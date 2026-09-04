@@ -48,14 +48,13 @@ type MiniOptions struct {
 }
 
 const (
-	bytesPerMB                    = 1024 * 1024 // Bytes per MB
-	miniVolumeMaxDataVolumeCounts = "0"         // auto-configured based on free disk space
-	miniVolumeMinFreeSpace        = "1"         // 1% minimum free space
-	minVolumeSizeMB               = 64          // Minimum volume size in MB
-	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
-	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
-	GrpcPortOffset                = 10000       // Offset used to calculate gRPC port from HTTP port
-	defaultMiniPluginJobTypes     = "all"
+	bytesPerMB                = 1024 * 1024 // Bytes per MB
+	miniVolumeMinFreeSpace    = "1"         // 1% minimum free space
+	minVolumeSizeMB           = 64          // Minimum volume size in MB
+	defaultMiniVolumeSizeMB   = 128         // Default volume size for mini mode
+	maxVolumeSizeMB           = 1024        // Maximum volume size in MB (1GB)
+	GrpcPortOffset            = 10000       // Offset used to calculate gRPC port from HTTP port
+	defaultMiniPluginJobTypes = "all"
 )
 
 var (
@@ -66,11 +65,12 @@ var (
 	miniWebDavOptions WebDavOption
 	miniAdminOptions  AdminOptions
 	// Track which port flags were explicitly passed on CLI before config file is applied
-	explicitPortFlags map[string]bool
-	miniEnableWebDAV  *bool
-	miniEnableS3      *bool
-	miniEnableAdminUI *bool
-	miniS3IamReadOnly *bool
+	explicitPortFlags             map[string]bool
+	miniEnableWebDAV              *bool
+	miniEnableS3                  *bool
+	miniEnableAdminUI             *bool
+	miniS3IamReadOnly             *bool
+	miniVolumeMaxDataVolumeCounts *string
 	// MiniClusterCtx is the context for the mini cluster. If set, the mini cluster will stop when the context is cancelled.
 	MiniClusterCtx context.Context
 
@@ -343,7 +343,7 @@ S3 gateway, WebDAV gateway, and Admin UI).
 
 All settings are optimized for small/dev use cases:
 - Volume size limit: auto configured based on disk space (64MB-1024MB)
-- Volume max: 0 (auto-configured based on free disk space)
+- Volume max: 0 (auto-configured based on free disk space), see -volume.max
 - Pre-stop seconds: 1 (faster shutdown)
 - Master peers: none (single master mode)
 
@@ -468,6 +468,7 @@ func initMiniFilerFlags() {
 
 // initMiniVolumeFlags initializes Volume server flag options
 func initMiniVolumeFlags() {
+	miniVolumeMaxDataVolumeCounts = cmdMini.Flag.String("volume.max", "0", "maximum numbers of volumes, count[,count]... If set to zero, the limit will be auto configured as free disk space divided by volume size.")
 	miniOptions.v.port = cmdMini.Flag.Int("volume.port", 9340, "volume server http listen port")
 	miniOptions.v.portGrpc = cmdMini.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
 	miniOptions.v.publicPort = cmdMini.Flag.Int("volume.port.public", 0, "volume server public port")
@@ -1433,7 +1434,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		defer reportMiniStopped("Volume")
 		startMiniService("Volume", func() {
 			minFreeSpaces := util.MustParseMinFreeSpace(miniVolumeMinFreeSpace, "")
-			miniOptions.v.startVolumeServer(*miniDataFolders, miniVolumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
+			miniOptions.v.startVolumeServer(*miniDataFolders, *miniVolumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
 		}, *miniOptions.v.port)
 	}()
 

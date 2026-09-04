@@ -71,11 +71,6 @@ type FileHandle struct {
 	// only the handle's shared lock and so races a second concurrent read.
 	remoteInstallMu sync.Mutex
 
-	// RDMA chunk offset cache for performance optimization
-	chunkOffsetCache []int64
-	chunkCacheValid  bool
-	chunkCacheLock   sync.RWMutex
-
 	// for debugging
 	mirrorFile *os.File
 }
@@ -142,9 +137,6 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		glog.Fatalf("setting file handle entry to nil")
 	}
 	fh.entry.SetEntry(entry)
-
-	// Invalidate chunk offset cache since chunks may have changed
-	fh.invalidateChunkCache()
 }
 
 // installAckedEntry installs filer-acknowledged state under the handle lock
@@ -208,17 +200,11 @@ func (fh *FileHandle) ResetDirtyPages() {
 func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entry {
 	result := fh.entry.UpdateEntry(fn)
 
-	// Invalidate chunk offset cache since entry may have been modified
-	fh.invalidateChunkCache()
-
 	return result
 }
 
 func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	fh.entry.AppendChunks(chunks)
-
-	// Invalidate chunk offset cache since new chunks were added
-	fh.invalidateChunkCache()
 }
 
 func (fh *FileHandle) ReleaseHandle() {
@@ -237,49 +223,4 @@ func (fh *FileHandle) ReleaseHandle() {
 	if IsDebugFileReadWrite {
 		fh.mirrorFile.Close()
 	}
-}
-
-// getCumulativeOffsets returns cached cumulative offsets for chunks, computing them if necessary
-func (fh *FileHandle) getCumulativeOffsets(chunks []*filer_pb.FileChunk) []int64 {
-	fh.chunkCacheLock.RLock()
-	if fh.chunkCacheValid && len(fh.chunkOffsetCache) == len(chunks)+1 {
-		// Cache is valid and matches current chunk count
-		result := make([]int64, len(fh.chunkOffsetCache))
-		copy(result, fh.chunkOffsetCache)
-		fh.chunkCacheLock.RUnlock()
-		return result
-	}
-	fh.chunkCacheLock.RUnlock()
-
-	// Need to compute/recompute cache
-	fh.chunkCacheLock.Lock()
-	defer fh.chunkCacheLock.Unlock()
-
-	// Double-check in case another goroutine computed it while we waited for the lock
-	if fh.chunkCacheValid && len(fh.chunkOffsetCache) == len(chunks)+1 {
-		result := make([]int64, len(fh.chunkOffsetCache))
-		copy(result, fh.chunkOffsetCache)
-		return result
-	}
-
-	// Compute cumulative offsets
-	cumulativeOffsets := make([]int64, len(chunks)+1)
-	for i, chunk := range chunks {
-		cumulativeOffsets[i+1] = cumulativeOffsets[i] + int64(chunk.Size)
-	}
-
-	// Cache the result
-	fh.chunkOffsetCache = make([]int64, len(cumulativeOffsets))
-	copy(fh.chunkOffsetCache, cumulativeOffsets)
-	fh.chunkCacheValid = true
-
-	return cumulativeOffsets
-}
-
-// invalidateChunkCache invalidates the chunk offset cache when chunks are modified
-func (fh *FileHandle) invalidateChunkCache() {
-	fh.chunkCacheLock.Lock()
-	fh.chunkCacheValid = false
-	fh.chunkOffsetCache = nil
-	fh.chunkCacheLock.Unlock()
 }

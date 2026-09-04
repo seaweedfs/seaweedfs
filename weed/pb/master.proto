@@ -222,6 +222,7 @@ message VolumeLocation {
   uint32 grpc_port = 7;
   repeated uint32 new_ec_vids = 8;
   repeated uint32 deleted_ec_vids = 9;
+  repeated uint32 remote_vids = 10;
 }
 
 message ClusterNodeUpdate {
@@ -267,6 +268,7 @@ message Location {
   string public_url = 2;
   uint32 grpc_port = 3;
   string data_center = 4;
+  bool data_in_remote = 5;
 }
 
 message AssignRequest {
@@ -412,12 +414,16 @@ message VolumeListRequest {
   // under a disk are selected; the topology and its disk counters are always
   // reported in full.
   string collection = 1;
-  uint32 volume_id = 2;
+  repeated uint32 volume_ids = 2;
   // The one collection the empty string cannot name. A named collection wins.
   bool default_collection_only = 3;
   // Empty and zero take everything. Wildcards are supported.
   string remote_storage_name = 4;
   bool local_volume_only = 5;
+  // The topology, its disks and their counters alone, without the volumes
+  // and ec shards. Selecting volumes above contradicts this and is refused.
+  // A master that predates this field ignores it and answers in full.
+  bool topology_only = 6;
 }
 message VolumeListResponse {
   TopologyInfo topology_info = 1;

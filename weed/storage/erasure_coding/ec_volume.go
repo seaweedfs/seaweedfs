@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -35,14 +36,18 @@ type EcVolume struct {
 	Shards                    []*EcVolumeShard
 	ShardLocations            map[ShardId][]pb.ServerAddress
 	ShardLocationsRefreshTime time.Time
-	ShardLocationsLock        sync.RWMutex
-	Version                   needle.Version
-	ecjFile                   *os.File
-	ecjFileAccessLock         sync.Mutex
-	diskType                  types.DiskType
-	datFileSize               int64
-	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
-	ECContext                 *ECContext // EC encoding parameters
+	// ShardLocationsStale marks the map for a prompt re-check: a read that failed
+	// against a cached location has disproved what the map claims, and the normal
+	// freshness window is far too long to serve from a map known to be wrong.
+	ShardLocationsStale bool
+	ShardLocationsLock  sync.RWMutex
+	Version             needle.Version
+	ecjFile             *os.File
+	ecjFileAccessLock   sync.Mutex
+	diskType            types.DiskType
+	datFileSize         int64
+	ExpireAtSec         uint64     //ec volume destroy time, calculated from the ec volume was created
+	ECContext           *ECContext // EC encoding parameters
 
 	// EncodeTsNs is the encode time (unix nanos) loaded from .vif; reads carry it
 	// so a shard from a different encode run is rejected. 0 for pre-upgrade volumes.
@@ -128,7 +133,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	default:
 		return nil, fmt.Errorf("cannot open ec volume index %s.ecx (or %s.ecx): %w", localBaseFileName, sharedBaseFileName, os.ErrNotExist)
 	}
-	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
+	if ev.ecxFile, err = backend.OpenVolumeFile(indexBaseFileName+".ecx", os.O_RDWR); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %w", indexBaseFileName, err)
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
@@ -140,7 +145,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	ev.ecxCreatedAt = ecxFi.ModTime()
 
 	// open ecj file and seed the in-memory deleted set from it.
-	if ev.ecjFile, err = os.OpenFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE, 0644); err != nil {
+	if ev.ecjFile, err = backend.OpenVolumeFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume journal %s.ecj: %v", indexBaseFileName, err)
 	}
 	if ecjFi, statErr := ev.ecjFile.Stat(); statErr == nil {
@@ -169,7 +174,16 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		}
 	}
 	ev.Version = needle.Version3
-	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(vifFileName); found {
+	// A present-but-unreadable or malformed .vif FAILS the mount: every new
+	// encode records a positive uniform block size there, and defaulting to
+	// the legacy layout would serve those shards with the wrong offset math.
+	// Absent stays legal — legacy volumes predate the sidecar.
+	volumeInfo, _, found, vifErr := volume_info.MaybeLoadVolumeInfo(vifFileName)
+	if vifErr != nil {
+		ev.Close()
+		return nil, fmt.Errorf("ec volume %d: load %s: %w", vid, vifFileName, vifErr)
+	}
+	if found {
 		ev.Version = needle.Version(volumeInfo.Version)
 		ev.datFileSize = volumeInfo.DatFileSize
 		ev.ExpireAtSec = volumeInfo.ExpireAtSec
@@ -180,21 +194,56 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 			ps := int(volumeInfo.EcShardConfig.ParityShards)
 			ev.EncodeTsNs = volumeInfo.EcShardConfig.GetEncodeTsNs()
 
-			// Validate shard counts to prevent zero or invalid values
-			if ds <= 0 || ps <= 0 || ds+ps > MaxShardCount {
-				glog.Warningf("Invalid EC config in VolumeInfo for volume %d (data=%d, parity=%d), using defaults", vid, ds, ps)
-				ev.ECContext = NewDefaultECContext(collection, vid)
+			// A config that is PRESENT but records an impossible ratio is not
+			// a volume to fall back on: substituting the default 10+4 with the
+			// legacy layout would read uniform shards with the wrong offset
+			// math and answer with the wrong bytes. Only an ENTIRELY absent
+			// config means "this predates the record", which the else-branch
+			// below serves with the legacy defaults.
+			if !ValidEcShardCounts(volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards) {
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: %s records invalid shard counts %d+%d",
+					vid, vifFileName, volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards)
+			} else if blockErr := ValidateBlockSize(volumeInfo.EcShardConfig.GetBlockSize()); blockErr != nil {
+				// A recorded block size that no encoder could have produced maps
+				// every read to the wrong shard offset. Refuse the mount rather
+				// than serve those bytes or silently pick a layout.
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: %s: %w", vid, vifFileName, blockErr)
 			} else {
 				ev.ECContext = &ECContext{
 					Collection:   collection,
 					VolumeId:     vid,
 					DataShards:   ds,
 					ParityShards: ps,
+					BlockSize:    volumeInfo.EcShardConfig.GetBlockSize(),
 				}
 				glog.V(1).Infof("Loaded EC config from VolumeInfo for volume %d: %s", vid, ev.ECContext.String())
 			}
 		} else {
-			ev.ECContext = NewDefaultECContext(collection, vid)
+			// A vif that carries no ecShardConfig answers nothing about the
+			// layout — it is no more informative than an absent one, so it
+			// must not skip the sidecar. Going straight to the defaults here
+			// read a uniform volume with the legacy offset math.
+			cfg, sidecarFound, sidecarErr := layoutFromSidecar(dataBaseFileName, indexBaseFileName)
+			if sidecarErr != nil {
+				ev.Close()
+				return nil, fmt.Errorf("ec volume %d: %s records no EC config and the bitrot sidecar cannot establish the layout: %w", vid, vifFileName, sidecarErr)
+			}
+			if sidecarFound {
+				ev.ECContext = &ECContext{
+					Collection:   collection,
+					VolumeId:     vid,
+					DataShards:   int(cfg.GetDataShards()),
+					ParityShards: int(cfg.GetParityShards()),
+					BlockSize:    cfg.GetBlockSize(),
+				}
+				ev.EncodeTsNs = cfg.GetEncodeTsNs()
+				glog.V(0).Infof("ec volume %d: .vif records no EC config; took it from the bitrot sidecar: %s",
+					vid, ev.ECContext.String())
+			} else {
+				ev.ECContext = NewDefaultECContext(collection, vid)
+			}
 		}
 	} else {
 		// Don't fabricate a stub .vif here: a version-only stub implies the
@@ -203,23 +252,70 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		// mistake for an authoritative config. Mount with in-memory defaults and
 		// leave the real .vif to the encoder or a recovery tool (the Rust volume
 		// server already behaves this way).
-		glog.Warningf("vif file not found, using defaults, volumeId:%d, filename:%s", vid, vifFileName)
+		//
+		// The bitrot sidecar records the same EC config at encode time, so when
+		// it is present it answers the layout question the missing .vif cannot:
+		// defaulting a uniform-layout volume to the legacy block sizes maps
+		// every read to the wrong shard offset. `weed fix -ecx` reads the
+		// sidecar for the same reason.
 		ev.ECContext = NewDefaultECContext(collection, vid)
+		cfg, sidecarFound, sidecarErr := layoutFromSidecar(dataBaseFileName, indexBaseFileName)
+		if sidecarErr != nil {
+			// With no .vif the sidecar is the ONLY record of this volume's
+			// layout. Present but unusable is not "assume legacy" — that
+			// answers reads with the wrong shard offsets, which is worse than
+			// not answering at all.
+			ev.Close()
+			return nil, fmt.Errorf("ec volume %d: no .vif and the bitrot sidecar cannot establish the layout: %w", vid, sidecarErr)
+		}
+		if sidecarFound {
+			ev.ECContext = &ECContext{
+				Collection:   collection,
+				VolumeId:     vid,
+				DataShards:   int(cfg.GetDataShards()),
+				ParityShards: int(cfg.GetParityShards()),
+				BlockSize:    cfg.GetBlockSize(),
+			}
+			ev.EncodeTsNs = cfg.GetEncodeTsNs()
+			glog.V(0).Infof("ec volume %d: .vif missing; took EC config from the bitrot sidecar: %s",
+				vid, ev.ECContext.String())
+		} else {
+			// Only now are the defaults what the volume actually mounted on;
+			// logging this after the sidecar answered would send an operator
+			// triaging wrong bytes after the legacy layout instead.
+			glog.Warningf("vif file not found, using defaults, volumeId:%d, filename:%s", vid, vifFileName)
+		}
 	}
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 
 	// Load the active-generation bitrot checksum sidecar (optional).
-	ev.loadActiveBitrotSidecar()
+	if err := ev.loadActiveBitrotSidecar(); err != nil {
+		ev.Close()
+		return nil, err
+	}
 
 	return
 }
 
-func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
+func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) (bool, error) {
 	for _, s := range ev.Shards {
 		if s.ShardId == ecVolumeShard.ShardId {
-			return false
+			return false, nil
 		}
+	}
+	// A 0-byte shard file beside an index with entries is residue of a
+	// failed copy or a truncation, not a mountable shard: registering it
+	// would advertise a size-0 claim that serves nothing and, since
+	// placement pins re-copies to the owning disk, would keep attracting
+	// repairs to a file that was never valid. A 0-byte shard beside a
+	// 0-byte index is different — that is the legitimate layout of a
+	// volume encoded with no live needles, and it must keep mounting.
+	// The startup scan already skips 0-byte shard files; this covers the
+	// mount RPC path, which opens the file directly.
+	if ecVolumeShard.Size() == 0 && ev.ecxFileSize > 0 {
+		return false, fmt.Errorf("ec volume %d shard %d: shard file is empty (0 bytes) but the index has %d entries: residue of a failed copy, not a mountable shard",
+			ev.VolumeId, ecVolumeShard.ShardId, ev.ecxFileSize/types.NeedleMapEntrySize)
 	}
 	ev.Shards = append(ev.Shards, ecVolumeShard)
 	slices.SortFunc(ev.Shards, func(a, b *EcVolumeShard) int {
@@ -228,7 +324,7 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 		}
 		return int(a.ShardId - b.ShardId)
 	})
-	return true
+	return true, nil
 }
 
 func (ev *EcVolume) DeleteEcVolumeShard(shardId ShardId) (ecVolumeShard *EcVolumeShard, deleted bool) {
@@ -524,9 +620,15 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 		shardSize = shard.ecdFileSize - 1
 	}
 	// calculate the locations in the ec shards
-	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, shardSize, offset, types.Size(needle.GetActualSize(size, version)))
+	intervals = LocateData(ev.ECContext.LargeBlockSize(), ev.ECContext.SmallBlockSize(), shardSize, offset, types.Size(needle.GetActualSize(size, version)))
 
 	return
+}
+
+// IntervalToShardIdAndOffset resolves an interval against this volume's shard
+// block layout.
+func (ev *EcVolume) IntervalToShardIdAndOffset(interval Interval) (ShardId, int64) {
+	return interval.ToShardIdAndOffset(ev.ECContext.LargeBlockSize(), ev.ECContext.SmallBlockSize())
 }
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {

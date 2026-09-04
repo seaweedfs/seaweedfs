@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/hashicorp/golang-lru/v2/simplelru"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 )
 
 // Read-only volumes — cloud-tiered ones above all — outnumber writable ones by
@@ -78,7 +79,7 @@ func (p *indexFilePool) borrow(name string, writable bool) (*pooledFile, error) 
 	}
 	// Opened outside the lock: a cold open blocks on disk, and holding a
 	// process-wide mutex across it would serialize every volume's lookups.
-	file, err := os.OpenFile(name, flag, 0644)
+	file, err := backend.OpenVolumeFile(name, flag)
 	if err != nil {
 		return nil, err
 	}

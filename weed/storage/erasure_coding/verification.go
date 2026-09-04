@@ -14,6 +14,11 @@ import (
 type ServerShardInventory struct {
 	Bits       ShardBits
 	QueryError error
+	// BlockSize is the shard block layout this holder reports for the volume —
+	// the one it will serve reads through. A binary predating the uniform
+	// layout drops the field off the wire and reports 0, which is how
+	// RequireAgreedBlockLayout tells such a holder from one that agrees.
+	BlockSize int64
 }
 
 // Query errors are recorded per-server and treated as zero shards rather
@@ -50,6 +55,7 @@ func VerifyShardsAcrossServers(ctx context.Context, volumeID uint32,
 					}
 					inv.Bits = inv.Bits.Set(ShardId(s.ShardId))
 				}
+				inv.BlockSize = resp.GetEcShardConfig().GetBlockSize()
 				return nil
 			})
 		if callErr != nil {
@@ -97,6 +103,39 @@ func RequireRecoverableShardSet(volumeID uint32, shardsPresent ShardBits, dataSh
 	sort.Ints(missing)
 	return false, fmt.Errorf("EC shard set unrecoverable for volume %d: %d/%d shards present, need %d to reconstruct, missing shard ids %v",
 		volumeID, totalShards-len(missing), totalShards, dataShards, missing)
+}
+
+// RequireAgreedBlockLayout gates source-volume deletion on every holder that
+// answered agreeing with the layout the shards were encoded under.
+//
+// The uniform block layout lives in a `.vif` field that older volume servers
+// have never heard of: such a server parses the file, silently discards the
+// unknown field, and mounts the volume on the legacy 1GiB/1MiB striping. Its
+// reads then land at the wrong shard offsets and return wrong bytes, and
+// nothing else in the encode path notices — the shard files are the same
+// length under either layout. Asking each holder which layout it is serving is
+// the one question that separates the two, and asking it here means the answer
+// arrives while the source .dat is still on disk.
+//
+// Holders that could not be reached, or that report no shard of this volume,
+// are skipped: RequireRecoverableShardSet already covers a missing holder, and
+// one that answered nothing has promised nothing.
+func RequireAgreedBlockLayout(volumeID uint32, encodedBlockSize int64, perServer map[string]ServerShardInventory) error {
+	disagreeing := make([]string, 0, len(perServer))
+	for server, inv := range perServer {
+		if inv.QueryError != nil || inv.Bits.Count() == 0 {
+			continue
+		}
+		if inv.BlockSize != encodedBlockSize {
+			disagreeing = append(disagreeing, fmt.Sprintf("%s serves block size %d", server, inv.BlockSize))
+		}
+	}
+	if len(disagreeing) == 0 {
+		return nil
+	}
+	sort.Strings(disagreeing)
+	return fmt.Errorf("volume %d was encoded with shard block size %d but %v; upgrade every volume server to a build that understands the uniform shard block layout before encoding",
+		volumeID, encodedBlockSize, disagreeing)
 }
 
 func SummarizeShardInventory(perServer map[string]ServerShardInventory) string {

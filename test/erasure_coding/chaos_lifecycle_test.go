@@ -933,7 +933,7 @@ func copyFileContents(src, dst string) error {
 // chaosDataNodes lists the data nodes from a fresh master topology snapshot.
 func chaosDataNodes(commandEnv *shell.CommandEnv) []*master_pb.DataNodeInfo {
 	var resp *master_pb.VolumeListResponse
-	err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		var e error
 		resp, e = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return e
@@ -955,7 +955,7 @@ func chaosDataNodes(commandEnv *shell.CommandEnv) []*master_pb.DataNodeInfo {
 func masterEcGenerations(commandEnv *shell.CommandEnv, volumeId uint32) map[int64]bool {
 	generations := map[int64]bool{}
 	var resp *master_pb.VolumeListResponse
-	err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		var e error
 		resp, e = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		return e

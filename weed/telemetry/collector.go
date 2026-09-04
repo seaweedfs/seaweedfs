@@ -68,8 +68,9 @@ func (c *Collector) CollectAndSendAsync() {
 	}
 
 	go func() {
-		data := c.collectData()
-		c.client.SendTelemetryAsync(data)
+		if data := c.collectData(); data != nil {
+			c.client.SendTelemetryAsync(data)
+		}
 	}()
 }
 
@@ -80,7 +81,7 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 		return
 	}
 
-	glog.V(0).Infof("Reporting anonymous cluster statistics to %s every %v, use -telemetry=false to opt out", c.client.url, interval)
+	glog.V(0).Infof("Reporting anonymous cluster statistics to %s every %v once %d GiB are stored, use -telemetry=false to opt out", c.client.url, interval, proto.MinDiskBytes>>30)
 
 	// Send initial telemetry after a short delay
 	go func() {
@@ -107,7 +108,9 @@ func (c *Collector) StartPeriodicCollection(interval time.Duration) {
 	}()
 }
 
-// collectData gathers telemetry data from the topology
+// collectData gathers telemetry data from the topology. It returns nil while
+// the cluster stores less than proto.MinDiskBytes, so throwaway clusters never
+// report.
 func (c *Collector) collectData() *proto.TelemetryData {
 	data := &proto.TelemetryData{
 		Version:   c.version,
@@ -131,6 +134,10 @@ func (c *Collector) collectData() *proto.TelemetryData {
 		data.BrokerCount = int32(c.countBrokers())
 	}
 
+	if data.TotalDiskBytes < proto.MinDiskBytes {
+		glog.V(2).Infof("Skipping telemetry: %d bytes stored, reporting starts at %d", data.TotalDiskBytes, proto.MinDiskBytes)
+		return nil
+	}
 	return data
 }
 

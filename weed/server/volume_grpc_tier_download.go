@@ -125,7 +125,7 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 // swapToLocalDatBackend closes the remote data backend and opens the downloaded
 // local .dat as a DiskFile so reads are served from local disk.
 func swapToLocalDatBackend(v *storage.Volume, datFileName string) error {
-	dataFile, err := os.OpenFile(datFileName, os.O_RDWR, 0644)
+	dataFile, err := backend.OpenVolumeFile(datFileName, os.O_RDWR)
 	if err != nil {
 		return err
 	}

@@ -277,11 +277,7 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 			}
 		} else {
 			// Delete file
-			_, err = client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-				Directory: dirPath,
-				Name:      resp.Entry.Name,
-			})
-			if err != nil {
+			if err := filer_pb.DoRemove(context.Background(), client, dirPath, resp.Entry.Name, false, false, false, false, nil); err != nil {
 				return fmt.Errorf("failed to delete file %s: %v", entryPath, err)
 			}
 		}
@@ -291,11 +287,7 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 	parentDir := path.Dir(dirPath)
 	dirName := path.Base(dirPath)
 
-	_, err = client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-		Directory: parentDir,
-		Name:      dirName,
-	})
-	if err != nil {
+	if err := filer_pb.DoRemove(context.Background(), client, parentDir, dirName, false, false, false, false, nil); err != nil {
 		return fmt.Errorf("failed to delete directory %s: %v", dirPath, err)
 	}
 

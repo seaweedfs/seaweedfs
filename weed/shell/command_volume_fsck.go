@@ -310,7 +310,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
-			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil)
 			if resolveErr != nil {
 				// Cancellation/deadline isn't manifest corruption; surface it
 				// so the BFS bails out cleanly without polluting the
@@ -747,7 +747,7 @@ func (c *commandVolumeFsck) purgeEmptyDirectories() {
 			continue
 		}
 		if err := c.deleteEmptyDirectory(dir, mtime); err != nil {
-			if !strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+			if !errors.Is(err, filer.ErrNonEmptyFolder) {
 				fmt.Fprintf(c.writer, "delete empty directory %s: %v\n", dir, err)
 			}
 			continue
@@ -771,7 +771,7 @@ func (c *commandVolumeFsck) deleteEmptyDirectory(dir util.FullPath, mtime int64)
 			return err
 		}
 		if resp.Error != "" {
-			return errors.New(resp.Error)
+			return filer.DeleteEntryError(resp.Error)
 		}
 		return nil
 	})

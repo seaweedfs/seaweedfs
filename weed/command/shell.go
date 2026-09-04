@@ -68,7 +68,11 @@ func runShell(command *Command, args []string) bool {
 		fmt.Fprintf(os.Stderr, "master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
 	}
 
-	shell.RunShell(shellOptions)
+	if err := shell.RunShell(shellOptions); err != nil {
+		// The command already printed the error; a piped run has to fail the
+		// script wrapping it too.
+		SetCommandExitStatus(1)
+	}
 
 	return true
 

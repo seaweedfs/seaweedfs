@@ -201,6 +201,50 @@ func TestRetriedFetchChunkDataKeepsBackoffWhenLocationsAreUnchanged(t *testing.T
 	}
 }
 
+// TestRetriedFetchChunkDataRefreshesLocationsAfterPartialFailure covers a read
+// that fails on a cached dead replica and succeeds on the next one: the read
+// itself is fine, but the list it came from is stale and must be refreshed so
+// later reads do not start with the dead replica again. Both the direct and
+// the streaming read paths take this branch.
+func TestRetriedFetchChunkDataRefreshesLocationsAfterPartialFailure(t *testing.T) {
+	forgetUnreachable(t)
+	payload := []byte("chunk contents")
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer live.Close()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	for _, isFullChunk := range []bool{true, false} {
+		forgetUnreachable(t)
+		refreshed := 0
+		refresh := func() []string {
+			refreshed++
+			return []string{live.URL + "/3,abc"}
+		}
+		buffer := make([]byte, len(payload))
+		n, err := RetriedFetchChunkData(context.Background(), buffer, []string{deadURL + "/3,abc", live.URL + "/3,abc"}, nil, false, isFullChunk, 0, "3,abc", refresh)
+		if err != nil || string(buffer[:n]) != string(payload) {
+			t.Fatalf("fullChunk=%v: got %q, %v; want %q", isFullChunk, buffer[:n], err, payload)
+		}
+		if refreshed != 1 {
+			t.Fatalf("fullChunk=%v: refresh called %d times after a partial failure, want exactly 1", isFullChunk, refreshed)
+		}
+
+		// a read answered by the first location leaves the list alone
+		refreshed = 0
+		n, err = RetriedFetchChunkData(context.Background(), buffer, []string{live.URL + "/3,abc", deadURL + "/3,abc"}, nil, false, isFullChunk, 0, "3,abc", refresh)
+		if err != nil || string(buffer[:n]) != string(payload) {
+			t.Fatalf("fullChunk=%v: got %q, %v; want %q", isFullChunk, buffer[:n], err, payload)
+		}
+		if refreshed != 0 {
+			t.Fatalf("fullChunk=%v: refresh called %d times without a failure, want none", isFullChunk, refreshed)
+		}
+	}
+}
+
 func TestSameUrlsIgnoresOrder(t *testing.T) {
 	a := []string{"http://a:8080/3,x", "http://b:8080/3,x"}
 	if !SameUrls(a, []string{a[1], a[0]}) {

@@ -2,12 +2,13 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"os"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -75,6 +76,14 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		Entry:                    newEntry,
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,
+		// mkdir(2) is exclusive by contract: creating an existing path must
+		// fail with EEXIST. Without OExcl the filer treats a concurrent
+		// duplicate as an update and reports success to both callers; the
+		// kernel's pre-mkdir lookup only catches the duplicate when the
+		// winner's create is already visible, which a cross-node race defeats.
+		// The filer routes an OExcl create to the entry's ring owner, so its
+		// per-path lock arbitrates every creator in the cluster.
+		OExcl: true,
 	}
 
 	glog.V(1).Infof("mkdir: %v", request)
@@ -99,6 +108,14 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 	if err != nil {
 		wfs.mapPbIdFromFilerToLocal(newEntry)
+		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			// Lost a create race: the path exists on the filer but not yet in
+			// this mount's cache. Drop the parent's children cache so the next
+			// lookup fetches the winner's entry instead of waiting for the
+			// metadata subscription to deliver it.
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+			return fuse.Status(syscall.EEXIST)
+		}
 		return fuse.EIO
 	}
 
@@ -139,10 +156,15 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	entryFullPath := dirFullPath.Child(name)
 
+	targetEntry, _, targetCode := wfs.maybeLoadEntry(entryFullPath)
+	if targetCode != fuse.OK {
+		targetEntry = nil
+	}
+
 	// POSIX: enforce sticky bit on the parent directory.
 	if dirEntry, _, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
-		if targetEntry, _, targetCode := wfs.maybeLoadEntry(entryFullPath); targetCode == fuse.OK && targetEntry != nil && targetEntry.Attributes != nil {
+		if targetEntry != nil && targetEntry.Attributes != nil {
 			targetUid = targetEntry.Attributes.Uid
 		}
 		if code := checkStickyBit(dirEntry.Attributes.FileMode, dirEntry.Attributes.Uid, targetUid, header.Uid); code != fuse.OK {
@@ -161,7 +183,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	resp, err := wfs.streamDeleteEntry(context.Background(), deleteReq)
 	if err != nil {
 		glog.V(1).Infof("remove %s: %v", entryFullPath, err)
-		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+		if filer.IsNonEmptyFolderError(err) {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}
 		return fuse.ENOENT
@@ -175,7 +197,17 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 		glog.Warningf("rmdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
 		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
-	wfs.inodeToPath.RemovePath(entryFullPath)
+	// The filer serialized the delete against concurrent updates and returned
+	// the entry as it stood; the snapshot loaded above may predate one.
+	if oldEntry := resp.GetMetadataEvent().GetEventNotification().GetOldEntry(); oldEntry.GetAttributes() != nil {
+		targetEntry = proto.Clone(oldEntry).(*filer_pb.Entry)
+		wfs.mapPbIdFromFilerToLocal(targetEntry)
+	}
+	wfs.inodeToPath.RemovePath(entryFullPath, func(inode uint64) {
+		if targetEntry != nil {
+			wfs.rememberRemovedDir(inode, targetEntry)
+		}
+	})
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 	wfs.touchDirMtimeCtimeBest(dirFullPath)
 	wfs.inodeToPath.AdjustSubdirCount(dirFullPath, -1)

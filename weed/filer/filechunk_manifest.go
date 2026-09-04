@@ -49,7 +49,7 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 	return
 }
 
-func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	// TODO maybe parallel this
 	for _, chunk := range chunks {
 
@@ -62,14 +62,14 @@ func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 			continue
 		}
 
-		resolvedChunks, err := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk)
+		resolvedChunks, err := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator)
 		if err != nil {
 			return dataChunks, nil, err
 		}
 
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
-		subDataChunks, subManifestChunks, subErr := ResolveChunkManifest(ctx, lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
+		subDataChunks, subManifestChunks, subErr := ResolveChunkManifest(ctx, lookupFileIdFn, resolvedChunks, startOffset, stopOffset, invalidator)
 		if subErr != nil {
 			return dataChunks, nil, subErr
 		}
@@ -79,7 +79,7 @@ func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 	return
 }
 
-func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	if !chunk.IsChunkManifest {
 		return
 	}
@@ -88,13 +88,13 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
 	bytesBuffer.Reset()
 	defer bytesBufferPool.Put(bytesBuffer)
-	err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed)
+	err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed, invalidator)
 	if err != nil {
-		return nil, fmt.Errorf("fail to read manifest %s: %v", chunk.GetFileIdString(), err)
+		return nil, fmt.Errorf("fail to read manifest %s: %w", chunk.GetFileIdString(), err)
 	}
 	m := &filer_pb.FileChunkManifest{}
 	if err := proto.Unmarshal(bytesBuffer.Bytes(), m); err != nil {
-		return nil, fmt.Errorf("fail to unmarshal manifest %s: %v", chunk.GetFileIdString(), err)
+		return nil, fmt.Errorf("fail to unmarshal manifest %s: %w", chunk.GetFileIdString(), err)
 	}
 
 	// recursive
@@ -103,18 +103,27 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 }
 
 // TODO fetch from cache for weed mount?
-func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) error {
+func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, invalidator CacheInvalidator) error {
 	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
 		return err
 	}
 	jwt := JwtForVolumeServer(fileId)
-	_, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0)
-	if err != nil {
-		return err
+	if _, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0, refreshUrls(ctx, invalidator, lookupFileIdFn, fileId)); err == nil {
+		return nil
 	}
-	return nil
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// a cancelled read says nothing about where the volume lives, and the
+		// stream error it provoked is a symptom, not the cause
+		return ctxErr
+	}
+	return retryFetchWithFreshLocations(ctx, invalidator, lookupFileIdFn, fileId, urlStrings, err, func(newUrls []string) error {
+		// the failed attempt may have streamed a partial prefix into the buffer
+		bytesBuffer.Reset()
+		_, retryErr := retriedStreamFetchChunkData(ctx, bytesBuffer, newUrls, jwt, cipherKey, isGzipped, true, 0, 0, nil)
+		return retryErr
+	})
 }
 
 func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
@@ -126,7 +135,10 @@ func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient
 	return util_http.RetriedFetchChunkData(ctx, buffer, urlStrings, cipherKey, isGzipped, false, offset, fileId, refreshUrls)
 }
 
-func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (written int64, err error) {
+// retriedStreamFetchChunkData streams a chunk from the first location that
+// answers. refreshUrls may be nil; when a location failed and a later one
+// answered, it is called so the reads that follow start from a fresh list.
+func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int, refreshUrls util_http.RefreshUrlsFunc) (written int64, err error) {
 
 	var shouldRetry bool
 	var totalWritten int
@@ -140,7 +152,8 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 		}
 
 		retriedCnt := 0
-		for _, urlString := range urlStrings {
+		var failed bool
+		for _, urlString := range util_http.ReachableFirst(urlStrings) {
 			// Check for context cancellation before each volume server request
 			select {
 			case <-ctx.Done():
@@ -182,10 +195,14 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 				break
 			}
 			if err != nil {
+				failed = true
 				glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
 			} else {
 				break
 			}
+		}
+		if err == nil && failed && refreshUrls != nil {
+			refreshUrls()
 		}
 		// all nodes have tried it
 		if retriedCnt == len(urlStrings) {

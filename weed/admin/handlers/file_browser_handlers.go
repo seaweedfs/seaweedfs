@@ -109,14 +109,7 @@ func (h *FileBrowserHandlers) DeleteFile(w http.ResponseWriter, r *http.Request)
 
 	// Delete file via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            path.Dir(request.Path),
-			Name:                 path.Base(request.Path),
-			IsDeleteData:         true,
-			IsRecursive:          true,
-			IgnoreRecursiveError: false,
-		})
-		return err
+		return filer_pb.DoRemove(context.Background(), client, path.Dir(request.Path), path.Base(request.Path), true, true, false, false, nil)
 	})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to delete file: "+err.Error())
@@ -156,14 +149,7 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 	// Delete each file/folder
 	for _, p := range request.Paths {
 		err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-				Directory:            path.Dir(p),
-				Name:                 path.Base(p),
-				IsDeleteData:         true,
-				IsRecursive:          true,
-				IgnoreRecursiveError: false,
-			})
-			return err
+			return filer_pb.DoRemove(context.Background(), client, path.Dir(p), path.Base(p), true, true, false, false, nil)
 		})
 
 		if err != nil {

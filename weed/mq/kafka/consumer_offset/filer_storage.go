@@ -296,13 +296,6 @@ func (f *FilerStorage) deleteDirectory(path string) error {
 	dir, name := fullPath.DirAndName()
 
 	return f.fca.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            dir,
-			Name:                 name,
-			IsDeleteData:         true,
-			IsRecursive:          true,
-			IgnoreRecursiveError: true,
-		})
-		return err
+		return filer_pb.DoRemove(context.Background(), client, dir, name, true, true, true, false, nil)
 	})
 }

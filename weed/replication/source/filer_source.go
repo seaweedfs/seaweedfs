@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +18,12 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
+
+// ErrVolumeNotFound reports that the source cluster has no location for a
+// chunk's volume: vacuumed away, deleted, or every replica offline. Callers
+// need it apart from a lookup that simply failed, which a later attempt can
+// still get past.
+var ErrVolumeNotFound = errors.New("volume not found")
 
 type FilerSource struct {
 	grpcAddress    string
@@ -88,8 +95,8 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 	locations := vid2Locations[vid]
 
 	if locations == nil || len(locations.Locations) == 0 {
-		glog.V(1).InfofCtx(ctx, "LookupFileId locate volume id %s: %v", vid, err)
-		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
+		glog.V(1).InfofCtx(ctx, "LookupFileId locate volume id %s: %v", vid, ErrVolumeNotFound)
+		return nil, fmt.Errorf("LookupFileId locate volume id %s: %w", vid, ErrVolumeNotFound)
 	}
 
 	if !fs.proxyByFiler {
@@ -118,12 +125,16 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 	}
 
 	if fs.proxyByFiler {
-		filename, header, resp, err = downloadFn("http://"+fs.address+"/?proxyChunkId="+fileId, "", offset)
+		fileUrl := "http://" + fs.address + "/?proxyChunkId=" + fileId
+		filename, header, resp, err = downloadFn(fileUrl, "", offset)
+		if err == nil {
+			err = readPartStatusError(fileUrl, resp)
+		}
 		if err != nil {
 			glog.V(0).Infof("read part %s via filer proxy %s offset %d: %v", fileId, fs.address, offset, err)
-		} else {
-			glog.V(4).Infof("read part %s via filer proxy %s offset %d content-length:%s", fileId, fs.address, offset, header.Get("Content-Length"))
+			return "", nil, nil, err
 		}
+		glog.V(4).Infof("read part %s via filer proxy %s offset %d content-length:%s", fileId, fs.address, offset, header.Get("Content-Length"))
 		return
 	}
 
@@ -134,15 +145,34 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 
 	for _, fileUrl := range fileUrls {
 		filename, header, resp, err = downloadFn(fileUrl, "", offset)
-		if err != nil {
-			glog.V(0).Infof("fail to read part %s from %s offset %d: %v", fileId, fileUrl, offset, err)
-		} else {
-			glog.V(4).Infof("read part %s from %s offset %d content-length:%s", fileId, fileUrl, offset, header.Get("Content-Length"))
-			break
+		if err == nil {
+			err = readPartStatusError(fileUrl, resp)
 		}
+		if err != nil {
+			resp = nil
+			glog.V(0).Infof("fail to read part %s from %s offset %d: %v", fileId, fileUrl, offset, err)
+			continue
+		}
+		glog.V(4).Infof("read part %s from %s offset %d content-length:%s", fileId, fileUrl, offset, header.Get("Content-Length"))
+		break
 	}
 
 	return filename, header, resp, err
+}
+
+// readPartStatusError turns a failure status into an error and closes the
+// response. Otherwise the caller copies the error page as chunk content and
+// reports it as a short read; a needle vacuum has removed answers 404, which
+// is the source having lost the data rather than corruption.
+func readPartStatusError(fileUrl string, resp *http.Response) error {
+	if resp == nil || resp.StatusCode < http.StatusBadRequest {
+		return nil
+	}
+	defer util_http.CloseResponse(resp)
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%s: %s: %w", fileUrl, resp.Status, util_http.ErrNotFound)
+	}
+	return fmt.Errorf("%s: %s", fileUrl, resp.Status)
 }
 
 var _ = filer_pb.FilerClient(&FilerSource{})

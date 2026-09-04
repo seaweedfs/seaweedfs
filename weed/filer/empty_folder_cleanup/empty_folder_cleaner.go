@@ -239,6 +239,16 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 	if efc.cleanupQueue.Remove(directory) {
 		glog.V(3).Infof("EmptyFolderCleaner: cancelled cleanup for %s due to new entry", directory)
 	}
+
+	// A directory that has just been created is a new incarnation, so a cleanup
+	// queued against the one it replaces would delete it rather than the folder
+	// that was found empty.
+	if isDirectory {
+		recreated := string(util.NewFullPath(directory, entryName))
+		if efc.cleanupQueue.Remove(recreated) {
+			glog.V(3).Infof("EmptyFolderCleaner: cancelled cleanup for %s, recreated", recreated)
+		}
+	}
 }
 
 // cleanupProcessor runs in background and processes the cleanup queue
@@ -529,6 +539,17 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 		return
 	}
 
+	// An S3 Tables catalog entry - a namespace, a table whose files a rename left
+	// behind at the old path, a view that never had any - is the directory itself,
+	// so its being empty says nothing about whether the catalog still names it.
+	if extended, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder)); err != nil {
+		glog.V(2).Infof("EmptyFolderCleaner: error reading attributes of %s: %v", folder, err)
+		return
+	} else if isCatalogEntry(extended) {
+		glog.V(3).Infof("EmptyFolderCleaner: skipping %s (triggered by %s), s3tables catalog entry", folder, triggeredBy)
+		return
+	}
+
 	// Observe it before the delete rather than after. A delete can fail partway and
 	// still leave the folder gone - the redis stores remove the folder before their
 	// parent-list member - so a failure return is not proof that it is still there.
@@ -615,6 +636,16 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 	efc.mu.Unlock()
 
 	return bucketPath, autoRemove, "filer", attrValue, nil
+}
+
+// isCatalogEntry reports whether the directory is an s3tables catalog record.
+func isCatalogEntry(attrs map[string][]byte) bool {
+	for key := range attrs {
+		if strings.HasPrefix(key, s3_constants.ExtS3TablesPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func autoRemoveEmptyFoldersEnabled(attrs map[string][]byte) (bool, string) {

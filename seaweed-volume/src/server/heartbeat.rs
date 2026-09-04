@@ -398,8 +398,7 @@ async fn do_heartbeat(
 
     // Keep track of what we sent, to generate delta updates
     let (initial_hb, initial_volumes) = collect_heartbeat_with_snapshot(config, state);
-    let mut last_volumes: HashMap<u32, master_pb::VolumeInformationMessage> =
-        initial_volumes.iter().map(|v| (v.id, v.clone())).collect();
+    let mut last_volumes: HashMap<u32, VolumeIdentity> = volume_identities(&initial_volumes);
     let mut last_ec_shards = {
         let store = state.store.read().unwrap();
         collect_ec_shard_delta_messages(&store)
@@ -466,8 +465,7 @@ async fn do_heartbeat(
                         if changed {
                             let (adjusted_hb, adjusted_volumes) =
                                 collect_heartbeat_with_snapshot(config, state);
-                            last_volumes =
-                                adjusted_volumes.iter().map(|v| (v.id, v.clone())).collect();
+                            last_volumes = volume_identities(&adjusted_volumes);
                             last_ec_shards = {
                                 let store = state.store.read().unwrap();
                                 collect_ec_shard_delta_messages(&store)
@@ -501,7 +499,7 @@ async fn do_heartbeat(
                     s.maybe_adjust_volume_max();
                 }
                 let (current_hb, current_volumes) = collect_heartbeat_with_snapshot(config, state);
-                last_volumes = current_volumes.iter().map(|v| (v.id, v.clone())).collect();
+                last_volumes = volume_identities(&current_volumes);
                 last_ec_shards = {
                     let store = state.store.read().unwrap();
                     collect_ec_shard_delta_messages(&store)
@@ -530,7 +528,7 @@ async fn do_heartbeat(
                     return Ok(None);
                 }
                 let held_volumes = collect_volume_snapshot(config, state);
-                let current_volumes: HashMap<u32, _> = held_volumes.iter().map(|v| (v.id, v.clone())).collect();
+                let current_volumes = volume_identities(&held_volumes);
                 let current_ec_shards = {
                     let store = state.store.read().unwrap();
                     collect_ec_shard_delta_messages(&store)
@@ -541,29 +539,13 @@ async fn do_heartbeat(
 
                 for (id, vol) in &current_volumes {
                     if !last_volumes.contains_key(id) {
-                        new_vols.push(master_pb::VolumeShortInformationMessage {
-                            id: *id,
-                            collection: vol.collection.clone(),
-                            version: vol.version,
-                            replica_placement: vol.replica_placement,
-                            ttl: vol.ttl,
-                            disk_type: vol.disk_type.clone(),
-                            disk_id: vol.disk_id,
-                        });
+                        new_vols.push(vol.to_short_message(*id));
                     }
                 }
 
                 for (id, vol) in &last_volumes {
                     if !current_volumes.contains_key(id) {
-                        del_vols.push(master_pb::VolumeShortInformationMessage {
-                            id: *id,
-                            collection: vol.collection.clone(),
-                            version: vol.version,
-                            replica_placement: vol.replica_placement,
-                            ttl: vol.ttl,
-                            disk_type: vol.disk_type.clone(),
-                            disk_id: vol.disk_id,
-                        });
+                        del_vols.push(vol.to_short_message(*id));
                     }
                 }
 
@@ -742,6 +724,54 @@ fn parse_bool_property(value: Option<&String>) -> bool {
             )
         })
         .unwrap_or(true)
+}
+
+/// What a mount or unmount delta has to name, which is far less than the
+/// information message the heartbeat carries. A server holding millions of
+/// volumes cannot keep a whole message for each just to notice one leave; the
+/// Go report state keeps the same fields for the same reason.
+#[derive(Clone)]
+struct VolumeIdentity {
+    collection: String,
+    disk_type: String,
+    version: u32,
+    replica_placement: u32,
+    ttl: u32,
+    disk_id: u32,
+}
+
+impl VolumeIdentity {
+    fn of(v: &master_pb::VolumeInformationMessage) -> Self {
+        Self {
+            collection: v.collection.clone(),
+            disk_type: v.disk_type.clone(),
+            version: v.version,
+            replica_placement: v.replica_placement,
+            ttl: v.ttl,
+            disk_id: v.disk_id,
+        }
+    }
+
+    fn to_short_message(&self, id: u32) -> master_pb::VolumeShortInformationMessage {
+        master_pb::VolumeShortInformationMessage {
+            id,
+            collection: self.collection.clone(),
+            version: self.version,
+            replica_placement: self.replica_placement,
+            ttl: self.ttl,
+            disk_type: self.disk_type.clone(),
+            disk_id: self.disk_id,
+        }
+    }
+}
+
+fn volume_identities(
+    volumes: &[master_pb::VolumeInformationMessage],
+) -> HashMap<u32, VolumeIdentity> {
+    volumes
+        .iter()
+        .map(|v| (v.id, VolumeIdentity::of(v)))
+        .collect()
 }
 
 /// Collect volume information into a Heartbeat message.

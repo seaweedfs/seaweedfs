@@ -22,6 +22,7 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 	var hasRemoteFile bool
 	v.volumeInfo, hasRemoteFile, found, err = volume_info.MaybeLoadVolumeInfo(v.FileName(".vif"))
 	v.hasRemoteFile.Store(hasRemoteFile)
+	internVolumeInfoStrings(v.volumeInfo)
 
 	if v.volumeInfo.Version == 0 {
 		v.volumeInfo.Version = uint32(needle.GetCurrentVersion())
@@ -54,6 +55,20 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
 	return
 
+}
+
+// internVolumeInfoStrings shares the values every volume's .vif repeats. A
+// tiered volume names its replication and its backend on every load, and the
+// decode allocates a fresh copy of each, so a server holding millions of them
+// otherwise holds millions of copies of the same handful of names. The remote
+// key is left alone: it names one volume.
+func internVolumeInfoStrings(volumeInfo *volume_server_pb.VolumeInfo) {
+	volumeInfo.Replication = internVolumeString(volumeInfo.Replication)
+	for _, remoteFile := range volumeInfo.GetFiles() {
+		remoteFile.BackendType = internVolumeString(remoteFile.BackendType)
+		remoteFile.BackendId = internVolumeString(remoteFile.BackendId)
+		remoteFile.Extension = internVolumeString(remoteFile.Extension)
+	}
 }
 
 func (v *Volume) HasRemoteFile() bool {

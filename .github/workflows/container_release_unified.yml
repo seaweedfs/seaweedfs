@@ -295,10 +295,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Assemble each variant's per-platform digests into one tag, then mirror to Docker Hub.
+  # Assemble each variant's per-platform digests into one tag, mirror it to
+  # Docker Hub, and sign the result on both registries.
   merge:
     needs: [build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -309,6 +313,13 @@ jobs:
           - { variant: large_disk_full, tag_suffix: _large_disk_full }
           - { variant: rocksdb,         tag_suffix: _large_disk_rocksdb }
     steps:
+      - name: Checkout the signing action
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
       - name: Download digests
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/download-artifact@v8
@@ -331,12 +342,17 @@ jobs:
 
       - name: Create multi-arch tag on GHCR
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        id: manifest
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
             -t ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
+            --metadata-file /tmp/manifest.json \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
           docker buildx imagetools inspect ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
+          # The copy and the signature below use the digest this run pushed, not whatever the tag points at by then.
+          digest=$(jq -er '."containerimage.descriptor".digest' /tmp/manifest.json)
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Login to Docker Hub
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -349,7 +365,9 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         run: |
           cd $(mktemp -d)
-          curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
+          curl -sLO https://github.com/google/go-containerregistry/releases/download/v0.22.0/go-containerregistry_Linux_x86_64.tar.gz
+          echo "edb74d53fad9a596860f59d1c5d04a43dfb5f441dc71f57060dd0bf39483c833  go-containerregistry_Linux_x86_64.tar.gz" | sha256sum -c -
+          tar xzf go-containerregistry_Linux_x86_64.tar.gz crane
           sudo mv crane /usr/local/bin/
           crane version
 
@@ -380,9 +398,17 @@ jobs:
 
           echo "Copying ${{ matrix.variant }} from GHCR to Docker Hub..."
           retry_with_backoff crane copy \
-            ${{ env.IMAGE }}:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
+            ${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }} \
             chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
           echo "Copied ${{ matrix.variant }} to Docker Hub"
+
+      - name: Sign ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
+        uses: ./.github/actions/sign-image
+        with:
+          images: >-
+            ${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}
+            chrislusf/seaweedfs@${{ steps.manifest.outputs.digest }}
 
   # Report-only trivy scan: uploads fixable HIGH/CRITICAL findings to GitHub
   # Security for visibility, but never blocks the release. Releases (including
@@ -430,7 +456,7 @@ jobs:
 
       - name: Upload Trivy scan results to GitHub Security
         if: always()
-        uses: github/codeql-action/upload-sarif@v4.37.8
+        uses: github/codeql-action/upload-sarif@v4.37.9
         with:
           sarif_file: trivy-results.sarif
           category: trivy-${{ matrix.variant }}
@@ -439,7 +465,8 @@ jobs:
   # image. crane tag adds an extra tag to an existing manifest — no rebuild,
   # no QEMU, no separate workflow. Replaces the old container_latest.yml
   # rebuild that often failed or lagged behind the release. Independent of
-  # trivy-scan: vuln findings are reported but do not block `latest`.
+  # trivy-scan: vuln findings are reported but do not block `latest`. The
+  # cosign signature is attached to the digest, so `latest` carries it too.
   tag-latest:
     runs-on: ubuntu-latest
     needs: [merge]
@@ -468,7 +495,9 @@ jobs:
       - name: Install crane
         run: |
           cd $(mktemp -d)
-          curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
+          curl -sLO https://github.com/google/go-containerregistry/releases/download/v0.22.0/go-containerregistry_Linux_x86_64.tar.gz
+          echo "edb74d53fad9a596860f59d1c5d04a43dfb5f441dc71f57060dd0bf39483c833  go-containerregistry_Linux_x86_64.tar.gz" | sha256sum -c -
+          tar xzf go-containerregistry_Linux_x86_64.tar.gz crane
           sudo mv crane /usr/local/bin/
           crane version
 

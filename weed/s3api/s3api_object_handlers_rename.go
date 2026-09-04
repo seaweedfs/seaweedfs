@@ -289,7 +289,7 @@ func (s3a *S3ApiServer) renameKeyHoldingNestedKeys(bucket, srcObject, dstObject 
 
 	// The destination holds copies now, so the source's own chunks go with it.
 	srcDir, srcName := util.FullPath(s3a.toFilerPath(bucket, srcObject)).DirAndName()
-	if err := s3a.rmObject(srcDir, srcName, true, false); err != nil {
+	if err := s3a.rmObject(context.Background(), srcDir, srcName, true, false); err != nil {
 		glog.Errorf("RenameObject %s: strip %s: %v", bucket, srcObject, err)
 		return s3err.ErrInternalError
 	}

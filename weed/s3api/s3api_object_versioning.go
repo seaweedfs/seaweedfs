@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -549,6 +550,37 @@ func (vc *versionCollector) computeStartFrom(relativePath string) (startFrom str
 	return remainder, true
 }
 
+// computeListPrefix returns the name prefix that every entry of the directory
+// at relativePath must carry to be relevant to vc.prefix: the next path
+// component of the requested prefix under that directory. Pushing it into the
+// filer listing stops unrelated siblings from being transferred and scanned at
+// every level on the way down to the prefix. A name can hold no slash, so a
+// directory whose name does not start with this component cannot contain a
+// matching key, and a file whose name does not start with it cannot be one.
+// Inside the prefix zone (and without a prefix) it returns "" - no constraint.
+func (vc *versionCollector) computeListPrefix(relativePath string) string {
+	if vc.prefix == "" {
+		return ""
+	}
+
+	var remainder string
+	if relativePath == "" {
+		remainder = vc.prefix
+	} else if strings.HasPrefix(vc.prefix, relativePath+"/") {
+		remainder = vc.prefix[len(relativePath)+1:]
+	} else {
+		// The walk only enters a directory that matches the prefix or can
+		// descend toward it; one the prefix does not extend into means the
+		// whole directory is inside the prefix zone.
+		return ""
+	}
+
+	if idx := strings.Index(remainder, "/"); idx >= 0 {
+		return remainder[:idx]
+	}
+	return remainder
+}
+
 // shouldSkipObjectForMarker returns true if the object should be skipped based on keyMarker
 func (vc *versionCollector) shouldSkipObjectForMarker(objectKey string) bool {
 	if vc.keyMarker == "" {
@@ -587,7 +619,7 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 			VersionId:    version.VersionId,
 			IsLatest:     version.IsLatest,
 			LastModified: version.LastModified,
-			Owner:        vc.s3a.getObjectOwnerFromVersion(version, vc.bucket, objectKey),
+			Owner:        vc.s3a.getObjectOwnerFromVersion(version),
 		}
 		*vc.allVersions = append(*vc.allVersions, deleteMarker)
 	} else {
@@ -598,15 +630,16 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 			LastModified: version.LastModified,
 			ETag:         version.ETag,
 			Size:         version.Size,
-			Owner:        vc.s3a.getObjectOwnerFromVersion(version, vc.bucket, objectKey),
+			Owner:        vc.s3a.getObjectOwnerFromVersion(version),
 			StorageClass: StorageClass(vc.s3a.getStorageClassFromExtended(entryExtended(version))),
 		}
 		*vc.allVersions = append(*vc.allVersions, versionEntry)
 	}
 }
 
-// processVersionsDirectory handles a .versions directory entry
-func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
+// processVersionsDirectory handles a .versions directory entry, using the
+// entry already fetched by the parent directory listing.
+func (vc *versionCollector) processVersionsDirectory(entryPath string, versionsEntry *filer_pb.Entry) error {
 	objectKey := strings.TrimSuffix(entryPath, s3_constants.VersionsFolder)
 	normalizedObjectKey := s3_constants.NormalizeObjectKey(objectKey)
 
@@ -622,7 +655,7 @@ func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
 
 	glog.V(2).Infof("processVersionsDirectory: found object %s", normalizedObjectKey)
 
-	versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
+	versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey, versionsEntry)
 	if err != nil {
 		glog.Warningf("processVersionsDirectory: failed to get versions for %s: %v", normalizedObjectKey, err)
 		return nil // Continue with other entries
@@ -712,7 +745,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 	versionsDirEntry, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
 	if versionsErr == nil && !hasVersionMeta {
 		// .versions exists but file has no version metadata - check for null version in .versions
-		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
+		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey, versionsDirEntry)
 		if err == nil {
 			for _, v := range versions {
 				if v.VersionId == "null" {
@@ -793,12 +826,13 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 		startFrom = markerStart
 		inclusive = true
 	}
+	listPrefix := vc.computeListPrefix(relativePath)
 	for {
 		if vc.isFull() {
 			return nil
 		}
 
-		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, inclusive, filer.PaginationSize)
+		entries, isLast, err := vc.s3a.list(currentPath, listPrefix, startFrom, inclusive, filer.PaginationSize)
 		// After the first batch, use exclusive mode for standard pagination
 		inclusive = false
 		if err != nil {
@@ -827,7 +861,7 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 				// Handle .versions directory
 				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					if err := vc.processVersionsDirectory(entryPath); err != nil {
+					if err := vc.processVersionsDirectory(entryPath, entry); err != nil {
 						return err
 					}
 					continue
@@ -932,25 +966,24 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 	return nil
 }
 
-// getObjectVersionList returns all versions of a specific object
+// getObjectVersionList returns all versions of a specific object.
+// versionsEntry is the object's .versions directory entry, which every caller
+// already holds from listing the parent directory - re-fetching it here would
+// cost one extra filer round-trip per object listed.
 // Uses pagination to handle objects with more than 1000 versions
-func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVersion, error) {
+func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntry *filer_pb.Entry) ([]*ObjectVersion, error) {
 	var versions []*ObjectVersion
 
-	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in .versions directory", bucket, object)
+	// A nil entry means the .versions directory is absent: no versions, the
+	// same empty result the internal lookup used to produce.
+	if versionsEntry == nil {
+		return versions, nil
+	}
 
 	// All versions are now stored in the .versions directory only
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
-	glog.V(2).Infof("getObjectVersionList: checking versions directory %s", versionsObjectPath)
-
-	// Get the .versions directory entry to read latest version metadata
-	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
-	if err != nil {
-		// No versions directory exists, return empty list
-		glog.V(2).Infof("getObjectVersionList: no versions directory found: %v", err)
-		return versions, nil
-	}
+	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in %s", bucket, object, versionsObjectPath)
 
 	// Get the latest version info from directory metadata
 	var latestVersionId string
@@ -1143,7 +1176,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 		// it falls back to for an entry other keys are nested under writes the entry
 		// back under that parent - so a key with a slash in it has to be split first.
 		dir, name := util.NewFullPath(bucketDir, normalizedObject).DirAndName()
-		deleteErr := s3a.rmObject(dir, name, !metadataOnly, false)
+		deleteErr := s3a.rmObject(ctx, dir, name, !metadataOnly, false)
 		if deleteErr != nil {
 			// Check if file was already deleted by another process
 			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {
@@ -1192,7 +1225,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 	// Attempt to delete the version file
 	// Note: We don't check if the file exists first to avoid race conditions
 	// The deletion operation should be idempotent
-	deleteErr := s3a.rm(versionsDir, versionFile, !metadataOnly, false)
+	deleteErr := s3a.rm(ctx, versionsDir, versionFile, !metadataOnly, false)
 	if deleteErr != nil {
 		// Check if file was already deleted by another process (race condition handling)
 		if _, checkErr := s3a.getEntry(versionsDir, versionFile); checkErr != nil {
@@ -1211,7 +1244,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(ctx context.Context, bucket,
 		// down. Non-recursive: any orphan from older code paths leaves
 		// the directory in place for the empty-folder cleaner or our
 		// reconciler to handle.
-		if rmErr := s3a.rm(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder, true, false); rmErr != nil {
+		if rmErr := s3a.rm(ctx, s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder, true, false); rmErr != nil {
 			glog.V(2).Infof("deleteSpecificObjectVersion: deferring .versions/ teardown for %s/%s: %v", bucket, normalizedObject, rmErr)
 		}
 	case isLatestVersion && !prePointerRolled:
@@ -1375,13 +1408,63 @@ func (s3a *S3ApiServer) repointLatestBeforeDeletion(ctx context.Context, bucket,
 
 // retryAttempts and retryStep tune the bounded retries used when the
 // load-bearing filer ops in updateLatestVersionAfterDeletion fail with
-// transient errors. Doubled per attempt, capped at retryCap. Total
-// worst-case wall time ≈ 6.3s before propagating.
+// transient errors. Doubled per attempt, capped at retryCap, for a
+// worst case of ~3.1s of backoff per op before propagating.
 const (
 	updateLatestRetryAttempts = 6
 	updateLatestRetryStep     = 100 * time.Millisecond
 	updateLatestRetryCap      = 2 * time.Second
 )
+
+func retryFilerBackoff(attempt int) time.Duration {
+	backoff := updateLatestRetryStep << (attempt - 1)
+	if backoff <= 0 || backoff > updateLatestRetryCap {
+		return updateLatestRetryCap
+	}
+	return backoff
+}
+
+// filerRetryRequestBudget is the total backoff one request may spend across
+// every retryFilerOp it drives: the worst case of a single op, so a batch
+// whose length the client chooses waits about as long as one key would.
+var filerRetryRequestBudget = func() (total time.Duration) {
+	for attempt := 1; attempt < updateLatestRetryAttempts; attempt++ {
+		total += retryFilerBackoff(attempt)
+	}
+	return total
+}()
+
+type filerRetryBudgetKey struct{}
+
+type filerRetryBudget struct {
+	mu        sync.Mutex
+	remaining time.Duration
+}
+
+// withFilerRetryBudget hands every retryFilerOp reached through ctx one shared
+// allowance, so per-key backoff no longer multiplies by the number of keys.
+func withFilerRetryBudget(ctx context.Context, total time.Duration) context.Context {
+	return context.WithValue(ctx, filerRetryBudgetKey{}, &filerRetryBudget{remaining: total})
+}
+
+func filerRetryBudgetFrom(ctx context.Context) *filerRetryBudget {
+	budget, _ := ctx.Value(filerRetryBudgetKey{}).(*filerRetryBudget)
+	return budget
+}
+
+// take reserves up to d of what is left, reporting false once nothing is.
+func (b *filerRetryBudget) take(d time.Duration) (time.Duration, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.remaining <= 0 {
+		return 0, false
+	}
+	if d > b.remaining {
+		d = b.remaining
+	}
+	b.remaining -= d
+	return d, true
+}
 
 // isRetryableFilerErr reports whether err is worth retrying through
 // retryFilerOp. Terminal conditions return false so the caller surfaces
@@ -1391,6 +1474,8 @@ const (
 //   - NotFound: the entry genuinely doesn't exist. Retrying won't make
 //     it appear, and callers (e.g. repointLatestBeforeDeletion) want
 //     to act on this directly.
+//   - non-empty folder: the filer looked and the children are there, so
+//     the answer will not change; callers act on it directly too.
 //   - context.Canceled / DeadlineExceeded: the request was aborted by
 //     the client or hit a deadline. Continuing to retry just delays
 //     the failure return.
@@ -1401,10 +1486,16 @@ func isRetryableFilerErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+	if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, filer.ErrNonEmptyFolder) {
 		return false
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// the same conditions once they have crossed gRPC, where a cancelled
+	// context arrives as a status and no longer matches the sentinel above
+	switch status.Code(err) {
+	case codes.NotFound, codes.Canceled, codes.DeadlineExceeded:
 		return false
 	}
 	return true
@@ -1412,7 +1503,7 @@ func isRetryableFilerErr(err error) bool {
 
 func retryFilerOp(ctx context.Context, name string, fn func() error) error {
 	var lastErr error
-	backoff := updateLatestRetryStep
+	budget := filerRetryBudgetFrom(ctx)
 	for attempt := 1; attempt <= updateLatestRetryAttempts; attempt++ {
 		err := fn()
 		if err == nil {
@@ -1431,19 +1522,23 @@ func retryFilerOp(ctx context.Context, name string, fn func() error) error {
 		if attempt == updateLatestRetryAttempts {
 			break
 		}
+		backoff := retryFilerBackoff(attempt)
+		if budget != nil {
+			granted, ok := budget.take(backoff)
+			if !ok {
+				return fmt.Errorf("%s stopped after %d attempts, request retry allowance spent: %w", name, attempt, lastErr)
+			}
+			backoff = granted
+		}
 		// Context-aware backoff so a server shutdown / client
-		// disconnect cancels the worst-case ~6.3s retry budget
-		// immediately instead of blocking the goroutine.
+		// disconnect cancels the pending retries immediately
+		// instead of blocking the goroutine.
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
 		case <-timer.C:
-		}
-		backoff *= 2
-		if backoff > updateLatestRetryCap {
-			backoff = updateLatestRetryCap
 		}
 	}
 	return fmt.Errorf("%s exhausted %d retries: %w", name, updateLatestRetryAttempts, lastErr)
@@ -1595,41 +1690,28 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(ctx context.Context, bu
 		// object is correctly absent.
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions directory", bucket, object)
 
-		rmErr := s3a.rm(bucketDir, versionsObjectPath, true, false)
+		rmErr := s3a.rm(ctx, bucketDir, versionsObjectPath, true, false)
 		if rmErr == nil {
 			return nil
 		}
-		// Two ways rm can fail here: "non-empty folder" (orphan entries
-		// blocking the teardown — fall through to pointer clear) and a
-		// transient filer error (worth retrying). Distinguish by the
-		// canonical error substring; if we can't tell, treat as transient.
-		if strings.Contains(rmErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+		// "non-empty folder" means orphan entries are blocking the
+		// teardown — fall through to the pointer clear. Anything else
+		// has already exhausted rm's own retries. Either way we still
+		// clear the stale pointer so readers get a clean miss; the
+		// directory can be tidied by the reconciler later.
+		if errors.Is(rmErr, filer.ErrNonEmptyFolder) {
 			glog.V(2).Infof("updateLatestVersionAfterDeletion: .versions/ for %s/%s still has orphan entries: %v", bucket, object, rmErr)
 			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
 			return nil
 		}
-		// Transient — retry the rm a few times before giving up. Even
-		// if it ultimately fails, we still clear the stale pointer so
-		// readers get a clean miss; the directory can be tidied by the
-		// reconciler later.
-		retryErr := retryFilerOp(ctx, "updateLatestVersionAfterDeletion.rm", func() error {
-			return s3a.rm(bucketDir, versionsObjectPath, true, false)
-		})
-		if retryErr == nil {
-			return nil
-		}
-		if strings.Contains(retryErr.Error(), filer.MsgFailDelNonEmptyFolder) {
-			s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion")
-			return nil
-		}
-		versioningHealWarningf("teardown_failed", "bucket=%s key=%s err=%v (fell through to clearStale)", bucket, object, retryErr)
+		versioningHealWarningf("teardown_failed", "bucket=%s key=%s err=%v (fell through to clearStale)", bucket, object, rmErr)
 		if s3a.clearStaleLatestVersionPointer(bucket, object, bucketDir, versionsObjectPath, versionsEntry, "updateLatestVersionAfterDeletion") {
 			// Pointer is consistent again; reader will get NoSuchKey via
 			// the clean-miss path. Don't emit `produced` or enqueue the
 			// reconciler — there's no stranded state left to heal.
 			return nil
 		}
-		return fmt.Errorf("delete .versions directory: %w", retryErr)
+		return fmt.Errorf("delete .versions directory: %w", rmErr)
 	}
 
 	return nil
@@ -1774,6 +1856,27 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	return s3a.doGetLatestObjectVersion(bucket, object, 8)
 }
 
+// lookupVersionsEntryWithRetry retries a .versions directory lookup, but only
+// for errors that can change on retry (isRetryableFilerErr). A definitive
+// NotFound is an answer, not a transient failure: retrying it walks the whole
+// backoff ladder (12.7s at 8 attempts) before the caller's pre-versioning
+// fallback gets to run, stalling every missing-key retention/tagging/ACL call.
+func lookupVersionsEntryWithRetry(lookup func() (*filer_pb.Entry, error), maxRetries int) (entry *filer_pb.Entry, err error) {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		entry, err = lookup()
+		if err == nil || !isRetryableFilerErr(err) {
+			return entry, err
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
+			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
+			time.Sleep(delay)
+		}
+	}
+	return entry, err
+}
+
 func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetries int) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
@@ -1784,20 +1887,9 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	glog.V(1).Infof("doGetLatestObjectVersion: looking for latest version of %s/%s (normalized: %s, retries: %d)", bucket, object, normalizedObject, maxRetries)
 
 	// Get the .versions directory entry to read latest version metadata with retry logic for filer consistency
-	var versionsEntry *filer_pb.Entry
-	var err error
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
-		if err == nil {
-			break
-		}
-
-		if attempt < maxRetries {
-			// Exponential backoff with higher base: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms
-			delay := time.Millisecond * time.Duration(100*(1<<(attempt-1)))
-			time.Sleep(delay)
-		}
-	}
+	versionsEntry, err := lookupVersionsEntryWithRetry(func() (*filer_pb.Entry, error) {
+		return s3a.getEntry(bucketDir, versionsObjectPath)
+	}, maxRetries)
 
 	if err != nil {
 		// .versions directory doesn't exist - this can happen for objects that existed
@@ -2012,7 +2104,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		// non-recursive rm makes this safe against a concurrent PUT — a new
 		// child fails the rm, and a directory removed just before that PUT's
 		// version file lands is recreated by the create's parent handling.
-		if rmErr := s3a.rm(bucketDir, versionsObjectPath, true, false); rmErr == nil {
+		if rmErr := s3a.rm(context.Background(), bucketDir, versionsObjectPath, true, false); rmErr == nil {
 			versioningHealInfof("healed", "bucket=%s key=%s mode=empty_dir_removed", bucket, normalizedObject)
 		} else {
 			// Orphan entries (files in .versions/ that lack the version-id
@@ -2249,24 +2341,16 @@ func (s3a *S3ApiServer) recoverLatestListEntryByScan(bucket, normalizedObject st
 }
 
 // getObjectOwnerFromVersion extracts object owner information from version metadata
-func (s3a *S3ApiServer) getObjectOwnerFromVersion(version *ObjectVersion, bucket, objectKey string) CanonicalUser {
-	// First try to get owner from the version's OwnerID field (extracted during listing)
+// getObjectOwnerFromVersion resolves the owner recorded on a listed version.
+// OwnerID was extracted from the version entry's Extended metadata during
+// listing; an empty value means that entry carries no owner (data written
+// before owners were stamped), so re-fetching the same entry cannot answer
+// differently and would only add one filer round-trip per listed version.
+func (s3a *S3ApiServer) getObjectOwnerFromVersion(version *ObjectVersion) CanonicalUser {
 	if version.OwnerID != "" {
 		ownerDisplayName := s3a.iam.GetAccountNameById(version.OwnerID)
 		return CanonicalUser{ID: version.OwnerID, DisplayName: ownerDisplayName}
 	}
-
-	// Fallback: fetch the specific version entry to get the owner
-	// This handles cases where OwnerID wasn't populated during listing
-	if specificVersionEntry, err := s3a.getSpecificObjectVersion(bucket, objectKey, version.VersionId); err == nil && specificVersionEntry.Extended != nil {
-		if ownerBytes, exists := specificVersionEntry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
-			ownerId := string(ownerBytes)
-			ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
-			return CanonicalUser{ID: ownerId, DisplayName: ownerDisplayName}
-		}
-	}
-
-	// Fallback: return anonymous if no owner found
 	return CanonicalUser{ID: s3_constants.AccountAnonymousId, DisplayName: "anonymous"}
 }
 

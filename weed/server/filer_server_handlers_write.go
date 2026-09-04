@@ -80,7 +80,10 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, contentLength int64) {
 	ctx := r.Context()
 
-	destination := r.RequestURI
+	// Match storage rules on the decoded path the entry is written to. The raw
+	// request-target is percent-encoded on the wire, so a rule on "/只读/" would
+	// never see "/%E5%8F%AA%E8%AF%BB/".
+	destination := r.URL.Path
 	headerDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader)
 	if headerDestination != "" {
 		destination = headerDestination
@@ -269,8 +272,7 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		// MatchStorageRule leaves LocationPrefix empty when several rules merge; fall back to the request path.
 		prefix := rule.LocationPrefix
 		if prefix == "" {
-			// requestURI may carry a query string on the HTTP path; keep only the path.
-			prefix, _, _ = strings.Cut(requestURI, "?")
+			prefix = requestURI
 		}
 		return nil, fmt.Errorf("%w: %s (e.g. bucket over quota)", ErrReadOnly, prefix)
 	}

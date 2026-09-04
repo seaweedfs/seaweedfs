@@ -788,8 +788,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Set object owner according to bucket ownership settings.
 	s3a.setObjectOwnerFromRequest(r, bucket, entry)
 
-	// Set version ID if present
+	// Set version ID if present. It is later used as a filer path segment, so a
+	// value carrying "/", "\\" or ".." must never be stored.
 	if versionIdHeader := r.Header.Get(s3_constants.ExtVersionIdKey); versionIdHeader != "" {
+		if !isValidVersionID(versionIdHeader) {
+			glog.Warningf("putToFiler: rejecting invalid version ID %q for object %s", versionIdHeader, filePath)
+			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+			return "", s3err.ErrInvalidRequest, SSEResponseMetadata{}
+		}
 		entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionIdHeader)
 		glog.V(3).Infof("putToFiler: setting version ID %s for object %s", versionIdHeader, filePath)
 	}
@@ -933,7 +939,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		entryCreated = true
 		if finalize != nil && finalize.afterCreate != nil {
 			if afterCreateCode := finalize.afterCreate(entry); afterCreateCode != s3err.ErrNone {
-				rollbackErr = s3a.rmObject(path.Dir(filePath), path.Base(filePath), true, false)
+				rollbackErr = s3a.rmObject(context.Background(), path.Dir(filePath), path.Base(filePath), true, false)
 				if rollbackErr != nil {
 					glog.Errorf("putToFiler: failed to rollback created entry for %s after post-create error: %v", filePath, rollbackErr)
 				} else {
@@ -1059,6 +1065,31 @@ var checksumHeaders = []struct {
 	{s3_constants.AmzChecksumCRC64NVME, ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
 	{s3_constants.AmzChecksumSHA1, ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
 	{s3_constants.AmzChecksumSHA256, ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// ChecksumResult carries the flexible-checksum members S3 returns inside an XML
+// response body, keyed by the canonical x-amz-checksum-* header name.
+type ChecksumResult struct {
+	ChecksumCRC32     string `xml:"ChecksumCRC32,omitempty"`
+	ChecksumCRC32C    string `xml:"ChecksumCRC32C,omitempty"`
+	ChecksumCRC64NVME string `xml:"ChecksumCRC64NVME,omitempty"`
+	ChecksumSHA1      string `xml:"ChecksumSHA1,omitempty"`
+	ChecksumSHA256    string `xml:"ChecksumSHA256,omitempty"`
+}
+
+func (c *ChecksumResult) SetChecksum(headerName, value string) {
+	switch headerName {
+	case s3_constants.AmzChecksumCRC32:
+		c.ChecksumCRC32 = value
+	case s3_constants.AmzChecksumCRC32C:
+		c.ChecksumCRC32C = value
+	case s3_constants.AmzChecksumCRC64NVME:
+		c.ChecksumCRC64NVME = value
+	case s3_constants.AmzChecksumSHA1:
+		c.ChecksumSHA1 = value
+	case s3_constants.AmzChecksumSHA256:
+		c.ChecksumSHA256 = value
+	}
 }
 
 // lookupHeaderOrQuery returns the value of an x-amz-* parameter, checking the
@@ -1470,7 +1501,7 @@ func (s3a *S3ApiServer) removeNullVersionFile(bucket, object string) {
 		if string(entry.Extended[s3_constants.ExtVersionIdKey]) != "null" {
 			continue
 		}
-		if rmErr := s3a.rm(versionsDir, entry.Name, true, false); rmErr != nil {
+		if rmErr := s3a.rm(context.Background(), versionsDir, entry.Name, true, false); rmErr != nil {
 			glog.Warningf("removeNullVersionFile: %s/%s: %v", bucket, object, rmErr)
 		}
 		return

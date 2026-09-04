@@ -18,6 +18,7 @@ pub struct LanceMetrics {
     pub worker: Metrics,
     pub fragments_removed: IntCounter,
     pub rows_indexed: IntCounter,
+    pub rows_sorted: IntCounter,
     pub versions_removed: IntCounter,
     pub bytes_reclaimed: IntCounter,
 }
@@ -33,6 +34,10 @@ impl LanceMetrics {
             rows_indexed: metrics.counter(
                 "lance_rows_indexed_total",
                 "Rows brought under an index that did not cover them.",
+            )?,
+            rows_sorted: metrics.counter(
+                "lance_rows_sorted_total",
+                "Rows rewritten into their table's declared order.",
             )?,
             versions_removed: metrics.counter(
                 "lance_versions_removed_total",

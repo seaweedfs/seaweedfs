@@ -161,7 +161,28 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 		}
 		l.ecVolumes[vid] = ecVolume
 	}
-	ecVolume.AddEcVolumeShard(ecVolumeShard)
+	added, err := ecVolume.AddEcVolumeShard(ecVolumeShard)
+	if err != nil {
+		// The shard could not be registered (e.g. a 0-byte file beside an
+		// index with entries). Leave nothing behind: close the opened shard,
+		// and remove the EcVolume if this call just created it and it holds
+		// no shards — a zero-shard registration would advertise a mount that
+		// serves no data while pinning its descriptors.
+		ecVolumeShard.Unmount() // release the gauge the constructor's Mount took
+		ecVolumeShard.Close()
+		if !found && len(ecVolume.Shards) == 0 {
+			delete(l.ecVolumes, vid)
+			ecVolume.Close()
+		}
+		return nil, err
+	}
+	if !added {
+		// Already registered on this disk (a mount retry): the existing
+		// shard keeps serving; release the duplicate's fd and gauge so
+		// repeated LoadEcShard calls don't leak either.
+		ecVolumeShard.Unmount()
+		ecVolumeShard.Close()
+	}
 
 	return ecVolume, nil
 }
@@ -218,19 +239,41 @@ const staleZeroShardAge = time.Hour
 
 func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
 
-	dirEntries, err := os.ReadDir(l.Directory)
-	if err != nil {
+	// Keep only the shard and index files this scan acts on: a disk of regular
+	// volumes has millions of .dat/.idx/.vif entries that would otherwise each
+	// cost a slot in the sorted slice below and a stat() for its size.
+	type ecDirEntry struct {
+		name string
+		size int64
+	}
+	var dirEntries []ecDirEntry
+	collect := func(dir string) error {
+		return eachDirEntry(dir, func(entry os.DirEntry) bool {
+			if entry.IsDir() {
+				return true
+			}
+			ext := path.Ext(entry.Name())
+			if !re.MatchString(ext) && ext != ".ecx" {
+				return true
+			}
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				return true
+			}
+			dirEntries = append(dirEntries, ecDirEntry{name: entry.Name(), size: info.Size()})
+			return true
+		})
+	}
+	if err := collect(l.Directory); err != nil {
 		return fmt.Errorf("load all ec shards in dir %s: %v", l.Directory, err)
 	}
 	if l.IdxDirectory != l.Directory {
-		indexDirEntries, err := os.ReadDir(l.IdxDirectory)
-		if err != nil {
+		if err := collect(l.IdxDirectory); err != nil {
 			return fmt.Errorf("load all ec shards in dir %s: %v", l.IdxDirectory, err)
 		}
-		dirEntries = append(dirEntries, indexDirEntries...)
 	}
-	slices.SortFunc(dirEntries, func(a, b os.DirEntry) int {
-		return strings.Compare(a.Name(), b.Name())
+	slices.SortFunc(dirEntries, func(a, b ecDirEntry) int {
+		return strings.Compare(a.name, b.name)
 	})
 
 	var sameVolumeShards []string
@@ -245,20 +288,11 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 	}
 
 	for _, fileInfo := range dirEntries {
-		if fileInfo.IsDir() {
-			continue
-		}
-		ext := path.Ext(fileInfo.Name())
-		name := fileInfo.Name()
+		name := fileInfo.name
+		ext := path.Ext(name)
 		baseName := name[:len(name)-len(ext)]
 
 		collection, volumeId, err := parseCollectionVolumeId(baseName)
-		if err != nil {
-			continue
-		}
-
-		info, err := fileInfo.Info()
-
 		if err != nil {
 			continue
 		}
@@ -272,7 +306,7 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 		// and a candidate path can be different files with one name: each
 		// candidate's own age decides, and a same-named fresh file (possibly
 		// an in-flight copy's just-created one) always survives.
-		if re.MatchString(ext) && info.Size() == 0 {
+		if re.MatchString(ext) && fileInfo.size == 0 {
 			for _, dir := range []string{l.Directory, l.IdxDirectory} {
 				p := path.Join(dir, name)
 				fi, statErr := os.Stat(p)
@@ -293,14 +327,14 @@ func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid n
 
 		// 0 byte files should be only appearing erroneously for ec data files
 		// so we ignore them
-		if re.MatchString(ext) && info.Size() > 0 {
+		if re.MatchString(ext) && fileInfo.size > 0 {
 			// Group shards by both collection and volumeId to avoid mixing collections
 			if prevVolumeId == 0 || (volumeId == prevVolumeId && collection == prevCollection) {
-				sameVolumeShards = append(sameVolumeShards, fileInfo.Name())
+				sameVolumeShards = append(sameVolumeShards, name)
 			} else {
 				// Before starting a new group, check if previous group had orphaned shards
 				l.checkOrphanedShards(sameVolumeShards, prevCollection, prevVolumeId)
-				sameVolumeShards = []string{fileInfo.Name()}
+				sameVolumeShards = []string{name}
 			}
 			prevVolumeId = volumeId
 			prevCollection = collection
@@ -471,26 +505,17 @@ func (l *DiskLocation) checkOrphanedShards(shards []string, collection string, v
 // erasure_coding.DataShardsCount so that tests writing a custom layout
 // to .vif compute the matching shard size, and so custom-ratio builds
 // (e.g. enterprise) can swap the default without touching this helper.
+// The padded shard length is the same number under both layouts —
+// TestUniformBlockSizeMatchesLegacyShardSize asserts the equivalence for every
+// input — so defer to the encoder's own helper instead of keeping a second copy
+// of the padding rule that a future change would have to be made in twice. An
+// empty .dat keeps its historic answer: the legacy encoder emits no block for
+// it, where UniformBlockSize floors at one.
 func calculateExpectedShardSize(datFileSize int64, dataShardCount int) int64 {
-	if dataShardCount <= 0 {
+	if dataShardCount <= 0 || datFileSize <= 0 {
 		return 0
 	}
-	var shardSize int64
-
-	// Process large blocks (1GB * dataShardCount per batch)
-	largeBatchSize := int64(erasure_coding.ErasureCodingLargeBlockSize) * int64(dataShardCount)
-	numLargeBatches := datFileSize / largeBatchSize
-	shardSize = numLargeBatches * int64(erasure_coding.ErasureCodingLargeBlockSize)
-	remainingSize := datFileSize - (numLargeBatches * largeBatchSize)
-
-	// Process remaining data in small blocks (1MB * dataShardCount per batch)
-	if remainingSize > 0 {
-		smallBatchSize := int64(erasure_coding.ErasureCodingSmallBlockSize) * int64(dataShardCount)
-		numSmallBatches := (remainingSize + smallBatchSize - 1) / smallBatchSize // Ceiling division
-		shardSize += numSmallBatches * int64(erasure_coding.ErasureCodingSmallBlockSize)
-	}
-
-	return shardSize
+	return erasure_coding.UniformBlockSize(datFileSize, dataShardCount)
 }
 
 // validateEcVolume reports whether the EC files for (collection, vid) on this

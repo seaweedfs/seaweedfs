@@ -48,7 +48,7 @@ func TestIsIcebergTableEntry(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			meta := buildTestMetadata(t, nil, nil, 0, c.properties)
+			meta := buildTestMetadata(t, nil, nil, 0, c.properties, nil, nil)
 			if got := isIcebergTableEntry(c.extended, meta); got != c.want {
 				t.Fatalf("isIcebergTableEntry() = %v, want %v", got, c.want)
 			}

@@ -324,7 +324,7 @@ func (s *AdminServer) GetVolumeDetails(volumeID uint32, server string) (*VolumeD
 
 	// Find the volume and all its replicas in the cluster
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeId: volumeID})
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeIds: []uint32{volumeID}})
 		if err != nil {
 			return err
 		}

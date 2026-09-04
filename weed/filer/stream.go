@@ -102,11 +102,36 @@ func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, jwtFunc
 
 type VolumeServerJwtFunction func(fileId string) string
 
+// refreshUrls lets a fetch loop relearn a chunk's locations inside a single
+// read: drop the cached entry and look it up again, whether every location
+// failed or one did while another answered. Nil when there is nothing to
+// invalidate against.
+func refreshUrls(ctx context.Context, invalidator CacheInvalidator, lookupFn wdclient.LookupFileIdFunctionType, fileId string) util_http.RefreshUrlsFunc {
+	if invalidator == nil || lookupFn == nil {
+		return nil
+	}
+	return func() []string {
+		invalidator.InvalidateCache(fileId)
+		urls, err := lookupFn(ctx, fileId)
+		if err != nil {
+			glog.V(0).InfofCtx(ctx, "re-lookup chunk %s: %v", fileId, err)
+			return nil
+		}
+		return urls
+	}
+}
+
 // retryFetchWithFreshLocations is the shared self-heal for the read paths: when a chunk fetch
 // fails, invalidate the cached volume locations, re-lookup, and call refetch only when the
 // resolved locations actually changed (so we never retry against the same servers). originalErr
 // is returned unchanged when no retry is attempted, so callers surface the real fetch failure.
 func retryFetchWithFreshLocations(ctx context.Context, invalidator CacheInvalidator, lookupFn wdclient.LookupFileIdFunctionType, fileId string, oldUrls []string, originalErr error, refetch func(newUrls []string) error) error {
+	// the caller may have gone away between its own check and this one; a
+	// cancelled read is no evidence the locations are wrong, and callers such
+	// as volume.fsck tell an abort from real corruption with errors.Is
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	if invalidator == nil {
 		return originalErr
 	}
@@ -193,7 +218,8 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 			urlStrings := fileId2Url[chunkView.FileId]
 			start := time.Now()
 			jwt := jwtFunc(chunkView.FileId)
-			written, err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+			invalidator, _ := masterClient.(CacheInvalidator)
+			written, err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), refreshUrls(ctx, invalidator, masterClient.GetLookupFileIdFunction(), chunkView.FileId))
 
 			if err != nil && ctx.Err() != nil {
 				return ctx.Err()
@@ -201,9 +227,8 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 
 			// If read failed, try to invalidate cache and re-lookup
 			if err != nil && written == 0 {
-				invalidator, _ := masterClient.(CacheInvalidator)
 				err = retryFetchWithFreshLocations(ctx, invalidator, masterClient.GetLookupFileIdFunction(), chunkView.FileId, urlStrings, err, func(newUrls []string) error {
-					_, refetchErr := retriedStreamFetchChunkData(ctx, writer, newUrls, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+					_, refetchErr := retriedStreamFetchChunkData(ctx, writer, newUrls, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), nil)
 					if refetchErr == nil {
 						// Update the map so subsequent references use fresh URLs
 						fileId2Url[chunkView.FileId] = newUrls

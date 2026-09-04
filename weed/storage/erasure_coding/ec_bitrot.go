@@ -195,6 +195,7 @@ func buildProtectionFromBuilders(ctx *ECContext, builders []*shardChecksumBuilde
 		EcShardConfig: &volume_server_pb.EcShardConfig{
 			DataShards:   uint32(ctx.DataShards),
 			ParityShards: uint32(ctx.ParityShards),
+			BlockSize:    ctx.BlockSize,
 		},
 		Shards:     shards,
 		EncodeUuid: NewEncodeUUID(),
@@ -431,6 +432,7 @@ func ComputeProtectionFromShards(baseFileName string, ctx *ECContext, generation
 		EcShardConfig: &volume_server_pb.EcShardConfig{
 			DataShards:   uint32(ctx.DataShards),
 			ParityShards: uint32(ctx.ParityShards),
+			BlockSize:    ctx.BlockSize,
 		},
 		Shards:     shards,
 		EncodeUuid: NewEncodeUUID(),
@@ -474,53 +476,141 @@ func (ev *EcVolume) BitrotProtection() (*volume_server_pb.EcBitrotProtection, Bi
 	return ev.bitrot, ev.bitrotStatus
 }
 
+// ReloadBitrotSidecar re-resolves the checksum sidecar for a volume that is
+// already mounted — a shard delivery can bring the manifest with it, and the
+// receive path only writes the file, so without this the in-memory volume
+// keeps the protection state it resolved at mount (off) until a remount.
+func (ev *EcVolume) ReloadBitrotSidecar(additionalDirs ...string) {
+	if err := ev.loadActiveBitrotSidecar(additionalDirs...); err != nil {
+		glog.Warningf("ec volume %d: reload bitrot sidecar: %v", ev.VolumeId, err)
+	}
+}
+
 // loadActiveBitrotSidecar loads the generation-0 checksum sidecar into the
 // volume. Best-effort: any failure leaves protection off/invalid without
 // failing the mount. OSS only produces generation-0 (fresh-encode) sidecars.
-func (ev *EcVolume) loadActiveBitrotSidecar() {
-	ev.loadBitrotForGeneration(0)
+func (ev *EcVolume) loadActiveBitrotSidecar(additionalDirs ...string) error {
+	return ev.loadBitrotForGeneration(0, additionalDirs...)
 }
 
 // loadBitrotForGeneration loads and validates the sidecar describing generation
 // `generation`, setting ev.bitrot/ev.bitrotStatus. Called at mount. Absent or
-// generation/config-mismatched => BitrotOff; self-integrity/manifest failure =>
+// generation-mismatched => BitrotOff; self-integrity/manifest failure =>
 // BitrotInvalid; usable => BitrotOn.
-func (ev *EcVolume) loadBitrotForGeneration(generation uint32) {
+//
+// A sidecar written FOR THIS generation that disagrees with the volume's shard
+// geometry is different in kind from those: both files record the layout the
+// generation was encoded with, so a disagreement means one of them is wrong and
+// reads through the other would land at the wrong shard offsets. That returns
+// an error and fails the mount instead of quietly dropping to unprotected
+// reads.
+func (ev *EcVolume) loadBitrotForGeneration(generation uint32, additionalDirs ...string) error {
 	ev.bitrotLock.Lock()
 	defer ev.bitrotLock.Unlock()
 	ev.bitrot = nil
 	ev.bitrotStatus = BitrotOff
 
 	if ev.ECContext == nil {
-		return
+		return nil
 	}
-	path := findBitrotSidecar(generation, ev.DataBaseFileName(), ev.IndexBaseFileName())
+	path := findBitrotSidecar(generation, ev.DataBaseFileName(), ev.IndexBaseFileName(), additionalDirs...)
 	if path == "" {
-		return
+		return nil
 	}
 	prot, err := LoadBitrotSidecar(path)
 	if err != nil {
 		glog.Warningf("ec volume %d: bitrot sidecar %s self-integrity failed: %v", ev.VolumeId, path, err)
 		ev.bitrotStatus = BitrotInvalid
-		return
+		return nil
 	}
 	if prot.Generation != generation {
-		return // not for this generation -> off, not corruption
+		return nil // not for this generation -> off, not corruption
 	}
-	if prot.EcShardConfig == nil ||
-		int(prot.EcShardConfig.DataShards) != ev.ECContext.DataShards ||
-		int(prot.EcShardConfig.ParityShards) != ev.ECContext.ParityShards {
-		return
+	if prot.EcShardConfig == nil {
+		return nil // records no geometry -> nothing to contradict
+	}
+	if int(prot.EcShardConfig.DataShards) != ev.ECContext.DataShards ||
+		int(prot.EcShardConfig.ParityShards) != ev.ECContext.ParityShards ||
+		prot.EcShardConfig.BlockSize != ev.ECContext.BlockSize {
+		return fmt.Errorf("ec volume %d generation %d: %s records layout %d+%d block %d but the volume is mounted as %d+%d block %d; refusing to serve one of the two layouts",
+			ev.VolumeId, generation, path,
+			prot.EcShardConfig.DataShards, prot.EcShardConfig.ParityShards, prot.EcShardConfig.BlockSize,
+			ev.ECContext.DataShards, ev.ECContext.ParityShards, ev.ECContext.BlockSize)
 	}
 	if err := ValidateBitrotManifest(prot, ev.ECContext.DataShards, ev.ECContext.ParityShards); err != nil {
 		glog.Warningf("ec volume %d: bitrot sidecar %s manifest invalid: %v", ev.VolumeId, path, err)
 		ev.bitrotStatus = BitrotInvalid
-		return
+		return nil
 	}
 	ev.bitrot = prot
 	ev.bitrotStatus = BitrotOn
 	glog.V(1).Infof("ec volume %d: loaded bitrot protection generation %d (%d shards, block_size %d)",
 		ev.VolumeId, generation, len(prot.Shards), prot.BlockSize)
+	return nil
+}
+
+// layoutFromSidecar resolves a volume's EC layout from its generation-0
+// checksum sidecar, searching the data base and then the index base. A split
+// -dir/-dir.idx layout keeps the sidecar with the index, so probing the data
+// base alone reports "absent" for a volume that has the record right there —
+// and absent is the one answer that selects the legacy 10+4 layout.
+//
+// The three answers stay distinct: (nil, false, nil) means genuinely absent
+// and the caller may fall back to the defaults; a non-nil error means the
+// record exists but cannot establish the layout, which must fail rather than
+// default; otherwise the config is usable.
+func layoutFromSidecar(dataBaseFileName, indexBaseFileName string) (cfg *volume_server_pb.EcShardConfig, found bool, err error) {
+	path := findBitrotSidecar(0, dataBaseFileName, indexBaseFileName)
+	if path == "" {
+		return nil, false, nil
+	}
+	cfg, err = EcShardConfigFromSidecarPath(path)
+	return cfg, true, err
+}
+
+// EcShardConfigFromSidecar reads the generation-0 bitrot sidecar's record of a
+// volume's EC config. The three answers are distinct on purpose: absent means
+// the volume may genuinely predate the sidecar, which is the only case a caller
+// may answer with the legacy layout; present-but-unusable means the one
+// surviving record of the geometry is corrupt, and guessing from there returns
+// wrong bytes rather than no bytes.
+func EcShardConfigFromSidecar(baseFileName string) (cfg *volume_server_pb.EcShardConfig, found bool, err error) {
+	path := BitrotSidecarPath(baseFileName, 0)
+	if _, statErr := os.Stat(path); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("stat %s: %w", path, statErr)
+	}
+	cfg, err = EcShardConfigFromSidecarPath(path)
+	return cfg, true, err
+}
+
+// EcShardConfigFromSidecarPath is EcShardConfigFromSidecar for a sidecar whose
+// path the caller already resolved — the rebuild finds it across a multi-disk
+// server's directories, not only next to the base name.
+func EcShardConfigFromSidecarPath(path string) (*volume_server_pb.EcShardConfig, error) {
+	prot, loadErr := LoadBitrotSidecar(path)
+	if loadErr != nil {
+		return nil, fmt.Errorf("read %s: %w", path, loadErr)
+	}
+	// The un-suffixed sidecar describes generation 0 and nothing else; one
+	// stamped for another generation is not a record of these shards.
+	if prot.GetGeneration() != 0 {
+		return nil, fmt.Errorf("%s records generation %d, not generation 0", path, prot.GetGeneration())
+	}
+	cfg := prot.GetEcShardConfig()
+	if cfg == nil {
+		return nil, fmt.Errorf("%s records no EC config", path)
+	}
+	if !ValidEcShardCounts(cfg.GetDataShards(), cfg.GetParityShards()) {
+		return nil, fmt.Errorf("%s records invalid shard counts %d+%d",
+			path, cfg.GetDataShards(), cfg.GetParityShards())
+	}
+	if bsErr := ValidateBlockSize(cfg.GetBlockSize()); bsErr != nil {
+		return nil, fmt.Errorf("%s: %w", path, bsErr)
+	}
+	return cfg, nil
 }
 
 // RemoveBitrotSidecars removes the legacy <base>.ecsum and any versioned
@@ -532,6 +622,15 @@ func RemoveBitrotSidecars(base string) {
 			os.Remove(m)
 		}
 	}
+}
+
+// FindBitrotSidecar is findBitrotSidecar for callers outside this package. It
+// answers "does this volume already have a manifest, and where" — a question
+// that cannot be settled from one base name, because a split -dir/-dir.idx
+// layout keeps the sidecar with the index and a multi-disk server may keep it
+// on a sibling. Returns "" when no candidate exists.
+func FindBitrotSidecar(generation uint32, dataBase, indexBase string, additionalDirs ...string) string {
+	return findBitrotSidecar(generation, dataBase, indexBase, additionalDirs...)
 }
 
 // findBitrotSidecar resolves the sidecar path for a generation, searching the

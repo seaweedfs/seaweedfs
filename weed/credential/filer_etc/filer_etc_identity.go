@@ -209,10 +209,7 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 		for _, entry := range entries {
 			if !entry.IsDirectory && !validNames[entry.Name] {
 				// Delete obsolete identity file
-				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-					Directory: dir,
-					Name:      entry.Name,
-				}); err != nil {
+				if err := filer_pb.DoRemove(ctx, client, dir, entry.Name, false, false, false, false, nil); err != nil {
 					glog.Warningf("Failed to delete obsolete identity file %s: %v", entry.Name, err)
 				}
 			}
@@ -240,10 +237,7 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 
 		for _, entry := range entries {
 			if !entry.IsDirectory && !validNames[entry.Name] {
-				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-					Directory: dir,
-					Name:      entry.Name,
-				}); err != nil {
+				if err := filer_pb.DoRemove(ctx, client, dir, entry.Name, false, false, false, false, nil); err != nil {
 					glog.Warningf("Failed to delete obsolete service account file %s: %v", entry.Name, err)
 				}
 			}
@@ -271,14 +265,8 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 
 		for _, entry := range entries {
 			if !entry.IsDirectory && !validNames[entry.Name] {
-				resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-					Directory: dir,
-					Name:      entry.Name,
-				})
-				if err != nil {
+				if err := filer_pb.DoRemove(ctx, client, dir, entry.Name, false, false, false, false, nil); err != nil {
 					glog.Warningf("Failed to delete obsolete group file %s: %v", entry.Name, err)
-				} else if resp != nil && resp.Error != "" {
-					glog.Warningf("Failed to delete obsolete group file %s: %s", entry.Name, resp.Error)
 				}
 			}
 		}
@@ -341,7 +329,7 @@ func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) err
 	}
 
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamIdentitiesDirectory,
 			Name:      username + ".json",
 		})
@@ -350,6 +338,12 @@ func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) err
 				return credential.ErrUserNotFound
 			}
 			return err
+		}
+		if resp != nil && resp.Error != "" {
+			if strings.Contains(resp.Error, filer_pb.ErrNotFound.Error()) {
+				return credential.ErrUserNotFound
+			}
+			return fmt.Errorf("delete user %s: %s", username, resp.Error)
 		}
 		return nil
 	})

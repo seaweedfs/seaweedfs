@@ -1,14 +1,21 @@
 package command
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 )
 
 // TestVersionedFilePathRewrittenForRemote verifies that the fix for
@@ -327,4 +334,298 @@ func TestRewriteVersionedSourcePath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func chunkedEntry(name string, remote *filer_pb.RemoteEntry, etags ...string) *filer_pb.Entry {
+	entry := &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote}
+	for i, etag := range etags {
+		entry.Chunks = append(entry.Chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%02x", i), Offset: int64(i) * 1024, Size: 1024, ETag: etag})
+	}
+	return entry
+}
+
+func TestIsMetadataOnlyUpdate(t *testing.T) {
+	const dir = "/buckets/media"
+	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669}
+
+	tests := []struct {
+		name     string
+		dir      string
+		oldEntry *filer_pb.Entry
+		newEntry *filer_pb.Entry
+		want     bool
+	}{
+		{
+			name:     "same chunks",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1", "e2"),
+			newEntry: chunkedEntry("output.pdf", replicated, "e1", "e2"),
+			want:     true,
+		},
+		{
+			name:     "same chunks, no RemoteEntry",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", nil, "e1", "e2"),
+			newEntry: chunkedEntry("output.pdf", nil, "e1", "e2"),
+			want:     true,
+		},
+		{
+			name:     "rewritten chunks",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1", "e2"),
+			newEntry: chunkedEntry("output.pdf", replicated, "e1", "e3"),
+			want:     false,
+		},
+		{
+			name:     "first write into an empty entry",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", nil),
+			newEntry: chunkedEntry("output.pdf", nil, "e1"),
+			want:     false,
+		},
+		{
+			name:     "rename",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1"),
+			newEntry: chunkedEntry("renamed.pdf", replicated, "e1"),
+			want:     false,
+		},
+		{
+			name:     "move to another directory",
+			dir:      "/buckets/media/inbox",
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1"),
+			newEntry: chunkedEntry("output.pdf", replicated, "e1"),
+			want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message := &filer_pb.EventNotification{NewParentPath: dir, OldEntry: tt.oldEntry, NewEntry: tt.newEntry}
+			if got := isMetadataOnlyUpdate(tt.dir, message); got != tt.want {
+				t.Errorf("isMetadataOnlyUpdate = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// stubFilerClient serves one entry; nil means not found. A non-nil err fails
+// every lookup instead.
+type stubFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	entry   *filer_pb.Entry
+	err     error
+	lookups int
+}
+
+func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.LookupDirectoryEntryRequest, ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+}
+
+func (c *stubFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func (c *stubFilerClient) AdjustedUrl(location *filer_pb.Location) string { return location.Url }
+
+func (c *stubFilerClient) GetDataCenter() string { return "" }
+
+// TestLiveRemoteEntry tells apart the two update events that carry no
+// RemoteEntry: a file never replicated (#11139), which must be uploaded, and a
+// chmod logged before the sync finished uploading the preceding write, which
+// must not be uploaded again.
+func TestLiveRemoteEntry(t *testing.T) {
+	const dir = "/buckets/media"
+	stamped := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669}
+
+	t.Run("event carries the RemoteEntry, no lookup", func(t *testing.T) {
+		filerClient := &stubFilerClient{}
+		got, err := liveRemoteEntry(filerClient, dir, chunkedEntry("output.pdf", stamped, "e1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != stamped {
+			t.Errorf("got %+v, want the event's own RemoteEntry", got)
+		}
+		if filerClient.lookups != 0 {
+			t.Errorf("looked up the filer %d times with the answer already in hand", filerClient.lookups)
+		}
+	})
+
+	t.Run("never replicated", func(t *testing.T) {
+		event := chunkedEntry("output.pdf", nil, "e1")
+		if !shouldSendToRemote(event) {
+			t.Fatal("an entry with no RemoteEntry should be eligible for sending")
+		}
+		filerClient := &stubFilerClient{entry: chunkedEntry("output.pdf", nil, "e1")}
+		got, err := liveRemoteEntry(filerClient, dir, event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != nil {
+			t.Errorf("got %+v, want nil so the update takes the write path", got)
+		}
+	})
+
+	t.Run("stamped after the event was logged", func(t *testing.T) {
+		filerClient := &stubFilerClient{entry: chunkedEntry("output.pdf", stamped, "e1")}
+		got, err := liveRemoteEntry(filerClient, dir, chunkedEntry("output.pdf", nil, "e1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != stamped {
+			t.Errorf("got %+v, want the filer's current RemoteEntry so the update stays on the metadata path", got)
+		}
+		if filerClient.lookups != 1 {
+			t.Errorf("looked up the filer %d times, want 1", filerClient.lookups)
+		}
+	})
+
+	t.Run("deleted since", func(t *testing.T) {
+		_, err := liveRemoteEntry(&stubFilerClient{}, dir, chunkedEntry("output.pdf", nil, "e1"))
+		if !errors.Is(err, filer_pb.ErrNotFound) {
+			t.Errorf("err = %v, want filer_pb.ErrNotFound so the update is skipped rather than uploaded from a deleted entry", err)
+		}
+	})
+}
+
+func chunk(fileId, etag string) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{FileId: fileId, Size: 1024, ETag: etag}
+}
+
+func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.FileChunk) *filer_pb.Entry {
+	return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote, Chunks: chunks}
+}
+
+// TestIsSuperseded decides what a failed upload means for its event (#11148).
+// A replay from an earlier offset re-emits creates for entries the filer has
+// since deleted or rewritten; their chunks are gone, so the upload can never
+// succeed, and failing the event pins the offset before it forever. Those are
+// skipped. A failure to upload an entry the filer still holds as described is
+// a real failure and must keep failing the event so the subscription retries.
+//
+// Every write stores its chunks under new file ids, so the entry is compared
+// by chunk identity, the way the filer itself decides which chunks an update
+// leaves for deletion. Content fingerprints would miss a delete-and-recreate
+// of identical bytes and fail the event forever on its dead chunks.
+func TestIsSuperseded(t *testing.T) {
+	const dir = "/buckets/ingest"
+	event := entryWith("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, chunk("3,01", "e1"), chunk("3,02", "e2"))
+	stamped := &filer_pb.RemoteEntry{StorageName: "b2", RemoteMtime: 1786096669}
+
+	tests := []struct {
+		name  string
+		filer *stubFilerClient
+		want  bool
+	}{
+		{name: "deleted since", filer: &stubFilerClient{}, want: true},
+		{name: "rewritten since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("4,07", "e3"))}, want: true},
+		{name: "recreated with identical content", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("5,11", "e1"), chunk("5,12", "e2"))}, want: true},
+		{name: "recreated with other content", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("6,01", "e9"))}, want: true},
+		{name: "truncated since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}, want: true},
+		{name: "still as described", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
+		{name: "still as described, since replicated", filer: &stubFilerClient{entry: entryWith(event.Name, stamped, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
+		{name: "appended since, chunks still live", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"), chunk("3,03", "e3"))}, want: false},
+		{name: "filer lookup failed", filer: &stubFilerClient{err: errors.New("rpc error: code = Unavailable")}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSuperseded(tt.filer, dir, event); got != tt.want {
+				t.Errorf("isSuperseded = %v, want %v", got, tt.want)
+			}
+			if tt.filer.lookups != 1 {
+				t.Errorf("looked up the filer %d times, want 1", tt.filer.lookups)
+			}
+		})
+	}
+
+	t.Run("inline content rewritten since", func(t *testing.T) {
+		event := &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}
+		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, dir, event) {
+			t.Error("isSuperseded = false, want true for an entry whose inline content has changed")
+		}
+		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, dir, event) {
+			t.Error("isSuperseded = true, want false for an entry whose inline content is unchanged")
+		}
+	})
+}
+
+// failingRemote fails every WriteFile with err and counts the attempts.
+type failingRemote struct {
+	remote_storage.RemoteStorageClient
+	err    error
+	writes int
+}
+
+func (r *failingRemote) WriteFile(*remote_pb.RemoteStorageLocation, *filer_pb.Entry, io.Reader) (*filer_pb.RemoteEntry, error) {
+	r.writes++
+	return nil, r.err
+}
+
+// TestRetriedWriteFileStopsWhenSuperseded checks that a failed upload asks the
+// filer at once, and stops retrying when the entry is gone: the ~13s of backoff
+// util.Retry would spend on a dead chunk buys nothing. An upload of an entry the
+// filer still holds keeps the retry policy it had.
+func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
+	const dir = "/buckets/ingest"
+	event := entryWith("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, chunk("3,01", "e1"))
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "tier", Path: "/" + event.Name}
+	// What the S3 SDK reports when the volume server no longer has the chunk:
+	// "requesterror" makes IsTransientError retry it to exhaustion.
+	deadChunk := errors.New("RequestError: send request failed\ncaused by: Put \"https://s3.example.com/tier/x\": http://volume:8444/3,01?readDeleted=true: 404 Not Found: not found")
+
+	t.Run("superseded, one attempt", func(t *testing.T) {
+		remote := &failingRemote{err: deadChunk}
+		filerClient := &stubFilerClient{}
+		start := time.Now()
+		_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+		if !errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want errSuperseded", err)
+		}
+		if !strings.Contains(err.Error(), "404 Not Found") {
+			t.Errorf("err = %v, want it to keep the write failure", err)
+		}
+		if remote.writes != 1 {
+			t.Errorf("wrote %d times, want 1: retrying a dead chunk cannot succeed", remote.writes)
+		}
+		if filerClient.lookups != 1 {
+			t.Errorf("looked up the filer %d times, want 1", filerClient.lookups)
+		}
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Errorf("took %v, want no backoff", elapsed)
+		}
+	})
+
+	t.Run("still as described, transient failure keeps retrying", func(t *testing.T) {
+		prev := util.RetryWaitTime
+		util.RetryWaitTime = 1600 * time.Millisecond // two attempts: 1s, then 1.5s
+		t.Cleanup(func() { util.RetryWaitTime = prev })
+		remote := &failingRemote{err: deadChunk}
+		filerClient := &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}
+		_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+		if errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want the write failure itself", err)
+		}
+		if remote.writes != 2 {
+			t.Errorf("wrote %d times, want 2: a transient failure on a live entry is still retried", remote.writes)
+		}
+		if filerClient.lookups != 2 {
+			t.Errorf("looked up the filer %d times, want one per failed attempt", filerClient.lookups)
+		}
+	})
+
+	t.Run("still as described, permanent failure not retried", func(t *testing.T) {
+		remote := &failingRemote{err: errors.New("AccessDenied: Access Denied")}
+		filerClient := &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}
+		_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+		if err == nil || errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want the write failure itself", err)
+		}
+		if remote.writes != 1 {
+			t.Errorf("wrote %d times, want 1", remote.writes)
+		}
+	})
 }

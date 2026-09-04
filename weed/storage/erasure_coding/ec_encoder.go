@@ -62,12 +62,126 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 // BackgroundECContext for the default ratio, or an explicit ctx for a configured
 // (e.g. custom-ratio) layout. It returns the bitrot protection (per-shard block
 // CRC32C) computed during the single encode pass; the caller persists it as a
-// <base>.ecsum sidecar.
+// <base>.ecsum sidecar, and persists ctx.BlockSize and ctx.DatFileSize (both
+// set here, from one measurement of the .dat) to the .vif so readers resolve
+// the shard block layout.
 func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitrotProtection, error) {
-	if ctx == nil || ctx.Total() == 0 {
+	if ctx == nil {
 		ctx = NewDefaultECContext("", 0)
+	} else if ctx.Total() == 0 {
+		// Fill the placeholder in place rather than swapping the pointer: the
+		// caller reads BlockSize and DatFileSize back off the context it
+		// passed, and a replacement leaves it holding the zero values.
+		ctx.DataShards, ctx.ParityShards = DataShardsCount, ParityShardsCount
 	}
-	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
+	// Always encode with the uniform block layout, sized for this .dat. Both
+	// the block size and the .dat length it was derived from are left on ctx,
+	// so the caller persists a .vif whose two fields describe one measurement
+	// — a second stat could see a different size on a volume still taking
+	// writes.
+	fi, err := os.Stat(baseFileName + ".dat")
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat dat file: %w", err)
+	}
+	ctx.DatFileSize = fi.Size()
+	ctx.BlockSize = UniformBlockSize(fi.Size(), ctx.DataShards)
+	return generateEcFiles(baseFileName, 256*1024, ctx.BlockSize, ctx.BlockSize, ctx)
+}
+
+// ValidateBlockSize reports whether a `.vif`-recorded shard block size is one
+// an encoder could have produced. 0 means the legacy two-tier layout, which is
+// always valid; anything positive must be a whole number of small blocks,
+// because that is what UniformBlockSize rounds to. A negative or unaligned
+// value is corruption, and using it would map every read to the wrong shard
+// offset.
+func ValidateBlockSize(blockSize int64) error {
+	if blockSize == 0 {
+		return nil
+	}
+	if blockSize < 0 || blockSize%ErasureCodingSmallBlockSize != 0 {
+		return fmt.Errorf("invalid shard block size %d: expected 0 (legacy) or a multiple of %d",
+			blockSize, ErasureCodingSmallBlockSize)
+	}
+	return nil
+}
+
+// UniformBlockSize returns the per-shard block size of the uniform layout for
+// a .dat of the given size: ceil(datFileSize/dataShards) rounded up to a whole
+// small block. For every input this equals the legacy layout's padded shard
+// size, so only the byte placement differs between the two layouts, never the
+// shard length.
+func UniformBlockSize(datFileSize int64, dataShards int) int64 {
+	perShard := (datFileSize + int64(dataShards) - 1) / int64(dataShards)
+	blocks := (perShard + ErasureCodingSmallBlockSize - 1) / ErasureCodingSmallBlockSize
+	if blocks < 1 {
+		blocks = 1
+	}
+	return blocks * ErasureCodingSmallBlockSize
+}
+
+// ResolveRebuildECContext answers which shard layout a rebuild of baseFileName
+// will use: the caller's context when it already states one, else the volume's
+// own metadata — its `.vif` in any of the directories the rebuild can read,
+// then the generation-0 bitrot sidecar, and only then the build defaults.
+// Exported so a caller that must agree with the rebuild (the post-rebuild
+// bitrot backfill writes a manifest describing these very shards) resolves
+// once and uses the same answer, instead of re-deriving it from a narrower
+// search and recording a layout the rebuild did not use.
+func ResolveRebuildECContext(baseFileName string, ctx *ECContext, additionalDirs []string) (*ECContext, error) {
+	if ctx == nil || ctx.Total() == 0 {
+		// Resolve the layout from the .vif to preserve the original configuration.
+		vifPath := findVifPath(baseFileName, additionalDirs)
+		volumeInfo, _, foundVif, vifErr := volume_info.MaybeLoadVolumeInfo(vifPath)
+		if vifErr != nil {
+			// The .vif exists but cannot be read or parsed. Fail closed rather
+			// than silently falling back to the default ratio, which would
+			// rebuild a custom-ratio volume with the wrong layout. Pass an
+			// explicit ctx to override.
+			return nil, fmt.Errorf("RebuildEcFiles %s: cannot load .vif: %w", baseFileName, vifErr)
+		}
+		switch {
+		case foundVif && volumeInfo.EcShardConfig != nil &&
+			ValidEcShardCounts(volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards):
+			if bsErr := ValidateBlockSize(volumeInfo.EcShardConfig.GetBlockSize()); bsErr != nil {
+				return nil, fmt.Errorf("RebuildEcFiles %s: %s: %w", baseFileName, vifPath, bsErr)
+			}
+			ctx = &ECContext{
+				DataShards:   int(volumeInfo.EcShardConfig.DataShards),
+				ParityShards: int(volumeInfo.EcShardConfig.ParityShards),
+				BlockSize:    volumeInfo.EcShardConfig.GetBlockSize(),
+			}
+			glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
+		case foundVif && volumeInfo.EcShardConfig != nil:
+			// A recorded-but-impossible ratio is corruption, not a reason to
+			// substitute the default one: a 12+4 volume rebuilt as 10+4
+			// reconstructs from the wrong matrix and never regenerates shards
+			// 14-15. Pass an explicit ctx to override.
+			return nil, fmt.Errorf("RebuildEcFiles %s: %s records invalid shard counts %d+%d",
+				baseFileName, vifPath, volumeInfo.EcShardConfig.DataShards, volumeInfo.EcShardConfig.ParityShards)
+		default:
+			// No usable .vif: the bitrot sidecar records the same config at
+			// encode time and is then the surviving authority. Reading the
+			// default ratio and the legacy block size instead would rebuild
+			// from the wrong geometry AND make the sidecar look like it
+			// disagrees, which silently skips every checksum check below.
+			if sidecarPath := findBitrotSidecar(0, baseFileName, baseFileName, additionalDirs...); sidecarPath != "" {
+				cfg, cfgErr := EcShardConfigFromSidecarPath(sidecarPath)
+				if cfgErr != nil {
+					return nil, fmt.Errorf("RebuildEcFiles %s: no usable .vif and %w", baseFileName, cfgErr)
+				}
+				ctx = &ECContext{
+					DataShards:   int(cfg.GetDataShards()),
+					ParityShards: int(cfg.GetParityShards()),
+					BlockSize:    cfg.GetBlockSize(),
+				}
+				glog.V(0).Infof("Rebuilding EC files for %s with config from the bitrot sidecar: %s", baseFileName, ctx.String())
+				break
+			}
+			glog.V(0).Infof("Rebuilding EC files for %s with default config", baseFileName)
+			ctx = NewDefaultECContext("", 0)
+		}
+	}
+	return ctx, nil
 }
 
 // RebuildEcFiles rebuilds missing EC shard files. Pass BackgroundECContext to
@@ -79,38 +193,11 @@ func WriteEcFiles(baseFileName string, ctx *ECContext) (*volume_server_pb.EcBitr
 // present input shards are verified against it and corrupt ones are excluded
 // from Reed-Solomon and regenerated; unsafeIgnoreSidecar bypasses that guard.
 func RebuildEcFiles(baseFileName string, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs ...string) ([]uint32, error) {
-	if ctx == nil || ctx.Total() == 0 {
-		// Resolve the layout from the .vif to preserve the original configuration.
-		volumeInfo, _, foundVif, vifErr := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif")
-		if vifErr != nil {
-			// The .vif exists but cannot be read or parsed. Fail closed rather
-			// than silently falling back to the default ratio, which would
-			// rebuild a custom-ratio volume with the wrong layout. Pass an
-			// explicit ctx to override.
-			return nil, fmt.Errorf("RebuildEcFiles %s: cannot load .vif: %w", baseFileName, vifErr)
-		}
-		if foundVif && volumeInfo.EcShardConfig != nil {
-			ds := int(volumeInfo.EcShardConfig.DataShards)
-			ps := int(volumeInfo.EcShardConfig.ParityShards)
-
-			// Validate EC config before using it
-			if ds > 0 && ps > 0 && ds+ps <= MaxShardCount {
-				ctx = &ECContext{
-					DataShards:   ds,
-					ParityShards: ps,
-				}
-				glog.V(0).Infof("Rebuilding EC files for %s with config from .vif: %s", baseFileName, ctx.String())
-			} else {
-				glog.Warningf("Invalid EC config in .vif for %s (data=%d, parity=%d), using default", baseFileName, ds, ps)
-				ctx = NewDefaultECContext("", 0)
-			}
-		} else {
-			glog.V(0).Infof("Rebuilding EC files for %s with default config", baseFileName)
-			ctx = NewDefaultECContext("", 0)
-		}
+	ctx, err := ResolveRebuildECContext(baseFileName, ctx, additionalDirs)
+	if err != nil {
+		return nil, err
 	}
-
-	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, unsafeIgnoreSidecar, additionalDirs)
+	return generateMissingEcFiles(baseFileName, 256*1024, ctx, unsafeIgnoreSidecar, additionalDirs)
 }
 
 func ToExt(ecIndex int) string {
@@ -159,7 +246,10 @@ func findShardFile(baseFileName string, ext string, additionalDirs []string) str
 	return ""
 }
 
-func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs []string) (generatedShardIds []uint32, err error) {
+// generateMissingEcFiles takes no block sizes: Reed-Solomon reconstruction is
+// layout-agnostic — it rebuilds a missing shard from the same offsets of the
+// survivors — so the shard layout only ever reaches it through ctx.
+func generateMissingEcFiles(baseFileName string, bufferSize int, ctx *ECContext, unsafeIgnoreSidecar bool, additionalDirs []string) (generatedShardIds []uint32, err error) {
 
 	// Pass 1: discover which shards exist and which are missing,
 	// opening input files but NOT creating output files yet.
@@ -363,6 +453,30 @@ func cleanupRebuildOutputs(outputFiles []*os.File, writePaths []string) {
 	}
 }
 
+// findVifPath locates the volume's `.vif` for a rebuild: next to the shards
+// first, then in every directory the caller also handed us — the index
+// directory of a split `-dir`/`-dir.idx` layout, and the sibling disks of a
+// multi-disk server, where `.ecx`/`.ecj`/`.vif` may live while this disk holds
+// only shards. Returns the data-base path when nothing exists, so the caller's
+// "not found" handling stays on the canonical name.
+func findVifPath(baseFileName string, additionalDirs []string) string {
+	dataPath := baseFileName + ".vif"
+	candidates := []string{dataPath}
+	base := filepath.Base(baseFileName)
+	for _, dir := range additionalDirs {
+		if dir == "" {
+			continue
+		}
+		candidates = append(candidates, filepath.Join(dir, base)+".vif")
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return dataPath
+}
+
 // loadRebuildSidecar loads and validates the generation-0 checksum sidecar for a
 // rebuild. RebuildEcFiles operates on the un-suffixed (generation 0) shard
 // names, so only the legacy sidecar is relevant here. Returns BitrotOff when
@@ -381,10 +495,20 @@ func loadRebuildSidecar(baseFileName string, ctx *ECContext, additionalDirs []st
 	if prot.Generation != 0 {
 		return nil, BitrotOff
 	}
-	if prot.EcShardConfig == nil ||
-		int(prot.EcShardConfig.DataShards) != ctx.DataShards ||
-		int(prot.EcShardConfig.ParityShards) != ctx.ParityShards {
-		return nil, BitrotOff
+	if prot.EcShardConfig == nil {
+		return nil, BitrotOff // records no geometry -> nothing to contradict
+	}
+	if int(prot.EcShardConfig.DataShards) != ctx.DataShards ||
+		int(prot.EcShardConfig.ParityShards) != ctx.ParityShards ||
+		prot.EcShardConfig.BlockSize != ctx.BlockSize {
+		// Both records describe the same encode, so a disagreement means the
+		// rebuild is about to reconstruct under a geometry the checksums do not
+		// cover. Treating that as "no protection" skipped every input and
+		// output check exactly when they matter most.
+		glog.Warningf("bitrot: sidecar %s records layout %d+%d block %d but the rebuild uses %d+%d block %d",
+			path, prot.EcShardConfig.DataShards, prot.EcShardConfig.ParityShards, prot.EcShardConfig.BlockSize,
+			ctx.DataShards, ctx.ParityShards, ctx.BlockSize)
+		return nil, BitrotInvalid
 	}
 	if err := ValidateBitrotManifest(prot, ctx.DataShards, ctx.ParityShards); err != nil {
 		glog.Warningf("bitrot: sidecar %s manifest invalid: %v", path, err)

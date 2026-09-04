@@ -8,6 +8,7 @@
 package postgres
 
 import (
+	"database/sql"
 	"strconv"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -28,8 +29,12 @@ func (store *PostgresStore) GetName() string {
 }
 
 func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
-	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
-	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Fewer idle slots than concurrent operations means a fresh connection per
+	// operation, until the filer runs out of ephemeral ports. connection_max_open
+	// stays unset: a listing runs a second query from its own callback, so a
+	// bounded pool deadlocks once the concurrency reaches it.
+	configuration.SetDefault(prefix+"connection_max_idle", 50)
+	configuration.SetDefault(prefix+"connection_max_lifetime_seconds", 300)
 	// Default on so minimal configs are not exposed to duplicate-key tx
 	// poisoning on Postgres; an explicit false still disables it.
 	configuration.SetDefault(prefix+"enableUpsert", true)
@@ -115,7 +120,11 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	if openErr != nil {
 		return openErr
 	}
-	store.DB = db
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
 
 	ConfigureListOrdering(store.DB, gen)
 

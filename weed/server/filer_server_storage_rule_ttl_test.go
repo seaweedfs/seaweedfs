@@ -27,6 +27,52 @@ func addTtlRule(t *testing.T, f *filer.Filer) {
 	}
 }
 
+// The native LMCache path allocates chunks and publishes the Filer Entry in
+// separate RPCs. Both RPCs must resolve the same storage rule, or metadata can
+// expire while its Volume remains permanent (or the reverse).
+func TestNativeCacheWriteUsesOneTtlForAllocationAndEntry(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries[ttlRulePrefix] = newDirectoryEntry(ttlRulePrefix, 10)
+	server := &FilerServer{
+		filer:          newRenameTestFiler(t, store),
+		option:         &FilerOption{},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	addTtlRule(t, server.filer)
+
+	allocation, err := server.resolveAssignStorageOption(context.Background(), &filer_pb.AssignVolumeRequest{
+		Path:       ttlRulePrefix + "cache-key",
+		Collection: "lmcache",
+	})
+	if err != nil {
+		t.Fatalf("resolveAssignStorageOption: %v", err)
+	}
+	if allocation.Collection != "lmcache" {
+		t.Fatalf("allocation collection = %q, want lmcache", allocation.Collection)
+	}
+	if allocation.TtlSeconds != 180 {
+		t.Fatalf("allocation TTL = %d, want 180", allocation.TtlSeconds)
+	}
+
+	if _, err := server.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		Directory: "/buckets/ttl",
+		Entry: &filer_pb.Entry{
+			Name:       "cache-key",
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
+		},
+	}); err != nil {
+		t.Fatalf("CreateEntry: %v", err)
+	}
+
+	entry, err := store.FindEntry(context.Background(), ttlRulePrefix+"cache-key")
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if entry.TtlSec != allocation.TtlSeconds {
+		t.Fatalf("entry TTL = %d, allocation TTL = %d", entry.TtlSec, allocation.TtlSeconds)
+	}
+}
+
 // An object written through ObjectTransaction (the routed S3 write path) must
 // pick up the path's TTL rule, the same as one written through CreateEntry.
 func TestObjectTransactionPutAppliesRuleTtl(t *testing.T) {
@@ -131,6 +177,41 @@ func TestCopyKeepsRemoteEntryUnexpiring(t *testing.T) {
 	}
 	if entry.TtlSec != 0 {
 		t.Errorf("remote entry TtlSec = %d, want 0", entry.TtlSec)
+	}
+}
+
+// Clients percent-encode non-ASCII path segments on the wire, so a rule has to
+// be matched against the decoded path the entry is written to, not the raw
+// request-target: a read-only rule on "/data/只读/" must still refuse a POST to
+// "/data/%E5%8F%AA%E8%AF%BB/".
+func TestPostHandlerMatchesStorageRuleOnDecodedPath(t *testing.T) {
+	const readOnlyPrefix = "/data/只读/"
+	store := newRenameTestStore()
+	source := newFileEntry("/src.txt", 11)
+	source.Content = []byte("hello")
+	store.entries["/src.txt"] = source
+	store.entries[readOnlyPrefix] = newDirectoryEntry(readOnlyPrefix, 10)
+
+	server := &FilerServer{
+		filer:          newRenameTestFiler(t, store),
+		option:         &FilerOption{},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	if err := server.filer.FilerConf.AddLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: readOnlyPrefix,
+		ReadOnly:       true,
+	}); err != nil {
+		t.Fatalf("AddLocationConf: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/data/%E5%8F%AA%E8%AF%BB/dst.txt?cp.from=/src.txt", http.NoBody)
+	rec := httptest.NewRecorder()
+	server.PostHandler(rec, req, 0)
+	if rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("copy into read-only path = %d, want %d; body=%q", rec.Code, http.StatusInsufficientStorage, rec.Body.String())
+	}
+	if _, err := store.FindEntry(context.Background(), readOnlyPrefix+"dst.txt"); err == nil {
+		t.Fatal("copy landed in the read-only path")
 	}
 }
 

@@ -112,13 +112,13 @@ func TestClusterSizeSeriesUsesLatestDailySample(t *testing.T) {
 		TopologyId:        "aaaaaaaa-0000-0000-0000-000000000001",
 		Version:           "4.40",
 		Os:                "linux/amd64",
-		TotalDiskBytes:    100,
+		TotalDiskBytes:    proto.MinDiskBytes + 100,
 		VolumeServerCount: 4,
 	}
 	if err := s.StoreTelemetry(data); err != nil {
 		t.Fatal(err)
 	}
-	data.TotalDiskBytes = 700
+	data.TotalDiskBytes = proto.MinDiskBytes + 700
 	data.VolumeServerCount = 6
 	if err := s.StoreTelemetry(data); err != nil {
 		t.Fatal(err)
@@ -133,14 +133,14 @@ func TestClusterSizeSeriesUsesLatestDailySample(t *testing.T) {
 	if today := time.Now().UTC().Format("2006-01-02"); len(series.Dates) != 1 || series.Dates[0] != today {
 		t.Errorf("dates = %v, want %s only", series.Dates, today)
 	}
-	if got := series.Clusters[0].Disk; !equal(got, []uint64{700}) {
+	if got := series.Clusters[0].Disk; !equal(got, []uint64{proto.MinDiskBytes + 700}) {
 		t.Errorf("disk = %v, want today's latest sample only", got)
 	}
 	if got := series.Clusters[0].Servers; !equal(got, []uint64{6}) {
 		t.Errorf("servers = %v, want today's latest sample only", got)
 	}
-	if series.TotalDisk != 700 || series.TotalServers != 6 {
-		t.Errorf("totals = %d disk / %d servers, want 700/6", series.TotalDisk, series.TotalServers)
+	if series.TotalDisk != proto.MinDiskBytes+700 || series.TotalServers != 6 {
+		t.Errorf("totals = %d disk / %d servers, want %d/6", series.TotalDisk, series.TotalServers, proto.MinDiskBytes+700)
 	}
 }
 

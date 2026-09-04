@@ -117,19 +117,27 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 	// enter maintenance mode
 	framework.EnableMaintenanceMode(t, ctx, grpcClient)
 
-	// existing volume in maintenance mode should return "maintenance mode" error
+	// marking readonly only restricts the server further and is the first step
+	// of evacuating it, so maintenance mode lets it through (issue #11066)
 	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: volumeID, Persist: true})
-	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("VolumeMarkReadonly maintenance error mismatch: %v", err)
+	if err != nil {
+		t.Fatalf("VolumeMarkReadonly should succeed in maintenance mode, got: %v", err)
+	}
+	statusResp, err := grpcClient.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("VolumeStatus after readonly in maintenance failed: %v", err)
+	}
+	if !statusResp.GetIsReadOnly() {
+		t.Fatalf("VolumeStatus expected readonly=true after VolumeMarkReadonly in maintenance mode")
 	}
 
+	// reopening a volume for writes is still refused on a read-only server
 	_, err = grpcClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: volumeID})
 	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
 		t.Fatalf("VolumeMarkWritable maintenance error mismatch: %v", err)
 	}
 
 	// non-existent volume in maintenance mode should still return "not found"
-	// (volume lookup happens before maintenance check)
 	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: 98773, Persist: true})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("VolumeMarkReadonly missing-volume in maintenance error mismatch: %v", err)

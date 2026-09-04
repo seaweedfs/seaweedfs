@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
@@ -101,6 +102,15 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	if hasEcVolume {
 		count, err := vs.store.DeleteEcShardNeedle(ecVolume, n, cookie)
+		if errors.Is(err, storage.ErrorDeleted) {
+			// Already gone. The non-EC path below answers 404 from its
+			// ReadVolumeNeedle pre-check rather than counting a write failure,
+			// and callers fold that 404 into success.
+			m := make(map[string]uint32)
+			m["size"] = 0
+			writeJsonQuiet(w, r, http.StatusNotFound, m)
+			return
+		}
 		writeDeleteResult(err, count, w, r)
 		return
 	}

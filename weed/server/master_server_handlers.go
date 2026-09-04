@@ -81,26 +81,22 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 	if ms.Topo.IsLeader() {
 		volumeId, newVolumeIdErr := needle.NewVolumeId(vid)
 		if newVolumeIdErr != nil {
-			err = fmt.Errorf("Unknown volume id %s", vid)
+			err = fmt.Errorf("unknown volume id %s", vid)
 		} else {
 			machines := ms.Topo.Lookup(collection, volumeId)
 			for _, loc := range machines {
-				locations = append(locations, operation.Location{
-					Url:        loc.Url(),
-					PublicUrl:  loc.PublicUrl,
-					DataCenter: loc.GetDataCenterId(),
-					GrpcPort:   loc.GrpcPort,
-				})
+				locations = append(locations, topologyLocation(loc, volumeId))
 			}
 		}
 	} else {
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
 		for _, loc := range machines {
 			locations = append(locations, operation.Location{
-				Url:        loc.Url,
-				PublicUrl:  loc.PublicUrl,
-				DataCenter: loc.DataCenter,
-				GrpcPort:   loc.GrpcPort,
+				Url:          loc.Url,
+				PublicUrl:    loc.PublicUrl,
+				DataCenter:   loc.DataCenter,
+				GrpcPort:     loc.GrpcPort,
+				DataInRemote: loc.DataInRemote,
 			})
 		}
 		err = getVidLocationsErr
@@ -119,6 +115,23 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		ret.Error = err.Error()
 	}
 	return ret
+}
+
+// topologyLocation describes one node holding vid. A node that answers for an
+// EC volume holds shards rather than a volume record, so an absent record means
+// the read is local, never that the node should be left out of the answer.
+func topologyLocation(dn *topology.DataNode, vid needle.VolumeId) operation.Location {
+	dataInRemote := false
+	if volInfo, lookupErr := dn.GetVolumesById(vid); lookupErr == nil {
+		dataInRemote = volInfo.IsRemote()
+	}
+	return operation.Location{
+		Url:          dn.Url(),
+		PublicUrl:    dn.PublicUrl,
+		DataCenter:   dn.GetDataCenterId(),
+		GrpcPort:     dn.GrpcPort,
+		DataInRemote: dataInRemote,
+	}
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {

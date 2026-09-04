@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -263,7 +264,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
-			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
+			if errors.Is(writeErr, errSuperseded) {
+				glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+				return nil
+			}
 			if writeErr != nil {
 				return writeErr
 			}
@@ -349,7 +354,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						return client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry)
 					} else {
 						newDest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), newRemoteStorageMountLocation)
-						remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, newDest)
+						remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, newDest)
+						if errors.Is(writeErr, errSuperseded) {
+							glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(newDest), writeErr)
+							return nil
+						}
 						if writeErr != nil {
 							return writeErr
 						}
@@ -386,7 +395,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if message.NewEntry.IsDirectory {
 					return client.WriteDirectory(newDest, message.NewEntry)
 				}
-				remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, newDest)
+				remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, newDest)
+				if errors.Is(writeErr, errSuperseded) {
+					glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(newDest), writeErr)
+					return nil
+				}
 				if writeErr != nil {
 					return writeErr
 				}

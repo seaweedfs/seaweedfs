@@ -1061,6 +1061,7 @@ type VolumeLocation struct {
 	GrpcPort      uint32                 `protobuf:"varint,7,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
 	NewEcVids     []uint32               `protobuf:"varint,8,rep,packed,name=new_ec_vids,json=newEcVids,proto3" json:"new_ec_vids,omitempty"`
 	DeletedEcVids []uint32               `protobuf:"varint,9,rep,packed,name=deleted_ec_vids,json=deletedEcVids,proto3" json:"deleted_ec_vids,omitempty"`
+	RemoteVids    []uint32               `protobuf:"varint,10,rep,packed,name=remote_vids,json=remoteVids,proto3" json:"remote_vids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1154,6 +1155,13 @@ func (x *VolumeLocation) GetNewEcVids() []uint32 {
 func (x *VolumeLocation) GetDeletedEcVids() []uint32 {
 	if x != nil {
 		return x.DeletedEcVids
+	}
+	return nil
+}
+
+func (x *VolumeLocation) GetRemoteVids() []uint32 {
+	if x != nil {
+		return x.RemoteVids
 	}
 	return nil
 }
@@ -1460,6 +1468,7 @@ type Location struct {
 	PublicUrl     string                 `protobuf:"bytes,2,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
 	GrpcPort      uint32                 `protobuf:"varint,3,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
 	DataCenter    string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	DataInRemote  bool                   `protobuf:"varint,5,opt,name=data_in_remote,json=dataInRemote,proto3" json:"data_in_remote,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1520,6 +1529,13 @@ func (x *Location) GetDataCenter() string {
 		return x.DataCenter
 	}
 	return ""
+}
+
+func (x *Location) GetDataInRemote() bool {
+	if x != nil {
+		return x.DataInRemote
+	}
+	return false
 }
 
 type AssignRequest struct {
@@ -2784,15 +2800,19 @@ type VolumeListRequest struct {
 	// Empty and zero take everything. Only the volumes and ec shards listed
 	// under a disk are selected; the topology and its disk counters are always
 	// reported in full.
-	Collection string `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"`
-	VolumeId   uint32 `protobuf:"varint,2,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string   `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"`
+	VolumeIds  []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
 	// The one collection the empty string cannot name. A named collection wins.
 	DefaultCollectionOnly bool `protobuf:"varint,3,opt,name=default_collection_only,json=defaultCollectionOnly,proto3" json:"default_collection_only,omitempty"`
 	// Empty and zero take everything. Wildcards are supported.
 	RemoteStorageName string `protobuf:"bytes,4,opt,name=remote_storage_name,json=remoteStorageName,proto3" json:"remote_storage_name,omitempty"`
 	LocalVolumeOnly   bool   `protobuf:"varint,5,opt,name=local_volume_only,json=localVolumeOnly,proto3" json:"local_volume_only,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The topology, its disks and their counters alone, without the volumes
+	// and ec shards. Selecting volumes above contradicts this and is refused.
+	// A master that predates this field ignores it and answers in full.
+	TopologyOnly  bool `protobuf:"varint,6,opt,name=topology_only,json=topologyOnly,proto3" json:"topology_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VolumeListRequest) Reset() {
@@ -2832,11 +2852,11 @@ func (x *VolumeListRequest) GetCollection() string {
 	return ""
 }
 
-func (x *VolumeListRequest) GetVolumeId() uint32 {
+func (x *VolumeListRequest) GetVolumeIds() []uint32 {
 	if x != nil {
-		return x.VolumeId
+		return x.VolumeIds
 	}
-	return 0
+	return nil
 }
 
 func (x *VolumeListRequest) GetDefaultCollectionOnly() bool {
@@ -2856,6 +2876,13 @@ func (x *VolumeListRequest) GetRemoteStorageName() string {
 func (x *VolumeListRequest) GetLocalVolumeOnly() bool {
 	if x != nil {
 		return x.LocalVolumeOnly
+	}
+	return false
+}
+
+func (x *VolumeListRequest) GetTopologyOnly() bool {
+	if x != nil {
+		return x.TopologyOnly
 	}
 	return false
 }
@@ -5061,7 +5088,7 @@ const file_master_proto_rawDesc = "" +
 	"filerGroup\x12\x1f\n" +
 	"\vdata_center\x18\x06 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
-	"\x04rack\x18\a \x01(\tR\x04rack\"\x9d\x02\n" +
+	"\x04rack\x18\a \x01(\tR\x04rack\"\xbe\x02\n" +
 	"\x0eVolumeLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
@@ -5073,7 +5100,10 @@ const file_master_proto_rawDesc = "" +
 	"dataCenter\x12\x1b\n" +
 	"\tgrpc_port\x18\a \x01(\rR\bgrpcPort\x12\x1e\n" +
 	"\vnew_ec_vids\x18\b \x03(\rR\tnewEcVids\x12&\n" +
-	"\x0fdeleted_ec_vids\x18\t \x03(\rR\rdeletedEcVids\"\xa6\x01\n" +
+	"\x0fdeleted_ec_vids\x18\t \x03(\rR\rdeletedEcVids\x12\x1f\n" +
+	"\vremote_vids\x18\n" +
+	" \x03(\rR\n" +
+	"remoteVids\"\xa6\x01\n" +
 	"\x11ClusterNodeUpdate\x12\x1b\n" +
 	"\tnode_type\x18\x01 \x01(\tR\bnodeType\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x15\n" +
@@ -5101,14 +5131,15 @@ const file_master_proto_rawDesc = "" +
 	"\x11volume_or_file_id\x18\x01 \x01(\tR\x0evolumeOrFileId\x121\n" +
 	"\tlocations\x18\x02 \x03(\v2\x13.master_pb.LocationR\tlocations\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x12\x12\n" +
-	"\x04auth\x18\x04 \x01(\tR\x04auth\"y\n" +
+	"\x04auth\x18\x04 \x01(\tR\x04auth\"\x9f\x01\n" +
 	"\bLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
 	"public_url\x18\x02 \x01(\tR\tpublicUrl\x12\x1b\n" +
 	"\tgrpc_port\x18\x03 \x01(\rR\bgrpcPort\x12\x1f\n" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
-	"dataCenter\"\xfe\x02\n" +
+	"dataCenter\x12$\n" +
+	"\x0edata_in_remote\x18\x05 \x01(\bR\fdataInRemote\"\xfe\x02\n" +
 	"\rAssignRequest\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x04R\x05count\x12 \n" +
 	"\vreplication\x18\x02 \x01(\tR\vreplication\x12\x1e\n" +
@@ -5232,15 +5263,17 @@ const file_master_proto_rawDesc = "" +
 	"\tdiskInfos\x18\x03 \x03(\v2&.master_pb.TopologyInfo.DiskInfosEntryR\tdiskInfos\x1aQ\n" +
 	"\x0eDiskInfosEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\xe4\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\x8b\x02\n" +
 	"\x11VolumeListRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
-	"collection\x12\x1b\n" +
-	"\tvolume_id\x18\x02 \x01(\rR\bvolumeId\x126\n" +
+	"collection\x12\x1d\n" +
+	"\n" +
+	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\x126\n" +
 	"\x17default_collection_only\x18\x03 \x01(\bR\x15defaultCollectionOnly\x12.\n" +
 	"\x13remote_storage_name\x18\x04 \x01(\tR\x11remoteStorageName\x12*\n" +
-	"\x11local_volume_only\x18\x05 \x01(\bR\x0flocalVolumeOnly\"\x83\x01\n" +
+	"\x11local_volume_only\x18\x05 \x01(\bR\x0flocalVolumeOnly\x12#\n" +
+	"\rtopology_only\x18\x06 \x01(\bR\ftopologyOnly\"\x83\x01\n" +
 	"\x12VolumeListResponse\x12<\n" +
 	"\rtopology_info\x18\x01 \x01(\v2\x17.master_pb.TopologyInfoR\ftopologyInfo\x12/\n" +
 	"\x14volume_size_limit_mb\x18\x02 \x01(\x04R\x11volumeSizeLimitMb\"\xda\x02\n" +

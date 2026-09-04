@@ -246,3 +246,28 @@ func TestGetVolumeSize_ClampsDeletedOverSize(t *testing.T) {
 		t.Errorf("expected 2000, got %d", got)
 	}
 }
+
+// Manifests on volumes in a foreign collection cannot reference plan volumes
+// and must be skipped instead of downloaded; plan sources and unknown volumes
+// must still be resolved.
+func TestManifestMayReferencePlan(t *testing.T) {
+	src := &master_pb.VolumeInformationMessage{Id: 1, Size: 100, Collection: "x"}
+	same := &master_pb.VolumeInformationMessage{Id: 2, Size: 100, Collection: "x"}
+	foreign := &master_pb.VolumeInformationMessage{Id: 3, Size: 100, Collection: "y"}
+	c := newMergeCmd(250000, src, same, foreign)
+
+	plan := newMergePlan(c.volumeSizeLimit)
+	plan.targets[needle.VolumeId(1)] = []needle.VolumeId{2}
+	planCollections := map[string]bool{"x": true}
+
+	for vid, want := range map[needle.VolumeId]bool{
+		1: true,  // plan source
+		2: true,  // same collection
+		3: false, // foreign collection
+		9: true,  // unknown volume, resolve conservatively
+	} {
+		if got := c.manifestMayReferencePlan(plan, planCollections, vid); got != want {
+			t.Fatalf("volume %d: got %v, want %v", vid, got, want)
+		}
+	}
+}

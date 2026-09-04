@@ -235,11 +235,7 @@ func (f *FilerSessionRevocationStore) Purge(ctx context.Context, filerAddress st
 				if entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(before) {
 					continue
 				}
-				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-					Directory:    f.basePath,
-					Name:         resp.Entry.Name,
-					IsDeleteData: true,
-				}); err == nil {
+				if err := filer_pb.DoRemove(ctx, client, f.basePath, resp.Entry.Name, true, false, false, false, nil); err == nil {
 					count++
 				}
 			}

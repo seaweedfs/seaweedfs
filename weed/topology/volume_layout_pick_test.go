@@ -103,7 +103,7 @@ func TestPickForWriteWeightedDistribution(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	counts := make(map[needle.VolumeId]int)
 	option := &VolumeGrowOption{}
@@ -155,7 +155,7 @@ func TestPickForWriteWithPendingSize(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	// Add large pending to vid 1, making it effectively 9000/10000
 	vl.RecordAssign(1, 8000)
@@ -268,7 +268,7 @@ func TestPickForWriteSingleWritable(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	option := &VolumeGrowOption{}
 	for i := 0; i < 100; i++ {
@@ -298,7 +298,7 @@ func TestPickForWriteAllNearFull(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	option := &VolumeGrowOption{}
 	for i := 0; i < 100; i++ {
@@ -338,7 +338,7 @@ func TestPickForWriteConstrainedWeighted(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	counts := make(map[needle.VolumeId]int)
 	option := &VolumeGrowOption{DataCenter: "dc1"}
@@ -373,7 +373,7 @@ func TestRecordAssignMarksCrowded(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	// Volume at 85% — not crowded yet (threshold is 90%)
 	_, crowded := vl.GetWritableVolumeCount()
@@ -591,7 +591,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	// vid2size starts at 1000 (reported). Add 8000 pending → 9000.
 	vl.RecordAssign(1, 8000)
@@ -770,7 +770,7 @@ func TestShouldGrowVolumesByDcAndRack_WithPendingSize(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(t, layout,10000)
+	_, vl := setupPickTest(t, layout, 10000)
 
 	writables := vl.CloneWritableVolumes()
 	if vl.ShouldGrowVolumesByDcAndRack(&writables, "dc1", "rack1") {
@@ -784,4 +784,3 @@ func TestShouldGrowVolumesByDcAndRack_WithPendingSize(t *testing.T) {
 		t.Error("should grow after pending pushes volume past crowded threshold")
 	}
 }
-

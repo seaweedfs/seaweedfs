@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"slices"
@@ -67,7 +68,7 @@ func (s3a *S3ApiServer) addBucketToOwnerIndex(owner, bucket string, crtime int64
 }
 
 func (s3a *S3ApiServer) removeBucketFromOwnerIndex(owner, bucket string) error {
-	return s3a.rm(s3a.bucketOwnerDir(owner), bucket, false, false)
+	return s3a.rm(context.Background(), s3a.bucketOwnerDir(owner), bucket, false, false)
 }
 
 // maintainBucketOwnerIndex applies a /buckets metadata event to the owner

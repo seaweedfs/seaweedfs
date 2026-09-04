@@ -117,6 +117,7 @@ func (lc *LockClient) PriorOwnerForKey(key string) pb.ServerAddress {
 }
 
 type LiveLock struct {
+	generation          int64 // fencing token from the lock server; MUST stay first so the 64-bit atomic ops stay 8-byte aligned on 32-bit ARM
 	key                 string
 	renewToken          string
 	expireAtNs          int64
@@ -129,8 +130,7 @@ type LiveLock struct {
 	lc                  *LockClient
 	owner               string
 	lockTTL             time.Duration
-	consecutiveFailures int   // Track connection failures to trigger fallback
-	generation          int64 // fencing token from the lock server
+	consecutiveFailures int // Track connection failures to trigger fallback
 }
 
 // NewShortLivedLock creates a lock with a 5-second duration

@@ -154,7 +154,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				},
 				processEventFn)
 			if readErr != nil {
-				return fmt.Errorf("read log file refs: %w", readErr)
+				return fmt.Errorf("%w: %w", ErrLogFileRead, readErr)
 			}
 			if lastTs > 0 {
 				option.StartTsNs = lastTs

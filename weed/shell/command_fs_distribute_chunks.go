@@ -255,7 +255,7 @@ func resolveEntryDataChunks(commandEnv *CommandEnv, entry *filer_pb.Entry) (data
 	if !filer.HasChunkManifest(chunks) {
 		return chunks, false, nil
 	}
-	dataChunks, _, err = filer.ResolveChunkManifest(context.Background(), filer.LookupFn(commandEnv), chunks, 0, math.MaxInt64)
+	dataChunks, _, err = filer.ResolveChunkManifest(context.Background(), filer.LookupFn(commandEnv), chunks, 0, math.MaxInt64, nil)
 	if err != nil {
 		return nil, true, fmt.Errorf("resolve chunk manifest: %v", err)
 	}

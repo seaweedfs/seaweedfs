@@ -233,8 +233,10 @@ func iterateEcjFile(baseFileName string, processNeedleFn func(key types.NeedleId
 // large-block row boundary, and deriving the layout from the shrunk extent
 // would read the shards in the wrong block order. Pass zero when the .vif does
 // not record the encode-time size to infer the layout from the shard size.
-func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string) error {
-	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)
+// largeBlockSize/smallBlockSize are the volume's shard block layout, e.g.
+// ctx.LargeBlockSize()/ctx.SmallBlockSize() from its .vif EC config.
+func WriteDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
+	return writeDatFile(baseFileName, datFileSize, encodedDatFileSize, shardFileNames, largeBlockSize, smallBlockSize)
 }
 
 func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int64, shardFileNames []string, largeBlockSize int64, smallBlockSize int64) error {
@@ -288,7 +290,11 @@ func writeDatFile(baseFileName string, datFileSize int64, encodedDatFileSize int
 		// A shard size that is an exact multiple of the large block size is
 		// ambiguous: N large rows, or N-1 large rows plus a full small-block
 		// region. The two layouts only agree below the last large row.
-		if shardSize%largeBlockSize == 0 && datFileSize > (shardSize/largeBlockSize-1)*largeBlockSize*int64(dataShards) {
+		// A uniform layout has no such ambiguity — its large and small blocks
+		// are the same size, so every reading of the shard is the same one, and
+		// without this precondition the check fires on every volume.
+		if largeBlockSize != smallBlockSize &&
+			shardSize%largeBlockSize == 0 && datFileSize > (shardSize/largeBlockSize-1)*largeBlockSize*int64(dataShards) {
 			return fmt.Errorf("shard size %d of %s does not identify the block layout; re-encode to record the dat size in .vif", shardSize, baseFileName)
 		}
 		encodedDatFileSize = int64(dataShards) * shardSize

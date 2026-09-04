@@ -26,6 +26,7 @@ use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
 use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
+use crate::storage::volume_open::open_volume_file;
 
 // ============================================================================
 // Errors
@@ -194,6 +195,10 @@ pub struct VifEcShardConfig {
     /// so a read served from a different run's shard is rejected.
     #[serde(default, rename = "encodeTsNs", with = "string_or_i64")]
     pub encode_ts_ns: i64,
+    /// Uniform block layout: each shard is a single contiguous block of this
+    /// many bytes. 0 = legacy 1GiB/1MiB two-tier layout.
+    #[serde(default, rename = "blockSize", with = "string_or_i64")]
+    pub block_size: i64,
 }
 
 /// Serde-compatible representation of OldVersionVolumeInfo for legacy .vif JSON deserialization.
@@ -288,6 +293,7 @@ impl VifVolumeInfo {
                 data_shards: c.data_shards,
                 parity_shards: c.parity_shards,
                 encode_ts_ns: c.encode_ts_ns,
+                block_size: c.block_size,
             }),
             read_only_can_delete: pb.read_only_can_delete,
         }
@@ -320,6 +326,7 @@ impl VifVolumeInfo {
                     data_shards: c.data_shards,
                     parity_shards: c.parity_shards,
                     encode_ts_ns: c.encode_ts_ns,
+                    block_size: c.block_size,
                 }
             }),
             read_only_can_delete: self.read_only_can_delete,
@@ -730,12 +737,12 @@ impl Volume {
             let metadata = fs::metadata(&dat_path)?;
 
             // Try to open read-write; fall back to read-only
-            match OpenOptions::new().read(true).write(true).open(&dat_path) {
+            match open_volume_file(OpenOptions::new().read(true).write(true), &dat_path) {
                 Ok(file) => {
                     self.dat_file = Some(file);
                 }
                 Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                    self.dat_file = Some(File::open(&dat_path)?);
+                    self.dat_file = Some(open_volume_file(OpenOptions::new().read(true), &dat_path)?);
                     self.no_write_or_delete = true;
                 }
                 Err(e) => return Err(e.into()),
@@ -756,11 +763,10 @@ impl Volume {
             if let Some(parent) = Path::new(&dat_path).parent() {
                 fs::create_dir_all(parent)?;
             }
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(&dat_path)?;
+            let file = open_volume_file(
+                OpenOptions::new().read(true).write(true).create(true),
+                &dat_path,
+            )?;
             if preallocate > 0 {
                 preallocate_file(&file, preallocate);
             }
@@ -795,6 +801,30 @@ impl Volume {
         }
 
         if also_load_index {
+            // Adjust for existing volumes with .idx together with .dat files:
+            // an index already beside the data keeps serving after --dir.idx
+            // named a different directory.
+            if self.dir_idx != self.dir
+                && Path::new(&format!("{}.idx", self.data_file_name())).exists()
+            {
+                self.dir_idx = self.dir.clone();
+            }
+
+            // A changed --dir.idx leaves the new directory without an index.
+            // The .dat still holds every row, so rebuild rather than mount the
+            // volume with every needle invisible.
+            if !self.has_remote_file
+                && !Path::new(&self.file_name(".idx")).exists()
+                && self.current_dat_file_size()? > SUPER_BLOCK_SIZE as u64
+            {
+                self.rebuild_idx_file()?;
+                info!(
+                    volume_id = self.id.0,
+                    idx = %self.file_name(".idx"),
+                    "rebuilt the index from the data file"
+                );
+            }
+
             // Recover rows that deletes on a tiered read-only volume overwrote
             // at the front of .idx. Best effort: a volume that cannot be
             // repaired is still servable for everything the surviving rows
@@ -976,7 +1006,7 @@ impl Volume {
         if self.no_write_or_delete {
             // Open read-only
             if Path::new(&idx_path).exists() {
-                let mut idx_file = File::open(&idx_path)?;
+                let mut idx_file = open_volume_file(OpenOptions::new().read(true), idx_path)?;
                 let nm = CompactNeedleMap::load_from_idx(&mut idx_file, self.version())?;
                 self.nm = Some(NeedleMap::InMemory(nm));
             } else {
@@ -995,11 +1025,10 @@ impl Volume {
             }
         } else {
             // Open read-write (create if missing)
-            let idx_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(&idx_path)?;
+            let idx_file = open_volume_file(
+                OpenOptions::new().read(true).write(true).create(true),
+                idx_path,
+            )?;
 
             let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
@@ -1025,7 +1054,7 @@ impl Volume {
         if self.no_write_or_delete {
             // Open read-only
             if Path::new(&idx_path).exists() {
-                let mut idx_file = File::open(&idx_path)?;
+                let mut idx_file = open_volume_file(OpenOptions::new().read(true), idx_path)?;
                 let nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_file, self.version())?;
                 self.nm = Some(NeedleMap::Redb(nm));
             } else {
@@ -1044,11 +1073,10 @@ impl Volume {
             }
         } else {
             // Open read-write (create if missing)
-            let idx_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(&idx_path)?;
+            let idx_file = open_volume_file(
+                OpenOptions::new().read(true).write(true).create(true),
+                idx_path,
+            )?;
 
             let idx_size = trim_torn_idx_tail(&idx_file, idx_path)?;
             let mut idx_reader = io::BufReader::new(&idx_file);
@@ -2690,10 +2718,7 @@ impl Volume {
     /// Open the local .dat as the data backend, dropping any remote backend, so reads
     /// are served from local disk. Mirrors Go's swapToLocalDatBackend after a tier-down.
     pub(crate) fn open_local_dat_backend(&mut self) -> Result<(), VolumeError> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(self.dat_path())?;
+        let file = open_volume_file(OpenOptions::new().read(true).write(true), self.dat_path())?;
         self.remote_dat_file = None;
         self.dat_file = Some(file);
         Ok(())
@@ -3994,7 +4019,7 @@ impl Volume {
 /// Byte offset just past the needle's on-disk record. Deletion tombstones
 /// carry TombstoneFileSize (-1) in the .idx but are written with DataSize=0,
 /// so their on-disk record is sized as 0. Mirrors Go's needleDiskEnd.
-fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
+pub(crate) fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
     let on_disk_size = if size.is_deleted() { Size(0) } else { size };
     offset.to_actual_offset() + get_actual_size(on_disk_size, version)
 }
@@ -4164,6 +4189,11 @@ pub fn scan_volume_file(
 
         if size.0 == 0 && _id.is_empty() {
             break; // end of valid data
+        }
+        // A negative size is a corrupt header, and body_length would advance the
+        // walk backwards from it. Go's scanners stop here by returning io.EOF.
+        if size.0 < 0 {
+            break;
         }
 
         let body_length = needle::needle_body_length(size, version);
@@ -5236,6 +5266,71 @@ mod tests {
         // Relocating again is a no-op: the index is already where asked.
         v.relocate_index_to(idx).unwrap();
         assert!(Path::new(&idx_dir_idx).exists());
+    }
+
+    #[test]
+    fn test_load_keeps_index_co_located_with_the_data() {
+        let root = TempDir::new().unwrap();
+        let data_dir = root.path().join("data");
+        let idx_dir = root.path().join("idx");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&idx_dir).unwrap();
+        let data = data_dir.to_str().unwrap();
+        let idx = idx_dir.to_str().unwrap();
+
+        let mut v = Volume::new(
+            data,
+            data,
+            "",
+            VolumeId(7),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let payload = b"payload-beside-the-data".to_vec();
+        let mut n = Needle {
+            id: NeedleId(42),
+            cookie: Cookie(0x55),
+            data: payload.clone(),
+            data_size: payload.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        drop(v);
+
+        // --dir.idx now names an empty directory: the index already beside the
+        // data keeps serving, and nothing lands in the new directory.
+        let reopened = Volume::new(
+            data,
+            idx,
+            "",
+            VolumeId(7),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert!(
+            Path::new(&format!("{data}/7.idx")).exists(),
+            "index stays with the data"
+        );
+        assert!(
+            !Path::new(&format!("{idx}/7.idx")).exists(),
+            "nothing written to the new idx dir"
+        );
+
+        let mut got = Needle {
+            id: NeedleId(42),
+            ..Needle::default()
+        };
+        reopened.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, payload);
     }
 
     #[test]

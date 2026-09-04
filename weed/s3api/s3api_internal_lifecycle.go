@@ -88,7 +88,7 @@ func (s3a *S3ApiServer) lifecycleDispatch(ctx context.Context, req *s3_lifecycle
 			return done(), nil
 		default:
 			err := s3a.WithFilerClient(false, func(c filer_pb.SeaweedFilerClient) error {
-				return s3a.deleteUnversionedObjectWithClient(c, req.Bucket, req.ObjectPath, metadataOnly)
+				return s3a.deleteUnversionedObjectWithClient(ctx, c, req.Bucket, req.ObjectPath, metadataOnly)
 			})
 			if err != nil {
 				if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) {
@@ -179,7 +179,7 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 	if !exists {
 		return noopResolved("NOT_FOUND"), nil
 	}
-	if err := s3a.rm(uploadsFolder, uploadID, true, true); err != nil {
+	if err := s3a.rm(ctx, uploadsFolder, uploadID, true, true); err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return noopResolved("NOT_FOUND_AT_DELETE"), nil
 		}

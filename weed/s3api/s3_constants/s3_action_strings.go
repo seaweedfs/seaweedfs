@@ -81,6 +81,25 @@ const (
 	S3_ACTION_GET_BUCKET_OBJECT_LOCK = "s3:GetBucketObjectLockConfiguration"
 	S3_ACTION_PUT_BUCKET_OBJECT_LOCK = "s3:PutBucketObjectLockConfiguration"
 
+	// Bucket encryption operations
+	// Note: DELETE bucket encryption uses s3:PutEncryptionConfiguration, matching AWS
+	S3_ACTION_GET_BUCKET_ENCRYPTION = "s3:GetEncryptionConfiguration"
+	S3_ACTION_PUT_BUCKET_ENCRYPTION = "s3:PutEncryptionConfiguration"
+
+	// Bucket request payment operations
+	S3_ACTION_GET_BUCKET_REQUEST_PAYMENT = "s3:GetBucketRequestPayment"
+	S3_ACTION_PUT_BUCKET_REQUEST_PAYMENT = "s3:PutBucketRequestPayment"
+
+	// Bucket public access block operations
+	// Note: DELETE uses s3:PutBucketPublicAccessBlock, matching AWS
+	S3_ACTION_GET_BUCKET_PUBLIC_ACCESS_BLOCK = "s3:GetBucketPublicAccessBlock"
+	S3_ACTION_PUT_BUCKET_PUBLIC_ACCESS_BLOCK = "s3:PutBucketPublicAccessBlock"
+
+	// Bucket ownership controls operations
+	// Note: DELETE uses s3:PutBucketOwnershipControls, matching AWS
+	S3_ACTION_GET_BUCKET_OWNERSHIP_CONTROLS = "s3:GetBucketOwnershipControls"
+	S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS = "s3:PutBucketOwnershipControls"
+
 	// Wildcard for all S3 actions
 	S3_ACTION_ALL = "s3:*"
 )

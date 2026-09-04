@@ -91,8 +91,14 @@ func ReadDirAllEntriesWithSnapshot(ctx context.Context, filerClient FilerClient,
 
 	for counter == paginationLimit {
 		counter = 0
+		lastStartFrom := startFrom
 		if _, err = doListWithSnapshot(ctx, filerClient, fullDirPath, prefix, counterFunc, startFrom, false, paginationLimit, snapshotTsNs); err != nil {
 			return snapshotTsNs, err
+		}
+		// A full page that ends on the name it started from would loop forever;
+		// a store whose ordering does not advance past the cursor causes this.
+		if counter == paginationLimit && startFrom == lastStartFrom {
+			return snapshotTsNs, fmt.Errorf("list %s: pagination stuck at %q", fullDirPath, startFrom)
 		}
 	}
 
@@ -155,7 +161,9 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 	defer cancel()
 	stream, err := client.ListEntries(ctx, request)
 	if err != nil {
-		return actualSnapshotTsNs, fmt.Errorf("list %s: %v", fullDirPath, err)
+		// fullDirPath is the caller's bucket and prefix; keep the status the filer
+		// sent so a retry is decided on that rather than on this message
+		return actualSnapshotTsNs, fmt.Errorf("list %s: %w", fullDirPath, err)
 	}
 
 	var prevEntry *Entry

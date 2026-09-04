@@ -230,14 +230,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 				fmt.Fprintf(writer, "Deleting %s... ", pathToDelete)
 
 				dir, name := util.FullPath(pathToDelete).DirAndName()
-				_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-					Directory:            dir,
-					Name:                 name,
-					IgnoreRecursiveError: false,
-					IsDeleteData:         true,
-					IsRecursive:          false,
-					IsFromOtherCluster:   false,
-				})
+				err := filer_pb.DoRemove(ctx, client, dir, name, true, false, false, false, nil)
 				if err != nil {
 					fmt.Fprintf(writer, "failed: %v\n", err)
 					return err

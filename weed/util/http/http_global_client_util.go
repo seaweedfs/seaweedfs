@@ -111,8 +111,10 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 
 	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
+		recordUnreachable(request.URL.Host)
 		return nil, true, err
 	}
+	recordReachable(request.URL.Host)
 	defer CloseResponse(response)
 
 	var reader io.ReadCloser
@@ -392,8 +394,12 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			recordUnreachable(req.URL.Host)
+		}
 		return true, err
 	}
+	recordReachable(req.URL.Host)
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		if r.StatusCode == http.StatusNotFound {
@@ -580,15 +586,19 @@ func SameUrls(a, b []string) bool {
 }
 
 // RefreshUrlsFunc supplies a fresh location list for a chunk. The retry loops
-// call it once, after every location in the list they were given has failed,
-// which is the point at which the list itself is the likely problem. Returning
-// nil or the same list leaves the caller on the original locations.
+// call it at most once: after every location in the list failed, to retry on
+// the fresh list at once, or after a later location answered for one that
+// failed, so the next read starts from what the cluster knows now instead of
+// trying the same dead replica again. Returning nil or the same list leaves
+// the caller on the original locations.
 type RefreshUrlsFunc func() []string
 
 // RetriedFetchChunkData reads a chunk, trying every location before backing off
 // and trying them again. refreshUrls may be nil; when it is not, a pass in which
 // every location failed is treated as a stale list rather than a slow cluster,
 // and the fresh list is tried immediately instead of after the next backoff.
+// A pass that failed on one location and succeeded on another refreshes the
+// list for the reads that follow.
 func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
 
 	loadJwtConfigOnce.Do(loadJwtConfig)
@@ -613,7 +623,8 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 		default:
 		}
 
-		for _, urlString := range urlStrings {
+		var failed bool
+		for _, urlString := range ReachableFirst(urlStrings) {
 			// Check for context cancellation before each volume server request
 			select {
 			case <-ctx.Done():
@@ -643,10 +654,14 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 				break
 			}
 			if err != nil {
+				failed = true
 				glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
 			} else {
 				break
 			}
+		}
+		if err == nil && failed && refreshUrls != nil {
+			refreshUrls()
 		}
 		if err != nil && shouldRetry {
 			if fresh, ok := refreshedUrls(ctx, refreshUrls, urlStrings, fileId); ok {
@@ -686,7 +701,8 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 		default:
 		}
 
-		for _, urlString := range urlStrings {
+		var failed bool
+		for _, urlString := range ReachableFirst(urlStrings) {
 			select {
 			case <-ctx.Done():
 				return 0, ctx.Err()
@@ -695,11 +711,15 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 
 			n, shouldRetry, err = readUrlDirectToBuffer(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), jwt, buffer)
 			if err == nil {
+				if failed && refreshUrls != nil {
+					refreshUrls()
+				}
 				return n, nil
 			}
 			if !shouldRetry {
 				break
 			}
+			failed = true
 			glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
 		}
 
@@ -737,8 +757,12 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
+		if ctx.Err() == nil {
+			recordUnreachable(req.URL.Host)
+		}
 		return 0, true, err
 	}
+	recordReachable(req.URL.Host)
 	defer CloseResponse(r)
 
 	if r.StatusCode >= 400 {

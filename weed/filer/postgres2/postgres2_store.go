@@ -9,6 +9,7 @@ package postgres2
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strconv"
 
@@ -33,8 +34,12 @@ func (store *PostgresStore2) GetName() string {
 }
 
 func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
-	// Absent key keeps a pooled default; an explicit 0 disables the idle pool.
-	configuration.SetDefault(prefix+"connection_max_idle", 2)
+	// Fewer idle slots than concurrent operations means a fresh connection per
+	// operation, until the filer runs out of ephemeral ports. connection_max_open
+	// stays unset: a listing runs a second query from its own callback, so a
+	// bounded pool deadlocks once the concurrency reaches it.
+	configuration.SetDefault(prefix+"connection_max_idle", 50)
+	configuration.SetDefault(prefix+"connection_max_lifetime_seconds", 300)
 	// Default on so minimal configs are not exposed to duplicate-key tx
 	// poisoning on Postgres; an explicit false still disables it.
 	configuration.SetDefault(prefix+"enableUpsert", true)
@@ -124,7 +129,11 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	if openErr != nil {
 		return openErr
 	}
-	store.DB = db
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return postgres.OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
+		return err
+	}
 
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)

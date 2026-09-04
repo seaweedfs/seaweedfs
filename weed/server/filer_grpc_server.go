@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -159,14 +158,19 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	return resp, err
 }
 
+// wdclientLocationsToPb converts the wdclient's internal Location entries
+// (carrying DataInRemote and grpc-port metadata) to the protobuf form served
+// by the filer gRPC API, preserving the fields the lookup client uses to
+// prefer a local replica over a remote-tiered one.
 func wdclientLocationsToPb(locations []wdclient.Location) []*filer_pb.Location {
 	locs := make([]*filer_pb.Location, 0, len(locations))
 	for _, loc := range locations {
 		locs = append(locs, &filer_pb.Location{
-			Url:        loc.Url,
-			PublicUrl:  loc.PublicUrl,
-			GrpcPort:   uint32(loc.GrpcPort),
-			DataCenter: loc.DataCenter,
+			Url:          loc.Url,
+			PublicUrl:    loc.PublicUrl,
+			GrpcPort:     uint32(loc.GrpcPort),
+			DataCenter:   loc.DataCenter,
+			DataInRemote: loc.DataInRemote,
 		})
 	}
 	return locs
@@ -195,6 +199,36 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	}
 
 	resp = &filer_pb.CreateEntryResponse{}
+
+	// An exclusive or conditional create is a read-then-write that the per-path
+	// lock below only makes atomic on this filer, while the store's insert is an
+	// upsert. Route it to the entry's ring owner so one filer's lock arbitrates
+	// every creator cluster-wide; is_moved bounds this to one hop. Plain creates
+	// are upserts either way and stay local.
+	if !req.IsMoved && (req.OExcl || conditionIsSet(req.Condition)) {
+		fullpath := util.NewFullPath(req.Directory, req.Entry.Name)
+		// Held apart from the named resp, which the local path below writes into:
+		// a failed forward must not leave it nil.
+		var ownerResp *filer_pb.CreateEntryResponse
+		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
+			glog.V(2).InfofCtx(ctx, "CreateEntry %s: forwarding to owner %s", fullpath, owner)
+			req.IsMoved = true
+			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				forwarded, e := client.CreateEntry(ctx, req)
+				if e != nil {
+					return e
+				}
+				ownerResp = forwarded
+				return nil
+			})
+		})
+		if handled {
+			if forwardErr != nil {
+				return &filer_pb.CreateEntryResponse{}, forwardErr
+			}
+			return ownerResp, nil
+		}
+	}
 
 	chunks, garbage, err2 := fs.cleanupChunks(ctx, util.Join(req.Directory, req.Entry.Name), nil, req.Entry)
 	if err2 != nil {
@@ -287,27 +321,29 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	// serialization point — even when the caller's ring view was stale. is_moved
 	// bounds this to one hop: a forwarded transaction is applied locally, so two
 	// filers that disagree on the owner during a ring change cannot loop.
-	if req.RouteKey != "" && !req.IsMoved && fs.filer.Dlm != nil {
-		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.RouteKey); owner != "" && owner != fs.option.Host {
-			// Rebuild rather than copy the request struct (it carries a mutex);
-			// the pointer/slice fields are shared since the original is not mutated.
-			forwarded := &filer_pb.ObjectTransactionRequest{
-				LockKey:            req.LockKey,
-				Condition:          req.Condition,
-				Mutations:          req.Mutations,
-				IsFromOtherCluster: req.IsFromOtherCluster,
-				Signatures:         req.Signatures,
-				ConditionKey:       req.ConditionKey,
-				RouteKey:           req.RouteKey,
-				IsMoved:            true,
-			}
+	if req.RouteKey != "" && !req.IsMoved {
+		// Rebuild rather than copy the request struct (it carries a mutex); the
+		// pointer/slice fields are shared since the original is not mutated.
+		forwarded := &filer_pb.ObjectTransactionRequest{
+			LockKey:            req.LockKey,
+			Condition:          req.Condition,
+			Mutations:          req.Mutations,
+			IsFromOtherCluster: req.IsFromOtherCluster,
+			Signatures:         req.Signatures,
+			ConditionKey:       req.ConditionKey,
+			RouteKey:           req.RouteKey,
+			IsMoved:            true,
+		}
+		var resp *filer_pb.ObjectTransactionResponse
+		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(owner pb.ServerAddress) error {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
-			var resp *filer_pb.ObjectTransactionResponse
-			err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				var e error
 				resp, e = client.ObjectTransaction(ctx, forwarded)
 				return e
 			})
+		})
+		if handled {
 			if err != nil {
 				return &filer_pb.ObjectTransactionResponse{}, err
 			}
@@ -433,7 +469,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 			// the expected no-op, and a failed teardown must not fail the
 			// already-applied delete.
 			parentErr := fs.filer.DeleteEntryMetaAndData(ctx, util.FullPath(m.Directory), false, false, false, fromOtherCluster, signatures, 0)
-			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !strings.Contains(parentErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+			if parentErr != nil && parentErr != filer_pb.ErrNotFound && !errors.Is(parentErr, filer.ErrNonEmptyFolder) {
 				glog.V(1).InfofCtx(ctx, "remove empty parent %s: %v", m.Directory, parentErr)
 			}
 		}
@@ -711,7 +747,7 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 
 	// remove old chunks if not included in the new ones
 	if existingEntry != nil {
-		garbage, err = filer.MinusChunks(ctx, fs.lookupFileId, existingEntry.GetChunks(), newEntry.GetChunks())
+		garbage, err = filer.MinusChunks(ctx, fs.lookupFileId, existingEntry.GetChunks(), newEntry.GetChunks(), fs.filer.MasterClient)
 		if err != nil {
 			return newEntry.GetChunks(), nil, fmt.Errorf("MinusChunks: %w", err)
 		}
@@ -890,8 +926,8 @@ func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.Collect
 	glog.V(4).InfofCtx(ctx, "CollectionList %v", req)
 	resp = &filer_pb.CollectionListResponse{}
 
-	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		masterResp, err := client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
+	err = fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		masterResp, err := client.CollectionList(ctx, &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: req.IncludeNormalVolumes,
 			IncludeEcVolumes:     req.IncludeEcVolumes,
 		})
@@ -911,7 +947,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).InfofCtx(ctx, "DeleteCollection %v", req)
 
-	err = fs.filer.DoDeleteCollection(req.GetCollection())
+	err = fs.filer.DoDeleteCollection(ctx, req.GetCollection())
 
 	return &filer_pb.DeleteCollectionResponse{}, err
 }

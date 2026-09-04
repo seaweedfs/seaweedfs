@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestDeleteUnversionedObjectWithClient_MetadataOnlySkipsChunkDelete(t *testi
 	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
 	client := &deleteObjectEntryTestClient{}
 
-	err := s3a.deleteUnversionedObjectWithClient(client, "b", "k", true)
+	err := s3a.deleteUnversionedObjectWithClient(context.Background(), client, "b", "k", true)
 	require.NoError(t, err)
 	require.NotNil(t, client.deleteReq)
 	assert.Equal(t, "/buckets/b", client.deleteReq.Directory)
@@ -61,7 +62,7 @@ func TestDeleteUnversionedObjectWithClient_FullDeletePreservesIsDeleteData(t *te
 	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
 	client := &deleteObjectEntryTestClient{}
 
-	err := s3a.deleteUnversionedObjectWithClient(client, "b", "k", false)
+	err := s3a.deleteUnversionedObjectWithClient(context.Background(), client, "b", "k", false)
 	require.NoError(t, err)
 	require.NotNil(t, client.deleteReq)
 	assert.True(t, client.deleteReq.IsDeleteData, "default delete must keep IsDeleteData true")
@@ -75,7 +76,7 @@ func TestDeleteUnversionedObjectWithClient_FullPathFromBucketsRoot(t *testing.T)
 	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
 	client := &deleteObjectEntryTestClient{}
 
-	err := s3a.deleteUnversionedObjectWithClient(client, "mybucket", "a/b/c.txt", false)
+	err := s3a.deleteUnversionedObjectWithClient(context.Background(), client, "mybucket", "a/b/c.txt", false)
 	require.NoError(t, err)
 	require.NotNil(t, client.deleteReq)
 	assert.Equal(t, "/buckets/mybucket/a/b", client.deleteReq.Directory)
@@ -86,7 +87,7 @@ func TestDeleteUnversionedObjectWithClientRejectsTraversal(t *testing.T) {
 	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
 	client := &deleteObjectEntryTestClient{}
 
-	err := s3a.deleteUnversionedObjectWithClient(client, "source-bucket", "../victim-bucket/secret", false)
+	err := s3a.deleteUnversionedObjectWithClient(context.Background(), client, "source-bucket", "../victim-bucket/secret", false)
 
 	require.Error(t, err)
 	assert.Nil(t, client.deleteReq, "invalid path must be rejected before a filer delete RPC")
@@ -102,7 +103,7 @@ func TestDeleteUnversionedObjectWithClient_PropagatesEntryAttributesIrrelevant(t
 		deleteResp: &filer_pb.DeleteEntryResponse{},
 	}
 
-	require.NoError(t, s3a.deleteUnversionedObjectWithClient(client, "b", "k", true))
+	require.NoError(t, s3a.deleteUnversionedObjectWithClient(context.Background(), client, "b", "k", true))
 	require.NotNil(t, client.deleteReq)
 	assert.False(t, client.deleteReq.IsDeleteData)
 }

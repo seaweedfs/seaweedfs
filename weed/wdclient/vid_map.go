@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type HasLookupFileIdFunction interface {
@@ -21,10 +21,11 @@ type HasLookupFileIdFunction interface {
 type LookupFileIdFunctionType func(ctx context.Context, fileId string) (targetUrls []string, err error)
 
 type Location struct {
-	Url        string `json:"url,omitempty"`
-	PublicUrl  string `json:"publicUrl,omitempty"`
-	DataCenter string `json:"dataCenter,omitempty"`
-	GrpcPort   int    `json:"grpcPort,omitempty"`
+	Url          string `json:"url,omitempty"`
+	PublicUrl    string `json:"publicUrl,omitempty"`
+	DataCenter   string `json:"dataCenter,omitempty"`
+	GrpcPort     int    `json:"grpcPort,omitempty"`
+	DataInRemote bool   `json:"dataInRemote,omitempty"`
 }
 
 func (l Location) ServerAddress() pb.ServerAddress {
@@ -87,6 +88,10 @@ func (vc *vidMap) isSameDataCenter(loc *Location) bool {
 	return true
 }
 
+// LookupVolumeServerUrl returns the cached volume-server URLs for vid in
+// preference order: same-DC local, same-DC remote-tier, then the other data
+// centers on the same footing. Within each group the order is randomized so
+// load spreads across equivalent servers.
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
@@ -99,7 +104,15 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 		return nil, fmt.Errorf("volume %d not found", id)
 	}
 	var sameDcServers, otherDcServers []string
+	localUrls := make(map[string]bool)
+
 	for _, loc := range locations {
+		glog.V(4).Infof("lookup %s => %s, data in remote storage tier: %v", vid, loc.Url, loc.DataInRemote)
+
+		if !loc.DataInRemote {
+			localUrls[loc.Url] = true
+		}
+
 		if vc.isSameDataCenter(&loc) {
 			sameDcServers = append(sameDcServers, loc.Url)
 		} else {
@@ -112,11 +125,20 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	rand.Shuffle(len(otherDcServers), func(i, j int) {
 		otherDcServers[i], otherDcServers[j] = otherDcServers[j], otherDcServers[i]
 	})
-	// Prefer same data center
+	// Local replicas go first inside each data center, but never ahead of the
+	// data-center preference itself: a remote tier is often in the same region
+	// as the local replicas, so crossing a DC boundary to avoid it can cost
+	// more than the remote read it saves.
+	if len(localUrls) > 0 {
+		sameDcServers = util.ReorderToFront(localUrls, sameDcServers)
+		otherDcServers = util.ReorderToFront(localUrls, otherDcServers)
+	}
 	serverUrls = append(sameDcServers, otherDcServers...)
 	return
 }
 
+// LookupFileId resolves a "<vid>,<cookie>" file id to a list of HTTP read
+// URLs using the same DC-then-local ordering as LookupVolumeServerUrl.
 func (vc *vidMap) LookupFileId(ctx context.Context, fileId string) (fullUrls []string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
@@ -132,6 +154,9 @@ func (vc *vidMap) LookupFileId(ctx context.Context, fileId string) (fullUrls []s
 	return
 }
 
+// GetVidLocations returns the cached Location entries for vid as a string,
+// for callers that need richer per-server fields than raw URLs (e.g.
+// DataInRemote, PublicUrl).
 func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
@@ -145,6 +170,11 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 	return nil, fmt.Errorf("volume id %s not found", vid)
 }
 
+// GetLocations returns the cached Location entries for vid as a uint32.
+// When both regular and EC entries are present, whichever was learned last
+// wins so a volume that switched between regular and EC encoding stops
+// answering from the stale copy. Returns found=false when nothing remains,
+// including when only an older-generation entry would otherwise apply.
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()
@@ -232,6 +262,14 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 // replaces what an earlier one held instead of merging with it: after a reset
 // the new master is the authority, so a volume that moved must not keep
 // answering with the server it moved off. Callers must hold the write lock.
+//
+// If the URL is already present and the remote/local classification matches,
+// the entry is left untouched (same replica, same view). When the
+// classification flips -- e.g. a volume tiered to remote storage, or a
+// remote-backed replica restored locally -- the entry is rebuilt so
+// subsequent lookups pick up the new DataInRemote. The server reference key
+// only depends on the URL/grpc port, so it stays stable across the flip and
+// the refcount does not need to move.
 func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid uint32, location Location) {
 	entry, found := vid2Locations[vid]
 	if !found || entry.generation != vc.generation {
@@ -246,8 +284,18 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 		return
 	}
 
-	for _, loc := range entry.locations {
+	for i, loc := range entry.locations {
 		if loc.Url == location.Url {
+			if loc.DataInRemote == location.DataInRemote {
+				return
+			}
+			// A reader holds the slice GetLocations handed it after the lock
+			// was dropped, so the replacement is copied rather than written
+			// into the array underneath it.
+			updated := make([]Location, len(entry.locations))
+			copy(updated, entry.locations)
+			updated[i] = location
+			entry.locations = updated
 			return
 		}
 	}

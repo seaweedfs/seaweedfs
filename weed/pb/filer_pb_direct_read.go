@@ -25,6 +25,11 @@ const logEntryChannelSize = 512
 // prefix, mirroring the filer package's unexported constant.
 const maxLogEntrySize = 1 << 30
 
+// ErrLogFileRead marks a failure to read persisted log chunks from volume
+// servers. It surfaces as the metadata stream's error, but says nothing about
+// the filer connection that carried the stream.
+var ErrLogFileRead = errors.New("read log file refs")
+
 // errReaderStopped signals that the entry consumer asked to stop (the merge
 // loop aborted or the caller hit a processing error). It is not a read failure.
 var errReaderStopped = errors.New("log entry reader stopped")

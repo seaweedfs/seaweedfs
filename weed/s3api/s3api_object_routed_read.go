@@ -38,7 +38,7 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 
 	dir, name := fullPath.DirAndName()
 	var entry *filer_pb.Entry
-	err := s3a.withFilerClientFailover(preferred, false, func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.withFilerClientFailover(context.Background(), preferred, false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,

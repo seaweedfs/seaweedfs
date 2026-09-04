@@ -55,7 +55,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 
 	// List S3 servers
 	var s3Servers []string
-	err := s.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := s.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		glog.V(4).Infof("IAM: listing S3 servers (FilerGroup: '%s')", s.masterClient.FilerGroup)
 		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.S3Type,

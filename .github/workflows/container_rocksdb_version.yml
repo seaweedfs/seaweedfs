@@ -22,6 +22,9 @@ permissions:
 jobs:
   build-rocksdb-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -94,6 +97,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v2
         with:
           context: ./docker
@@ -108,3 +112,8 @@ jobs:
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
+
+      - name: Sign
+        uses: ./.github/actions/sign-image
+        with:
+          images: chrislusf/seaweedfs@${{ steps.build.outputs.digest }}

@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"errors"
+	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -60,7 +61,17 @@ func (wfs *WFS) streamDeleteEntry(ctx context.Context, req *filer_pb.DeleteEntry
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var err error
 		resp, err = client.DeleteEntry(ctx, req)
-		return err
+		if err != nil {
+			return err
+		}
+		// A refused delete arrives in the response, as the stream branch above.
+		if resp.Error != "" {
+			return &streamMutateError{msg: resp.Error, errno: syscall.EIO}
+		}
+		return nil
 	})
-	return resp, err
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }

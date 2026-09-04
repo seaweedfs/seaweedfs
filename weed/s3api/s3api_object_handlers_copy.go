@@ -643,7 +643,7 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string) error {
 	versionPath := util.FullPath(fmt.Sprintf("%s/%s", bucketDir, versionObjectPath))
 	versionDir, versionName := versionPath.DirAndName()
-	return s3a.rmObject(versionDir, versionName, true, false)
+	return s3a.rmObject(context.Background(), versionDir, versionName, true, false)
 }
 
 func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
@@ -787,13 +787,9 @@ func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, 
 }
 
 type CopyPartResult struct {
-	LastModified      time.Time `xml:"LastModified"`
-	ETag              string    `xml:"ETag"`
-	ChecksumCRC32     string    `xml:"ChecksumCRC32,omitempty"`
-	ChecksumCRC32C    string    `xml:"ChecksumCRC32C,omitempty"`
-	ChecksumCRC64NVME string    `xml:"ChecksumCRC64NVME,omitempty"`
-	ChecksumSHA1      string    `xml:"ChecksumSHA1,omitempty"`
-	ChecksumSHA256    string    `xml:"ChecksumSHA256,omitempty"`
+	LastModified time.Time `xml:"LastModified"`
+	ETag         string    `xml:"ETag"`
+	ChecksumResult
 }
 
 func buildCopyPartResult(etag string, lastModified time.Time, metadata SSEResponseMetadata) CopyPartResult {
@@ -801,18 +797,7 @@ func buildCopyPartResult(etag string, lastModified time.Time, metadata SSERespon
 		ETag:         etag,
 		LastModified: lastModified,
 	}
-	switch metadata.ChecksumHeaderName {
-	case s3_constants.AmzChecksumCRC32:
-		result.ChecksumCRC32 = metadata.ChecksumValue
-	case s3_constants.AmzChecksumCRC32C:
-		result.ChecksumCRC32C = metadata.ChecksumValue
-	case s3_constants.AmzChecksumCRC64NVME:
-		result.ChecksumCRC64NVME = metadata.ChecksumValue
-	case s3_constants.AmzChecksumSHA1:
-		result.ChecksumSHA1 = metadata.ChecksumValue
-	case s3_constants.AmzChecksumSHA256:
-		result.ChecksumSHA256 = metadata.ChecksumValue
-	}
+	result.SetChecksum(metadata.ChecksumHeaderName, metadata.ChecksumValue)
 	return result
 }
 
@@ -1028,6 +1013,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
+		// the copy above re-creates a directory an abort removed mid-copy
+		if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
+			return
+		}
 		setEtag(w, "\""+strings.Trim(etag, "\"")+"\"")
 		// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
 		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
@@ -1090,7 +1079,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// Save the part entry to the multipart uploads folder
 	// Check if part exists and remove it first (allow re-copying same part)
 	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
-		if err := s3a.rm(uploadDir, partName, false, false); err != nil {
+		if err := s3a.rm(r.Context(), uploadDir, partName, false, false); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
@@ -1101,6 +1090,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		entry.Extended = dstEntry.Extended
 	}); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// the copy above re-creates a directory an abort removed mid-copy
+	if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
 		return
 	}
 

@@ -17,7 +17,7 @@ import (
 // openIndex returns a file descriptor for the volume's index, and the index size in bytes.
 func (v *Volume) openIndex() (*os.File, int64, error) {
 	idxFileName := v.FileName(".idx")
-	idxFile, err := os.OpenFile(idxFileName, os.O_RDONLY, 0644)
+	idxFile, err := backend.OpenVolumeFile(idxFileName, os.O_RDONLY)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to open IDX file %s for volume %v: %v", idxFileName, v.Id, err)
 	}

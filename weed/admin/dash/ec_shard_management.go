@@ -561,7 +561,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 	// Get detailed EC shard information for the specific volume via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeId: volumeID})
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{VolumeIds: []uint32{volumeID}})
 		if err != nil {
 			return err
 		}

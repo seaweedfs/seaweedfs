@@ -429,6 +429,39 @@ func TestSessionExpiration(t *testing.T) {
 	assert.True(t, allowed, "Access should still be allowed since token hasn't naturally expired")
 }
 
+// TestSessionOutlivesShortLivedToken verifies the session lifetime is not
+// clamped to the web identity token's exp: IdPs like GitLab issue ~2-minute
+// id_tokens, and the session should still run the configured duration.
+func TestSessionOutlivesShortLivedToken(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	shortLivedJWT := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key",
+		time.Now().Add(3*time.Minute))
+
+	tests := []struct {
+		name            string
+		durationSeconds *int64
+		wantDuration    time.Duration
+	}{
+		{"default duration ignores token exp", nil, time.Hour},
+		{"explicit DurationSeconds ignores token exp", int64Ptr(3600), time.Hour},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+				RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
+				WebIdentityToken: shortLivedJWT,
+				RoleSessionName:  "short-lived-token-test",
+				DurationSeconds:  tc.durationSeconds,
+			})
+			require.NoError(t, err)
+			assert.WithinDuration(t, time.Now().Add(tc.wantDuration), response.Credentials.Expiration, time.Minute)
+		})
+	}
+}
+
 // TestTrustPolicyValidation tests role trust policy validation
 func TestTrustPolicyValidation(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
@@ -717,12 +750,16 @@ func TestOIDCClaimsTrustPolicy(t *testing.T) {
 // Helper functions and test setup
 
 // createTestJWT creates a test JWT token with the specified issuer, subject and signing key
-func createTestJWT(t *testing.T, issuer, subject, signingKey string) string {
+func createTestJWT(t *testing.T, issuer, subject, signingKey string, exp ...time.Time) string {
+	expiresAt := time.Now().Add(time.Hour)
+	if len(exp) > 0 {
+		expiresAt = exp[0]
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"iss": issuer,
 		"sub": subject,
 		"aud": "test-client-id",
-		"exp": time.Now().Add(time.Hour).Unix(),
+		"exp": expiresAt.Unix(),
 		"iat": time.Now().Unix(),
 		// Add claims that trust policy validation expects
 		"idp": "test-oidc", // Identity provider claim for trust policy matching

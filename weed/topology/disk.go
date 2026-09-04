@@ -209,7 +209,7 @@ func (d *Disk) String() string {
 	return fmt.Sprintf("Disk:%s, volumes:%v, ecShards:%v", d.NodeImpl.String(), d.volumes, d.ecShards)
 }
 
-func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	d.Lock()
 	defer d.Unlock()
 	return d.doAddOrUpdateVolume(v, true)
@@ -218,13 +218,48 @@ func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
 // AddProvisionalVolume records a volume the master registered on its own --
 // volume growth -- before any server report has named it. Until one does, the
 // volume is protected from removal by a report that raced its creation.
-func (d *Disk) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
+func (d *Disk) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged, tierTransition bool) {
 	d.Lock()
 	defer d.Unlock()
 	return d.doAddOrUpdateVolume(v, false)
 }
 
-func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew, isChanged bool) {
+// SetVolumeReadOnly records the read-only flag the server reported for vid,
+// keeping the report digest and the active volume count in step, and reports
+// whether the disk holds vid. It is not a volume report: a provisional volume
+// stays protected from a stale report until one names it.
+func (d *Disk) SetVolumeReadOnly(vid needle.VolumeId, readOnly bool) (found bool) {
+	d.Lock()
+	defer d.Unlock()
+	v, found := d.volumes[vid]
+	if !found || v.ReadOnly == readOnly {
+		return found
+	}
+	d.volumeDigest ^= v.ReportHash()
+	v.ReadOnly = readOnly
+	d.volumeDigest ^= v.ReportHash()
+	delta := &DiskUsageCounts{activeVolumeCount: 1}
+	if readOnly {
+		delta.activeVolumeCount = -1
+	}
+	d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), delta)
+	return true
+}
+
+// doAddOrUpdateVolume returns three signals about how v was installed against
+// any existing record:
+//
+//   - isNew: no record was held before; the volume arrived.
+//   - isChanged: the ReadOnly flag flipped (the only field isChanged currently
+//     tracks). Other fields changing without ReadOnly flipping leaves this
+//     false.
+//   - tierTransition: v's IsRemote() classification differs from the previous
+//     record. The volume was already known and remains servable, but every
+//     connected client needs to refresh its replica priority -- a remote-tier
+//     replica restored locally must jump the read order, and one newly tiered
+//     to remote storage must give way. Callers that broadcast volume changes
+//     to clients must include tier-transitioned volumes alongside arrivals.
+func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew, isChanged, tierTransition bool) {
 	deltaDiskUsage := &DiskUsageCounts{}
 	if oldV, ok := d.volumes[v.Id]; !ok {
 		stored := v
@@ -253,7 +288,8 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew
 			// server keeps reporting.
 			v.DiskId = oldV.DiskId
 		}
-		if oldV.IsRemote() != v.IsRemote() {
+		tierTransition = oldV.IsRemote() != v.IsRemote()
+		if tierTransition {
 			if v.IsRemote() {
 				deltaDiskUsage.remoteVolumeCount = 1
 			}
@@ -291,16 +327,20 @@ func (d *Disk) GetVolumes() []storage.VolumeInfo {
 	return d.AppendVolumes(make([]storage.VolumeInfo, 0, d.VolumeCount()))
 }
 
-// AppendVolumeIds appends the ids of the disk's volumes to dst. Callers that
-// only need to name volumes use this rather than AppendVolumes, which copies
-// a whole record per volume to be read for four bytes of it.
-func (d *Disk) AppendVolumeIds(dst []uint32) []uint32 {
+// AppendVolumeIds appends the ids of the disk's volumes to all, and repeats
+// the remote-tier ones on remote. Callers that only need to name volumes use
+// this rather than AppendVolumes, which copies a whole record per volume to
+// be read for four bytes of it.
+func (d *Disk) AppendVolumeIds(all, remote []uint32) ([]uint32, []uint32) {
 	d.RLock()
 	defer d.RUnlock()
-	for id := range d.volumes {
-		dst = append(dst, uint32(id))
+	for id, v := range d.volumes {
+		all = append(all, uint32(id))
+		if v.IsRemote() {
+			remote = append(remote, uint32(id))
+		}
 	}
-	return dst
+	return all, remote
 }
 
 // AppendVolumes appends the disk's volumes to dst, so a caller gathering

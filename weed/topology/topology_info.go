@@ -87,6 +87,12 @@ func (t *Topology) ToVolumeMap() interface{} {
 	return m
 }
 
+// ToVolumeLocations snapshots every data node's volume set into a list of
+// per-node VolumeLocation messages. NewVids carries every volume; RemoteVids
+// repeats the remote-tier subset so clients can route reads to a local
+// replica first when one exists on any node. EC shards are flattened into
+// NewEcVids so each vid is reported once even when its shards live on
+// multiple disks of the same node.
 func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocation) {
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
@@ -100,7 +106,9 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 					DataCenter: dn.GetDataCenterId(),
 					GrpcPort:   uint32(dn.GrpcPort),
 				}
-				volumeLocation.NewVids = dn.AppendVolumeIds(nil)
+
+				volumeLocation.NewVids, volumeLocation.RemoteVids = dn.AppendVolumeIds(nil, nil)
+
 				// A single EC volume's shards can live on multiple disks of
 				// one DataNode, so GetEcShards returns per-(vid,disk) entries.
 				// Dedupe so the snapshot carries each vid once.

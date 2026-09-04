@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -137,5 +139,19 @@ func TestCheckDiskSpaceProbesWithTheDiskTypeThreshold(t *testing.T) {
 		if probed != want {
 			t.Errorf("-disk %q: probed with %v, want %v", diskType, probed, want)
 		}
+	}
+}
+
+// -dir.idx naming a directory that does not exist yet used to leave every
+// volume unable to open its index.
+func TestNewDiskLocation_CreatesIdxDirectory(t *testing.T) {
+	root := t.TempDir()
+	idxDir := filepath.Join(root, "idx", "nested")
+
+	loc := NewDiskLocation(root, 1, util.MinFreeSpace{}, idxDir, types.HardDriveType, nil, stats.DiskIOProbeConfig{})
+	defer loc.Close()
+
+	if _, err := os.Stat(idxDir); err != nil {
+		t.Fatalf("idx dir not created: %v", err)
 	}
 }

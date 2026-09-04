@@ -21,7 +21,7 @@ func validReport() *proto.TelemetryData {
 		Version:           "4.40",
 		Os:                "linux/amd64",
 		VolumeServerCount: 5,
-		TotalDiskBytes:    123456789,
+		TotalDiskBytes:    123 << 30,
 		TotalVolumeCount:  42,
 		FilerCount:        2,
 		BrokerCount:       1,

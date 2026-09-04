@@ -295,17 +295,9 @@ func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client fi
 }
 
 // deleteDirectory deletes a directory and all its contents
-// Note: DeleteEntry RPC response doesn't have an Error field, so we only check the RPC err
 func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
-	_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-		Directory:            dir,
-		Name:                 name,
-		IsDeleteData:         true,
-		IsRecursive:          true,
-		IgnoreRecursiveError: true,
-	})
-	return err
+	return filer_pb.DoRemove(ctx, client, dir, name, true, true, true, false, nil)
 }
 
 // entryExists checks if an entry exists at the given path

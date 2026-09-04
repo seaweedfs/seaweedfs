@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var RetryWaitTime = 6 * time.Second
@@ -56,6 +58,20 @@ func IsTransientErrorMessage(msg string) bool {
 	return false
 }
 
+// ServerStatus returns the status a gRPC server sent, when the error chain
+// still carries one. Unlike status.FromError it keeps the server's own message
+// instead of the whole wrapped string: callers routinely format a path the
+// client chose into their wrapper, so a classifier that matches substrings has
+// to read what the server said and not what the caller added around it.
+func ServerStatus(err error) (*status.Status, bool) {
+	var carrier interface{ GRPCStatus() *status.Status }
+	if !errors.As(err, &carrier) {
+		return nil, false
+	}
+	st := carrier.GRPCStatus()
+	return st, st != nil
+}
+
 // IsTransientError reports whether err is a network or service condition worth
 // retrying. A cancelled or expired context never is: the caller is already gone.
 func IsTransientError(err error) bool {
@@ -74,6 +90,10 @@ func IsTransientError(err error) bool {
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
+	}
+	if st, ok := ServerStatus(err); ok {
+		return st.Code() == codes.Unavailable || st.Code() == codes.ResourceExhausted ||
+			IsTransientErrorMessage(st.Message())
 	}
 	return IsTransientErrorMessage(err.Error())
 }

@@ -151,6 +151,11 @@ func (ms *MasterServer) ProcessGrowRequest() {
 	}()
 }
 
+// LookupVolume resolves one or more volume ids (or "<vid>,<cookie>" file ids)
+// to their current replica locations on the volume servers. Each returned
+// entry carries DataInRemote per replica so the caller can prefer a local
+// replica; entries carrying a file id also receive a freshly generated read
+// jwt the volume server will accept.
 func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
 
 	resp := &master_pb.LookupVolumeResponse{}
@@ -167,10 +172,11 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			var locations []*master_pb.Location
 			for _, loc := range result.Locations {
 				locations = append(locations, &master_pb.Location{
-					Url:        loc.Url,
-					PublicUrl:  loc.PublicUrl,
-					DataCenter: loc.DataCenter,
-					GrpcPort:   uint32(loc.GrpcPort),
+					Url:          loc.Url,
+					PublicUrl:    loc.PublicUrl,
+					DataCenter:   loc.DataCenter,
+					GrpcPort:     uint32(loc.GrpcPort),
+					DataInRemote: loc.DataInRemote,
 				})
 			}
 			var auth string
@@ -189,9 +195,12 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 	}
 
-	// Only return Unavailable during warmup when every requested ID was a transient not-found
-	if len(req.VolumeOrFileIds) > 0 && notFoundCount == len(req.VolumeOrFileIds) && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
-		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d not found)", notFoundCount)
+	// While warming up, a not-found may only mean the volume server has not
+	// reported yet, so no part of the answer can be treated as authoritative.
+	// Callers retry Unavailable; a partial answer would let them take a
+	// missing volume as gone.
+	if notFoundCount > 0 && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d of %d not found)", notFoundCount, len(req.VolumeOrFileIds))
 		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 
@@ -286,8 +295,13 @@ func (ms *MasterServer) VolumeList(ctx context.Context, req *master_pb.VolumeLis
 		return nil, raft.NotLeaderError
 	}
 
+	filter, err := topology.NewVolumeFilter(req)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	resp := &master_pb.VolumeListResponse{
-		TopologyInfo:      ms.Topo.ToTopologyInfo(topology.NewVolumeFilter(req)),
+		TopologyInfo:      ms.Topo.ToTopologyInfo(filter),
 		VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
 	}
 
@@ -303,8 +317,13 @@ func (ms *MasterServer) VolumeListStream(req *master_pb.VolumeListRequest, strea
 		return raft.NotLeaderError
 	}
 
+	filter, err := topology.NewVolumeFilter(req)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	listed := ms.Topo.ToTopologyInfo(topology.NoVolumes())
-	err := stream.Send(&master_pb.VolumeListStreamResponse{
+	err = stream.Send(&master_pb.VolumeListStreamResponse{
 		Header: &master_pb.VolumeListResponse{
 			TopologyInfo:      listed,
 			VolumeSizeLimitMb: uint64(ms.option.VolumeSizeLimitMB),
@@ -314,7 +333,7 @@ func (ms *MasterServer) VolumeListStream(req *master_pb.VolumeListRequest, strea
 		return err
 	}
 
-	return ms.Topo.StreamVolumes(listed, topology.NewVolumeFilter(req), 0, stream.Send)
+	return ms.Topo.StreamVolumes(listed, filter, 0, stream.Send)
 }
 
 func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {

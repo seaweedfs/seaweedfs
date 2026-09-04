@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -133,5 +134,56 @@ func TestListAfterMidStreamFailureHasNoDuplicates(t *testing.T) {
 	}
 	if !isLast {
 		t.Fatal("want isLast")
+	}
+}
+
+// hangingCollectionFiler answers CollectionList only when the caller gives up,
+// standing in for a filer waiting on a master that has stopped answering.
+type hangingCollectionFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	calls atomic.Int32
+}
+
+func (f *hangingCollectionFiler) CollectionList(ctx context.Context, _ *filer_pb.CollectionListRequest) (*filer_pb.CollectionListResponse, error) {
+	f.calls.Add(1)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// The caller's own budget expiring says nothing about the filer that was
+// answering it. Counted as a filer failure it would, after the three that open
+// the circuit, mark every filer in the walk unhealthy -- and LookupVolumeIds
+// skips unhealthy filers, so unrelated object reads would start failing over a
+// slow master they never touched.
+func TestFailoverDoesNotBlameFilersForTheCallersExpiredBudget(t *testing.T) {
+	first := &hangingCollectionFiler{}
+	second := &hangingCollectionFiler{}
+	firstAddr := startFakeFiler(t, first)
+	secondAddr := startFakeFiler(t, second)
+	s3a := newFailoverTestServer(t, firstAddr, secondAddr)
+
+	// More attempts than the three failures it takes to open the circuit.
+	for attempt := 0; attempt < 5; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		err := s3a.withFilerClient(ctx, false, func(client filer_pb.SeaweedFilerClient) error {
+			_, listErr := client.CollectionList(ctx, &filer_pb.CollectionListRequest{})
+			return listErr
+		})
+		cancel()
+		if err == nil {
+			t.Fatalf("attempt %d: want the expired budget surfaced as an error", attempt)
+		}
+	}
+
+	for _, addr := range []pb.ServerAddress{firstAddr, secondAddr} {
+		if s3a.filerClient.ShouldSkipUnhealthyFiler(addr) {
+			t.Errorf("filer %s was flagged unhealthy for the caller's own timeout; unrelated reads would now skip it", addr)
+		}
+	}
+
+	// And the walk stops rather than spending an already-spent budget on the next
+	// filer, which cannot answer any faster.
+	if n := second.calls.Load(); n != 0 {
+		t.Errorf("the second filer was tried %d times with no budget left to answer in", n)
 	}
 }

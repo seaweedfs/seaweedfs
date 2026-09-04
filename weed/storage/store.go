@@ -643,6 +643,14 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		hasNoVolumes = false
 	}
 
+	// The state rides along on every heartbeat, not only when it changes: the
+	// first heartbeat to a master that just took the lead is how that master
+	// learns this server is in maintenance mode.
+	var state *volume_server_pb.VolumeServerState
+	if s.State != nil {
+		state = s.State.Proto()
+	}
+
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,
 		Port:            uint32(s.Port),
@@ -664,6 +672,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		HasNoEcShards:   len(ecVolumeMessages) == 0,
 		LocationUuids:   uuidList,
 		DiskTags:        diskTags,
+		State:           state,
 	}
 
 }
@@ -1018,7 +1027,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 		} else if err == ErrVolumeNotEmpty {
 			// onlyEmpty: a non-empty copy aborts the delete rather than leaving a
 			// partial result across disks.
-			return fmt.Errorf("DeleteVolume %d: %v", i, err)
+			return fmt.Errorf("DeleteVolume %d: %w", i, err)
 		} else {
 			// A real failure on one disk must not be masked by another copy's
 			// success: a stale copy left on the failing disk would re-register.
@@ -1030,7 +1039,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 		return fmt.Errorf("DeleteVolume %d failed on some disks: %w", i, errors.Join(errs...))
 	}
 	if !deletedAny {
-		return fmt.Errorf("delete volume %d not found on disk", i)
+		return fmt.Errorf("delete volume %d not found on disk: %w", i, ErrVolumeNotFound)
 	}
 	return nil
 }

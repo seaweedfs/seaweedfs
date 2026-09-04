@@ -67,7 +67,7 @@ func (c *commandRaftLeaderTransfer) Do(args []string, commandEnv *CommandEnv, wr
 	fmt.Fprintf(writer, "Checking current raft cluster status...\n")
 
 	var currentLeader string
-	err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err := commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -107,7 +107,7 @@ func (c *commandRaftLeaderTransfer) Do(args []string, commandEnv *CommandEnv, wr
 	}
 	fmt.Fprintf(writer, "\nTransferring leadership from %s to %s...\n", currentLeader, targetDesc)
 
-	err = commandEnv.MasterClient.WithClient(true, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(context.Background(), true, func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 

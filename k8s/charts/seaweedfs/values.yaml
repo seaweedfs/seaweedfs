@@ -55,7 +55,7 @@ global:
       gatewayHost: null
       gatewayPort: null
       additionalLabels: {}
-    # if enabled will use global.seaweedfs.replicationPlacement and override master & filer defaultReplicaPlacement config
+    # if enabled will use global.seaweedfs.replicationPlacement and override master.defaultReplication & filer.defaultReplicaPlacement config
     enableReplication: false
     #  replication type is XYZ:
     # X number of replica in other data centers
@@ -276,6 +276,7 @@ master:
     host: "master.seaweedfs.local"
     path: "/sw-master/?(.*)"
     pathType: ImplementationSpecific
+    labels: {}
     annotations: {}
       # nginx.ingress.kubernetes.io/auth-type: "basic"
       # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -600,6 +601,7 @@ volume:
     host: "volume.seaweedfs.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     annotations:
       nginx.ingress.kubernetes.io/app-root: /ui/index.html
       # nginx.ingress.kubernetes.io/use-regex: "true"
@@ -858,6 +860,7 @@ filer:
       host: "seaweedfs.cluster.local"
       path: "/sw-filer/?(.*)"
       pathType: ImplementationSpecific
+      labels: {}
       annotations: {}
         # nginx.ingress.kubernetes.io/backend-protocol: GRPC
         # nginx.ingress.kubernetes.io/auth-type: "basic"
@@ -884,6 +887,7 @@ filer:
       # whole host, not the HTTP UI's regex path.
       path: "/"
       pathType: Prefix
+      labels: {}
       annotations:
         # Ingress terminates TLS and re-originates gRPC (HTTP/2) to the filer.
         nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
@@ -1180,6 +1184,7 @@ s3:
     host: "seaweedfs.cluster.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     # additional ingress annotations for the s3 endpoint
     annotations: {}
     tls: []
@@ -1205,6 +1210,7 @@ s3:
     host: "seaweedfs-iceberg.cluster.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     annotations: {}
     tls: []
 
@@ -1214,6 +1220,7 @@ s3:
     host: "seaweedfs-lance.cluster.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     annotations: {}
     tls: []
 
@@ -1445,6 +1452,7 @@ admin:
     host: "admin.seaweedfs.local"
     path: "/"
     pathType: Prefix
+    labels: {}
     annotations: {}
     tls: []
 

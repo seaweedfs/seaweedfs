@@ -2,6 +2,7 @@ package storage
 
 import (
 	"sync"
+	"unique"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
@@ -14,13 +15,32 @@ type volumeReportKey struct {
 	volumeId uint32
 }
 
+// reportedIdentity is what naming a departure needs beyond the volume and disk
+// ids the key already holds. Volumes share very few distinct values here — one
+// per collection, placement, version, ttl and disk type in use — so entries
+// hold a handle to a shared copy, which keeps them small enough that a server
+// with millions of volumes is not paying for identity per volume.
+//
+// The handle is what keeps the shared copy alive, and dropping the last one
+// clears the entry. Handing out the value and letting the handle go, as
+// internVolumeString warns against, would have the next volume make a second
+// copy.
+type reportedIdentity struct {
+	collection       string
+	diskType         string
+	replicaPlacement uint32
+	version          uint32
+	ttl              uint32
+}
+
 // reportedVolume is what the master was told about one volume copy: the hash
 // that detects change, the heartbeat pass that last found the copy held, and
-// enough identity to name the volume if it departs.
+// the identity that names the volume if it departs. The departure message
+// itself is built on the way out, since almost no volume ever leaves.
 type reportedVolume struct {
-	hash  uint64
-	pass  uint64
-	short *master_pb.VolumeShortInformationMessage
+	hash     uint64
+	pass     uint64
+	identity unique.Handle[reportedIdentity]
 }
 
 // volumeReportState remembers what the master was last told about each volume,
@@ -88,9 +108,7 @@ func (s *volumeReportState) record(m *master_pb.VolumeInformationMessage, hash u
 	if previous, known := s.lastReported[key]; known {
 		changed := previous.hash != hash
 		if changed {
-			// Only a departure hands a short message out, and that entry leaves
-			// the map in the same step, so the one held here is read by no one.
-			fillShortInformation(previous.short, m)
+			previous.identity = identityOf(m)
 		}
 		previous.hash, previous.pass = hash, pass
 		s.lastReported[key] = previous
@@ -99,20 +117,31 @@ func (s *volumeReportState) record(m *master_pb.VolumeInformationMessage, hash u
 	if s.lastReported == nil {
 		s.lastReported = make(map[volumeReportKey]reportedVolume)
 	}
-	short := &master_pb.VolumeShortInformationMessage{}
-	fillShortInformation(short, m)
-	s.lastReported[key] = reportedVolume{hash: hash, pass: pass, short: short}
+	s.lastReported[key] = reportedVolume{hash: hash, pass: pass, identity: identityOf(m)}
 	return true
 }
 
-func fillShortInformation(short *master_pb.VolumeShortInformationMessage, m *master_pb.VolumeInformationMessage) {
-	short.Id = m.Id
-	short.Collection = m.Collection
-	short.ReplicaPlacement = m.ReplicaPlacement
-	short.Version = m.Version
-	short.Ttl = m.Ttl
-	short.DiskType = m.DiskType
-	short.DiskId = m.DiskId
+func identityOf(m *master_pb.VolumeInformationMessage) unique.Handle[reportedIdentity] {
+	return unique.Make(reportedIdentity{
+		collection:       m.Collection,
+		diskType:         m.DiskType,
+		replicaPlacement: m.ReplicaPlacement,
+		version:          m.Version,
+		ttl:              m.Ttl,
+	})
+}
+
+func (held reportedVolume) toShortInformation(key volumeReportKey) *master_pb.VolumeShortInformationMessage {
+	identity := held.identity.Value()
+	return &master_pb.VolumeShortInformationMessage{
+		Id:               key.volumeId,
+		Collection:       identity.collection,
+		ReplicaPlacement: identity.replicaPlacement,
+		Version:          identity.version,
+		Ttl:              identity.ttl,
+		DiskType:         identity.diskType,
+		DiskId:           key.diskId,
+	}
 }
 
 // commit closes the heartbeat. Copies this pass did not find are forgotten, so
@@ -151,7 +180,7 @@ func (s *volumeReportState) commit(pass uint64, generation uint64, full bool) []
 	var gone []*master_pb.VolumeShortInformationMessage
 	for _, key := range goneKeys {
 		if !full && goneIds[key.volumeId] {
-			gone = append(gone, s.lastReported[key].short)
+			gone = append(gone, s.lastReported[key].toShortInformation(key))
 		}
 		delete(s.lastReported, key)
 	}

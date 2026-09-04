@@ -221,18 +221,11 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		DisableXAttr:                *option.disableXAttr,
 		IsMacOs:                     runtime.GOOS == "darwin",
 		MetadataFlushSeconds:        *option.metadataFlushSeconds,
-		// RDMA acceleration options
-		RdmaEnabled:           *option.rdmaEnabled,
-		RdmaSidecarAddr:       *option.rdmaSidecarAddr,
-		RdmaFallback:          *option.rdmaFallback,
-		RdmaReadOnly:          *option.rdmaReadOnly,
-		RdmaMaxConcurrent:     *option.rdmaMaxConcurrent,
-		RdmaTimeoutMs:         *option.rdmaTimeoutMs,
-		DirIdleEvictSec:       *option.dirIdleEvictSec,
-		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
-		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
-		EagerFilerCreate:      p.eagerFilerCreate,
-		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
+		DirIdleEvictSec:             *option.dirIdleEvictSec,
+		EnableDistributedLock:       option.distributedLock != nil && *option.distributedLock,
+		WritebackCache:              option.writebackCache != nil && *option.writebackCache,
+		EagerFilerCreate:            p.eagerFilerCreate,
+		PosixDirNlink:               option.posixDirNlink != nil && *option.posixDirNlink,
 		// Peer chunk sharing
 		PeerEnabled:    option.peerEnabled != nil && *option.peerEnabled,
 		PeerListen:     peerStringOrEmpty(option.peerListen),
@@ -285,12 +278,25 @@ func resolveCacheDirs(option *MountOptions) (string, string) {
 }
 
 // volumeName labels the mount where the platform shows one, in Finder and in
-// Explorer. The mounted path names the disk; the filer address, which every
-// mount from one filer shares, is only the whole-tree fallback.
-func volumeName(filer, filerMountRootPath string) string {
-	name := path.Base(filerMountRootPath)
-	if name == "/" || name == "." {
+// Explorer. The mounted path names the disk, then the mount point; the filer
+// address, which every mount from one filer shares, is the last resort.
+func volumeName(filer, filerMountRootPath, dir string) string {
+	name := lastSegment(filerMountRootPath)
+	if name == "" {
+		name = lastSegment(dir)
+	}
+	if name == "" {
 		name = filer
 	}
 	return strings.ReplaceAll(name, ",", "+")
+}
+
+// lastSegment is the name a path ends with, and "" for the ones that name no
+// disk: the root, "." and a bare Windows drive letter.
+func lastSegment(p string) string {
+	name := path.Base(strings.ReplaceAll(p, `\`, "/"))
+	if name == "/" || name == "." || strings.HasSuffix(name, ":") {
+		return ""
+	}
+	return name
 }

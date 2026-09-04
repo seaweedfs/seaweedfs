@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -29,6 +30,7 @@ type SqlGenerator interface {
 type AbstractSqlStore struct {
 	SqlGenerator
 	DB                     *sql.DB
+	KvDB                   *sql.DB
 	SupportBucketTable     bool
 	dbs                    map[string]bool
 	dbsLock                sync.Mutex
@@ -94,6 +96,49 @@ func (store *AbstractSqlStore) RollbackTransaction(ctx context.Context) error {
 	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
 		return tx.Rollback()
 	}
+	return nil
+}
+
+// A listing holds its connection for the whole row iteration while its callback
+// reads a hard link through KvGet, so both cannot come out of one bounded pool:
+// the listings fill it and then wait for a connection none of them will release.
+// Give the key-value reads their own slice of connection_max_open. A cap of 1 is
+// the exception -- it has to become 2, or a single listing cannot finish.
+func splitPoolForKv(maxOpen int) (mainOpen, kvOpen int) {
+	if maxOpen <= 0 {
+		return maxOpen, 0
+	}
+	kvOpen = min(max(maxOpen/4, 1), maxKvPoolSize)
+	return max(maxOpen-kvOpen, 1), kvOpen
+}
+
+const maxKvPoolSize = 8
+
+// UseConnectionPools sizes the store's pool and, when it is bounded, opens the
+// separate pool the key-value reads run on.
+func (store *AbstractSqlStore) UseConnectionPools(db *sql.DB, openKv func() (*sql.DB, error), maxIdle, maxOpen, maxLifetimeSeconds int) error {
+
+	lifetime := time.Duration(maxLifetimeSeconds) * time.Second
+	mainOpen, kvOpen := splitPoolForKv(maxOpen)
+
+	db.SetMaxIdleConns(maxIdle)
+	db.SetMaxOpenConns(mainOpen)
+	db.SetConnMaxLifetime(lifetime)
+	store.DB = db
+
+	if kvOpen == 0 {
+		return nil
+	}
+
+	kvDB, err := openKv()
+	if err != nil {
+		return err
+	}
+	kvDB.SetMaxIdleConns(kvOpen)
+	kvDB.SetMaxOpenConns(kvOpen)
+	kvDB.SetConnMaxLifetime(lifetime)
+	store.KvDB = kvDB
+
 	return nil
 }
 
@@ -400,6 +445,9 @@ func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath
 
 func (store *AbstractSqlStore) Shutdown() {
 	store.DB.Close()
+	if store.KvDB != nil {
+		store.KvDB.Close()
+	}
 }
 
 func isValidBucket(bucket string) bool {

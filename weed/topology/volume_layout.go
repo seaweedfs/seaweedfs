@@ -53,13 +53,16 @@ const capacityRecoveryDelay = 30 * time.Second
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
-	growRequest      atomic.Bool
-	lastGrowCount    atomic.Uint32
-	rp               *super_block.ReplicaPlacement
-	ttl              *needle.TTL
-	diskType         types.DiskType
-	vid2location     map[needle.VolumeId]*VolumeLocationList
-	writables        []needle.VolumeId // transient array of writable volume id
+	growRequest   atomic.Bool
+	lastGrowCount atomic.Uint32
+	rp            *super_block.ReplicaPlacement
+	ttl           *needle.TTL
+	diskType      types.DiskType
+	vid2location  map[needle.VolumeId]*VolumeLocationList
+	writables     []needle.VolumeId // transient array of writable volume id
+	// writableMembers mirrors writables for membership tests, which run for
+	// every volume on every heartbeat through ensureCorrectWritables.
+	writableMembers  map[needle.VolumeId]struct{}
 	crowded          map[needle.VolumeId]struct{}
 	vacuumedVolumes  map[needle.VolumeId]time.Time
 	volumeSizeLimit  uint64
@@ -86,6 +89,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		diskType:         diskType,
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
+		writableMembers:  make(map[needle.VolumeId]struct{}),
 		crowded:          make(map[needle.VolumeId]struct{}),
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
@@ -400,9 +404,15 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	}
 }
 
+// isAllWritable reports whether every replica of vid can take writes. A write
+// lands on one replica and is forwarded to the rest, so one read-only replica,
+// or one on a server in maintenance mode, holds the whole volume out.
 func (vl *VolumeLayout) isAllWritable(vid needle.VolumeId) bool {
 	if location, ok := vl.vid2location[vid]; ok {
 		for _, dn := range location.list {
+			if dn.InMaintenanceMode() {
+				return false
+			}
 			if v, getError := dn.GetVolumesById(vid); getError == nil {
 				if v.ReadOnly {
 					return false
@@ -758,6 +768,28 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 	return true
 }
 
+// listVolumeDataCenters returns the data centers hosting at least one volume
+// of this layout, stopping once limit distinct DCs are seen (0 = no limit).
+// The walk holds accessLock and a layout can span millions of volumes, so
+// callers pass the smallest limit that answers their question and only a
+// layout truly confined to fewer DCs pays for a full walk.
+func (vl *VolumeLayout) listVolumeDataCenters(limit int) map[NodeId]struct{} {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	dataCenters := make(map[NodeId]struct{})
+	for _, location := range vl.vid2location {
+		for _, dn := range location.list {
+			if dcId := dn.GetDataCenterId(); dcId != "" {
+				dataCenters[NodeId(dcId)] = struct{}{}
+				if limit > 0 && len(dataCenters) >= limit {
+					return dataCenters
+				}
+			}
+		}
+	}
+	return dataCenters
+}
+
 // RackGrowPlan is one volume grow action produced by the periodic rack-aware
 // growth scan. An empty Rack means the grow is DC-wide.
 type RackGrowPlan struct {
@@ -766,8 +798,8 @@ type RackGrowPlan struct {
 	WritableVolumeCount uint32
 }
 
-// PlanRackAwareGrowth returns the grow actions needed so every location that
-// can serve writes keeps a non-crowded writable volume. stepCount is the
+// PlanRackAwareGrowth returns the grow actions needed so every data center
+// this layout lives in keeps a non-crowded writable volume. stepCount is the
 // default per-event increment.
 //
 // For rack-spanning replication (DiffRackCount > 0) a single logical volume
@@ -782,21 +814,33 @@ func (vl *VolumeLayout) PlanRackAwareGrowth(dcs map[NodeId][]NodeId, lastGrowCou
 		stepCount = c
 	}
 	growOncePerDc := vl.rp.DiffRackCount > 0
+	// Only maintain data centers already hosting this layout's volumes: a
+	// collection pinned to one DC (fs.configure -dataCenter) must not sprout
+	// volumes in every other DC, and a DC that does need this layout gets its
+	// volumes from the DC-constrained assign that first asks for them.
+	hostingDCs := vl.listVolumeDataCenters(len(dcs))
 	// Spread lastGrowCount evenly across all grow targets. Summing every rack
 	// up front keeps the divisor global, so DCs with different rack counts do
 	// not each over-grow from a per-DC divisor.
-	var rackPairs uint32
-	for _, racks := range dcs {
+	var rackPairs, dcCount uint32
+	for dcId, racks := range dcs {
+		if _, hosting := hostingDCs[dcId]; !hosting {
+			continue
+		}
+		dcCount++
 		rackPairs += uint32(len(racks))
 	}
 	for dcId, racks := range dcs {
+		if _, hosting := hostingDCs[dcId]; !hosting {
+			continue
+		}
 		if growOncePerDc {
 			if !vl.ShouldGrowVolumesByDcAndRack(&writables, dcId, "") {
 				continue
 			}
 			count := stepCount
 			if lastGrowCount > 0 {
-				count = ceilDiv(lastGrowCount, uint32(len(dcs)))
+				count = ceilDiv(lastGrowCount, dcCount)
 			}
 			plans = append(plans, RackGrowPlan{DataCenter: string(dcId), WritableVolumeCount: count})
 			continue
@@ -862,32 +906,34 @@ func (vl *VolumeLayout) CountUnderReplicatedVolumes() int {
 }
 
 func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
-	toDeleteIndex := -1
+	if _, ok := vl.writableMembers[vid]; !ok {
+		return false
+	}
 	for k, id := range vl.writables {
 		if id == vid {
-			toDeleteIndex = k
-			break
+			glog.V(0).Infoln("Volume", vid, "becomes unwritable")
+			vl.writables = append(vl.writables[0:k], vl.writables[k+1:]...)
+			delete(vl.writableMembers, vid)
+			return true
 		}
-	}
-	if toDeleteIndex >= 0 {
-		glog.V(0).Infoln("Volume", vid, "becomes unwritable")
-		vl.writables = append(vl.writables[0:toDeleteIndex], vl.writables[toDeleteIndex+1:]...)
-		return true
 	}
 	return false
 }
 func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
-	for _, v := range vl.writables {
-		if v == vid {
-			return false
-		}
+	if _, ok := vl.writableMembers[vid]; ok {
+		return false
 	}
 	glog.V(1).Infoln("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
+	vl.writableMembers[vid] = struct{}{}
 	return true
 }
 
+// SetVolumeReadOnly and SetVolumeWritable apply what dn itself said about its
+// replica of vid. That is recorded on the node first, so isAllWritable judges
+// the volume by it now rather than by the heartbeat that has yet to repeat it.
 func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, true)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -899,6 +945,7 @@ func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) boo
 }
 
 func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, false)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -906,7 +953,7 @@ func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) boo
 		location.SetReadOnly(dn, false)
 	}
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		return vl.setVolumeWritable(vid)
 	}
 	return false
@@ -966,7 +1013,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	}
 	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		becameWritable = vl.setVolumeWritable(vid)
 		if becameWritable {
 			if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() {
@@ -1046,12 +1093,26 @@ func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 }
 
 func (vlc *VolumeLayoutCollection) ToVolumeGrowRequest() *master_pb.VolumeGrowRequest {
-	return &master_pb.VolumeGrowRequest{
+	vgr := &master_pb.VolumeGrowRequest{
 		Collection:  vlc.Collection,
 		Replication: vlc.VolumeLayout.rp.String(),
 		Ttl:         vlc.VolumeLayout.ttl.String(),
 		DiskType:    vlc.VolumeLayout.diskType.String(),
 	}
+	// A layout living in exactly one data center is either pinned there or on
+	// a single-DC cluster; either way unconstrained growth has no business
+	// placing its volumes elsewhere. Cross-DC replication can never
+	// legitimately live in one DC — there a single hosting DC means an
+	// outage, not a pin.
+	if vlc.VolumeLayout.rp.DiffDataCenterCount > 0 {
+		return vgr
+	}
+	if dcs := vlc.VolumeLayout.listVolumeDataCenters(2); len(dcs) == 1 {
+		for dc := range dcs {
+			vgr.DataCenter = string(dc)
+		}
+	}
+	return vgr
 }
 
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {

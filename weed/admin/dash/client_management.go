@@ -20,7 +20,7 @@ import (
 
 // WithMasterClient executes a function with a master client connection
 func (s *AdminServer) WithMasterClient(f func(client master_pb.SeaweedClient) error) error {
-	return s.masterClient.WithClient(false, f)
+	return s.masterClient.WithClient(context.Background(), false, f)
 }
 
 // WithFilerClient executes a function with a filer client connection

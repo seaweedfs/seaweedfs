@@ -8,6 +8,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
@@ -49,6 +51,21 @@ func (store *SqliteStore) Initialize(configuration util.Configuration, prefix st
 	)
 }
 
+// sqliteDSN keeps the store's two pools on one database and lets a writer that
+// meets the other pool's reader wait for it instead of failing outright. A bare
+// :memory: is private to each connection, so it has to be named and shared.
+func sqliteDSN(dbFile string) string {
+	dsn := dbFile
+	if dsn == ":memory:" {
+		dsn = fmt.Sprintf("file:seaweedfs%d?mode=memory&cache=shared", time.Now().UnixNano())
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + "_pragma=busy_timeout(10000)"
+}
+
 func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (err error) {
 
 	store.SupportBucketTable = true
@@ -58,21 +75,25 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
-	var dbErr error
-	store.DB, dbErr = sql.Open("sqlite", dbFile)
+	dsn := sqliteDSN(dbFile)
+
+	db, dbErr := sql.Open("sqlite", dsn)
 	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
-			store.DB = nil
+		if db != nil {
+			db.Close()
 		}
 		return fmt.Errorf("can not connect to %s error:%v", dbFile, dbErr)
 	}
 
-	if err = store.DB.Ping(); err != nil {
+	if err = db.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", dbFile, err)
 	}
 
-	store.DB.SetMaxOpenConns(1)
+	if err = store.UseConnectionPools(db, func() (*sql.DB, error) {
+		return sql.Open("sqlite", dsn)
+	}, 1, 1, 0); err != nil {
+		return err
+	}
 
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
