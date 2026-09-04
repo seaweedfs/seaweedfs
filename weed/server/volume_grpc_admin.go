@@ -186,14 +186,13 @@ func (vs *VolumeServer) VolumeConsolidateIndex(ctx context.Context, req *volume_
 
 }
 
+// VolumeDelete is allowed in maintenance mode: it removes data from the server
+// rather than adding any, and evacuating a server in maintenance mode ends each
+// move by deleting the source copy (issue #11066).
 func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
 	resp := &volume_server_pb.VolumeDeleteResponse{}
 
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
-		return resp, err
-	}
-
-	if err := vs.CheckMaintenanceMode(); err != nil {
 		return resp, err
 	}
 
@@ -271,11 +270,10 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 
 }
 
+// makeVolumeReadonly is not gated on maintenance mode: marking a volume readonly
+// only restricts a server that is already meant to be read-only, and it is the
+// first step of moving a volume off a server under evacuation (issue #11066).
 func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volume, canDelete bool, persist bool) error {
-	if err := vs.CheckMaintenanceMode(); err != nil {
-		return err
-	}
-
 	// step 1: stop master from redirecting traffic here
 	if err := vs.notifyMasterVolumeReadonly(ctx, v, true); err != nil {
 		return err

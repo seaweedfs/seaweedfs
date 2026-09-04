@@ -464,11 +464,10 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 // VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed
 // the shard should not be mounted before calling this.
+// Allowed in maintenance mode: like VolumeDelete it only removes data, and
+// evacuating EC shards off a server in maintenance mode ends here (issue #11066).
 func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
 

@@ -520,14 +520,25 @@ func TestScrubVolumeMarkBrokenReadonlyInMaintenanceMode(t *testing.T) {
 
 	framework.EnableMaintenanceMode(t, ctx, grpcClient)
 
-	// scrub with the flag in maintenance mode: makeVolumeReadonly should fail
-	// and ScrubVolume should propagate the error
-	_, err := grpcClient.ScrubVolume(ctx, &volume_server_pb.ScrubVolumeRequest{
+	// marking a volume readonly only restricts a server that is already
+	// read-only, so maintenance mode does not block fencing broken volumes
+	resp, err := grpcClient.ScrubVolume(ctx, &volume_server_pb.ScrubVolumeRequest{
 		VolumeIds:                 []uint32{volumeID},
 		Mode:                      volume_server_pb.VolumeScrubMode_INDEX,
 		MarkBrokenVolumesReadonly: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("ScrubVolume with MarkBrokenVolumesReadonly in maintenance mode error mismatch: %v", err)
+	if err != nil {
+		t.Fatalf("ScrubVolume with MarkBrokenVolumesReadonly in maintenance mode failed: %v", err)
+	}
+	if len(resp.GetBrokenVolumeIds()) == 0 {
+		t.Fatalf("expected broken volume after corruption")
+	}
+
+	statusResp, err := grpcClient.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("VolumeStatus after scrub in maintenance mode failed: %v", err)
+	}
+	if !statusResp.GetIsReadOnly() {
+		t.Fatalf("broken volume should be read-only after MarkBrokenVolumesReadonly scrub in maintenance mode")
 	}
 }
