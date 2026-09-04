@@ -297,18 +297,18 @@ impl VolumeGrpcService {
     }
 
     /// Shared helper matching Go's `makeVolumeReadonly(ctx, v, canDelete, persist)`.
-    /// 1. Check maintenance mode
-    /// 2. Notify master (readonly=true)
-    /// 3. Mark local volume readonly
-    /// 4. Notify master again (cover heartbeat race)
+    /// Not gated on maintenance mode: marking a volume readonly only restricts a
+    /// server that is already meant to be read-only, and it is the first step of
+    /// moving a volume off a server under evacuation (issue #11066).
+    /// 1. Notify master (readonly=true)
+    /// 2. Mark local volume readonly
+    /// 3. Notify master again (cover heartbeat race)
     async fn make_volume_readonly(
         &self,
         vid: VolumeId,
         can_delete: bool,
         persist: bool,
     ) -> Result<(), Status> {
-        self.state.check_maintenance()?;
-
         let info = {
             let store = self.state.store.read().unwrap();
             let (loc_idx, vol) = store
@@ -1020,12 +1020,14 @@ impl VolumeServer for VolumeGrpcService {
         ))
     }
 
+    /// Allowed in maintenance mode: it removes data from the server rather than
+    /// adding any, and evacuating a server in maintenance mode ends each move by
+    /// deleting the source copy (issue #11066).
     async fn volume_delete(
         &self,
         request: Request<volume_server_pb::VolumeDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeDeleteResponse>, Status> {
         self.check_grpc_admin_auth(&request)?;
-        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
@@ -1059,7 +1061,7 @@ impl VolumeServer for VolumeGrpcService {
         self.check_grpc_admin_auth(&request)?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
-        // Go: volume lookup (L239-241) happens before maintenance check (L166 in makeVolumeReadonly)
+        // Go: VolumeMarkReadonly looks the volume up before calling makeVolumeReadonly
         {
             let store = self.state.store.read().unwrap();
             store
@@ -3014,12 +3016,13 @@ impl VolumeServer for VolumeGrpcService {
         ))
     }
 
+    /// Allowed in maintenance mode: like `volume_delete` it only removes data, and
+    /// evacuating EC shards off a server in maintenance mode ends here (issue #11066).
     async fn volume_ec_shards_delete(
         &self,
         request: Request<volume_server_pb::VolumeEcShardsDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsDeleteResponse>, Status> {
         self.check_grpc_admin_auth(&request)?;
-        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
