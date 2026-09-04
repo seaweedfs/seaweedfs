@@ -17,10 +17,10 @@ import (
 
 // IamGrpcServer implements the IAM gRPC service on the filer. Every RPC
 // requires a Bearer token in the "authorization" metadata signed with
-// adminSigningKey. weed/command/filer.go always supplies a non-empty key,
-// either jwt.filer_signing.key from security.toml or one it generates and
-// persists on first start, so in normal operation this service is never
-// reachable without a valid token.
+// adminSigningKey. weed/command/filer.go only registers this service once it
+// has a non-empty key — jwt.filer_signing.key from security.toml, or one it
+// generates and persists on first start — so it is never reachable without
+// a valid token.
 type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
 	credentialManager *credential.CredentialManager

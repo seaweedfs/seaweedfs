@@ -482,14 +482,16 @@ func (fo *FilerOptions) startFiler() {
 	// a key generated on first start (see resolveFilerAdminSigningKey).
 	// weed server / weed mini share the generated key with the admin UI
 	// automatically since both run in the same process; a separate admin or
-	// weed shell process needs jwt.filer_signing.key set explicitly.
+	// weed shell process needs jwt.filer_signing.key set explicitly. If no
+	// key can be resolved at all, leave the service unregistered rather than
+	// running it without authentication.
 	if credentialManager != nil {
 		adminSigningKey := resolveFilerAdminSigningKey(*fo.defaultLevelDbDirectory)
-		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
-		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
 		if len(adminSigningKey) == 0 {
-			glog.Warningf("IAM gRPC service on filer has no admin signing key; every RPC is unauthenticated")
+			glog.Errorf("Not registering IAM gRPC service on filer: no admin signing key available. Set jwt.filer_signing.key in security.toml, or fix write access to %s", *fo.defaultLevelDbDirectory)
 		} else {
+			iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
+			iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
 			glog.V(0).Info("Registered IAM gRPC service on filer (admin Bearer token required)")
 		}
 	}
