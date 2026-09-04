@@ -131,8 +131,7 @@ func (fs *FilerServer) proxyToVolumeServerURL(w http.ResponseWriter, r *http.Req
 	// "jwt" here is the filer credential that got the caller past the gate, and
 	// a volume server has no business seeing one. security.GetJwt reads that
 	// parameter before the Authorization header, so relaying it would also
-	// outrank the volume credential -- the token the filer attaches on a read,
-	// or the writer's own AssignVolume token on a write.
+	// hide the volume credential the filer attaches below.
 	query.Del("jwt")
 	if encoded := query.Encode(); encoded != "" {
 		targetURL += "?" + encoded
@@ -146,10 +145,9 @@ func (fs *FilerServer) proxyToVolumeServerURL(w http.ResponseWriter, r *http.Req
 	}
 
 	// Limit concurrent reads per volume server to prevent overload. Writes are
-	// deliberately exempt: a proxied write carries the caller's AssignVolume
-	// token, which expires 10s after the assign by default, so queueing one here
-	// can push it past expiry and turn it into a 401 the uploader does not
-	// re-assign on.
+	// deliberately exempt: the bursts this exists to contain are replication
+	// reads, and an upload queued behind them stalls a caller that is holding a
+	// volume assignment open.
 	if isProxyReadMethod(r.Method) {
 		volumeHost := proxyReq.URL.Host
 		if err := acquireProxySemaphore(ctx, volumeHost); err != nil {
@@ -171,23 +169,15 @@ func (fs *FilerServer) proxyToVolumeServerURL(w http.ResponseWriter, r *http.Req
 	}
 
 	// Decide the volume credential explicitly rather than letting the copied
-	// header stand, because the two directions need opposite handling.
-	//
-	// Reads: the volume server may require a read JWT even though the proxy
-	// endpoint doesn't, so mint one. When there is nothing to mint, drop the
-	// caller's Authorization instead of relaying it -- on this path it is a
-	// filer credential, and a volume server has no business seeing one.
-	//
-	// Writes: never mint. This branch runs ahead of the filer's JWT gate, so a
-	// token minted here would be signed for an unauthenticated caller. A
-	// legitimate writer already carries its own volume JWT from AssignVolume,
-	// so that one is forwarded untouched.
-	if isProxyReadMethod(r.Method) {
-		if jwt := fs.maybeGetVolumeReadJwtAuthorizationToken(fileId); jwt != "" {
-			proxyReq.Header.Set("Authorization", security.BearerPrefix+jwt)
-		} else {
-			proxyReq.Header.Del("Authorization")
-		}
+	// header stand. The caller's Authorization is the filer credential that got
+	// them past the gate: a volume server has no business seeing one, and it
+	// would not honour it anyway. Mint the credential the volume server does
+	// ask for, at the access level this request needs, and drop the caller's
+	// when there is nothing to mint.
+	if jwt := fs.maybeGetVolumeJwtAuthorizationToken(fileId, !isProxyReadMethod(r.Method)); jwt != "" {
+		proxyReq.Header.Set("Authorization", security.BearerPrefix+jwt)
+	} else {
+		proxyReq.Header.Del("Authorization")
 	}
 
 	proxyResponse, postErr := util_http.GetGlobalHttpClient().Do(proxyReq)

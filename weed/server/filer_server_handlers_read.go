@@ -331,11 +331,21 @@ func (fs *FilerServer) maybeGetVolumeReadJwtAuthorizationToken(fileId string) st
 	// solely when jwt.signing.read.key is set, so falling back to the write key
 	// buys no access on a read -- it only hands out a token that would authorize
 	// a write.
-	key := fs.volumeGuard.ReadSigningKey()
+	return fs.maybeGetVolumeJwtAuthorizationToken(fileId, false)
+}
+
+// maybeGetVolumeJwtAuthorizationToken mints the volume credential for one file
+// id at the requested access level, empty when that key is unset -- which is
+// also when the volume server asks for nothing.
+func (fs *FilerServer) maybeGetVolumeJwtAuthorizationToken(fileId string, isWrite bool) string {
+	key, expiresAfterSec := fs.volumeGuard.ReadSigningKey(), fs.volumeGuard.ReadExpiresAfterSec()
+	if isWrite {
+		key, expiresAfterSec = fs.volumeGuard.SigningKey(), fs.volumeGuard.ExpiresAfterSec()
+	}
 	if len(key) == 0 {
 		return ""
 	}
 	// Claim the base fid: the volume server strips a _N delta suffix before
 	// comparing, so a token claiming the suffixed form never matches.
-	return string(security.GenJwtForVolumeServer(key, fs.volumeGuard.ReadExpiresAfterSec(), baseFileId(fileId)))
+	return string(security.GenJwtForVolumeServer(key, expiresAfterSec, baseFileId(fileId)))
 }
