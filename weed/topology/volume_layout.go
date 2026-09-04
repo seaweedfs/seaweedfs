@@ -948,7 +948,7 @@ func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) boo
 		location.SetReadOnly(dn, false)
 	}
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		return vl.setVolumeWritable(vid)
 	}
 	return false
@@ -1008,7 +1008,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	}
 	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		becameWritable = vl.setVolumeWritable(vid)
 		if becameWritable {
 			if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() {

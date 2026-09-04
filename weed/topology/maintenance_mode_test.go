@@ -200,3 +200,81 @@ func TestMaintenanceModeTogglesVolumeWritability(t *testing.T) {
 	expectWritables("dn2 in maintenance: shared", vlShared)
 	expectWritables("dn2 in maintenance: alone", vlAlone)
 }
+
+// A vacuum commit or a mark-writable that lands after the server entered
+// maintenance mode must not put the volume back on the writable list. Both
+// used to check only the replica count, and since heartbeats carry only changed
+// volumes, nothing would have taken it off again.
+func TestMaintenanceModeHoldsThroughVacuumAndMarkWritable(t *testing.T) {
+	topo, dc := newMaintenanceTestTopology()
+	rack := NewRack("rack1")
+	dc.LinkChildNode(rack)
+	dn1 := addMaintenanceTestNode(rack, "dn1", 10)
+	dn2 := addMaintenanceTestNode(rack, "dn2", 10)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+	vi := storage.VolumeInfo{Id: 1, Size: 100, ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, Version: needle.GetCurrentVersion()}
+	dn1.AddOrUpdateVolume(vi)
+	dn2.AddOrUpdateVolume(vi)
+	topo.RegisterVolumeLayout(vi, dn1)
+	topo.RegisterVolumeLayout(vi, dn2)
+	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
+	expectWritableCount := func(step string, want int) {
+		t.Helper()
+		if got, _ := vl.GetWritableVolumeCount(); got != want {
+			t.Errorf("%s: writable count = %d, want %d", step, got, want)
+		}
+	}
+
+	// vacuum: taken off the writable list before compaction, dn1 enters
+	// maintenance meanwhile, then every replica commits
+	vl.DrainAndRemoveFromWritable(1)
+	topo.SetDataNodeMaintenanceMode(dn1, true)
+	for _, dn := range []*DataNode{dn1, dn2} {
+		if vl.SetVolumeAvailable(dn, 1, false, false) {
+			t.Errorf("vacuum commit on %s made the volume writable with a replica in maintenance", dn.Id())
+		}
+	}
+	expectWritableCount("after vacuum commit", 0)
+	topo.SetDataNodeMaintenanceMode(dn1, false)
+	expectWritableCount("after maintenance", 1)
+
+	// mark-writable from a vacuum worker, after dn1 entered maintenance
+	vl.SetVolumeReadOnly(dn2, 1)
+	topo.SetDataNodeMaintenanceMode(dn1, true)
+	if vl.SetVolumeWritable(dn2, 1) {
+		t.Error("mark-writable made the volume writable with a replica in maintenance")
+	}
+	expectWritableCount("after mark-writable", 0)
+	topo.SetDataNodeMaintenanceMode(dn1, false)
+	expectWritableCount("after maintenance", 1)
+}
+
+// SetDataNodeMaintenanceMode walks a snapshot of the node's volumes, so a
+// concurrent disconnect can have removed one from its layout by the time it is
+// re-evaluated. That must be a no-op, not a crash or a resurrected entry.
+func TestMaintenanceModeAfterVolumeLeftLayout(t *testing.T) {
+	topo, dc := newMaintenanceTestTopology()
+	rack := NewRack("rack1")
+	dc.LinkChildNode(rack)
+	dn := addMaintenanceTestNode(rack, "dn1", 10)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vi := storage.VolumeInfo{Id: 1, Size: 100, ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, Version: needle.GetCurrentVersion()}
+	dn.AddOrUpdateVolume(vi)
+	topo.RegisterVolumeLayout(vi, dn)
+	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
+	vl.UnRegisterVolume(&vi, dn)
+
+	for _, on := range []bool{true, false} {
+		if !topo.SetDataNodeMaintenanceMode(dn, on) {
+			t.Fatalf("SetDataNodeMaintenanceMode(%v) should report a change", on)
+		}
+		if got, _ := vl.GetWritableVolumeCount(); got != 0 {
+			t.Errorf("maintenance %v: writable count = %d, want 0", on, got)
+		}
+		if locations := vl.Lookup(1); locations != nil {
+			t.Errorf("maintenance %v: re-evaluating a departed volume re-created its location list: %v", on, locations)
+		}
+	}
+}
