@@ -383,6 +383,54 @@ func TestProxyRejectsTraversalBeforeLookup(t *testing.T) {
 	}
 }
 
+// The proxy branch reaches any needle in the cluster by file id, on the filer
+// port jwt.filer_signing exists to make safe to expose, so it has to sit behind
+// the same gate as every other request.
+func TestFilerHandlerGatesChunkProxy(t *testing.T) {
+	signingKey := "secret"
+	fs := &FilerServer{
+		option:     &FilerOption{},
+		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0),
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPost, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			r := httptest.NewRequest(method, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
+			w := httptest.NewRecorder()
+
+			// fs.filer is nil: reaching the lookup would panic, so surviving
+			// this call is itself proof the request was refused first.
+			fs.filerHandler(w, r)
+
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("anonymous %s of a chunk returned %d, want 401", method, w.Code)
+			}
+		})
+	}
+}
+
+// ... and once past it the branch still runs. A malformed fid is refused by
+// validateProxyChunkId ahead of any lookup, which is as far as this can go
+// without a cluster behind the filer.
+func TestFilerHandlerProxiesChunkForAuthorizedCaller(t *testing.T) {
+	signingKey := "secret"
+	fs := &FilerServer{
+		option:     &FilerOption{},
+		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0),
+	}
+	token := security.GenJwtForFilerServer(security.SigningKey(signingKey), 60)
+
+	r := httptest.NewRequest(http.MethodGet, "http://filer:8888/?proxyChunkId=3,not-a-fid", nil)
+	r.Header.Set("Authorization", security.BearerPrefix+string(token))
+	w := httptest.NewRecorder()
+
+	fs.filerHandler(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("authorized chunk proxy returned %d, want 400 from the fid check", w.Code)
+	}
+}
+
 func TestProxySemaphore_LimitsConcurrency(t *testing.T) {
 	host := "test-volume:8080"
 	defer proxySemaphores.Delete(host)

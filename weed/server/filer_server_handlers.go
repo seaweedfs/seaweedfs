@@ -56,17 +56,6 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// proxy to volume servers
-	var fileId string
-	if r.URL.Path == "/" {
-		fileId = r.URL.Query().Get("proxyChunkId")
-	}
-	if fileId != "" {
-		fs.proxyToVolumeServer(w, r, fileId)
-		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
-		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
-		return
-	}
 	requestMethod := r.Method
 	defer func(method *string) {
 		stats.FilerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
@@ -77,6 +66,17 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
+	}
+
+	// proxy to volume servers, after the gate: this is the one port operators
+	// expose, and the branch reaches any needle in the cluster by file id.
+	if r.URL.Path == "/" {
+		if fileId := r.URL.Query().Get("proxyChunkId"); fileId != "" {
+			fs.proxyToVolumeServer(w, r, fileId)
+			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
+			stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
+			return
+		}
 	}
 
 	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
