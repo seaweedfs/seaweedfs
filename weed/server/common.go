@@ -12,6 +12,8 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -414,6 +416,46 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		return fmt.Errorf("ProcessRangeRequest err: %w", err)
 	}
 	return nil
+}
+
+// CleanPathHandler serves a request whose path is not canonical ("//", "." or
+// ".." segments) at the cleaned path instead of letting http.ServeMux redirect
+// to it. ServeMux builds that redirect from the already percent-encoded path, so
+// the Location header is encoded twice (golang/go#79897): a client following it
+// re-sends "/负极全景" as "/%25E8%25B4%259F...", and the filer then stores a
+// directory literally named "%E8%B4%9F...". Cleaning here mirrors the path
+// ServeMux would have redirected to, so the decoded name reaches the handler.
+func CleanPathHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		escaped := r.URL.EscapedPath()
+		if cleaned := cleanPath(escaped); cleaned != escaped {
+			if p, err := url.PathUnescape(cleaned); err == nil {
+				r2 := new(http.Request)
+				*r2 = *r
+				r2.URL = new(url.URL)
+				*r2.URL = *r.URL
+				r2.URL.Path, r2.URL.RawPath = p, cleaned
+				r = r2
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// cleanPath is the canonical form http.ServeMux redirects to: path.Clean plus
+// the trailing slash, which the filer relies on to tell a directory from a file.
+func cleanPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	np := path.Clean(p)
+	if p[len(p)-1] == '/' && np != "/" {
+		np += "/"
+	}
+	return np
 }
 
 func requestIDMiddleware(h http.HandlerFunc) http.HandlerFunc {

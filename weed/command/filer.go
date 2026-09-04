@@ -400,6 +400,11 @@ func (fo *FilerOptions) startFiler() {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
 	}
 
+	// Serve "//" and ".." paths at their cleaned form instead of letting the mux
+	// redirect: its Location is double-escaped, turning non-ASCII names into
+	// percent-encoded directory names when a client follows it (#11125).
+	defaultHandler := weed_server.CleanPathHandler(defaultMux)
+
 	// Ensure fs.Shutdown() runs exactly once, whether triggered by a signal hook
 	// or by the main goroutine after Serve() returns (e.g., MiniCluster tests).
 	var shutdownOnce sync.Once
@@ -416,14 +421,15 @@ func (fo *FilerOptions) startFiler() {
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
+		publicHandler := weed_server.CleanPathHandler(publicVolumeMux)
 		go func() {
-			if e := http.Serve(publicListener, publicVolumeMux); e != nil {
+			if e := http.Serve(publicListener, publicHandler); e != nil {
 				glog.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
 		if localPublicListener != nil {
 			go func() {
-				if e := http.Serve(localPublicListener, publicVolumeMux); e != nil {
+				if e := http.Serve(localPublicListener, publicHandler); e != nil {
 					glog.Errorf("Volume server fail to serve public: %v", e)
 				}
 			}()
@@ -506,7 +512,7 @@ func (fo *FilerOptions) startFiler() {
 		if err != nil {
 			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
 		}
-		socketServer = newHttpServer(defaultMux, nil)
+		socketServer = newHttpServer(defaultHandler, nil)
 		go socketServer.Serve(filerSocketListener)
 	}
 
@@ -549,14 +555,14 @@ func (fo *FilerOptions) startFiler() {
 
 		var localTLSServer *http.Server
 		if filerLocalListener != nil {
-			localTLSServer = newHttpServer(defaultMux, tlsConfig)
+			localTLSServer = newHttpServer(defaultHandler, tlsConfig)
 			go func() {
 				if err := localTLSServer.ServeTLS(filerLocalListener, "", ""); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
-		httpS := newHttpServer(defaultMux, tlsConfig)
+		httpS := newHttpServer(defaultHandler, tlsConfig)
 
 		// Register a single shutdown hook that runs the steps in the correct order:
 		// stop accepting new gRPC/HTTP requests, then close the filer database.
@@ -600,14 +606,14 @@ func (fo *FilerOptions) startFiler() {
 	} else {
 		var localHTTPServer *http.Server
 		if filerLocalListener != nil {
-			localHTTPServer = newHttpServer(defaultMux, nil)
+			localHTTPServer = newHttpServer(defaultHandler, nil)
 			go func() {
 				if err := localHTTPServer.Serve(filerLocalListener); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
-		httpS := newHttpServer(defaultMux, nil)
+		httpS := newHttpServer(defaultHandler, nil)
 
 		// Register a single shutdown hook that runs the steps in the correct order:
 		// stop accepting new gRPC/HTTP requests, then close the filer database.
