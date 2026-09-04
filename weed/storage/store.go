@@ -643,6 +643,14 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		hasNoVolumes = false
 	}
 
+	// The state rides along on every heartbeat, not only when it changes: the
+	// first heartbeat to a master that just took the lead is how that master
+	// learns this server is in maintenance mode.
+	var state *volume_server_pb.VolumeServerState
+	if s.State != nil {
+		state = s.State.Proto()
+	}
+
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,
 		Port:            uint32(s.Port),
@@ -664,6 +672,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		HasNoEcShards:   len(ecVolumeMessages) == 0,
 		LocationUuids:   uuidList,
 		DiskTags:        diskTags,
+		State:           state,
 	}
 
 }

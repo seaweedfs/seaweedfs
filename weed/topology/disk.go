@@ -224,6 +224,28 @@ func (d *Disk) AddProvisionalVolume(v storage.VolumeInfo) (isNew, isChanged, tie
 	return d.doAddOrUpdateVolume(v, false)
 }
 
+// SetVolumeReadOnly records the read-only flag the server reported for vid,
+// keeping the report digest and the active volume count in step, and reports
+// whether the disk holds vid. It is not a volume report: a provisional volume
+// stays protected from a stale report until one names it.
+func (d *Disk) SetVolumeReadOnly(vid needle.VolumeId, readOnly bool) (found bool) {
+	d.Lock()
+	defer d.Unlock()
+	v, found := d.volumes[vid]
+	if !found || v.ReadOnly == readOnly {
+		return found
+	}
+	d.volumeDigest ^= v.ReportHash()
+	v.ReadOnly = readOnly
+	d.volumeDigest ^= v.ReportHash()
+	delta := &DiskUsageCounts{activeVolumeCount: 1}
+	if readOnly {
+		delta.activeVolumeCount = -1
+	}
+	d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), delta)
+	return true
+}
+
 // doAddOrUpdateVolume returns three signals about how v was installed against
 // any existing record:
 //

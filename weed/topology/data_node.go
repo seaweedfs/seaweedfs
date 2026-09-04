@@ -23,7 +23,11 @@ type DataNode struct {
 	Counter       int   // in race condition, the previous dataNode was not dead
 	IsTerminating bool
 
-	MaintenanceMode bool
+	// maintenanceMode mirrors the volume server's own flag, reported over the
+	// heartbeat. A server in maintenance is being drained: the master places
+	// no new volumes on it and assigns no writes to the volumes it holds. Read
+	// on the assign and volume-growth paths without the node lock.
+	maintenanceMode atomic.Bool
 	// lookupDigest covers the volumes reachable through this node in the volume
 	// layouts, for comparison against what its disks actually hold.
 	lookupDigest atomic.Uint64
@@ -58,10 +62,34 @@ func (dn *DataNode) String() string {
 	return fmt.Sprintf("Node:%s, Ip:%s, Port:%d, PublicUrl:%s", dn.NodeImpl.String(), dn.Ip, dn.Port, dn.PublicUrl)
 }
 
+// InMaintenanceMode reports whether the volume server asked to be left alone
+// for writes; see Topology.SetDataNodeMaintenanceMode for what that changes.
+func (dn *DataNode) InMaintenanceMode() bool {
+	return dn.maintenanceMode.Load()
+}
+
+// SetMaintenanceMode records the flag and reports whether it changed. Prefer
+// Topology.SetDataNodeMaintenanceMode, which also updates the writable lists.
+func (dn *DataNode) SetMaintenanceMode(on bool) (changed bool) {
+	return dn.maintenanceMode.Swap(on) != on
+}
+
 func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO, tierTransition bool) {
 	dn.Lock()
 	defer dn.Unlock()
 	return dn.doAddOrUpdateVolume(v)
+}
+
+// SetVolumeReadOnly records the read-only flag a volume server reported for
+// one of its volumes, ahead of the heartbeat that will repeat it.
+func (dn *DataNode) SetVolumeReadOnly(vid needle.VolumeId, readOnly bool) {
+	dn.Lock()
+	defer dn.Unlock()
+	for _, c := range dn.children {
+		if c.(*Disk).SetVolumeReadOnly(vid, readOnly) {
+			return
+		}
+	}
 }
 
 func (dn *DataNode) getOrCreateDisk(diskType string) *Disk {

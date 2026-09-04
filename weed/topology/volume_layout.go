@@ -404,9 +404,15 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	}
 }
 
+// isAllWritable reports whether every replica of vid can take writes. A write
+// lands on one replica and is forwarded to the rest, so one read-only replica,
+// or one on a server in maintenance mode, holds the whole volume out.
 func (vl *VolumeLayout) isAllWritable(vid needle.VolumeId) bool {
 	if location, ok := vl.vid2location[vid]; ok {
 		for _, dn := range location.list {
+			if dn.InMaintenanceMode() {
+				return false
+			}
 			if v, getError := dn.GetVolumesById(vid); getError == nil {
 				if v.ReadOnly {
 					return false
@@ -923,7 +929,11 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 	return true
 }
 
+// SetVolumeReadOnly and SetVolumeWritable apply what dn itself said about its
+// replica of vid. That is recorded on the node first, so isAllWritable judges
+// the volume by it now rather than by the heartbeat that has yet to repeat it.
 func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, true)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -935,6 +945,7 @@ func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) boo
 }
 
 func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, false)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -942,7 +953,7 @@ func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) boo
 		location.SetReadOnly(dn, false)
 	}
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		return vl.setVolumeWritable(vid)
 	}
 	return false
@@ -1002,7 +1013,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 	}
 	vl.initSizeTracking(vid, vInfo.Size, vInfo.CompactRevision)
 
-	if vl.enoughCopies(vid) {
+	if vl.enoughCopies(vid) && vl.isAllWritable(vid) {
 		becameWritable = vl.setVolumeWritable(vid)
 		if becameWritable {
 			if st := vl.sizeTracking[vid]; st != nil && !st.fullSince.IsZero() {
