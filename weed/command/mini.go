@@ -711,10 +711,11 @@ func ensureMiniDevSSES3Keys(dataFolder string) {
 // loadOrCreateMiniHexSecret loads a hex-encoded secret from path or generates
 // nBytes of randomness on first call, persists it (0600), and returns the hex
 // string. Returns "" if reading fails, generation fails, OR persistence fails
-// — refusing to return an in-memory-only secret is deliberate: SSE-S3 writes
-// data encrypted under this key, and a later restart that can't read the
-// persisted secret would generate a fresh one and orphan whatever was written.
-// Better to leave SSE-S3 disabled this run than to silently lose data later.
+// — refusing to return an in-memory-only secret is deliberate: callers use
+// this for secrets that must stay stable across restarts (encryption keys,
+// admin signing keys), and a restart that can't read the persisted value
+// would generate a fresh one and invalidate whatever depended on the old one.
+// Shared by mini's dev SSE-S3/IAM setup and the filer's admin signing key.
 func loadOrCreateMiniHexSecret(path string, nBytes int) string {
 	if data, err := os.ReadFile(path); err == nil {
 		if s := strings.TrimSpace(string(data)); s != "" {
@@ -723,12 +724,12 @@ func loadOrCreateMiniHexSecret(path string, nBytes int) string {
 	}
 	buf := make([]byte, nBytes)
 	if _, err := rand.Read(buf); err != nil {
-		glog.Warningf("mini: failed to generate dev secret for %s: %v", path, err)
+		glog.Warningf("failed to generate secret for %s: %v", path, err)
 		return ""
 	}
 	s := hex.EncodeToString(buf)
 	if err := os.WriteFile(path, []byte(s), 0600); err != nil {
-		glog.Warningf("mini: failed to persist dev secret to %s: %v (skipping; SSE-S3/IAM stay disabled this run to avoid orphaning data on next restart)", path, err)
+		glog.Warningf("failed to persist secret to %s: %v (skipping this run to avoid orphaning state on next restart)", path, err)
 		return ""
 	}
 	return s
