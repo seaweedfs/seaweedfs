@@ -80,6 +80,23 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO,
 	return dn.doAddOrUpdateVolume(v)
 }
 
+// SetVolumeReadOnly records the read-only flag a volume server reported for
+// one of its volumes, ahead of the heartbeat that will repeat it.
+func (dn *DataNode) SetVolumeReadOnly(vid needle.VolumeId, readOnly bool) {
+	dn.Lock()
+	defer dn.Unlock()
+	for _, c := range dn.children {
+		disk := c.(*Disk)
+		if v, err := disk.GetVolumesById(vid); err == nil {
+			if v.ReadOnly != readOnly {
+				v.ReadOnly = readOnly
+				disk.AddOrUpdateVolume(v)
+			}
+			return
+		}
+	}
+}
+
 func (dn *DataNode) getOrCreateDisk(diskType string) *Disk {
 	c, found := dn.children[NodeId(diskType)]
 	if !found {

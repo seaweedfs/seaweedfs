@@ -250,6 +250,57 @@ func TestMaintenanceModeHoldsThroughVacuumAndMarkWritable(t *testing.T) {
 	expectWritableCount("after maintenance", 1)
 }
 
+// A volume server notifies the master the moment it flips a volume between
+// read-only and writable, ahead of the heartbeat that repeats the flag. The
+// master must act on the notification, not on its heartbeat copy: mark-writable
+// takes effect at once, and a maintenance toggle landing between a mark-readonly
+// and its heartbeat must not put the volume back.
+func TestMarkReadOnlyAndWritableAheadOfHeartbeat(t *testing.T) {
+	topo, dc := newMaintenanceTestTopology()
+	rack := NewRack("rack1")
+	dc.LinkChildNode(rack)
+	dn1 := addMaintenanceTestNode(rack, "dn1", 10)
+	dn2 := addMaintenanceTestNode(rack, "dn2", 10)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+	vi := storage.VolumeInfo{Id: 1, Size: 100, ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, Version: needle.GetCurrentVersion()}
+	dn1.AddOrUpdateVolume(vi)
+	dn2.AddOrUpdateVolume(vi)
+	topo.RegisterVolumeLayout(vi, dn1)
+	topo.RegisterVolumeLayout(vi, dn2)
+	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
+	expectWritableCount := func(step string, want int) {
+		t.Helper()
+		if got, _ := vl.GetWritableVolumeCount(); got != want {
+			t.Errorf("%s: writable count = %d, want %d", step, got, want)
+		}
+	}
+
+	// the heartbeat has reported dn2's replica read-only
+	readOnly := vi
+	readOnly.ReadOnly = true
+	dn2.AddOrUpdateVolume(readOnly)
+	vl.EnsureCorrectWritables(&readOnly)
+	expectWritableCount("heartbeat says read-only", 0)
+
+	// dn2 marks it writable and notifies, before the next heartbeat
+	if !vl.SetVolumeWritable(dn2, 1) {
+		t.Error("mark-writable from the replica's own server should take effect at once")
+	}
+	expectWritableCount("after mark-writable", 1)
+	if v, err := dn2.GetVolumesById(1); err != nil || v.ReadOnly {
+		t.Errorf("the node's record should say writable, got %+v, %v", v, err)
+	}
+
+	// dn2 marks it read-only and notifies; dn1 leaves maintenance before the
+	// heartbeat repeats the flag
+	vl.SetVolumeReadOnly(dn2, 1)
+	expectWritableCount("after mark-readonly", 0)
+	topo.SetDataNodeMaintenanceMode(dn1, true)
+	topo.SetDataNodeMaintenanceMode(dn1, false)
+	expectWritableCount("re-evaluated before the heartbeat", 0)
+}
+
 // SetDataNodeMaintenanceMode walks a snapshot of the node's volumes, so a
 // concurrent disconnect can have removed one from its layout by the time it is
 // re-evaluated. That must be a no-op, not a crash or a resurrected entry.

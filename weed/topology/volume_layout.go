@@ -929,7 +929,11 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 	return true
 }
 
+// SetVolumeReadOnly and SetVolumeWritable apply what dn itself said about its
+// replica of vid. That is recorded on the node first, so isAllWritable judges
+// the volume by it now rather than by the heartbeat that has yet to repeat it.
 func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, true)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -941,6 +945,7 @@ func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) boo
 }
 
 func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) bool {
+	dn.SetVolumeReadOnly(vid, false)
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
