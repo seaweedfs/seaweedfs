@@ -180,6 +180,41 @@ func TestCopyKeepsRemoteEntryUnexpiring(t *testing.T) {
 	}
 }
 
+// Clients percent-encode non-ASCII path segments on the wire, so a rule has to
+// be matched against the decoded path the entry is written to, not the raw
+// request-target: a read-only rule on "/data/只读/" must still refuse a POST to
+// "/data/%E5%8F%AA%E8%AF%BB/".
+func TestPostHandlerMatchesStorageRuleOnDecodedPath(t *testing.T) {
+	const readOnlyPrefix = "/data/只读/"
+	store := newRenameTestStore()
+	source := newFileEntry("/src.txt", 11)
+	source.Content = []byte("hello")
+	store.entries["/src.txt"] = source
+	store.entries[readOnlyPrefix] = newDirectoryEntry(readOnlyPrefix, 10)
+
+	server := &FilerServer{
+		filer:          newRenameTestFiler(t, store),
+		option:         &FilerOption{},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	if err := server.filer.FilerConf.AddLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: readOnlyPrefix,
+		ReadOnly:       true,
+	}); err != nil {
+		t.Fatalf("AddLocationConf: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/data/%E5%8F%AA%E8%AF%BB/dst.txt?cp.from=/src.txt", http.NoBody)
+	rec := httptest.NewRecorder()
+	server.PostHandler(rec, req, 0)
+	if rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("copy into read-only path = %d, want %d; body=%q", rec.Code, http.StatusInsufficientStorage, rec.Body.String())
+	}
+	if _, err := store.FindEntry(context.Background(), readOnlyPrefix+"dst.txt"); err == nil {
+		t.Fatal("copy landed in the read-only path")
+	}
+}
+
 // A completed TUS upload uploads its chunks under the target path's rule, so the
 // entry it lands has to expire with them.
 func TestCompleteTusUploadAppliesRuleTtl(t *testing.T) {
