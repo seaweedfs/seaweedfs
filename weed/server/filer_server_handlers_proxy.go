@@ -128,14 +128,12 @@ func (fs *FilerServer) proxyToVolumeServerURL(w http.ResponseWriter, r *http.Req
 	// (e.g. readDeleted=true from weed mount) but drop the internal proxyChunkId.
 	query := r.URL.Query()
 	query.Del("proxyChunkId")
-	if isProxyReadMethod(r.Method) {
-		// On a read the filer decides the volume credential below, and
-		// security.GetJwt reads the "jwt" query parameter before the
-		// Authorization header -- so leaving a caller-supplied one in place
-		// would silently outrank the token we attach. Writes keep theirs: the
-		// proxy forwards a writer's own credential either way.
-		query.Del("jwt")
-	}
+	// "jwt" here is the filer credential that got the caller past the gate, and
+	// a volume server has no business seeing one. security.GetJwt reads that
+	// parameter before the Authorization header, so relaying it would also
+	// outrank the volume credential -- the token the filer attaches on a read,
+	// or the writer's own AssignVolume token on a write.
+	query.Del("jwt")
 	if encoded := query.Encode(); encoded != "" {
 		targetURL += "?" + encoded
 	}

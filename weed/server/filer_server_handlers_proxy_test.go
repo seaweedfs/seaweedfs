@@ -117,20 +117,25 @@ func TestProxyReadDropsCallerJwtQueryParam(t *testing.T) {
 	}
 }
 
-// A writer's credential is its own either way, so the query parameter is left
-// alone on writes -- stripping it would break a caller that presents its volume
-// JWT that way.
-func TestProxyWriteKeepsCallerJwtQueryParam(t *testing.T) {
+// On a write the query parameter carries the filer credential that got the
+// caller past the gate. Relaying it would hand a volume server a filer token
+// and, since security.GetJwt reads it first, hide the writer's AssignVolume
+// token behind one the volume server cannot validate.
+func TestProxyWriteDropsCallerJwtQueryParam(t *testing.T) {
 	volume := newProxyTestVolume(t)
 	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
 
 	r := httptest.NewRequest(http.MethodPost,
-		"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=caller-supplied", nil)
+		"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=filer-credential", nil)
+	r.Header.Set("Authorization", security.BearerPrefix+"assign-volume-token")
 	fs.proxyToVolumeServerURL(httptest.NewRecorder(), r, proxyTestFileId, volume.URL+"/"+proxyTestFileId)
 
 	volume.requireReached(t)
-	if got := volume.seenEffectiveJwt(); got != "caller-supplied" {
-		t.Fatalf("writer's own jwt query param was altered: got %q", got)
+	if q := volume.seenRawQuery(); strings.Contains(q, "jwt=") {
+		t.Fatalf("filer credential survived in the forwarded query: %q", q)
+	}
+	if got := volume.seenEffectiveJwt(); got != "assign-volume-token" {
+		t.Fatalf("volume server would evaluate %q, want the writer's own token", got)
 	}
 }
 
