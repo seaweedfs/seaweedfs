@@ -86,17 +86,13 @@ data:
       server serves its internal gRPC (IAM cache propagation, s3 lifecycle
       delete RPCs) as plaintext, while peers dial it with mTLS credentials:
       "tls: first record does not look like a TLS handshake".
-      Reuses the client certificate, already mounted on s3 pods by
-      s3-deployment.yaml (same pair the s3 HTTPS listener uses via the
-      seaweedfs.s3.tlsArgs helper unless s3.tlsSecret is set). */}}
+      Always uses the internal CA-signed client certificate (already mounted
+      on s3 pods by s3-deployment.yaml). Deliberately NOT s3.tlsSecret: that
+      secret is for the public HTTPS listener and may be issued by a public
+      CA which internal gRPC peers (trusting only grpc.ca) would reject. */}}
     [grpc.s3]
-    {{- if .Values.s3.tlsSecret }}
-    cert = "/usr/local/share/ca-certificates/s3/tls.crt"
-    key  = "/usr/local/share/ca-certificates/s3/tls.key"
-    {{- else }}
     cert = "/usr/local/share/ca-certificates/client/tls.crt"
     key  = "/usr/local/share/ca-certificates/client/tls.key"
-    {{- end }}
 
     # use this for any place needs a grpc client
     # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
