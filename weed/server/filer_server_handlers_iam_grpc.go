@@ -15,12 +15,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// IamGrpcServer implements the IAM gRPC service on the filer.
-// Auth is opt-in: when jwt.filer_signing.key is set in security.toml the
-// service requires a Bearer token in the "authorization" metadata signed with
-// that key; when it is empty every RPC is accepted unauthenticated, matching
-// the rest of SeaweedFS's gRPC surface. Operators who expose the filer gRPC
-// port beyond a trusted network should configure the key.
+// IamGrpcServer implements the IAM gRPC service on the filer. Every RPC
+// requires a Bearer token in the "authorization" metadata signed with
+// adminSigningKey. weed/command/filer.go always supplies a non-empty key,
+// either jwt.filer_signing.key from security.toml or one it generates and
+// persists on first start, so in normal operation this service is never
+// reachable without a valid token.
 type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
 	credentialManager *credential.CredentialManager
@@ -29,7 +29,8 @@ type IamGrpcServer struct {
 
 // NewIamGrpcServer creates a new IAM gRPC server. If adminSigningKey is empty
 // the service runs unauthenticated; otherwise every RPC requires a Bearer
-// token signed with the key.
+// token signed with the key. Production callers should not pass an empty
+// key — see weed/command/filer.go's resolveFilerAdminSigningKey.
 func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSigningKey security.SigningKey) *IamGrpcServer {
 	return &IamGrpcServer{
 		credentialManager: credentialManager,

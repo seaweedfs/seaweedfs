@@ -118,9 +118,11 @@ func TestIamGrpc_ValidToken_ReachesHandler(t *testing.T) {
 }
 
 func TestIamGrpc_NoSigningKey_Unauthenticated_Allowed(t *testing.T) {
-	// Auth is opt-in: when the server is built without a signing key, every
-	// RPC is accepted regardless of (or in the absence of) metadata so the
-	// admin UI works against a filer that has no jwt.filer_signing.key set.
+	// checkAdminAuth itself is a no-op when built with an empty key: every
+	// RPC is accepted regardless of (or in the absence of) metadata. Production
+	// never constructs the server this way — weed/command/filer.go's
+	// resolveFilerAdminSigningKey always supplies a real key — but the
+	// low-level behavior is still worth pinning down.
 	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
 	if err != nil {
 		t.Fatalf("NewCredentialManager: %v", err)
