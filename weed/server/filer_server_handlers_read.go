@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/format"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -139,6 +140,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 		writeJsonQuiet(w, r, http.StatusOK, entry)
+		return
+	}
+
+	if viewName := query.Get(format.ViewParam); viewName != "" {
+		fs.serveFormatView(ctx, w, r, entry, viewName)
 		return
 	}
 
