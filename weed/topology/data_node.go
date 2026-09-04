@@ -86,12 +86,7 @@ func (dn *DataNode) SetVolumeReadOnly(vid needle.VolumeId, readOnly bool) {
 	dn.Lock()
 	defer dn.Unlock()
 	for _, c := range dn.children {
-		disk := c.(*Disk)
-		if v, err := disk.GetVolumesById(vid); err == nil {
-			if v.ReadOnly != readOnly {
-				v.ReadOnly = readOnly
-				disk.AddOrUpdateVolume(v)
-			}
+		if c.(*Disk).SetVolumeReadOnly(vid, readOnly) {
 			return
 		}
 	}
