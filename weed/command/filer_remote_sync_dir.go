@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -225,13 +226,24 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			if isMetadataOnlyUpdate(resp.Directory, message) {
-				glog.V(2).Infof("update meta: %+v", resp)
-				return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
+				remoteEntry, err := liveRemoteEntry(option, message.NewParentPath, message.NewEntry)
+				if errors.Is(err, filer_pb.ErrNotFound) {
+					glog.V(2).Infof("skipping updating deleted entry: %+v", resp)
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				if remoteEntry != nil {
+					glog.V(2).Infof("update meta: %+v", resp)
+					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
+				}
+				glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 			}
 			glog.V(2).Infof("update: %+v", resp)
-			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
-			if err := client.DeleteFile(oldDest); err != nil {
-				if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
+			if !proto.Equal(oldDest, dest) {
+				glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
+				if err := client.DeleteFile(oldDest); err != nil && isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
 					return nil
 				}
 			}
@@ -303,22 +315,30 @@ func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLoca
 	}
 }
 
-// isMetadataOnlyUpdate reports whether an update to an existing entry can be
-// applied to the remote by rewriting metadata alone, instead of deleting the
-// old object and writing the new content.
-//
-// It requires the object to already be on the remote. A nil RemoteEntry means
-// it never got there, and the metadata path would return without ever writing
-// it, leaving the entry unreplicated for as long as its content stays the same
-// -- shouldSendToRemote has already reported that this entry needs sending.
+// isMetadataOnlyUpdate reports whether an update leaves the entry at the same
+// path with the same content, so the remote object needs at most its metadata
+// rewritten -- provided it is already there, which liveRemoteEntry establishes.
 func isMetadataOnlyUpdate(dir string, message *filer_pb.EventNotification) bool {
 	if dir != message.NewParentPath || message.OldEntry.Name != message.NewEntry.Name {
 		return false
 	}
-	if !filer.IsSameData(message.OldEntry, message.NewEntry) {
-		return false
+	return filer.IsSameData(message.OldEntry, message.NewEntry)
+}
+
+// liveRemoteEntry returns the RemoteEntry showing the entry's object is on the
+// remote, or nil when it never got there. The event's own is not enough: a
+// chmod right after a write is logged before the sync has uploaded the write
+// and stamped the entry, and treating it as unreplicated would upload twice.
+// Returns filer_pb.ErrNotFound when the entry has since been deleted.
+func liveRemoteEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) (*filer_pb.RemoteEntry, error) {
+	if entry.RemoteEntry != nil {
+		return entry.RemoteEntry, nil
 	}
-	return message.NewEntry.RemoteEntry != nil
+	current, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.NewFullPath(dir, entry.Name))
+	if err != nil {
+		return nil, err
+	}
+	return current.RemoteEntry, nil
 }
 
 func shouldSendToRemote(entry *filer_pb.Entry) bool {

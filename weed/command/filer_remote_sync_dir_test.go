@@ -1,6 +1,9 @@
 package command
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 )
 
 // TestVersionedFilePathRewrittenForRemote verifies that the fix for
@@ -329,75 +333,153 @@ func TestRewriteVersionedSourcePath(t *testing.T) {
 	}
 }
 
-// TestMetadataOnlyUpdateRequiresRemoteEntry covers the case where a file is
-// rewritten with identical content before it was ever replicated.
-//
-// shouldSendToRemote reports such an entry as needing to be sent, because its
-// RemoteEntry is nil. Routing it to the metadata path discards that: the S3,
-// GCS and Azure UpdateFileMetadata implementations all return early when the
-// extended attributes are unchanged, without checking whether the object is on
-// the remote at all. The entry then stays unreplicated for as long as its
-// content does not change, while the sync reports healthy progress over it.
-func TestMetadataOnlyUpdateRequiresRemoteEntry(t *testing.T) {
-	const dir = "/buckets/media"
-
-	entry := func(remote *filer_pb.RemoteEntry) *filer_pb.Entry {
-		return &filer_pb.Entry{
-			Name:        "output.pdf",
-			Content:     []byte("same bytes"),
-			RemoteEntry: remote,
-		}
+func chunkedEntry(name string, remote *filer_pb.RemoteEntry, etags ...string) *filer_pb.Entry {
+	entry := &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote}
+	for i, etag := range etags {
+		entry.Chunks = append(entry.Chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%02x", i), Offset: int64(i) * 1024, Size: 1024, ETag: etag})
 	}
-	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 10}
+	return entry
+}
 
-	t.Run("never replicated falls through to the write path", func(t *testing.T) {
-		message := &filer_pb.EventNotification{
-			NewParentPath: dir,
-			OldEntry:      entry(nil),
-			NewEntry:      entry(nil),
+func TestIsMetadataOnlyUpdate(t *testing.T) {
+	const dir = "/buckets/media"
+	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669}
+
+	tests := []struct {
+		name     string
+		dir      string
+		oldEntry *filer_pb.Entry
+		newEntry *filer_pb.Entry
+		want     bool
+	}{
+		{
+			name:     "same chunks",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1", "e2"),
+			newEntry: chunkedEntry("output.pdf", replicated, "e1", "e2"),
+			want:     true,
+		},
+		{
+			name:     "same chunks, no RemoteEntry",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", nil, "e1", "e2"),
+			newEntry: chunkedEntry("output.pdf", nil, "e1", "e2"),
+			want:     true,
+		},
+		{
+			name:     "rewritten chunks",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1", "e2"),
+			newEntry: chunkedEntry("output.pdf", replicated, "e1", "e3"),
+			want:     false,
+		},
+		{
+			name:     "first write into an empty entry",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", nil),
+			newEntry: chunkedEntry("output.pdf", nil, "e1"),
+			want:     false,
+		},
+		{
+			name:     "rename",
+			dir:      dir,
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1"),
+			newEntry: chunkedEntry("renamed.pdf", replicated, "e1"),
+			want:     false,
+		},
+		{
+			name:     "move to another directory",
+			dir:      "/buckets/media/inbox",
+			oldEntry: chunkedEntry("output.pdf", replicated, "e1"),
+			newEntry: chunkedEntry("output.pdf", replicated, "e1"),
+			want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message := &filer_pb.EventNotification{NewParentPath: dir, OldEntry: tt.oldEntry, NewEntry: tt.newEntry}
+			if got := isMetadataOnlyUpdate(tt.dir, message); got != tt.want {
+				t.Errorf("isMetadataOnlyUpdate = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// stubFilerClient serves one entry; nil means not found.
+type stubFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	entry   *filer_pb.Entry
+	lookups int
+}
+
+func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.LookupDirectoryEntryRequest, ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	c.lookups++
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+}
+
+func (c *stubFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+
+func (c *stubFilerClient) AdjustedUrl(location *filer_pb.Location) string { return location.Url }
+
+func (c *stubFilerClient) GetDataCenter() string { return "" }
+
+// TestLiveRemoteEntry tells apart the two update events that carry no
+// RemoteEntry: a file never replicated (#11139), which must be uploaded, and a
+// chmod logged before the sync finished uploading the preceding write, which
+// must not be uploaded again.
+func TestLiveRemoteEntry(t *testing.T) {
+	const dir = "/buckets/media"
+	stamped := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669}
+
+	t.Run("event carries the RemoteEntry, no lookup", func(t *testing.T) {
+		filerClient := &stubFilerClient{}
+		got, err := liveRemoteEntry(filerClient, dir, chunkedEntry("output.pdf", stamped, "e1"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !shouldSendToRemote(message.NewEntry) {
+		if got != stamped {
+			t.Errorf("got %+v, want the event's own RemoteEntry", got)
+		}
+		if filerClient.lookups != 0 {
+			t.Errorf("looked up the filer %d times with the answer already in hand", filerClient.lookups)
+		}
+	})
+
+	t.Run("never replicated", func(t *testing.T) {
+		event := chunkedEntry("output.pdf", nil, "e1")
+		if !shouldSendToRemote(event) {
 			t.Fatal("an entry with no RemoteEntry should be eligible for sending")
 		}
-		if isMetadataOnlyUpdate(dir, message) {
-			t.Error("expected a content write, not a metadata-only update, for an entry that was never replicated")
+		filerClient := &stubFilerClient{entry: chunkedEntry("output.pdf", nil, "e1")}
+		got, err := liveRemoteEntry(filerClient, dir, event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != nil {
+			t.Errorf("got %+v, want nil so the update takes the write path", got)
 		}
 	})
 
-	t.Run("already replicated stays on the metadata path", func(t *testing.T) {
-		message := &filer_pb.EventNotification{
-			NewParentPath: dir,
-			OldEntry:      entry(replicated),
-			NewEntry:      entry(replicated),
+	t.Run("stamped after the event was logged", func(t *testing.T) {
+		filerClient := &stubFilerClient{entry: chunkedEntry("output.pdf", stamped, "e1")}
+		got, err := liveRemoteEntry(filerClient, dir, chunkedEntry("output.pdf", nil, "e1"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !isMetadataOnlyUpdate(dir, message) {
-			t.Error("unchanged content on a replicated object should not be rewritten")
+		if got != stamped {
+			t.Errorf("got %+v, want the filer's current RemoteEntry so the update stays on the metadata path", got)
 		}
-	})
-
-	t.Run("changed content is written even when replicated", func(t *testing.T) {
-		newEntry := entry(replicated)
-		newEntry.Content = []byte("different bytes")
-		message := &filer_pb.EventNotification{
-			NewParentPath: dir,
-			OldEntry:      entry(replicated),
-			NewEntry:      newEntry,
-		}
-		if isMetadataOnlyUpdate(dir, message) {
-			t.Error("changed content must take the write path")
+		if filerClient.lookups != 1 {
+			t.Errorf("looked up the filer %d times, want 1", filerClient.lookups)
 		}
 	})
 
-	t.Run("rename is written rather than updated in place", func(t *testing.T) {
-		renamed := entry(replicated)
-		renamed.Name = "renamed.pdf"
-		message := &filer_pb.EventNotification{
-			NewParentPath: dir,
-			OldEntry:      entry(replicated),
-			NewEntry:      renamed,
-		}
-		if isMetadataOnlyUpdate(dir, message) {
-			t.Error("a rename changes the remote key and must take the write path")
+	t.Run("deleted since", func(t *testing.T) {
+		_, err := liveRemoteEntry(&stubFilerClient{}, dir, chunkedEntry("output.pdf", nil, "e1"))
+		if !errors.Is(err, filer_pb.ErrNotFound) {
+			t.Errorf("err = %v, want filer_pb.ErrNotFound so the update is skipped rather than uploaded from a deleted entry", err)
 		}
 	})
 }
