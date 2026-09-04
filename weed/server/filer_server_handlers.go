@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -56,17 +57,6 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// proxy to volume servers
-	var fileId string
-	if r.URL.Path == "/" {
-		fileId = r.URL.Query().Get("proxyChunkId")
-	}
-	if fileId != "" {
-		fs.proxyToVolumeServer(w, r, fileId)
-		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
-		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
-		return
-	}
 	requestMethod := r.Method
 	defer func(method *string) {
 		stats.FilerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
@@ -77,6 +67,19 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
+	}
+
+	// proxy to volume servers, after the gate: this is the one port operators
+	// expose, and the branch reaches any needle in the cluster by file id.
+	if r.URL.Path == "/" {
+		if fileId := r.URL.Query().Get(util_http.ProxyChunkIdParam); fileId != "" {
+			fs.proxyToVolumeServer(w, r, fileId)
+			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
+			// Name the deferred observation after the proxy rather than
+			// observing a second time, which would count the request twice.
+			requestMethod = stats.ChunkProxy
+			return
+		}
 	}
 
 	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
@@ -211,11 +214,6 @@ func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
 
 // maybeCheckJwtAuthorization returns true if access should be granted, false if it should be denied
 func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool) bool {
-
-	if !isWrite && r.URL.Path == "/" {
-		return true
-	}
-
 	return fs.checkJwtAuthorization(r, isWrite, jwtScopedRequestPaths(r))
 }
 

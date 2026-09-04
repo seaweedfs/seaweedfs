@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error {
@@ -167,7 +168,7 @@ func (b *MessageQueueBroker) assignAndUpload(targetFile string, data []byte) (fi
 	if b.option.VolumeServerAccess == "filerProxy" {
 		// b.currentFiler can change on failover, so read it per attempt.
 		uploadOption.GenUploadUrl = func(host, fileId string) string {
-			return fmt.Sprintf("http://%s/?proxyChunkId=%s", b.currentFiler, fileId)
+			return util_http.ProxyChunkUrl(string(b.currentFiler), fileId)
 		}
 	}
 

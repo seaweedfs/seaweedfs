@@ -110,7 +110,7 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 			}
 		}
 	} else {
-		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, part))
+		fileUrls = append(fileUrls, util_http.ProxyChunkUrl(fs.address, part))
 	}
 
 	return
@@ -125,8 +125,8 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 	}
 
 	if fs.proxyByFiler {
-		fileUrl := "http://" + fs.address + "/?proxyChunkId=" + fileId
-		filename, header, resp, err = downloadFn(fileUrl, "", offset)
+		fileUrl := util_http.ProxyChunkUrl(fs.address, fileId)
+		filename, header, resp, err = downloadFn(fileUrl, util_http.JwtForFilerServer(false), offset)
 		if err == nil {
 			err = readPartStatusError(fileUrl, resp)
 		}

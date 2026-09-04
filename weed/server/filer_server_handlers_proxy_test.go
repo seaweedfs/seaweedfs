@@ -117,31 +117,50 @@ func TestProxyReadDropsCallerJwtQueryParam(t *testing.T) {
 	}
 }
 
-// A writer's credential is its own either way, so the query parameter is left
-// alone on writes -- stripping it would break a caller that presents its volume
-// JWT that way.
-func TestProxyWriteKeepsCallerJwtQueryParam(t *testing.T) {
+// On a write the query parameter carries the filer credential that got the
+// caller past the gate. Relaying it would hand a volume server a filer token
+// and, since security.GetJwt reads it first, hide the minted volume token
+// behind one the volume server cannot validate.
+func TestProxyWriteDropsCallerJwtQueryParam(t *testing.T) {
 	volume := newProxyTestVolume(t)
 	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
 
 	r := httptest.NewRequest(http.MethodPost,
-		"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=caller-supplied", nil)
+		"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=filer-credential", nil)
 	fs.proxyToVolumeServerURL(httptest.NewRecorder(), r, proxyTestFileId, volume.URL+"/"+proxyTestFileId)
 
 	volume.requireReached(t)
-	if got := volume.seenEffectiveJwt(); got != "caller-supplied" {
-		t.Fatalf("writer's own jwt query param was altered: got %q", got)
+	if q := volume.seenRawQuery(); strings.Contains(q, "jwt=") {
+		t.Fatalf("filer credential survived in the forwarded query: %q", q)
+	}
+	claims := &security.SeaweedFileIdClaims{}
+	if _, err := security.DecodeJwt(security.SigningKey(proxyTestWriteKey),
+		security.EncodedJwt(volume.seenEffectiveJwt()), claims); err != nil {
+		t.Fatalf("volume server would evaluate %q, which does not validate against the write key: %v",
+			volume.seenEffectiveJwt(), err)
 	}
 }
 
-// Everything the filer can hand a caller on the proxy path is reachable without
-// authentication, because the branch runs ahead of the filer's JWT gate. With
-// only a write key configured it must therefore mint nothing at all.
-func TestProxyMintsNothingWithoutReadKey(t *testing.T) {
-	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, "", 10)}
+// The token is minted for the caller only once the filer has authorized them,
+// so a key that is not configured means no token: on a read that is the write
+// key, which would hand out more authority than the read needs.
+func TestProxyMintsNothingWithoutKey(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		isWrite  bool
+		writeKey string
+		readKey  string
+	}{
+		{"read with only a write key", false, proxyTestWriteKey, ""},
+		{"write with only a read key", true, "", proxyTestReadKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, tc.writeKey, 10, tc.readKey, 10)}
 
-	if jwt := fs.maybeGetVolumeReadJwtAuthorizationToken(proxyTestFileId); jwt != "" {
-		t.Fatalf("minted %q with no read key configured", jwt)
+			if jwt := fs.maybeGetVolumeJwtAuthorizationToken(proxyTestFileId, tc.isWrite); jwt != "" {
+				t.Fatalf("minted %q with no key configured for that access level", jwt)
+			}
+		})
 	}
 }
 
@@ -169,40 +188,31 @@ func TestProxyReadTokenIsReadOnly(t *testing.T) {
 	}
 }
 
-// Writes must reach the volume server carrying the caller's own AssignVolume
-// token and nothing else. POST is the method every in-tree proxied uploader
-// actually sends, so it leads the table.
-func TestProxyWriteCarriesOnlyCallerCredential(t *testing.T) {
-	callerToken := security.BearerPrefix + string(security.GenJwtForVolumeServer(security.SigningKey(proxyTestWriteKey), 10, proxyTestFileId))
+// A proxied write reaches the volume server on a token the filer minted for
+// this file id, never on the caller's own Authorization -- that one is the
+// filer credential the caller was authorized with. POST is the method every
+// in-tree proxied uploader actually sends, so it leads the table.
+func TestProxyWriteCarriesMintedWriteToken(t *testing.T) {
+	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
 
-	for _, tc := range []struct {
-		name    string
-		method  string
-		readKey string
-		sent    string
-		want    string
-	}{
-		{"anonymous post", http.MethodPost, "", "", ""},
-		{"anonymous post with read key", http.MethodPost, proxyTestReadKey, "", ""},
-		{"anonymous delete", http.MethodDelete, "", "", ""},
-		{"anonymous delete with read key", http.MethodDelete, proxyTestReadKey, "", ""},
-		{"anonymous put with read key", http.MethodPut, proxyTestReadKey, "", ""},
-		{"caller token forwarded on post", http.MethodPost, proxyTestReadKey, callerToken, callerToken},
-		{"caller token forwarded on delete", http.MethodDelete, "", callerToken, callerToken},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
 			volume := newProxyTestVolume(t)
-			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, tc.readKey, 10)}
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
 
-			r := httptest.NewRequest(tc.method, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
-			if tc.sent != "" {
-				r.Header.Set("Authorization", tc.sent)
-			}
+			r := httptest.NewRequest(method, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
+			r.Header.Set("Authorization", security.BearerPrefix+"filer-credential")
 			fs.proxyToVolumeServerURL(httptest.NewRecorder(), r, proxyTestFileId, volume.URL+"/"+proxyTestFileId)
 
 			volume.requireReached(t)
-			if got := volume.seenAuth(); got != tc.want {
-				t.Fatalf("volume server saw Authorization %q, want %q", got, tc.want)
+			seen := volume.seenAuth()
+			if seen == security.BearerPrefix+"filer-credential" {
+				t.Fatal("caller's filer credential reached the volume server")
+			}
+			check := httptest.NewRequest(method, "http://volume:8080/"+proxyTestFileId, nil)
+			check.Header.Set("Authorization", seen)
+			if !vs.maybeCheckJwtAuthorization(check, proxyTestVid, proxyTestFid, true) {
+				t.Fatalf("forwarded token %q did not authorize the write", seen)
 			}
 		})
 	}
@@ -233,14 +243,14 @@ func TestProxyReadReplacesCallerCredential(t *testing.T) {
 	}
 }
 
-// With no read key there is nothing to mint, and the caller's Authorization on
-// the read path is a filer credential -- it must be dropped, not relayed to a
-// volume server that has no business seeing it.
-func TestProxyReadDropsCallerCredentialWhenNothingMinted(t *testing.T) {
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
+// With no volume key there is nothing to mint, and the caller's Authorization
+// is a filer credential -- it must be dropped, not relayed to a volume server
+// that has no business seeing it.
+func TestProxyDropsCallerCredentialWhenNothingMinted(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			volume := newProxyTestVolume(t)
-			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, "", 10)}
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, "", 10, "", 10)}
 
 			r := httptest.NewRequest(method, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
 			r.Header.Set("Authorization", security.BearerPrefix+"filer-credential")
@@ -375,6 +385,54 @@ func TestProxyRejectsTraversalBeforeLookup(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("proxyChunkId=%q returned %d, want 400", fileId, w.Code)
 		}
+	}
+}
+
+// The proxy branch reaches any needle in the cluster by file id, on the filer
+// port jwt.filer_signing exists to make safe to expose, so it has to sit behind
+// the same gate as every other request.
+func TestFilerHandlerGatesChunkProxy(t *testing.T) {
+	signingKey := "secret"
+	fs := &FilerServer{
+		option:     &FilerOption{},
+		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0),
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPost, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			r := httptest.NewRequest(method, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
+			w := httptest.NewRecorder()
+
+			// fs.filer is nil: reaching the lookup would panic, so surviving
+			// this call is itself proof the request was refused first.
+			fs.filerHandler(w, r)
+
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("anonymous %s of a chunk returned %d, want 401", method, w.Code)
+			}
+		})
+	}
+}
+
+// ... and once past it the branch still runs. A malformed fid is refused by
+// validateProxyChunkId ahead of any lookup, which is as far as this can go
+// without a cluster behind the filer.
+func TestFilerHandlerProxiesChunkForAuthorizedCaller(t *testing.T) {
+	signingKey := "secret"
+	fs := &FilerServer{
+		option:     &FilerOption{},
+		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0),
+	}
+	token := security.GenJwtForFilerServer(security.SigningKey(signingKey), 60)
+
+	r := httptest.NewRequest(http.MethodGet, "http://filer:8888/?proxyChunkId=3,not-a-fid", nil)
+	r.Header.Set("Authorization", security.BearerPrefix+string(token))
+	w := httptest.NewRecorder()
+
+	fs.filerHandler(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("authorized chunk proxy returned %d, want 400 from the fid check", w.Code)
 	}
 }
 

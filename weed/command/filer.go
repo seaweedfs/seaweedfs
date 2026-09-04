@@ -391,6 +391,7 @@ func (fo *FilerOptions) startFiler() {
 		DownloadMaxBytesPs:        int64(*fo.downloadMaxMBps) * 1024 * 1024,
 		DiskType:                  *fo.diskType,
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
+		ExposeDirectoryData:       *fo.exposeDirectoryData,
 		TusBasePath:               *fo.tusBasePath,
 		TusMaxSize:                int64(*fo.tusMaxSizeMB) * 1024 * 1024,
 		TusSessionExpiry:          *fo.tusSessionExpiry,

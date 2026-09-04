@@ -601,10 +601,14 @@ type RefreshUrlsFunc func() []string
 // list for the reads that follow.
 func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
 
-	loadJwtConfigOnce.Do(loadJwtConfig)
 	var jwt security.EncodedJwt
-	if cfg := jwtSigningReadConfigPtr.Load(); cfg != nil && len(cfg.key) > 0 {
-		jwt = security.GenJwtForVolumeServer(cfg.key, cfg.expires, fileId)
+	if len(urlStrings) > 0 && IsProxyChunkUrl(urlStrings[0]) {
+		jwt = security.EncodedJwt(JwtForFilerServer(false))
+	} else {
+		loadJwtConfigOnce.Do(loadJwtConfig)
+		if cfg := jwtSigningReadConfigPtr.Load(); cfg != nil && len(cfg.key) > 0 {
+			jwt = security.GenJwtForVolumeServer(cfg.key, cfg.expires, fileId)
+		}
 	}
 
 	// For unencrypted, non-gzipped full chunks, use direct buffer read
