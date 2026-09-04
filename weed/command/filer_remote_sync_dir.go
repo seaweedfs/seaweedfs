@@ -241,9 +241,6 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 			}
 			glog.V(2).Infof("update: %+v", resp)
-			// A write to the same key overwrites; deleting first only opens a
-			// window with no object on the remote, and leaves none at all if
-			// the write then fails.
 			if !proto.Equal(oldDest, dest) {
 				glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 				if err := client.DeleteFile(oldDest); err != nil && isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
@@ -319,9 +316,8 @@ func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLoca
 }
 
 // isMetadataOnlyUpdate reports whether an update leaves the entry at the same
-// path with the same content, so that the remote object needs at most its
-// metadata rewritten instead of being deleted and written again -- provided
-// the object is already on the remote, which liveRemoteEntry establishes.
+// path with the same content, so the remote object needs at most its metadata
+// rewritten -- provided it is already there, which liveRemoteEntry establishes.
 func isMetadataOnlyUpdate(dir string, message *filer_pb.EventNotification) bool {
 	if dir != message.NewParentPath || message.OldEntry.Name != message.NewEntry.Name {
 		return false
@@ -329,18 +325,11 @@ func isMetadataOnlyUpdate(dir string, message *filer_pb.EventNotification) bool 
 	return filer.IsSameData(message.OldEntry, message.NewEntry)
 }
 
-// liveRemoteEntry returns the RemoteEntry that says whether the entry's object
-// is on the remote, or nil when it never got there.
-//
-// The metadata path writes nothing when the extended attributes are unchanged
-// (the S3, GCS and Azure clients all return early), so an entry that was never
-// uploaded must not be sent down it. But a nil RemoteEntry on the event is not
-// proof of that: the event is the entry as it was when the update was logged,
-// and a chmod or utimes right after a write is logged while the sync is still
-// uploading the write, before it stamps the entry. Taking the event at face
-// value would delete and re-upload every file written that way, so a missing
-// RemoteEntry is confirmed against the filer's current entry first. The error
-// is filer_pb.ErrNotFound when the entry has since been deleted.
+// liveRemoteEntry returns the RemoteEntry showing the entry's object is on the
+// remote, or nil when it never got there. The event's own is not enough: a
+// chmod right after a write is logged before the sync has uploaded the write
+// and stamped the entry, and treating it as unreplicated would upload twice.
+// Returns filer_pb.ErrNotFound when the entry has since been deleted.
 func liveRemoteEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) (*filer_pb.RemoteEntry, error) {
 	if entry.RemoteEntry != nil {
 		return entry.RemoteEntry, nil

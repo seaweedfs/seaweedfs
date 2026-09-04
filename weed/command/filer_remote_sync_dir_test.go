@@ -333,8 +333,6 @@ func TestRewriteVersionedSourcePath(t *testing.T) {
 	}
 }
 
-// chunkedEntry builds a file entry the way the mount and the S3 gateway do,
-// as chunks identified by ETag, which is what filer.IsSameData compares.
 func chunkedEntry(name string, remote *filer_pb.RemoteEntry, etags ...string) *filer_pb.Entry {
 	entry := &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote}
 	for i, etag := range etags {
@@ -362,7 +360,7 @@ func TestIsMetadataOnlyUpdate(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "same chunks with no RemoteEntry is still metadata-only; liveRemoteEntry decides",
+			name:     "same chunks, no RemoteEntry",
 			dir:      dir,
 			oldEntry: chunkedEntry("output.pdf", nil, "e1", "e2"),
 			newEntry: chunkedEntry("output.pdf", nil, "e1", "e2"),
@@ -407,8 +405,7 @@ func TestIsMetadataOnlyUpdate(t *testing.T) {
 	}
 }
 
-// stubFilerClient answers the one lookup liveRemoteEntry makes with a fixed
-// entry, nil meaning the entry no longer exists.
+// stubFilerClient serves one entry; nil means not found.
 type stubFilerClient struct {
 	filer_pb.SeaweedFilerClient
 	entry   *filer_pb.Entry
@@ -428,19 +425,10 @@ func (c *stubFilerClient) AdjustedUrl(location *filer_pb.Location) string { retu
 
 func (c *stubFilerClient) GetDataCenter() string { return "" }
 
-// TestLiveRemoteEntry covers the two ways an update event arrives without a
-// RemoteEntry, which the sync has to tell apart.
-//
-// A file rewritten with identical content, or touched, before it was ever
-// replicated must be uploaded: shouldSendToRemote already says so, and the
-// metadata path would return without writing anything, leaving the entry
-// unreplicated for as long as its content stays the same (#11139).
-//
-// But the event is a snapshot. A chmod logged while the sync was still
-// uploading the preceding write also carries no RemoteEntry, and by the time it
-// is processed the upload has completed and stamped the filer's entry. That one
-// must stay on the metadata path, or every write-then-chmod would be uploaded
-// twice.
+// TestLiveRemoteEntry tells apart the two update events that carry no
+// RemoteEntry: a file never replicated (#11139), which must be uploaded, and a
+// chmod logged before the sync finished uploading the preceding write, which
+// must not be uploaded again.
 func TestLiveRemoteEntry(t *testing.T) {
 	const dir = "/buckets/media"
 	stamped := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669}
