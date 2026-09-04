@@ -489,15 +489,29 @@ func TestLiveRemoteEntry(t *testing.T) {
 	})
 }
 
+func chunk(fileId, etag string) *filer_pb.FileChunk {
+	return &filer_pb.FileChunk{FileId: fileId, Size: 1024, ETag: etag}
+}
+
+func entryWith(name string, remote *filer_pb.RemoteEntry, chunks ...*filer_pb.FileChunk) *filer_pb.Entry {
+	return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remote, Chunks: chunks}
+}
+
 // TestIsSuperseded decides what a failed upload means for its event (#11148).
 // A replay from an earlier offset re-emits creates for entries the filer has
 // since deleted or rewritten; their chunks are gone, so the upload can never
 // succeed, and failing the event pins the offset before it forever. Those are
 // skipped. A failure to upload an entry the filer still holds as described is
 // a real failure and must keep failing the event so the subscription retries.
+//
+// Every write stores its chunks under new file ids, so the entry is compared
+// by chunk identity, the way the filer itself decides which chunks an update
+// leaves for deletion. Content fingerprints would miss a delete-and-recreate
+// of identical bytes and fail the event forever on its dead chunks.
 func TestIsSuperseded(t *testing.T) {
 	const dir = "/buckets/ingest"
-	event := chunkedEntry("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, "e1", "e2")
+	event := entryWith("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, chunk("3,01", "e1"), chunk("3,02", "e2"))
+	stamped := &filer_pb.RemoteEntry{StorageName: "b2", RemoteMtime: 1786096669}
 
 	tests := []struct {
 		name  string
@@ -505,10 +519,13 @@ func TestIsSuperseded(t *testing.T) {
 		want  bool
 	}{
 		{name: "deleted since", filer: &stubFilerClient{}, want: true},
-		{name: "rewritten since", filer: &stubFilerClient{entry: chunkedEntry(event.Name, nil, "e1", "e3")}, want: true},
-		{name: "deleted and recreated under the same name", filer: &stubFilerClient{entry: chunkedEntry(event.Name, nil, "e9")}, want: true},
-		{name: "still as described", filer: &stubFilerClient{entry: chunkedEntry(event.Name, nil, "e1", "e2")}, want: false},
-		{name: "still as described, since replicated", filer: &stubFilerClient{entry: chunkedEntry(event.Name, &filer_pb.RemoteEntry{RemoteMtime: 1786096669}, "e1", "e2")}, want: false},
+		{name: "rewritten since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("4,07", "e3"))}, want: true},
+		{name: "recreated with identical content", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("5,11", "e1"), chunk("5,12", "e2"))}, want: true},
+		{name: "recreated with other content", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("6,01", "e9"))}, want: true},
+		{name: "truncated since", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}, want: true},
+		{name: "still as described", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
+		{name: "still as described, since replicated", filer: &stubFilerClient{entry: entryWith(event.Name, stamped, chunk("3,01", "e1"), chunk("3,02", "e2"))}, want: false},
+		{name: "appended since, chunks still live", filer: &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"), chunk("3,02", "e2"), chunk("3,03", "e3"))}, want: false},
 		{name: "filer lookup failed", filer: &stubFilerClient{err: errors.New("rpc error: code = Unavailable")}, want: false},
 	}
 	for _, tt := range tests {

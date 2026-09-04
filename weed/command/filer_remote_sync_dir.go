@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -268,21 +269,30 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 }
 
 // isSuperseded reports whether the filer has moved past the entry an event
-// described: it is deleted, or it now holds other content. The chunks the event
-// names are then gone from the volume servers, or about to be, and no retry of
-// the upload can succeed. A replay from an earlier offset (-timeAgo) re-emits
-// such events. Failing one holds the sync offset before it, so every restart of
-// the subscription replays it into the same dead chunks, and progress on
-// everything after it in the log is never persisted. Skipping is safe: the
-// event that superseded this one follows in the log, and the delete removes the
-// remote object or the rewrite uploads the current content. A lookup that fails
-// for any other reason keeps the write failure, so the event is retried.
+// described: it is deleted, or it no longer references every chunk the event
+// named. Those are the chunks the filer deletes when an entry is updated, so
+// they are gone from the volume servers, or about to be, and no retry of the
+// upload can succeed. Chunks are compared by file id, not content: a rewrite
+// stores even identical bytes under new ids and drops the old ones. A replay
+// from an earlier offset (-timeAgo) re-emits such events. Failing one holds the
+// sync offset before it, so every restart of the subscription replays it into
+// the same dead chunks, and progress on everything after it in the log is never
+// persisted. Skipping is safe: the event that superseded this one follows in
+// the log, and the delete removes the remote object or the rewrite uploads the
+// current content. A lookup that fails for any other reason keeps the write
+// failure, so the event is retried.
 func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) bool {
 	current, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.NewFullPath(dir, entry.Name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return true
 	}
-	return err == nil && !filer.IsSameData(current, entry)
+	if err != nil {
+		return false
+	}
+	if len(entry.Content) > 0 || len(current.Content) > 0 {
+		return !bytes.Equal(entry.Content, current.Content)
+	}
+	return len(filer.DoMinusChunks(entry.GetChunks(), current.GetChunks())) > 0
 }
 
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *source.FilerSource, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
