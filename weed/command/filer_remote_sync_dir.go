@@ -241,9 +241,12 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 			}
 			glog.V(2).Infof("update: %+v", resp)
-			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
-			if err := client.DeleteFile(oldDest); err != nil {
-				if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
+			// A write to the same key overwrites; deleting first only opens a
+			// window with no object on the remote, and leaves none at all if
+			// the write then fails.
+			if !proto.Equal(oldDest, dest) {
+				glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
+				if err := client.DeleteFile(oldDest); err != nil && isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
 					return nil
 				}
 			}
