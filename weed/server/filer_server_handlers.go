@@ -75,7 +75,9 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		if fileId := r.URL.Query().Get(util_http.ProxyChunkIdParam); fileId != "" {
 			fs.proxyToVolumeServer(w, r, fileId)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
-			stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
+			// Name the deferred observation after the proxy rather than
+			// observing a second time, which would count the request twice.
+			requestMethod = stats.ChunkProxy
 			return
 		}
 	}
