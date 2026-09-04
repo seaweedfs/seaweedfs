@@ -405,15 +405,20 @@ func TestIsMetadataOnlyUpdate(t *testing.T) {
 	}
 }
 
-// stubFilerClient serves one entry; nil means not found.
+// stubFilerClient serves one entry; nil means not found. A non-nil err fails
+// every lookup instead.
 type stubFilerClient struct {
 	filer_pb.SeaweedFilerClient
 	entry   *filer_pb.Entry
+	err     error
 	lookups int
 }
 
 func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.LookupDirectoryEntryRequest, ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	c.lookups++
+	if c.err != nil {
+		return nil, c.err
+	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
 }
 
@@ -480,6 +485,50 @@ func TestLiveRemoteEntry(t *testing.T) {
 		_, err := liveRemoteEntry(&stubFilerClient{}, dir, chunkedEntry("output.pdf", nil, "e1"))
 		if !errors.Is(err, filer_pb.ErrNotFound) {
 			t.Errorf("err = %v, want filer_pb.ErrNotFound so the update is skipped rather than uploaded from a deleted entry", err)
+		}
+	})
+}
+
+// TestIsSuperseded decides what a failed upload means for its event (#11148).
+// A replay from an earlier offset re-emits creates for entries the filer has
+// since deleted or rewritten; their chunks are gone, so the upload can never
+// succeed, and failing the event pins the offset before it forever. Those are
+// skipped. A failure to upload an entry the filer still holds as described is
+// a real failure and must keep failing the event so the subscription retries.
+func TestIsSuperseded(t *testing.T) {
+	const dir = "/buckets/ingest"
+	event := chunkedEntry("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, "e1", "e2")
+
+	tests := []struct {
+		name  string
+		filer *stubFilerClient
+		want  bool
+	}{
+		{name: "deleted since", filer: &stubFilerClient{}, want: true},
+		{name: "rewritten since", filer: &stubFilerClient{entry: chunkedEntry(event.Name, nil, "e1", "e3")}, want: true},
+		{name: "deleted and recreated under the same name", filer: &stubFilerClient{entry: chunkedEntry(event.Name, nil, "e9")}, want: true},
+		{name: "still as described", filer: &stubFilerClient{entry: chunkedEntry(event.Name, nil, "e1", "e2")}, want: false},
+		{name: "still as described, since replicated", filer: &stubFilerClient{entry: chunkedEntry(event.Name, &filer_pb.RemoteEntry{RemoteMtime: 1786096669}, "e1", "e2")}, want: false},
+		{name: "filer lookup failed", filer: &stubFilerClient{err: errors.New("rpc error: code = Unavailable")}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSuperseded(tt.filer, dir, event); got != tt.want {
+				t.Errorf("isSuperseded = %v, want %v", got, tt.want)
+			}
+			if tt.filer.lookups != 1 {
+				t.Errorf("looked up the filer %d times, want 1", tt.filer.lookups)
+			}
+		})
+	}
+
+	t.Run("inline content rewritten since", func(t *testing.T) {
+		event := &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}
+		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, dir, event) {
+			t.Error("isSuperseded = false, want true for an entry whose inline content has changed")
+		}
+		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, dir, event) {
+			t.Error("isSuperseded = true, want false for an entry whose inline content is unchanged")
 		}
 	})
 }

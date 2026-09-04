@@ -179,6 +179,10 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
+				if isSuperseded(option, message.NewParentPath, message.NewEntry) {
+					glog.Errorf("skipping %s: %s/%s deleted or rewritten since the event was logged: %v", remote_storage.FormatLocation(dest), message.NewParentPath, message.NewEntry.Name, writeErr)
+					return nil
+				}
 				return writeErr
 			}
 			// Skip updateLocalEntry for versioned rewrites: the logical
@@ -249,6 +253,10 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			}
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
+				if isSuperseded(option, message.NewParentPath, message.NewEntry) {
+					glog.Errorf("skipping %s: %s/%s deleted or rewritten since the event was logged: %v", remote_storage.FormatLocation(dest), message.NewParentPath, message.NewEntry.Name, writeErr)
+					return nil
+				}
 				return writeErr
 			}
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
@@ -257,6 +265,24 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		return nil
 	}
 	return eachEntryFunc, nil
+}
+
+// isSuperseded reports whether the filer has moved past the entry an event
+// described: it is deleted, or it now holds other content. The chunks the event
+// names are then gone from the volume servers, or about to be, and no retry of
+// the upload can succeed. A replay from an earlier offset (-timeAgo) re-emits
+// such events. Failing one holds the sync offset before it, so every restart of
+// the subscription replays it into the same dead chunks, and progress on
+// everything after it in the log is never persisted. Skipping is safe: the
+// event that superseded this one follows in the log, and the delete removes the
+// remote object or the rewrite uploads the current content. A lookup that fails
+// for any other reason keeps the write failure, so the event is retried.
+func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry) bool {
+	current, _, _, err := filer_pb.GetEntry(context.Background(), filerClient, util.NewFullPath(dir, entry.Name))
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return true
+	}
+	return err == nil && !filer.IsSameData(current, entry)
 }
 
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *source.FilerSource, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
