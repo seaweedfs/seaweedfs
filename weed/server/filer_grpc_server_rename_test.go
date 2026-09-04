@@ -29,6 +29,7 @@ type renameTestStore struct {
 	findCalls map[string]int
 	commitErr error
 	deleteErr error
+	listErr   error         // simulates a transient store/RPC failure from a directory listing
 	findDelay time.Duration // optional: widen check-then-act windows in tests
 }
 
@@ -107,6 +108,11 @@ func (s *renameTestStore) DeleteFolderChildren(_ context.Context, p util.FullPat
 
 func (s *renameTestStore) listDirectoryEntries(dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
 	s.mu.Lock()
+	if s.listErr != nil {
+		err := s.listErr
+		s.mu.Unlock()
+		return "", err
+	}
 	var entries []*filer.Entry
 	for path, entry := range s.entries {
 		if path == string(dirPath) {
