@@ -328,3 +328,76 @@ func TestRewriteVersionedSourcePath(t *testing.T) {
 		})
 	}
 }
+
+// TestMetadataOnlyUpdateRequiresRemoteEntry covers the case where a file is
+// rewritten with identical content before it was ever replicated.
+//
+// shouldSendToRemote reports such an entry as needing to be sent, because its
+// RemoteEntry is nil. Routing it to the metadata path discards that: the S3,
+// GCS and Azure UpdateFileMetadata implementations all return early when the
+// extended attributes are unchanged, without checking whether the object is on
+// the remote at all. The entry then stays unreplicated for as long as its
+// content does not change, while the sync reports healthy progress over it.
+func TestMetadataOnlyUpdateRequiresRemoteEntry(t *testing.T) {
+	const dir = "/buckets/media"
+
+	entry := func(remote *filer_pb.RemoteEntry) *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "output.pdf",
+			Content:     []byte("same bytes"),
+			RemoteEntry: remote,
+		}
+	}
+	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 10}
+
+	t.Run("never replicated falls through to the write path", func(t *testing.T) {
+		message := &filer_pb.EventNotification{
+			NewParentPath: dir,
+			OldEntry:      entry(nil),
+			NewEntry:      entry(nil),
+		}
+		if !shouldSendToRemote(message.NewEntry) {
+			t.Fatal("an entry with no RemoteEntry should be eligible for sending")
+		}
+		if isMetadataOnlyUpdate(dir, message) {
+			t.Error("expected a content write, not a metadata-only update, for an entry that was never replicated")
+		}
+	})
+
+	t.Run("already replicated stays on the metadata path", func(t *testing.T) {
+		message := &filer_pb.EventNotification{
+			NewParentPath: dir,
+			OldEntry:      entry(replicated),
+			NewEntry:      entry(replicated),
+		}
+		if !isMetadataOnlyUpdate(dir, message) {
+			t.Error("unchanged content on a replicated object should not be rewritten")
+		}
+	})
+
+	t.Run("changed content is written even when replicated", func(t *testing.T) {
+		newEntry := entry(replicated)
+		newEntry.Content = []byte("different bytes")
+		message := &filer_pb.EventNotification{
+			NewParentPath: dir,
+			OldEntry:      entry(replicated),
+			NewEntry:      newEntry,
+		}
+		if isMetadataOnlyUpdate(dir, message) {
+			t.Error("changed content must take the write path")
+		}
+	})
+
+	t.Run("rename is written rather than updated in place", func(t *testing.T) {
+		renamed := entry(replicated)
+		renamed.Name = "renamed.pdf"
+		message := &filer_pb.EventNotification{
+			NewParentPath: dir,
+			OldEntry:      entry(replicated),
+			NewEntry:      renamed,
+		}
+		if isMetadataOnlyUpdate(dir, message) {
+			t.Error("a rename changes the remote key and must take the write path")
+		}
+	})
+}
