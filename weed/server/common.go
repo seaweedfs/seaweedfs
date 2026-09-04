@@ -435,6 +435,9 @@ func CleanPathHandler(h http.Handler) http.Handler {
 				r2.URL = new(url.URL)
 				*r2.URL = *r.URL
 				r2.URL.Path, r2.URL.RawPath = p, cleaned
+				// PostHandler picks storage rules and the bucket from RequestURI, so
+				// keep it in step with the path the entry is written to.
+				r2.RequestURI = r2.URL.RequestURI()
 				r = r2
 			}
 		}

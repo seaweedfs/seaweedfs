@@ -72,12 +72,17 @@ func TestWriteJsonNoJSONP(t *testing.T) {
 // redirect whose Location percent-encodes the already-escaped path a second
 // time (golang/go#79897), and a client following it creates directories
 // literally named "%E8%B4%9F..." (seaweedfs#11125).
+//
+// RequestURI must follow the cleaned path as well: PostHandler derives storage
+// rules, bucket and read-only checks from it, so it has to agree with URL.Path.
+// wantRequestURI defaults to wantEscaped.
 func TestCleanPathHandlerServesCleanedPathWithoutRedirect(t *testing.T) {
 	tests := []struct {
-		name        string
-		target      string
-		wantPath    string
-		wantEscaped string
+		name           string
+		target         string
+		wantPath       string
+		wantEscaped    string
+		wantRequestURI string
 	}{
 		{
 			name:        "double slash before non-ascii segments",
@@ -104,10 +109,18 @@ func TestCleanPathHandlerServesCleanedPathWithoutRedirect(t *testing.T) {
 			wantEscaped: "/Image/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/a.jpg",
 		},
 		{
-			name:        "canonical path is passed through untouched",
-			target:      "/Image/负极全景/a.jpg",
-			wantPath:    "/Image/负极全景/a.jpg",
-			wantEscaped: "/Image/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/a.jpg",
+			name:           "dot segments crossing a bucket move RequestURI to the written bucket, query kept",
+			target:         "/buckets/a/../b/f.jpg?collection=c&ttl=1d",
+			wantPath:       "/buckets/b/f.jpg",
+			wantEscaped:    "/buckets/b/f.jpg",
+			wantRequestURI: "/buckets/b/f.jpg?collection=c&ttl=1d",
+		},
+		{
+			name:           "canonical path is passed through untouched",
+			target:         "/Image/负极全景/a.jpg",
+			wantPath:       "/Image/负极全景/a.jpg",
+			wantEscaped:    "/Image/%E8%B4%9F%E6%9E%81%E5%85%A8%E6%99%AF/a.jpg",
+			wantRequestURI: "/Image/负极全景/a.jpg",
 		},
 		{
 			name:        "encoded slash is not a separator and is preserved",
@@ -124,10 +137,10 @@ func TestCleanPathHandlerServesCleanedPathWithoutRedirect(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var gotPath, gotEscaped string
+			var gotPath, gotEscaped, gotRequestURI string
 			mux := http.NewServeMux()
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				gotPath, gotEscaped = r.URL.Path, r.URL.EscapedPath()
+				gotPath, gotEscaped, gotRequestURI = r.URL.Path, r.URL.EscapedPath(), r.RequestURI
 			})
 
 			w := httptest.NewRecorder()
@@ -141,6 +154,13 @@ func TestCleanPathHandlerServesCleanedPathWithoutRedirect(t *testing.T) {
 			}
 			if gotEscaped != tc.wantEscaped {
 				t.Errorf("r.URL.EscapedPath(): got %q want %q", gotEscaped, tc.wantEscaped)
+			}
+			wantRequestURI := tc.wantRequestURI
+			if wantRequestURI == "" {
+				wantRequestURI = tc.wantEscaped
+			}
+			if gotRequestURI != wantRequestURI {
+				t.Errorf("r.RequestURI: got %q want %q", gotRequestURI, wantRequestURI)
 			}
 		})
 	}
