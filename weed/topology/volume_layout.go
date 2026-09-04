@@ -404,9 +404,15 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 	}
 }
 
+// isAllWritable reports whether every replica of vid can take writes. A write
+// lands on one replica and is forwarded to the rest, so one read-only replica,
+// or one on a server in maintenance mode, holds the whole volume out.
 func (vl *VolumeLayout) isAllWritable(vid needle.VolumeId) bool {
 	if location, ok := vl.vid2location[vid]; ok {
 		for _, dn := range location.list {
+			if dn.InMaintenanceMode() {
+				return false
+			}
 			if v, getError := dn.GetVolumesById(vid); getError == nil {
 				if v.ReadOnly {
 					return false

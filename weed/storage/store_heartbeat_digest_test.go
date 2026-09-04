@@ -3,6 +3,7 @@ package storage
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
@@ -63,6 +64,28 @@ func TestCollectHeartbeatDigestsAnEmptyStore(t *testing.T) {
 	}
 	if !heartbeat.HasNoVolumes {
 		t.Error("expected has_no_volumes on an empty store")
+	}
+}
+
+// The maintenance flag has to reach a master that never saw the change: a
+// leader elected while a server sits in maintenance only hears from it through
+// the regular heartbeats, so each one carries the state.
+func TestCollectHeartbeatCarriesState(t *testing.T) {
+	store := newTestStore(t, 1)
+
+	heartbeat := store.CollectHeartbeat()
+	if heartbeat.State == nil {
+		t.Fatal("heartbeat carried no state")
+	}
+	if heartbeat.State.GetMaintenance() {
+		t.Fatal("a fresh store must not report maintenance mode")
+	}
+
+	if err := store.State.Update(&volume_server_pb.VolumeServerState{Maintenance: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.CollectHeartbeat().GetState().GetMaintenance() {
+		t.Error("heartbeat did not report maintenance mode after it was switched on")
 	}
 }
 

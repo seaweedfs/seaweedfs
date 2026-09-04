@@ -211,20 +211,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
 
-		if heartbeat.State != nil {
+		// Every heartbeat may carry the state, so a master that just took over
+		// learns about a server already in maintenance from the first one.
+		if heartbeat.State != nil && ms.Topo.SetDataNodeMaintenanceMode(dn, heartbeat.State.GetMaintenance()) {
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("stateUpdates").Inc()
-
-			updated := false
-			dn.Lock()
-			if dn.MaintenanceMode != heartbeat.State.GetMaintenance() {
-				updated = true
-				dn.MaintenanceMode = heartbeat.State.GetMaintenance()
-			}
-			dn.Unlock()
-
-			if updated {
-				glog.V(1).Infof("master sees state update from %s: %v", dn.Url(), heartbeat.State)
-			}
+			glog.V(1).Infof("master sees state update from %s: %v", dn.Url(), heartbeat.State)
 		}
 
 		message := &master_pb.VolumeLocation{

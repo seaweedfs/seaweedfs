@@ -306,7 +306,22 @@ func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 	return n.diskUsages.getOrCreateDisk(diskType)
 }
 
+// inMaintenanceMode is true for a data node whose volume server is in
+// maintenance mode. Racks and data centers never are: their rolled-up counters
+// still include such a node, so their free-slot totals may exceed what their
+// children will actually hand out; see reserveOneVolumeInternal.
+func (n *NodeImpl) inMaintenanceMode() bool {
+	dn, ok := n.value.(*DataNode)
+	return ok && dn.InMaintenanceMode()
+}
+
+// AvailableSpaceFor is the free volume slots on this node for the option's disk
+// type. A data node in maintenance mode reports none: it is being drained, so
+// it is neither a volume-growth candidate nor reservable.
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
+	if n.inMaintenanceMode() {
+		return 0
+	}
 	t := n.getOrCreateDisk(option.DiskType)
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
 	freeVolumeSlotCount -= erasure_coding.VolumeSlots(atomic.LoadInt64(&t.ecShardCount))
@@ -400,13 +415,29 @@ func (n *NodeImpl) ReserveOneVolumeForReservation(r int64, option *VolumeGrowOpt
 func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, useReservations bool) (assignedNode *DataNode, err error) {
 	n.RLock()
 	defer n.RUnlock()
-	for _, node := range n.children {
-		var freeSpace int64
+	freeSpaceOf := func(node Node) int64 {
 		if useReservations {
-			freeSpace = node.AvailableSpaceForReservation(option)
-		} else {
-			freeSpace = node.AvailableSpaceFor(option)
+			return node.AvailableSpaceForReservation(option)
 		}
+		return node.AvailableSpaceFor(option)
+	}
+	// The caller draws r from this node's rolled-up free slots, which still
+	// count children the walk below skips: a data node in maintenance mode
+	// reports no space, and an over-committed one reports less than zero. Fold
+	// r into the space that is actually on offer so it cannot walk off the end
+	// and fail with slots still free.
+	var eligible int64
+	for _, node := range n.children {
+		if freeSpace := freeSpaceOf(node); freeSpace > 0 {
+			eligible += freeSpace
+		}
+	}
+	if eligible <= 0 {
+		return nil, errors.New("No free volume slot found!")
+	}
+	r %= eligible
+	for _, node := range n.children {
+		freeSpace := freeSpaceOf(node)
 		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
 			continue
