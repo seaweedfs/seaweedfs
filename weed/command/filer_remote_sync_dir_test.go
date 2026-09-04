@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -546,6 +549,83 @@ func TestIsSuperseded(t *testing.T) {
 		}
 		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}}, dir, event) {
 			t.Error("isSuperseded = true, want false for an entry whose inline content is unchanged")
+		}
+	})
+}
+
+// failingRemote fails every WriteFile with err and counts the attempts.
+type failingRemote struct {
+	remote_storage.RemoteStorageClient
+	err    error
+	writes int
+}
+
+func (r *failingRemote) WriteFile(*remote_pb.RemoteStorageLocation, *filer_pb.Entry, io.Reader) (*filer_pb.RemoteEntry, error) {
+	r.writes++
+	return nil, r.err
+}
+
+// TestRetriedWriteFileStopsWhenSuperseded checks that a failed upload asks the
+// filer at once, and stops retrying when the entry is gone: the ~13s of backoff
+// util.Retry would spend on a dead chunk buys nothing. An upload of an entry the
+// filer still holds keeps the retry policy it had.
+func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
+	const dir = "/buckets/ingest"
+	event := entryWith("tmpjt9req69__Alan_Doe_Resume-1.pdf", nil, chunk("3,01", "e1"))
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "tier", Path: "/" + event.Name}
+	// What the S3 SDK reports when the volume server no longer has the chunk:
+	// "requesterror" makes IsTransientError retry it to exhaustion.
+	deadChunk := errors.New("RequestError: send request failed\ncaused by: Put \"https://s3.example.com/tier/x\": http://volume:8444/3,01?readDeleted=true: 404 Not Found: not found")
+
+	t.Run("superseded, one attempt", func(t *testing.T) {
+		remote := &failingRemote{err: deadChunk}
+		filerClient := &stubFilerClient{}
+		start := time.Now()
+		_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+		if !errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want errSuperseded", err)
+		}
+		if !strings.Contains(err.Error(), "404 Not Found") {
+			t.Errorf("err = %v, want it to keep the write failure", err)
+		}
+		if remote.writes != 1 {
+			t.Errorf("wrote %d times, want 1: retrying a dead chunk cannot succeed", remote.writes)
+		}
+		if filerClient.lookups != 1 {
+			t.Errorf("looked up the filer %d times, want 1", filerClient.lookups)
+		}
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Errorf("took %v, want no backoff", elapsed)
+		}
+	})
+
+	t.Run("still as described, transient failure keeps retrying", func(t *testing.T) {
+		prev := util.RetryWaitTime
+		util.RetryWaitTime = 1600 * time.Millisecond // two attempts: 1s, then 1.5s
+		t.Cleanup(func() { util.RetryWaitTime = prev })
+		remote := &failingRemote{err: deadChunk}
+		filerClient := &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}
+		_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+		if errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want the write failure itself", err)
+		}
+		if remote.writes != 2 {
+			t.Errorf("wrote %d times, want 2: a transient failure on a live entry is still retried", remote.writes)
+		}
+		if filerClient.lookups != 2 {
+			t.Errorf("looked up the filer %d times, want one per failed attempt", filerClient.lookups)
+		}
+	})
+
+	t.Run("still as described, permanent failure not retried", func(t *testing.T) {
+		remote := &failingRemote{err: errors.New("AccessDenied: Access Denied")}
+		filerClient := &stubFilerClient{entry: entryWith(event.Name, nil, chunk("3,01", "e1"))}
+		_, err := retriedWriteFile(remote, filerClient, dir, event, dest)
+		if err == nil || errors.Is(err, errSuperseded) {
+			t.Errorf("err = %v, want the write failure itself", err)
+		}
+		if remote.writes != 1 {
+			t.Errorf("wrote %d times, want 1", remote.writes)
 		}
 	})
 }

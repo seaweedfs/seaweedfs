@@ -178,12 +178,12 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
-			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
+			if errors.Is(writeErr, errSuperseded) {
+				glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+				return nil
+			}
 			if writeErr != nil {
-				if isSuperseded(option, message.NewParentPath, message.NewEntry) {
-					glog.Errorf("skipping %s: %s/%s deleted or rewritten since the event was logged: %v", remote_storage.FormatLocation(dest), message.NewParentPath, message.NewEntry.Name, writeErr)
-					return nil
-				}
 				return writeErr
 			}
 			// Skip updateLocalEntry for versioned rewrites: the logical
@@ -252,12 +252,12 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 					return nil
 				}
 			}
-			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
+			if errors.Is(writeErr, errSuperseded) {
+				glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+				return nil
+			}
 			if writeErr != nil {
-				if isSuperseded(option, message.NewParentPath, message.NewEntry) {
-					glog.Errorf("skipping %s: %s/%s deleted or rewritten since the event was logged: %v", remote_storage.FormatLocation(dest), message.NewParentPath, message.NewEntry.Name, writeErr)
-					return nil
-				}
 				return writeErr
 			}
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
@@ -295,18 +295,28 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 	return len(filer.DoMinusChunks(entry.GetChunks(), current.GetChunks())) > 0
 }
 
-func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *source.FilerSource, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
-	var writeErr error
-	err = util.Retry("writeFile", func() error {
+// errSuperseded marks an upload that failed for an entry the filer has since
+// moved past (isSuperseded). The caller skips the event instead of failing it.
+var errSuperseded = errors.New("deleted or rewritten since the event was logged")
+
+// retriedWriteFile uploads the entry, retrying transient failures. Every failed
+// attempt first asks the filer whether the entry is superseded, and stops at
+// once when it is: a dead chunk reads as a transient "RequestError" from the
+// SDK, and waiting out the backoff on it buys nothing.
+func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource filer_pb.FilerClient, dir string, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	err = util.RetryOnError("writeFile", func(err error) bool {
+		return !errors.Is(err, errSuperseded) && util.IsTransientError(err)
+	}, func() error {
 		reader := filer.NewFileReader(filerSource, newEntry)
 		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
+		var writeErr error
 		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
-		if writeErr != nil {
-			return writeErr
+		if writeErr != nil && isSuperseded(filerSource, dir, newEntry) {
+			return fmt.Errorf("%s %w: %w", util.NewFullPath(dir, newEntry.Name), errSuperseded, writeErr)
 		}
-		return nil
+		return writeErr
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errSuperseded) {
 		glog.Errorf("write to %s: %v", dest, err)
 	}
 	return
