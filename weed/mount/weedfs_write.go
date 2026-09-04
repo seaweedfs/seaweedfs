@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFunctionType {
@@ -38,7 +39,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		if wfs.option.VolumeServerAccess == "filerProxy" {
 			// getCurrentFiler() can change on failover, so read it per attempt.
 			uploadOption.GenUploadUrl = func(host, fileId string) string {
-				return fmt.Sprintf("http://%s/?proxyChunkId=%s", wfs.getCurrentFiler(), fileId)
+				return util_http.ProxyChunkUrl(string(wfs.getCurrentFiler()), fileId)
 			}
 		}
 

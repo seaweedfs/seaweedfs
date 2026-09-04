@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -71,7 +72,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	// proxy to volume servers, after the gate: this is the one port operators
 	// expose, and the branch reaches any needle in the cluster by file id.
 	if r.URL.Path == "/" {
-		if fileId := r.URL.Query().Get("proxyChunkId"); fileId != "" {
+		if fileId := r.URL.Query().Get(util_http.ProxyChunkIdParam); fileId != "" {
 			fs.proxyToVolumeServer(w, r, fileId)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
 			stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())

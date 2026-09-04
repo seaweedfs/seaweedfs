@@ -51,6 +51,18 @@ func JwtForVolumeServer(fileId string) string {
 	return string(security.GenJwtForVolumeServer(jwtSigningReadKey, jwtSigningReadKeyExpires, fileId))
 }
 
+// ChunkReadJwt returns the credential for reading fileId from urlStrings. A
+// lookup answers with the volume servers holding the needle or with a filer
+// proxying it, never a mix. A proxied chunk is a request to the filer, which
+// authorizes it and attaches the volume credential itself, so the token there
+// is a filer one.
+func ChunkReadJwt(urlStrings []string, fileId string) string {
+	if len(urlStrings) > 0 && util_http.IsProxyChunkUrl(urlStrings[0]) {
+		return util_http.JwtForFilerServer(false)
+	}
+	return JwtForVolumeServer(fileId)
+}
+
 func HasData(entry *filer_pb.Entry) bool {
 
 	if len(entry.Content) > 0 {
@@ -501,7 +513,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	// pre-size to the known chunk size; avoids bytes.Buffer's doubling regrowth
 	buffer.Grow(int(chunkView.ViewSize))
 	var shouldRetry bool
-	jwt := JwtForVolumeServer(chunkView.FileId)
+	jwt := ChunkReadJwt(urlStrings, chunkView.FileId)
 	for _, urlString := range urlStrings {
 		shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), util_http.AppendQueryParameter(urlString, "readDeleted", "true"), jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), func(data []byte) {
 			buffer.Write(data)

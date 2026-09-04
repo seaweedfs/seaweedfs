@@ -29,6 +29,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
@@ -960,7 +961,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 	if wfs.option.VolumeServerAccess == "filerProxy" {
 		return func(ctx context.Context, fileId string) (targetUrls []string, err error) {
-			return []string{"http://" + wfs.getCurrentFiler().ToHttpAddress() + "/?proxyChunkId=" + fileId}, nil
+			return []string{util_http.ProxyChunkUrl(string(wfs.getCurrentFiler().ToHttpAddress()), fileId)}, nil
 		}
 	}
 	// Use the cached FilerClient for efficient lookups with singleflight and cache history

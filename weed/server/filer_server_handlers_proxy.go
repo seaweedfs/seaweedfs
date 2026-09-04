@@ -127,7 +127,7 @@ func (fs *FilerServer) proxyToVolumeServerURL(w http.ResponseWriter, r *http.Req
 	// (e.g. http://server:8080/6,08136bdce4). Forward the caller's query params
 	// (e.g. readDeleted=true from weed mount) but drop the internal proxyChunkId.
 	query := r.URL.Query()
-	query.Del("proxyChunkId")
+	query.Del(util_http.ProxyChunkIdParam)
 	// "jwt" here is the filer credential that got the caller past the gate, and
 	// a volume server has no business seeing one. security.GetJwt reads that
 	// parameter before the Authorization header, so relaying it would also

@@ -42,7 +42,7 @@ func GenUploadUrlProxy(filerAddress string) func(host, fileId string) string {
 		if filerAddress == "" {
 			return fmt.Sprintf("http://%s/%s", host, fileId)
 		}
-		return fmt.Sprintf("http://%s/?proxyChunkId=%s", filerAddress, fileId)
+		return util_http.ProxyChunkUrl(filerAddress, fileId)
 	}
 }
 
@@ -209,6 +209,12 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 		}
 		uploadOption.UploadUrl = genUrl(host, fileId)
 		uploadOption.Jwt = auth
+		if util_http.IsProxyChunkUrl(uploadOption.UploadUrl) {
+			// The request addresses the filer, which authorizes it and mints the
+			// volume credential itself. The AssignVolume token is not a filer
+			// credential and gets the caller nowhere here.
+			uploadOption.Jwt = security.EncodedJwt(util_http.JwtForFilerServer(true))
+		}
 
 		uploadResult, err = uploader.retriedUploadData(context.Background(), data, uploadOption)
 		return err
