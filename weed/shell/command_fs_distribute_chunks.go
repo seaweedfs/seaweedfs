@@ -191,7 +191,8 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 	finalChunks := chunks
 	if hadManifest {
-		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), chunks)
+		// no chunk deleter here: a failed fold reports the blobs it saved
+		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), nil, chunks)
 		if manErr != nil {
 			fmt.Fprintf(writer, "WARNING: re-manifestize failed: %v. Writing flat chunk list.\n", manErr)
 		} else {

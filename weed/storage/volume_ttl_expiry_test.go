@@ -1,0 +1,249 @@
+package storage
+
+import (
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+)
+
+// TestVolumeTtlClockSurvivesDeletes reproduces the delete-traffic TTL bug:
+// deletes append a tombstone to the .dat, which moves the file's mtime, and
+// the loader read the TTL clock back from that mtime. A volume taking delete
+// traffic therefore had expired() re-armed for another full TTL on every
+// restart and was never reclaimed. The clock has to come from the newest
+// write instead.
+func TestVolumeTtlClockSurvivesDeletes(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	// Backdate the writes on disk so the last one sits well outside the TTL,
+	// while the tombstones below leave the .dat mtime at now.
+	lastWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	for i := 1; i <= 3; i++ {
+		n := newRandomNeedle(uint64(i))
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, lastWriteNs)
+	}
+	// More than one tombstone: the scan has to walk back over the whole run of
+	// them to reach a write.
+	for _, id := range []uint64{2, 3} {
+		if _, err := v.doDeleteRequest(newEmptyNeedle(id)); err != nil {
+			t.Fatalf("delete needle %d: %v", id, err)
+		}
+	}
+	contentSize := v.ContentSize()
+	v.Close()
+
+	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer reloaded.Close()
+
+	if got, want := reloaded.lastModifiedTsSeconds, lastWriteNs/uint64(time.Second); got != want {
+		t.Errorf("TTL clock recovered as %d, want the last write at %d", got, want)
+	}
+	if !reloaded.expired(contentSize, 1024*1024) {
+		t.Error("a TTL volume whose last write is 2h old must be expired after a reload")
+	}
+}
+
+// TestVolumeTtlClockKeepsMtimeWithoutRecoverableWrite covers a TTL volume whose
+// needles carry no append timestamp: the loader must stay on the .dat mtime
+// rather than treat the volume as written at the epoch and drop it on sight.
+func TestVolumeTtlClockKeepsMtimeWithoutRecoverableWrite(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.Version2, 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	contentSize := v.ContentSize()
+	v.Close()
+
+	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.Version2, 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer reloaded.Close()
+
+	if reloaded.expired(contentSize, 1024*1024) {
+		t.Error("a just-written volume must not be expired after a reload")
+	}
+}
+
+// TestVolumeTtlClockAfterVacuumTakesNewestWrite covers the one layout where a
+// .dat's order does not track its write order: vacuum rewrites it by key, and
+// an overwrite keeps its original, lower key. Reading the position rather than
+// the timestamps would recover the highest-key needle's older write time and
+// expire the volume before the overwrite has lived out its TTL.
+func TestVolumeTtlClockAfterVacuumTakesNewestWrite(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	// Needle 1 is overwritten last but sorts first, so vacuum leaves it at the
+	// head of the .dat with the newest timestamp of the three.
+	oldWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	newWriteNs := uint64(time.Now().Add(-time.Minute).UnixNano())
+	for _, w := range []struct {
+		id uint64
+		ns uint64
+	}{{2, oldWriteNs}, {3, oldWriteNs}, {1, newWriteNs}} {
+		n := newRandomNeedle(w.id)
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", w.id, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, w.ns)
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+	contentSize := v.ContentSize()
+	v.Close()
+
+	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer reloaded.Close()
+
+	if got, want := reloaded.lastModifiedTsSeconds, newWriteNs/uint64(time.Second); got != want {
+		t.Errorf("TTL clock recovered as %d, want the newest write at %d", got, want)
+	}
+	if reloaded.expired(contentSize, 1024*1024) {
+		t.Error("a volume overwritten a minute ago must not be expired after a vacuum and reload")
+	}
+}
+
+// TestVolumeTtlClockDeclinesUnaffordableScan covers the budget the vacuumed
+// path runs under. Reading a subset of a key-ordered volume's writes could
+// recover a timestamp older than the newest write and expire live data, so a
+// scan that does not fit has to leave the clock on the mtime instead.
+func TestVolumeTtlClockDeclinesUnaffordableScan(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	oldWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	for i := 1; i <= 3; i++ {
+		n := newRandomNeedle(uint64(i))
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, oldWriteNs)
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+	contentSize := v.ContentSize()
+	v.Close()
+
+	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
+	vacuumedLastWriteScanEntries = 2
+
+	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer reloaded.Close()
+
+	if reloaded.lastModifiedTsSeconds == oldWriteNs/uint64(time.Second) {
+		t.Error("a scan that ran out of budget must not report a partial maximum as the last write")
+	}
+	if reloaded.expired(contentSize, 1024*1024) {
+		t.Error("declining the scan must leave the volume on its mtime, not expire it")
+	}
+}
+
+// TestVolumeExpireAtSecCountsFromLastWrite guards the destroy time an EC volume
+// is reclaimed on (erasure_coding.EcVolume.IsTimeToDestroy). It was recomputed
+// as now+TTL on every .vif write, so a read-only mark, a tier upload or an EC
+// encode handed an already expiring volume another full TTL.
+func TestVolumeExpireAtSecCountsFromLastWrite(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	// A volume with nothing written yet has no last write to count from, and
+	// must not land in 1970 with its data due for destruction on sight.
+	if got := v.GetVolumeInfo().ExpireAtSec; got < uint64(time.Now().Unix()) {
+		t.Errorf("a fresh volume expires at %d, already in the past", got)
+	}
+
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	v.lastModifiedTsSeconds = uint64(time.Now().Add(-time.Hour).Unix())
+	want := v.lastModifiedTsSeconds + ttl.ToSeconds()
+
+	for i := 0; i < 2; i++ {
+		if err := v.SaveVolumeInfo(); err != nil {
+			t.Fatalf("save .vif: %v", err)
+		}
+		if got := v.GetVolumeInfo().ExpireAtSec; got != want {
+			t.Fatalf(".vif save %d put ExpireAtSec at %d, want %d counted from the last write", i, got, want)
+		}
+	}
+}
+
+func backdateAppendAtNs(t *testing.T, v *Volume, offset int64, size types.Size, appendAtNs uint64) {
+	t.Helper()
+	stamp := make([]byte, types.TimestampSize)
+	util.Uint64toBytes(stamp, appendAtNs)
+	tsOffset := offset + types.NeedleHeaderSize + int64(size) + needle.NeedleChecksumSize
+	if _, err := v.DataBackend.WriteAt(stamp, tsOffset); err != nil {
+		t.Fatalf("backdate the needle at offset %d: %v", offset, err)
+	}
+}

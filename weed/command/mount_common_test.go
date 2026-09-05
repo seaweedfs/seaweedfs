@@ -10,8 +10,24 @@ func Test_volumeName(t *testing.T) {
 		filer              string
 		filerMountRootPath string
 		dir                string
+		override           string
 		expected           string
 	}{
+		{
+			name:               "an override outranks the mounted path and the mount point",
+			filer:              "127.0.0.1:8888",
+			filerMountRootPath: "/buckets/videos",
+			dir:                `\\seaweedfs\Images`,
+			override:           "MyDisk",
+			expected:           "MyDisk",
+		},
+		{
+			name:               "an override still gets commas replaced",
+			filer:              "127.0.0.1:8888",
+			filerMountRootPath: "/",
+			override:           "My, Disk",
+			expected:           "My+ Disk",
+		},
 		{
 			name:               "a drive letter leaves only the filer to fall back on",
 			filer:              "127.0.0.1:8888",
@@ -80,8 +96,8 @@ func Test_volumeName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := volumeName(tt.filer, tt.filerMountRootPath, tt.dir); got != tt.expected {
-				t.Errorf("volumeName(%q, %q, %q) = %q, want %q", tt.filer, tt.filerMountRootPath, tt.dir, got, tt.expected)
+			if got := volumeName(tt.filer, tt.filerMountRootPath, tt.dir, tt.override); got != tt.expected {
+				t.Errorf("volumeName(%q, %q, %q, %q) = %q, want %q", tt.filer, tt.filerMountRootPath, tt.dir, tt.override, got, tt.expected)
 			}
 		})
 	}

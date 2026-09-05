@@ -132,6 +132,7 @@ func init() {
 	filerOptions.tusBasePath = cmdServer.Flag.String("filer.tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
 	filerOptions.tusMaxSizeMB = cmdServer.Flag.Int("filer.tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
 	filerOptions.tusSessionExpiry = cmdServer.Flag.Duration("filer.tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
+	filerOptions.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("filer.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
@@ -190,6 +191,7 @@ func init() {
 	s3Options.externalUrl = cmdServer.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	s3Options.defaultFileMode = cmdServer.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	s3Options.cacheSizeMB = cmdServer.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
+	s3Options.allowUntrustedRemoteEndpoints = cmdServer.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 
 	sftpOptions.port = cmdServer.Flag.Int("sftp.port", 2022, "SFTP server listen port")
 	sftpOptions.sshPrivateKey = cmdServer.Flag.String("sftp.sshPrivateKey", "", "path to the SSH private key file for host authentication")

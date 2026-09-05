@@ -9,6 +9,7 @@ type MountOptions struct {
 	filer                *string
 	filerMountRootPath   *string
 	dir                  *string
+	volumeName           *string
 	dirAutoCreate        *bool
 	collection           *string
 	collectionQuota      *int
@@ -92,6 +93,7 @@ func init() {
 	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "comma-separated weed filer location")
 	mountOptions.filerMountRootPath = cmdMount.Flag.String("filer.path", "/", "mount this remote path from filer server")
 	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
+	mountOptions.volumeName = cmdMount.Flag.String("volumeName", "", "name the mount shown by the platform (Finder/Explorer, or \"mount\"/\"df\" on Linux and FreeBSD), overriding the name taken from -filer.path or -dir")
 	mountOptions.dirAutoCreate = cmdMount.Flag.Bool("dirAutoCreate", false, "auto create the directory to mount to")
 	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
 	mountOptions.collectionQuota = cmdMount.Flag.Int("collectionQuotaMB", 0, "quota for the collection")
@@ -188,6 +190,8 @@ var cmdMount = &Command{
   the whole tree takes the name from the mount point instead, so
   -dir=\\seaweedfs\Images labels the disk "Images" while still mounting
   everything, and only a bare drive letter falls back to the filer address.
+  -volumeName overrides whatever name either of those would otherwise give it,
+  including what Linux and FreeBSD show for the mount in "mount" and "df".
 
   `,
 }

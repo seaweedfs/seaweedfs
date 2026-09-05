@@ -46,6 +46,10 @@ var (
 	filerSftpOptions   SftpOptions
 )
 
+// allowUntrustedRemoteEndpointsUsage documents the flag shared by the filer and
+// S3 gateway, whose remote-mount read paths dial the mounted endpoint directly.
+const allowUntrustedRemoteEndpointsUsage = "if true, a read of a remote-only entry accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints."
+
 type FilerOptions struct {
 	masters                   *pb.ServerDiscovery
 	mastersString             *string
@@ -83,6 +87,8 @@ type FilerOptions struct {
 	tusMaxSizeMB              *int
 	tusSessionExpiry          *time.Duration
 	s3ConfigFile              *string // optional path to static S3 identity config
+
+	allowUntrustedRemoteEndpoints *bool
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
 	// and by weed mini; nil for standalone weed filer.
@@ -127,6 +133,7 @@ func init() {
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
 	f.tusMaxSizeMB = cmdFiler.Flag.Int("tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
 	f.tusSessionExpiry = cmdFiler.Flag.Duration("tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
+	f.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -161,6 +168,7 @@ func init() {
 	filerS3Options.externalUrl = cmdFiler.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	filerS3Options.defaultFileMode = cmdFiler.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	filerS3Options.cacheSizeMB = cmdFiler.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
+	filerS3Options.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -396,6 +404,8 @@ func (fo *FilerOptions) startFiler() {
 		TusMaxSize:                int64(*fo.tusMaxSizeMB) * 1024 * 1024,
 		TusSessionExpiry:          *fo.tusSessionExpiry,
 		CredentialManager:         credentialManager,
+
+		AllowUntrustedRemoteEndpoints: *fo.allowUntrustedRemoteEndpoints,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

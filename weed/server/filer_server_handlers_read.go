@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -202,6 +204,18 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		stats.RecordRemoteCacheRead(stats.RemoteCacheSourceFiler, fs.filer.DetectBucket(entry.FullPath), hit)
 	}
 
+	// Every part of a multipart Range is prepared on its own, so the origin
+	// preflight below is memoized to one stat per request.
+	statOrigin := sync.OnceValue(func() error {
+		dir, name := entry.FullPath.DirAndName()
+		client, remoteLocation, err := fs.mountedRemoteClient(ctx, dir, name)
+		if err != nil {
+			return err
+		}
+		_, err = client.StatFile(remoteLocation)
+		return err
+	})
+
 	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
 			return func(writer io.Writer) error {
@@ -216,10 +230,18 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
+			var mountedLocation *remote_pb.RemoteStorageLocation
+			if fs.filer.RemoteStorage != nil {
+				_, mountedLocation = fs.filer.RemoteStorage.FindMountDirectory(entry.FullPath)
+			}
+			cacheWait := remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize, mountedLocation)
+			if cacheWait <= 0 {
+				return fs.streamFromRemoteOnly(ctx, r, dir, name, offset, size, statOrigin)
+			}
 			// Bounded wait: a large download outlasts any client timeout, so
 			// serve straight from the origin once the wait expires while the
 			// detached cache keeps filling for later reads.
-			cacheCtx, cancelCache := context.WithTimeout(ctx, remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize))
+			cacheCtx, cancelCache := context.WithTimeout(ctx, cacheWait)
 			resp, err := fs.CacheRemoteObjectToLocalCluster(cacheCtx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 				Directory: dir,
 				Name:      name,
@@ -279,22 +301,71 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// streamFromRemoteOnly serves a byte range of an entry whose mount opted out of
+// caching, leaving the origin as its only source. A multipart Range prepares
+// every part before writing any, so those open the origin at write time instead
+// of holding one connection per part through the whole preparation.
+func (fs *FilerServer) streamFromRemoteOnly(ctx context.Context, r *http.Request, dir, name string, offset, size int64, statOrigin func() error) (filer.DoStreamContent, error) {
+	fullPath := util.FullPath(dir).Child(name)
+	if strings.Contains(r.Header.Get("Range"), ",") {
+		// Stat first so a missing or unreachable origin still picks the response
+		// status, which the multipart body would otherwise have committed.
+		if err := statOrigin(); err != nil {
+			return nil, fs.remoteReadError(ctx, fullPath, err)
+		}
+		return func(writer io.Writer) error {
+			streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size)
+			if remoteErr != nil {
+				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
+				return remoteErr
+			}
+			return streamFn(writer)
+		}, nil
+	}
+	streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size)
+	if remoteErr != nil {
+		return nil, fs.remoteReadError(ctx, fullPath, remoteErr)
+	}
+	return streamFn, nil
+}
+
+// remoteReadError maps a failed origin read of an uncachable entry onto the
+// sentinel the caller turns into a response: a vanished object is final, since
+// no cache can resurrect it, while anything else may pass.
+func (fs *FilerServer) remoteReadError(ctx context.Context, fullPath util.FullPath, err error) error {
+	stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
+	glog.WarningfCtx(ctx, "read %s from remote: %v", fullPath, err)
+	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return filer_pb.ErrNotFound
+	}
+	return fmt.Errorf("read %s: %w", fullPath, ErrCacheNotReady)
+}
+
+// mountedRemoteClient resolves the origin of dir/name into a client that can
+// stream it.
+func (fs *FilerServer) mountedRemoteClient(ctx context.Context, dir, name string) (remote_storage.RemoteStorageClient, *remote_pb.RemoteStorageLocation, error) {
+	storageConf, remoteLocation, err := fs.resolveMountedRemote(ctx, dir, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	client, err := BuildGuardedRemoteStorageClient(ctx, storageConf, fs.option.AllowUntrustedRemoteEndpoints)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, ok := client.(remote_storage.RemoteStorageStreamReader); !ok {
+		return nil, nil, fmt.Errorf("remote storage type %s does not support streaming reads", storageConf.Type)
+	}
+	return client, remoteLocation, nil
+}
+
 // streamFromRemote serves a byte range of a remote-only entry straight from the
 // mounted origin, so a first read is not blocked by the full local caching.
 func (fs *FilerServer) streamFromRemote(ctx context.Context, dir, name string, offset, size int64) (filer.DoStreamContent, error) {
-	storageConf, remoteLocation, err := fs.resolveMountedRemote(ctx, dir, name)
+	client, remoteLocation, err := fs.mountedRemoteClient(ctx, dir, name)
 	if err != nil {
 		return nil, err
 	}
-	client, err := BuildGuardedRemoteStorageClient(ctx, storageConf, false)
-	if err != nil {
-		return nil, err
-	}
-	streamer, ok := client.(remote_storage.RemoteStorageStreamReader)
-	if !ok {
-		return nil, fmt.Errorf("remote storage type %s does not support streaming reads", storageConf.Type)
-	}
-	reader, err := streamer.ReadFileAsStream(ctx, remoteLocation, offset, size)
+	reader, err := client.(remote_storage.RemoteStorageStreamReader).ReadFileAsStream(ctx, remoteLocation, offset, size)
 	if err != nil {
 		return nil, err
 	}

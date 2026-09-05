@@ -850,75 +850,15 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Continue with streaming immediately - will serve from remote or cached chunks
 	}
 
-	// Check if PartNumber query parameter is present (for multipart GET requests)
-	partNumberStr := r.URL.Query().Get("partNumber")
-	if partNumberStr == "" {
-		partNumberStr = r.URL.Query().Get("PartNumber")
-	}
-
-	// If PartNumber is specified, set headers and modify Range to read only that part
-	// This replicates the filer handler logic
-	if partNumberStr != "" {
-		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
-			// Get actual parts count from metadata (not chunk count)
-			partsCount, partInfo := s3a.getMultipartInfo(objectEntryForSSE, partNumber)
-
-			// Validate part number
-			if partNumber > partsCount {
-				glog.Warningf("GetObject: Invalid part number %d, object has %d parts", partNumber, partsCount)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
-				return
-			}
-
-			// Set parts count header
-			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(partsCount))
-			glog.V(3).Infof("GetObject: Set PartsCount=%d for multipart GET with PartNumber=%d", partsCount, partNumber)
-
-			// Calculate the byte range for this part
-			// Note: ETag is NOT overridden - AWS S3 returns the complete object's ETag
-			// even when requesting a specific part via PartNumber
-			var startOffset, endOffset int64
-			if partInfo != nil {
-				var ok bool
-				startOffset, endOffset, ok = partRange(partInfo, objectEntryForSSE.Chunks)
-				if !ok {
-					glog.Errorf("GetObject: part %d boundary chunks [%d,%d) out of range (chunks: %d)", partNumber, partInfo.StartChunk, partInfo.EndChunk, len(objectEntryForSSE.Chunks))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-					return
-				}
-			} else {
-				// Fallback: assume 1:1 part-to-chunk mapping (backward compatibility)
-				chunkIndex := partNumber - 1
-				if chunkIndex >= len(objectEntryForSSE.Chunks) {
-					glog.Warningf("GetObject: Part %d chunk index %d out of range (chunks: %d)", partNumber, chunkIndex, len(objectEntryForSSE.Chunks))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
-					return
-				}
-				partChunk := objectEntryForSSE.Chunks[chunkIndex]
-				startOffset = partChunk.Offset
-				endOffset = partChunk.Offset + int64(partChunk.Size) - 1
-			}
-
-			// Check if client supplied a Range header - if so, apply it within the part's boundaries
-			// S3 allows both partNumber and Range together, where Range applies within the selected part
-			clientRangeHeader := r.Header.Get("Range")
-			if clientRangeHeader != "" {
-				adjustedStart, adjustedEnd, rangeErr := adjustRangeForPart(startOffset, endOffset, clientRangeHeader)
-				if rangeErr != nil {
-					glog.Warningf("GetObject: Invalid Range for part %d: %v", partNumber, rangeErr)
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return
-				}
-				startOffset = adjustedStart
-				endOffset = adjustedEnd
-				glog.V(3).Infof("GetObject: Client Range %s applied to part %d, adjusted to bytes=%d-%d", clientRangeHeader, partNumber, startOffset, endOffset)
-			}
-
-			// Set Range header to read the requested bytes (full part or client-specified range within part)
-			rangeHeader := fmt.Sprintf("bytes=%d-%d", startOffset, endOffset)
-			r.Header.Set("Range", rangeHeader)
-			glog.V(3).Infof("GetObject: Set Range header for part %d: %s", partNumber, rangeHeader)
+	// If PartNumber is specified, turn the request into a ranged read of that part
+	if partNumber := requestedPartNumber(r); partNumber > 0 {
+		startOffset, endOffset, errCode := s3a.partByteRange(w, r, objectEntryForSSE, partNumber)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
 		}
+		r.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", startOffset, endOffset))
+		glog.V(3).Infof("GetObject: part %d served as bytes=%d-%d", partNumber, startOffset, endOffset)
 	}
 
 	// NEW OPTIMIZATION: Stream directly from volume servers, bypassing filer proxy
@@ -2289,10 +2229,10 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 
 	// Set checksum header if stored in metadata, but only when:
 	// 1. The request contains "x-amz-checksum-mode: ENABLED" (per AWS S3 spec)
-	// 2. The request is NOT a ranged GET (Range header absent)
+	// 2. The response covers the full object (no Range header, no partNumber)
 	//    The stored checksum covers the full object; returning it for partial
 	//    responses causes SDK checksum validation failures.
-	if r != nil && r.Header.Get("X-Amz-Checksum-Mode") == "ENABLED" && r.Header.Get("Range") == "" {
+	if r != nil && r.Header.Get("X-Amz-Checksum-Mode") == "ENABLED" && r.Header.Get("Range") == "" && requestedPartNumber(r) == 0 {
 		if entry.Extended != nil {
 			if algoName, ok := entry.Extended[s3_constants.ExtChecksumAlgorithm]; ok {
 				if checksumVal, ok := entry.Extended[s3_constants.ExtChecksumValue]; ok {
@@ -2596,35 +2536,23 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// For HEAD requests, we already have all metadata - just set headers directly
 	totalSize := int64(filer.FileSize(objectEntryForSSE))
-	s3a.setResponseHeaders(w, r, objectEntryForSSE, totalSize)
+	responseSize := totalSize
+	statusCode := http.StatusOK
 
-	// Check if PartNumber query parameter is present (for multipart objects)
-	// This logic matches the filer handler for consistency
-	partNumberStr := r.URL.Query().Get("partNumber")
-	if partNumberStr == "" {
-		partNumberStr = r.URL.Query().Get("PartNumber")
-	}
-
-	// If PartNumber is specified, set headers (matching filer logic)
-	if partNumberStr != "" {
-		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
-			// Get actual parts count from metadata (not chunk count)
-			partsCount, _ := s3a.getMultipartInfo(objectEntryForSSE, partNumber)
-
-			// Validate part number
-			if partNumber > partsCount {
-				glog.Warningf("HeadObject: Invalid part number %d, object has %d parts", partNumber, partsCount)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
-				return
-			}
-
-			// Set parts count header
-			// Note: ETag is NOT overridden - AWS S3 returns the complete object's ETag
-			// even when requesting a specific part via PartNumber
-			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(partsCount))
-			glog.V(3).Infof("HeadObject: Set PartsCount=%d for part %d", partsCount, partNumber)
+	// A partNumber HEAD is a ranged HEAD of that part: report the part's size and range
+	if partNumber := requestedPartNumber(r); partNumber > 0 {
+		startOffset, endOffset, errCode := s3a.partByteRange(w, r, objectEntryForSSE, partNumber)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
 		}
+		responseSize = endOffset - startOffset + 1
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startOffset, endOffset, totalSize))
+		statusCode = http.StatusPartialContent
+		glog.V(3).Infof("HeadObject: part %d is bytes %d-%d/%d", partNumber, startOffset, endOffset, totalSize)
 	}
+
+	s3a.setResponseHeaders(w, r, objectEntryForSSE, responseSize)
 
 	// Detect and handle SSE
 	glog.V(3).Infof("HeadObjectHandler: Retrieved entry for %s/%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
@@ -2656,7 +2584,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		s3a.addSSEResponseHeadersFromEntry(w, r, objectEntryForSSE, sseType)
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(statusCode)
 }
 
 // fetchObjectEntry fetches the filer entry for an object
@@ -3254,16 +3182,17 @@ type rc struct {
 }
 
 // getMultipartInfo retrieves multipart metadata for a given part number
-// Returns: (partsCount, partInfo)
+// Returns: (partsCount, partInfo, hasBoundaries)
 // - partsCount: total number of parts in the multipart object
 // - partInfo: boundary information for the requested part (nil if not found or not a multipart object)
-func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) (int, *PartBoundaryInfo) {
+// - hasBoundaries: the entry carries part boundaries, so a nil partInfo means the object has no such part
+func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) (int, *PartBoundaryInfo, bool) {
 	if entry == nil {
-		return 0, nil
+		return 0, nil, false
 	}
 	if entry.Extended == nil {
 		// Not a multipart object or no metadata
-		return len(entry.GetChunks()), nil
+		return len(entry.GetChunks()), nil, false
 	}
 
 	// Try to get parts count from metadata
@@ -3275,20 +3204,82 @@ func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) 
 	}
 
 	// Try to get part boundaries from metadata
-	if boundariesJSON, exists := entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries]; exists {
-		var boundaries []PartBoundaryInfo
-		if err := json.Unmarshal(boundariesJSON, &boundaries); err == nil {
-			// Find the requested part
-			for i := range boundaries {
-				if boundaries[i].PartNumber == partNumber {
-					return partsCount, &boundaries[i]
-				}
-			}
+	boundariesJSON, exists := entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries]
+	if !exists {
+		return partsCount, nil, false
+	}
+	var boundaries []PartBoundaryInfo
+	if err := json.Unmarshal(boundariesJSON, &boundaries); err != nil {
+		glog.Warningf("getMultipartInfo: failed to unmarshal part boundaries: %v", err)
+		return partsCount, nil, false
+	}
+	for i := range boundaries {
+		if boundaries[i].PartNumber == partNumber {
+			return partsCount, &boundaries[i], true
 		}
 	}
 
-	// No part boundaries metadata or part not found
-	return partsCount, nil
+	// The object records its parts and this is not one of them
+	return partsCount, nil, true
+}
+
+// requestedPartNumber returns the partNumber query parameter, or 0 when it is
+// absent or not a positive integer.
+func requestedPartNumber(r *http.Request) int {
+	partNumberStr := r.URL.Query().Get("partNumber")
+	if partNumberStr == "" {
+		partNumberStr = r.URL.Query().Get("PartNumber")
+	}
+	partNumber, parseErr := strconv.Atoi(partNumberStr)
+	if parseErr != nil || partNumber <= 0 {
+		return 0
+	}
+	return partNumber
+}
+
+// partByteRange resolves the inclusive byte range a partNumber request reads,
+// narrowed by a client Range within the part, and sets the parts count header.
+// The object ETag is kept as is, matching AWS.
+func (s3a *S3ApiServer) partByteRange(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, partNumber int) (startOffset, endOffset int64, errCode s3err.ErrorCode) {
+	// Part numbers need not be consecutive, so an object that records its part
+	// boundaries is asked for the part itself rather than for a count.
+	partsCount, partInfo, hasBoundaries := s3a.getMultipartInfo(entry, partNumber)
+	if partInfo == nil && (hasBoundaries || partNumber > partsCount) {
+		glog.Warningf("partByteRange: object has no part %d, it has %d parts", partNumber, partsCount)
+		return 0, 0, s3err.ErrInvalidPartNumber
+	}
+
+	w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(partsCount))
+
+	if partInfo != nil {
+		var ok bool
+		startOffset, endOffset, ok = partRange(partInfo, entry.Chunks)
+		if !ok {
+			glog.Errorf("partByteRange: part %d boundary chunks [%d,%d) out of range (chunks: %d)", partNumber, partInfo.StartChunk, partInfo.EndChunk, len(entry.Chunks))
+			return 0, 0, s3err.ErrInternalError
+		}
+	} else {
+		// Fallback: assume 1:1 part-to-chunk mapping (backward compatibility)
+		chunkIndex := partNumber - 1
+		if chunkIndex >= len(entry.Chunks) {
+			glog.Warningf("partByteRange: part %d chunk index %d out of range (chunks: %d)", partNumber, chunkIndex, len(entry.Chunks))
+			return 0, 0, s3err.ErrInvalidPartNumber
+		}
+		partChunk := entry.Chunks[chunkIndex]
+		startOffset, endOffset = partChunk.Offset, partChunk.Offset+int64(partChunk.Size)-1
+	}
+
+	// S3 allows both partNumber and Range together, where Range applies within the selected part
+	if clientRangeHeader := r.Header.Get("Range"); clientRangeHeader != "" {
+		adjustedStart, adjustedEnd, rangeErr := adjustRangeForPart(startOffset, endOffset, clientRangeHeader)
+		if rangeErr != nil {
+			glog.Warningf("partByteRange: invalid Range for part %d: %v", partNumber, rangeErr)
+			return 0, 0, s3err.ErrInvalidRange
+		}
+		startOffset, endOffset = adjustedStart, adjustedEnd
+	}
+
+	return startOffset, endOffset, s3err.ErrNone
 }
 
 // buildRemoteObjectPath builds the filer directory and object name from S3 bucket/object.
@@ -3303,17 +3294,10 @@ func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name 
 	return dir, name
 }
 
-// openRemoteStream opens a ranged read of a remote-only object straight from
-// its mounted origin, resolving the mount and storage conf from the filer.
-// cached, when set, is the remote generation the local copy was made from: the
-// stream is refused unless the remote still matches it.
-func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object string, offset, size int64, cached *filer_pb.RemoteEntry) (io.ReadCloser, error) {
-	dir, name := s3a.buildRemoteObjectPath(bucket, object)
-
-	var storageConf *remote_pb.RemoteConf
-	var localMountedDir string
-	var mountedLocation *remote_pb.RemoteStorageLocation
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+// findMountedRemoteMapping resolves the remote mount covering dir from the
+// mount mapping kept in the filer.
+func (s3a *S3ApiServer) findMountedRemoteMapping(ctx context.Context, dir string) (localMountedDir string, mountedLocation *remote_pb.RemoteStorageLocation, err error) {
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mappingContent, readErr := filer.ReadInsideFiler(ctx, client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
 		if readErr != nil {
 			return readErr
@@ -3324,9 +3308,25 @@ func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object str
 		}
 		var findErr error
 		localMountedDir, mountedLocation, findErr = filer.FindMountedRemoteMapping(mappings, dir)
-		if findErr != nil {
-			return findErr
-		}
+		return findErr
+	})
+	return localMountedDir, mountedLocation, err
+}
+
+// openRemoteStream opens a ranged read of a remote-only object straight from
+// its mounted origin, resolving the mount and storage conf from the filer.
+// cached, when set, is the remote generation the local copy was made from: the
+// stream is refused unless the remote still matches it.
+func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object string, offset, size int64, cached *filer_pb.RemoteEntry) (io.ReadCloser, error) {
+	dir, name := s3a.buildRemoteObjectPath(bucket, object)
+
+	localMountedDir, mountedLocation, err := s3a.findMountedRemoteMapping(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var storageConf *remote_pb.RemoteConf
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		confContent, readErr := filer.ReadInsideFiler(ctx, client, filer.DirectoryEtcRemote, mountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX)
 		if readErr != nil {
 			return readErr
@@ -3338,7 +3338,7 @@ func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object str
 		return nil, err
 	}
 
-	client, err := weed_server.BuildGuardedRemoteStorageClient(ctx, storageConf, false)
+	client, err := weed_server.BuildGuardedRemoteStorageClient(ctx, storageConf, s3a.option.AllowUntrustedRemoteEndpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -3405,18 +3405,40 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 // Atomic so tests can shorten it without racing the read path.
 var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
 
+// remoteCacheWait resolves how long a read of dir may wait for the local cache.
+// Zero means the mount opted out of caching, so the read is served from the
+// origin instead -- except for a version-specific read, which has no origin key
+// to fall back to and therefore keeps the size tiers.
+func (s3a *S3ApiServer) remoteCacheWait(ctx context.Context, dir string, remoteSize int64, versionId string) time.Duration {
+	_, mountedLocation, mountErr := s3a.findMountedRemoteMapping(ctx, dir)
+	if mountErr != nil {
+		glog.V(2).Infof("remoteCacheWait: find mount for %s: %v", dir, mountErr)
+	}
+	wait := remote_storage.CacheWaitTimeout(remoteSize, mountedLocation)
+	if wait <= 0 && versionId != "" && versionId != "null" {
+		return remote_storage.CacheWaitTimeout(remoteSize, nil)
+	}
+	return wait
+}
+
 // cacheRemoteObjectForStreamingWithShortTimeout polls for cache completion with an adaptive timeout.
-// Timeout is based on file size: small files wait longer to maximize cache hits, large files
-// fail-fast to improve TTFB. Returns the cached entry and error to allow callers to distinguish
-// between transient errors (timeout) and permanent errors (not found, permission denied).
-// The filer continues caching on detached context, so retry finds cached chunks.
+// Timeout comes from the file size or the mount's cache_wait_ms: small files wait longer to
+// maximize cache hits, large files fail-fast to improve TTFB. Returns the cached entry and error
+// to allow callers to distinguish between transient errors (timeout) and permanent errors (not
+// found, permission denied). The filer continues caching on detached context, so retry finds
+// cached chunks.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) (*filer_pb.Entry, error) {
-	pollTimeout := remote_storage.CacheWaitTimeout(entry.GetRemoteEntry().GetRemoteSize())
+	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
+
+	pollTimeout := s3a.remoteCacheWait(r.Context(), dir, entry.GetRemoteEntry().GetRemoteSize(), versionId)
+	if pollTimeout <= 0 {
+		// The mount opted out of caching: report it uncached so the caller serves the origin.
+		glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: caching disabled for %s/%s", dir, name)
+		return nil, nil
+	}
 
 	cacheCtx, cancel := context.WithTimeout(r.Context(), pollTimeout)
 	defer cancel()
-
-	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
 	glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: polling cache status for %s/%s (timeout=%v)", dir, name, pollTimeout)
 
@@ -3523,6 +3545,10 @@ func (s3a *S3ApiServer) startBackgroundRemoteCache(bucket, object, versionId str
 		// Use timeout to bound goroutine and prevent pile-up if RPC stalls under load
 		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		if s3a.remoteCacheWait(bgCtx, dir, entry.GetRemoteEntry().GetRemoteSize(), versionId) <= 0 {
+			glog.V(2).Infof("startBackgroundRemoteCache: caching disabled for %s/%s", dir, name)
+			return
+		}
 		_, err := s3a.doCacheRemoteObject(bgCtx, dir, name)
 		if err != nil {
 			glog.V(2).Infof("startBackgroundRemoteCache: cache failed for %s/%s: %v", bucket, object, err)

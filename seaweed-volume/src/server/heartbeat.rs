@@ -961,7 +961,10 @@ fn build_heartbeat_with_ec_status(
                     version: vol.super_block.version.0 as u32,
                     ttl: vol.super_block.ttl.to_u32(),
                     compact_revision: vol.super_block.compaction_revision as u32,
-                    modified_at_second: vol.last_modified_ts() as i64,
+                    // The .dat mtime, as Go reports: the shell's quiet-period
+                    // gates read this as "last touched", which a delete has to
+                    // count towards even though the TTL clock ignores it.
+                    modified_at_second: vol.dat_file_mod_time() as i64,
                     disk_type: loc.disk_type.to_string(),
                     disk_id: disk_id as u32,
                     remote_storage_name,
