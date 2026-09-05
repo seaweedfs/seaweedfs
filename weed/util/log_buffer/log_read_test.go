@@ -622,6 +622,15 @@ func TestLoopProcessLogData_DuplicateReaderLeaving(t *testing.T) {
 	time.Sleep(observeFor)
 	spun := survivorIterations.Load() - before
 
+	// A low iteration count only means "not spinning" if the reader was still
+	// there to spin. Had LoopProcessLogData returned when its duplicate left,
+	// spun would be 0 and the count below would pass while proving nothing.
+	select {
+	case <-survivorDone:
+		t.Fatal("surviving reader returned while its duplicate unregistered; it must keep reading")
+	default:
+	}
+
 	stopSurvivor.Store(true)
 	<-survivorDone
 
