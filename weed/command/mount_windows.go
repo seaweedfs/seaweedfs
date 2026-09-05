@@ -104,7 +104,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	host := winfsp.New(seaweedFileSystem, winfsp.Options{
-		VolumeName:   volumeName(*option.filer, *option.filerMountRootPath, dir),
+		VolumeName:   volumeName(*option.filer, *option.filerMountRootPath, dir, ""),
 		Uid:          ownedByMounter,
 		Gid:          ownedByMounter,
 		CacheTimeout: windowsCacheTimeout,
