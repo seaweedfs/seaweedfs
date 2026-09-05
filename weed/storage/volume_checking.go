@@ -263,8 +263,8 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 // the volume, replacing the .dat mtime the loader starts from. A delete appends
 // a tombstone and vacuum rewrites the .dat wholesale, so the mtime moves
 // without any write: every restart of a volume taking delete traffic re-armed
-// expired() for another full TTL and the volume was never reclaimed. See issue
-// #11160. Left on the mtime when no write is recoverable.
+// expired() for another full TTL and the volume was never reclaimed. Left on
+// the mtime when no write is recoverable.
 func (v *Volume) recoverLastModifiedTs(indexFile *os.File) {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return

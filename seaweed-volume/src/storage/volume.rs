@@ -2229,8 +2229,8 @@ impl Volume {
     /// the .dat mtime the loader starts from. A delete appends a tombstone and
     /// vacuum rewrites the .dat wholesale, so the mtime moves without any write
     /// ever landing: every restart of a volume taking delete traffic re-armed
-    /// is_expired() for another full TTL and the volume was never reclaimed. See
-    /// issue #11160. Mirrors Go's recoverLastModifiedTs.
+    /// is_expired() for another full TTL and the volume was never reclaimed.
+    /// Mirrors Go's recoverLastModifiedTs.
     fn recover_last_modified_ts(&mut self) {
         if self.super_block.ttl.minutes() == 0 {
             return;
@@ -4906,10 +4906,11 @@ mod tests {
         );
     }
 
-    // Reproduce issue #11160: deletes append a tombstone to the .dat, which
-    // moves the file's mtime, and the loader read the TTL clock back from that
-    // mtime. A volume taking delete traffic therefore had is_expired() re-armed
-    // for another full TTL on every restart and was never reclaimed.
+    // Reproduce the delete-traffic TTL bug: deletes append a tombstone to the
+    // .dat, which moves the file's mtime, and the loader read the TTL clock
+    // back from that mtime. A volume taking delete traffic therefore had
+    // is_expired() re-armed for another full TTL on every restart and was
+    // never reclaimed.
     #[test]
     fn test_ttl_clock_survives_deletes() {
         let tmp = TempDir::new().unwrap();

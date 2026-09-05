@@ -10,11 +10,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// TestVolumeTtlClockSurvivesDeletes reproduces issue #11160: deletes append a
-// tombstone to the .dat, which moves the file's mtime, and the loader read the
-// TTL clock back from that mtime. A volume taking delete traffic therefore had
-// expired() re-armed for another full TTL on every restart and was never
-// reclaimed. The clock has to come from the newest write instead.
+// TestVolumeTtlClockSurvivesDeletes reproduces the delete-traffic TTL bug:
+// deletes append a tombstone to the .dat, which moves the file's mtime, and
+// the loader read the TTL clock back from that mtime. A volume taking delete
+// traffic therefore had expired() re-armed for another full TTL on every
+// restart and was never reclaimed. The clock has to come from the newest
+// write instead.
 func TestVolumeTtlClockSurvivesDeletes(t *testing.T) {
 	dir := t.TempDir()
 	ttl, err := needle.ReadTTL("5m")
@@ -58,7 +59,7 @@ func TestVolumeTtlClockSurvivesDeletes(t *testing.T) {
 		t.Errorf("TTL clock recovered as %d, want the last write at %d", got, want)
 	}
 	if !reloaded.expired(contentSize, 1024*1024) {
-		t.Error("a TTL volume whose last write is 2h old must be expired after a reload (issue #11160)")
+		t.Error("a TTL volume whose last write is 2h old must be expired after a reload")
 	}
 }
 
