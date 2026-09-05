@@ -3347,7 +3347,7 @@ func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object str
 		return nil, err
 	}
 
-	client, err := weed_server.BuildGuardedRemoteStorageClient(ctx, storageConf, false)
+	client, err := weed_server.BuildGuardedRemoteStorageClient(ctx, storageConf, s3a.option.AllowUntrustedRemoteEndpoints)
 	if err != nil {
 		return nil, err
 	}

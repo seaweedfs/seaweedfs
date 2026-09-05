@@ -302,7 +302,7 @@ func (fs *FilerServer) streamFromRemote(ctx context.Context, dir, name string, o
 	if err != nil {
 		return nil, err
 	}
-	client, err := BuildGuardedRemoteStorageClient(ctx, storageConf, false)
+	client, err := BuildGuardedRemoteStorageClient(ctx, storageConf, fs.option.AllowUntrustedRemoteEndpoints)
 	if err != nil {
 		return nil, err
 	}
