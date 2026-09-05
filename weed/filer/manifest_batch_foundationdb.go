@@ -21,6 +21,4 @@ package filer
 // agree on a list the filer's store can hold. A binary built with this tag but
 // pointed at another store folds earlier than that store requires, which costs
 // one manifest blob per 500 chunks and one read to resolve it.
-//
-// See issue #11158.
 const ManifestBatch = 500

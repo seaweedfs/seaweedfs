@@ -224,14 +224,42 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 
 }
 
-func MaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_pb.FileChunk) (chunks []*filer_pb.FileChunk, err error) {
+// MaybeManifestize folds a flat chunk list into manifest chunks once it passes
+// ManifestBatch, so an entry's chunk list stays within what the metadata store
+// will hold. A fold that fails partway returns inputChunks unchanged -- never
+// the half-folded list, which drops the manifests the caller came in with --
+// and hands the blobs it had already saved to deleteChunks, since the flat list
+// it returns references none of them. deleteChunks may be nil where the caller
+// has no deleter to offer; then the blobs are only named in the log.
+func MaybeManifestize(saveFunc SaveDataAsChunkFunctionType, deleteChunks func([]*filer_pb.FileChunk), inputChunks []*filer_pb.FileChunk) (chunks []*filer_pb.FileChunk, err error) {
 	// Don't manifestize SSE-encrypted chunks to preserve per-chunk metadata
 	for _, chunk := range inputChunks {
 		if chunk.GetSseType() != 0 { // Any SSE type (SSE-C or SSE-KMS)
 			return inputChunks, nil
 		}
 	}
-	return doMaybeManifestize(saveFunc, inputChunks, ManifestBatch, mergeIntoManifest)
+
+	var saved []*filer_pb.FileChunk
+	record := func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (*filer_pb.FileChunk, error) {
+		chunk, saveErr := saveFunc(reader, name, offset, tsNs, expectedDataSize)
+		if saveErr == nil {
+			saved = append(saved, chunk)
+		}
+		return chunk, saveErr
+	}
+
+	chunks, err = doMaybeManifestize(record, inputChunks, ManifestBatch, mergeIntoManifest)
+	if err == nil {
+		return chunks, nil
+	}
+	if len(saved) > 0 {
+		if deleteChunks != nil {
+			deleteChunks(saved)
+		} else {
+			glog.V(0).Infof("manifestize failed, %d manifest blobs left unreferenced: %v", len(saved), err)
+		}
+	}
+	return inputChunks, err
 }
 
 func doMaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_pb.FileChunk, mergeFactor int, mergefn func(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer_pb.FileChunk) (manifestChunk *filer_pb.FileChunk, err error)) (chunks []*filer_pb.FileChunk, err error) {
@@ -249,7 +277,9 @@ func doMaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*fil
 	for i := 0; i+mergeFactor <= len(dataChunks); i += mergeFactor {
 		chunk, err := mergefn(saveFunc, dataChunks[i:i+mergeFactor])
 		if err != nil {
-			return dataChunks, err
+			// dataChunks is what is left after the manifests the caller
+			// already had were separated out; returning it would drop them
+			return inputChunks, err
 		}
 		chunks = append(chunks, chunk)
 		remaining -= mergeFactor
