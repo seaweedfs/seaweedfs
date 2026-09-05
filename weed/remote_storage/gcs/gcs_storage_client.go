@@ -270,7 +270,7 @@ func (gcs *gcsRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *re
 		if errors.Is(err, storage.ErrObjectNotExist) {
 			return nil, remote_storage.ErrRemoteObjectNotFound
 		}
-		return nil, fmt.Errorf("failed to open stream for %s%s: %v", loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("failed to open stream for %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	return reader, nil
 }
