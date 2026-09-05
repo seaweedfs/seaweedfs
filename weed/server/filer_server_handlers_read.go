@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -203,6 +204,18 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		stats.RecordRemoteCacheRead(stats.RemoteCacheSourceFiler, fs.filer.DetectBucket(entry.FullPath), hit)
 	}
 
+	// Every part of a multipart Range is prepared on its own, so the origin
+	// preflight below is memoized to one stat per request.
+	statOrigin := sync.OnceValue(func() error {
+		dir, name := entry.FullPath.DirAndName()
+		client, remoteLocation, err := fs.mountedRemoteClient(ctx, dir, name)
+		if err != nil {
+			return err
+		}
+		_, err = client.StatFile(remoteLocation)
+		return err
+	})
+
 	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
 			return func(writer io.Writer) error {
@@ -223,7 +236,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			cacheWait := remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize, mountedLocation)
 			if cacheWait <= 0 {
-				return fs.streamFromRemoteOnly(ctx, r, dir, name, offset, size)
+				return fs.streamFromRemoteOnly(ctx, r, dir, name, offset, size, statOrigin)
 			}
 			// Bounded wait: a large download outlasts any client timeout, so
 			// serve straight from the origin once the wait expires while the
@@ -292,16 +305,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 // caching, leaving the origin as its only source. A multipart Range prepares
 // every part before writing any, so those open the origin at write time instead
 // of holding one connection per part through the whole preparation.
-func (fs *FilerServer) streamFromRemoteOnly(ctx context.Context, r *http.Request, dir, name string, offset, size int64) (filer.DoStreamContent, error) {
+func (fs *FilerServer) streamFromRemoteOnly(ctx context.Context, r *http.Request, dir, name string, offset, size int64, statOrigin func() error) (filer.DoStreamContent, error) {
 	fullPath := util.FullPath(dir).Child(name)
 	if strings.Contains(r.Header.Get("Range"), ",") {
 		// Stat first so a missing or unreachable origin still picks the response
 		// status, which the multipart body would otherwise have committed.
-		client, remoteLocation, err := fs.mountedRemoteClient(ctx, dir, name)
-		if err == nil {
-			_, err = client.StatFile(remoteLocation)
-		}
-		if err != nil {
+		if err := statOrigin(); err != nil {
 			return nil, fs.remoteReadError(ctx, fullPath, err)
 		}
 		return func(writer io.Writer) error {
