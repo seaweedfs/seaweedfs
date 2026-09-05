@@ -284,19 +284,32 @@ func (v *Volume) recoverLastModifiedTs(indexFile *os.File) {
 	v.lastModifiedTsSeconds = appendAtNs / uint64(time.Second)
 }
 
-// findLastWriteAppendAtNs scans the .idx backwards for the newest entry that
-// records a write rather than a deletion and returns that needle's append
-// timestamp. Both the .idx and the .dat are append ordered -- vacuum rewrites
-// them together, ordered by key, which the master hands out increasing -- so
-// the newest write entry is the newest needle in the volume. Returns 0 when the
-// .idx holds nothing but tombstones, or for a volume older than version 3,
-// whose needles carry no append timestamp.
+// vacuumedLastWriteScanEntries caps the needles a vacuumed volume's scan reads
+// a timestamp for. Reading every one would cost a seek per needle on a volume
+// holding millions; the .idx is walked newest key first, so the cap keeps the
+// most recently issued keys, where the newest write is.
+const vacuumedLastWriteScanEntries = 4096
+
+// findLastWriteAppendAtNs scans the .idx backwards for the newest write -- an
+// entry that is not a deletion tombstone -- and returns that needle's append
+// timestamp. The .idx and the .dat share an order, so an append-ordered volume
+// answers with the first write the scan reaches. Vacuum rewrites both in key
+// order, which tracks write order only because the master issues keys
+// increasing: an overwrite keeps its original, lower key, so a vacuumed volume
+// takes the maximum over a bounded window of entries rather than trusting the
+// position. Returns 0 when the .idx holds nothing but tombstones, or for a
+// volume older than version 3, whose needles carry no append timestamp.
 func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (uint64, error) {
 	if v.Version() != needle.Version3 {
 		return 0, nil
 	}
+	entriesToRead := 1
+	if v.SuperBlock.CompactionRevision > 0 {
+		entriesToRead = vacuumedLastWriteScanEntries
+	}
+	var lastWriteAppendAtNs uint64
 	block := make([]byte, types.NeedleMapEntrySize*idx.RowsToRead)
-	for end := indexSize; end > 0; {
+	for end := indexSize; end > 0 && entriesToRead > 0; {
 		start := max(end-int64(len(block)), 0)
 		entries := block[:end-start]
 		readCount, err := indexFile.ReadAt(entries, start)
@@ -306,16 +319,21 @@ func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (ui
 		if err != nil {
 			return 0, fmt.Errorf("read %s at %d: %v", indexFile.Name(), start, err)
 		}
-		for i := len(entries) - types.NeedleMapEntrySize; i >= 0; i -= types.NeedleMapEntrySize {
+		for i := len(entries) - types.NeedleMapEntrySize; i >= 0 && entriesToRead > 0; i -= types.NeedleMapEntrySize {
 			_, offset, size := idx.IdxFileEntry(entries[i : i+types.NeedleMapEntrySize])
 			if offset.IsZero() || size.IsDeleted() {
 				continue
 			}
-			return readNeedleAppendAtNs(v.DataBackend, offset.ToActualOffset(), size)
+			appendAtNs, err := readNeedleAppendAtNs(v.DataBackend, offset.ToActualOffset(), size)
+			if err != nil {
+				return 0, err
+			}
+			lastWriteAppendAtNs = max(lastWriteAppendAtNs, appendAtNs)
+			entriesToRead--
 		}
 		end = start
 	}
-	return 0, nil
+	return lastWriteAppendAtNs, nil
 }
 
 // readNeedleAppendAtNs reads the append timestamp a version 3 needle carries

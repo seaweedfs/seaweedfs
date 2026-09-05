@@ -93,6 +93,61 @@ func TestVolumeTtlClockKeepsMtimeWithoutRecoverableWrite(t *testing.T) {
 	}
 }
 
+// TestVolumeTtlClockAfterVacuumTakesNewestWrite covers the one layout where a
+// .dat's order does not track its write order: vacuum rewrites it by key, and
+// an overwrite keeps its original, lower key. Reading the position rather than
+// the timestamps would recover the highest-key needle's older write time and
+// expire the volume before the overwrite has lived out its TTL.
+func TestVolumeTtlClockAfterVacuumTakesNewestWrite(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	// Needle 1 is overwritten last but sorts first, so vacuum leaves it at the
+	// head of the .dat with the newest timestamp of the three.
+	oldWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	newWriteNs := uint64(time.Now().Add(-time.Minute).UnixNano())
+	for _, w := range []struct {
+		id uint64
+		ns uint64
+	}{{2, oldWriteNs}, {3, oldWriteNs}, {1, newWriteNs}} {
+		n := newRandomNeedle(w.id)
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", w.id, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, w.ns)
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+	contentSize := v.ContentSize()
+	v.Close()
+
+	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer reloaded.Close()
+
+	if got, want := reloaded.lastModifiedTsSeconds, newWriteNs/uint64(time.Second); got != want {
+		t.Errorf("TTL clock recovered as %d, want the newest write at %d", got, want)
+	}
+	if reloaded.expired(contentSize, 1024*1024) {
+		t.Error("a volume overwritten a minute ago must not be expired after a vacuum and reload")
+	}
+}
+
 // TestVolumeExpireAtSecCountsFromLastWrite guards the destroy time an EC volume
 // is reclaimed on (erasure_coding.EcVolume.IsTimeToDestroy). It was recomputed
 // as now+TTL on every .vif write, so a read-only mark, a tier upload or an EC

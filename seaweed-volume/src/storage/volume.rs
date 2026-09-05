@@ -2218,6 +2218,12 @@ impl Volume {
         }
     }
 
+    /// Caps the needles a vacuumed volume's scan reads a timestamp for. Reading
+    /// every one would cost a seek per needle on a volume holding millions; the
+    /// .idx is walked newest key first, so the cap keeps the most recently
+    /// issued keys, where the newest write is.
+    const VACUUMED_LAST_WRITE_SCAN_ENTRIES: usize = 4096;
+
     /// Point the TTL clock at the newest write recorded in the volume, replacing
     /// the .dat mtime the loader starts from. A delete appends a tombstone and
     /// vacuum rewrites the .dat wholesale, so the mtime moves without any write
@@ -2239,13 +2245,16 @@ impl Volume {
         }
     }
 
-    /// Scan the .idx backwards for the newest entry that records a write rather
-    /// than a deletion and return that needle's append timestamp. Both the .idx
-    /// and the .dat are append ordered — vacuum rewrites them together in key
-    /// order, and the master hands keys out increasing — so the newest write
-    /// entry is the newest needle in the volume. Returns 0 when the .idx holds
-    /// nothing but tombstones, or for a volume older than version 3, whose
-    /// needles carry no append timestamp. Mirrors Go's findLastWriteAppendAtNs.
+    /// Scan the .idx backwards for the newest write — an entry that is not a
+    /// deletion tombstone — and return that needle's append timestamp. The .idx
+    /// and the .dat share an order, so an append-ordered volume answers with the
+    /// first write the scan reaches. Vacuum rewrites both in key order, which
+    /// tracks write order only because the master issues keys increasing: an
+    /// overwrite keeps its original, lower key, so a vacuumed volume takes the
+    /// maximum over a bounded window of entries rather than trusting the
+    /// position. Returns 0 when the .idx holds nothing but tombstones, or for a
+    /// volume older than version 3, whose needles carry no append timestamp.
+    /// Mirrors Go's findLastWriteAppendAtNs.
     fn find_last_write_append_at_ns(&self) -> Result<u64, VolumeError> {
         if self.version() != VERSION_3 {
             return Ok(0);
@@ -2255,24 +2264,35 @@ impl Volume {
         if idx_size == 0 || idx_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
             return Ok(0);
         }
+        let mut entries_to_read = if self.super_block.compaction_revision > 0 {
+            Self::VACUUMED_LAST_WRITE_SCAN_ENTRIES
+        } else {
+            1
+        };
+        let mut last_write_append_at_ns = 0u64;
         let mut idx_file = File::open(&idx_path)?;
         let mut block = vec![0u8; NEEDLE_MAP_ENTRY_SIZE * idx::ROWS_TO_READ];
         let mut end = idx_size;
-        while end > 0 {
+        while end > 0 && entries_to_read > 0 {
             let start = (end - block.len() as i64).max(0);
             let entries = &mut block[..(end - start) as usize];
             idx_file.seek(SeekFrom::Start(start as u64))?;
             idx_file.read_exact(entries)?;
             for entry in entries.chunks_exact(NEEDLE_MAP_ENTRY_SIZE).rev() {
+                if entries_to_read == 0 {
+                    break;
+                }
                 let (_, offset, size) = idx_entry_from_bytes(entry);
                 if offset.is_zero() || size.is_deleted() {
                     continue;
                 }
-                return self.read_needle_append_at_ns(offset.to_actual_offset(), size);
+                last_write_append_at_ns = last_write_append_at_ns
+                    .max(self.read_needle_append_at_ns(offset.to_actual_offset(), size)?);
+                entries_to_read -= 1;
             }
             end = start;
         }
-        Ok(0)
+        Ok(last_write_append_at_ns)
     }
 
     /// Read the append timestamp a version 3 needle carries past its checksum.
@@ -4907,6 +4927,53 @@ mod tests {
         assert!(
             v.is_expired(content_size, 1024 * 1024),
             "a TTL volume whose last write is 2h old must be expired after a reload"
+        );
+    }
+
+    // The one layout where a .dat's order does not track its write order:
+    // vacuum rewrites it by key, and an overwrite keeps its original, lower key.
+    // Reading the position rather than the timestamps would recover the
+    // highest-key needle's older write time and expire the volume before the
+    // overwrite has lived out its TTL.
+    #[test]
+    fn test_ttl_clock_after_vacuum_takes_newest_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let old_write_ns = (now - 2 * 60 * 60) * 1_000_000_000;
+        let new_write_ns = (now - 60) * 1_000_000_000;
+
+        let content_size = {
+            let mut v = make_ttl_volume(dir, ttl);
+            // Needle 1 is overwritten last but sorts first, so vacuum leaves it
+            // at the head of the .dat with the newest timestamp of the three.
+            for (id, append_at_ns) in [(2u64, old_write_ns), (3, old_write_ns), (1, new_write_ns)] {
+                let data = format!("data {}", id);
+                let mut n = Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(id as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
+                v.sync_to_disk().unwrap();
+                backdate_append_at_ns(&v.dat_path(), offset, n.size, append_at_ns);
+            }
+            v.compact_by_index(0, 0, |_| true).unwrap();
+            v.commit_compact().unwrap();
+            v.content_size()
+        };
+
+        let v = make_ttl_volume(dir, ttl);
+        assert_eq!(v.last_modified_ts(), new_write_ns / 1_000_000_000);
+        assert!(
+            !v.is_expired(content_size, 1024 * 1024),
+            "a volume overwritten a minute ago must not be expired after a vacuum and reload"
         );
     }
 
