@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -258,6 +259,79 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 	return lastAppendAtNs, nil
 }
 
+// recoverLastModifiedTs points the TTL clock at the newest write recorded in
+// the volume, replacing the .dat mtime the loader starts from. A delete appends
+// a tombstone and vacuum rewrites the .dat wholesale, so the mtime moves
+// without any write: every restart of a volume taking delete traffic re-armed
+// expired() for another full TTL and the volume was never reclaimed. See issue
+// #11160. Left on the mtime when no write is recoverable.
+func (v *Volume) recoverLastModifiedTs(indexFile *os.File) {
+	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
+		return
+	}
+	indexSize, err := verifyIndexFileIntegrity(indexFile)
+	if err != nil || indexSize == 0 {
+		return
+	}
+	appendAtNs, err := findLastWriteAppendAtNs(v, indexFile, indexSize)
+	if err != nil {
+		glog.Warningf("volume %d recover last write from %s: %v", v.Id, indexFile.Name(), err)
+		return
+	}
+	if appendAtNs == 0 {
+		return
+	}
+	v.lastModifiedTsSeconds = appendAtNs / uint64(time.Second)
+}
+
+// findLastWriteAppendAtNs scans the .idx backwards for the newest entry that
+// records a write rather than a deletion and returns that needle's append
+// timestamp. Both the .idx and the .dat are append ordered -- vacuum rewrites
+// them together, ordered by key, which the master hands out increasing -- so
+// the newest write entry is the newest needle in the volume. Returns 0 when the
+// .idx holds nothing but tombstones, or for a volume older than version 3,
+// whose needles carry no append timestamp.
+func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (uint64, error) {
+	if v.Version() != needle.Version3 {
+		return 0, nil
+	}
+	block := make([]byte, types.NeedleMapEntrySize*idx.RowsToRead)
+	for end := indexSize; end > 0; {
+		start := max(end-int64(len(block)), 0)
+		entries := block[:end-start]
+		readCount, err := indexFile.ReadAt(entries, start)
+		if err == io.EOF && readCount == len(entries) {
+			err = nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("read %s at %d: %v", indexFile.Name(), start, err)
+		}
+		for i := len(entries) - types.NeedleMapEntrySize; i >= 0; i -= types.NeedleMapEntrySize {
+			_, offset, size := idx.IdxFileEntry(entries[i : i+types.NeedleMapEntrySize])
+			if offset.IsZero() || size.IsDeleted() {
+				continue
+			}
+			return readNeedleAppendAtNs(v.DataBackend, offset.ToActualOffset(), size)
+		}
+		end = start
+	}
+	return 0, nil
+}
+
+// readNeedleAppendAtNs reads the append timestamp a version 3 needle carries
+// past its checksum.
+func readNeedleAppendAtNs(datFile backend.BackendStorageFile, offset int64, size types.Size) (uint64, error) {
+	bytes := make([]byte, types.TimestampSize)
+	readCount, err := datFile.ReadAt(bytes, offset+types.NeedleHeaderSize+int64(size)+needle.NeedleChecksumSize)
+	if err == io.EOF && readCount == types.TimestampSize {
+		err = nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return util.BytesToUint64(bytes), nil
+}
+
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {
 		if indexSize%types.NeedleMapEntrySize != 0 {
@@ -293,19 +367,13 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 		return 0, ErrorSizeMismatch
 	}
 	if v == needle.Version3 {
-		bytes := make([]byte, types.TimestampSize)
-		var readCount int
-		readCount, err = datFile.ReadAt(bytes, offset+types.NeedleHeaderSize+int64(size)+needle.NeedleChecksumSize)
-		if err == io.EOF && readCount == types.TimestampSize {
-			err = nil
-		}
+		n.AppendAtNs, err = readNeedleAppendAtNs(datFile, offset, size)
 		if err == io.EOF {
 			return 0, err
 		}
 		if err != nil {
 			return 0, fmt.Errorf("verifyNeedleIntegrity check %s entry offset %d size %d: %v", datFile.Name(), offset, size, err)
 		}
-		n.AppendAtNs = util.BytesToUint64(bytes)
 		fileTailOffset := offset + needle.GetActualSize(size, v)
 		fileSize, _, err := datFile.GetStat()
 		if err != nil {
