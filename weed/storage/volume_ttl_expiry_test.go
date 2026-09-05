@@ -148,6 +148,56 @@ func TestVolumeTtlClockAfterVacuumTakesNewestWrite(t *testing.T) {
 	}
 }
 
+// TestVolumeTtlClockDeclinesUnaffordableScan covers the budget the vacuumed
+// path runs under. Reading a subset of a key-ordered volume's writes could
+// recover a timestamp older than the newest write and expire live data, so a
+// scan that does not fit has to leave the clock on the mtime instead.
+func TestVolumeTtlClockDeclinesUnaffordableScan(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	oldWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	for i := 1; i <= 3; i++ {
+		n := newRandomNeedle(uint64(i))
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, oldWriteNs)
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+	contentSize := v.ContentSize()
+	v.Close()
+
+	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
+	vacuumedLastWriteScanEntries = 2
+
+	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer reloaded.Close()
+
+	if reloaded.lastModifiedTsSeconds == oldWriteNs/uint64(time.Second) {
+		t.Error("a scan that ran out of budget must not report a partial maximum as the last write")
+	}
+	if reloaded.expired(contentSize, 1024*1024) {
+		t.Error("declining the scan must leave the volume on its mtime, not expire it")
+	}
+}
+
 // TestVolumeExpireAtSecCountsFromLastWrite guards the destroy time an EC volume
 // is reclaimed on (erasure_coding.EcVolume.IsTimeToDestroy). It was recomputed
 // as now+TTL on every .vif write, so a read-only mark, a tier upload or an EC

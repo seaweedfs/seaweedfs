@@ -2218,11 +2218,12 @@ impl Volume {
         }
     }
 
-    /// Caps the needles a vacuumed volume's scan reads a timestamp for. Reading
-    /// every one would cost a seek per needle on a volume holding millions; the
-    /// .idx is walked newest key first, so the cap keeps the most recently
-    /// issued keys, where the newest write is.
-    const VACUUMED_LAST_WRITE_SCAN_ENTRIES: usize = 4096;
+    /// Bounds the work a vacuumed volume's recovery does, where key order makes
+    /// every write a candidate for the newest one. A volume with more live
+    /// needles than this keeps the .dat mtime: reading a subset could recover a
+    /// timestamp older than the newest write and expire data still inside its
+    /// TTL, so a scan that will not fit declines instead of guessing.
+    const VACUUMED_LAST_WRITE_SCAN_ENTRIES: usize = 1 << 16;
 
     /// Point the TTL clock at the newest write recorded in the volume, replacing
     /// the .dat mtime the loader starts from. A delete appends a tombstone and
@@ -2250,13 +2251,14 @@ impl Volume {
     /// and the .dat share an order, so an append-ordered volume answers with the
     /// first write the scan reaches. Vacuum rewrites both in key order, which
     /// tracks write order only because the master issues keys increasing: an
-    /// overwrite keeps its original, lower key, so a vacuumed volume takes the
-    /// maximum over a bounded window of entries rather than trusting the
-    /// position. Returns 0 when the .idx holds nothing but tombstones, or for a
-    /// volume older than version 3, whose needles carry no append timestamp.
-    /// Mirrors Go's findLastWriteAppendAtNs.
+    /// overwrite keeps its original, lower key, so a vacuumed volume has to take
+    /// the maximum over every write it indexes. Returns 0 when the .idx holds
+    /// nothing but tombstones, when a vacuumed volume holds more needles than
+    /// the scan budget, or for a volume older than version 3, whose needles
+    /// carry no append timestamp. Mirrors Go's findLastWriteAppendAtNs.
     fn find_last_write_append_at_ns(&self) -> Result<u64, VolumeError> {
-        if self.version() != VERSION_3 {
+        let version = self.version();
+        if version != VERSION_3 {
             return Ok(0);
         }
         let idx_path = self.file_name(".idx");
@@ -2264,35 +2266,67 @@ impl Volume {
         if idx_size == 0 || idx_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
             return Ok(0);
         }
-        let mut entries_to_read = if self.super_block.compaction_revision > 0 {
-            Self::VACUUMED_LAST_WRITE_SCAN_ENTRIES
-        } else {
-            1
-        };
+        let scan_every_write = self.super_block.compaction_revision > 0;
+        let mut entry_budget = Self::VACUUMED_LAST_WRITE_SCAN_ENTRIES;
         let mut last_write_append_at_ns = 0u64;
         let mut idx_file = File::open(&idx_path)?;
         let mut block = vec![0u8; NEEDLE_MAP_ENTRY_SIZE * idx::ROWS_TO_READ];
         let mut end = idx_size;
-        while end > 0 && entries_to_read > 0 {
+        while end > 0 {
             let start = (end - block.len() as i64).max(0);
             let entries = &mut block[..(end - start) as usize];
             idx_file.seek(SeekFrom::Start(start as u64))?;
             idx_file.read_exact(entries)?;
             for entry in entries.chunks_exact(NEEDLE_MAP_ENTRY_SIZE).rev() {
-                if entries_to_read == 0 {
-                    break;
-                }
-                let (_, offset, size) = idx_entry_from_bytes(entry);
+                let (key, offset, size) = idx_entry_from_bytes(entry);
                 if offset.is_zero() || size.is_deleted() {
                     continue;
                 }
+                let Some(needle_offset) =
+                    self.find_needle_offset(offset.to_actual_offset(), key, size)
+                else {
+                    continue;
+                };
                 last_write_append_at_ns = last_write_append_at_ns
-                    .max(self.read_needle_append_at_ns(offset.to_actual_offset(), size)?);
-                entries_to_read -= 1;
+                    .max(self.read_needle_append_at_ns(needle_offset, size)?);
+                if !scan_every_write {
+                    return Ok(last_write_append_at_ns);
+                }
+                entry_budget -= 1;
+                if entry_budget == 0 {
+                    warn!(
+                        volume_id = self.id.0,
+                        budget = Self::VACUUMED_LAST_WRITE_SCAN_ENTRIES,
+                        "too many needles to scan for the last write, keeping the .dat mtime"
+                    );
+                    return Ok(0);
+                }
             }
             end = start;
         }
         Ok(last_write_append_at_ns)
+    }
+
+    /// The .dat offset holding the needle an .idx entry describes, or None when
+    /// no needle there matches it. A .dat past MAX_POSSIBLE_VOLUME_SIZE wraps the
+    /// offsets in its .idx, so the needle can sit one volume size further in;
+    /// verify_needle_integrity retries the same way. Mirrors Go's
+    /// findNeedleOffset.
+    fn find_needle_offset(&self, actual_offset: i64, key: NeedleId, size: Size) -> Option<i64> {
+        for at in [
+            actual_offset,
+            actual_offset + MAX_POSSIBLE_VOLUME_SIZE as i64,
+        ] {
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            if self.read_exact_at_backend(&mut header, at as u64).is_err() {
+                continue;
+            }
+            let (_, needle_id, needle_size) = Needle::parse_header(&header);
+            if needle_id == key && needle_size == size {
+                return Some(at);
+            }
+        }
+        None
     }
 
     /// Read the append timestamp a version 3 needle carries past its checksum.
