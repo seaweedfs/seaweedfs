@@ -433,8 +433,9 @@ Your support will be really appreciated by me and other supporters!
 
 [Back to TOC](#table-of-contents)
 
-## Stargazers over time
-[![Stargazers over time](https://starchart.cc/seaweedfs/seaweedfs.svg?variant=adaptive)](https://starchart.cc/seaweedfs/seaweedfs)
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=seaweedfs/seaweedfs&type=Date)](https://star-history.com/#seaweedfs/seaweedfs&Date)
 
 [WeedMini]: https://github.com/seaweedfs/seaweedfs/wiki/Quick-Start-with-weed-mini
 [DockerComposeS3]: https://github.com/seaweedfs/seaweedfs/wiki/Docker-Compose-for-S3
