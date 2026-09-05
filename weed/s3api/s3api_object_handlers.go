@@ -3547,6 +3547,12 @@ func (s3a *S3ApiServer) startBackgroundRemoteCache(bucket, object, versionId str
 		// Use timeout to bound goroutine and prevent pile-up if RPC stalls under load
 		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		if _, mountedLocation, mountErr := s3a.findMountedRemoteMapping(bgCtx, dir); mountErr == nil {
+			if remote_storage.CacheWaitTimeout(entry.GetRemoteEntry().GetRemoteSize(), mountedLocation) <= 0 {
+				glog.V(2).Infof("startBackgroundRemoteCache: caching disabled for %s/%s", dir, name)
+				return
+			}
+		}
 		_, err := s3a.doCacheRemoteObject(bgCtx, dir, name)
 		if err != nil {
 			glog.V(2).Infof("startBackgroundRemoteCache: cache failed for %s/%s: %v", bucket, object, err)
