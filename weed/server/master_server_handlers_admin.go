@@ -125,14 +125,15 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
+	fileSizeLimitBytes := int64(ms.option.FileSizeLimitMB) * 1024 * 1024
 	if ms.Topo.IsLeader() {
-		submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return ms.option.Master }, ms.grpcDialOption)
+		submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return ms.option.Master }, ms.grpcDialOption, fileSizeLimitBytes)
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else {
-			submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return masterUrl }, ms.grpcDialOption)
+			submitForClientHandler(w, r, func(ctx context.Context) pb.ServerAddress { return masterUrl }, ms.grpcDialOption, fileSizeLimitBytes)
 		}
 	}
 }

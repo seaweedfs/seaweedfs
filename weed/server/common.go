@@ -137,7 +137,7 @@ func debug(params ...interface{}) {
 	glog.V(4).Infoln(params...)
 }
 
-func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption) {
+func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, fileSizeLimitBytes int64) {
 	ctx := r.Context()
 	m := make(map[string]interface{})
 	if r.Method != http.MethodPost {
@@ -148,7 +148,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 	debug("parsing upload file...")
 	bytesBuffer := bufPool.Get().(*bytes.Buffer)
 	defer bufPool.Put(bytesBuffer)
-	pu, pe := needle.ParseUpload(r, 256*1024*1024, bytesBuffer)
+	pu, pe := needle.ParseUpload(r, fileSizeLimitBytes, bytesBuffer)
 	if pe != nil {
 		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return

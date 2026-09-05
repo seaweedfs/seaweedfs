@@ -33,6 +33,7 @@ func init() {
 	mf.ip = aws.String(util.DetectedHostAddress())
 	mf.metaFolder = aws.String("")
 	mf.volumeSizeLimitMB = nil
+	mf.fileSizeLimitMB = aws.Int(256)
 	mf.volumePreallocate = nil
 	mf.defaultReplication = nil
 	mf.garbageThreshold = aws.Float64(0.1)
