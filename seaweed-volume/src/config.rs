@@ -64,6 +64,8 @@ pub struct Cli {
     pub rack: String,
 
     /// Choose [memory|redb|redbMedium|redbLarge] mode for memory~performance balance.
+    /// The redb tiers give each volume's on-disk index a 4, 8, or 16 MiB page
+    /// cache respectively; total index memory is roughly (volumes x cache).
     /// `leveldb`/`leveldbMedium`/`leveldbLarge` are accepted as aliases for the
     /// corresponding redb backends (Rust volume server uses redb under the hood).
     #[arg(long = "index", default_value = "memory")]
