@@ -127,7 +127,7 @@ jobs:
 
         Start-Mount 'seaweed-mount'
 
-        Invoke-Tests 'exercise' @('test','-v','-timeout','20m','./test/winfsp','-mountpoint=S:\')
+        Invoke-Tests 'exercise' @('test','-v','-timeout','20m','./test/winfsp','-mountpoint=S:\','-filer=127.0.0.1:8888')
         Invoke-Tests 'persist-write' @('test','-v','-timeout','15m','./test/winfsp','-run','TestPersistence','-mountpoint=S:\','-phase=write','-filer=127.0.0.1:8888')
 
         Stop-Mount
