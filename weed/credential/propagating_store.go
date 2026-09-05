@@ -13,8 +13,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var _ CredentialStore = &PropagatingCredentialStore{}
@@ -48,10 +51,28 @@ func (s *PropagatingCredentialStore) SetFilerAddressFunc(getFiler func() pb.Serv
 	}
 }
 
+// withIamCacheAdminAuth attaches a Bearer token signed with jwt.filer_signing.key
+// to the outgoing context so the S3 gateway's IAM-cache gRPC handlers accept the
+// propagation. With no key configured it is a no-op, matching the S3 handler's
+// checkAdminAuth.
+func withIamCacheAdminAuth(ctx context.Context) context.Context {
+	signingKey := util.GetViper().GetString("jwt.filer_signing.key")
+	if signingKey == "" {
+		return ctx
+	}
+	expiresAfterSec := util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds")
+	token := security.GenJwtForFilerAdmin(security.SigningKey(signingKey), expiresAfterSec)
+	if token == "" {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, "authorization", security.BearerPrefix+string(token))
+}
+
 func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3IamCacheClient) error) {
 	if s.masterClient == nil {
 		return
 	}
+	ctx = withIamCacheAdminAuth(ctx)
 
 	// List S3 servers
 	var s3Servers []string
