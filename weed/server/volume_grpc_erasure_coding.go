@@ -139,15 +139,8 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 
 	// write .vif files
-	var expireAtSec uint64
-	if v.Ttl != nil {
-		ttlSecond := v.Ttl.ToSeconds()
-		if ttlSecond > 0 {
-			expireAtSec = uint64(time.Now().Unix()) + ttlSecond //calculated expiration time
-		}
-	}
 	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
-	volumeInfo.ExpireAtSec = expireAtSec
+	volumeInfo.ExpireAtSec = v.ExpireAtSec()
 	// The size the encode actually read, not a separate stat: a replica-sync
 	// write can land between two stats of a live .dat, and the .vif would then
 	// record a DatFileSize and a BlockSize describing different files.

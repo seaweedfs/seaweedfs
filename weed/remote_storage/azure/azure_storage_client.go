@@ -382,6 +382,9 @@ func (az *azureRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *r
 		},
 	})
 	if err != nil {
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
 		return nil, fmt.Errorf("failed to open stream for %s%s: %v", loc.Bucket, loc.Path, err)
 	}
 	return downloadResponse.Body, nil

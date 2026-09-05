@@ -118,6 +118,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// When autofs/systemd-mount is used, FsName must be "fuse" so util-linux/mount can recognize
 	// it as a pseudo filesystem. Otherwise, preserve the descriptive name for mount/df output.
 	fsName := serverFriendlyName + ":" + filerMountRootPath
+	if *option.volumeName != "" {
+		fsName = *option.volumeName
+	}
 	if skipAutofs {
 		fsName = "fuse"
 	}
@@ -179,7 +182,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
 		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+volumeName(*option.filer, filerMountRootPath, dir))
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+volumeName(*option.filer, filerMountRootPath, dir, *option.volumeName))
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 	// Last, so an option given on the command line wins over the default
