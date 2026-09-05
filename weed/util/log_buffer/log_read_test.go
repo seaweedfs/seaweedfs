@@ -3,6 +3,7 @@ package log_buffer
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -571,6 +572,62 @@ func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("LoopProcessLogData blocked instead of returning ResumeFromDiskError")
+	}
+}
+
+// TestLoopProcessLogData_DuplicateReaderLeaving is a regression test for issue
+// #10810: an idle metadata subscriber pinning a full core inside
+// awaitNotificationOrTimeoutFor. Two readers registered under the same name
+// share one notification channel, which happens whenever a client reconnects
+// before its previous stream noticed the disconnect. When the departing one
+// closed that channel, the surviving reader's select won on it instantly on
+// every pass, so the loop ran flat out - allocating a timer per iteration -
+// until the client went away.
+func TestLoopProcessLogData_DuplicateReaderLeaving(t *testing.T) {
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	const readerName = "localMeta:s3@"
+	startPosition := NewMessagePosition(time.Now().UnixNano(), -2)
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) { return false, nil }
+
+	// startReader runs a reader and reports how many times it went round the
+	// loop; the loop calls waitForDataFn exactly once per pass.
+	startReader := func(iterations *atomic.Int64, stop *atomic.Bool) chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			logBuffer.LoopProcessLogData(readerName, startPosition, 0, func() bool {
+				iterations.Add(1)
+				return !stop.Load()
+			}, eachLogEntryFn)
+		}()
+		for iterations.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		return done
+	}
+
+	var leavingIterations, survivorIterations atomic.Int64
+	var stopLeaving, stopSurvivor atomic.Bool
+	leavingDone := startReader(&leavingIterations, &stopLeaving)
+	survivorDone := startReader(&survivorIterations, &stopSurvivor)
+
+	stopLeaving.Store(true)
+	<-leavingDone
+
+	const observeFor = 500 * time.Millisecond
+	before := survivorIterations.Load()
+	time.Sleep(observeFor)
+	spun := survivorIterations.Load() - before
+
+	stopSurvivor.Store(true)
+	<-survivorDone
+
+	maxIterations := int64(observeFor/notificationHealthCheckInterval) + 1
+	if spun > maxIterations {
+		t.Errorf("surviving reader looped %d times in %v, expected at most %d (suggests busy-waiting)", spun, observeFor, maxIterations)
 	}
 }
 
