@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -216,10 +217,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
+			var mountedLocation *remote_pb.RemoteStorageLocation
+			if fs.filer.RemoteStorage != nil {
+				_, mountedLocation = fs.filer.RemoteStorage.FindMountDirectory(entry.FullPath)
+			}
+			cacheWait := remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize, mountedLocation)
 			// Bounded wait: a large download outlasts any client timeout, so
 			// serve straight from the origin once the wait expires while the
 			// detached cache keeps filling for later reads.
-			cacheCtx, cancelCache := context.WithTimeout(ctx, remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize))
+			cacheCtx, cancelCache := context.WithTimeout(ctx, cacheWait)
 			resp, err := fs.CacheRemoteObjectToLocalCluster(cacheCtx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 				Directory: dir,
 				Name:      name,
