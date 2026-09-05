@@ -679,4 +679,6 @@ The text of this page is available for modification and reuse under the terms of
 [Back to TOC](#table-of-contents)
 
 ## Stargazers over time
-[![Stargazers over time](https://starchart.cc/seaweedfs/seaweedfs.svg?variant=adaptive)](https://starchart.cc/seaweedfs/seaweedfs)
+<a href="https://starchart.cc/seaweedfs/seaweedfs">
+  <img src="https://starchart.cc/seaweedfs/seaweedfs.svg?variant=adaptive" alt="Stargazers over time" width="720" height="540">
+</a>
