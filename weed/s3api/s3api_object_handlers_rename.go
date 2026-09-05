@@ -2,10 +2,12 @@ package s3api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -31,6 +33,8 @@ var renameSourceConditionalHeaders = sourceConditionalHeaderNames{
 //
 // The object is moved by the filer's AtomicRenameEntry, so its bytes are never
 // read or rewritten and its metadata (ETag, tags, SSE keys) travels unchanged.
+// x-amz-client-token travels with it too, so a rename whose response was lost
+// answers its own retry instead of the NoSuchKey its vanished source would give.
 // Versioned buckets are rejected: the move would have to rebuild the .versions
 // chain, and AWS itself only offers RenameObject on directory buckets, which
 // cannot be versioned.
@@ -92,12 +96,33 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	clientToken := r.Header.Get(s3_constants.AmzClientToken)
+	renameSource := r.Header.Get(s3_constants.AmzRenameSource)
+
 	errCode = s3a.withRenameWriteLocks(bucket, srcObject, dstObject, func() s3err.ErrorCode {
 		entry, err := s3a.resolveCopySourceEntry(bucket, srcObject, "", "")
 		srcIsPrefixObject := entry.IsPrefixObject()
 		entry = prefixObjectSource(entry)
-		if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		srcErrCode := classifyCopySourceError(entry, err)
+
+		dstEntry, errCode := s3a.lookupRenameDestination(bucket, dstObject)
+		if errCode != s3err.ErrNone {
 			return errCode
+		}
+		switch classifyRenameToken(dstEntry, clientToken, renameSource, dstObject) {
+		case renameTokenReused:
+			return s3err.ErrIdempotentParameterMismatch
+		case renameTokenSameRequest:
+			// This rename already committed and only its response was lost, so the
+			// source it names is gone for good and no retry can succeed on its own.
+			// A source that is back is not that retry: the move is still to be made,
+			// and making it is what leaves the caller where it asked to be.
+			if srcErrCode == s3err.ErrNoSuchKey {
+				return s3err.ErrNone
+			}
+		}
+		if srcErrCode != s3err.ErrNone {
+			return srcErrCode
 		}
 		if errCode := validateSourceConditionalHeaders(r, entry, renameSourceConditionalHeaders); errCode != s3err.ErrNone {
 			return errCode
@@ -105,7 +130,14 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 		if errCode := s3a.checkConditionalHeaders(r, bucket, dstObject); errCode != s3err.ErrNone {
 			return errCode
 		}
-		return s3a.renameObjectEntry(r.Context(), bucket, srcObject, dstObject, entry, srcIsPrefixObject)
+
+		// AtomicRenameEntry moves a directory by moving everything under it, and the keys
+		// nested under either end of this rename are not part of what is being renamed.
+		keyHoldsNestedKeys := srcIsPrefixObject || (dstEntry != nil && dstEntry.IsDirectory)
+		if clientToken != "" {
+			s3a.stampRenameToken(bucket, srcObject, dstObject, entry, clientToken, renameSource, keyHoldsNestedKeys)
+		}
+		return s3a.renameObjectEntry(r.Context(), bucket, srcObject, dstObject, entry, keyHoldsNestedKeys)
 	})
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -207,6 +239,114 @@ func (s3a *S3ApiServer) authorizeRenameSource(r *http.Request, bucket, srcObject
 	return s3a.iam.AuthorizeObjectDelete(r, identity, bucket, srcObject, "")
 }
 
+// renameTokenValidity bounds how long a committed rename answers for its own
+// retry. An SDK gives up retrying long before this, so the window covers every
+// retry there is, while a token that comes back days later no longer stands in
+// for a move the caller means to happen now.
+const renameTokenValidity = 24 * time.Hour
+
+// renameToken is what a rename leaves on the object it moves, so that the same
+// request replayed after its response was lost can be answered from the
+// destination instead of from a source that is no longer there.
+//
+// Source is the x-amz-rename-source header as it was sent. A retry resends the
+// request byte for byte, so equality on the raw value recognises it, and any
+// other value is the token used for a different rename. Dest is the key the
+// rename wrote, which tells a token that travelled here some other way - on a
+// CopyObject of a renamed object, say - from one this rename left.
+type renameToken struct {
+	Token  string `json:"token"`
+	Source string `json:"source"`
+	Dest   string `json:"dest"`
+	Unix   int64  `json:"unix"`
+}
+
+type renameTokenVerdict int
+
+const (
+	// renameTokenUnrelated: the destination carries no live token of this request's.
+	renameTokenUnrelated renameTokenVerdict = iota
+	// renameTokenSameRequest: this very rename already committed here.
+	renameTokenSameRequest
+	// renameTokenReused: the same token was sent for a different rename.
+	renameTokenReused
+)
+
+// classifyRenameToken reads what the destination object says about a request
+// carrying clientToken.
+func classifyRenameToken(dstEntry *filer_pb.Entry, clientToken, renameSource, dstObject string) renameTokenVerdict {
+	if clientToken == "" || dstEntry == nil {
+		return renameTokenUnrelated
+	}
+	stamped, found := dstEntry.Extended[s3_constants.SeaweedFSRenameToken]
+	if !found {
+		return renameTokenUnrelated
+	}
+	var token renameToken
+	if err := json.Unmarshal(stamped, &token); err != nil {
+		glog.Warningf("RenameObject: unreadable rename token on %s: %v", dstEntry.Name, err)
+		return renameTokenUnrelated
+	}
+	if token.Token != clientToken || token.Dest != dstObject || time.Since(time.Unix(token.Unix, 0)) > renameTokenValidity {
+		return renameTokenUnrelated
+	}
+	if token.Source != renameSource {
+		return renameTokenReused
+	}
+	return renameTokenSameRequest
+}
+
+// markRenameToken puts the client token on the entry the rename moves.
+func markRenameToken(srcEntry *filer_pb.Entry, clientToken, renameSource, dstObject string) error {
+	stamped, err := json.Marshal(renameToken{Token: clientToken, Source: renameSource, Dest: dstObject, Unix: time.Now().Unix()})
+	if err != nil {
+		return err
+	}
+	if srcEntry.Extended == nil {
+		srcEntry.Extended = make(map[string][]byte)
+	}
+	srcEntry.Extended[s3_constants.SeaweedFSRenameToken] = stamped
+	return nil
+}
+
+// stampRenameToken records the client token on the object about to be moved, so
+// that the move carries it to the destination.
+//
+// The token goes on before the move rather than after it: a move that commits
+// and then loses its token is exactly the failure the token exists to cover,
+// while a token left on a move that never happened simply rides along with the
+// next attempt. Failing to record it costs this rename its idempotency and
+// nothing else, so the move goes ahead either way.
+func (s3a *S3ApiServer) stampRenameToken(bucket, srcObject, dstObject string, srcEntry *filer_pb.Entry, clientToken, renameSource string, keyHoldsNestedKeys bool) {
+	// The ETag as it stands now, read before the token joins it.
+	expected := map[string][]byte{s3_constants.ExtETagKey: srcEntry.Extended[s3_constants.ExtETagKey]}
+
+	if err := markRenameToken(srcEntry, clientToken, renameSource, dstObject); err != nil {
+		glog.Errorf("RenameObject %s: rename token for %s: %v", bucket, srcObject, err)
+		return
+	}
+
+	// renameKeyHoldingNestedKeys writes the destination out of this entry, so the
+	// token reaches it without a write of its own.
+	if keyHoldsNestedKeys {
+		return
+	}
+
+	// AtomicRenameEntry moves the entry as the filer holds it, so the token has to
+	// be on the source for the move to carry it. The precondition keeps the write
+	// off an object another gateway replaced in the meantime.
+	srcDir, _ := util.FullPath(s3a.toFilerPath(bucket, srcObject)).DirAndName()
+	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+			Directory:        srcDir,
+			Entry:            srcEntry,
+			ExpectedExtended: expected,
+		})
+	}); err != nil {
+		glog.Warningf("RenameObject %s: record rename token on %s: %v", bucket, srcObject, err)
+	}
+}
+
 // withRenameWriteLocks holds the object write lock of both keys across the
 // precondition checks and the move. The keys are locked in a fixed order so a
 // rename in the opposite direction cannot deadlock against this one.
@@ -220,25 +360,32 @@ func (s3a *S3ApiServer) withRenameWriteLocks(bucket, srcObject, dstObject string
 	})
 }
 
-func (s3a *S3ApiServer) renameObjectEntry(ctx context.Context, bucket, srcObject, dstObject string, srcEntry *filer_pb.Entry, srcIsPrefixObject bool) s3err.ErrorCode {
+// lookupRenameDestination reads what the destination key already holds. A key
+// nothing lives at is the ordinary case and comes back as a nil entry.
+//
+// The move overwrites an existing destination object. A directory there is not a
+// conflict: it means other keys are nested under the destination key, and the
+// object goes onto the directory they live in, the way a PutObject of that key
+// would put it there.
+func (s3a *S3ApiServer) lookupRenameDestination(bucket, dstObject string) (*filer_pb.Entry, s3err.ErrorCode) {
+	dstDir, dstName := util.FullPath(s3a.toFilerPath(bucket, dstObject)).DirAndName()
+
+	entry, err := s3a.getEntry(dstDir, dstName)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, s3err.ErrNone
+		}
+		glog.Errorf("RenameObject %s: destination %s: %v", bucket, dstObject, err)
+		return nil, s3err.ErrInternalError
+	}
+	return entry, s3err.ErrNone
+}
+
+func (s3a *S3ApiServer) renameObjectEntry(ctx context.Context, bucket, srcObject, dstObject string, srcEntry *filer_pb.Entry, keyHoldsNestedKeys bool) s3err.ErrorCode {
 	srcDir, srcName := util.FullPath(s3a.toFilerPath(bucket, srcObject)).DirAndName()
 	dstDir, dstName := util.FullPath(s3a.toFilerPath(bucket, dstObject)).DirAndName()
 
-	// The move overwrites an existing destination object. A directory there is not a
-	// conflict: it means other keys are nested under the destination key, and the
-	// object goes onto the directory they live in, the way a PutObject of that key
-	// would put it there.
-	dstHoldsNestedKeys := false
-	if existing, err := s3a.getEntry(dstDir, dstName); err == nil {
-		dstHoldsNestedKeys = existing.IsDirectory
-	} else if !errors.Is(err, filer_pb.ErrNotFound) {
-		glog.Errorf("RenameObject %s: destination %s: %v", bucket, dstObject, err)
-		return s3err.ErrInternalError
-	}
-
-	// AtomicRenameEntry moves a directory by moving everything under it, and the keys
-	// nested under either end of this rename are not part of what is being renamed.
-	if srcIsPrefixObject || dstHoldsNestedKeys {
+	if keyHoldsNestedKeys {
 		return s3a.renameKeyHoldingNestedKeys(bucket, srcObject, dstObject, srcEntry)
 	}
 

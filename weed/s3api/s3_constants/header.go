@@ -107,6 +107,9 @@ const (
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
 
 	// RenameObject
+	// AmzClientToken makes a rename idempotent. The AWS SDKs fill it in on every
+	// call, so it arrives on requests that were never written with it in mind.
+	AmzClientToken                   = "X-Amz-Client-Token"
 	AmzRenameSource                  = "X-Amz-Rename-Source"
 	AmzRenameSourceIfMatch           = "X-Amz-Rename-Source-If-Match"
 	AmzRenameSourceIfNoneMatch       = "X-Amz-Rename-Source-If-None-Match"
@@ -156,6 +159,12 @@ const (
 	SeaweedFSSSEKMSBucketKeyEnabled  = "x-seaweedfs-sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSEncryptionContext = "x-seaweedfs-sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSBaseIV            = "x-seaweedfs-sse-kms-base-iv"            // Base IV for multipart upload SSE-KMS (for IV offset calculation)
+
+	// SeaweedFSRenameToken records the x-amz-client-token of the rename that put an
+	// object at its key, together with the source that rename named. It rides on the
+	// object itself, so every gateway reads the same answer for a retry of that
+	// rename, and it is dropped whenever the key is written again.
+	SeaweedFSRenameToken = "x-seaweedfs-rename-token"
 
 	// Multipart upload metadata keys for SSE-S3
 	SeaweedFSSSES3Encryption = "x-seaweedfs-sse-s3-encryption" // Encryption type for multipart upload SSE-S3 inheritance
