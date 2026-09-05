@@ -190,6 +190,7 @@ var cmdMount = &Command{
   the whole tree takes the name from the mount point instead, so
   -dir=\\seaweedfs\Images labels the disk "Images" while still mounting
   everything, and only a bare drive letter falls back to the filer address.
+  -volumeName overrides whatever name either of those would otherwise give it.
 
   `,
 }
