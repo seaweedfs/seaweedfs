@@ -311,5 +311,12 @@ func TestSubmitForClientHandlerFileSizeLimit(t *testing.T) {
 		if strings.Contains(w.Body.String(), "over the limited") {
 			t.Errorf("body: got %q, want no file size limit error", w.Body.String())
 		}
+		// Asserting on the message alone would still pass if the limit rejected
+		// this payload with different wording. Parser failures answer 400, and the
+		// cancelled assignment this request runs into answers 500, so a 400 here
+		// means the upload never got past parsing.
+		if w.Code == http.StatusBadRequest {
+			t.Errorf("status: got 400, want the request to reach assignment, body %q", w.Body.String())
+		}
 	})
 }

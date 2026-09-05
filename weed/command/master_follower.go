@@ -29,11 +29,15 @@ func init() {
 	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	mf.peers = cmdMasterFollower.Flag.String("master", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	mf.mastersDeprecated = cmdMasterFollower.Flag.String("masters", "", "all master nodes in comma separated ip:port list (deprecated, use -master instead)")
+	// A follower serves /submit like the leader does, so it buffers uploads under
+	// the same limit and has to be told the same value. Left fixed at 256, a
+	// cluster raised above that would accept an upload through the leader and
+	// refuse the identical one through a follower.
+	mf.fileSizeLimitMB = cmdMasterFollower.Flag.Int("fileSizeLimitMB", 256, "limit the file size accepted by /submit, should match the leader's -fileSizeLimitMB")
 
 	mf.ip = aws.String(util.DetectedHostAddress())
 	mf.metaFolder = aws.String("")
 	mf.volumeSizeLimitMB = nil
-	mf.fileSizeLimitMB = aws.Int(256)
 	mf.volumePreallocate = nil
 	mf.defaultReplication = nil
 	mf.garbageThreshold = aws.Float64(0.1)
