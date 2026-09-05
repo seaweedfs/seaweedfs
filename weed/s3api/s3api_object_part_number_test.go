@@ -85,3 +85,22 @@ func TestPartByteRange(t *testing.T) {
 	// AWS answers an unsatisfiable partNumber with 416, not 400.
 	assert.Equal(t, http.StatusRequestedRangeNotSatisfiable, s3err.GetAPIError(s3err.ErrInvalidPartNumber).HTTPStatusCode)
 }
+
+// The stored checksum covers the whole object, so a part response must not carry it.
+func TestSetResponseHeadersSkipsChecksumForPart(t *testing.T) {
+	s3a := &S3ApiServer{}
+	entry := twoPartEntry(t, true)
+	entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte("x-amz-checksum-crc32")
+	entry.Extended[s3_constants.ExtChecksumValue] = []byte("AAAAAA==")
+
+	for query, want := range map[string]string{
+		"":             "AAAAAA==",
+		"partNumber=1": "",
+	} {
+		r := httptest.NewRequest(http.MethodHead, "/bucket/object?"+query, nil)
+		r.Header.Set("X-Amz-Checksum-Mode", "ENABLED")
+		w := httptest.NewRecorder()
+		s3a.setResponseHeaders(w, r, entry, part1Size)
+		assert.Equal(t, want, w.Header().Get("x-amz-checksum-crc32"), "query %q", query)
+	}
+}
