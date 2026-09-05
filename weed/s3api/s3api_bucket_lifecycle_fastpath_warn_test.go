@@ -152,3 +152,36 @@ func TestFastpathWarn_OverflowDays_NoWarn(t *testing.T) {
 		t.Fatalf("overflow rule must not warn, got %q", got)
 	}
 }
+
+func TestFastpathWarn_IDOnlyRename_NoWarn(t *testing.T) {
+	// Renaming a rule while keeping the same prefix, size filters, and
+	// days must not warn: the policy is unchanged, only the label moved.
+	old := lcXML("r1", "logs/", 7)
+	new := lcXML("r2", "logs/", 7)
+	if got := fastpathConfigChangeLeavesStampedObjects(old, new); got != "" {
+		t.Fatalf("ID-only rename must not warn, got %q", got)
+	}
+}
+
+func TestFastpathWarn_IDRenameAndLengthen_Warns(t *testing.T) {
+	// Renaming AND lengthening: the predicate match finds the successor
+	// and the days increase triggers a lengthened warning.
+	old := lcXML("r1", "logs/", 7)
+	new := lcXML("r2", "logs/", 30)
+	got := fastpathConfigChangeLeavesStampedObjects(old, new)
+	if got == "" {
+		t.Fatalf("rename + lengthen must warn")
+	}
+	if !strings.Contains(got, "lengthened") || !strings.Contains(got, "7 -> 30") {
+		t.Fatalf("unexpected reason: %q", got)
+	}
+}
+
+func TestFastpathWarn_IDRenameAndShorten_NoWarn(t *testing.T) {
+	// Renaming AND shortening: not the data-loss direction.
+	old := lcXML("r1", "logs/", 30)
+	new := lcXML("r2", "logs/", 7)
+	if got := fastpathConfigChangeLeavesStampedObjects(old, new); got != "" {
+		t.Fatalf("rename + shorten must not warn, got %q", got)
+	}
+}

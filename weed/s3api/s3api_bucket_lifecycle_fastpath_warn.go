@@ -37,6 +37,11 @@ const fastpathWarningHeader = "X-Seaweed-Lifecycle-Fastpath-Warning"
 //   - its prefix or size filter changed (objects that matched before may
 //     keep an expiry the new rule no longer describes).
 //
+// Rule identity is matched in two passes: first by ID, then by fast-path
+// predicates (prefix + size filters). An ID-only rename with unchanged
+// predicates and days is NOT a warning — the policy is equivalent, only
+// the label moved.
+//
 // Shortening a rule (e.g. 30d -> 7d) does NOT warn: old objects simply
 // expire later than the new shorter rule, which is not the data-loss
 // direction. Tag-filtered rules are never on the fast path, so their
@@ -51,29 +56,59 @@ func fastpathConfigChangeLeavesStampedObjects(oldXML, newXML []byte) string {
 	}
 	newRules := fastpathEligibleRules(newXML)
 
-	newByKey := make(map[string]*s3lifecycle.Rule, len(newRules))
-	for _, r := range newRules {
-		newByKey[fastpathRuleKey(r)] = r
+	// Match old rules to new rules in two passes so an ID-only rename
+	// (same prefix/size/days, different ID) does not produce a false
+	// "removed" warning:
+	//   1. Match by ID. A rule that kept its ID is the same rule; check
+	//      for filter or days changes.
+	//   2. For unmatched old rules, try matching by fast-path predicates
+	//      (prefix + size). A predicate match with different days means
+	//      the rule was renamed and possibly lengthened; same days means
+	//      a pure rename — no warning.
+	// Greedy: each new rule is consumed by at most one old rule so
+	// overlapping rules can't be double-matched.
+	used := make([]bool, len(newRules))
+	newByID := make(map[string]int, len(newRules))
+	for i, r := range newRules {
+		if r.ID != "" {
+			newByID[r.ID] = i
+		}
 	}
 
 	var reasons []string
 	for _, r := range oldRules {
-		key := fastpathRuleKey(r)
-		nr, ok := newByKey[key]
-		if !ok {
+		// Pass 1: ID match.
+		if r.ID != "" {
+			if idx, ok := newByID[r.ID]; ok && !used[idx] {
+				used[idx] = true
+				nr := newRules[idx]
+				if nr.Prefix != r.Prefix || nr.FilterSizeGreaterThan != r.FilterSizeGreaterThan || nr.FilterSizeLessThan != r.FilterSizeLessThan {
+					reasons = append(reasons, fmt.Sprintf("rule %q filter changed", ruleName(r)))
+				} else if nr.ExpirationDays > r.ExpirationDays {
+					reasons = append(reasons, fmt.Sprintf("rule %q lengthened %d -> %d days", ruleName(r), r.ExpirationDays, nr.ExpirationDays))
+				}
+				continue
+			}
+		}
+		// Pass 2: predicate match (prefix + size filters).
+		matched := false
+		for i, nr := range newRules {
+			if used[i] {
+				continue
+			}
+			if nr.Prefix == r.Prefix && nr.FilterSizeGreaterThan == r.FilterSizeGreaterThan && nr.FilterSizeLessThan == r.FilterSizeLessThan {
+				used[i] = true
+				// Same coverage; only days can differ. An ID-only
+				// rename with unchanged days is not a warning.
+				if nr.ExpirationDays > r.ExpirationDays {
+					reasons = append(reasons, fmt.Sprintf("rule %q lengthened %d -> %d days", ruleName(r), r.ExpirationDays, nr.ExpirationDays))
+				}
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			reasons = append(reasons, fmt.Sprintf("rule %q removed or disabled", ruleName(r)))
-			continue
-		}
-		// Same identity (ID, or prefix+size when ID-less). A change to
-		// the prefix or size filter moves the rule's coverage, leaving
-		// objects that matched before on a TTL the new rule no longer
-		// describes — warn on that separately from a days change.
-		if nr.Prefix != r.Prefix || nr.FilterSizeGreaterThan != r.FilterSizeGreaterThan || nr.FilterSizeLessThan != r.FilterSizeLessThan {
-			reasons = append(reasons, fmt.Sprintf("rule %q filter changed", ruleName(r)))
-			continue
-		}
-		if nr.ExpirationDays > r.ExpirationDays {
-			reasons = append(reasons, fmt.Sprintf("rule %q lengthened %d -> %d days", ruleName(r), r.ExpirationDays, nr.ExpirationDays))
 		}
 	}
 	if len(reasons) == 0 {
@@ -113,19 +148,6 @@ func fastpathEligibleRules(xmlBytes []byte) []*s3lifecycle.Rule {
 		out = append(out, r)
 	}
 	return out
-}
-
-// fastpathRuleKey is the identity used to match an old rule to its
-// successor in the new config. ID is used when present; otherwise the
-// prefix + size filters stand in, since those are the fast-path
-// predicates. ExpirationDays is intentionally NOT part of the key so a
-// lengthened rule matches its predecessor and the days delta is detected
-// separately.
-func fastpathRuleKey(r *s3lifecycle.Rule) string {
-	if r.ID != "" {
-		return "id:" + r.ID
-	}
-	return fmt.Sprintf("p:%s|gt:%d|lt:%d", r.Prefix, r.FilterSizeGreaterThan, r.FilterSizeLessThan)
 }
 
 func ruleName(r *s3lifecycle.Rule) string {

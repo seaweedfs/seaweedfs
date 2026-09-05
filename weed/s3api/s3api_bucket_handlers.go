@@ -1183,16 +1183,22 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	// config removes or lengthens a rule: objects already written keep their
 	// baked-in TTL and won't be rescued by this change (unlike the default
 	// worker path, which re-evaluates the current rules each pass).
+	// Compute the reason before storing, but emit only after the store
+	// succeeds so a failed mutation never carries a warning for a change
+	// that was not applied.
+	var fastpathWarnReason string
 	if cfg, _ := s3a.getBucketConfig(bucket); cfg != nil && cfg.LifecycleTTL != nil {
-		if reason := fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, lifecycleXML); reason != "" {
-			glog.Warningf("PutBucketLifecycleConfigurationHandler %s: %s", bucket, reason)
-			w.Header().Set(fastpathWarningHeader, reason)
-		}
+		fastpathWarnReason = fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, lifecycleXML)
 	}
 
 	if errCode := s3a.storeBucketLifecycleConfiguration(bucket, lifecycleXML, r.Header.Get(bucketLifecycleTransitionMinimumObjectSizeHeader)); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	if fastpathWarnReason != "" {
+		glog.Warningf("PutBucketLifecycleConfigurationHandler %s: %s", bucket, fastpathWarnReason)
+		w.Header().Set(fastpathWarningHeader, fastpathWarnReason)
 	}
 
 	writeSuccessResponseEmpty(w, r)
@@ -1222,17 +1228,22 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 	// If the per-write TTL fast path is active, every previously-stamped
 	// object keeps its baked-in volume TTL after the config is removed —
 	// deleting the rules does not rescue them (unlike the default worker
-	// path). Warn so the operator can act before the old deadlines.
+	// path). Compute the reason before clearing, but emit only after the
+	// clear succeeds so a failed mutation never carries a warning for a
+	// change that was not applied.
+	var fastpathWarnReason string
 	if cfg, _ := s3a.getBucketConfig(bucket); cfg != nil && cfg.LifecycleTTL != nil {
-		if reason := fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, nil); reason != "" {
-			glog.Warningf("DeleteBucketLifecycleHandler %s: %s", bucket, reason)
-			w.Header().Set(fastpathWarningHeader, reason)
-		}
+		fastpathWarnReason = fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, nil)
 	}
 
 	if errCode := s3a.clearStoredBucketLifecycleConfiguration(bucket); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	if fastpathWarnReason != "" {
+		glog.Warningf("DeleteBucketLifecycleHandler %s: %s", bucket, fastpathWarnReason)
+		w.Header().Set(fastpathWarningHeader, fastpathWarnReason)
 	}
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
