@@ -86,6 +86,26 @@ func TestPartByteRange(t *testing.T) {
 	assert.Equal(t, http.StatusRequestedRangeNotSatisfiable, s3err.GetAPIError(s3err.ErrInvalidPartNumber).HTTPStatusCode)
 }
 
+// Completion accepts ascending, not consecutive, part numbers.
+func TestPartByteRangeSparsePartNumbers(t *testing.T) {
+	s3a := &S3ApiServer{}
+	entry := twoPartEntry(t, true)
+	boundaries, err := json.Marshal([]PartBoundaryInfo{
+		{PartNumber: 1, StartChunk: 0, EndChunk: 1, StartOffset: 0, EndOffset: part1Size},
+		{PartNumber: 3, StartChunk: 1, EndChunk: 2, StartOffset: part1Size, EndOffset: part1Size + part2Size},
+	})
+	require.NoError(t, err)
+	entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = boundaries
+
+	start, end, errCode := s3a.partByteRange(httptest.NewRecorder(), entry, 3)
+	assert.Equal(t, s3err.ErrNone, errCode, "the uploaded part 3 must resolve")
+	assert.Equal(t, int64(part1Size), start)
+	assert.Equal(t, int64(part1Size+part2Size-1), end)
+
+	_, _, errCode = s3a.partByteRange(httptest.NewRecorder(), entry, 2)
+	assert.Equal(t, s3err.ErrInvalidPartNumber, errCode, "part 2 was never uploaded")
+}
+
 // The stored checksum covers the whole object, so a part response must not carry it.
 func TestSetResponseHeadersSkipsChecksumForPart(t *testing.T) {
 	s3a := &S3ApiServer{}

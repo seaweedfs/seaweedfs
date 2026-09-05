@@ -3195,16 +3195,17 @@ type rc struct {
 }
 
 // getMultipartInfo retrieves multipart metadata for a given part number
-// Returns: (partsCount, partInfo)
+// Returns: (partsCount, partInfo, hasBoundaries)
 // - partsCount: total number of parts in the multipart object
 // - partInfo: boundary information for the requested part (nil if not found or not a multipart object)
-func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) (int, *PartBoundaryInfo) {
+// - hasBoundaries: the entry carries part boundaries, so a nil partInfo means the object has no such part
+func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) (int, *PartBoundaryInfo, bool) {
 	if entry == nil {
-		return 0, nil
+		return 0, nil, false
 	}
 	if entry.Extended == nil {
 		// Not a multipart object or no metadata
-		return len(entry.GetChunks()), nil
+		return len(entry.GetChunks()), nil, false
 	}
 
 	// Try to get parts count from metadata
@@ -3216,20 +3217,23 @@ func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) 
 	}
 
 	// Try to get part boundaries from metadata
-	if boundariesJSON, exists := entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries]; exists {
-		var boundaries []PartBoundaryInfo
-		if err := json.Unmarshal(boundariesJSON, &boundaries); err == nil {
-			// Find the requested part
-			for i := range boundaries {
-				if boundaries[i].PartNumber == partNumber {
-					return partsCount, &boundaries[i]
-				}
-			}
+	boundariesJSON, exists := entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries]
+	if !exists {
+		return partsCount, nil, false
+	}
+	var boundaries []PartBoundaryInfo
+	if err := json.Unmarshal(boundariesJSON, &boundaries); err != nil {
+		glog.Warningf("getMultipartInfo: failed to unmarshal part boundaries: %v", err)
+		return partsCount, nil, false
+	}
+	for i := range boundaries {
+		if boundaries[i].PartNumber == partNumber {
+			return partsCount, &boundaries[i], true
 		}
 	}
 
-	// No part boundaries metadata or part not found
-	return partsCount, nil
+	// The object records its parts and this is not one of them
+	return partsCount, nil, true
 }
 
 // requestedPartNumber returns the partNumber query parameter, or 0 when it is
@@ -3249,9 +3253,11 @@ func requestedPartNumber(r *http.Request) int {
 // partByteRange resolves the inclusive byte range of a part and sets the parts
 // count header. The object ETag is kept as is, matching AWS.
 func (s3a *S3ApiServer) partByteRange(w http.ResponseWriter, entry *filer_pb.Entry, partNumber int) (startOffset, endOffset int64, errCode s3err.ErrorCode) {
-	partsCount, partInfo := s3a.getMultipartInfo(entry, partNumber)
-	if partNumber > partsCount {
-		glog.Warningf("partByteRange: part number %d out of range, object has %d parts", partNumber, partsCount)
+	// Part numbers need not be consecutive, so an object that records its part
+	// boundaries is asked for the part itself rather than for a count.
+	partsCount, partInfo, hasBoundaries := s3a.getMultipartInfo(entry, partNumber)
+	if partInfo == nil && (hasBoundaries || partNumber > partsCount) {
+		glog.Warningf("partByteRange: object has no part %d, it has %d parts", partNumber, partsCount)
 		return 0, 0, s3err.ErrInvalidPartNumber
 	}
 
