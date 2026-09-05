@@ -154,6 +154,27 @@ pub enum NeedleMapKind {
     RedbLarge,
 }
 
+impl NeedleMapKind {
+    /// Bytes of redb page cache to give ONE volume's index database.
+    ///
+    /// A volume server opens a separate redb database per volume, so the
+    /// process-wide ceiling is roughly (open volumes x this budget). redb's
+    /// own default is 1 GiB per database, which with hundreds of volumes
+    /// grows without practical bound as traffic touches them (#11179).
+    /// These tiers mirror the Go server's LevelDB sizing (block cache +
+    /// write buffer of 3/6/12 MiB), rounded to powers of two.
+    pub fn redb_cache_bytes(self) -> usize {
+        const MIB: usize = 1024 * 1024;
+        match self {
+            // InMemory never opens redb; return the smallest tier so a
+            // caller that does not branch on kind still gets a sane bound.
+            NeedleMapKind::InMemory | NeedleMapKind::Redb => 4 * MIB,
+            NeedleMapKind::RedbMedium => 8 * MIB,
+            NeedleMapKind::RedbLarge => 16 * MIB,
+        }
+    }
+}
+
 // ============================================================================
 // IdxFileWriter trait
 // ============================================================================
@@ -390,7 +411,8 @@ const META_TABLE: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const META_IDX_SIZE: &str = "idx_size";
 
 /// Disk-backed needle map using redb.
-/// Low memory usage — data lives on disk with redb's page cache.
+/// Low memory usage — data lives on disk behind a small, bounded redb page
+/// cache sized by `NeedleMapKind::redb_cache_bytes`.
 pub struct RedbNeedleMap {
     db: Database,
     metric: NeedleMapMetric,
@@ -412,10 +434,14 @@ impl RedbNeedleMap {
 
     /// Create a new redb-backed needle map at the given path.
     /// The database file will be created if it does not exist.
-    pub fn new(db_path: &str) -> io::Result<Self> {
-        let db = Database::create(db_path).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb create error: {}", e))
-        })?;
+    /// `cache_bytes` bounds redb's page cache for this one database.
+    pub fn new(db_path: &str, cache_bytes: usize) -> io::Result<Self> {
+        let db = Database::builder()
+            .set_cache_size(cache_bytes)
+            .create(db_path)
+            .map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("redb create error: {}", e))
+            })?;
 
         // Ensure tables exist
         let txn = Self::begin_write_no_fsync(&db)?;
@@ -529,20 +555,21 @@ impl RedbNeedleMap {
         db_path: &str,
         reader: &mut R,
         version: Version,
+        cache_bytes: usize,
     ) -> io::Result<Self> {
         let idx_size = reader.seek(io::SeekFrom::End(0))?;
         reader.seek(io::SeekFrom::Start(0))?;
 
         // Try to reuse existing .rdb
         if Path::new(db_path).exists() {
-            if let Ok(nm) = Self::try_reuse_rdb(db_path, reader, idx_size, version) {
+            if let Ok(nm) = Self::try_reuse_rdb(db_path, reader, idx_size, version, cache_bytes) {
                 return Ok(nm);
             }
             // Reuse failed — fall through to full rebuild
             reader.seek(io::SeekFrom::Start(0))?;
         }
 
-        Self::full_rebuild(db_path, reader, idx_size, version)
+        Self::full_rebuild(db_path, reader, idx_size, version, cache_bytes)
     }
 
     /// Try to reuse an existing .rdb file. Returns Ok if successful,
@@ -552,8 +579,11 @@ impl RedbNeedleMap {
         reader: &mut R,
         idx_size: u64,
         version: Version,
+        cache_bytes: usize,
     ) -> io::Result<Self> {
-        let db = Database::open(db_path)
+        let db = Database::builder()
+            .set_cache_size(cache_bytes)
+            .open(db_path)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open: {}", e)))?;
 
         let nm = RedbNeedleMap {
@@ -662,9 +692,10 @@ impl RedbNeedleMap {
         reader: &mut R,
         idx_size: u64,
         version: Version,
+        cache_bytes: usize,
     ) -> io::Result<Self> {
         let _ = std::fs::remove_file(db_path);
-        let nm = RedbNeedleMap::new(db_path)?;
+        let nm = RedbNeedleMap::new(db_path, cache_bytes)?;
 
         // Collect entries from idx file, resolving duplicates/deletions
         let mut entries: HashMap<NeedleId, Option<NeedleValue>> = HashMap::new();
@@ -1302,11 +1333,16 @@ mod tests {
 
     // ---- RedbNeedleMap tests ----
 
+    /// The cache budget production gives the smallest redb tier.
+    fn redb_test_cache() -> usize {
+        NeedleMapKind::Redb.redb_cache_bytes()
+    }
+
     #[test]
     fn test_redb_needle_map_put_get() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
-        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
 
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
@@ -1326,7 +1362,7 @@ mod tests {
     fn test_redb_needle_map_delete() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
-        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
 
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
@@ -1352,7 +1388,7 @@ mod tests {
     fn test_redb_needle_map_metrics() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
-        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
 
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
@@ -1415,7 +1451,13 @@ mod tests {
         .unwrap();
 
         let mut cursor = Cursor::new(idx_data);
-        let nm = RedbNeedleMap::load_from_idx(db_path.to_str().unwrap(), &mut cursor, Version::current()).unwrap();
+        let nm = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut cursor,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
 
         assert!(nm.get(NeedleId(1)).unwrap().is_some());
         assert!(nm.get(NeedleId(2)).unwrap().is_none()); // deleted and removed
@@ -1427,7 +1469,7 @@ mod tests {
     fn test_redb_needle_map_double_delete() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
-        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
 
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
@@ -1449,7 +1491,7 @@ mod tests {
     fn test_redb_needle_map_ascending_visit() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
-        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
 
         nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300))
             .unwrap();
@@ -1477,7 +1519,7 @@ mod tests {
         let db_path = dir.path().join("test.rdb");
         let idx_path = dir.path().join("test.idx");
 
-        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
         nm.put(NeedleId(1), Offset::from_actual_offset(8), Size(100))
             .unwrap();
         nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
@@ -1544,10 +1586,46 @@ mod tests {
     fn test_needle_map_enum_redb() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
-        let mut nm = NeedleMap::Redb(RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap());
+        let mut nm = NeedleMap::Redb(
+            RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap(),
+        );
         nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
             .unwrap();
         assert_eq!(nm.get(NeedleId(1)).unwrap().unwrap().size, Size(100));
         assert_eq!(nm.file_count(), 1);
+    }
+
+    #[test]
+    fn test_needle_map_kind_redb_cache_bytes_grows_by_tier() {
+        // Per-volume redb cache budgets. These must stay small: a volume
+        // server opens one redb database per volume, so the process-wide
+        // ceiling is roughly (volumes x budget).
+        assert_eq!(NeedleMapKind::Redb.redb_cache_bytes(), 4 * 1024 * 1024);
+        assert_eq!(NeedleMapKind::RedbMedium.redb_cache_bytes(), 8 * 1024 * 1024);
+        assert_eq!(NeedleMapKind::RedbLarge.redb_cache_bytes(), 16 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_redb_needle_map_tiny_cache_still_serves_all_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.rdb");
+        // A cache far smaller than the data forces redb to evict pages on
+        // every write and read; every entry must still round-trip.
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), 64 * 1024).unwrap();
+        let n = 3000u64;
+        for i in 1..=n {
+            nm.put(
+                NeedleId(i),
+                Offset::from_actual_offset((i * 8) as i64),
+                Size(i as i32),
+            )
+            .unwrap();
+        }
+        for i in 1..=n {
+            let v = nm.get(NeedleId(i)).unwrap().unwrap();
+            assert_eq!(v.size, Size(i as i32));
+            assert_eq!(v.offset, Offset::from_actual_offset((i * 8) as i64));
+        }
+        assert_eq!(nm.file_count(), n as i64);
     }
 }
