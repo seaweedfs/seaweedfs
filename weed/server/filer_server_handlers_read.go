@@ -289,8 +289,20 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 // streamFromRemoteOnly serves a byte range of an entry whose mount opted out of
-// caching, leaving the origin as its only source.
+// caching, leaving the origin as its only source. A multipart Range prepares
+// every part before writing any, so those open the origin at write time instead
+// of holding one connection per part through the whole preparation.
 func (fs *FilerServer) streamFromRemoteOnly(ctx context.Context, r *http.Request, dir, name string, offset, size int64) (filer.DoStreamContent, error) {
+	if strings.Contains(r.Header.Get("Range"), ",") {
+		return func(writer io.Writer) error {
+			streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size)
+			if remoteErr != nil {
+				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
+				return remoteErr
+			}
+			return streamFn(writer)
+		}, nil
+	}
 	streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size)
 	if remoteErr == nil {
 		return streamFn, nil
