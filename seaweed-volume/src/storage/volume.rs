@@ -2069,6 +2069,26 @@ impl Volume {
         (ttl_minutes as u64) < lived_minutes
     }
 
+    /// When this volume's data becomes garbage, counted from its last write.
+    /// Counting from the current time instead let every .vif rewrite — a
+    /// read-only mark, a tier upload, an EC encode — hand an already expiring
+    /// volume another full TTL. Zero when the volume has no TTL. Mirrors Go's
+    /// ExpireAtSec.
+    pub fn expire_at_sec(&self) -> u64 {
+        let ttl_seconds = self.super_block.ttl.to_seconds();
+        if ttl_seconds == 0 {
+            return 0;
+        }
+        let mut last_write_sec = self.last_modified_ts_seconds;
+        if last_write_sec == 0 {
+            last_write_sec = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+        }
+        last_write_sec + ttl_seconds
+    }
+
     pub fn is_expired_long_enough(&self, max_delay_minutes: u32) -> bool {
         let ttl_minutes = self.super_block.ttl.minutes();
         if ttl_minutes == 0 {
@@ -2900,13 +2920,9 @@ impl Volume {
         let mut vif = VifVolumeInfo::from_pb(&self.volume_info);
 
         // Match Go's SaveVolumeInfo: compute ExpireAtSec from TTL
-        let ttl_seconds = self.super_block.ttl.to_seconds();
-        if ttl_seconds > 0 {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            vif.expire_at_sec = now + ttl_seconds;
+        let expire_at_sec = self.expire_at_sec();
+        if expire_at_sec > 0 {
+            vif.expire_at_sec = expire_at_sec;
         }
 
         let content = serde_json::to_string_pretty(&vif)
@@ -2924,13 +2940,9 @@ impl Volume {
         self.volume_info.read_only_can_delete = marked_can_delete;
 
         // Compute ExpireAtSec from TTL (matches Go's SaveVolumeInfo)
-        let ttl_seconds = self.super_block.ttl.to_seconds();
-        if ttl_seconds > 0 {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            self.volume_info.expire_at_sec = now + ttl_seconds;
+        let expire_at_sec = self.expire_at_sec();
+        if expire_at_sec > 0 {
+            self.volume_info.expire_at_sec = expire_at_sec;
         }
 
         let vif = VifVolumeInfo::from_pb(&self.volume_info);
@@ -4896,6 +4908,36 @@ mod tests {
             v.is_expired(content_size, 1024 * 1024),
             "a TTL volume whose last write is 2h old must be expired after a reload"
         );
+    }
+
+    // Guard the destroy time an EC volume is reclaimed on: it was recomputed as
+    // now+TTL every time the .vif was written, so a read-only mark, a tier
+    // upload or an EC encode handed an already expiring volume another full TTL.
+    #[test]
+    fn test_expire_at_sec_counts_from_last_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut v = make_ttl_volume(dir, ttl);
+        // A volume with nothing written yet has no last write to count from, and
+        // must not land in 1970 with its data due for destruction on sight.
+        assert!(v.expire_at_sec() >= now);
+
+        v.set_last_modified_ts_for_test(now - 3600);
+        let want = now - 3600 + ttl.to_seconds();
+        for pass in 0..2 {
+            v.save_volume_info().unwrap();
+            assert_eq!(
+                v.volume_info.expire_at_sec, want,
+                ".vif save {} moved the destroy time off the last write",
+                pass
+            );
+        }
     }
 
     fn make_ttl_volume(dir: &str, ttl: crate::storage::needle::ttl::TTL) -> Volume {
