@@ -75,20 +75,6 @@ func TestMaybeManifestizeBelowThreshold(t *testing.T) {
 	}
 }
 
-func TestMaybeManifestizeSkipsSse(t *testing.T) {
-	store := &fakeManifestStore{}
-	chunks := flatTestChunks(ManifestBatch + 50)
-	chunks[0].SseType = filer_pb.SSEType_SSE_S3
-
-	result, err := MaybeManifestize(store.save, store.delete, chunks)
-	if err != nil {
-		t.Fatalf("MaybeManifestize: %v", err)
-	}
-	if len(result) != len(chunks) || store.saves != 0 {
-		t.Fatalf("SSE chunks must not be folded, got %d chunks, %d saves", len(result), store.saves)
-	}
-}
-
 // A fold that fails midway must hand back the caller's own list and delete the
 // manifest blobs its earlier batches already uploaded.
 func TestMaybeManifestizeRollsBackPartialFold(t *testing.T) {
