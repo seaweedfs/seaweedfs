@@ -265,7 +265,14 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 
 func (gcs *gcsRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error) {
 	key := loc.Path[1:]
-	return gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(ctx, offset, size)
+	reader, err = gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(ctx, offset, size)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("failed to open stream for %s%s: %v", loc.Bucket, loc.Path, err)
+	}
+	return reader, nil
 }
 
 func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
