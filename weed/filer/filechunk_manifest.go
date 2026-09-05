@@ -232,13 +232,6 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 // it returns references none of them. deleteChunks may be nil where the caller
 // has no deleter to offer; then the blobs are only named in the log.
 func MaybeManifestize(saveFunc SaveDataAsChunkFunctionType, deleteChunks func([]*filer_pb.FileChunk), inputChunks []*filer_pb.FileChunk) (chunks []*filer_pb.FileChunk, err error) {
-	// Don't manifestize SSE-encrypted chunks to preserve per-chunk metadata
-	for _, chunk := range inputChunks {
-		if chunk.GetSseType() != 0 { // Any SSE type (SSE-C or SSE-KMS)
-			return inputChunks, nil
-		}
-	}
-
 	var saved []*filer_pb.FileChunk
 	record := func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (*filer_pb.FileChunk, error) {
 		chunk, saveErr := saveFunc(reader, name, offset, tsNs, expectedDataSize)
