@@ -19,7 +19,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::{error, info, warn};
 
-#[cfg(test)]
 use crate::storage::idx;
 use crate::storage::needle::needle::{self, get_actual_size, Needle, NeedleError};
 use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
@@ -855,6 +854,7 @@ impl Volume {
                         "volumeDataIntegrityChecking failed"
                     );
                 }
+                self.recover_last_modified_ts();
 
                 // Structural check: no .idx entry may reference bytes past the
                 // end of .dat. The needle map's load walk above already
@@ -2198,6 +2198,74 @@ impl Volume {
         }
     }
 
+    /// Point the TTL clock at the newest write recorded in the volume, replacing
+    /// the .dat mtime the loader starts from. A delete appends a tombstone and
+    /// vacuum rewrites the .dat wholesale, so the mtime moves without any write
+    /// ever landing: every restart of a volume taking delete traffic re-armed
+    /// is_expired() for another full TTL and the volume was never reclaimed. See
+    /// issue #11160. Mirrors Go's recoverLastModifiedTs.
+    fn recover_last_modified_ts(&mut self) {
+        if self.super_block.ttl.minutes() == 0 {
+            return;
+        }
+        match self.find_last_write_append_at_ns() {
+            Ok(0) => {}
+            Ok(append_at_ns) => self.last_modified_ts_seconds = append_at_ns / 1_000_000_000,
+            Err(e) => warn!(
+                volume_id = self.id.0,
+                error = %e,
+                "recover the last write from the index"
+            ),
+        }
+    }
+
+    /// Scan the .idx backwards for the newest entry that records a write rather
+    /// than a deletion and return that needle's append timestamp. Both the .idx
+    /// and the .dat are append ordered — vacuum rewrites them together in key
+    /// order, and the master hands keys out increasing — so the newest write
+    /// entry is the newest needle in the volume. Returns 0 when the .idx holds
+    /// nothing but tombstones, or for a volume older than version 3, whose
+    /// needles carry no append timestamp. Mirrors Go's findLastWriteAppendAtNs.
+    fn find_last_write_append_at_ns(&self) -> Result<u64, VolumeError> {
+        if self.version() != VERSION_3 {
+            return Ok(0);
+        }
+        let idx_path = self.file_name(".idx");
+        let idx_size = fs::metadata(&idx_path).map(|m| m.len()).unwrap_or(0) as i64;
+        if idx_size == 0 || idx_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
+            return Ok(0);
+        }
+        let mut idx_file = File::open(&idx_path)?;
+        let mut block = vec![0u8; NEEDLE_MAP_ENTRY_SIZE * idx::ROWS_TO_READ];
+        let mut end = idx_size;
+        while end > 0 {
+            let start = (end - block.len() as i64).max(0);
+            let entries = &mut block[..(end - start) as usize];
+            idx_file.seek(SeekFrom::Start(start as u64))?;
+            idx_file.read_exact(entries)?;
+            for entry in entries.chunks_exact(NEEDLE_MAP_ENTRY_SIZE).rev() {
+                let (_, offset, size) = idx_entry_from_bytes(entry);
+                if offset.is_zero() || size.is_deleted() {
+                    continue;
+                }
+                return self.read_needle_append_at_ns(offset.to_actual_offset(), size);
+            }
+            end = start;
+        }
+        Ok(0)
+    }
+
+    /// Read the append timestamp a version 3 needle carries past its checksum.
+    fn read_needle_append_at_ns(&self, actual_offset: i64, size: Size) -> Result<u64, VolumeError> {
+        let ts_offset = actual_offset as u64
+            + NEEDLE_HEADER_SIZE as u64
+            + size.0 as u64
+            + NEEDLE_CHECKSUM_SIZE as u64;
+        let mut ts = [0u8; TIMESTAMP_SIZE];
+        self.read_exact_at_backend(&mut ts, ts_offset)?;
+        Ok(u64::from_be_bytes(ts))
+    }
+
     /// .idx file position of the entry whose needle is physically last in the
     /// .dat (highest offset). The common case — an append-ordered .idx — is
     /// resolved in O(1): the last entry's on-disk end equals the .dat size. A
@@ -2297,10 +2365,7 @@ impl Volume {
             return Ok(());
         }
 
-        let ts_offset = checked_offset as u64 + NEEDLE_HEADER_SIZE as u64 + size.0 as u64 + 4; // skip checksum
-        let mut ts_buf = [0u8; 8];
-        self.read_exact_at_backend(&mut ts_buf, ts_offset)?;
-        let ts = u64::from_be_bytes(ts_buf);
+        let ts = self.read_needle_append_at_ns(checked_offset, size)?;
         if ts > 0 {
             self.last_append_at_ns = ts;
         }
@@ -4773,6 +4838,87 @@ mod tests {
             !v.is_no_write_or_delete(),
             "volume should not be read-only after reload with trailing deletion tombstone"
         );
+    }
+
+    // Reproduce issue #11160: deletes append a tombstone to the .dat, which
+    // moves the file's mtime, and the loader read the TTL clock back from that
+    // mtime. A volume taking delete traffic therefore had is_expired() re-armed
+    // for another full TTL on every restart and was never reclaimed.
+    #[test]
+    fn test_ttl_clock_survives_deletes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let last_write_ns = (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 2 * 60 * 60)
+            * 1_000_000_000;
+
+        let content_size = {
+            let mut v = make_ttl_volume(dir, ttl);
+            let mut written = Vec::new();
+            for i in 1..=3u64 {
+                let data = format!("data {}", i);
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
+                written.push((offset, n.size));
+            }
+            // More than one tombstone: the scan has to walk back over the whole
+            // run of them to reach a write.
+            for i in [2u64, 3] {
+                v.delete_needle(&mut Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    ..Needle::default()
+                })
+                .unwrap();
+            }
+            v.sync_to_disk().unwrap();
+            // Backdate the writes on disk so the last one sits well outside the
+            // TTL, while the tombstones leave the .dat mtime at now.
+            for (offset, size) in written {
+                backdate_append_at_ns(&v.dat_path(), offset, size, last_write_ns);
+            }
+            v.content_size()
+        };
+
+        let v = make_ttl_volume(dir, ttl);
+        assert_eq!(v.last_modified_ts(), last_write_ns / 1_000_000_000);
+        assert!(
+            v.is_expired(content_size, 1024 * 1024),
+            "a TTL volume whose last write is 2h old must be expired after a reload"
+        );
+    }
+
+    fn make_ttl_volume(dir: &str, ttl: crate::storage::needle::ttl::TTL) -> Volume {
+        Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            Some(ttl),
+            0,
+            Version::current(),
+        )
+        .unwrap()
+    }
+
+    fn backdate_append_at_ns(dat_path: &str, offset: u64, size: Size, append_at_ns: u64) {
+        let ts_offset =
+            offset + NEEDLE_HEADER_SIZE as u64 + size.0 as u64 + NEEDLE_CHECKSUM_SIZE as u64;
+        let mut f = OpenOptions::new().write(true).open(dat_path).unwrap();
+        f.seek(SeekFrom::Start(ts_offset)).unwrap();
+        f.write_all(&append_at_ns.to_be_bytes()).unwrap();
     }
 
     fn write_three_needles(dir: &str) {
