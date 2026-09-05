@@ -478,6 +478,7 @@ type RemoteStorageLocation struct {
 	Bucket                 string                 `protobuf:"bytes,2,opt,name=bucket,proto3" json:"bucket,omitempty"`
 	Path                   string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	ListingCacheTtlSeconds int32                  `protobuf:"varint,4,opt,name=listing_cache_ttl_seconds,json=listingCacheTtlSeconds,proto3" json:"listing_cache_ttl_seconds,omitempty"` // 0 = disabled; >0 enables on-demand directory listing with this TTL in seconds
+	CacheWaitMs            *int32                 `protobuf:"varint,5,opt,name=cache_wait_ms,json=cacheWaitMs,proto3,oneof" json:"cache_wait_ms,omitempty"`                              // unset = size based default; 0 = read straight from the remote without caching
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -536,6 +537,13 @@ func (x *RemoteStorageLocation) GetPath() string {
 func (x *RemoteStorageLocation) GetListingCacheTtlSeconds() int32 {
 	if x != nil {
 		return x.ListingCacheTtlSeconds
+	}
+	return 0
+}
+
+func (x *RemoteStorageLocation) GetCacheWaitMs() int32 {
+	if x != nil && x.CacheWaitMs != nil {
+		return *x.CacheWaitMs
 	}
 	return 0
 }
@@ -599,12 +607,14 @@ const file_remote_proto_rawDesc = "" +
 	"\x1bprimary_bucket_storage_name\x18\x02 \x01(\tR\x18primaryBucketStorageName\x1a]\n" +
 	"\rMappingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x126\n" +
-	"\x05value\x18\x02 \x01(\v2 .remote_pb.RemoteStorageLocationR\x05value:\x028\x01\"\x92\x01\n" +
+	"\x05value\x18\x02 \x01(\v2 .remote_pb.RemoteStorageLocationR\x05value:\x028\x01\"\xcd\x01\n" +
 	"\x15RemoteStorageLocation\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06bucket\x18\x02 \x01(\tR\x06bucket\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x129\n" +
-	"\x19listing_cache_ttl_seconds\x18\x04 \x01(\x05R\x16listingCacheTtlSecondsBP\n" +
+	"\x19listing_cache_ttl_seconds\x18\x04 \x01(\x05R\x16listingCacheTtlSeconds\x12'\n" +
+	"\rcache_wait_ms\x18\x05 \x01(\x05H\x00R\vcacheWaitMs\x88\x01\x01B\x10\n" +
+	"\x0e_cache_wait_msBP\n" +
 	"\x10seaweedfs.clientB\n" +
 	"FilerProtoZ0github.com/seaweedfs/seaweedfs/weed/pb/remote_pbb\x06proto3"
 
@@ -642,6 +652,7 @@ func file_remote_proto_init() {
 	if File_remote_proto != nil {
 		return
 	}
+	file_remote_proto_msgTypes[2].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

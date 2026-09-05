@@ -139,7 +139,8 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	compactedChunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 
 	// Try to create manifest chunks for large files
-	compactedChunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), compactedChunks)
+	// no chunk deleter here: a failed fold reports the blobs it saved
+	compactedChunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, compactedChunks)
 	if manifestErr != nil {
 		glog.V(0).Infof("flushFileMetadata MaybeManifestize: %v", manifestErr)
 	}
