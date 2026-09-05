@@ -3252,7 +3252,7 @@ func (s3a *S3ApiServer) partByteRange(w http.ResponseWriter, entry *filer_pb.Ent
 	partsCount, partInfo := s3a.getMultipartInfo(entry, partNumber)
 	if partNumber > partsCount {
 		glog.Warningf("partByteRange: part number %d out of range, object has %d parts", partNumber, partsCount)
-		return 0, 0, s3err.ErrInvalidPart
+		return 0, 0, s3err.ErrInvalidPartNumber
 	}
 
 	w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(partsCount))
@@ -3270,7 +3270,7 @@ func (s3a *S3ApiServer) partByteRange(w http.ResponseWriter, entry *filer_pb.Ent
 	chunkIndex := partNumber - 1
 	if chunkIndex >= len(entry.Chunks) {
 		glog.Warningf("partByteRange: part %d chunk index %d out of range (chunks: %d)", partNumber, chunkIndex, len(entry.Chunks))
-		return 0, 0, s3err.ErrInvalidPart
+		return 0, 0, s3err.ErrInvalidPartNumber
 	}
 	partChunk := entry.Chunks[chunkIndex]
 	return partChunk.Offset, partChunk.Offset + int64(partChunk.Size) - 1, s3err.ErrNone

@@ -79,6 +79,9 @@ func TestPartByteRange(t *testing.T) {
 
 		w = httptest.NewRecorder()
 		_, _, errCode = s3a.partByteRange(w, entry, 3)
-		assert.Equal(t, s3err.ErrInvalidPart, errCode, "part beyond the object must not resolve")
+		assert.Equal(t, s3err.ErrInvalidPartNumber, errCode, "part beyond the object must not resolve")
 	}
+
+	// AWS answers an unsatisfiable partNumber with 416, not 400.
+	assert.Equal(t, http.StatusRequestedRangeNotSatisfiable, s3err.GetAPIError(s3err.ErrInvalidPartNumber).HTTPStatusCode)
 }

@@ -128,6 +128,9 @@ jobs:
           echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests/functional/test_s3.py
+          # The suite expects RGW's 400 InvalidPart for a partNumber past the last
+          # part; AWS answers 416 InvalidPartNumber, which is what we return.
+          sed -i "/# request PartNumber out of range/,+4{s/assert status == 400/assert status == 416/; s/assert error_code == 'InvalidPart'/assert error_code == 'InvalidPartNumber'/}" s3tests/functional/test_s3.py
           
           # Debug: Show the config file contents
           echo "=== S3 Config File Contents ==="
@@ -968,6 +971,9 @@ jobs:
           echo "All SeaweedFS components are ready!"
           cd ../s3-tests
           sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3tests/functional/test_s3.py
+          # The suite expects RGW's 400 InvalidPart for a partNumber past the last
+          # part; AWS answers 416 InvalidPartNumber, which is what we return.
+          sed -i "/# request PartNumber out of range/,+4{s/assert status == 400/assert status == 416/; s/assert error_code == 'InvalidPart'/assert error_code == 'InvalidPartNumber'/}" s3tests/functional/test_s3.py
           # Create and update s3tests.conf to use port 8004
           cp ../docker/compose/s3tests.conf ../docker/compose/s3tests-sql.conf
           sed -i 's/port = 8000/port = 8004/g' ../docker/compose/s3tests-sql.conf
