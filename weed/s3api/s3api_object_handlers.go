@@ -3427,7 +3427,12 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Re
 	if mountErr != nil {
 		glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: find mount for %s: %v", dir, mountErr)
 	}
-	pollTimeout := remote_storage.CacheWaitTimeout(entry.GetRemoteEntry().GetRemoteSize(), mountedLocation)
+	remoteSize := entry.GetRemoteEntry().GetRemoteSize()
+	pollTimeout := remote_storage.CacheWaitTimeout(remoteSize, mountedLocation)
+	if pollTimeout <= 0 && versionId != "" && versionId != "null" {
+		// A version-specific read has no origin key to fall back to, so it keeps the size tiers.
+		pollTimeout = remote_storage.CacheWaitTimeout(remoteSize, nil)
+	}
 	if pollTimeout <= 0 {
 		// The mount opted out of caching: report it uncached so the caller serves the origin.
 		glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: caching disabled for %s/%s", dir, name)

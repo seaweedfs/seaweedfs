@@ -792,6 +792,20 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 		require.NotNil(t, originClient.gotLoc, "must read from the origin")
 	})
 
+	t.Run("zero cache wait still caches a version-specific read", func(t *testing.T) {
+		// the version has no origin key, so the cache stays its only source
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-nowait-versioned", status.Error(codes.NotFound, "entry vanished"), func(loc *remote_pb.RemoteStorageLocation) {
+			loc.CacheWaitMs = proto.Int32(0)
+		}))
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin?versionId=v123", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "v123")
+
+		require.Error(t, err)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
 	t.Run("entry not found stays 404", func(t *testing.T) {
 		notFoundForms := map[string]error{
 			"canonical status": status.Error(codes.NotFound, "entry vanished"),
