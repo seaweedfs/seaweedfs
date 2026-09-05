@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;">
+  <rect width="800" height="600" fill="#ffffff" rx="8"/>
+  <text x="400.0" y="25" text-anchor="middle" font-size="16" font-weight="bold" fill="#333333">Stargazers over time</text>
+    <line x1="60" y1="550.0" x2="770" y2="550.0" stroke="#e0e0e0" stroke-width="1"/>
+    <line x1="60" y1="448.0" x2="770" y2="448.0" stroke="#e0e0e0" stroke-width="1"/>
+    <line x1="60" y1="346.0" x2="770" y2="346.0" stroke="#e0e0e0" stroke-width="1"/>
+    <line x1="60" y1="244.0" x2="770" y2="244.0" stroke="#e0e0e0" stroke-width="1"/>
+    <line x1="60" y1="142.0" x2="770" y2="142.0" stroke="#e0e0e0" stroke-width="1"/>
+    <line x1="60" y1="40.0" x2="770" y2="40.0" stroke="#e0e0e0" stroke-width="1"/>
+  <polyline points="60.0,550.0 94.9,542.9 122.4,534.5 135.3,527.4 167.1,519.0 201.4,510.5 204.9,503.5 225.3,495.0 260.6,486.6 294.1,478.1 306.3,469.7 310.9,462.6 329.3,454.2 347.3,445.7 362.5,438.7 381.9,430.2 404.1,421.8 421.9,413.3 428.6,404.9 444.0,397.8 461.0,389.4 474.4,380.9 488.0,373.9 499.9,365.4 514.0,357.0 529.5,348.5 540.2,340.0 550.5,333.0 561.8,324.6 573.8,316.1 582.8,309.1 596.3,300.6 610.4,292.1 618.7,283.7 619.0,275.2 622.2,268.2 632.9,259.7 644.1,251.3 652.8,244.2 662.9,235.8 671.2,227.3 683.5,218.9 695.7,210.4 701.0,203.4 708.8,194.9 718.8,186.5 720.0,179.4 721.5,171.0 726.0,162.5 726.4,154.1 729.2,145.6 732.5,138.6 737.3,130.1 740.1,121.7 743.9,114.6 748.5,106.2 751.9,97.7 756.2,89.3 760.7,80.8 764.6,73.8 769.4,65.3 770.0,64.3" fill="none" stroke="#6b63ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <line x1="60" y1="40" x2="60" y2="550" stroke="#333333" stroke-width="1.5"/>
+  <line x1="60" y1="550" x2="770" y2="550" stroke="#333333" stroke-width="1.5"/>
+    <text x="50" y="554.0" text-anchor="end" font-size="12" fill="#333333">0</text>
+    <text x="50" y="452.0" text-anchor="end" font-size="12" fill="#333333">7,239</text>
+    <text x="50" y="350.0" text-anchor="end" font-size="12" fill="#333333">14,478</text>
+    <text x="50" y="248.0" text-anchor="end" font-size="12" fill="#333333">21,717</text>
+    <text x="50" y="146.0" text-anchor="end" font-size="12" fill="#333333">28,957</text>
+    <text x="50" y="44.0" text-anchor="end" font-size="12" fill="#333333">36,196</text>
+    <text x="87.1" y="575" text-anchor="middle" font-size="12" fill="#333333">2015</text>
+    <text x="145.5" y="575" text-anchor="middle" font-size="12" fill="#333333">2016</text>
+    <text x="204.1" y="575" text-anchor="middle" font-size="12" fill="#333333">2017</text>
+    <text x="262.6" y="575" text-anchor="middle" font-size="12" fill="#333333">2018</text>
+    <text x="321.0" y="575" text-anchor="middle" font-size="12" fill="#333333">2019</text>
+    <text x="379.5" y="575" text-anchor="middle" font-size="12" fill="#333333">2020</text>
+    <text x="438.1" y="575" text-anchor="middle" font-size="12" fill="#333333">2021</text>
+    <text x="496.5" y="575" text-anchor="middle" font-size="12" fill="#333333">2022</text>
+    <text x="555.0" y="575" text-anchor="middle" font-size="12" fill="#333333">2023</text>
+    <text x="613.4" y="575" text-anchor="middle" font-size="12" fill="#333333">2024</text>
+    <text x="672.0" y="575" text-anchor="middle" font-size="12" fill="#333333">2025</text>
+    <text x="730.4" y="575" text-anchor="middle" font-size="12" fill="#333333">2026</text>
+</svg>
