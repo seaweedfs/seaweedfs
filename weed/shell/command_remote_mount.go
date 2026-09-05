@@ -96,10 +96,15 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 	remoteStorageLocation.ListingCacheTtlSeconds = int32(*listingCacheTTL)
 	if *cacheWait >= 0 {
-		if cacheWait.Milliseconds() > math.MaxInt32 {
+		waitMs := cacheWait.Milliseconds()
+		if waitMs > math.MaxInt32 {
 			return fmt.Errorf("cacheWait %v is too long", *cacheWait)
 		}
-		remoteStorageLocation.CacheWaitMs = proto.Int32(int32(cacheWait.Milliseconds()))
+		// truncating to 0 would read as "never wait" instead of the asked-for wait
+		if waitMs == 0 && *cacheWait > 0 {
+			return fmt.Errorf("cacheWait %v is shorter than 1ms", *cacheWait)
+		}
+		remoteStorageLocation.CacheWaitMs = proto.Int32(int32(waitMs))
 	}
 
 	strategy := MetadataCacheStrategy(strings.ToLower(*metadataStrategy))
