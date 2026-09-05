@@ -118,6 +118,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// When autofs/systemd-mount is used, FsName must be "fuse" so util-linux/mount can recognize
 	// it as a pseudo filesystem. Otherwise, preserve the descriptive name for mount/df output.
 	fsName := serverFriendlyName + ":" + filerMountRootPath
+	if *option.volumeName != "" {
+		fsName = *option.volumeName
+	}
 	if skipAutofs {
 		fsName = "fuse"
 	}
