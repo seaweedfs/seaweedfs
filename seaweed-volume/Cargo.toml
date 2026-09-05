@@ -57,7 +57,7 @@ rustls-pemfile = "2"
 rusty-leveldb = "3"
 
 # Disk-backed needle map (alternative to in-memory HashMap)
-redb = "3"
+redb = "4"
 
 # Reed-Solomon erasure coding
 reed-solomon-erasure = "6"
