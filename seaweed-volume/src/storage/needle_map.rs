@@ -15,8 +15,10 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 mod compact_map;
 pub mod file_pool;
+mod idx_metric;
 pub mod sorted_file;
 use compact_map::CompactMap;
+use idx_metric::metrics_from_idx;
 use sorted_file::SortedFileNeedleMap;
 
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
@@ -410,6 +412,14 @@ const NEEDLE_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("needles"
 const META_TABLE: TableDefinition<&str, u64> = TableDefinition::new("meta");
 const META_IDX_SIZE: &str = "idx_size";
 
+/// Writes between two durable redb checkpoints. Every non-durable commit
+/// leaves an entry in redb's transaction tracker and pins the pages that
+/// were on disk at the last durable commit; only a durable commit clears
+/// both. Without a cadence they grow for the life of the process (#11179).
+/// The map only counts; the volume takes the checkpoint (see
+/// `RedbNeedleMap::checkpoint_due`) because the .dat must be flushed first.
+const REDB_CHECKPOINT_INTERVAL: u32 = 1000;
+
 /// Disk-backed needle map using redb.
 /// Low memory usage — data lives on disk behind a small, bounded redb page
 /// cache sized by `NeedleMapKind::redb_cache_bytes`.
@@ -418,17 +428,59 @@ pub struct RedbNeedleMap {
     metric: NeedleMapMetric,
     idx_file: Option<Box<dyn IdxFileWriter>>,
     idx_file_offset: u64,
+    /// Puts/deletes since the last durable checkpoint.
+    writes_since_checkpoint: u32,
 }
 
 impl RedbNeedleMap {
     /// Begin a write transaction with `Durability::None` (no fsync).
-    /// The .idx file is the source of truth for crash recovery, so redb
-    /// is always rebuilt from .idx on startup — fsync is unnecessary.
+    /// The .idx file is the source of truth for crash recovery: a crash
+    /// loses at most the writes since the last checkpoint from redb, and
+    /// the next load replays them from .idx.
     fn begin_write_no_fsync(db: &Database) -> io::Result<redb::WriteTransaction> {
         let mut txn = db.begin_write().map_err(|e| {
             io::Error::new(io::ErrorKind::Other, format!("redb begin_write: {}", e))
         })?;
         let _ = txn.set_durability(Durability::None);
+        Ok(txn)
+    }
+
+    /// True once `REDB_CHECKPOINT_INTERVAL` puts/deletes have been committed
+    /// non-durably. The caller (the volume) must then flush the .dat and
+    /// call [`checkpoint`](Self::checkpoint): a checkpoint makes the index
+    /// durable, so the bytes it points at have to be on disk before it.
+    pub fn checkpoint_due(&self) -> bool {
+        self.writes_since_checkpoint >= REDB_CHECKPOINT_INTERVAL
+    }
+
+    /// Make the table durable and record how much of the .idx it reflects.
+    /// Precondition: the .dat the index points into has been flushed.
+    pub fn checkpoint(&mut self) -> io::Result<()> {
+        let txn = self.begin_checkpoint()?;
+        txn.commit()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
+        self.writes_since_checkpoint = 0;
+        Ok(())
+    }
+
+    /// Begin a durable transaction (fsync on commit) that also records how
+    /// much of the .idx the table reflects, so a reload replays only the
+    /// tail appended after it. The .idx is synced first: the recorded size
+    /// must never exceed what is on disk, or the reload would have to
+    /// rebuild from scratch.
+    fn begin_checkpoint(&self) -> io::Result<redb::WriteTransaction> {
+        self.sync()?;
+        let txn = self.db.begin_write().map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("redb begin_write: {}", e))
+        })?;
+        if self.idx_file.is_some() {
+            let mut meta = txn.open_table(META_TABLE).map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e))
+            })?;
+            meta.insert(META_IDX_SIZE, self.idx_file_offset).map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("redb insert meta: {}", e))
+            })?;
+        }
         Ok(txn)
     }
 
@@ -461,6 +513,7 @@ impl RedbNeedleMap {
             metric: NeedleMapMetric::default(),
             idx_file: None,
             idx_file_offset: 0,
+            writes_since_checkpoint: 0,
         })
     }
 
@@ -499,49 +552,6 @@ impl RedbNeedleMap {
                 format!("redb get meta: {}", e),
             )),
         }
-    }
-
-    /// Rebuild metrics by scanning all entries in the redb table.
-    /// Called when reusing an existing .rdb without a full rebuild.
-    fn rebuild_metrics_from_db(&self, version: Version) -> io::Result<()> {
-        let txn = self
-            .db
-            .begin_read()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
-        let table = txn
-            .open_table(NEEDLE_TABLE)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
-        let iter = table
-            .iter()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb iter: {}", e)))?;
-        for entry in iter {
-            let (key_guard, val_guard) = entry.map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb iter next: {}", e))
-            })?;
-            let key = NeedleId(key_guard.value());
-            let bytes: &[u8] = val_guard.value();
-            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                arr.copy_from_slice(bytes);
-                let nv = unpack_needle_value(&arr);
-                self.metric.maybe_set_max_file_key(key);
-                self.metric
-                    .maybe_set_max_needle_end(nv.offset, nv.size, version);
-                if nv.size.is_valid() {
-                    self.metric.file_count.fetch_add(1, Ordering::Relaxed);
-                    self.metric
-                        .file_byte_count
-                        .fetch_add(nv.size.0 as u64, Ordering::Relaxed);
-                } else {
-                    // Deleted entry (negative size)
-                    self.metric.deletion_count.fetch_add(1, Ordering::Relaxed);
-                    self.metric
-                        .deletion_byte_count
-                        .fetch_add((-nv.size.0) as u64, Ordering::Relaxed);
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Load from an .idx file, reusing an existing .rdb if it is consistent.
@@ -586,11 +596,12 @@ impl RedbNeedleMap {
             .open(db_path)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open: {}", e)))?;
 
-        let nm = RedbNeedleMap {
+        let mut nm = RedbNeedleMap {
             db,
             metric: NeedleMapMetric::default(),
             idx_file: None,
             idx_file_offset: 0,
+            writes_since_checkpoint: 0,
         };
 
         let stored_idx_size = nm
@@ -605,8 +616,10 @@ impl RedbNeedleMap {
             ));
         }
 
-        // Rebuild metrics from existing data
-        nm.rebuild_metrics_from_db(version)?;
+        // Counters come from the whole .idx history, never from the table,
+        // so the replay below is free to re-apply rows the table already
+        // holds (redb flushes on drop even without a checkpoint).
+        nm.metric = metrics_from_idx(reader, version)?;
 
         if stored_idx_size < idx_size {
             // .idx grew — replay new entries incrementally
@@ -617,14 +630,12 @@ impl RedbNeedleMap {
                     io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
                 })?;
                 idx::walk_index_file(reader, start_entry, |key, offset, size| {
-                    nm.metric.maybe_set_max_needle_end(offset, size, version);
                     let key_u64: u64 = key.into();
                     if offset.is_zero() || size.is_deleted() {
-                        // Delete: look up old value for metric update, then
-                        // store tombstone (negative size with original offset)
+                        // Delete: store a tombstone (negative size, original
+                        // offset) over a live value; already deleted is a no-op.
                         if let Ok(Some(old)) = nm.get_via_table(&table, key_u64) {
                             if old.size.is_valid() {
-                                nm.metric.on_delete(&old);
                                 let deleted_nv = NeedleValue {
                                     offset: old.offset,
                                     size: Size(-(old.size.0)),
@@ -639,14 +650,10 @@ impl RedbNeedleMap {
                             }
                         }
                     } else {
-                        // Put: look up old value for metric update
-                        let old = nm.get_via_table(&table, key_u64).ok().flatten();
-                        let nv = NeedleValue { offset, size };
-                        let packed = pack_needle_value(&nv);
+                        let packed = pack_needle_value(&NeedleValue { offset, size });
                         table.insert(key_u64, packed.as_slice()).map_err(|e| {
                             io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
                         })?;
-                        nm.metric.on_put(key, old.as_ref(), size);
                     }
                     Ok(())
                 })?;
@@ -695,12 +702,11 @@ impl RedbNeedleMap {
         cache_bytes: usize,
     ) -> io::Result<Self> {
         let _ = std::fs::remove_file(db_path);
-        let nm = RedbNeedleMap::new(db_path, cache_bytes)?;
+        let mut nm = RedbNeedleMap::new(db_path, cache_bytes)?;
 
         // Collect entries from idx file, resolving duplicates/deletions
         let mut entries: HashMap<NeedleId, Option<NeedleValue>> = HashMap::new();
         idx::walk_index_file(reader, 0, |key, offset, size| {
-            nm.metric.maybe_set_max_needle_end(offset, size, version);
             if offset.is_zero() || size.is_deleted() {
                 entries.insert(key, None);
             } else {
@@ -723,7 +729,6 @@ impl RedbNeedleMap {
                     table.insert(key_u64, packed.as_slice()).map_err(|e| {
                         io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
                     })?;
-                    nm.metric.on_put(*key, None, nv.size);
                 } else {
                     // Entry was deleted — remove from redb if present
                     table.remove(key_u64).map_err(|e| {
@@ -736,6 +741,7 @@ impl RedbNeedleMap {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
 
         nm.save_idx_size_meta(idx_size)?;
+        nm.metric = metrics_from_idx(reader, version)?;
 
         Ok(nm)
     }
@@ -779,6 +785,7 @@ impl RedbNeedleMap {
         }
         txn.commit()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
+        self.writes_since_checkpoint += 1;
 
         self.metric.on_put(key, old.as_ref(), size);
         Ok(())
@@ -832,7 +839,6 @@ impl RedbNeedleMap {
                     self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
                 }
 
-                self.metric.on_delete(&old);
                 let deleted_size = Size(-(old.size.0));
                 // Keep original offset so readDeleted can find original data (matching Go behavior)
                 let deleted_nv = NeedleValue {
@@ -853,7 +859,10 @@ impl RedbNeedleMap {
                 txn.commit().map_err(|e| {
                     io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e))
                 })?;
+                self.writes_since_checkpoint += 1;
 
+                // Only now is the tombstone in the table the metrics describe.
+                self.metric.on_delete(&old);
                 return Ok(Some(old.size));
             }
         }
@@ -900,9 +909,13 @@ impl RedbNeedleMap {
         Ok(())
     }
 
-    /// Close index file.
+    /// Close the index file, checkpointing first so a reload starts from
+    /// the recorded .idx size instead of replaying entries the table
+    /// already holds.
     pub fn close(&mut self) {
-        let _ = self.sync();
+        if let Err(e) = self.checkpoint() {
+            tracing::warn!("redb checkpoint on close failed: {}", e);
+        }
         self.idx_file = None;
     }
 
@@ -1068,6 +1081,25 @@ impl NeedleMap {
         }
     }
 
+    /// Whether the backend wants a durable checkpoint. Only the redb map
+    /// commits non-durably between checkpoints; see
+    /// `RedbNeedleMap::checkpoint_due`.
+    pub fn checkpoint_due(&self) -> bool {
+        match self {
+            NeedleMap::Redb(nm) => nm.checkpoint_due(),
+            NeedleMap::InMemory(_) | NeedleMap::SortedFile(_) => false,
+        }
+    }
+
+    /// Take the checkpoint `checkpoint_due` asked for. The caller must have
+    /// flushed the .dat first.
+    pub fn checkpoint(&mut self) -> io::Result<()> {
+        match self {
+            NeedleMap::Redb(nm) => nm.checkpoint(),
+            NeedleMap::InMemory(_) | NeedleMap::SortedFile(_) => Ok(()),
+        }
+    }
+
     /// Content byte count.
     pub fn content_size(&self) -> u64 {
         match self {
@@ -1197,6 +1229,29 @@ impl NeedleMap {
 // ============================================================================
 // Tests
 // ============================================================================
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// The `.idx` size recorded in the durable state of the `.rdb` at
+    /// `rdb_path`, read from a copy taken while the map may still be open:
+    /// exactly what a crash would leave behind. `None` when nothing durable
+    /// has been recorded yet.
+    pub(crate) fn durable_idx_size(rdb_path: &Path) -> Option<u64> {
+        let copy = rdb_path.with_extension("crash-copy.rdb");
+        std::fs::copy(rdb_path, &copy).unwrap();
+        let db = Database::open(&copy).unwrap();
+        let txn = db.begin_read().unwrap();
+        let meta = txn.open_table(META_TABLE).ok()?;
+        let size = meta.get(META_IDX_SIZE).unwrap().map(|g| g.value());
+        drop(meta);
+        drop(txn);
+        drop(db);
+        let _ = std::fs::remove_file(&copy);
+        size
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1338,6 +1393,36 @@ mod tests {
         NeedleMapKind::Redb.redb_cache_bytes()
     }
 
+    /// Open a redb map on an empty .idx with an append writer attached, the
+    /// way `Volume::load_index_redb` opens a writable volume.
+    fn open_writable_redb(
+        dir: &std::path::Path,
+    ) -> (RedbNeedleMap, std::path::PathBuf, std::path::PathBuf) {
+        let db_path = dir.join("v.rdb");
+        let idx_path = dir.join("v.idx");
+        let idx_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&idx_path)
+            .unwrap();
+        let idx_size = idx_file.metadata().unwrap().len();
+        let mut reader = std::io::BufReader::new(&idx_file);
+        let mut nm = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut reader,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
+        let writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&idx_path)
+            .unwrap();
+        nm.set_idx_file(Box::new(writer), idx_size);
+        (nm, db_path, idx_path)
+    }
+
     #[test]
     fn test_redb_needle_map_put_get() {
         let dir = tempfile::tempdir().unwrap();
@@ -1462,7 +1547,11 @@ mod tests {
         assert!(nm.get(NeedleId(1)).unwrap().is_some());
         assert!(nm.get(NeedleId(2)).unwrap().is_none()); // deleted and removed
         assert!(nm.get(NeedleId(3)).unwrap().is_some());
-        assert_eq!(nm.file_count(), 2);
+        // Same history as test_needle_map_load_from_idx: the counters must
+        // match what the in-memory map (and a live volume) accumulates.
+        assert_eq!(nm.file_count(), 3);
+        assert_eq!(nm.deleted_count(), 1);
+        assert_eq!(nm.deleted_size(), 200);
     }
 
     #[test]
@@ -1627,5 +1716,162 @@ mod tests {
             assert_eq!(v.offset, Offset::from_actual_offset((i * 8) as i64));
         }
         assert_eq!(nm.file_count(), n as i64);
+    }
+
+    #[test]
+    fn test_redb_checkpoint_is_explicit_and_due_every_interval() {
+        use test_support::durable_idx_size;
+
+        // Every non-durable redb commit leaves bookkeeping behind until a
+        // durable one clears it, so a writable map asks for a checkpoint on
+        // a fixed cadence. The map never takes it by itself: the volume has
+        // to flush the .dat first, then call checkpoint().
+        const EXPECTED_INTERVAL: u64 = 1000;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, db_path, _idx_path) = open_writable_redb(dir.path());
+        for i in 1..EXPECTED_INTERVAL {
+            nm.put(NeedleId(i), Offset::from_actual_offset((i * 8) as i64), Size(1))
+                .unwrap();
+            assert!(!nm.checkpoint_due(), "due after only {i} writes");
+        }
+        nm.put(
+            NeedleId(EXPECTED_INTERVAL),
+            Offset::from_actual_offset((EXPECTED_INTERVAL * 8) as i64),
+            Size(1),
+        )
+        .unwrap();
+        assert!(nm.checkpoint_due());
+        assert_eq!(durable_idx_size(&db_path), None, "put() must not commit durably");
+
+        nm.checkpoint().unwrap();
+        assert!(!nm.checkpoint_due());
+        assert_eq!(
+            durable_idx_size(&db_path),
+            Some(EXPECTED_INTERVAL * NEEDLE_MAP_ENTRY_SIZE as u64),
+            "checkpoint records how much of the .idx the table reflects"
+        );
+
+        // Snapshot the .rdb while the map is still open: what a crash leaves.
+        let crash_copy = dir.path().join("crash.rdb");
+        std::fs::copy(&db_path, &crash_copy).unwrap();
+        drop(nm);
+        let db = Database::open(&crash_copy).unwrap();
+        let txn = db.begin_read().unwrap();
+        let table = txn.open_table(NEEDLE_TABLE).unwrap();
+        assert!(
+            table.get(EXPECTED_INTERVAL).unwrap().is_some(),
+            "entries up to the checkpoint are durable"
+        );
+    }
+
+    #[test]
+    fn test_redb_close_records_idx_size_so_reload_does_not_double_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
+        for i in 1..=5u64 {
+            nm.put(NeedleId(i), Offset::from_actual_offset((i * 8) as i64), Size(1))
+                .unwrap();
+        }
+        nm.close();
+        drop(nm);
+
+        // A clean close leaves the table durable; the recorded .idx size
+        // must match it, or the reload replays the same 5 entries on top.
+        let mut idx = std::fs::File::open(&idx_path).unwrap();
+        let reloaded = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut idx,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
+        assert_eq!(reloaded.file_count(), 5);
+        assert_eq!(reloaded.deleted_count(), 0);
+    }
+
+    #[test]
+    fn test_redb_reload_with_stale_idx_size_does_not_double_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
+        for i in 1..=5u64 {
+            nm.put(NeedleId(i), Offset::from_actual_offset((i * 8) as i64), Size(1))
+                .unwrap();
+        }
+        // Drop without close(): redb makes the table durable on drop, but the
+        // recorded .idx size stays at its load-time value (0), so the reload
+        // replays all 5 entries over rows the table already holds.
+        drop(nm);
+
+        let mut idx = std::fs::File::open(&idx_path).unwrap();
+        let reloaded = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut idx,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
+        assert_eq!(reloaded.file_count(), 5);
+        assert_eq!(reloaded.deleted_count(), 0);
+        assert_eq!(
+            reloaded.get(NeedleId(5)).unwrap().unwrap().offset,
+            Offset::from_actual_offset(40)
+        );
+    }
+
+    #[test]
+    fn test_redb_reload_metrics_keep_overwrite_and_delete_history() {
+        // garbage_level() is deleted_size / content_size. Every load path
+        // must rebuild both from the whole .idx history, the way the live
+        // counters accumulate, not from the table's final state, or the
+        // bytes of overwritten and deleted needles stop counting as garbage
+        // after a restart.
+        for (close_first, rebuild) in [(true, false), (false, false), (true, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
+            nm.put(NeedleId(1), Offset::from_actual_offset(8), Size(100))
+                .unwrap();
+            // Overwrite: the first 100 bytes become garbage.
+            nm.put(NeedleId(1), Offset::from_actual_offset(200), Size(200))
+                .unwrap();
+            nm.put(NeedleId(2), Offset::from_actual_offset(500), Size(50))
+                .unwrap();
+            nm.delete(NeedleId(2), Offset::from_actual_offset(600))
+                .unwrap();
+            let live = (
+                nm.file_count(),
+                nm.content_size(),
+                nm.deleted_count(),
+                nm.deleted_size(),
+            );
+            assert_eq!(live, (3, 350, 2, 150));
+            if close_first {
+                nm.close();
+            }
+            drop(nm);
+            if rebuild {
+                std::fs::remove_file(&db_path).unwrap();
+            }
+
+            let mut idx = std::fs::File::open(&idx_path).unwrap();
+            let reloaded = RedbNeedleMap::load_from_idx(
+                db_path.to_str().unwrap(),
+                &mut idx,
+                Version::current(),
+                redb_test_cache(),
+            )
+            .unwrap();
+            let after = (
+                reloaded.file_count(),
+                reloaded.content_size(),
+                reloaded.deleted_count(),
+                reloaded.deleted_size(),
+            );
+            assert_eq!(
+                after, live,
+                "close_first={close_first} rebuild={rebuild}"
+            );
+            assert_eq!(reloaded.get(NeedleId(1)).unwrap().unwrap().size, Size(200));
+            assert!(reloaded.get(NeedleId(2)).unwrap().map_or(true, |v| v.size.is_deleted()));
+        }
     }
 }
