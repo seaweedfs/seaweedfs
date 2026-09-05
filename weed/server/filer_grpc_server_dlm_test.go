@@ -34,3 +34,22 @@ func TestFindLockOwnerExpiredLockReturnsNotFound(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, codes.NotFound, st.Code())
 }
+
+func TestForwardedLockAcquired(t *testing.T) {
+	tests := []struct {
+		name string
+		resp *filer_pb.LockResponse
+		want bool
+	}{
+		{name: "nil response"},
+		{name: "empty token", resp: &filer_pb.LockResponse{}},
+		{name: "application error", resp: &filer_pb.LockResponse{RenewToken: "token", Error: "lock already owned"}},
+		{name: "acquired", resp: &filer_pb.LockResponse{RenewToken: "token"}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, forwardedLockAcquired(tt.resp))
+		})
+	}
+}
