@@ -442,6 +442,25 @@ func (v *Volume) expired(contentSize uint64, volumeSizeLimit uint64) bool {
 	return false
 }
 
+// ExpireAtSec is when this volume's data becomes garbage, counted from its last
+// write. Counting from the current time instead let every .vif rewrite -- a
+// read-only mark, a tier upload, an EC encode -- hand an already expiring volume
+// another full TTL. Zero when the volume has no TTL.
+func (v *Volume) ExpireAtSec() uint64 {
+	if v.Ttl == nil {
+		return 0
+	}
+	ttlSeconds := v.Ttl.ToSeconds()
+	if ttlSeconds == 0 {
+		return 0
+	}
+	lastWriteSec := v.lastModifiedTsSeconds
+	if lastWriteSec == 0 {
+		lastWriteSec = uint64(time.Now().Unix())
+	}
+	return lastWriteSec + ttlSeconds
+}
+
 // wait either maxDelayMinutes or 10% of ttl minutes
 func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {

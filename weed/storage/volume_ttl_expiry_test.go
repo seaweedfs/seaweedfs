@@ -93,6 +93,45 @@ func TestVolumeTtlClockKeepsMtimeWithoutRecoverableWrite(t *testing.T) {
 	}
 }
 
+// TestVolumeExpireAtSecCountsFromLastWrite guards the destroy time an EC volume
+// is reclaimed on (erasure_coding.EcVolume.IsTimeToDestroy). It was recomputed
+// as now+TTL on every .vif write, so a read-only mark, a tier upload or an EC
+// encode handed an already expiring volume another full TTL.
+func TestVolumeExpireAtSecCountsFromLastWrite(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	// A volume with nothing written yet has no last write to count from, and
+	// must not land in 1970 with its data due for destruction on sight.
+	if got := v.GetVolumeInfo().ExpireAtSec; got < uint64(time.Now().Unix()) {
+		t.Errorf("a fresh volume expires at %d, already in the past", got)
+	}
+
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	v.lastModifiedTsSeconds = uint64(time.Now().Add(-time.Hour).Unix())
+	want := v.lastModifiedTsSeconds + ttl.ToSeconds()
+
+	for i := 0; i < 2; i++ {
+		if err := v.SaveVolumeInfo(); err != nil {
+			t.Fatalf("save .vif: %v", err)
+		}
+		if got := v.GetVolumeInfo().ExpireAtSec; got != want {
+			t.Fatalf(".vif save %d put ExpireAtSec at %d, want %d counted from the last write", i, got, want)
+		}
+	}
+}
+
 func backdateAppendAtNs(t *testing.T, v *Volume, offset int64, size types.Size, appendAtNs uint64) {
 	t.Helper()
 	stamp := make([]byte, types.TimestampSize)
