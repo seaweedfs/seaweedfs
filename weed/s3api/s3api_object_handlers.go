@@ -3294,17 +3294,10 @@ func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name 
 	return dir, name
 }
 
-// openRemoteStream opens a ranged read of a remote-only object straight from
-// its mounted origin, resolving the mount and storage conf from the filer.
-// cached, when set, is the remote generation the local copy was made from: the
-// stream is refused unless the remote still matches it.
-func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object string, offset, size int64, cached *filer_pb.RemoteEntry) (io.ReadCloser, error) {
-	dir, name := s3a.buildRemoteObjectPath(bucket, object)
-
-	var storageConf *remote_pb.RemoteConf
-	var localMountedDir string
-	var mountedLocation *remote_pb.RemoteStorageLocation
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+// findMountedRemoteMapping resolves the remote mount covering dir from the
+// mount mapping kept in the filer.
+func (s3a *S3ApiServer) findMountedRemoteMapping(ctx context.Context, dir string) (localMountedDir string, mountedLocation *remote_pb.RemoteStorageLocation, err error) {
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mappingContent, readErr := filer.ReadInsideFiler(ctx, client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
 		if readErr != nil {
 			return readErr
@@ -3315,9 +3308,25 @@ func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object str
 		}
 		var findErr error
 		localMountedDir, mountedLocation, findErr = filer.FindMountedRemoteMapping(mappings, dir)
-		if findErr != nil {
-			return findErr
-		}
+		return findErr
+	})
+	return localMountedDir, mountedLocation, err
+}
+
+// openRemoteStream opens a ranged read of a remote-only object straight from
+// its mounted origin, resolving the mount and storage conf from the filer.
+// cached, when set, is the remote generation the local copy was made from: the
+// stream is refused unless the remote still matches it.
+func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object string, offset, size int64, cached *filer_pb.RemoteEntry) (io.ReadCloser, error) {
+	dir, name := s3a.buildRemoteObjectPath(bucket, object)
+
+	localMountedDir, mountedLocation, err := s3a.findMountedRemoteMapping(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var storageConf *remote_pb.RemoteConf
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		confContent, readErr := filer.ReadInsideFiler(ctx, client, filer.DirectoryEtcRemote, mountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX)
 		if readErr != nil {
 			return readErr
@@ -3329,7 +3338,7 @@ func (s3a *S3ApiServer) openRemoteStream(ctx context.Context, bucket, object str
 		return nil, err
 	}
 
-	client, err := weed_server.BuildGuardedRemoteStorageClient(ctx, storageConf, false)
+	client, err := weed_server.BuildGuardedRemoteStorageClient(ctx, storageConf, s3a.option.AllowUntrustedRemoteEndpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -3396,18 +3405,40 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 // Atomic so tests can shorten it without racing the read path.
 var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
 
+// remoteCacheWait resolves how long a read of dir may wait for the local cache.
+// Zero means the mount opted out of caching, so the read is served from the
+// origin instead -- except for a version-specific read, which has no origin key
+// to fall back to and therefore keeps the size tiers.
+func (s3a *S3ApiServer) remoteCacheWait(ctx context.Context, dir string, remoteSize int64, versionId string) time.Duration {
+	_, mountedLocation, mountErr := s3a.findMountedRemoteMapping(ctx, dir)
+	if mountErr != nil {
+		glog.V(2).Infof("remoteCacheWait: find mount for %s: %v", dir, mountErr)
+	}
+	wait := remote_storage.CacheWaitTimeout(remoteSize, mountedLocation)
+	if wait <= 0 && versionId != "" && versionId != "null" {
+		return remote_storage.CacheWaitTimeout(remoteSize, nil)
+	}
+	return wait
+}
+
 // cacheRemoteObjectForStreamingWithShortTimeout polls for cache completion with an adaptive timeout.
-// Timeout is based on file size: small files wait longer to maximize cache hits, large files
-// fail-fast to improve TTFB. Returns the cached entry and error to allow callers to distinguish
-// between transient errors (timeout) and permanent errors (not found, permission denied).
-// The filer continues caching on detached context, so retry finds cached chunks.
+// Timeout comes from the file size or the mount's cache_wait_ms: small files wait longer to
+// maximize cache hits, large files fail-fast to improve TTFB. Returns the cached entry and error
+// to allow callers to distinguish between transient errors (timeout) and permanent errors (not
+// found, permission denied). The filer continues caching on detached context, so retry finds
+// cached chunks.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) (*filer_pb.Entry, error) {
-	pollTimeout := remote_storage.CacheWaitTimeout(entry.GetRemoteEntry().GetRemoteSize())
+	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
+
+	pollTimeout := s3a.remoteCacheWait(r.Context(), dir, entry.GetRemoteEntry().GetRemoteSize(), versionId)
+	if pollTimeout <= 0 {
+		// The mount opted out of caching: report it uncached so the caller serves the origin.
+		glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: caching disabled for %s/%s", dir, name)
+		return nil, nil
+	}
 
 	cacheCtx, cancel := context.WithTimeout(r.Context(), pollTimeout)
 	defer cancel()
-
-	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
 	glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: polling cache status for %s/%s (timeout=%v)", dir, name, pollTimeout)
 
@@ -3514,6 +3545,10 @@ func (s3a *S3ApiServer) startBackgroundRemoteCache(bucket, object, versionId str
 		// Use timeout to bound goroutine and prevent pile-up if RPC stalls under load
 		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		if s3a.remoteCacheWait(bgCtx, dir, entry.GetRemoteEntry().GetRemoteSize(), versionId) <= 0 {
+			glog.V(2).Infof("startBackgroundRemoteCache: caching disabled for %s/%s", dir, name)
+			return
+		}
 		_, err := s3a.doCacheRemoteObject(bgCtx, dir, name)
 		if err != nil {
 			glog.V(2).Infof("startBackgroundRemoteCache: cache failed for %s/%s: %v", bucket, object, err)

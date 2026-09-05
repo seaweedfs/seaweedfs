@@ -637,10 +637,14 @@ func (m *fakeStreamRemoteMaker) HasBucket() bool { return true }
 
 // startStreamThroughFiler serves a filer whose cache RPC always fails with
 // cacheErr and whose /etc/remote mounts /buckets/mybucket on a fake origin.
-func startStreamThroughFiler(t *testing.T, remoteName string, cacheErr error) pb.ServerAddress {
+func startStreamThroughFiler(t *testing.T, remoteName string, cacheErr error, mountOpts ...func(*remote_pb.RemoteStorageLocation)) pb.ServerAddress {
+	mount := &remote_pb.RemoteStorageLocation{Name: remoteName, Bucket: "origin-bucket", Path: "/data"}
+	for _, opt := range mountOpts {
+		opt(mount)
+	}
 	mappingBytes, err := proto.Marshal(&remote_pb.RemoteStorageMapping{
 		Mappings: map[string]*remote_pb.RemoteStorageLocation{
-			"/buckets/mybucket": {Name: remoteName, Bucket: "origin-bucket", Path: "/data"},
+			"/buckets/mybucket": mount,
 		},
 	})
 	require.NoError(t, err)
@@ -765,6 +769,41 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, content, w.Body.Bytes())
+	})
+
+	t.Run("mount with a zero cache wait never asks the cache", func(t *testing.T) {
+		originClient := &fakeStreamRemoteClient{data: content}
+		remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: originClient}
+		defer func() {
+			remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: client}
+		}()
+		// a consulted cache would 404 this read, so a 200 proves it was skipped
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-nowait", status.Error(codes.NotFound, "entry vanished"), func(loc *remote_pb.RemoteStorageLocation) {
+			loc.CacheWaitMs = proto.Int32(0)
+		}))
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "")
+
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, content, w.Body.Bytes())
+		require.NotNil(t, originClient.gotLoc, "must read from the origin")
+	})
+
+	t.Run("zero cache wait still caches a version-specific read", func(t *testing.T) {
+		// the version has no origin key, so the cache stays its only source
+		s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, "faketest-nowait-versioned", status.Error(codes.NotFound, "entry vanished"), func(loc *remote_pb.RemoteStorageLocation) {
+			loc.CacheWaitMs = proto.Int32(0)
+		}))
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin?versionId=v123", nil)
+
+		err := s3a.streamFromVolumeServers(w, r, entry(), "", "mybucket", "dir/obj.bin", "v123")
+
+		require.Error(t, err)
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
 	t.Run("entry not found stays 404", func(t *testing.T) {

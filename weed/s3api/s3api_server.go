@@ -69,6 +69,9 @@ type S3ApiServerOption struct {
 	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
 	CacheSizeMB               int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
 	MaxMB                     int32  // filer's -maxMB, read from the filer configuration at startup
+	// AllowUntrustedRemoteEndpoints lets a read of a remote-only object dial a
+	// mounted endpoint that resolves to a loopback / private / metadata host.
+	AllowUntrustedRemoteEndpoints bool
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
