@@ -1276,6 +1276,9 @@ func runMini(cmd *Command, args []string) bool {
 	miniOptions.v.rack = miniRack
 
 	miniMasterOptions.whiteList = miniWhiteListOption
+	// The master's /submit buffers the upload before handing it to the volume
+	// server started here, so it must not reject what that volume server accepts.
+	miniMasterOptions.fileSizeLimitMB = miniOptions.v.fileSizeLimitMB
 
 	miniFilerOptions.dataCenter = miniDataCenter
 	miniFilerOptions.rack = miniRack
