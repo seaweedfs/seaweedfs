@@ -60,7 +60,7 @@ def fetch_stargazers():
 def render(stars, out):
     stars.sort()
     counts = list(range(1, len(stars) + 1))
-    fig, ax = plt.subplots(figsize=(10, 4), dpi=130)
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=130)
     ax.plot(stars, counts, color="#0969da", linewidth=1.6)
     ax.set_xlabel("Date")
     ax.set_ylabel("Stars")
