@@ -3414,12 +3414,6 @@ func cachedEntryHasLocalData(entry *filer_pb.Entry) bool {
 // Atomic so tests can shorten it without racing the read path.
 var remoteCacheStreamingTimeoutNS = int64(20 * time.Second)
 
-// cacheRemoteObjectForStreamingWithShortTimeout polls for cache completion with an adaptive timeout.
-// Timeout is based on file size, or on the mount's cache_wait_ms: small files wait longer to
-// maximize cache hits, large files fail-fast to improve TTFB. Returns the cached entry and error
-// to allow callers to distinguish between transient errors (timeout) and permanent errors (not
-// found, permission denied). The filer continues caching on detached context, so retry finds
-// cached chunks.
 // remoteCacheWait resolves how long a read of dir may wait for the local cache.
 // Zero means the mount opted out of caching, so the read is served from the
 // origin instead -- except for a version-specific read, which has no origin key
@@ -3436,6 +3430,12 @@ func (s3a *S3ApiServer) remoteCacheWait(ctx context.Context, dir string, remoteS
 	return wait
 }
 
+// cacheRemoteObjectForStreamingWithShortTimeout polls for cache completion with an adaptive timeout.
+// Timeout comes from the file size or the mount's cache_wait_ms: small files wait longer to
+// maximize cache hits, large files fail-fast to improve TTFB. Returns the cached entry and error
+// to allow callers to distinguish between transient errors (timeout) and permanent errors (not
+// found, permission denied). The filer continues caching on detached context, so retry finds
+// cached chunks.
 func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) (*filer_pb.Entry, error) {
 	dir, name := s3a.buildVersionedRemoteObjectPath(bucket, object, versionId)
 
