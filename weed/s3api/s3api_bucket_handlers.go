@@ -1178,6 +1178,18 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 
+	// The per-write TTL fast path stamps a volume TTL at write time that
+	// can't be taken back. If it's active on this bucket, warn when the new
+	// config removes or lengthens a rule: objects already written keep their
+	// baked-in TTL and won't be rescued by this change (unlike the default
+	// worker path, which re-evaluates the current rules each pass).
+	if cfg, _ := s3a.getBucketConfig(bucket); cfg != nil && cfg.LifecycleTTL != nil {
+		if reason := fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, lifecycleXML); reason != "" {
+			glog.Warningf("PutBucketLifecycleConfigurationHandler %s: %s", bucket, reason)
+			w.Header().Set(fastpathWarningHeader, reason)
+		}
+	}
+
 	if errCode := s3a.storeBucketLifecycleConfiguration(bucket, lifecycleXML, r.Header.Get(bucketLifecycleTransitionMinimumObjectSizeHeader)); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -1205,6 +1217,17 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 		glog.Errorf("DeleteBucketLifecycleHandler clear legacy day-TTLs: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
+	}
+
+	// If the per-write TTL fast path is active, every previously-stamped
+	// object keeps its baked-in volume TTL after the config is removed —
+	// deleting the rules does not rescue them (unlike the default worker
+	// path). Warn so the operator can act before the old deadlines.
+	if cfg, _ := s3a.getBucketConfig(bucket); cfg != nil && cfg.LifecycleTTL != nil {
+		if reason := fastpathConfigChangeLeavesStampedObjects(cfg.LifecycleXML, nil); reason != "" {
+			glog.Warningf("DeleteBucketLifecycleHandler %s: %s", bucket, reason)
+			w.Header().Set(fastpathWarningHeader, reason)
+		}
 	}
 
 	if errCode := s3a.clearStoredBucketLifecycleConfiguration(bucket); errCode != s3err.ErrNone {
