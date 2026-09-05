@@ -80,6 +80,8 @@ type S3Options struct {
 	externalUrl               *string
 	defaultFileMode           *string
 	cacheSizeMB               *int64
+
+	allowUntrustedRemoteEndpoints *bool
 	// shutdownCtx, when non-nil, tells startS3Server/startIcebergServer to
 	// gracefully shut down their HTTP/gRPC servers once the ctx is cancelled.
 	// Used by weed mini to orchestrate an ordered shutdown; nil for standalone
@@ -127,6 +129,7 @@ func init() {
 	s3StandaloneOptions.externalUrl = cmdS3.Flag.String("externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	s3StandaloneOptions.defaultFileMode = cmdS3.Flag.String("defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	s3StandaloneOptions.cacheSizeMB = cmdS3.Flag.Int64("cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
+	s3StandaloneOptions.allowUntrustedRemoteEndpoints = cmdS3.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 }
 
 var cmdS3 = &Command{
@@ -378,6 +381,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		DefaultFileMode:           defaultFileMode,
 		CacheSizeMB:               *s3opt.cacheSizeMB,
 		MaxMB:                     filerMaxMB,
+
+		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

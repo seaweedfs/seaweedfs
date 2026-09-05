@@ -88,6 +88,9 @@ type FilerOption struct {
 	TusSessionExpiry          time.Duration
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
+	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
+	// mounted endpoint that resolves to a loopback / private / metadata host.
+	AllowUntrustedRemoteEndpoints bool
 }
 
 type FilerServer struct {
