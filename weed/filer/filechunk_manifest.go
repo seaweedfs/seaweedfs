@@ -19,10 +19,6 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-const (
-	ManifestBatch = 10000
-)
-
 var bytesBufferPool = sync.Pool{
 	New: func() interface{} {
 		return new(bytes.Buffer)
