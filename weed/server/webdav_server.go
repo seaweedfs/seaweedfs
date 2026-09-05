@@ -495,7 +495,8 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		}
 		f.bufWriter.CloseFunc = func() error {
 
-			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, f.entry.GetChunks())
+			// no chunk deleter here: a failed fold reports the blobs it saved
+			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, nil, f.entry.GetChunks())
 			if manifestErr != nil {
 				// not good, but should be ok
 				glog.V(0).Infof("file %s close MaybeManifestize: %v", f.name, manifestErr)

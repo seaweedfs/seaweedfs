@@ -112,8 +112,12 @@ type RemoteStorageStreamReader interface {
 
 // CacheWaitTimeout is how long a read of an uncached remote-only object waits
 // for the local cache before serving another way: small files wait longer since
-// their cache completes quickly, large files fail fast for better TTFB.
-func CacheWaitTimeout(remoteSize int64) time.Duration {
+// their cache completes quickly, large files fail fast for better TTFB. A mount
+// carrying cache_wait_ms replaces the size tiers, and 0 means never wait.
+func CacheWaitTimeout(remoteSize int64, mountedLocation *remote_pb.RemoteStorageLocation) time.Duration {
+	if mountedLocation != nil && mountedLocation.CacheWaitMs != nil {
+		return max(0, time.Duration(*mountedLocation.CacheWaitMs)*time.Millisecond)
+	}
 	switch {
 	case remoteSize > 500*1024*1024:
 		return 2 * time.Second

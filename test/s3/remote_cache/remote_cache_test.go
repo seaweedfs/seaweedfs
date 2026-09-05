@@ -40,6 +40,9 @@ const (
 	// Bucket name - mounted on primary as remote storage
 	testBucket = "remotemounted"
 
+	// Bucket name on the remote that testBucket is mounted on
+	remoteBucket = "remotesourcebucket"
+
 	// Path to weed binary
 	weedBinary = "../../../weed/weed_binary"
 )
@@ -386,6 +389,66 @@ func TestRemoteCacheRangeRequest(t *testing.T) {
 	t.Logf("Range request returned: %s", string(rangeData))
 
 	t.Log("Range request test passed")
+}
+
+// mountRemote remounts the test bucket, keeping the metadata already pulled,
+// with the given extra remote.mount flags.
+func mountRemote(t *testing.T, extraFlags string) {
+	cmd := fmt.Sprintf("remote.mount -dir=/buckets/%s -remote=seaweedremote/%s -nonempty -metadataStrategy=lazy %s", testBucket, remoteBucket, extraFlags)
+	output, err := runWeedShell(t, cmd)
+	require.NoErrorf(t, err, "remount failed: %s", output)
+	time.Sleep(time.Second)
+}
+
+// copyLocalToRemote pushes matching local objects to the remote, which is what
+// lets remote.uncache drop their local chunks afterwards.
+func copyLocalToRemote(t *testing.T, pattern string) {
+	output, err := runWeedShell(t, fmt.Sprintf("remote.copy.local -dir=/buckets/%s -include=%s", testBucket, pattern))
+	require.NoErrorf(t, err, "remote.copy.local failed: %s", output)
+}
+
+// localChunkCount reports how many local chunks an entry has, so a test can
+// tell a cached read from one served straight out of the remote.
+func localChunkCount(t *testing.T, key string) string {
+	meta, err := runWeedShell(t, fmt.Sprintf("fs.meta.cat /buckets/%s/%s", testBucket, key))
+	require.NoError(t, err)
+	// fs.meta.cat closes with "chunks N meta size: ..."
+	summary := strings.LastIndex(meta, "chunks ")
+	require.GreaterOrEqualf(t, summary, 0, "no chunk count in %s", meta)
+	return strings.Fields(meta[summary+len("chunks "):])[0]
+}
+
+// TestRemoteCacheWaitZero tests that a mount with -cacheWait=0 serves a read of
+// an uncached object from the remote without caching it locally.
+func TestRemoteCacheWaitZero(t *testing.T) {
+	checkServersRunning(t)
+
+	testKey := fmt.Sprintf("test-cachewait-%d.bin", time.Now().UnixNano())
+	testData := make([]byte, 1024*1024)
+	for i := range testData {
+		testData[i] = byte(i % 256)
+	}
+
+	t.Log("Step 1: Writing 1MB object, pushing it to the remote and dropping the local chunks...")
+	uploadToPrimary(t, testKey, testData)
+	copyLocalToRemote(t, testKey)
+	uncacheLocal(t, testKey)
+	require.Equal(t, "0", localChunkCount(t, testKey), "the object must start out remote-only")
+
+	t.Log("Step 2: Remounting with -cacheWait=0...")
+	mountRemote(t, "-cacheWait=0")
+	defer mountRemote(t, "")
+
+	t.Log("Step 3: Reading the object (should stream from remote)...")
+	assert.Equal(t, testData, getFromPrimary(t, testKey), "data mismatch reading from remote")
+	assert.Equal(t, "0", localChunkCount(t, testKey), "the read must not cache chunks locally")
+
+	t.Log("Step 4: Reading with the size based wait (should cache locally)...")
+	mountRemote(t, "")
+	assert.Equal(t, testData, getFromPrimary(t, testKey), "data mismatch reading through the cache")
+	assert.NotEqual(t, "0", localChunkCount(t, testKey), "the read must cache chunks locally")
+
+	t.Log("Zero cache wait test passed")
 }
 
 // TestRemoteCacheNotFound tests that non-existent objects return proper errors

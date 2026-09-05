@@ -491,7 +491,22 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		return uploadError
 	}
 
-	manifestedChunks, manifestErr := filer.MaybeManifestize(worker.saveDataAsChunk, chunks)
+	// A fold that fails midway aborts the copy, so the blobs its earlier
+	// batches wrote go the same way as the chunks of a failed upload.
+	deleteManifestChunks := func(saved []*filer_pb.FileChunk) {
+		if len(worker.options.masters) == 0 {
+			return
+		}
+		var fileIds []string
+		for _, chunk := range saved {
+			fileIds = append(fileIds, chunk.GetFileIdString())
+		}
+		operation.DeleteFileIds(func(_ context.Context) pb.ServerAddress {
+			return pb.ServerAddress(worker.options.masters[0])
+		}, false, worker.options.grpcDialOption, fileIds)
+	}
+
+	manifestedChunks, manifestErr := filer.MaybeManifestize(worker.saveDataAsChunk, deleteManifestChunks, chunks)
 	if manifestErr != nil {
 		return fmt.Errorf("create manifest: %w", manifestErr)
 	}

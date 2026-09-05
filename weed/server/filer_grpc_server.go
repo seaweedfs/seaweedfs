@@ -769,11 +769,13 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 			"",
 			"",
 		) // ignore readonly error for capacity needed to manifestize
-		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), chunks)
-		if err != nil {
-			// not good, but should be ok
-			glog.V(0).InfofCtx(ctx, "MaybeManifestize: %v", err)
+		// A failed fold leaves a flat list, which is still a correct entry --
+		// and the store rejects it by name if it cannot hold one this size.
+		folded, manifestErr := filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, chunks)
+		if manifestErr != nil {
+			glog.V(0).InfofCtx(ctx, "MaybeManifestize %s: %v", fullpath, manifestErr)
 		}
+		chunks = folded
 	}
 
 	chunks = append(manifestChunks, chunks...)
@@ -824,10 +826,10 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.WarningfCtx(ctx, "applyStorageDefaultsToEntry: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), entry.GetChunks())
+	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, entry.GetChunks())
 	if err != nil {
-		// not good, but should be ok
-		glog.V(0).InfofCtx(ctx, "MaybeManifestize: %v", err)
+		// the append is still correct with the flat list
+		glog.V(0).InfofCtx(ctx, "MaybeManifestize %s: %v", fullpath, err)
 	}
 
 	err = fs.filer.CreateEntry(context.Background(), entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength)
