@@ -1,6 +1,7 @@
 package util
 
 import (
+	"math"
 	"path"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,12 @@ func (fp FullPath) Child(name string) FullPath {
 func (fp FullPath) AsInode(unixTime int64) uint64 {
 	inode := uint64(HashStringToLong(string(fp)))
 	inode = inode + uint64(unixTime)*37
+	// Inodes are persisted by metadata stores such as Elasticsearch, whose
+	// integer type is a signed 64-bit long. Keep generated values in that range.
+	inode &= uint64(math.MaxInt64)
+	if inode == 0 {
+		return 1
+	}
 	return inode
 }
 
