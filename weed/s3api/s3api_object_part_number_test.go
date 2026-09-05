@@ -58,6 +58,15 @@ func twoPartEntry(t *testing.T, withBoundaries bool) *filer_pb.Entry {
 	return entry
 }
 
+// partRequest is a HEAD of partNumber, optionally narrowed by a client Range.
+func partRequest(rangeHeader string) *http.Request {
+	r := httptest.NewRequest(http.MethodHead, "/bucket/object", nil)
+	if rangeHeader != "" {
+		r.Header.Set("Range", rangeHeader)
+	}
+	return r
+}
+
 func TestPartByteRange(t *testing.T) {
 	s3a := &S3ApiServer{}
 
@@ -65,20 +74,27 @@ func TestPartByteRange(t *testing.T) {
 		entry := twoPartEntry(t, withBoundaries)
 
 		w := httptest.NewRecorder()
-		start, end, errCode := s3a.partByteRange(w, entry, 1)
+		start, end, errCode := s3a.partByteRange(w, partRequest(""), entry, 1)
 		assert.Equal(t, s3err.ErrNone, errCode)
 		assert.Equal(t, int64(0), start)
 		assert.Equal(t, int64(part1Size-1), end)
 		assert.Equal(t, "2", w.Header().Get(s3_constants.AmzMpPartsCount))
 
 		w = httptest.NewRecorder()
-		start, end, errCode = s3a.partByteRange(w, entry, 2)
+		start, end, errCode = s3a.partByteRange(w, partRequest(""), entry, 2)
 		assert.Equal(t, s3err.ErrNone, errCode)
 		assert.Equal(t, int64(part1Size), start)
 		assert.Equal(t, int64(part1Size+part2Size-1), end)
 
+		// A client Range applies within the selected part
 		w = httptest.NewRecorder()
-		_, _, errCode = s3a.partByteRange(w, entry, 3)
+		start, end, errCode = s3a.partByteRange(w, partRequest("bytes=0-1023"), entry, 2)
+		assert.Equal(t, s3err.ErrNone, errCode)
+		assert.Equal(t, int64(part1Size), start)
+		assert.Equal(t, int64(part1Size+1023), end)
+
+		w = httptest.NewRecorder()
+		_, _, errCode = s3a.partByteRange(w, partRequest(""), entry, 3)
 		assert.Equal(t, s3err.ErrInvalidPartNumber, errCode, "part beyond the object must not resolve")
 	}
 
@@ -97,12 +113,12 @@ func TestPartByteRangeSparsePartNumbers(t *testing.T) {
 	require.NoError(t, err)
 	entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = boundaries
 
-	start, end, errCode := s3a.partByteRange(httptest.NewRecorder(), entry, 3)
+	start, end, errCode := s3a.partByteRange(httptest.NewRecorder(), partRequest(""), entry, 3)
 	assert.Equal(t, s3err.ErrNone, errCode, "the uploaded part 3 must resolve")
 	assert.Equal(t, int64(part1Size), start)
 	assert.Equal(t, int64(part1Size+part2Size-1), end)
 
-	_, _, errCode = s3a.partByteRange(httptest.NewRecorder(), entry, 2)
+	_, _, errCode = s3a.partByteRange(httptest.NewRecorder(), partRequest(""), entry, 2)
 	assert.Equal(t, s3err.ErrInvalidPartNumber, errCode, "part 2 was never uploaded")
 }
 

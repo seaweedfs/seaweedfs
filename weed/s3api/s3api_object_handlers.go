@@ -852,24 +852,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	// If PartNumber is specified, turn the request into a ranged read of that part
 	if partNumber := requestedPartNumber(r); partNumber > 0 {
-		startOffset, endOffset, errCode := s3a.partByteRange(w, objectEntryForSSE, partNumber)
+		startOffset, endOffset, errCode := s3a.partByteRange(w, r, objectEntryForSSE, partNumber)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
-
-		// S3 allows both partNumber and Range together, where Range applies within the selected part
-		if clientRangeHeader := r.Header.Get("Range"); clientRangeHeader != "" {
-			adjustedStart, adjustedEnd, rangeErr := adjustRangeForPart(startOffset, endOffset, clientRangeHeader)
-			if rangeErr != nil {
-				glog.Warningf("GetObject: Invalid Range for part %d: %v", partNumber, rangeErr)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-				return
-			}
-			startOffset = adjustedStart
-			endOffset = adjustedEnd
-		}
-
 		r.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", startOffset, endOffset))
 		glog.V(3).Infof("GetObject: part %d served as bytes=%d-%d", partNumber, startOffset, endOffset)
 	}
@@ -2554,7 +2541,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// A partNumber HEAD is a ranged HEAD of that part: report the part's size and range
 	if partNumber := requestedPartNumber(r); partNumber > 0 {
-		startOffset, endOffset, errCode := s3a.partByteRange(w, objectEntryForSSE, partNumber)
+		startOffset, endOffset, errCode := s3a.partByteRange(w, r, objectEntryForSSE, partNumber)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
@@ -3250,9 +3237,10 @@ func requestedPartNumber(r *http.Request) int {
 	return partNumber
 }
 
-// partByteRange resolves the inclusive byte range of a part and sets the parts
-// count header. The object ETag is kept as is, matching AWS.
-func (s3a *S3ApiServer) partByteRange(w http.ResponseWriter, entry *filer_pb.Entry, partNumber int) (startOffset, endOffset int64, errCode s3err.ErrorCode) {
+// partByteRange resolves the inclusive byte range a partNumber request reads,
+// narrowed by a client Range within the part, and sets the parts count header.
+// The object ETag is kept as is, matching AWS.
+func (s3a *S3ApiServer) partByteRange(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, partNumber int) (startOffset, endOffset int64, errCode s3err.ErrorCode) {
 	// Part numbers need not be consecutive, so an object that records its part
 	// boundaries is asked for the part itself rather than for a count.
 	partsCount, partInfo, hasBoundaries := s3a.getMultipartInfo(entry, partNumber)
@@ -3264,22 +3252,34 @@ func (s3a *S3ApiServer) partByteRange(w http.ResponseWriter, entry *filer_pb.Ent
 	w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(partsCount))
 
 	if partInfo != nil {
-		startOffset, endOffset, ok := partRange(partInfo, entry.Chunks)
+		var ok bool
+		startOffset, endOffset, ok = partRange(partInfo, entry.Chunks)
 		if !ok {
 			glog.Errorf("partByteRange: part %d boundary chunks [%d,%d) out of range (chunks: %d)", partNumber, partInfo.StartChunk, partInfo.EndChunk, len(entry.Chunks))
 			return 0, 0, s3err.ErrInternalError
 		}
-		return startOffset, endOffset, s3err.ErrNone
+	} else {
+		// Fallback: assume 1:1 part-to-chunk mapping (backward compatibility)
+		chunkIndex := partNumber - 1
+		if chunkIndex >= len(entry.Chunks) {
+			glog.Warningf("partByteRange: part %d chunk index %d out of range (chunks: %d)", partNumber, chunkIndex, len(entry.Chunks))
+			return 0, 0, s3err.ErrInvalidPartNumber
+		}
+		partChunk := entry.Chunks[chunkIndex]
+		startOffset, endOffset = partChunk.Offset, partChunk.Offset+int64(partChunk.Size)-1
 	}
 
-	// Fallback: assume 1:1 part-to-chunk mapping (backward compatibility)
-	chunkIndex := partNumber - 1
-	if chunkIndex >= len(entry.Chunks) {
-		glog.Warningf("partByteRange: part %d chunk index %d out of range (chunks: %d)", partNumber, chunkIndex, len(entry.Chunks))
-		return 0, 0, s3err.ErrInvalidPartNumber
+	// S3 allows both partNumber and Range together, where Range applies within the selected part
+	if clientRangeHeader := r.Header.Get("Range"); clientRangeHeader != "" {
+		adjustedStart, adjustedEnd, rangeErr := adjustRangeForPart(startOffset, endOffset, clientRangeHeader)
+		if rangeErr != nil {
+			glog.Warningf("partByteRange: invalid Range for part %d: %v", partNumber, rangeErr)
+			return 0, 0, s3err.ErrInvalidRange
+		}
+		startOffset, endOffset = adjustedStart, adjustedEnd
 	}
-	partChunk := entry.Chunks[chunkIndex]
-	return partChunk.Offset, partChunk.Offset + int64(partChunk.Size) - 1, s3err.ErrNone
+
+	return startOffset, endOffset, s3err.ErrNone
 }
 
 // buildRemoteObjectPath builds the filer directory and object name from S3 bucket/object.
