@@ -3428,6 +3428,11 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Re
 		glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: find mount for %s: %v", dir, mountErr)
 	}
 	pollTimeout := remote_storage.CacheWaitTimeout(entry.GetRemoteEntry().GetRemoteSize(), mountedLocation)
+	if pollTimeout <= 0 {
+		// The mount opted out of caching: report it uncached so the caller serves the origin.
+		glog.V(2).Infof("cacheRemoteObjectForStreamingWithShortTimeout: caching disabled for %s/%s", dir, name)
+		return nil, nil
+	}
 
 	cacheCtx, cancel := context.WithTimeout(r.Context(), pollTimeout)
 	defer cancel()

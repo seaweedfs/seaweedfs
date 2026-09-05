@@ -222,6 +222,16 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				_, mountedLocation = fs.filer.RemoteStorage.FindMountDirectory(entry.FullPath)
 			}
 			cacheWait := remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize, mountedLocation)
+			if cacheWait <= 0 {
+				// The mount opted out of caching, so the origin is the only source.
+				streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size)
+				if remoteErr != nil {
+					stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
+					glog.WarningfCtx(ctx, "stream %s from remote: %v", entry.FullPath, remoteErr)
+					return nil, fmt.Errorf("read %s: %w", entry.FullPath, ErrCacheNotReady)
+				}
+				return streamFn, nil
+			}
 			// Bounded wait: a large download outlasts any client timeout, so
 			// serve straight from the origin once the wait expires while the
 			// detached cache keeps filling for later reads.
