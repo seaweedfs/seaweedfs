@@ -278,10 +278,14 @@ func resolveCacheDirs(option *MountOptions) (string, string) {
 }
 
 // volumeName labels the mount where the platform shows one, in Finder and in
-// Explorer. The mounted path names the disk, then the mount point; the filer
-// address, which every mount from one filer shares, is the last resort.
-func volumeName(filer, filerMountRootPath, dir string) string {
-	name := lastSegment(filerMountRootPath)
+// Explorer. An explicit override always wins; failing that, the mounted path
+// names the disk, then the mount point; the filer address, which every mount
+// from one filer shares, is the last resort.
+func volumeName(filer, filerMountRootPath, dir, override string) string {
+	name := override
+	if name == "" {
+		name = lastSegment(filerMountRootPath)
+	}
 	if name == "" {
 		name = lastSegment(dir)
 	}
