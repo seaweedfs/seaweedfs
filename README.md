@@ -435,7 +435,7 @@ Your support will be really appreciated by me and other supporters!
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=seaweedfs/seaweedfs&type=Date)](https://star-history.com/#seaweedfs/seaweedfs&Date)
+![Star History](note/star_history.svg)
 
 [WeedMini]: https://github.com/seaweedfs/seaweedfs/wiki/Quick-Start-with-weed-mini
 [DockerComposeS3]: https://github.com/seaweedfs/seaweedfs/wiki/Docker-Compose-for-S3
