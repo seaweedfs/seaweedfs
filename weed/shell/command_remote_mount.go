@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -50,6 +51,8 @@ func (c *commandRemoteMount) Help() string {
 	remote.mount -dir=/xxx -remote=cloud1/bucket/dir1
 	# mount with on-demand directory listing cached for 5 minutes
 	remote.mount -dir=/xxx -remote=cloud1/bucket -listingCacheTTL=300
+	# mount as a streaming source: reads go to the remote instead of waiting for the local cache
+	remote.mount -dir=/xxx -remote=cloud1/bucket -cacheWait=0
 
 	# after mount, start a separate process to write updates to remote storage
 	weed filer.remote.sync -filer=<filerHost>:<filerPort> -dir=/xxx
@@ -70,6 +73,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	metadataStrategy := remoteMountCommand.String("metadataStrategy", string(MetadataCacheEager), "lazy: skip upfront metadata pull; eager: full metadata pull (default)")
 	remote := remoteMountCommand.String("remote", "", "a directory in remote storage, ex. <storageName>/<bucket>/path/to/dir")
 	listingCacheTTL := remoteMountCommand.Int("listingCacheTTL", 0, "seconds to cache remote directory listings (0 = disabled)")
+	cacheWait := remoteMountCommand.Duration("cacheWait", -1, "how long a read of an uncached object waits for the local cache, ex. 0 or 500ms (default: by object size)")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
 		return nil
@@ -91,6 +95,12 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 	remoteStorageLocation.ListingCacheTtlSeconds = int32(*listingCacheTTL)
+	if *cacheWait >= 0 {
+		if cacheWait.Milliseconds() > math.MaxInt32 {
+			return fmt.Errorf("cacheWait %v is too long", *cacheWait)
+		}
+		remoteStorageLocation.CacheWaitMs = proto.Int32(int32(cacheWait.Milliseconds()))
+	}
 
 	strategy := MetadataCacheStrategy(strings.ToLower(*metadataStrategy))
 	if strategy != MetadataCacheLazy && strategy != MetadataCacheEager {
