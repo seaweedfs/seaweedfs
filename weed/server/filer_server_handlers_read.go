@@ -223,14 +223,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			cacheWait := remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize, mountedLocation)
 			if cacheWait <= 0 {
-				// The mount opted out of caching, so the origin is the only source.
-				streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size)
-				if remoteErr != nil {
-					stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
-					glog.WarningfCtx(ctx, "stream %s from remote: %v", entry.FullPath, remoteErr)
-					return nil, fmt.Errorf("read %s: %w", entry.FullPath, ErrCacheNotReady)
-				}
-				return streamFn, nil
+				return fs.streamFromRemoteOnly(ctx, r, dir, name, offset, size)
 			}
 			// Bounded wait: a large download outlasts any client timeout, so
 			// serve straight from the origin once the wait expires while the
@@ -293,6 +286,23 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return err
 		}, nil
 	})
+}
+
+// streamFromRemoteOnly serves a byte range of an entry whose mount opted out of
+// caching, leaving the origin as its only source.
+func (fs *FilerServer) streamFromRemoteOnly(ctx context.Context, r *http.Request, dir, name string, offset, size int64) (filer.DoStreamContent, error) {
+	streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size)
+	if remoteErr == nil {
+		return streamFn, nil
+	}
+	fullPath := util.FullPath(dir).Child(name)
+	stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
+	glog.WarningfCtx(ctx, "stream %s from remote: %v", fullPath, remoteErr)
+	// A vanished origin object is final: no cache can resurrect it.
+	if errors.Is(remoteErr, remote_storage.ErrRemoteObjectNotFound) {
+		return nil, filer_pb.ErrNotFound
+	}
+	return nil, fmt.Errorf("read %s: %w", fullPath, ErrCacheNotReady)
 }
 
 // streamFromRemote serves a byte range of a remote-only entry straight from the
