@@ -169,6 +169,7 @@ const (
 
 	ErrInvalidRenameSource
 	ErrRenameDestinationSameAsSource
+	ErrIdempotentParameterMismatch
 )
 
 // Error message constants for checksum validation
@@ -373,6 +374,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrRenameDestinationSameAsSource: {
 		Code:           "InvalidRequest",
 		Description:    "This rename request is illegal because it is trying to rename an object to itself.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrIdempotentParameterMismatch: {
+		Code:           "IdempotentParameterMismatch",
+		Description:    "The request uses the same client token as a previous, but non-identical request.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidTag: {
