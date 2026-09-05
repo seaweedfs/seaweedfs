@@ -1329,6 +1329,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	if sseType == "" || sseType == "None" {
 		return s3a.streamFromVolumeServers(w, r, entry, sseType, bucket, object, versionId)
 	}
+	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+		return fmt.Errorf("resolve encrypted chunk manifests: %w", err)
+	}
 
 	// Profiling: Track SSE decryption stages
 	t0 := time.Now()
@@ -2653,48 +2656,24 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 
 // detectPrimarySSEType determines the primary SSE type by examining chunk metadata
 func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
-	// Safety check: handle nil entry
 	if entry == nil {
 		return "None"
 	}
 
-	if len(entry.GetChunks()) == 0 {
-		// No chunks - check object-level metadata only (single objects or smallContent)
-		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
-		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
-
-		// Check for SSE-S3: algorithm is AES256 but no customer key
-		if hasSSEKMS && !hasSSEC {
-			// Distinguish SSE-S3 from SSE-KMS: check the algorithm value and the presence of a KMS key ID
-			sseAlgo := string(entry.Extended[s3_constants.AmzServerSideEncryption])
-			switch sseAlgo {
-			case s3_constants.SSEAlgorithmAES256:
-				// Could be SSE-S3 or SSE-KMS, check for KMS key ID
-				if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
-					return s3_constants.SSETypeKMS
-				}
-				// No KMS key, this is SSE-S3
-				return s3_constants.SSETypeS3
-			case s3_constants.SSEAlgorithmKMS:
-				return s3_constants.SSETypeKMS
-			default:
-				// Unknown or unsupported algorithm
-				return "None"
+	metadataType := "None"
+	hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
+	if hasSSEC {
+		metadataType = s3_constants.SSETypeC
+	} else {
+		switch string(entry.Extended[s3_constants.AmzServerSideEncryption]) {
+		case s3_constants.SSEAlgorithmAES256:
+			metadataType = s3_constants.SSETypeS3
+			if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
+				metadataType = s3_constants.SSETypeKMS
 			}
-		} else if hasSSEC && !hasSSEKMS {
-			return s3_constants.SSETypeC
-		} else if hasSSEC && hasSSEKMS {
-			// Both present - this should only happen during cross-encryption copies
-			// Use content to determine actual encryption state
-			if len(entry.Content) > 0 {
-				// smallContent - check if it's encrypted (heuristic: random-looking data)
-				return s3_constants.SSETypeC // Default to SSE-C for mixed case
-			} else {
-				// No content, both headers - default to SSE-C
-				return s3_constants.SSETypeC
-			}
+		case s3_constants.SSEAlgorithmKMS:
+			metadataType = s3_constants.SSETypeKMS
 		}
-		return "None"
 	}
 
 	// Count chunk types to determine primary (multipart objects)
@@ -2735,7 +2714,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		return s3_constants.SSETypeS3
 	}
 
-	return "None"
+	return metadataType
 }
 
 // createMultipartSSECDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-C objects (direct volume path)
