@@ -12,33 +12,6 @@
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/seaweedfs.png)
 
-<h2 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a></h2>
-
-SeaweedFS is an independent Apache-licensed open source project with its ongoing development made
-possible entirely thanks to the support of these awesome [backers](https://github.com/seaweedfs/seaweedfs/blob/master/backers.md).
-If you'd like to grow SeaweedFS even stronger, please consider joining our
-<a href="https://www.patreon.com/seaweedfs">sponsors on Patreon</a>.
-
-Your support will be really appreciated by me and other supporters!
-
-<!--
-<h4 align="center">Platinum</h4>
-
-<p align="center">
-  <a href="" target="_blank">
-    <img src="https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_nodion.png" width="200" alt="nodion">
-  </a>
-</p>
--->
-
-### Gold Sponsors
-[![nodion](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_nodion.png)](https://www.nodion.com)
-[![piknik](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/piknik.png)](https://www.piknik.com)
-[![keepsec](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/keepsec.png)](https://www.keepsec.ca)
-[![zyner](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_zyner.png)](https://zyner.org)
-
----
-
 SeaweedFS is a simple and highly scalable distributed file system. There are two objectives:
 
 1. to store billions of files!
@@ -78,6 +51,7 @@ Table of Contents
 * [Benchmark](#benchmark)
 * [Enterprise](#enterprise)
 * [License](#license)
+* [Sponsors](#sponsors)
 
 # Quick Start #
 
@@ -427,6 +401,35 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 The text of this page is available for modification and reuse under the terms of the Creative Commons Attribution-Sharealike 3.0 Unported License and the GNU Free Documentation License (unversioned, with no invariant sections, front-cover texts, or back-cover texts).
+
+[Back to TOC](#table-of-contents)
+
+# Sponsors #
+
+<h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a></h3>
+
+SeaweedFS is an independent Apache-licensed open source project with its ongoing development made
+possible entirely thanks to the support of these awesome [backers](https://github.com/seaweedfs/seaweedfs/blob/master/backers.md).
+If you'd like to grow SeaweedFS even stronger, please consider joining our
+<a href="https://www.patreon.com/seaweedfs">sponsors on Patreon</a>.
+
+Your support will be really appreciated by me and other supporters!
+
+<!--
+<h4 align="center">Platinum</h4>
+
+<p align="center">
+  <a href="" target="_blank">
+    <img src="https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_nodion.png" width="200" alt="nodion">
+  </a>
+</p>
+-->
+
+### Gold Sponsors
+[![nodion](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_nodion.png)](https://www.nodion.com)
+[![piknik](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/piknik.png)](https://www.piknik.com)
+[![keepsec](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/keepsec.png)](https://www.keepsec.ca)
+[![zyner](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/sponsor_zyner.png)](https://zyner.org)
 
 [Back to TOC](#table-of-contents)
 
