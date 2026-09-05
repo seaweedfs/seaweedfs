@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -104,23 +105,29 @@ func TestSSECReadsResolveChunkManifests(t *testing.T) {
 		}
 	}
 
-	serializedChunks := make([]*filer_pb.FileChunk, len(chunks))
+	manifests := make([]*filer_pb.FileChunk, 0, len(chunks))
 	for i, chunk := range chunks {
-		serializedChunks[i] = proto.Clone(chunk).(*filer_pb.FileChunk)
+		serializedChunks := []*filer_pb.FileChunk{proto.Clone(chunk).(*filer_pb.FileChunk)}
+		filer_pb.BeforeEntrySerialization(serializedChunks)
+		manifestData, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: serializedChunks})
+		require.NoError(t, err)
+		manifest := &filer_pb.FileChunk{
+			Fid:             &filer_pb.FileId{VolumeId: uint32(17 + i), FileKey: 1, Cookie: 1},
+			Offset:          chunk.Offset,
+			Size:            chunk.Size,
+			IsChunkManifest: true,
+		}
+		objects[manifest.GetFileIdString()] = manifestData
+		manifests = append(manifests, manifest)
 	}
-	filer_pb.BeforeEntrySerialization(serializedChunks)
-	manifestData, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: serializedChunks})
-	require.NoError(t, err)
-	manifest := &filer_pb.FileChunk{
-		Fid:             &filer_pb.FileId{VolumeId: 7, FileKey: 1, Cookie: 1},
-		Offset:          0,
-		Size:            uint64(len(plaintext)),
-		IsChunkManifest: true,
-	}
-	objects[manifest.GetFileIdString()] = manifestData
 
+	var failFirstManifest atomic.Bool
 	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data, found := objects[strings.TrimPrefix(r.URL.Path, "/")]
+		fileID := strings.TrimPrefix(r.URL.Path, "/")
+		data, found := objects[fileID]
+		if fileID == manifests[0].GetFileIdString() && failFirstManifest.Load() {
+			found = false
+		}
 		if !found {
 			http.NotFound(w, r)
 			return
@@ -138,10 +145,14 @@ func TestSSECReadsResolveChunkManifests(t *testing.T) {
 	s3a := &S3ApiServer{option: &S3ApiServerOption{}, filerClient: filerClient}
 
 	newEntry := func() *filer_pb.Entry {
+		entryManifests := make([]*filer_pb.FileChunk, len(manifests))
+		for i, manifest := range manifests {
+			entryManifests[i] = proto.Clone(manifest).(*filer_pb.FileChunk)
+		}
 		return &filer_pb.Entry{
 			Name:       "object",
 			Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(plaintext))},
-			Chunks:     []*filer_pb.FileChunk{proto.Clone(manifest).(*filer_pb.FileChunk)},
+			Chunks:     entryManifests,
 			Extended: map[string][]byte{
 				s3_constants.AmzServerSideEncryptionCustomerAlgorithm: []byte(s3_constants.SSEAlgorithmAES256),
 				s3_constants.AmzServerSideEncryptionCustomerKeyMD5:    []byte(keyPair.KeyMD5),
@@ -165,6 +176,7 @@ func TestSSECReadsResolveChunkManifests(t *testing.T) {
 	})
 
 	t.Run("range", func(t *testing.T) {
+		failFirstManifest.Store(true)
 		entry := newEntry()
 		sseType := s3a.detectPrimarySSEType(entry)
 		r := newRequest()
@@ -174,6 +186,26 @@ func TestSSECReadsResolveChunkManifests(t *testing.T) {
 		err := s3a.streamFromVolumeServersWithSSE(w, r, entry, sseType, "bucket", "object", "")
 		require.NoError(t, err)
 		require.Equal(t, plaintext[start:end+1], w.Body.Bytes())
+	})
+
+	t.Run("invalid range", func(t *testing.T) {
+		entry := newEntry()
+		r := newRequest()
+		r.Header.Set("Range", "bytes="+strconv.Itoa(len(plaintext))+"-")
+		w := httptest.NewRecorder()
+		err := s3a.streamFromVolumeServersWithSSE(w, r, entry, s3a.detectPrimarySSEType(entry), "bucket", "object", "")
+		require.Error(t, err)
+		require.Equal(t, http.StatusRequestedRangeNotSatisfiable, w.Code)
+	})
+
+	t.Run("wrong key", func(t *testing.T) {
+		entry := newEntry()
+		r := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+		SetupTestSSECHeaders(r, GenerateTestSSECKey(10))
+		w := httptest.NewRecorder()
+		err := s3a.streamFromVolumeServersWithSSE(w, r, entry, s3a.detectPrimarySSEType(entry), "bucket", "object", "")
+		require.Error(t, err)
+		require.Equal(t, http.StatusForbidden, w.Code)
 	})
 }
 

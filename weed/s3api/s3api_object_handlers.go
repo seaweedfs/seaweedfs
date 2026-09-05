@@ -1329,9 +1329,6 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	if sseType == "" || sseType == "None" {
 		return s3a.streamFromVolumeServers(w, r, entry, sseType, bucket, object, versionId)
 	}
-	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
-		return fmt.Errorf("resolve encrypted chunk manifests: %w", err)
-	}
 
 	// Profiling: Track SSE decryption stages
 	t0 := time.Now()
@@ -1460,6 +1457,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		}
 		body.Commit()
 		return nil
+	}
+	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+		return fmt.Errorf("resolve encrypted chunk manifests: %w", err)
 	}
 
 	// Full object path: Optimize multipart vs single-part
@@ -1616,9 +1616,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 // This implements the filer's ViewFromChunks approach for optimal range performance
 // Returns the number of bytes written and any error
 func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io.Writer, entry *filer_pb.Entry, offset int64, size int64, sseType string, decryptionKey interface{}) (int64, error) {
-	// Use filer's ViewFromChunks to resolve only needed chunks for the range
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
-	chunkViews := filer.ViewFromChunks(ctx, lookupFileIdFn, entry.GetChunks(), offset, size)
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, entry.GetChunks(), offset, offset+size, s3a.filerClient)
+	if err != nil {
+		return 0, err
+	}
+	chunkViews := filer.ViewFromChunks(ctx, nil, resolvedChunks, offset, size)
 
 	totalWritten := int64(0)
 	targetOffset := offset
@@ -1640,7 +1643,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 
 		// Find the corresponding FileChunk for this chunkView
 		var fileChunk *filer_pb.FileChunk
-		for _, chunk := range entry.GetChunks() {
+		for _, chunk := range resolvedChunks {
 			if chunk.GetFileIdString() == chunkView.FileId {
 				fileChunk = chunk
 				break
