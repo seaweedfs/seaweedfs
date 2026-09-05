@@ -185,8 +185,19 @@ jobs:
         if (Test-Path S:\walk) { throw "directory survived recursive delete" }
         Write-Host "::endgroup::"
 
+        # Tear down everything we started so the runner's later steps (Logs,
+        # post-checkout) launch into a clean environment. A WinFsp mount left
+        # active and a weed.exe holding winfsp-x64.dll have been seen to make
+        # the next step's pwsh.exe fail with STATUS_DLL_INIT_FAILED
+        # (0xC0000142), which fails a job whose actual test step passed.
+        try { Stop-Mount } catch { Write-Host "no mount to stop at teardown: $_" }
+        Get-CimInstance Win32_Process -Filter "Name = 'weed.exe'" |
+          ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 3
+
     - name: Logs
       if: always()
+      continue-on-error: true
       shell: pwsh
       run: |
         foreach ($f in 'C:\seaweed-mount.log','C:\seaweed-mount.err.log','C:\seaweed-remount.log','C:\seaweed-remount.err.log','C:\seaweed-remount2.log','C:\seaweed-remount2.err.log','C:\seaweed-dirmount.log','C:\seaweed-dirmount.err.log','C:\seaweed-mini.log','C:\seaweed-mini.err.log') {

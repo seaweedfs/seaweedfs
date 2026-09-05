@@ -2426,18 +2426,7 @@ impl VolumeServer for VolumeGrpcService {
             }
             let version = vol.version().0 as u32;
             let dat_size = vol.dat_file_size().unwrap_or(0) as i64;
-            let expire_at_sec = {
-                let ttl_seconds = vol.super_block.ttl.to_seconds();
-                if ttl_seconds > 0 {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                        + ttl_seconds
-                } else {
-                    0
-                }
-            };
+            let expire_at_sec = vol.expire_at_sec();
             (
                 store.locations[loc_idx].directory.clone(),
                 store.locations[loc_idx].idx_directory.clone(),

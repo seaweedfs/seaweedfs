@@ -293,6 +293,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				v.noWriteOrDelete = true
 				glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
 			}
+			v.recoverLastModifiedTs(indexFile)
 		}
 
 		// The post-load structural check below uses the in-memory needle map
