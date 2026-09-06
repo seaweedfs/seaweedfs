@@ -72,7 +72,6 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 	if s.masterClient == nil {
 		return
 	}
-	ctx = withIamCacheAdminAuth(ctx)
 
 	// List S3 servers
 	var s3Servers []string
@@ -98,8 +97,9 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 	}
 	glog.V(1).Infof("IAM: propagating change to %d S3 servers: %v", len(s3Servers), s3Servers)
 
-	// Create context with timeout for the propagation process
-	propagateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// Mint the admin token after master discovery so master retries can't burn
+	// through the (default 10s) token lifetime before the peer fan-out begins.
+	propagateCtx, cancel := context.WithTimeout(withIamCacheAdminAuth(ctx), 10*time.Second)
 	defer cancel()
 
 	var wg sync.WaitGroup
