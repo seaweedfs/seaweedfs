@@ -21,12 +21,12 @@ func changedTierVolume(id uint32, size uint64, remoteStorageName string) *master
 // ChangedVolumes heartbeat through announceVolume, the routing the server
 // itself uses, so the tests below assert what would really be broadcast
 // without standing up a gRPC stream.
-func announceChangedVolumes(topo *topology.Topology, dn *topology.DataNode, changed []*master_pb.VolumeInformationMessage) (newVids, remoteVids []uint32) {
+func announceChangedVolumes(topo *topology.Topology, dn *topology.DataNode, changed []*master_pb.VolumeInformationMessage) (newVids, remoteVids, readOnlyVids []uint32) {
 	message := &master_pb.VolumeLocation{}
 	for _, v := range topo.ApplyVolumeChanges(changed, dn) {
 		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
 	}
-	return message.NewVids, message.RemoteVids
+	return message.NewVids, message.RemoteVids, message.ReadOnlyVids
 }
 
 // A replica that the heartbeat says has just been tiered to remote storage is
@@ -39,14 +39,17 @@ func TestChangedVolumesAnnounceLocalToRemoteTierTransition(t *testing.T) {
 		changedTestVolume(1, 1024),
 	}, dn)
 
-	newVids, remoteVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
-		changedTierVolume(1, 1024, "s3-bucket"),
-	})
+	v := changedTierVolume(1, 1024, "s3-bucket")
+	v.ReadOnly = true
+	newVids, remoteVids, readOnlyVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{v})
 	if !containsUint32(remoteVids, 1) {
 		t.Errorf("a local-to-remote transition was not announced as RemoteVids: %v", remoteVids)
 	}
 	if !containsUint32(newVids, 1) {
 		t.Errorf("a remote volume must stay on NewVids for clients that cannot read RemoteVids: %v", newVids)
+	}
+	if !containsUint32(readOnlyVids, 1) {
+		t.Errorf("a read-only transition was not announced as ReadOnlyVids: %v", readOnlyVids)
 	}
 }
 
@@ -60,7 +63,7 @@ func TestChangedVolumesAnnounceRemoteToLocalTierTransition(t *testing.T) {
 		changedTierVolume(1, 1024, "s3-bucket"),
 	}, dn)
 
-	newVids, remoteVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
+	newVids, remoteVids, readOnlyVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
 		changedTestVolume(1, 1024),
 	})
 	if !containsUint32(newVids, 1) {
@@ -68,6 +71,9 @@ func TestChangedVolumesAnnounceRemoteToLocalTierTransition(t *testing.T) {
 	}
 	if containsUint32(remoteVids, 1) {
 		t.Errorf("a remote-to-local transition was routed as RemoteVids: %v", remoteVids)
+	}
+	if containsUint32(readOnlyVids, 1) {
+		t.Errorf("a writable transition was routed as ReadOnlyVids: %v", readOnlyVids)
 	}
 }
 
@@ -80,10 +86,10 @@ func TestChangedVolumesSuppressNoOpTierReport(t *testing.T) {
 		changedTestVolume(1, 1024),
 	}, dn)
 
-	newVids, remoteVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
+	newVids, remoteVids, readOnlyVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
 		changedTestVolume(1, 4096),
 	})
-	if containsUint32(newVids, 1) || containsUint32(remoteVids, 1) {
+	if containsUint32(newVids, 1) || containsUint32(remoteVids, 1) || containsUint32(readOnlyVids, 1) {
 		t.Errorf("a no-op tier report was broadcast: newVids=%v remoteVids=%v", newVids, remoteVids)
 	}
 }
@@ -98,7 +104,7 @@ func TestChangedVolumesAnnounceOnlyTierTransitions(t *testing.T) {
 		changedTestVolume(2, 1024),
 	}, dn)
 
-	newVids, remoteVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
+	newVids, remoteVids, _ := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{
 		changedTestVolume(1, 4096),              // pure growth
 		changedTierVolume(2, 1024, "s3-bucket"), // tier transition
 	})
@@ -133,25 +139,28 @@ func TestFullReconciliationAnnouncesTierTransition(t *testing.T) {
 		changedTestVolume(1, 1024),
 	}, dn)
 
-	newVids, remoteVids := announceFullReconciliation(topo, dn, []*master_pb.VolumeInformationMessage{
-		changedTierVolume(1, 1024, "s3-bucket"),
-	})
+	v := changedTierVolume(1, 1024, "s3-bucket")
+	v.ReadOnly = true
+	newVids, remoteVids, readOnlyVids := announceFullReconciliation(topo, dn, []*master_pb.VolumeInformationMessage{v})
 	if !containsUint32(remoteVids, 1) {
 		t.Errorf("a tier transition reported in a full reconciliation was not announced: newVids=%v remoteVids=%v", newVids, remoteVids)
 	}
 	if !containsUint32(newVids, 1) {
 		t.Errorf("a remote volume must stay on NewVids for clients that cannot read RemoteVids: %v", newVids)
 	}
+	if !containsUint32(readOnlyVids, 1) {
+		t.Errorf("a read-only transition was not announced as ReadOnlyVids: %v", readOnlyVids)
+	}
 }
 
 // announceFullReconciliation runs the same routing loop master_grpc_server's
 // SendHeartbeat does on a full Volumes heartbeat, including the changed-set
 // re-route added so digest-mismatch recovery propagates tier transitions.
-func announceFullReconciliation(topo *topology.Topology, dn *topology.DataNode, volumes []*master_pb.VolumeInformationMessage) (newVids, remoteVids []uint32) {
+func announceFullReconciliation(topo *topology.Topology, dn *topology.DataNode, volumes []*master_pb.VolumeInformationMessage) (newVids, remoteVids, readOnlyVids []uint32) {
 	message := &master_pb.VolumeLocation{}
 	newOnes, _, changedOnes := topo.SyncDataNodeRegistration(volumes, dn)
 	for _, v := range append(newOnes, changedOnes...) {
 		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
 	}
-	return message.NewVids, message.RemoteVids
+	return message.NewVids, message.RemoteVids, message.ReadOnlyVids
 }

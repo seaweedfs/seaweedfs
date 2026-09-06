@@ -149,6 +149,14 @@ func TestGetWritableRemoteReplicationsRefreshesReadOnlyReplicas(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("master lookup calls = %d, want 2", calls)
 	}
+
+	locations, err = GetRemoteReplications(store, dialOption, volumeId, masterFn)
+	if err != nil {
+		t.Fatalf("delete lookup: %v", err)
+	}
+	if len(locations) != 1 || !locations[0].ReadOnly {
+		t.Fatalf("read-only-can-delete target was dropped: %v", locations)
+	}
 }
 
 // TestReplicatedWriteForwardsFsyncToReplicas verifies that the fsync=true

@@ -176,7 +176,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetRemoteReplications(store, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -270,7 +270,15 @@ func DistributedOperation(ctx context.Context, locations []operation.Location, o
 	return ret.Error()
 }
 
-func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
+func GetRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) ([]operation.Location, error) {
+	return getRemoteReplications(s, grpcDialOption, volumeId, masterFn, false)
+}
+
+func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) ([]operation.Location, error) {
+	return getRemoteReplications(s, grpcDialOption, volumeId, masterFn, true)
+}
+
+func getRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn, writableOnly bool) (remoteLocations []operation.Location, err error) {
 
 	v := s.GetVolume(volumeId)
 	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
@@ -288,7 +296,7 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 		}
 		selfUrl := util.JoinHostPort(s.Ip, s.Port)
 		for _, location := range lookupResult.Locations {
-			if location.ReadOnly {
+			if writableOnly && location.ReadOnly {
 				continue
 			}
 			writableLocations++
@@ -306,8 +314,12 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 		copyCount := v.ReplicaPlacement.GetCopyCount()
 		if writableLocations < copyCount {
 			operation.InvalidateVolumeIdLocationCache(volumeId.String())
-			err = fmt.Errorf("writable replication locations [%d] is less than volume %d replication copy count [%d]",
-				writableLocations, volumeId, copyCount)
+			label := "replication"
+			if writableOnly {
+				label = "writable replication"
+			}
+			err = fmt.Errorf("%s locations [%d] is less than volume %d replication copy count [%d]",
+				label, writableLocations, volumeId, copyCount)
 		}
 	}
 
