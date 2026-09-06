@@ -24,7 +24,7 @@ func changedTierVolume(id uint32, size uint64, remoteStorageName string) *master
 func announceChangedVolumes(topo *topology.Topology, dn *topology.DataNode, changed []*master_pb.VolumeInformationMessage) (newVids, remoteVids []uint32) {
 	message := &master_pb.VolumeLocation{}
 	for _, v := range topo.ApplyVolumeChanges(changed, dn) {
-		announceVolume(message, uint32(v.Id), v.IsRemote())
+		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
 	}
 	return message.NewVids, message.RemoteVids
 }
@@ -151,7 +151,7 @@ func announceFullReconciliation(topo *topology.Topology, dn *topology.DataNode, 
 	message := &master_pb.VolumeLocation{}
 	newOnes, _, changedOnes := topo.SyncDataNodeRegistration(volumes, dn)
 	for _, v := range append(newOnes, changedOnes...) {
-		announceVolume(message, uint32(v.Id), v.IsRemote())
+		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
 	}
 	return message.NewVids, message.RemoteVids
 }

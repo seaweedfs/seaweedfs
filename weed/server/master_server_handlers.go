@@ -97,6 +97,7 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 				DataCenter:   loc.DataCenter,
 				GrpcPort:     loc.GrpcPort,
 				DataInRemote: loc.DataInRemote,
+				ReadOnly:     loc.ReadOnly,
 			})
 		}
 		err = getVidLocationsErr
@@ -121,9 +122,10 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 // EC volume holds shards rather than a volume record, so an absent record means
 // the read is local, never that the node should be left out of the answer.
 func topologyLocation(dn *topology.DataNode, vid needle.VolumeId) operation.Location {
-	dataInRemote := false
+	dataInRemote, readOnly := false, false
 	if volInfo, lookupErr := dn.GetVolumesById(vid); lookupErr == nil {
 		dataInRemote = volInfo.IsRemote()
+		readOnly = volInfo.ReadOnly
 	}
 	return operation.Location{
 		Url:          dn.Url(),
@@ -131,6 +133,7 @@ func topologyLocation(dn *topology.DataNode, vid needle.VolumeId) operation.Loca
 		DataCenter:   dn.GetDataCenterId(),
 		GrpcPort:     dn.GrpcPort,
 		DataInRemote: dataInRemote,
+		ReadOnly:     readOnly,
 	}
 }
 

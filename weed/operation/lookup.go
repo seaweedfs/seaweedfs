@@ -20,6 +20,7 @@ type Location struct {
 	DataCenter   string `json:"dataCenter,omitempty"`
 	GrpcPort     int    `json:"grpcPort,omitempty"`
 	DataInRemote bool   `json:"dataInRemote,omitempty"`
+	ReadOnly     bool   `json:"readOnly,omitempty"`
 }
 
 func (l *Location) ServerAddress() pb.ServerAddress {
@@ -127,6 +128,7 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 					DataCenter:   loc.DataCenter,
 					GrpcPort:     int(loc.GrpcPort),
 					DataInRemote: loc.DataInRemote,
+					ReadOnly:     loc.ReadOnly,
 				})
 			}
 			if vidLocations.Error == "" {

@@ -223,6 +223,7 @@ message VolumeLocation {
   repeated uint32 new_ec_vids = 8;
   repeated uint32 deleted_ec_vids = 9;
   repeated uint32 remote_vids = 10;
+  repeated uint32 read_only_vids = 11;
 }
 
 message ClusterNodeUpdate {
@@ -269,6 +270,7 @@ message Location {
   uint32 grpc_port = 3;
   string data_center = 4;
   bool data_in_remote = 5;
+  bool read_only = 6;
 }
 
 message AssignRequest {

@@ -177,6 +177,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 					DataCenter:   loc.DataCenter,
 					GrpcPort:     uint32(loc.GrpcPort),
 					DataInRemote: loc.DataInRemote,
+					ReadOnly:     loc.ReadOnly,
 				})
 			}
 			var auth string

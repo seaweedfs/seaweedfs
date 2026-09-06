@@ -26,6 +26,7 @@ type Location struct {
 	DataCenter   string `json:"dataCenter,omitempty"`
 	GrpcPort     int    `json:"grpcPort,omitempty"`
 	DataInRemote bool   `json:"dataInRemote,omitempty"`
+	ReadOnly     bool   `json:"readOnly,omitempty"`
 }
 
 func (l Location) ServerAddress() pb.ServerAddress {
@@ -286,7 +287,7 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 
 	for i, loc := range entry.locations {
 		if loc.Url == location.Url {
-			if loc.DataInRemote == location.DataInRemote {
+			if loc.DataInRemote == location.DataInRemote && loc.ReadOnly == location.ReadOnly {
 				return
 			}
 			// A reader holds the slice GetLocations handed it after the lock
