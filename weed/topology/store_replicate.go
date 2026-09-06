@@ -278,10 +278,20 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	}
 
 	// not on local store, or has replications
-	lookupResult, lookupErr := operation.LookupVolumeId(masterFn, grpcDialOption, volumeId.String())
+	lookupResults, lookupErr := operation.LookupVolumeIds(masterFn, grpcDialOption, []string{volumeId.String()}, false)
+	lookupResult := lookupResults[volumeId.String()]
+	writableLocations := 0
 	if lookupErr == nil {
+		if lookupResult == nil {
+			err = fmt.Errorf("replicating lookup returned no result for %d", volumeId)
+			return
+		}
 		selfUrl := util.JoinHostPort(s.Ip, s.Port)
 		for _, location := range lookupResult.Locations {
+			if location.ReadOnly {
+				continue
+			}
+			writableLocations++
 			if location.Url != selfUrl {
 				remoteLocations = append(remoteLocations, location)
 			}
@@ -294,11 +304,10 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	if v != nil {
 		// has one local and has remote replications
 		copyCount := v.ReplicaPlacement.GetCopyCount()
-		if len(lookupResult.Locations) < copyCount {
-			// drop the stale cache so the next write re-queries the master once it re-registers the missing replica
+		if writableLocations < copyCount {
 			operation.InvalidateVolumeIdLocationCache(volumeId.String())
-			err = fmt.Errorf("replicating operations [%d] is less than volume %d replication copy count [%d]",
-				len(lookupResult.Locations), volumeId, copyCount)
+			err = fmt.Errorf("writable replication locations [%d] is less than volume %d replication copy count [%d]",
+				writableLocations, volumeId, copyCount)
 		}
 	}
 

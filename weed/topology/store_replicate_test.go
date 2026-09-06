@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,10 +69,15 @@ func TestDistributedOperationEmpty(t *testing.T) {
 
 type mockMasterServer struct {
 	master_pb.UnimplementedSeaweedServer
+	mu        sync.Mutex
+	calls     int
 	locations []*master_pb.Location
 }
 
 func (m *mockMasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
 	var vls []*master_pb.LookupVolumeResponse_VolumeIdLocation
 	for _, vid := range req.VolumeOrFileIds {
 		vls = append(vls, &master_pb.LookupVolumeResponse_VolumeIdLocation{
@@ -80,6 +86,69 @@ func (m *mockMasterServer) LookupVolume(ctx context.Context, req *master_pb.Look
 		})
 	}
 	return &master_pb.LookupVolumeResponse{VolumeIdLocations: vls}, nil
+}
+
+func startMockMasterServer(t *testing.T, master *mockMasterServer) (operation.GetMasterFn, grpc.DialOption) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcServer := grpc.NewServer()
+	master_pb.RegisterSeaweedServer(grpcServer, master)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- grpcServer.Serve(lis) }()
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		if err := <-serveErr; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("mock master serve: %v", err)
+		}
+	})
+
+	grpcPort := lis.Addr().(*net.TCPAddr).Port
+	return func(_ context.Context) pb.ServerAddress {
+		return pb.NewServerAddressWithGrpcPort(fmt.Sprintf("127.0.0.1:%d", grpcPort), grpcPort)
+	}, grpc.WithTransportCredentials(insecure.NewCredentials())
+}
+
+func TestGetWritableRemoteReplicationsRefreshesReadOnlyReplicas(t *testing.T) {
+	master := &mockMasterServer{locations: []*master_pb.Location{
+		{Url: "127.0.0.1:8080"},
+		{Url: "127.0.0.2:8080"},
+	}}
+	masterFn, dialOption := startMockMasterServer(t, master)
+	store := &storage.Store{Ip: "127.0.0.1", Port: 8080}
+	volumeId := needle.VolumeId(1)
+	operation.InvalidateVolumeIdLocationCache(volumeId.String())
+
+	locations, err := GetWritableRemoteReplications(store, dialOption, volumeId, masterFn)
+	if err != nil {
+		t.Fatalf("first lookup: %v", err)
+	}
+	if len(locations) != 1 || locations[0].Url != "127.0.0.2:8080" {
+		t.Fatalf("first lookup locations = %v", locations)
+	}
+
+	master.mu.Lock()
+	master.locations = []*master_pb.Location{
+		{Url: "127.0.0.1:8080"},
+		{Url: "127.0.0.2:8080", ReadOnly: true},
+	}
+	master.mu.Unlock()
+
+	locations, err = GetWritableRemoteReplications(store, dialOption, volumeId, masterFn)
+	if err != nil {
+		t.Fatalf("second lookup: %v", err)
+	}
+	if len(locations) != 0 {
+		t.Fatalf("read-only replica remained a write target: %v", locations)
+	}
+	master.mu.Lock()
+	calls := master.calls
+	master.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("master lookup calls = %d, want 2", calls)
+	}
 }
 
 // TestReplicatedWriteForwardsFsyncToReplicas verifies that the fsync=true
@@ -97,32 +166,9 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 	defer replica.Close()
 	replicaHost := strings.TrimPrefix(replica.URL, "http://")
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	grpcServer := grpc.NewServer()
-	master_pb.RegisterSeaweedServer(grpcServer, &mockMasterServer{
+	masterFn, dialOption := startMockMasterServer(t, &mockMasterServer{
 		locations: []*master_pb.Location{{Url: replicaHost}},
 	})
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- grpcServer.Serve(lis) }()
-	// Stop closes the listener it was handed, so there is no separate close here
-	defer func() {
-		grpcServer.Stop()
-		if err := <-serveErr; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			t.Errorf("mock master serve: %v", err)
-		}
-	}()
-
-	grpcPort := lis.Addr().(*net.TCPAddr).Port
-	masterFn := func(_ context.Context) pb.ServerAddress {
-		// ServerAddress.ToGrpcAddress treats "host:port" as an http address and
-		// adds 10000 to reach the grpc port, so hand it the "port.grpcPort"
-		// form to point straight at the mock listener.
-		return pb.NewServerAddressWithGrpcPort(fmt.Sprintf("127.0.0.1:%d", grpcPort), grpcPort)
-	}
-	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 
 	store := &storage.Store{}
 	volumeId := needle.VolumeId(1)
