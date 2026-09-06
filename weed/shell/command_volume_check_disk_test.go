@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,103 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// TestLiveDivergenceClassifiesOneSidedVsTwoSided verifies the divergence
+// classifier used to turn check.disk's dead-end "cannot prove" no-op into an
+// actionable verdict: one-sided (safe to re-copy) vs two-sided (split-brain).
+func TestLiveDivergenceClassifiesOneSidedVsTwoSided(t *testing.T) {
+	// one-sided: source has an extra live needle; target has none unique.
+	src, tgt := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer src.Close()
+	defer tgt.Close()
+	if err := src.Set(types.NeedleId(1001), types.ToOffset(8), types.Size(123)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := tgt.Set(types.NeedleId(1002), types.ToOffset(8), types.Size(45)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// a shared live needle (should NOT count as divergence either way)
+	if err := src.Set(types.NeedleId(2000), types.ToOffset(8), types.Size(9)); err != nil {
+		t.Fatalf("seed shared: %v", err)
+	}
+	if err := tgt.Set(types.NeedleId(2000), types.ToOffset(8), types.Size(9)); err != nil {
+		t.Fatalf("seed shared: %v", err)
+	}
+	vcd := &volumeCheckDisk{writer: &bytes.Buffer{}, now: time.Now()}
+	sOnly, tOnly := vcd.liveDivergence(src, tgt)
+	if sOnly != 1 || tOnly != 1 {
+		t.Fatalf("one-sided: got sOnly=%d tOnly=%d, want 1/1 (1001 only on src, 1002 only on tgt)", sOnly, tOnly)
+	}
+
+	// strict subset: target has no unique needles -> tOnly must be 0.
+	subset, full := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer subset.Close()
+	defer full.Close()
+	if err := subset.Set(types.NeedleId(2000), types.ToOffset(8), types.Size(9)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	for _, id := range []types.NeedleId{2000, 2001, 2002} {
+		if err := full.Set(id, types.ToOffset(8), types.Size(9)); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	aOnly, bOnly := vcd.liveDivergence(full, subset) // full->subset
+	if aOnly != 2 || bOnly != 0 {
+		t.Fatalf("subset: full is superset; want aOnly=2 (2001,2002) bOnly=0, got %d/%d", aOnly, bOnly)
+	}
+
+	// tombstones must be excluded: a deleted-only difference is not divergence.
+	delSrc, delTgt := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer delSrc.Close()
+	defer delTgt.Close()
+	if err := delSrc.Set(types.NeedleId(3000), types.ToOffset(8), types.Size(9)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := delTgt.Set(types.NeedleId(3000), types.ToOffset(8), types.Size(9)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// delete 3000 on the source (tombstone), leave it live on target
+	if err := delSrc.Delete(types.NeedleId(3000)); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	x, y := vcd.liveDivergence(delSrc, delTgt)
+	if x != 0 && y != 1 {
+		t.Fatalf("tombstone: deleted needle on src should not count; want src-only=0, tgt-only=1, got %d/%d", x, y)
+	}
+}
+
+// TestReportDivergenceVerdictEmitsCopyCommand checks that a one-sided verdict
+// prints the exact volume.copy command (complete -> lagging) and a two-sided
+// verdict warns instead of auto-repairing.
+func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
+	var one bytes.Buffer
+	vcd := &volumeCheckDisk{writer: &one, now: time.Now()}
+	src := &VolumeReplica{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.1:8081"}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
+	tgt := &VolumeReplica{location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "10.0.0.2:8083"}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
+	// source has 5 unique live, target has none -> target is the lagging side.
+	vcd.reportDivergenceVerdict(src, tgt, 5, 0)
+	got := one.String()
+	if !strings.Contains(got, "ONE-SIDED") {
+		t.Fatalf("expected ONE-SIDED verdict, got: %s", got)
+	}
+	if !strings.Contains(got, "volume.copy -source 10.0.0.1:8081 -target 10.0.0.2:8083 -volumeId 42") {
+		t.Fatalf("expected copy complete(10.0.0.1:8081)->lagging(10.0.0.2:8083), got: %s", got)
+	}
+	if !strings.Contains(got, "5") {
+		t.Fatalf("expected missing-needle count 5, got: %s", got)
+	}
+
+	var two bytes.Buffer
+	vcd2 := &volumeCheckDisk{writer: &two, now: time.Now()}
+	vcd2.reportDivergenceVerdict(src, tgt, 3, 4)
+	got2 := two.String()
+	if !strings.Contains(got2, "TWO-SIDED") || !strings.Contains(got2, "split-brain") {
+		t.Fatalf("expected TWO-SIDED split-brain warning, got: %s", got2)
+	}
+	if strings.Contains(got2, "volume.copy") {
+		t.Fatalf("two-sided must not emit an auto volume.copy command, got: %s", got2)
+	}
+}
 
 // TestDoVolumeCheckDiskDoesNotResurrectAbsentNeedle verifies that a needle
 // present-and-live on the source but entirely absent on the target is NOT

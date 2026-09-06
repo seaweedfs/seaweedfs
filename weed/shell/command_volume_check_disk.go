@@ -549,7 +549,71 @@ func (vcd *volumeCheckDisk) checkBoth(source, target *VolumeReplica, bidi bool) 
 		return sourceHasChanges, targetHasChanges, errors.Join(errs...)
 	}
 
+	// When nothing was repaired — typically because resurrection is gated off
+	// since both replicas have been vacuumed (compaction revision > 0), which is
+	// the normal state of any production cluster — doVolumeCheckDisk only logged
+	// "cannot prove they are missing writes vs vacuumed deletes" and stopped.
+	// That dead-end leaves a diverged replica with no actionable path, so classify
+	// the divergence and print the exact repair. This is report-only: it changes
+	// no data and does not bypass the resurrection safety gate.
+	if !targetHasChanges && !sourceHasChanges {
+		sourceOnly, targetOnly := vcd.liveDivergence(sourceDB, targetDB)
+		if sourceOnly > 0 || targetOnly > 0 {
+			vcd.reportDivergenceVerdict(source, target, sourceOnly, targetOnly)
+		}
+	}
+
 	return sourceHasChanges, targetHasChanges, nil
+}
+
+// liveDivergence counts live (non-deleted) needles present on a's index but
+// entirely absent from b's, and the reverse. It is used to classify a diverged
+// replica pair: one-sided (safe to re-copy the complete replica over the
+// lagging one, which holds no unique live data) versus two-sided (true
+// split-brain — do not auto-repair). Tombstones are excluded, so vacuum
+// asymmetry (a compacted replica that has dropped deleted entries) does not
+// create a false difference.
+func (vcd *volumeCheckDisk) liveDivergence(a, b *needle_map.MemDb) (aOnly, bOnly int) {
+	a.DescendingVisit(func(v needle_map.NeedleValue) error {
+		if v.Size.IsDeleted() {
+			return nil
+		}
+		if _, found := b.Get(v.Key); !found {
+			aOnly++
+		}
+		return nil
+	})
+	b.DescendingVisit(func(v needle_map.NeedleValue) error {
+		if v.Size.IsDeleted() {
+			return nil
+		}
+		if _, found := a.Get(v.Key); !found {
+			bOnly++
+		}
+		return nil
+	})
+	return
+}
+
+// reportDivergenceVerdict prints the actionable outcome for a diverged replica
+// pair that check.disk could not repair in place (resurrection gated). The
+// dataNode.Id is the host:port of the volume server, which is exactly what
+// volume.copy's -source/-target expect.
+func (vcd *volumeCheckDisk) reportDivergenceVerdict(source, target *VolumeReplica, sourceOnly, targetOnly int) {
+	srcAddr := source.location.dataNode.Id
+	tgtAddr := target.location.dataNode.Id
+	vid := source.info.Id
+	switch {
+	case sourceOnly > 0 && targetOnly == 0:
+		vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data. Safe repair (re-copy the complete replica; verify-before-destroy is enforced): volume.copy -source %s -target %s -volumeId %d",
+			vid, tgtAddr, sourceOnly, srcAddr, tgtAddr, srcAddr, tgtAddr, vid)
+	case targetOnly > 0 && sourceOnly == 0:
+		vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data. Safe repair (re-copy the complete replica; verify-before-destroy is enforced): volume.copy -source %s -target %s -volumeId %d",
+			vid, srcAddr, targetOnly, tgtAddr, srcAddr, tgtAddr, srcAddr, vid)
+	case sourceOnly > 0 && targetOnly > 0:
+		vcd.write("volume %d: TWO-SIDED (split-brain) divergence — %s has %d unique live needle(s) AND %s has %d. Do NOT auto-repair: each side may hold data the other lacks. Confirm orphans with volume.fsck -collection <c> -volumeId %d -findMissingChunksInFiler before re-copying the complete replica, or restore the missing needles manually.",
+			vid, srcAddr, sourceOnly, tgtAddr, targetOnly, vid)
+	}
 }
 
 func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, resurrectAbsent bool, targetRevision uint32) (hasChanges bool, err error) {
