@@ -67,26 +67,35 @@ func TestLiveDivergenceClassifiesOneSidedVsTwoSided(t *testing.T) {
 	if err := delTgt.Set(types.NeedleId(3000), types.ToOffset(8), types.Size(9)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// delete 3000 on the source (tombstone), leave it live on target
-	if err := delSrc.Delete(types.NeedleId(3000)); err != nil {
-		t.Fatalf("delete: %v", err)
+	// delete 3000 on the source as a real tombstone (negative size), leave it
+	// live on target. liveDivergence must skip the tombstone on the source and
+	// must not count 3000 on the target either, because Get still finds the
+	// tombstone entry — so the expected answer is 0/0, not 0/1.
+	if err := delSrc.Set(types.NeedleId(3000), types.ToOffset(8), types.Size(-9)); err != nil {
+		t.Fatalf("tombstone: %v", err)
 	}
 	x, y := vcd.liveDivergence(delSrc, delTgt)
-	if x != 0 && y != 1 {
-		t.Fatalf("tombstone: deleted needle on src should not count; want src-only=0, tgt-only=1, got %d/%d", x, y)
+	if x != 0 || y != 0 {
+		t.Fatalf("tombstone: deleted needle on src should not count; want src-only=0, tgt-only=0, got %d/%d", x, y)
 	}
 }
 
 // TestReportDivergenceVerdictEmitsCopyCommand checks that a one-sided verdict
-// prints the exact volume.copy command (complete -> lagging) and a two-sided
-// verdict warns instead of auto-repairing.
+// prints the exact volume.copy command (complete -> lagging, dialable address),
+// that the command never uses the logical node Id, that a vacuumed lagging
+// replica carries the resurrection caveat, and that a two-sided verdict warns
+// instead of auto-repairing.
 func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
+	// Id is a logical node identifier (NOT dialable); Address is the real
+	// ip:port the copy command must use.
+	src := &VolumeReplica{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "node-1", Address: "10.0.0.1:8081"}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
+	tgt := &VolumeReplica{location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "node-2", Address: "10.0.0.2:8083"}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
+
+	// Case A: source has 5 unique live, target has none -> target is lagging.
+	// Revisions were not read (revKnown=false), so the caveat must be present.
 	var one bytes.Buffer
 	vcd := &volumeCheckDisk{writer: &one, now: time.Now()}
-	src := &VolumeReplica{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "10.0.0.1:8081"}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
-	tgt := &VolumeReplica{location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "10.0.0.2:8083"}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
-	// source has 5 unique live, target has none -> target is the lagging side.
-	vcd.reportDivergenceVerdict(src, tgt, 5, 0)
+	vcd.reportDivergenceVerdict(src, tgt, 5, 0, 0, 0, false, false)
 	got := one.String()
 	if !strings.Contains(got, "ONE-SIDED") {
 		t.Fatalf("expected ONE-SIDED verdict, got: %s", got)
@@ -94,13 +103,50 @@ func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
 	if !strings.Contains(got, "volume.copy -source 10.0.0.1:8081 -target 10.0.0.2:8083 -volumeId 42") {
 		t.Fatalf("expected copy complete(10.0.0.1:8081)->lagging(10.0.0.2:8083), got: %s", got)
 	}
+	if strings.Contains(got, "node-1") || strings.Contains(got, "node-2") {
+		t.Fatalf("copy command must use dialable Address, not logical node Id, got: %s", got)
+	}
+	if !strings.Contains(got, "Caveat") {
+		t.Fatalf("unproven lagging replica must carry the resurrection caveat, got: %s", got)
+	}
 	if !strings.Contains(got, "5") {
 		t.Fatalf("expected missing-needle count 5, got: %s", got)
 	}
 
+	// Case B: source is lagging (target complete). The command must go
+	// complete -> lagging, i.e. -source <target> -target <source>.
+	var rev bytes.Buffer
+	vcdRev := &volumeCheckDisk{writer: &rev, now: time.Now()}
+	vcdRev.reportDivergenceVerdict(src, tgt, 0, 5, 0, 0, false, false)
+	gotRev := rev.String()
+	if !strings.Contains(gotRev, "volume.copy -source 10.0.0.2:8083 -target 10.0.0.1:8081 -volumeId 42") {
+		t.Fatalf("expected copy complete(10.0.0.2:8083)->lagging(10.0.0.1:8081), got: %s", gotRev)
+	}
+	if strings.Contains(gotRev, "volume.copy -source 10.0.0.1:8081 -target 10.0.0.2:8083") {
+		t.Fatalf("reversed direction: must not copy lagging source over complete target, got: %s", gotRev)
+	}
+
+	// Case C: lagging replica proven never-vacuumed under the resurrection
+	// flag (revKnown=true, its revision 0) -> absent needles are missing
+	// writes, the re-copy is safe, and the caveat must NOT be printed.
+	var safe bytes.Buffer
+	vcdSafe := &volumeCheckDisk{writer: &safe, now: time.Now()}
+	vcdSafe.reportDivergenceVerdict(src, tgt, 5, 0, 17, 0, true, true)
+	gotSafe := safe.String()
+	if !strings.Contains(gotSafe, "ONE-SIDED") {
+		t.Fatalf("expected ONE-SIDED verdict, got: %s", gotSafe)
+	}
+	if strings.Contains(gotSafe, "Caveat") {
+		t.Fatalf("proven never-vacuumed lagging replica must not carry the caveat, got: %s", gotSafe)
+	}
+	if !strings.Contains(gotSafe, "volume.copy -source 10.0.0.1:8081 -target 10.0.0.2:8083 -volumeId 42") {
+		t.Fatalf("expected copy complete->lagging, got: %s", gotSafe)
+	}
+
+	// Case D: two-sided split-brain warns instead of auto-repairing.
 	var two bytes.Buffer
 	vcd2 := &volumeCheckDisk{writer: &two, now: time.Now()}
-	vcd2.reportDivergenceVerdict(src, tgt, 3, 4)
+	vcd2.reportDivergenceVerdict(src, tgt, 3, 4, 0, 0, false, false)
 	got2 := two.String()
 	if !strings.Contains(got2, "TWO-SIDED") || !strings.Contains(got2, "split-brain") {
 		t.Fatalf("expected TWO-SIDED split-brain warning, got: %s", got2)
