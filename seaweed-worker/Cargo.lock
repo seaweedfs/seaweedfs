@@ -6556,11 +6556,13 @@ dependencies = [
  "lance-table",
  "prometheus",
  "reqwest 0.12.28",
+ "rustls",
  "seaweed-worker-core",
  "seaweed-worker-sort",
  "serde",
  "serde_json",
  "tokio",
+ "tonic",
  "tracing",
  "tracing-subscriber",
 ]
