@@ -162,7 +162,7 @@ func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
 		t.Fatalf("expected no-re-copy warning for vacuumed lagging replica, got: %s", gotVac)
 	}
 
-	// Case E: two-sided split-brain warns instead of auto-repairing.
+	// Case E: two-sided, unproven (revisions not read) -> split-brain warning.
 	var two bytes.Buffer
 	vcd2 := &volumeCheckDisk{writer: &two, now: time.Now()}
 	vcd2.reportDivergenceVerdict(src, tgt, 3, 4, 0, 0, false, false, false)
@@ -172,6 +172,39 @@ func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
 	}
 	if strings.Contains(got2, "volume.copy") {
 		t.Fatalf("two-sided must not emit an auto volume.copy command, got: %s", got2)
+	}
+
+	// Case F: two-sided with BOTH replicas proven never-vacuumed under the
+	// resurrection flag (bidirectional simulation): mutually missing writes,
+	// not split-brain — the in-place -apply repair must be recommended and
+	// the split-brain warning must not appear.
+	var both bytes.Buffer
+	vcdBoth := &volumeCheckDisk{writer: &both, now: time.Now()}
+	vcdBoth.reportDivergenceVerdict(src, tgt, 3, 4, 0, 0, true, true, true)
+	gotBoth := both.String()
+	if !strings.Contains(gotBoth, "TWO-SIDED") {
+		t.Fatalf("expected TWO-SIDED verdict, got: %s", gotBoth)
+	}
+	if strings.Contains(gotBoth, "Do NOT auto-repair") {
+		t.Fatalf("proven never-vacuumed both sides must not get the split-brain warning, got: %s", gotBoth)
+	}
+	if !strings.Contains(gotBoth, "mutually missed writes") || !strings.Contains(gotBoth, "-apply") {
+		t.Fatalf("expected mutually-missed-writes verdict recommending -apply, got: %s", gotBoth)
+	}
+	if strings.Contains(gotBoth, "volume.copy") {
+		t.Fatalf("two-sided must not emit an auto volume.copy command, got: %s", gotBoth)
+	}
+
+	// Case G: custom gRPC ports must survive into the emitted addresses
+	// (ServerAddress.String() would drop the .grpcPort suffix).
+	srcGrpc := &VolumeReplica{location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "node-1", Address: "10.0.0.1:8081", GrpcPort: 18081}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
+	tgtGrpc := &VolumeReplica{location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "node-2", Address: "10.0.0.2:8083", GrpcPort: 18083}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
+	var grpc bytes.Buffer
+	vcdGrpc := &volumeCheckDisk{writer: &grpc, now: time.Now()}
+	vcdGrpc.reportDivergenceVerdict(srcGrpc, tgtGrpc, 5, 0, 0, 0, false, true, true)
+	gotGrpc := grpc.String()
+	if !strings.Contains(gotGrpc, "10.0.0.1:8081.18081") || !strings.Contains(gotGrpc, "10.0.0.2:8083.18083") {
+		t.Fatalf("custom gRPC port must be preserved in emitted addresses, got: %s", gotGrpc)
 	}
 }
 

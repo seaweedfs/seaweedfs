@@ -616,8 +616,11 @@ func (vcd *volumeCheckDisk) liveDivergence(a, b *needle_map.MemDb) (aOnly, bOnly
 // never-vacuumed; otherwise the verdict points at a non-destructive
 // needle-level repair instead.
 func (vcd *volumeCheckDisk) reportDivergenceVerdict(source, target *VolumeReplica, sourceOnly, targetOnly int, revSrc, revTgt uint32, srcRevKnown, tgtRevKnown, resurrectFlag bool) {
-	srcAddr := pb.NewServerAddressFromDataNode(source.location.dataNode)
-	tgtAddr := pb.NewServerAddressFromDataNode(target.location.dataNode)
+	// Raw string form, NOT String(): ServerAddress.String() drops the custom
+	// gRPC port suffix, and volume.copy's dialer accepts the host:port.grpcPort
+	// form (see checkDialable in weed/operation/volume_move).
+	srcAddr := string(pb.NewServerAddressFromDataNode(source.location.dataNode))
+	tgtAddr := string(pb.NewServerAddressFromDataNode(target.location.dataNode))
 	vid := source.info.Id
 	switch {
 	case sourceOnly > 0 && targetOnly == 0:
@@ -641,8 +644,19 @@ func (vcd *volumeCheckDisk) reportDivergenceVerdict(source, target *VolumeReplic
 				vid, srcAddr, targetOnly, tgtAddr, srcAddr, vid)
 		}
 	case sourceOnly > 0 && targetOnly > 0:
-		vcd.write("volume %d: TWO-SIDED (split-brain) divergence — %s has %d unique live needle(s) AND %s has %d. Do NOT auto-repair: each side may hold data the other lacks. Confirm orphans with volume.fsck -collection <c> -volumeId %d -findMissingChunksInFiler before re-copying the complete replica, or restore the missing needles manually.",
-			vid, srcAddr, sourceOnly, tgtAddr, targetOnly, vid)
+		if resurrectFlag && srcRevKnown && tgtRevKnown && revSrc == 0 && revTgt == 0 {
+			// Both replicas proven never-vacuumed: the mutually missing
+			// needles are provably missing writes on both sides (the same
+			// proof the resurrection gate uses), not split-brain. The two
+			// doVolumeCheckDisk passes above already queued them for
+			// in-place resurrection but this was a simulation run, so
+			// nothing was applied.
+			vcd.write("volume %d: TWO-SIDED divergence, both replicas never vacuumed — %s is missing %d live needle(s) that exist on %s AND %s is missing %d that exist on %s. These are mutually missed writes, not split-brain: re-run this command with -apply to resurrect them in place (both directions).",
+				vid, tgtAddr, sourceOnly, srcAddr, srcAddr, targetOnly, tgtAddr)
+		} else {
+			vcd.write("volume %d: TWO-SIDED (split-brain) divergence — %s has %d unique live needle(s) AND %s has %d. Do NOT auto-repair: each side may hold data the other lacks. Confirm orphans with volume.fsck -collection <c> -volumeId %d -findMissingChunksInFiler before re-copying the complete replica, or restore the missing needles manually.",
+				vid, srcAddr, sourceOnly, tgtAddr, targetOnly, vid)
+		}
 	}
 }
 
