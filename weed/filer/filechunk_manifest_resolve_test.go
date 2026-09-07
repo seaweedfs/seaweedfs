@@ -455,6 +455,28 @@ func TestResolveChunkManifestReturnsLaterFailureWithoutRecursingEarlierChildren(
 	require.Less(t, elapsed, time.Second, "must return promptly without waiting for a-child's slow read")
 }
 
+func TestResolveChunkManifestExcludesOutOfRangeChildrenOnLaterFailure(t *testing.T) {
+	fixture := newManifestReadFixture(t,
+		map[string][]*filer_pb.FileChunk{
+			"a": {
+				resolveTestData("a-in-range", 0),
+				resolveTestData("a-out-of-range", 500),
+			},
+			"b": nil,
+		},
+		map[string]time.Duration{"b": 50 * time.Millisecond},
+	)
+	fixture.manifests["b"] = []byte("not a protobuf manifest")
+
+	data, _, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
+		resolveTestManifest("a", 0),
+		resolveTestManifest("b", 100),
+	}, 0, 200, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "fail to unmarshal manifest b")
+	require.Equal(t, []string{"a-in-range"}, fileIDs(data), "out-of-range child chunks must be excluded from partial results")
+}
+
 func fileIDs(chunks []*filer_pb.FileChunk) []string {
 	ids := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {

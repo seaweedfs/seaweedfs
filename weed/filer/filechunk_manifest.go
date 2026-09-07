@@ -203,7 +203,7 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 					continue
 				}
 				for _, c := range slots[j].result.chunks {
-					if !c.IsChunkManifest {
+					if !c.IsChunkManifest && max(c.Offset, startOffset) < min(c.Offset+int64(c.Size), stopOffset) {
 						dataChunks = append(dataChunks, c)
 					}
 				}
