@@ -244,7 +244,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			for _, volInfo := range heartbeat.NewVolumes {
 				// The short form carries no remote-storage name, so the volume
 				// reads as local until a changed or full report names its tier.
-				announceVolume(message, volInfo.Id, false, false, false)
+				announceVolume(message, volInfo.Id, false, volInfo.ReadOnly, volInfo.ReadOnlyCanDelete)
 			}
 			for _, volInfo := range heartbeat.DeletedVolumes {
 				if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(volInfo.Id)) {
