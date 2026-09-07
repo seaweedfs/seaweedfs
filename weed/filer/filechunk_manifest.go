@@ -25,6 +25,9 @@ var bytesBufferPool = sync.Pool{
 	},
 }
 
+// Keep Manifest reads bounded across all recursion levels of one resolution.
+const maxChunkManifestResolveWorkers = 4
+
 func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
 	for _, chunk := range chunks {
 		if chunk.IsChunkManifest {
@@ -46,26 +49,115 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 }
 
 func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
-	// TODO maybe parallel this
-	for _, chunk := range chunks {
+	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator)
+	defer resolver.close()
+	return resolver.resolve(chunks, startOffset, stopOffset)
+}
 
+type chunkManifestResolveJob struct {
+	chunk  *filer_pb.FileChunk
+	result *chunkManifestResolveResult
+	done   *sync.WaitGroup
+}
+
+type chunkManifestResolveResult struct {
+	chunks []*filer_pb.FileChunk
+	err    error
+}
+
+type chunkManifestResolver struct {
+	ctx            context.Context
+	lookupFileIdFn wdclient.LookupFileIdFunctionType
+	invalidator    CacheInvalidator
+	jobs           chan chunkManifestResolveJob
+	workers        sync.WaitGroup
+	startOnce      sync.Once
+	started        bool
+}
+
+func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator) *chunkManifestResolver {
+	resolver := &chunkManifestResolver{
+		ctx:            ctx,
+		lookupFileIdFn: lookupFileIdFn,
+		invalidator:    invalidator,
+		jobs:           make(chan chunkManifestResolveJob),
+	}
+	return resolver
+}
+
+func (r *chunkManifestResolver) worker() {
+	defer r.workers.Done()
+	for job := range r.jobs {
+		job.result.chunks, job.result.err = ResolveOneChunkManifest(r.ctx, r.lookupFileIdFn, job.chunk, r.invalidator)
+		job.done.Done()
+	}
+}
+
+func (r *chunkManifestResolver) close() {
+	close(r.jobs)
+	if r.started {
+		r.workers.Wait()
+	}
+}
+
+func (r *chunkManifestResolver) submit(job chunkManifestResolveJob) bool {
+	r.startOnce.Do(func() {
+		r.workers.Add(maxChunkManifestResolveWorkers)
+		for i := 0; i < maxChunkManifestResolveWorkers; i++ {
+			go r.worker()
+		}
+		r.started = true
+	})
+	select {
+	case r.jobs <- job:
+		return true
+	case <-r.ctx.Done():
+		return false
+	}
+}
+
+func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffset, stopOffset int64) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	type resolveSlot struct {
+		chunk  *filer_pb.FileChunk
+		result chunkManifestResolveResult
+	}
+
+	slots := make([]resolveSlot, len(chunks))
+	var reads sync.WaitGroup
+	for i, chunk := range chunks {
 		if max(chunk.Offset, startOffset) >= min(chunk.Offset+int64(chunk.Size), stopOffset) {
 			continue
 		}
 
+		slots[i].chunk = chunk
 		if !chunk.IsChunkManifest {
-			dataChunks = append(dataChunks, chunk)
 			continue
 		}
 
-		resolvedChunks, err := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator)
-		if err != nil {
-			return dataChunks, nil, err
+		reads.Add(1)
+		if !r.submit(chunkManifestResolveJob{chunk: chunk, result: &slots[i].result, done: &reads}) {
+			slots[i].result.err = r.ctx.Err()
+			reads.Done()
+		}
+	}
+	reads.Wait()
+
+	// Recurse only after this level's reads release their worker slots. A
+	// worker must never wait for a child manifest while holding a slot.
+	for _, slot := range slots {
+		if slot.chunk == nil {
+			continue
+		}
+		if slot.result.err != nil {
+			return dataChunks, nil, slot.result.err
+		}
+		if !slot.chunk.IsChunkManifest {
+			dataChunks = append(dataChunks, slot.chunk)
+			continue
 		}
 
-		manifestChunks = append(manifestChunks, chunk)
-		// recursive
-		subDataChunks, subManifestChunks, subErr := ResolveChunkManifest(ctx, lookupFileIdFn, resolvedChunks, startOffset, stopOffset, invalidator)
+		manifestChunks = append(manifestChunks, slot.chunk)
+		subDataChunks, subManifestChunks, subErr := r.resolve(slot.result.chunks, startOffset, stopOffset)
 		if subErr != nil {
 			return dataChunks, nil, subErr
 		}
