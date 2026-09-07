@@ -95,12 +95,15 @@ func rebuildManifestEntry(entry iceberg.ManifestEntry, spec iceberg.PartitionSpe
 	)
 	if err != nil {
 		// The original DataFile already validated these fields, so the only
-		// way to get here is a nil spec, which rebuildManifestEntry's caller
-		// guards against. Fall back to the original entry rather than panic.
+		// ways to get here are a nil spec (which rebuildManifestEntry's caller
+		// guards against) or a zero-record / zero-byte file, which the builder
+		// rejects with recordCount <= 0 or fileSize <= 0. Fall back to the
+		// original entry rather than panic; the unnormalized partition survives
+		// but an empty file is unlikely to carry a logical partition value.
 		return entry
 	}
 
-	builder.BlockSizeInBytes(0) // deprecated in v2; the original is not exposed
+	builder.BlockSizeInBytes(64 * 1024 * 1024) // v1 schema default; deprecated and omitted in v2+
 	if sizes := df.ColumnSizes(); sizes != nil {
 		builder.ColumnSizes(sizes)
 	}

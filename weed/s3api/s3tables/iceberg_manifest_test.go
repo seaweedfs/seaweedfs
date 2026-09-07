@@ -7,6 +7,7 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
+	"github.com/twmb/avro/ocf"
 )
 
 // A manifest whose partition union puts the value branch first hides the
@@ -208,5 +209,67 @@ func TestReadManifestConvertsBeforeTheWriterRebindsLogicalTypes(t *testing.T) {
 	buf.Reset()
 	if _, err := iceberg.WriteManifest("metadata/manifest.avro", &buf, 2, spec, schema, snapshotID, entries); err != nil {
 		t.Fatalf("write manifest read through the shim: %v", err)
+	}
+}
+
+// rebuildManifestEntry rebuilds the DataFile through NewDataFileBuilder, which
+// has no setter for the original block_size_in_bytes (the field is not exposed
+// on DataFile). The v1 manifest schema includes block_size_in_bytes with a
+// default of 64 MiB and the spec says "Always write default in v1", so a
+// rebuilt entry written as v1 must carry that default — not 0.
+func TestReadManifestRebuiltEntryPreservesV1BlockSizeDefault(t *testing.T) {
+	schema := iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Name: "event_date", Type: iceberg.PrimitiveTypes.Date, Required: true},
+	)
+	spec := iceberg.NewPartitionSpec(iceberg.PartitionField{
+		SourceIDs: []int{1}, FieldID: 1000, Name: "part", Transform: iceberg.IdentityTransform{},
+	})
+	specs := map[int]iceberg.PartitionSpec{spec.ID(): spec}
+	dfBuilder, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData, "data/file.parquet",
+		iceberg.ParquetFile, map[int]any{1000: iceberg.Date(20737)}, nil, nil, 1, 1)
+	if err != nil {
+		t.Fatalf("build data file: %v", err)
+	}
+	snapshotID := int64(1)
+	entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapshotID, nil, nil, dfBuilder.Build())
+	// valueFirst=true spells the union [<type>, null], hiding the logical type
+	// from iceberg-go so the partition arrives as a time.Time. That triggers
+	// normalizePartitionValue → rebuildManifestEntry, which is the path that
+	// sets block_size_in_bytes.
+	foreignBytes, foreignManifest := s3tablestest.ForeignPartitionManifest(t, schema, spec, entry,
+		"metadata/foreign-manifest.avro", "date", time.Date(2026, time.October, 11, 0, 0, 0, 0, time.UTC), true)
+
+	entries, err := ReadManifest(foreignManifest, foreignBytes, true, specs, schema)
+	if err != nil {
+		t.Fatalf("read foreign manifest: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := iceberg.WriteManifest("metadata/manifest.avro", &buf, 1, spec, schema, snapshotID, entries); err != nil {
+		t.Fatalf("write v1 manifest: %v", err)
+	}
+
+	reader, err := ocf.NewReader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("open v1 manifest: %v", err)
+	}
+	var record map[string]any
+	if err := reader.Decode(&record); err != nil {
+		t.Fatalf("decode v1 manifest: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close v1 manifest: %v", err)
+	}
+	dataFile, ok := record["data_file"].(map[string]any)
+	if !ok {
+		t.Fatalf("data_file = %T, want record", record["data_file"])
+	}
+	got, ok := dataFile["block_size_in_bytes"]
+	if !ok {
+		t.Fatal("block_size_in_bytes missing from v1 manifest")
+	}
+	const want = int64(64 * 1024 * 1024)
+	if got != want {
+		t.Fatalf("block_size_in_bytes = %v, want %d", got, want)
 	}
 }
