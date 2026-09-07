@@ -14,7 +14,7 @@ use crate::pb::master_pb;
 /// It must cover every field of `VolumeInformationMessage`: a change the hash
 /// misses is a change the master would never be told about.
 pub fn report_hash(m: &master_pb::VolumeInformationMessage) -> u64 {
-    let mut buf = [0u8; 57];
+    let mut buf = [0u8; 58];
     buf[0..4].copy_from_slice(&m.id.to_le_bytes());
     buf[4..12].copy_from_slice(&m.size.to_le_bytes());
     buf[12..20].copy_from_slice(&m.file_count.to_le_bytes());
@@ -29,6 +29,9 @@ pub fn report_hash(m: &master_pb::VolumeInformationMessage) -> u64 {
     buf[52..56].copy_from_slice(&m.disk_id.to_le_bytes());
     if m.read_only {
         buf[56] = 1;
+    }
+    if m.read_only_can_delete {
+        buf[57] = 1;
     }
     let mut h = xxh64(&buf, 0);
 
@@ -82,6 +85,7 @@ mod tests {
             delete_count: 2,
             deleted_byte_count: 99,
             read_only: true,
+            read_only_can_delete: false,
             replica_placement: 10,
             version: 3,
             ttl: 3 << 8,
