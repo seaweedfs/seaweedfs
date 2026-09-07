@@ -332,14 +332,17 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			volume.diskId = diskId // Set the disk ID
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d on disk ID %d", vid, diskId)
+			readOnly, _, readOnlyCanDelete, _ := volume.ReadOnlyReasons()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
-				Id:               uint32(vid),
-				Collection:       collection,
-				ReplicaPlacement: uint32(replicaPlacement.Byte()),
-				Version:          uint32(volume.Version()),
-				Ttl:              ttl.ToUint32(),
-				DiskType:         string(diskType),
-				DiskId:           diskId,
+				Id:                uint32(vid),
+				Collection:        collection,
+				ReplicaPlacement:  uint32(replicaPlacement.Byte()),
+				Version:           uint32(volume.Version()),
+				Ttl:               ttl.ToUint32(),
+				DiskType:          string(diskType),
+				DiskId:            diskId,
+				ReadOnly:          readOnly,
+				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
 			return nil
 		} else {
@@ -392,17 +395,19 @@ func collectStatsForOneLocation(location *DiskLocation) (stats []*VolumeInfo) {
 
 func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 
+	readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 	s = &VolumeInfo{
 		Id:               vid,
 		Collection:       v.Collection,
 		ReplicaPlacement: v.ReplicaPlacement,
 		Version:          v.Version(),
-		ReadOnly:         v.IsReadOnly(),
+		ReadOnly:         readOnly,
 		Ttl:              v.Ttl,
 		CompactRevision:  uint32(v.CompactionRevision),
 		DiskType:         v.DiskType().String(),
 		DiskId:           v.diskId,
 	}
+	s.ReadOnlyCanDelete = readOnlyCanDelete
 	s.RemoteStorageName, _ = v.RemoteStorageNameKey()
 
 	v.dataFileAccessLock.RLock()
@@ -880,14 +885,17 @@ func (s *Store) MountVolume(i needle.VolumeId) error {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting
+			readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
-				Id:               uint32(v.Id),
-				Collection:       v.Collection,
-				ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-				Version:          uint32(v.Version()),
-				Ttl:              v.Ttl.ToUint32(),
-				DiskType:         string(v.location.DiskType),
-				DiskId:           uint32(diskId),
+				Id:                uint32(v.Id),
+				Collection:        v.Collection,
+				ReplicaPlacement:  uint32(v.ReplicaPlacement.Byte()),
+				Version:           uint32(v.Version()),
+				Ttl:               v.Ttl.ToUint32(),
+				DiskType:          string(v.location.DiskType),
+				DiskId:            uint32(diskId),
+				ReadOnly:          readOnly,
+				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
 			return nil
 		}

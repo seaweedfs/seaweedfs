@@ -302,8 +302,8 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew
 		if fromReport {
 			delete(d.volumeAddedAt, v.Id)
 		}
-		isChanged = oldV.ReadOnly != v.ReadOnly
-		if isChanged {
+		isChanged = oldV.ReadOnly != v.ReadOnly || oldV.ReadOnlyCanDelete != v.ReadOnlyCanDelete
+		if oldV.ReadOnly != v.ReadOnly {
 			// Adjust active volume count when ReadOnly status changes
 			// Use a separate delta object to avoid affecting other metric adjustments
 			readOnlyDelta := &DiskUsageCounts{}
@@ -331,7 +331,7 @@ func (d *Disk) GetVolumes() []storage.VolumeInfo {
 // the remote-tier ones on remote. Callers that only need to name volumes use
 // this rather than AppendVolumes, which copies a whole record per volume to
 // be read for four bytes of it.
-func (d *Disk) AppendVolumeIds(all, remote []uint32) ([]uint32, []uint32) {
+func (d *Disk) AppendVolumeIds(all, remote, readOnly, readOnlyCanDelete []uint32) ([]uint32, []uint32, []uint32, []uint32) {
 	d.RLock()
 	defer d.RUnlock()
 	for id, v := range d.volumes {
@@ -339,8 +339,14 @@ func (d *Disk) AppendVolumeIds(all, remote []uint32) ([]uint32, []uint32) {
 		if v.IsRemote() {
 			remote = append(remote, uint32(id))
 		}
+		if v.ReadOnly {
+			readOnly = append(readOnly, uint32(id))
+			if v.ReadOnlyCanDelete {
+				readOnlyCanDelete = append(readOnlyCanDelete, uint32(id))
+			}
+		}
 	}
-	return all, remote
+	return all, remote, readOnly, readOnlyCanDelete
 }
 
 // AppendVolumes appends the disk's volumes to dst, so a caller gathering

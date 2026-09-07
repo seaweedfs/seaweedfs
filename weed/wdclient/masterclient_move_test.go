@@ -39,6 +39,19 @@ func TestRemovedVolumeLosesItsLocation(t *testing.T) {
 	}
 }
 
+func TestReadOnlyVolumeUpdatesItsLocation(t *testing.T) {
+	mc := moveClient()
+	mc.updateVidMap(moveResponse([]uint32{1}, nil))
+	mc.updateVidMap(&master_pb.KeepConnectedResponse{VolumeLocation: &master_pb.VolumeLocation{
+		Url: "server:8080", PublicUrl: "server:8080", NewVids: []uint32{1}, ReadOnlyVids: []uint32{1},
+	}})
+
+	locations, found := mc.GetLocations(1)
+	if !found || len(locations) != 1 || !locations[0].ReadOnly {
+		t.Fatalf("read-only update = %v, want one read-only location", locations)
+	}
+}
+
 // Removals of other volumes in the same message must still apply.
 func TestRemovalsAlongsideAMoveStillApply(t *testing.T) {
 	mc := moveClient()
