@@ -544,7 +544,7 @@ async fn do_heartbeat(
                 let mut del_vols = Vec::new();
 
                 for (id, vol) in &current_volumes {
-                    if !last_volumes.contains_key(id) {
+                    if last_volumes.get(id) != Some(vol) {
                         new_vols.push(vol.to_short_message(*id));
                     }
                 }
@@ -736,7 +736,7 @@ fn parse_bool_property(value: Option<&String>) -> bool {
 /// information message the heartbeat carries. A server holding millions of
 /// volumes cannot keep a whole message for each just to notice one leave; the
 /// Go report state keeps the same fields for the same reason.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct VolumeIdentity {
     collection: String,
     disk_type: String,
