@@ -8,7 +8,7 @@
 //! Loaded from .idx file on volume mount. Supports Get, Put, Delete with
 //! metrics tracking (file count, byte count, deleted count, deleted bytes).
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -707,7 +707,13 @@ impl RedbNeedleMap {
         }
     }
 
-    /// Full rebuild: delete existing .rdb and rebuild from entire .idx file.
+    /// Full rebuild: prefer a fresh `.rdb`, then rebuild from the entire `.idx`.
+    ///
+    /// `Database::create` opens an existing file (`truncate(false)`). Unlink
+    /// is best-effort: if it fails (sticky bit, foreign owner) but the path is
+    /// still writable, clear the leftover needles table before inserting.
+    /// Live keys come from a `BTreeMap` so inserts are in needle-id order and
+    /// redb 4.2.0 packs leaves, without a second Vec + sort scratch.
     fn full_rebuild<R: Read + Seek>(
         db_path: &str,
         reader: &mut R,
@@ -715,49 +721,72 @@ impl RedbNeedleMap {
         version: Version,
         cache_bytes: usize,
     ) -> io::Result<Self> {
-        let _ = std::fs::remove_file(db_path);
-        let mut nm = RedbNeedleMap::new(db_path, cache_bytes)?;
-
-        // Collect entries from idx file, resolving duplicates/deletions
-        let mut entries: HashMap<NeedleId, Option<NeedleValue>> = HashMap::new();
-        idx::walk_index_file(reader, 0, |key, offset, size| {
-            if offset.is_zero() || size.is_deleted() {
-                entries.insert(key, None);
-            } else {
-                entries.insert(key, Some(NeedleValue { offset, size }));
+        let unlinked = match std::fs::remove_file(db_path) {
+            Ok(()) => true,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => true,
+            Err(e) => {
+                tracing::warn!("redb unlink before rebuild failed: {}", e);
+                false
             }
-            Ok(())
-        })?;
+        };
 
-        // Write all live entries to redb in a single transaction
-        let txn = Self::begin_write_no_fsync(&nm.db)?;
-        {
-            let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
+        let mut nm = match RedbNeedleMap::new(db_path, cache_bytes) {
+            Ok(nm) => nm,
+            Err(e) => {
+                let _ = std::fs::remove_file(db_path);
+                return Err(e);
+            }
+        };
+
+        let result = (|| -> io::Result<()> {
+            // Seek independently of walk_index_file. Run before the write txn
+            // so a metric-read error does not unlink a committed rebuild.
+            nm.metric = metrics_from_idx(reader, version)?;
+
+            let mut entries: BTreeMap<NeedleId, NeedleValue> = BTreeMap::new();
+            idx::walk_index_file(reader, 0, |key, offset, size| {
+                if offset.is_zero() || size.is_deleted() {
+                    entries.remove(&key);
+                } else {
+                    entries.insert(key, NeedleValue { offset, size });
+                }
+                Ok(())
             })?;
 
-            for (key, maybe_nv) in &entries {
-                let key_u64: u64 = (*key).into();
-                if let Some(nv) = maybe_nv {
+            let txn = Self::begin_write_no_fsync(&nm.db)?;
+            {
+                let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
+                })?;
+                if !unlinked {
+                    table.retain(|_, _| false).map_err(|e| {
+                        io::Error::new(io::ErrorKind::Other, format!("redb retain: {}", e))
+                    })?;
+                }
+
+                for (key, nv) in &entries {
+                    let key_u64: u64 = (*key).into();
                     let packed = pack_needle_value(nv);
                     table.insert(key_u64, packed.as_slice()).map_err(|e| {
                         io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
                     })?;
-                } else {
-                    // Entry was deleted — remove from redb if present
-                    table.remove(key_u64).map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("redb remove: {}", e))
-                    })?;
                 }
             }
+            txn.commit()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
+
+            nm.save_idx_size_meta(idx_size)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => Ok(nm),
+            Err(e) => {
+                drop(nm);
+                let _ = std::fs::remove_file(db_path);
+                Err(e)
+            }
         }
-        txn.commit()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
-
-        nm.save_idx_size_meta(idx_size)?;
-        nm.metric = metrics_from_idx(reader, version)?;
-
-        Ok(nm)
     }
 
     /// Set the index file for append-only writes.
@@ -1485,6 +1514,107 @@ mod tests {
             .unwrap();
         nm.set_idx_file(Box::new(writer), idx_size);
         (nm, db_path, idx_path)
+    }
+
+    /// .idx records in non-id order: 10, 1, 5, overwrite 1, delete 5.
+    fn shuffled_idx_with_overwrite_and_delete() -> Vec<u8> {
+        let mut idx_data = Vec::new();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(10),
+            Offset::from_actual_offset(8),
+            Size(100),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(1),
+            Offset::from_actual_offset(128),
+            Size(50),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(5),
+            Offset::from_actual_offset(384),
+            Size(75),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(1),
+            Offset::from_actual_offset(200),
+            Size(200),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(5),
+            Offset::default(),
+            TOMBSTONE_FILE_SIZE,
+        )
+        .unwrap();
+        idx_data
+    }
+
+    #[test]
+    fn test_redb_full_rebuild_last_write_wins_from_shuffled_idx() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.rdb");
+        let idx_data = shuffled_idx_with_overwrite_and_delete();
+        let mut cursor = Cursor::new(idx_data);
+        let nm = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut cursor,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
+
+        let v10 = nm.get(NeedleId(10)).unwrap().unwrap();
+        assert_eq!(v10.size, Size(100));
+        let v1 = nm.get(NeedleId(1)).unwrap().unwrap();
+        assert_eq!(v1.size, Size(200));
+        assert_eq!(v1.offset, Offset::from_actual_offset(200));
+        assert!(nm.get(NeedleId(5)).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_redb_full_rebuild_drops_keys_absent_from_idx() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
+        nm.put(NeedleId(1), Offset::from_actual_offset(8), Size(100))
+            .unwrap();
+        nm.put(NeedleId(99), Offset::from_actual_offset(128), Size(50))
+            .unwrap();
+        nm.checkpoint(true).unwrap();
+        nm.close();
+        drop(nm);
+
+        // idx on disk is two entries; stored idx_size is two entries.
+        // Shrink the .idx so try_reuse_rdb rejects (stored > idx) and
+        // full_rebuild runs. Key 99 must not survive.
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&idx_path)
+                .unwrap();
+            f.set_len(NEEDLE_MAP_ENTRY_SIZE as u64).unwrap();
+        }
+
+        let mut idx = std::fs::File::open(&idx_path).unwrap();
+        let reloaded = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut idx,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
+        assert!(reloaded.get(NeedleId(1)).unwrap().is_some());
+        assert!(
+            reloaded.get(NeedleId(99)).unwrap().is_none(),
+            "full_rebuild must not keep keys that are not in the .idx"
+        );
     }
 
     #[test]
