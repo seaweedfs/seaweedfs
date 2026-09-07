@@ -489,13 +489,16 @@ impl RedbNeedleMap {
     /// much of the .idx the table reflects, so a reload replays only the
     /// tail appended after it. When `sync_idx` is true the .idx is fsynced
     /// first (see [`checkpoint`](Self::checkpoint)).
+    /// Durable commit uses `set_quick_repair(true)` so the next open after a
+    /// crash does not scan the whole file.
     fn begin_checkpoint(&self, sync_idx: bool) -> io::Result<redb::WriteTransaction> {
         if sync_idx {
             self.sync()?;
         }
-        let txn = self.db.begin_write().map_err(|e| {
+        let mut txn = self.db.begin_write().map_err(|e| {
             io::Error::new(io::ErrorKind::Other, format!("redb begin_write: {}", e))
         })?;
+        txn.set_quick_repair(true);
         if self.idx_file.is_some() {
             let mut meta = txn.open_table(META_TABLE).map_err(|e| {
                 io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e))
