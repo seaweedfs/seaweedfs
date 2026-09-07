@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -61,23 +62,30 @@ type chunkManifestResolveJob struct {
 }
 
 type chunkManifestResolveResult struct {
-	chunks []*filer_pb.FileChunk
-	err    error
+	chunks         []*filer_pb.FileChunk
+	err            error
+	internalCancel bool
 }
 
 type chunkManifestResolver struct {
 	ctx            context.Context
+	parentCtx      context.Context
+	cancel         context.CancelFunc
 	lookupFileIdFn wdclient.LookupFileIdFunctionType
 	invalidator    CacheInvalidator
 	jobs           chan chunkManifestResolveJob
 	workers        sync.WaitGroup
 	startOnce      sync.Once
+	cancelOnce     sync.Once
 	started        bool
 }
 
 func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator) *chunkManifestResolver {
+	workCtx, cancel := context.WithCancel(ctx)
 	resolver := &chunkManifestResolver{
-		ctx:            ctx,
+		ctx:            workCtx,
+		parentCtx:      ctx,
+		cancel:         cancel,
 		lookupFileIdFn: lookupFileIdFn,
 		invalidator:    invalidator,
 		jobs:           make(chan chunkManifestResolveJob),
@@ -89,11 +97,19 @@ func (r *chunkManifestResolver) worker() {
 	defer r.workers.Done()
 	for job := range r.jobs {
 		job.result.chunks, job.result.err = ResolveOneChunkManifest(r.ctx, r.lookupFileIdFn, job.chunk, r.invalidator)
+		if job.result.err != nil && r.parentCtx.Err() == nil {
+			if r.ctx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
+				job.result.internalCancel = true
+			} else if r.ctx.Err() == nil {
+				r.cancelOnce.Do(r.cancel)
+			}
+		}
 		job.done.Done()
 	}
 }
 
 func (r *chunkManifestResolver) close() {
+	r.cancel()
 	close(r.jobs)
 	if r.started {
 		r.workers.Wait()
@@ -137,10 +153,14 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 		reads.Add(1)
 		if !r.submit(chunkManifestResolveJob{chunk: chunk, result: &slots[i].result, done: &reads}) {
 			slots[i].result.err = r.ctx.Err()
+			slots[i].result.internalCancel = r.parentCtx.Err() == nil && slots[i].result.err != nil
 			reads.Done()
 		}
 	}
 	reads.Wait()
+	if err := r.parentCtx.Err(); err != nil {
+		return dataChunks, nil, err
+	}
 
 	// Recurse only after this level's reads release their worker slots. A
 	// worker must never wait for a child manifest while holding a slot.
@@ -149,6 +169,9 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 			continue
 		}
 		if slot.result.err != nil {
+			if slot.result.internalCancel {
+				continue
+			}
 			return dataChunks, nil, slot.result.err
 		}
 		if !slot.chunk.IsChunkManifest {

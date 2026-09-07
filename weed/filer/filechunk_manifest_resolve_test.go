@@ -201,7 +201,7 @@ func TestResolveChunkManifestPropagatesReadAndFormatErrorsInInputOrder(t *testin
 		map[string][]*filer_pb.FileChunk{
 			"valid":  {resolveTestData("valid-data", 0)},
 			"broken": nil,
-		}, nil)
+		}, map[string]time.Duration{"broken": 50 * time.Millisecond})
 	fixture.manifests["broken"] = []byte("not a protobuf manifest")
 
 	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
@@ -246,7 +246,148 @@ func TestResolveChunkManifestCancellationStopsAllReads(t *testing.T) {
 	cancel()
 	err := <-result
 	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, int32(0), fixture.active.Load(), "all manifest readers must exit before ResolveChunkManifest returns")
+	require.Eventually(t, func() bool {
+		return fixture.active.Load() == 0
+	}, time.Second, time.Millisecond, "all manifest readers must exit after ResolveChunkManifest returns")
+}
+
+type manifestFailureReadFixture struct {
+	server       *httptest.Server
+	fastRelease  chan struct{}
+	slowStarted  chan struct{}
+	fastStarted  chan struct{}
+	slowCanceled chan struct{}
+}
+
+func newManifestFailureReadFixture(t testing.TB) *manifestFailureReadFixture {
+	t.Helper()
+	fixture := &manifestFailureReadFixture{
+		fastRelease:  make(chan struct{}),
+		slowStarted:  make(chan struct{}),
+		fastStarted:  make(chan struct{}),
+		slowCanceled: make(chan struct{}),
+	}
+	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimPrefix(r.URL.Path, "/") {
+		case "fast":
+			close(fixture.fastStarted)
+			<-fixture.fastRelease
+			w.Header().Set("Content-Length", "7")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("invalid"))
+		case "slow":
+			close(fixture.slowStarted)
+			<-r.Context().Done()
+			close(fixture.slowCanceled)
+		}
+	}))
+	t.Cleanup(fixture.server.Close)
+	return fixture
+}
+
+func (f *manifestFailureReadFixture) lookup(ctx context.Context, fileID string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return []string{f.server.URL + "/" + fileID}, nil
+}
+
+func waitForManifestFailureSignal(t *testing.T, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for manifest request")
+	}
+}
+
+func TestResolveChunkManifestFastFailureCancelsSlowSibling(t *testing.T) {
+	testCases := []struct {
+		name       string
+		inputIDs   []string
+		expectedID string
+	}{
+		{name: "fast then slow returns quickly", inputIDs: []string{"fast", "slow"}, expectedID: "fast"},
+		{name: "slow then fast keeps real error", inputIDs: []string{"slow", "fast"}, expectedID: "fast"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newManifestFailureReadFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			chunks := make([]*filer_pb.FileChunk, 0, len(testCase.inputIDs))
+			for i, id := range testCase.inputIDs {
+				chunks = append(chunks, resolveTestManifest(id, int64(i*100)))
+			}
+			result := make(chan error, 1)
+			go func() {
+				_, _, err := ResolveChunkManifest(ctx, fixture.lookup, chunks, 0, 200, nil)
+				result <- err
+			}()
+
+			waitForManifestFailureSignal(t, fixture.fastStarted)
+			waitForManifestFailureSignal(t, fixture.slowStarted)
+			close(fixture.fastRelease)
+
+			var err error
+			select {
+			case err = <-result:
+			case <-time.After(time.Second):
+				cancel()
+				select {
+				case <-result:
+				case <-time.After(time.Second):
+					t.Fatal("ResolveChunkManifest did not finish after caller cancellation")
+				}
+				t.Fatal("fast manifest failure waited for the slow sibling")
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "fail to unmarshal manifest "+testCase.expectedID)
+			require.NotErrorIs(t, err, context.Canceled)
+			waitForManifestFailureSignal(t, fixture.slowCanceled)
+		})
+	}
+}
+
+func TestResolveChunkManifestKeepsRealErrorAfterInternalCancellation(t *testing.T) {
+	earlyStarted := make(chan struct{})
+	lateStarted := make(chan struct{})
+	earlyErr := errors.New("early lookup failed")
+	lateErr := errors.New("late lookup failed")
+	lookup := func(ctx context.Context, fileID string) ([]string, error) {
+		switch fileID {
+		case "early":
+			close(earlyStarted)
+			<-ctx.Done()
+			return nil, earlyErr
+		case "late":
+			close(lateStarted)
+			return nil, lateErr
+		default:
+			return nil, fmt.Errorf("unexpected manifest %s", fileID)
+		}
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := ResolveChunkManifest(context.Background(), lookup, []*filer_pb.FileChunk{
+			resolveTestManifest("early", 0),
+			resolveTestManifest("late", 100),
+		}, 0, 200, nil)
+		result <- err
+	}()
+	waitForManifestFailureSignal(t, earlyStarted)
+	waitForManifestFailureSignal(t, lateStarted)
+
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, earlyErr)
+		require.NotErrorIs(t, err, lateErr)
+	case <-time.After(time.Second):
+		t.Fatal("ResolveChunkManifest did not return the input-order error")
+	}
 }
 
 func fileIDs(chunks []*filer_pb.FileChunk) []string {
