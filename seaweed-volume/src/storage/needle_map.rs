@@ -57,6 +57,15 @@ fn unpack_needle_value(bytes: &[u8; PACKED_NEEDLE_VALUE_SIZE]) -> NeedleValue {
     }
 }
 
+fn packed_to_needle_value(bytes: &[u8]) -> Option<NeedleValue> {
+    if bytes.len() != PACKED_NEEDLE_VALUE_SIZE {
+        return None;
+    }
+    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
+    arr.copy_from_slice(bytes);
+    Some(unpack_needle_value(&arr))
+}
+
 // ============================================================================
 // NeedleMapMetric
 // ============================================================================
@@ -689,16 +698,7 @@ impl RedbNeedleMap {
         key_u64: u64,
     ) -> io::Result<Option<NeedleValue>> {
         match table.get(key_u64) {
-            Ok(Some(guard)) => {
-                let bytes: &[u8] = guard.value();
-                if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                    arr.copy_from_slice(bytes);
-                    Ok(Some(unpack_needle_value(&arr)))
-                } else {
-                    Ok(None)
-                }
-            }
+            Ok(Some(guard)) => Ok(packed_to_needle_value(guard.value())),
             Ok(None) => Ok(None),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -814,30 +814,35 @@ impl RedbNeedleMap {
         }
 
         let key_u64: u64 = key.into();
-        let nv = NeedleValue { offset, size };
-        let packed = pack_needle_value(&nv);
+        let packed = pack_needle_value(&NeedleValue { offset, size });
 
-        // Read old value for metric update
-        let old = self.get_internal(key_u64)?;
-
-        let txn = Self::begin_write_no_fsync(&self.db)?;
-        {
-            let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
+        let old = match (|| -> io::Result<Option<NeedleValue>> {
+            let txn = Self::begin_write_no_fsync(&self.db)?;
+            let old = {
+                let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
+                })?;
+                let prev = table.insert(key_u64, packed.as_slice()).map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
+                })?;
+                prev.and_then(|g| packed_to_needle_value(g.value()))
+            };
+            txn.commit().map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e))
             })?;
-            table
-                .insert(key_u64, packed.as_slice())
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e)))?;
-        }
-        if let Err(e) = txn.commit() {
-            self.truncate_idx_to_offset();
-            return Err(io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)));
-        }
+            Ok(old)
+        })() {
+            Ok(old) => old,
+            Err(e) => {
+                self.truncate_idx_to_offset();
+                return Err(e);
+            }
+        };
+
         if self.idx_file.is_some() {
             self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
         }
         self.writes_since_checkpoint = self.writes_since_checkpoint.saturating_add(1);
-
         self.metric.on_put(key, old.as_ref(), size);
         Ok(())
     }
@@ -860,16 +865,7 @@ impl RedbNeedleMap {
             .open_table(NEEDLE_TABLE)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
         match table.get(key_u64) {
-            Ok(Some(guard)) => {
-                let bytes: &[u8] = guard.value();
-                if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                    arr.copy_from_slice(bytes);
-                    Ok(Some(unpack_needle_value(&arr)))
-                } else {
-                    Ok(None)
-                }
-            }
+            Ok(Some(guard)) => Ok(packed_to_needle_value(guard.value())),
             Ok(None) => Ok(None),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -881,48 +877,56 @@ impl RedbNeedleMap {
     /// Mark a needle as deleted. Appends tombstone to .idx file, negates size in redb.
     pub fn delete(&mut self, key: NeedleId, offset: Offset) -> io::Result<Option<Size>> {
         let key_u64: u64 = key.into();
-
-        if let Some(old) = self.get_internal(key_u64)? {
-            if old.size.is_valid() {
-                // Persist tombstone to idx file BEFORE mutating redb. The
-                // offset is advanced only after the redb commit succeeds
-                // (see put).
-                if let Some(ref mut idx_file) = self.idx_file {
-                    idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
-                }
-
-                let deleted_size = Size(-(old.size.0));
-                // Keep original offset so readDeleted can find original data (matching Go behavior)
-                let deleted_nv = NeedleValue {
-                    offset: old.offset,
-                    size: deleted_size,
-                };
-                let packed = pack_needle_value(&deleted_nv);
-
-                let txn = Self::begin_write_no_fsync(&self.db)?;
-                {
-                    let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-                    })?;
-                    table.insert(key_u64, packed.as_slice()).map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
-                    })?;
-                }
-                if let Err(e) = txn.commit() {
-                    self.truncate_idx_to_offset();
-                    return Err(io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)));
-                }
-                if self.idx_file.is_some() {
-                    self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
-                }
-                self.writes_since_checkpoint = self.writes_since_checkpoint.saturating_add(1);
-
-                // Only now is the tombstone in the table the metrics describe.
-                self.metric.on_delete(&old);
-                return Ok(Some(old.size));
+        let txn = Self::begin_write_no_fsync(&self.db)?;
+        let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
+        })?;
+        let old = match table.get(key_u64) {
+            Ok(Some(guard)) => packed_to_needle_value(guard.value()),
+            Ok(None) => None,
+            Err(e) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("redb get: {}", e),
+                ));
             }
+        };
+        let Some(old) = old.filter(|nv| nv.size.is_valid()) else {
+            drop(table);
+            return Ok(None);
+        };
+
+        if let Some(ref mut idx_file) = self.idx_file {
+            idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
         }
-        Ok(None)
+
+        let deleted_nv = NeedleValue {
+            offset: old.offset,
+            size: Size(-(old.size.0)),
+        };
+        let packed = pack_needle_value(&deleted_nv);
+        let insert_res = table.insert(key_u64, packed.as_slice()).map(|_| ());
+        drop(table);
+        if let Err(e) = insert_res {
+            self.truncate_idx_to_offset();
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("redb insert: {}", e),
+            ));
+        }
+        if let Err(e) = txn.commit() {
+            self.truncate_idx_to_offset();
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("redb commit: {}", e),
+            ));
+        }
+        if self.idx_file.is_some() {
+            self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
+        }
+        self.writes_since_checkpoint = self.writes_since_checkpoint.saturating_add(1);
+        self.metric.on_delete(&old);
+        Ok(Some(old.size))
     }
 
     // ---- Metrics accessors ----
@@ -1638,6 +1642,24 @@ mod tests {
     }
 
     #[test]
+    fn test_redb_put_overwrite_metrics_without_prior_get() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.rdb");
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(8), Size(100))
+            .unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(200), Size(200))
+            .unwrap();
+        assert_eq!(nm.file_count(), 2);
+        assert_eq!(nm.content_size(), 300);
+        assert_eq!(nm.deleted_count(), 1);
+        assert_eq!(nm.deleted_size(), 100);
+        let v = nm.get(NeedleId(1)).unwrap().unwrap();
+        assert_eq!(v.size, Size(200));
+        assert_eq!(v.offset, Offset::from_actual_offset(200));
+    }
+
+    #[test]
     fn test_redb_needle_map_delete() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
@@ -1768,6 +1790,26 @@ mod tests {
             .unwrap();
         assert_eq!(r2, None);
         assert_eq!(nm.deleted_count(), 1); // not double counted
+    }
+
+    #[test]
+    fn test_redb_delete_wrong_length_value_is_absent_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.rdb");
+        let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap(), redb_test_cache()).unwrap();
+        {
+            let txn = RedbNeedleMap::begin_write_no_fsync(&nm.db).unwrap();
+            {
+                let mut table = txn.open_table(NEEDLE_TABLE).unwrap();
+                table.insert(1u64, &b"xx"[..]).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+        let deleted = nm
+            .delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
+        assert_eq!(deleted, None);
+        assert_eq!(nm.deleted_count(), 0);
     }
 
     #[test]
