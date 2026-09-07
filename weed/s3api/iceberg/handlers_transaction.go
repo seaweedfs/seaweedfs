@@ -246,7 +246,11 @@ func cloneTableMetadata(m *s3tables.TableMetadata) *s3tables.TableMetadata {
 func parseTableChange(change tableChangeRequest) (table.Requirements, table.Updates, []statisticsUpdate, *icebergRequestError) {
 	var requirements table.Requirements
 	if len(change.Requirements) > 0 {
-		if err := json.Unmarshal(change.Requirements, &requirements); err != nil {
+		normalized, err := normalizeRequirements(change.Requirements)
+		if err != nil {
+			return nil, nil, nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", "Invalid requirements: " + err.Error()}
+		}
+		if err := json.Unmarshal(normalized, &requirements); err != nil {
 			return nil, nil, nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", "Invalid requirements: " + err.Error()}
 		}
 	}
