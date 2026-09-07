@@ -5,7 +5,7 @@ go 1.26
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/pubsub v1.51.1
-	cloud.google.com/go/storage v1.64.0
+	cloud.google.com/go/storage v1.67.0
 	github.com/Shopify/sarama v1.38.1
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -59,7 +59,7 @@ require (
 	github.com/posener/complete v1.2.3
 	github.com/pquerna/cachecontrol v0.2.0
 	github.com/prometheus/client_golang v1.24.1
-	github.com/prometheus/client_model v0.6.2
+	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.22.0
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
@@ -129,8 +129,8 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cognusion/imaging v1.0.4
 	github.com/fluent/fluent-logger-golang v1.10.1
-	github.com/getsentry/sentry-go v0.48.0
-	github.com/go-ldap/ldap/v3 v3.4.13
+	github.com/getsentry/sentry-go v0.49.0
+	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hashicorp/golang-lru/v2 v2.0.7
@@ -211,7 +211,7 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dromara/dongle v1.0.1 // indirect
 	github.com/gin-gonic/gin v1.11.0 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
 	github.com/go-git/go-billy/v5 v5.9.0 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect

@@ -13,6 +13,9 @@ use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
+#[cfg(feature = "redb-experimental-cursor")]
+use std::ops::Bound;
+
 mod compact_map;
 pub mod file_pool;
 mod idx_metric;
@@ -591,14 +594,18 @@ impl RedbNeedleMap {
         let meta = txn
             .open_table(META_TABLE)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e)))?;
-        match meta.get(META_IDX_SIZE) {
+        // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
+        // ReadableTable::get guard borrows `meta`; bind the match so the
+        // temporary Result is dropped before `meta`.
+        let result = match meta.get(META_IDX_SIZE) {
             Ok(Some(guard)) => Ok(Some(guard.value())),
             Ok(None) => Ok(None),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("redb get meta: {}", e),
             )),
-        }
+        };
+        result
     }
 
     /// Load from an .idx file, reusing an existing .rdb if it is consistent.
@@ -792,11 +799,38 @@ impl RedbNeedleMap {
                     })?;
                 }
 
-                for (key, nv) in &entries {
-                    let key_u64: u64 = (*key).into();
-                    let packed = pack_needle_value(nv);
-                    table.insert(key_u64, packed.as_slice()).map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
+                #[cfg(not(feature = "redb-experimental-cursor"))]
+                {
+                    for (key, nv) in &entries {
+                        let key_u64: u64 = (*key).into();
+                        let packed = pack_needle_value(nv);
+                        table.insert(key_u64, packed.as_slice()).map_err(|e| {
+                            io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
+                        })?;
+                    }
+                }
+                #[cfg(feature = "redb-experimental-cursor")]
+                {
+                    let mut cursor = table
+                        .upper_bound_mut(Bound::<u64>::Unbounded)
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("redb upper_bound_mut: {}", e),
+                            )
+                        })?;
+                    for (key, nv) in &entries {
+                        let key_u64: u64 = (*key).into();
+                        let packed = pack_needle_value(nv);
+                        cursor.insert_before(key_u64, packed.as_slice()).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("redb insert_before: {}", e),
+                            )
+                        })?;
+                    }
+                    cursor.close().map_err(|e| {
+                        io::Error::new(io::ErrorKind::Other, format!("redb cursor close: {}", e))
                     })?;
                 }
             }
@@ -938,14 +972,18 @@ impl RedbNeedleMap {
         let table = txn
             .open_table(NEEDLE_TABLE)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
-        match table.get(key_u64) {
+        // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
+        // ReadableTable::get guard borrows `table`; bind the match so the
+        // temporary Result is dropped before `table`.
+        let result = match table.get(key_u64) {
             Ok(Some(guard)) => Ok(packed_to_needle_value(guard.value())),
             Ok(None) => Ok(None),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("redb get: {}", e),
             )),
-        }
+        };
+        result
     }
 
     /// Mark a needle as deleted. Appends tombstone to .idx file, negates size in redb.
@@ -1762,6 +1800,67 @@ mod tests {
             reloaded.get(NeedleId(99)).unwrap().is_none(),
             "full_rebuild must not keep keys that are not in the .idx"
         );
+    }
+
+    #[cfg(feature = "redb-experimental-cursor")]
+    #[test]
+    fn test_redb_full_rebuild_insert_before_reads_back_thousands_of_shuffled_keys() {
+        // Enough keys to split leaves. insert_before vs table.insert only
+        // diverges across page boundaries (pending-insert buffer / close).
+        const N: u64 = 4000;
+        let mut idx_data = Vec::new();
+        for i in (1..=N).rev() {
+            idx::write_index_entry(
+                &mut idx_data,
+                NeedleId(i),
+                Offset::from_actual_offset((8 * i) as i64),
+                Size(i as i32),
+            )
+            .unwrap();
+        }
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(1),
+            Offset::from_actual_offset(200),
+            Size(200),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(2),
+            Offset::default(),
+            TOMBSTONE_FILE_SIZE,
+        )
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.rdb");
+        let mut cursor = Cursor::new(idx_data);
+        let nm = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut cursor,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
+
+        let v1 = nm.get(NeedleId(1)).unwrap().unwrap();
+        assert_eq!(v1.size, Size(200));
+        assert_eq!(v1.offset, Offset::from_actual_offset(200));
+        assert!(nm.get(NeedleId(2)).unwrap().is_none());
+        let v_n = nm.get(NeedleId(N)).unwrap().unwrap();
+        assert_eq!(v_n.size, Size(N as i32));
+        let v3 = nm.get(NeedleId(3)).unwrap().unwrap();
+        assert_eq!(v3.size, Size(3));
+        assert_eq!(v3.offset, Offset::from_actual_offset(24));
+
+        let mut live = 0u64;
+        nm.ascending_visit(|_, _| {
+            live += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(live, N - 1);
     }
 
     #[test]
