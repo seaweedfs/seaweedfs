@@ -392,18 +392,19 @@ func collectStatsForOneLocation(location *DiskLocation) (stats []*VolumeInfo) {
 
 func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 
+	readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 	s = &VolumeInfo{
 		Id:               vid,
 		Collection:       v.Collection,
 		ReplicaPlacement: v.ReplicaPlacement,
 		Version:          v.Version(),
-		ReadOnly:         v.IsReadOnly(),
+		ReadOnly:         readOnly,
 		Ttl:              v.Ttl,
 		CompactRevision:  uint32(v.CompactionRevision),
 		DiskType:         v.DiskType().String(),
 		DiskId:           v.diskId,
 	}
-	_, _, s.ReadOnlyCanDelete, _ = v.ReadOnlyReasons()
+	s.ReadOnlyCanDelete = readOnlyCanDelete
 	s.RemoteStorageName, _ = v.RemoteStorageNameKey()
 
 	v.dataFileAccessLock.RLock()

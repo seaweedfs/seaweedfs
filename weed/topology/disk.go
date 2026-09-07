@@ -302,7 +302,7 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo, fromReport bool) (isNew
 		if fromReport {
 			delete(d.volumeAddedAt, v.Id)
 		}
-		isChanged = oldV.ReadOnly != v.ReadOnly
+		isChanged = oldV.ReadOnly != v.ReadOnly || oldV.ReadOnlyCanDelete != v.ReadOnlyCanDelete
 		if isChanged {
 			// Adjust active volume count when ReadOnly status changes
 			// Use a separate delta object to avoid affecting other metric adjustments

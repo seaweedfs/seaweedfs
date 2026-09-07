@@ -110,6 +110,19 @@ func TestChangedVolumesAnnounceSameTierReadOnlyTransition(t *testing.T) {
 	}
 }
 
+func TestChangedVolumesAnnounceReadOnlyDeleteCapabilityTransition(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	initial := changedTestVolume(1, 1024)
+	initial.ReadOnly, initial.ReadOnlyCanDelete = true, true
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{initial}, dn)
+	next := changedTestVolume(1, 1024)
+	next.ReadOnly = true
+	_, _, readOnlyVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{next})
+	if !containsUint32(readOnlyVids, 1) {
+		t.Fatalf("read-only delete-capability transition was not announced: %v", readOnlyVids)
+	}
+}
+
 // A heartbeat that mixes a pure growth with a tier transition only announces
 // the tier-transitioned replica: a growth is local state, not a re-route, and
 // must not push other topology updates out of a bounded client queue.
@@ -182,6 +195,19 @@ func TestFullReconciliationAnnounceSameTierReadOnlyTransition(t *testing.T) {
 	_, _, readOnlyVids = announceFullReconciliation(topo, dn, []*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)})
 	if containsUint32(readOnlyVids, 1) {
 		t.Fatalf("read-only-to-writable reconciliation retained ReadOnlyVids: %v", readOnlyVids)
+	}
+}
+
+func TestFullReconciliationAnnounceReadOnlyDeleteCapabilityTransition(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	initial := changedTestVolume(1, 1024)
+	initial.ReadOnly, initial.ReadOnlyCanDelete = true, true
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{initial}, dn)
+	next := changedTestVolume(1, 1024)
+	next.ReadOnly = true
+	_, _, readOnlyVids := announceFullReconciliation(topo, dn, []*master_pb.VolumeInformationMessage{next})
+	if !containsUint32(readOnlyVids, 1) {
+		t.Fatalf("read-only delete-capability reconciliation was not announced: %v", readOnlyVids)
 	}
 }
 
