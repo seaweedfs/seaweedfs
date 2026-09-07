@@ -24,6 +24,7 @@ func TestSetVolumeReadOnlyInvalidRequests(t *testing.T) {
 		{"null mode", "7", "node-a", `{"read_only":null}`},
 		{"string mode", "7", "node-a", `{"read_only":"false"}`},
 		{"malformed JSON", "7", "node-a", `{"read_only":`},
+		{"trailing JSON", "7", "node-a", `{"read_only":true}{}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))

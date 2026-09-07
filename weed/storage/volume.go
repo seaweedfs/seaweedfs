@@ -575,10 +575,19 @@ func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete,
 	return noWriteOrDelete || noWriteCanDelete || diskSpaceLow, noWriteOrDelete, noWriteCanDelete, diskSpaceLow
 }
 
-func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) {
+func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) error {
 	v.volumeInfoRWLock.Lock()
 	defer v.volumeInfoRWLock.Unlock()
+	prevReadOnly := v.volumeInfo.ReadOnly
+	prevReadOnlyCanDelete := v.volumeInfo.ReadOnlyCanDelete
 	v.volumeInfo.ReadOnly = readOnly
 	v.volumeInfo.ReadOnlyCanDelete = readOnly && canDelete
-	v.SaveVolumeInfo()
+	if err := v.SaveVolumeInfo(); err != nil {
+		// Roll back the in-memory state so a failed .vif write does not
+		// leave the volume acting on a mode that restart will revert.
+		v.volumeInfo.ReadOnly = prevReadOnly
+		v.volumeInfo.ReadOnlyCanDelete = prevReadOnlyCanDelete
+		return fmt.Errorf("persist volume read-only state: %v", err)
+	}
+	return nil
 }

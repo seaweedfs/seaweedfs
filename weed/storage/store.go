@@ -838,6 +838,8 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 		}
 	}
 	v.noWriteLock.Lock()
+	prevNoWriteOrDelete := v.noWriteOrDelete
+	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = !canDelete
 	if canDelete {
 		v.noWriteCanDelete = true
@@ -846,7 +848,14 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 		v.noWriteCanDelete = false
 	}
 	if persist {
-		v.PersistReadOnly(true, canDelete)
+		if err := v.PersistReadOnly(true, canDelete); err != nil {
+			// Roll back the in-memory flags so a failed .vif write does
+			// not leave the volume in a mode that restart will revert.
+			v.noWriteOrDelete = prevNoWriteOrDelete
+			v.noWriteCanDelete = prevNoWriteCanDelete
+			v.noWriteLock.Unlock()
+			return fmt.Errorf("volume %d persist read-only: %v", i, err)
+		}
 	}
 	v.noWriteLock.Unlock()
 	return nil
@@ -865,12 +874,21 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 	}
 	v.noWriteLock.Lock()
+	prevNoWriteOrDelete := v.noWriteOrDelete
+	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false
 	// Remote-tiered volumes must stay noWriteCanDelete regardless of marks.
 	if !v.HasRemoteFile() {
 		v.noWriteCanDelete = false
 	}
-	v.PersistReadOnly(false, false)
+	if err := v.PersistReadOnly(false, false); err != nil {
+		// Roll back the in-memory flags so a failed .vif write does not
+		// leave the volume writable in memory but read-only after restart.
+		v.noWriteOrDelete = prevNoWriteOrDelete
+		v.noWriteCanDelete = prevNoWriteCanDelete
+		v.noWriteLock.Unlock()
+		return fmt.Errorf("volume %d persist writable: %v", i, err)
+	}
 	v.noWriteLock.Unlock()
 	// Clear the EIO streak and the sticky quarantine flag so the next
 	// CollectHeartbeat can announce the volume again. If the disk is

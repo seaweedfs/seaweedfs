@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"mime"
 	"net/http"
@@ -433,7 +434,12 @@ func (h *ClusterHandlers) SetVolumeReadOnly(w http.ResponseWriter, r *http.Reque
 	var request struct {
 		ReadOnly *bool `json:"read_only"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ReadOnly == nil {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&request); err != nil || request.ReadOnly == nil {
+		writeJSONError(w, http.StatusBadRequest, "read_only must be a boolean")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeJSONError(w, http.StatusBadRequest, "read_only must be a boolean")
 		return
 	}
