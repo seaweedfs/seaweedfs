@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
 	"testing"
@@ -293,5 +294,102 @@ func TestVolumeCopyOverwritesExistingDestinationVolume(t *testing.T) {
 	}
 	if string(destReadAfterBody) != string(sourcePayload) {
 		t.Fatalf("destination post-copy payload mismatch: got %q want %q", string(destReadAfterBody), string(sourcePayload))
+	}
+}
+
+// A VolumeCopy whose caller goes away must not leave a mounted volume behind on
+// the destination. weed-admin's batch balance routinely starts far more copies
+// than it finishes, and each abandoned copy that still mounts costs the
+// destination a volume it was never asked to hold: a per-volume index cache that
+// is never reclaimed, and — under replication=000 — a second writable copy of a
+// volume id that two writers can diverge.
+//
+// The copy is throttled so it is demonstrably still in flight when the caller
+// cancels; the assertion before the cancel keeps the test from passing
+// vacuously if the throttle ever stops biting.
+func TestVolumeCopyCancelledByCallerDoesNotMountDestination(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartDualVolumeCluster(t, matrix.P1())
+	sourceConn, sourceClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer sourceConn.Close()
+	destConn, destClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(1))
+	defer destConn.Close()
+
+	const volumeID = uint32(44)
+	const payloadMiB = 192
+	framework.AllocateVolume(t, sourceClient, volumeID, "")
+
+	// The fixture size is load-bearing twice over; do not shrink it to save CI
+	// time without reading both reasons.
+	//
+	// First, the copy has to still be running when the caller cancels, and the
+	// only lever for that is IoBytePerSecond. It is a no-op below ~100ms of wall
+	// clock — the throttler never re-checks within its first window — and on a
+	// tmpfs loopback cluster 64 MiB copies in ~110ms.
+	//
+	// Second, 192 MiB is above the 128 MiB progress-report interval, which is
+	// what lets this test be green on Go: a failing stream.Send from that report
+	// is Go's only abort signal. Measured below the interval (120 MiB), a Go
+	// destination mounts the abandoned copy too, so a smaller fixture would fail
+	// the Go leg without any Rust change.
+	//
+	// The bytes are pseudo-random because the volume server gzips compressible
+	// uploads; a repeating payload lands on disk as a few KB and the throttle
+	// never bites.
+	httpClient := framework.NewHTTPClient()
+	chunk := make([]byte, 1024*1024)
+	if _, err := rand.New(rand.NewSource(11186)).Read(chunk); err != nil {
+		t.Fatalf("generate payload: %v", err)
+	}
+	for i := 0; i < payloadMiB; i++ {
+		fid := framework.NewFileID(volumeID, uint64(880100+i), 0x3456789a)
+		uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(0), fid, chunk)
+		_ = framework.ReadAllAndClose(t, uploadResp)
+		if uploadResp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload %d to source expected 201, got %d", i, uploadResp.StatusCode)
+		}
+	}
+
+	// 192 MiB at 16 MiB/s is about twelve seconds of copying.
+	copyCtx, cancelCopy := context.WithCancel(context.Background())
+	defer cancelCopy()
+	_, err := destClient.VolumeCopy(copyCtx, &volume_server_pb.VolumeCopyRequest{
+		VolumeId:        volumeID,
+		Collection:      "",
+		SourceDataNode:  clusterHarness.VolumeAdminAddress(0) + "." + strings.Split(clusterHarness.VolumeGRPCAddress(0), ":")[1],
+		IoBytePerSecond: 16 * 1024 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("VolumeCopy start failed: %v", err)
+	}
+
+	time.Sleep(2 * time.Second)
+
+	// Premise: the copy must still be running when we cancel. If the
+	// destination has already mounted, the throttle no longer bites and the
+	// rest of this test would prove nothing.
+	premiseCtx, cancelPremise := context.WithTimeout(context.Background(), 5*time.Second)
+	_, premiseErr := destClient.ReadVolumeFileStatus(premiseCtx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: volumeID})
+	cancelPremise()
+	if premiseErr == nil {
+		t.Fatalf("copy of volume %d already completed before the cancel; raise payloadMiB or lower IoBytePerSecond", volumeID)
+	}
+
+	cancelCopy()
+
+	// Well past the ~10s the unabandoned copy would have needed: the volume
+	// must never appear on the destination.
+	deadline := time.Now().Add(25 * time.Second)
+	for time.Now().Before(deadline) {
+		pollCtx, cancelPoll := context.WithTimeout(context.Background(), 5*time.Second)
+		_, statusErr := destClient.ReadVolumeFileStatus(pollCtx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: volumeID})
+		cancelPoll()
+		if statusErr == nil {
+			t.Fatalf("destination mounted volume %d after its VolumeCopy caller cancelled", volumeID)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }

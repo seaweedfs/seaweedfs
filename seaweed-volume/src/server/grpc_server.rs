@@ -1396,7 +1396,22 @@ impl VolumeServer for VolumeGrpcService {
         let state = self.state.clone();
 
         tokio::spawn(async move {
+            // Tracks whether mount_volume succeeded so the error branch can
+            // unmount (not just unlink) an orphaned replica. A mount that
+            // races a departing caller is the one case where the existing
+            // file-only cleanup leaves the volume loaded in memory.
+            let mut mounted = false;
             let result = async {
+                // Nothing below is worth doing for a caller that has already
+                // gone: the transfer would spend the source's bandwidth and the
+                // destination's disk on a volume nobody will take delivery of.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} copy cancelled by caller",
+                        vid
+                    )));
+                }
+
                 let report_interval: i64 = 128 * 1024 * 1024;
                 let mut next_report_target: i64 = report_interval;
                 let io_byte_per_second = if req.io_byte_per_second > 0 {
@@ -1410,12 +1425,24 @@ impl VolumeServer for VolumeGrpcService {
                 let mut preallocate_size: i64 = 0;
                 if !has_remote_dat {
                     let grpc_addr = super::heartbeat::to_grpc_address(&state.master_url);
-                    match super::heartbeat::try_get_master_configuration(
-                        &grpc_addr,
-                        state.outgoing_grpc_tls.as_ref(),
-                    )
-                    .await
-                    {
+                    // Race the master-configuration RPC against the caller's
+                    // response channel: a stalled master (or a slow leader
+                    // election) would otherwise hold the task and its .note
+                    // past a departing caller, since the per-chunk checks in
+                    // copy_file_from_source are never reached.
+                    let config = tokio::select! {
+                        res = super::heartbeat::try_get_master_configuration(
+                            &grpc_addr,
+                            state.outgoing_grpc_tls.as_ref(),
+                        ) => res,
+                        _ = tx.closed() => {
+                            return Err(Status::cancelled(format!(
+                                "volume {} copy cancelled by caller",
+                                vid
+                            )));
+                        }
+                    };
+                    match config {
                         Ok(resp) => {
                             if resp.volume_preallocate {
                                 preallocate_size = resp.volume_size_limit_m_b as i64 * 1024 * 1024;
@@ -1454,13 +1481,13 @@ impl VolumeServer for VolumeGrpcService {
                         ".dat",
                         false,
                         true,
-                        Some(&tx),
+                        &tx,
+                        true,
                         &mut next_report_target,
                         report_interval,
                         &mut throttler,
                     )
-                    .await
-                    .map_err(|e| Status::internal(e))?;
+                    .await?;
                     if dat_modified_ts_ns > 0 {
                         let _ = set_file_mtime(&dat_path, dat_modified_ts_ns);
                     }
@@ -1479,13 +1506,13 @@ impl VolumeServer for VolumeGrpcService {
                     ".idx",
                     false,
                     false,
-                    None,
+                    &tx,
+                    false,
                     &mut next_report_target,
                     report_interval,
                     &mut throttler,
                 )
-                .await
-                .map_err(|e| Status::internal(e))?;
+                .await?;
                 if idx_modified_ts_ns > 0 {
                     let _ = set_file_mtime(&idx_path, idx_modified_ts_ns);
                 }
@@ -1503,13 +1530,13 @@ impl VolumeServer for VolumeGrpcService {
                     ".vif",
                     false,
                     true,
-                    None,
+                    &tx,
+                    false,
                     &mut next_report_target,
                     report_interval,
                     &mut throttler,
                 )
-                .await
-                .map_err(|e| Status::internal(e))?;
+                .await?;
                 if vif_modified_ts_ns > 0 {
                     let _ = set_file_mtime(&vif_path, vif_modified_ts_ns);
                 }
@@ -1546,6 +1573,18 @@ impl VolumeServer for VolumeGrpcService {
                     vol_info.dat_file_timestamp_seconds * 1_000_000_000
                 };
 
+                // An orphaned mount is how an abandoned copy does lasting
+                // damage: the destination carries that volume's index cache for
+                // the lifetime of the process, and under replication=000 the
+                // cluster is left holding one volume id on two servers, both
+                // writable, which concurrent writes can diverge.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} copy cancelled by caller before mount",
+                        vid
+                    )));
+                }
+
                 // Mount the volume
                 {
                     let mut store = state.store.write().unwrap();
@@ -1554,23 +1593,69 @@ impl VolumeServer for VolumeGrpcService {
                         .map_err(|e| {
                             Status::internal(format!("failed to mount volume {}: {}", vid, e))
                         })?;
+                    mounted = true;
                 }
                 state.volume_state_notify.notify_one();
 
-                // Send final response with last_append_at_ns
-                let _ = tx
+                // Send final response with last_append_at_ns. A failed send
+                // means the caller is gone: the mount above raced a departing
+                // receiver (the pre-mount is_closed() check cannot close that
+                // window), and leaving the volume mounted is exactly the orphan
+                // this PR prevents. Surface it as Cancelled so the error branch
+                // unmounts and deletes the replica it just created.
+                if tx
                     .send(Ok(volume_server_pb::VolumeCopyResponse {
                         last_append_at_ns: last_append_at_ns,
                         processed_bytes: 0,
                     }))
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    return Err(Status::cancelled(format!(
+                        "volume {} copy cancelled by caller after mount",
+                        vid
+                    )));
+                }
 
                 Ok::<(), Status>(())
             }
             .await;
 
             if let Err(e) = result {
-                // Clean up on error
+                // An abandoned copy is otherwise invisible here: the error goes
+                // to a channel nobody is reading. Logging it gives the operator
+                // the cause behind the balancer's "delete that copy, then re-run
+                // the move".
+                if e.code() == tonic::Code::Cancelled {
+                    tracing::info!(
+                        "volume {} copy from {} abandoned by its caller, discarding the partial copy",
+                        vid,
+                        req.source_data_node
+                    );
+                } else {
+                    tracing::warn!(
+                        "volume {} copy from {} failed: {}",
+                        vid,
+                        req.source_data_node,
+                        e
+                    );
+                }
+                // Clean up on error. If the volume was mounted (the after-mount
+                // race), delete_volume unmounts it from the store AND removes
+                // the .dat/.idx/.vif in one step; the remove_file calls below
+                // cover the never-mounted partial-file case and are harmless
+                // no-ops when delete_volume already removed the files.
+                //
+                // keep_remote_data=true matches the pre-spawn delete_volume at
+                // the top of volume_copy: a remote-tier copy's .vif points at
+                // the same cloud object the source replica references, so
+                // destroying the abandoned destination with keep_remote_data=
+                // false would delete the source's remote data.
+                if mounted {
+                    let mut store = state.store.write().unwrap();
+                    let _ = store.delete_volume(vid, false, true);
+                    state.volume_state_notify.notify_one();
+                }
                 let _ = std::fs::remove_file(format!("{}.dat", data_base_name));
                 let _ = std::fs::remove_file(format!("{}.idx", idx_base_name));
                 let _ = std::fs::remove_file(format!("{}.vif", data_base_name));
@@ -3671,21 +3756,52 @@ impl VolumeServer for VolumeGrpcService {
 
         tokio::spawn(async move {
             let result: Result<(), Status> = async {
+                // Nothing below is worth doing for a caller that has already
+                // gone: the upload would spend bandwidth and S3 storage on a
+                // transition nobody is waiting to hear the result of.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} tier move to remote cancelled by caller",
+                        vid
+                    )));
+                }
+
                 // Upload the .dat file to S3 with progress
                 let tx_progress = tx.clone();
                 let mut last_report = std::time::Instant::now();
                 let (key, size) = backend
                     .upload_file(&dat_path, move |processed, percentage| {
+                        // Checked on every part, not only where progress is
+                        // reported: the report is rate-limited to one a second,
+                        // so its result alone would miss a caller that left in
+                        // between. Go aborts here too -- the progress callback
+                        // returns stream.Send's error (s3_upload.go).
+                        if tx_progress.is_closed() {
+                            return Err(format!(
+                                "volume {} tier move to remote cancelled by caller",
+                                vid
+                            ));
+                        }
                         let now = std::time::Instant::now();
                         if now.duration_since(last_report) >= std::time::Duration::from_secs(1) {
                             last_report = now;
-                            let _ = tx_progress.try_send(Ok(
-                                volume_server_pb::VolumeTierMoveDatToRemoteResponse {
-                                    processed,
-                                    processed_percentage: percentage,
-                                },
-                            ));
+                            if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
+                                tx_progress.try_send(Ok(
+                                    volume_server_pb::VolumeTierMoveDatToRemoteResponse {
+                                        processed,
+                                        processed_percentage: percentage,
+                                    },
+                                ))
+                            {
+                                return Err(format!(
+                                    "volume {} tier move to remote cancelled by caller",
+                                    vid
+                                ));
+                            }
+                            // A merely full channel is a slow reader, not a
+                            // departed one; drop the report and keep going.
                         }
+                        Ok(())
                     })
                     .await
                     .map_err(|e| {
@@ -3695,6 +3811,11 @@ impl VolumeServer for VolumeGrpcService {
                         ))
                     })?;
 
+                // Deliberately no cancellation check here. Once the object is
+                // in S3 the cheap bookkeeping that follows is what makes the
+                // state consistent; stopping now would leave the object paid
+                // for and referenced by nothing. Go does not gate here either:
+                // its progress callback only runs during the transfer.
                 // Update volume info with remote file reference
                 {
                     let mut store = state.store.write().unwrap();
@@ -3746,6 +3867,16 @@ impl VolumeServer for VolumeGrpcService {
             .await;
 
             if let Err(e) = result {
+                // The error otherwise goes to a channel nobody is
+                // reading, leaving an abandoned tier move with no trace.
+                if e.code() == tonic::Code::Cancelled {
+                    tracing::info!(
+                        "volume {} tier move to remote abandoned by its caller",
+                        vid
+                    );
+                } else {
+                    tracing::warn!("volume {} tier move to remote failed: {}", vid, e);
+                }
                 let _ = tx.send(Err(e)).await;
             }
         });
@@ -3828,25 +3959,73 @@ impl VolumeServer for VolumeGrpcService {
 
         tokio::spawn(async move {
             let result: Result<(), Status> = async {
+                // Nothing below is worth doing for a caller that has already
+                // gone, and the download would overwrite a .dat path the volume
+                // still reports as absent.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} tier move from remote cancelled by caller",
+                        vid
+                    )));
+                }
+
                 // Download the .dat file from S3 with progress
                 let tx_progress = tx.clone();
                 let mut last_report = std::time::Instant::now();
                 let storage_name_clone = storage_name.clone();
                 let _size = backend
                     .download_file(&dat_path, &storage_key, move |processed, percentage| {
+                        // Checked on every part, not only where progress is
+                        // reported: the report is rate-limited to one a second,
+                        // so its result alone would miss a caller that left in
+                        // between. Go aborts here too -- the progress callback
+                        // returns stream.Send's error (s3_download.go).
+                        if tx_progress.is_closed() {
+                            return Err(format!(
+                                "volume {} tier move from remote cancelled by caller",
+                                vid
+                            ));
+                        }
                         let now = std::time::Instant::now();
                         if now.duration_since(last_report) >= std::time::Duration::from_secs(1) {
                             last_report = now;
-                            let _ = tx_progress.try_send(Ok(
-                                volume_server_pb::VolumeTierMoveDatFromRemoteResponse {
-                                    processed,
-                                    processed_percentage: percentage,
-                                },
-                            ));
+                            if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
+                                tx_progress.try_send(Ok(
+                                    volume_server_pb::VolumeTierMoveDatFromRemoteResponse {
+                                        processed,
+                                        processed_percentage: percentage,
+                                    },
+                                ))
+                            {
+                                return Err(format!(
+                                    "volume {} tier move from remote cancelled by caller",
+                                    vid
+                                ));
+                            }
+                            // A merely full channel is a slow reader, not a
+                            // departed one; drop the report and keep going.
                         }
+                        Ok(())
                     })
                     .await
                     .map_err(|e| {
+                        // download_file pre-allocates the destination to the
+                        // object's full size, so an aborted download leaves a
+                        // .dat that is the right length and the wrong content.
+                        // It has to go: this handler refuses to run at all when
+                        // a local .dat exists, so leaving one wedges every
+                        // retry on "already on local disk", and a restart would
+                        // load the sparse file as the volume's data.
+                        if let Err(rm) = std::fs::remove_file(&dat_path) {
+                            if rm.kind() != std::io::ErrorKind::NotFound {
+                                tracing::warn!(
+                                    "volume {} could not remove the incomplete download {}: {}",
+                                    vid,
+                                    dat_path,
+                                    rm
+                                );
+                            }
+                        }
                         Status::internal(format!(
                             "backend {} copy file {}: {}",
                             storage_name_clone, dat_path, e
@@ -3977,6 +4156,16 @@ impl VolumeServer for VolumeGrpcService {
             .await;
 
             if let Err(e) = result {
+                // The error otherwise goes to a channel nobody is
+                // reading, leaving an abandoned tier move with no trace.
+                if e.code() == tonic::Code::Cancelled {
+                    tracing::info!(
+                        "volume {} tier move from remote abandoned by its caller",
+                        vid
+                    );
+                } else {
+                    tracing::warn!("volume {} tier move from remote failed: {}", vid, e);
+                }
                 let _ = tx.send(Err(e)).await;
             }
         });
@@ -5009,13 +5198,12 @@ async fn copy_file_from_source<T>(
     ext: &str,
     is_append: bool,
     ignore_source_not_found: bool,
-    progress_tx: Option<
-        &tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
-    >,
+    progress_tx: &tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
+    report_progress: bool,
     next_report_target: &mut i64,
     report_interval: i64,
     throttler: &mut WriteThrottler,
-) -> Result<i64, String>
+) -> Result<i64, Status>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody>,
     T::Error: Into<tonic::codegen::StdError>,
@@ -5032,62 +5220,107 @@ where
         ignore_source_file_not_found: ignore_source_not_found,
     };
 
-    let mut stream = client
-        .copy_file(copy_req)
-        .await
-        .map_err(|e| {
-            format!(
-                "failed to start copying volume {} {} file: {}",
-                volume_id, ext, e
-            )
-        })?
-        .into_inner();
+    // Cancellation surfaces as Status::cancelled so the spawn's error branch
+    // can distinguish it from ordinary failures (logging + future handling).
+    // The other errors here stay Status::internal, matching the prior
+    // `.map_err(|e| Status::internal(e))` at the call sites.
+    let cancelled = || {
+        Status::cancelled(format!(
+            "volume {} {} copy cancelled by caller",
+            volume_id, ext
+        ))
+    };
+
+    // Race the initial RPC establishment against the caller's response channel:
+    // if the source stalls before sending response headers, the per-message
+    // select! below is never reached, and without this race the task, the
+    // source connection, and any preallocated files would outlive a caller
+    // that has already gone.
+    let mut stream = tokio::select! {
+        res = client.copy_file(copy_req) => {
+            res.map_err(|e| {
+                Status::internal(format!(
+                    "failed to start copying volume {} {} file: {}",
+                    volume_id, ext, e
+                ))
+            })?
+            .into_inner()
+        }
+        _ = progress_tx.closed() => return Err(cancelled()),
+    };
 
     let mut file = if is_append {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(dest_path)
-            .map_err(|e| format!("open file {}: {}", dest_path, e))?
+            .map_err(|e| Status::internal(format!("open file {}: {}", dest_path, e)))?
     } else {
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(dest_path)
-            .map_err(|e| format!("open file {}: {}", dest_path, e))?
+            .map_err(|e| Status::internal(format!("open file {}: {}", dest_path, e)))?
     };
 
     let mut progressed_bytes: i64 = 0;
     let mut modified_ts_ns: i64 = 0;
 
-    while let Some(resp) = stream
-        .message()
-        .await
-        .map_err(|e| format!("receiving {}: {}", dest_path, e))?
-    {
+    // The source stream's message() future is the one await in this loop that
+    // can hang indefinitely: a stalled source (slow disk, network partition,
+    // GC pause on the source host) never returns a chunk, and without racing
+    // it against the caller's response channel the detached task, the source
+    // connection, and the partial files (including the .note) all outlive the
+    // caller. select! lets a departing caller preempt the source read.
+    loop {
+        let resp = tokio::select! {
+            msg = stream.message() => {
+                msg.map_err(|e| Status::internal(format!("receiving {}: {}", dest_path, e)))?
+            }
+            _ = progress_tx.closed() => return Err(cancelled()),
+        };
+        let resp = match resp {
+            Some(r) => r,
+            None => break,
+        };
         if resp.modified_ts_ns != 0 {
             modified_ts_ns = resp.modified_ts_ns;
         }
         if !resp.file_content.is_empty() {
+            // The caller's response stream is the only thing that makes this
+            // copy worth finishing. Checked every chunk rather than only where
+            // progress is reported: the first report lands 128MB in, so a
+            // smaller volume would otherwise run to completion — and mount —
+            // long after its caller stopped listening.
+            if progress_tx.is_closed() {
+                return Err(cancelled());
+            }
             use std::io::Write;
             file.write_all(&resp.file_content)
-                .map_err(|e| format!("write file {}: {}", dest_path, e))?;
+                .map_err(|e| Status::internal(format!("write file {}: {}", dest_path, e)))?;
             progressed_bytes += resp.file_content.len() as i64;
-            throttler
-                .maybe_slowdown(resp.file_content.len() as i64)
-                .await;
+            // A throttled copy sleeps seconds at a time; wake for a departing
+            // caller instead of finishing the nap first.
+            tokio::select! {
+                _ = throttler.maybe_slowdown(resp.file_content.len() as i64) => {}
+                _ = progress_tx.closed() => return Err(cancelled()),
+            }
 
-            if let Some(tx) = progress_tx {
-                if progressed_bytes > *next_report_target {
-                    let _ = tx
-                        .send(Ok(volume_server_pb::VolumeCopyResponse {
-                            last_append_at_ns: 0,
-                            processed_bytes: progressed_bytes,
-                        }))
-                        .await;
-                    *next_report_target = progressed_bytes + report_interval;
+            if report_progress && progressed_bytes > *next_report_target {
+                // Go aborts the transfer when this send fails
+                // (volume_grpc_copy.go: `return false`); so do we.
+                if progress_tx
+                    .send(Ok(volume_server_pb::VolumeCopyResponse {
+                        last_append_at_ns: 0,
+                        processed_bytes: progressed_bytes,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    return Err(cancelled());
                 }
+                *next_report_target = progressed_bytes + report_interval;
             }
         }
     }
@@ -5830,6 +6063,95 @@ mod tests {
             .remove("s3.tier_down_delete");
     }
 
+    // The progress callback is the only thing a tier transfer polls, so it is
+    // the only place a departing caller can be noticed. Go gives it an error
+    // return for exactly this (s3_upload.go:99, s3_download.go:84); this checks
+    // the Rust port now honours one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_download_file_aborts_when_the_progress_callback_fails() {
+        let (service, tmp, shutdown_tx, _dat_bytes, _super_block_size, _delete_count) =
+            make_remote_only_service("tier_progress_abort");
+        let backend = global_s3_tier_registry()
+            .read()
+            .unwrap()
+            .get("s3.tier_progress_abort")
+            .expect("backend registered");
+        let dest = format!("{}/aborted.dat", tmp.path().to_str().unwrap());
+
+        let err = backend
+            .download_file(&dest, "remote-key", |_, _| {
+                Err("caller gone".to_string())
+            })
+            .await
+            .expect_err("a failing progress callback must abort the download");
+        assert!(err.contains("caller gone"), "unexpected error: {}", err);
+
+        drop(service);
+        let _ = shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_progress_abort");
+    }
+
+    // An abandoned tier-down must leave the volume exactly as it found it. The
+    // partial .dat matters most: download_file pre-allocates the destination to
+    // the object's full size, this handler refuses to run while a local .dat
+    // exists, and a restart would load that file as the volume's data -- so a
+    // leftover wedges every retry on "already on local disk" and corrupts the
+    // volume on the way.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_tier_move_from_remote_cancelled_leaves_the_volume_untouched() {
+        let (service, tmp, shutdown_tx, _dat_bytes, _super_block_size, delete_count) =
+            make_remote_only_service("tier_down_cancel");
+        let dat_path = format!("{}/1.dat", tmp.path().to_str().unwrap());
+        assert!(!std::path::Path::new(&dat_path).exists());
+
+        let response = service
+            .volume_tier_move_dat_from_remote(Request::new(
+                volume_server_pb::VolumeTierMoveDatFromRemoteRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    keep_remote_dat_file: false,
+                },
+            ))
+            .await
+            .unwrap();
+
+        // The caller hangs up: dropping the response drops the receiving half
+        // of the channel, which is all a cancelled RPC amounts to here.
+        drop(response);
+
+        for _ in 0..60 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            assert!(
+                !std::path::Path::new(&dat_path).exists(),
+                "abandoned tier-down left a local .dat behind"
+            );
+        }
+
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert!(
+                vol.has_remote_file,
+                "abandoned tier-down published the transition to local"
+            );
+            assert!(!vol.volume_info.files.is_empty());
+        }
+        assert_eq!(
+            delete_count.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "abandoned tier-down deleted the shared remote object"
+        );
+
+        let _ = shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_down_cancel");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_tier_move_from_remote_keep_remote_still_swaps_to_local() {
         let (service, tmp, shutdown_tx, dat_bytes, _super_block_size, delete_count) =
@@ -5904,6 +6226,256 @@ mod tests {
         };
         let dat_bytes = std::fs::read(&dat_path).unwrap();
         (service, tmp, dat_bytes)
+    }
+
+    // Serve a VolumeGrpcService over a real gRPC endpoint. VolumeCopy dials its
+    // source_data_node rather than calling in process, so a cancellation test
+    // needs a source that is reachable over the wire.
+    async fn serve_source(
+        service: VolumeGrpcService,
+    ) -> (u16, tokio::sync::oneshot::Sender<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = tonic::transport::Server::builder()
+                .add_service(
+                    crate::pb::volume_server_pb::volume_server_server::VolumeServerServer::new(
+                        service,
+                    ),
+                )
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await;
+        });
+        (port, shutdown_tx)
+    }
+
+    // The transfer itself must notice a caller that has gone, with no progress
+    // report to carry the news. The first report is 128MB in, so for anything
+    // smaller -- the ordinary case for a balance move -- the send result says
+    // nothing and only the closed channel does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_copy_file_from_source_stops_when_the_caller_is_gone() {
+        let (source_service, _source_tmp, dat_bytes) = make_local_service_with_large_volume();
+        assert!(
+            dat_bytes.len() > 2 * 1024 * 1024,
+            "fixture must span several 2MB chunks"
+        );
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client =
+            volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
+                .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+                .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest_path = format!("{}/copied.dat", dest_tmp.path().to_str().unwrap());
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<
+            Result<volume_server_pb::VolumeCopyResponse, Status>,
+        >(16);
+        drop(rx); // exactly what a client hanging up does to the sender
+
+        let mut next_report_target: i64 = 128 * 1024 * 1024;
+        let mut throttler = WriteThrottler::new(0);
+        let err = copy_file_from_source(
+            &mut client,
+            false,
+            "",
+            1,
+            u32::MAX,
+            dat_bytes.len() as u64,
+            &dest_path,
+            ".dat",
+            false,
+            true,
+            &tx,
+            true,
+            &mut next_report_target,
+            128 * 1024 * 1024,
+            &mut throttler,
+        )
+        .await
+        .expect_err("a copy whose caller is gone must not run to completion");
+        // Cancellation must surface as Status::cancelled, not Status::internal:
+        // the spawn's error branch classifies on the code, so an Internal here
+        // would be logged as a generic failure instead of "abandoned by caller".
+        assert_eq!(
+            err.code(),
+            tonic::Code::Cancelled,
+            "expected Cancelled, got {:?}: {}",
+            err.code(),
+            err
+        );
+        assert!(
+            err.message().contains("cancelled by caller"),
+            "unexpected error: {}",
+            err
+        );
+
+        let copied = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
+        assert!(
+            copied < dat_bytes.len() as u64,
+            "copy should have stopped short, wrote {} of {} bytes",
+            copied,
+            dat_bytes.len()
+        );
+    }
+
+    // An abandoned VolumeCopy must leave nothing behind: no mounted volume (its
+    // index cache would be held for the life of the process, and under
+    // replication=000 the cluster would carry one volume id on two writable
+    // servers), and none of the partial files or the .note, which fails the
+    // volume load on the next restart.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_cancelled_by_caller_mounts_nothing_and_cleans_up() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store.delete_volume(VolumeId(1), false, false).unwrap();
+            // available_space is filled in by the periodic disk check, which
+            // does not run in a unit test; without it VolumeCopy finds no
+            // location with room and never gets as far as copying.
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_dir = dest_tmp.path().to_str().unwrap().to_string();
+        let dest_file = |ext: &str| format!("{}/1{}", dest_dir, ext);
+        assert!(
+            !std::path::Path::new(&dest_file(".dat")).exists(),
+            "destination must start without the volume for this test to mean anything"
+        );
+
+        let response = dest_service
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        // The caller hangs up. Dropping the response drops the receiving half of
+        // the channel, which is all a cancelled RPC amounts to on this side.
+        drop(response);
+
+        // Give the copy longer than it would need to finish, and hold it to the
+        // assertion throughout rather than only at the end.
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let store = dest_service.state.store.read().unwrap();
+            assert!(
+                store.find_volume(VolumeId(1)).is_none(),
+                "destination mounted a volume whose copy was abandoned"
+            );
+        }
+
+        for ext in [".dat", ".idx", ".vif", ".note"] {
+            assert!(
+                !std::path::Path::new(&dest_file(ext)).exists(),
+                "abandoned copy left {} behind",
+                dest_file(ext)
+            );
+        }
+    }
+
+    // If the caller departs in the narrow window between the pre-mount
+    // is_closed() check and the final tx.send, the volume is already mounted
+    // when the send fails. The task must roll back that mount — not just unlink
+    // the files — or the destination carries the volume's index cache for the
+    // life of the process.
+    //
+    // Reaching that window black-box needs a seam. The one the code already
+    // offers is the store write lock: the test takes it immediately after
+    // volume_copy returns, so the spawned task runs the copy to completion with
+    // the caller still attached, passes the pre-mount is_closed() check, then
+    // parks entering the mount block (state.store.write() blocks on the test's
+    // guard). The test then drops the response — the caller is gone — and
+    // releases the guard. The task acquires the lock, mounts, fails the final
+    // tx.send (receiver dropped), and must roll back via the error branch's
+    // delete_volume. Without the lock seam the task sees is_closed() at its
+    // very first check and returns before mount_volume, exercising the wrong
+    // path — the test would be green for the wrong reason.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_after_mount_cancellation_rolls_back_mount() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store.delete_volume(VolumeId(1), false, false).unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_dir = dest_tmp.path().to_str().unwrap().to_string();
+        let dest_file = |ext: &str| format!("{}/1{}", dest_dir, ext);
+
+        let response = dest_service
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        // Hold the store write lock so the task parks at the mount block after
+        // completing the copy and passing the pre-mount is_closed() check.
+        let store_guard = dest_service.state.store.write().unwrap();
+
+        // Give the copy time to complete and the task to reach the mount block.
+        // The 5 MB fixture copies in well under a second on a local loopback
+        // gRPC connection; 2 s is generous and keeps the test fast.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // The caller hangs up while the task is parked at the mount block.
+        drop(response);
+
+        // Release the store lock so the task can enter the mount block, mount,
+        // fail the final send, and roll back.
+        drop(store_guard);
+
+        // Wait for the rollback to finish.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let store = dest_service.state.store.read().unwrap();
+        assert!(
+            store.find_volume(VolumeId(1)).is_none(),
+            "destination still holds a mounted volume after after-mount cancellation"
+        );
+        drop(store);
+
+        for ext in [".dat", ".idx", ".vif", ".note"] {
+            assert!(
+                !std::path::Path::new(&dest_file(ext)).exists(),
+                "abandoned copy left {} behind",
+                dest_file(ext)
+            );
+        }
     }
 
     // copy_file must stream the whole .dat in 2MB chunks (not buffer it) and

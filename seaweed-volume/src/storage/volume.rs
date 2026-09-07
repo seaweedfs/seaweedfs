@@ -1874,8 +1874,43 @@ impl Volume {
             self.last_modified_ts_seconds = n.last_modified;
         }
 
+        self.maybe_checkpoint_index(fsync);
+
         // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
         Ok((offset, Size(n.data_size as i32), false))
+    }
+
+    /// Take the index checkpoint the needle map asked for, data first: the
+    /// checkpoint makes the index durable, and an index row that outlives
+    /// the bytes it points at loads read-only (see load()). A failed .dat
+    /// flush therefore skips the checkpoint; the map keeps asking, so it is
+    /// retried on the next write.
+    ///
+    /// When `idx_already_synced` is true the .idx has already been fsynced by
+    /// `flush_idx` on the fsync=true write path, so the checkpoint skips its
+    /// own .idx fsync to avoid a redundant one.
+    fn maybe_checkpoint_index(&mut self, idx_already_synced: bool) {
+        let due = self.nm.as_ref().is_some_and(|nm| nm.checkpoint_due());
+        if !due {
+            return;
+        }
+        if let Err(e) = self.flush_dat() {
+            self.check_read_write_error(Some(&e));
+            tracing::warn!(
+                "volume {}: skipping index checkpoint, .dat flush failed: {}",
+                self.id.0,
+                e
+            );
+            return;
+        }
+        let checkpointed = match self.nm.as_mut() {
+            Some(nm) => nm.checkpoint(!idx_already_synced),
+            None => Ok(()),
+        };
+        if let Err(e) = checkpointed {
+            self.check_read_write_error(Some(&e));
+            tracing::warn!("volume {}: index checkpoint failed: {}", self.id.0, e);
+        }
     }
 
     fn read_needle_header_unlocked(&self, n: &mut Needle, offset: i64) -> Result<(), VolumeError> {
@@ -2014,6 +2049,7 @@ impl Volume {
         if let Some(nm) = &mut self.nm {
             nm.delete(n.id, Offset::from_actual_offset(offset as i64))?;
         }
+        self.maybe_checkpoint_index(false);
 
         Ok(size)
     }
@@ -2726,6 +2762,7 @@ impl Volume {
         if let Some(ref mut nm) = self.nm {
             nm.put(key, offset, size).map_err(VolumeError::Io)?;
         }
+        self.maybe_checkpoint_index(false);
         Ok(())
     }
 
@@ -3360,6 +3397,7 @@ impl Volume {
         if let Some(ref mut nm) = self.nm {
             nm.put(needle_id, offset, size)?;
         }
+        self.maybe_checkpoint_index(false);
 
         Ok(())
     }
@@ -3967,13 +4005,29 @@ impl Volume {
     }
 
     pub fn close(&mut self) {
-        if let Some(ref dat_file) = self.dat_file {
-            let _ = dat_file.sync_all();
-        }
+        let dat_synced = if let Some(ref dat_file) = self.dat_file {
+            dat_file.sync_all().is_ok()
+        } else {
+            true
+        };
         self.dat_file = None;
         self.remote_dat_file = None;
-        if let Some(ref nm) = self.nm {
-            let _ = nm.sync();
+        // When the .dat flushed, checkpoint the index so the next load starts
+        // from the recorded .idx size. When it did not, skip the checkpoint:
+        // a durable index pointing past an unflushed .dat tail would make the
+        // reload's max_needle_end check mark the volume read-only. Without the
+        // checkpoint, META_IDX_SIZE stays at the last successful one and the
+        // reload replays the uncheckpointed tail (redb flushes on drop).
+        if let Some(ref mut nm) = self.nm {
+            if dat_synced {
+                nm.close();
+            } else {
+                tracing::warn!(
+                    "volume {}: .dat sync failed on close, skipping index checkpoint",
+                    self.id.0
+                );
+                nm.close_without_checkpoint();
+            }
         }
         self.nm = None;
     }
@@ -5505,6 +5559,106 @@ mod tests {
         };
         v.read_needle(&mut n).unwrap();
         assert_eq!(std::str::from_utf8(&n.data).unwrap(), "data 2");
+    }
+
+    #[test]
+    fn test_redb_volume_close_then_reload_keeps_counters_exact() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let open = || {
+            Volume::new(
+                dir,
+                dir,
+                "",
+                VolumeId(1),
+                NeedleMapKind::Redb,
+                None,
+                None,
+                0,
+                Version::current(),
+            )
+            .unwrap()
+        };
+
+        {
+            let mut v = open();
+            for i in 1..=3 {
+                let data = format!("data {}", i);
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            // Volume::close is the shutdown path (store -> disk location ->
+            // volume). It must checkpoint the redb index, or the reload
+            // replays rows the table already holds and inflates the counters.
+            v.close();
+        }
+
+        let v = open();
+        assert_eq!(v.file_count(), 3);
+        assert_eq!(v.deleted_count(), 0);
+        let mut n = Needle {
+            id: NeedleId(2),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n).unwrap();
+        assert_eq!(std::str::from_utf8(&n.data).unwrap(), "data 2");
+    }
+
+    #[test]
+    fn test_redb_volume_checkpoint_flushes_dat_before_index() {
+        use crate::storage::needle_map::test_support::durable_idx_size;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::Redb,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        let rdb_path = std::path::PathBuf::from(v.file_name(".rdb"));
+        let write = |v: &mut Volume, i: u64| {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(1),
+                data: b"x".to_vec(),
+                data_size: 1,
+                ..Needle::default()
+            };
+            // fsync=false: the .dat append is not flushed by the write itself.
+            v.write_needle(&mut n, true, false).unwrap();
+        };
+        for i in 1..1000 {
+            write(&mut v, i);
+        }
+        assert_eq!(durable_idx_size(&rdb_path), None);
+
+        // The 1000th write makes an index checkpoint due. A checkpoint makes
+        // the index durable, so the volume has to flush the .dat first, and
+        // when that flush fails nothing may be checkpointed: a durable index
+        // row pointing past the end of an unflushed .dat loads read-only.
+        v.fail_next_fsync_for_test(true);
+        write(&mut v, 1000);
+        assert_eq!(durable_idx_size(&rdb_path), None);
+
+        v.fail_next_fsync_for_test(false);
+        write(&mut v, 1001);
+        assert_eq!(
+            durable_idx_size(&rdb_path),
+            Some(1001 * NEEDLE_MAP_ENTRY_SIZE as u64)
+        );
     }
 
     #[test]

@@ -81,13 +81,17 @@ impl S3TierBackend {
     /// Returns (s3_key, file_size) on success.
     /// The progress callback receives (bytes_uploaded, percentage).
     /// Uses 64MB part size and 5 concurrent uploads (matches Go s3manager).
+    /// `progress_fn` returning `Err` aborts the upload, mirroring Go's
+    /// `fn(progressed, percentage) error` in `s3_upload.go`, where the error
+    /// surfaces out of `ReadAt` and fails the transfer. It is what lets a
+    /// caller that has hung up stop the work it is no longer waiting for.
     pub async fn upload_file<F>(
         &self,
         file_path: &str,
         progress_fn: F,
     ) -> Result<(String, u64), String>
     where
-        F: FnMut(i64, f32) + Send + Sync + 'static,
+        F: FnMut(i64, f32) -> Result<(), String> + Send + Sync + 'static,
     {
         let key = uuid::Uuid::new_v4().to_string();
 
@@ -184,8 +188,10 @@ impl S3TierBackend {
 
                 let e_tag = upload_part_resp.e_tag().unwrap_or_default().to_string();
 
-                // Report progress
-                {
+                // Report progress. The lock is released before the result is
+                // propagated so an aborting callback cannot poison the mutex
+                // for the other parts still in flight.
+                let progress_result = {
                     let mut guard = progress.lock().unwrap();
                     guard.0 += size as u64;
                     let uploaded = guard.0;
@@ -194,8 +200,9 @@ impl S3TierBackend {
                     } else {
                         100.0
                     };
-                    (guard.1)(uploaded as i64, pct);
-                }
+                    (guard.1)(uploaded as i64, pct)
+                };
+                progress_result?;
 
                 Ok::<_, String>(
                     CompletedPart::builder()
@@ -206,29 +213,58 @@ impl S3TierBackend {
             }));
         }
 
-        // Collect results, preserving part order
-        let mut completed_parts = Vec::with_capacity(handles.len());
-        for handle in handles {
-            let part = handle
+        let finish = async {
+            // Collect results, preserving part order
+            let mut completed_parts = Vec::with_capacity(handles.len());
+            for handle in handles {
+                let part = handle
+                    .await
+                    .map_err(|e| format!("upload task panicked: {}", e))??;
+                completed_parts.push(part);
+            }
+
+            // Complete multipart upload
+            let completed_upload = CompletedMultipartUpload::builder()
+                .set_parts(Some(completed_parts))
+                .build();
+
+            self.client
+                .complete_multipart_upload()
+                .bucket(&self.bucket)
+                .key(&key)
+                .upload_id(&upload_id)
+                .multipart_upload(completed_upload)
+                .send()
                 .await
-                .map_err(|e| format!("upload task panicked: {}", e))??;
-            completed_parts.push(part);
+                .map_err(|e| format!("failed to complete multipart upload: {}", e))?;
+
+            Ok::<(), String>(())
         }
+        .await;
 
-        // Complete multipart upload
-        let completed_upload = CompletedMultipartUpload::builder()
-            .set_parts(Some(completed_parts))
-            .build();
-
-        self.client
-            .complete_multipart_upload()
-            .bucket(&self.bucket)
-            .key(&key)
-            .upload_id(&upload_id)
-            .multipart_upload(completed_upload)
-            .send()
-            .await
-            .map_err(|e| format!("failed to complete multipart upload: {}", e))?;
+        if let Err(e) = finish {
+            // An abandoned multipart upload does not appear in an ordinary
+            // object listing but still accrues storage charges until a
+            // lifecycle rule reaps it. Now that a departing caller aborts the
+            // transfer this is a routine path, not a rare one.
+            if let Err(abort_err) = self
+                .client
+                .abort_multipart_upload()
+                .bucket(&self.bucket)
+                .key(&key)
+                .upload_id(&upload_id)
+                .send()
+                .await
+            {
+                tracing::warn!(
+                    "failed to abort multipart upload {} for key {}: {}",
+                    upload_id,
+                    key,
+                    abort_err
+                );
+            }
+            return Err(e);
+        }
 
         Ok((key, file_size))
     }
@@ -238,6 +274,8 @@ impl S3TierBackend {
     ///
     /// Returns the file size on success.
     /// Uses 64MB part size and 5 concurrent downloads (matches Go s3manager).
+    /// `progress_fn` returning `Err` aborts the download, mirroring Go's
+    /// `fn(progressed, percentage) error` in `s3_download.go`.
     pub async fn download_file<F>(
         &self,
         dest_path: &str,
@@ -245,7 +283,7 @@ impl S3TierBackend {
         progress_fn: F,
     ) -> Result<u64, String>
     where
-        F: FnMut(i64, f32) + Send + Sync + 'static,
+        F: FnMut(i64, f32) -> Result<(), String> + Send + Sync + 'static,
     {
         // Get file size first
         let head_resp = self
@@ -340,8 +378,10 @@ impl S3TierBackend {
                     .await
                     .map_err(|e| format!("failed to write to {}: {}", dp, e))?;
 
-                // Report progress
-                {
+                // Report progress. The lock is released before the result is
+                // propagated so an aborting callback cannot poison the mutex
+                // for the other parts still in flight.
+                let progress_result = {
                     let mut guard = progress.lock().unwrap();
                     guard.0 += bytes.len() as u64;
                     let downloaded = guard.0;
@@ -350,8 +390,9 @@ impl S3TierBackend {
                     } else {
                         100.0
                     };
-                    (guard.1)(downloaded as i64, pct);
-                }
+                    (guard.1)(downloaded as i64, pct)
+                };
+                progress_result?;
 
                 Ok::<_, String>(())
             }));
