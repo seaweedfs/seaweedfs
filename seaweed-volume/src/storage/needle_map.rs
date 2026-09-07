@@ -845,7 +845,14 @@ impl RedbNeedleMap {
         let packed = pack_needle_value(&NeedleValue { offset, size });
 
         let old = {
-            let txn = Self::begin_write_no_fsync(self.db_or_err()?);
+            let db = match self.db_or_err() {
+                Ok(db) => db,
+                Err(e) => {
+                    self.truncate_idx_to_offset();
+                    return Err(e);
+                }
+            };
+            let txn = Self::begin_write_no_fsync(db);
             let txn = match txn {
                 Ok(txn) => txn,
                 Err(e) => {
