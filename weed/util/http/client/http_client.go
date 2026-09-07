@@ -114,6 +114,16 @@ func (httpClient *HTTPClient) IsTLSVerified() bool {
 	return httpClient.expectHttpsScheme && httpClient.Transport != nil && (httpClient.Transport.TLSClientConfig == nil || !httpClient.Transport.TLSClientConfig.InsecureSkipVerify)
 }
 
+func rejectHttpsDowngrade(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return http.ErrUseLastResponse
+	}
+	if len(via) > 0 && via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return http.ErrUseLastResponse
+	}
+	return nil
+}
+
 func (httpClient *HTTPClient) NormalizeHttpScheme(rawURL string) (string, error) {
 	expectedScheme := httpClient.GetHttpScheme()
 
@@ -187,13 +197,8 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 		IdleConnTimeout:       idleConnTimeout,
 	}
 	httpClient.Client = &http.Client{
-		Transport: httpClient.Transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) > 0 && via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
-				return http.ErrUseLastResponse
-			}
-			return nil
-		},
+		Transport:     httpClient.Transport,
+		CheckRedirect: rejectHttpsDowngrade,
 	}
 
 	for _, opt := range opts {
@@ -311,7 +316,8 @@ func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify b
 		IdleConnTimeout:       idleConnTimeout,
 	}
 	httpClient.Client = &http.Client{
-		Transport: httpClient.Transport,
+		Transport:     httpClient.Transport,
+		CheckRedirect: rejectHttpsDowngrade,
 	}
 
 	for _, opt := range opts {
