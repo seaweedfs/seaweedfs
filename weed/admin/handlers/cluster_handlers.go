@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -414,6 +415,45 @@ func (h *ClusterHandlers) GetVolumeServers(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"volume_servers": topology.VolumeServers})
+}
+
+// SetVolumeReadOnly handles access mode changes for a single volume replica.
+func (h *ClusterHandlers) SetVolumeReadOnly(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	volumeID, err := strconv.ParseUint(vars["id"], 10, 32)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid volume ID")
+		return
+	}
+	server := vars["server"]
+	if server == "" {
+		writeJSONError(w, http.StatusBadRequest, "Server is required")
+		return
+	}
+	var request struct {
+		ReadOnly *bool `json:"read_only"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ReadOnly == nil {
+		writeJSONError(w, http.StatusBadRequest, "read_only must be a boolean")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := h.adminServer.SetVolumeReadOnly(ctx, uint32(volumeID), server, *request.ReadOnly); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to change volume access mode: "+err.Error())
+		return
+	}
+	mode := "read/write"
+	if *request.ReadOnly {
+		mode = "read-only"
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":   fmt.Sprintf("Volume %d on %s marked %s", volumeID, server, mode),
+		"volume_id": volumeID,
+		"server":    server,
+		"read_only": *request.ReadOnly,
+	})
 }
 
 // VacuumVolume handles volume vacuum requests via API
