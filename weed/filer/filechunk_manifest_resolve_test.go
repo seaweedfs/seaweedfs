@@ -41,7 +41,7 @@ func newManifestReadFixture(t testing.TB, manifests map[string][]*filer_pb.FileC
 	}
 
 	fixture := &manifestReadFixture{manifests: encoded, delays: delays, stopReads: make(chan struct{})}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	fixture.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/")
@@ -351,6 +351,45 @@ func TestResolveChunkManifestFastFailureCancelsSlowSibling(t *testing.T) {
 	}
 }
 
+func TestResolveChunkManifestFastFailureCancelsEncryptedSibling(t *testing.T) {
+	fixture := newManifestFailureReadFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	slowChunk := resolveTestManifest("slow", 0)
+	slowChunk.CipherKey = []byte("0123456789abcdef")
+	chunks := []*filer_pb.FileChunk{
+		slowChunk,
+		resolveTestManifest("fast", 100),
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := ResolveChunkManifest(ctx, fixture.lookup, chunks, 0, 200, nil)
+		result <- err
+	}()
+
+	waitForManifestFailureSignal(t, fixture.fastStarted)
+	waitForManifestFailureSignal(t, fixture.slowStarted)
+	close(fixture.fastRelease)
+
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(time.Second):
+		cancel()
+		select {
+		case <-result:
+		case <-time.After(time.Second):
+			t.Fatal("ResolveChunkManifest did not finish after caller cancellation")
+		}
+		t.Fatal("fast manifest failure waited for the encrypted slow sibling")
+	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "fail to unmarshal manifest fast")
+	require.NotErrorIs(t, err, context.Canceled)
+	waitForManifestFailureSignal(t, fixture.slowCanceled)
+}
+
 func TestResolveChunkManifestKeepsRealErrorAfterInternalCancellation(t *testing.T) {
 	earlyStarted := make(chan struct{})
 	lateStarted := make(chan struct{})
@@ -388,6 +427,28 @@ func TestResolveChunkManifestKeepsRealErrorAfterInternalCancellation(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("ResolveChunkManifest did not return the input-order error")
 	}
+}
+
+func TestResolveChunkManifestPreservesEarlierManifestChildrenOnLaterFailure(t *testing.T) {
+	fixture := newManifestReadFixture(t,
+		map[string][]*filer_pb.FileChunk{
+			"a":       {resolveTestManifest("a-child", 0)},
+			"a-child": {resolveTestData("a-child-data", 0)},
+			"b":       nil,
+		},
+		map[string]time.Duration{"a": 5 * time.Millisecond, "b": 50 * time.Millisecond},
+	)
+	fixture.manifests["b"] = []byte("not a protobuf manifest")
+
+	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
+		resolveTestManifest("a", 0),
+		resolveTestManifest("b", 100),
+	}, 0, 200, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "fail to unmarshal manifest b")
+	require.Equal(t, []string{"a-child-data"}, fileIDs(data), "earlier manifest's children must be resolved even when a later manifest fails")
+	require.Nil(t, meta)
+	require.Equal(t, int32(3), fixture.loads.Load(), "both the earlier manifest, the failing manifest, and the earlier manifest's child must be read")
 }
 
 func fileIDs(chunks []*filer_pb.FileChunk) []string {

@@ -56,9 +56,12 @@ func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 }
 
 type chunkManifestResolveJob struct {
-	chunk  *filer_pb.FileChunk
-	result *chunkManifestResolveResult
-	done   *sync.WaitGroup
+	chunk       *filer_pb.FileChunk
+	result      *chunkManifestResolveResult
+	done        *sync.WaitGroup
+	batchCtx    context.Context
+	batchCancel context.CancelFunc
+	batchOnce   *sync.Once
 }
 
 type chunkManifestResolveResult struct {
@@ -76,7 +79,6 @@ type chunkManifestResolver struct {
 	jobs           chan chunkManifestResolveJob
 	workers        sync.WaitGroup
 	startOnce      sync.Once
-	cancelOnce     sync.Once
 	started        bool
 }
 
@@ -96,12 +98,12 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 func (r *chunkManifestResolver) worker() {
 	defer r.workers.Done()
 	for job := range r.jobs {
-		job.result.chunks, job.result.err = ResolveOneChunkManifest(r.ctx, r.lookupFileIdFn, job.chunk, r.invalidator)
+		job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator)
 		if job.result.err != nil && r.parentCtx.Err() == nil {
-			if r.ctx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
+			if job.batchCtx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
 				job.result.internalCancel = true
-			} else if r.ctx.Err() == nil {
-				r.cancelOnce.Do(r.cancel)
+			} else if job.batchCtx.Err() == nil {
+				job.batchOnce.Do(job.batchCancel)
 			}
 		}
 		job.done.Done()
@@ -138,6 +140,14 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 		result chunkManifestResolveResult
 	}
 
+	// Cancellation is scoped to this parallel read batch so a failure in a
+	// later manifest does not cancel recursive work for an earlier manifest
+	// that already completed. Recursion creates its own batch context derived
+	// from the still-alive resolver context.
+	batchCtx, batchCancel := context.WithCancel(r.ctx)
+	defer batchCancel()
+	var batchOnce sync.Once
+
 	slots := make([]resolveSlot, len(chunks))
 	var reads sync.WaitGroup
 	for i, chunk := range chunks {
@@ -151,7 +161,14 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 		}
 
 		reads.Add(1)
-		if !r.submit(chunkManifestResolveJob{chunk: chunk, result: &slots[i].result, done: &reads}) {
+		if !r.submit(chunkManifestResolveJob{
+			chunk:       chunk,
+			result:      &slots[i].result,
+			done:        &reads,
+			batchCtx:    batchCtx,
+			batchCancel: batchCancel,
+			batchOnce:   &batchOnce,
+		}) {
 			slots[i].result.err = r.ctx.Err()
 			slots[i].result.internalCancel = r.parentCtx.Err() == nil && slots[i].result.err != nil
 			reads.Done()

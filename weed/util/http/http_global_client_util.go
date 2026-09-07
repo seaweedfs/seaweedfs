@@ -102,7 +102,11 @@ func Get(url string) ([]byte, bool, error) {
 }
 
 func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
-	request, err := http.NewRequest(http.MethodGet, url, nil)
+	return GetAuthenticatedWithContext(context.Background(), url, jwt)
+}
+
+func GetAuthenticatedWithContext(ctx context.Context, url, jwt string) ([]byte, bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, true, err
 	}
@@ -111,7 +115,9 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 
 	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
-		recordUnreachable(request.URL.Host)
+		if ctx.Err() == nil {
+			recordUnreachable(request.URL.Host)
+		}
 		return nil, true, err
 	}
 	recordReachable(request.URL.Host)
@@ -135,6 +141,9 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 		return nil, retryable, fmt.Errorf("%s: %s", url, response.Status)
 	}
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, false, ctxErr
+		}
 		return nil, false, err
 	}
 	return b, false, nil
@@ -454,7 +463,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 }
 
 func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	encryptedData, retryable, err := GetAuthenticated(fileUrl, jwt)
+	encryptedData, retryable, err := GetAuthenticatedWithContext(ctx, fileUrl, jwt)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}
