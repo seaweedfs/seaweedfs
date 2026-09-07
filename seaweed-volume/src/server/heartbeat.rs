@@ -544,7 +544,12 @@ async fn do_heartbeat(
                 let mut del_vols = Vec::new();
 
                 for (id, vol) in &current_volumes {
-                    if last_volumes.get(id) != Some(vol) {
+                    if let Some(previous) = last_volumes.get(id) {
+                        if previous != vol {
+                            del_vols.push(previous.to_short_message(*id));
+                            new_vols.push(vol.to_short_message(*id));
+                        }
+                    } else {
                         new_vols.push(vol.to_short_message(*id));
                     }
                 }
