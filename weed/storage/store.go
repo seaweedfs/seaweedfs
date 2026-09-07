@@ -332,14 +332,17 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			volume.diskId = diskId // Set the disk ID
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d on disk ID %d", vid, diskId)
+			readOnly, _, readOnlyCanDelete, _ := volume.ReadOnlyReasons()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
-				Id:               uint32(vid),
-				Collection:       collection,
-				ReplicaPlacement: uint32(replicaPlacement.Byte()),
-				Version:          uint32(volume.Version()),
-				Ttl:              ttl.ToUint32(),
-				DiskType:         string(diskType),
-				DiskId:           diskId,
+				Id:                uint32(vid),
+				Collection:        collection,
+				ReplicaPlacement:  uint32(replicaPlacement.Byte()),
+				Version:           uint32(volume.Version()),
+				Ttl:               ttl.ToUint32(),
+				DiskType:          string(diskType),
+				DiskId:            diskId,
+				ReadOnly:          readOnly,
+				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
 			return nil
 		} else {
