@@ -1128,9 +1128,10 @@ func TestRemoveOrphansPreservesReferencedFiles(t *testing.T) {
 	}
 }
 
-// DuckDB writes manifest lists carrying no Iceberg header metadata, which
-// iceberg-go reads as v1 and then rejects every v2 manifest listed in them,
-// failing all three maintenance operations before they touch anything.
+// DuckDB writes manifest lists carrying no Iceberg header metadata. iceberg-go
+// now infers the format version from the embedded writer schema, so a stripped
+// v2 list is read as v2 and maintenance operations proceed normally. This used
+// to fail because iceberg-go fell back to v1 and rejected every v2 manifest.
 func TestMaintenanceOnManifestListWithoutFormatVersion(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -1186,14 +1187,14 @@ func dropManifestListFormatVersion(t *testing.T, fs *fakeFilerServer, dir, name 
 		Content:    patched,
 	})
 
-	// Confirm the fixture reproduces the report: with the entry gone,
-	// iceberg-go alone falls back to v1 and mislabels the v2 manifests.
+	// Confirm the fixture: with the entry gone, iceberg-go infers v2 from
+	// the embedded writer schema (content / sequence_number are v2 fields).
 	manifests, err := iceberg.ReadManifestList(bytes.NewReader(patched))
 	if err != nil {
 		t.Fatalf("read patched manifest list: %v", err)
 	}
-	if got := manifests[0].Version(); got != 1 {
-		t.Fatalf("patched manifest list still reports v%d", got)
+	if got := manifests[0].Version(); got != 2 {
+		t.Fatalf("patched manifest list reports v%d, want v2", got)
 	}
 }
 
