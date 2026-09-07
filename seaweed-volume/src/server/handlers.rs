@@ -356,6 +356,10 @@ fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
 #[derive(Clone, Debug, Deserialize)]
 struct VolumeLocation {
     url: String,
+    #[serde(rename = "readOnly", default)]
+    read_only: bool,
+    #[serde(rename = "readOnlyCanDelete", default)]
+    read_only_can_delete: bool,
     // Master often omits publicUrl when it matches url (Go json omitempty).
     #[serde(rename = "publicUrl", default)]
     public_url: String,
@@ -546,27 +550,39 @@ async fn do_replicated_request(
     .await
     .map_err(|e| format!("lookup volume failed: {}", e))?;
 
-    // Mirror Go's GetWritableRemoteReplications: reject when the master reports fewer replicas than
-    // the copy count. lookup_volume is uncached, so recovery is immediate once the replica re-registers.
     let copy_count = {
         let store = state.store.read().unwrap();
-        store.find_volume(VolumeId(vid)).map_or(1, |(_, v)| {
-            v.super_block.replica_placement.get_copy_count()
-        })
+        store
+            .find_volume(VolumeId(vid))
+            .map_or(1, |(_, v)| v.super_block.replica_placement.get_copy_count())
     };
-    if locations.len() < copy_count as usize {
+    let allow_delete = method == axum::http::Method::DELETE;
+    let eligible_locations: Vec<_> = locations
+        .into_iter()
+        .filter(|loc| {
+            (!loc.read_only && allow_delete)
+                || (!loc.read_only && !allow_delete)
+                || (allow_delete && loc.read_only_can_delete)
+        })
+        .collect();
+    if eligible_locations.len() < copy_count as usize {
         return Err(format!(
             "replicating operations [{}] is less than volume {} replication copy count [{}]",
-            locations.len(),
+            eligible_locations.len(),
             vid,
             copy_count
         ));
     }
 
     let self_http = to_http_address(&state.self_url);
-    let remote_locations: Vec<_> = locations
+    let remote_locations: Vec<_> = eligible_locations
         .into_iter()
         .filter(|loc| {
+            if (!allow_delete && loc.read_only)
+                || (allow_delete && loc.read_only && !loc.read_only_can_delete)
+            {
+                return false;
+            }
             to_http_address(&loc.url) != self_http
                 && to_http_address(loc.public_or_url()) != self_http
         })
@@ -1047,8 +1063,8 @@ async fn get_or_head_handler_inner(
     let has_range = headers.contains_key(header::RANGE);
     let ext = extract_extension_from_path(&path);
     // Go checks resize and crop extensions separately: resize supports .webp, crop does not.
-    let has_resize_ops =
-        is_image_resize_ext(&ext) && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
+    let has_resize_ops = is_image_resize_ext(&ext)
+        && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
     // Go's shouldCropImages (L410) requires x2 > x1 && y2 > y1 (x1/y1 default 0).
     // Only disable streaming when a real crop will actually happen.
     let has_crop_ops = is_image_crop_ext(&ext) && {
@@ -1077,10 +1093,8 @@ async fn get_or_head_handler_inner(
         // serves both the "all shards local" fast case and the
         // "some intervals need peer fetch + reconstruct" general
         // case without paying for the local interval reads twice.
-        match crate::server::store_ec::read_ec_shard_needle_distributed(
-            &state, vid, needle_id,
-        )
-        .await
+        match crate::server::store_ec::read_ec_shard_needle_distributed(&state, vid, needle_id)
+            .await
         {
             Ok(Some(ec_needle)) => {
                 n = ec_needle;
@@ -1101,10 +1115,7 @@ async fn get_or_head_handler_inner(
                 if e.kind() == std::io::ErrorKind::NotFound {
                     return StatusCode::NOT_FOUND.into_response();
                 }
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("ec read: {}", e),
-                )
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("ec read: {}", e))
                     .into_response();
             }
         }
@@ -2243,7 +2254,10 @@ pub async fn post_handler(
             // With a limit configured, an error here means the body exceeded it
             // before we buffered the whole thing; report it like the size check.
             let msg = if state.file_size_limit_bytes > 0 {
-                format!("file over the limited {} bytes", state.file_size_limit_bytes)
+                format!(
+                    "file over the limited {} bytes",
+                    state.file_size_limit_bytes
+                )
             } else {
                 format!("read body: {}", e)
             };
@@ -3464,10 +3478,7 @@ async fn try_expand_chunk_manifest(
 /// (reconstruct-on-read from surviving shards), or a peer resolved via the
 /// master. Mirrors Go's ChunkedFileReader, which looks every chunk up through
 /// the master instead of assuming a local regular needle.
-async fn read_chunk_needle(
-    state: &Arc<VolumeServerState>,
-    fid: &str,
-) -> Result<Vec<u8>, String> {
+async fn read_chunk_needle(state: &Arc<VolumeServerState>, fid: &str) -> Result<Vec<u8>, String> {
     let (vid, nid, cookie) =
         parse_url_path(fid).ok_or_else(|| format!("invalid chunk fid: {}", fid))?;
 
@@ -4178,6 +4189,8 @@ mod tests {
             url: "volume.internal:8080".to_string(),
             public_url: "volume.public:8080".to_string(),
             grpc_port: 18080,
+            read_only: false,
+            read_only_can_delete: false,
         };
 
         let response = redirect_request(&info, &target, "https");
@@ -4204,6 +4217,8 @@ mod tests {
             url: "volume.internal:8080.18080".to_string(),
             public_url: "volume.public:8080.18080".to_string(),
             grpc_port: 18080,
+            read_only: false,
+            read_only_can_delete: false,
         };
 
         let response = redirect_request(&info, &target, "http");
@@ -4250,15 +4265,19 @@ mod tests {
 
         let app = Router::new().route(
             "/dir/lookup",
-            get(|axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>| async move {
-                assert_eq!(params.get("volumeId").map(String::as_str), Some("31"));
-                axum::Json(serde_json::json!({
-                    "volumeOrFileId": "31",
-                    "locations": [
-                        {"url": "10.0.0.2:5301", "publicUrl": "10.0.0.2:5301", "grpcPort": 5311}
-                    ]
-                }))
-            }),
+            get(
+                |axum::extract::Query(params): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| async move {
+                    assert_eq!(params.get("volumeId").map(String::as_str), Some("31"));
+                    axum::Json(serde_json::json!({
+                        "volumeOrFileId": "31",
+                        "locations": [
+                            {"url": "10.0.0.2:5301", "publicUrl": "10.0.0.2:5301", "grpcPort": 5311}
+                        ]
+                    }))
+                },
+            ),
         );
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

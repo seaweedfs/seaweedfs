@@ -3,6 +3,7 @@ package topology
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -165,6 +166,103 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 	assert(t, "activeVolumeCount2", int(usageCounts.activeVolumeCount), 0)
 
+}
+
+func TestIncrementalSyncReplacesVolumeReadOnlyState(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		fromReadOnly bool
+		toReadOnly   bool
+	}{
+		{name: "writable to read-only", toReadOnly: true},
+		{name: "read-only to writable", fromReadOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+			dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+				GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+			volume := func(readOnly bool) *master_pb.VolumeShortInformationMessage {
+				return &master_pb.VolumeShortInformationMessage{
+					Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()), ReadOnly: readOnly,
+				}
+			}
+
+			oldVolume := volume(tc.fromReadOnly)
+			topo.IncrementalSyncDataNodeRegistration([]*master_pb.VolumeShortInformationMessage{oldVolume}, nil, dn)
+			topo.IncrementalSyncDataNodeRegistration(
+				[]*master_pb.VolumeShortInformationMessage{volume(tc.toReadOnly)},
+				[]*master_pb.VolumeShortInformationMessage{oldVolume}, dn)
+
+			locations := topo.Lookup("c", needle.VolumeId(1))
+			if len(locations) != 1 || locations[0] != dn {
+				t.Fatalf("lookup locations = %v, want only %v", locations, dn)
+			}
+			stored, err := dn.GetVolumesById(needle.VolumeId(1))
+			if err != nil || stored.ReadOnly != tc.toReadOnly {
+				t.Fatalf("stored volume = %+v, err = %v, want read-only %t", stored, err, tc.toReadOnly)
+			}
+			rp, _ := super_block.NewReplicaPlacementFromString("000")
+			active, _ := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType).GetWritableVolumeCount()
+			want := 0
+			if !tc.toReadOnly {
+				want = 1
+			}
+			if active != want {
+				t.Fatalf("writable count = %d, want %d", active, want)
+			}
+			if !dn.HasConsistentVolumeIndex() {
+				t.Fatal("replacement left the held and servable volume indexes inconsistent")
+			}
+		})
+	}
+}
+
+func TestIncrementalSyncRegistersMovedVolumeBeforeRemoval(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25, "ssd": 25})
+	oldVolume := &master_pb.VolumeShortInformationMessage{
+		Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()),
+	}
+	newVolume := &master_pb.VolumeShortInformationMessage{
+		Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()), DiskType: "ssd",
+	}
+	topo.IncrementalSyncDataNodeRegistration([]*master_pb.VolumeShortInformationMessage{oldVolume}, nil, dn)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	oldLayout := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+	newLayout := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.SsdType)
+	oldLayout.accessLock.Lock()
+	done := make(chan struct{})
+	go func() {
+		topo.IncrementalSyncDataNodeRegistration(
+			[]*master_pb.VolumeShortInformationMessage{newVolume},
+			[]*master_pb.VolumeShortInformationMessage{oldVolume}, dn)
+		close(done)
+	}()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	movedBeforeRemoval := false
+	for !movedBeforeRemoval {
+		select {
+		case <-deadline.C:
+			oldLayout.accessLock.Unlock()
+			<-done
+			t.Fatal("destination layout was not registered before source removal")
+		case <-ticker.C:
+			movedBeforeRemoval = len(newLayout.Lookup(needle.VolumeId(1))) == 1
+		}
+	}
+	oldLayout.accessLock.Unlock()
+	<-done
+
+	locations := topo.Lookup("c", needle.VolumeId(1))
+	if len(locations) != 1 || locations[0] != dn {
+		t.Fatalf("lookup locations = %v, want only %v", locations, dn)
+	}
 }
 
 func TestDataNodeToDataNodeInfo_IncludeEmptyDiskFromUsage(t *testing.T) {
