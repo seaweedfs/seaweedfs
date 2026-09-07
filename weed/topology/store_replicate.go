@@ -299,6 +299,9 @@ func getRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, vol
 			if writableOnly && location.ReadOnly {
 				continue
 			}
+			if !writableOnly && location.ReadOnly && !location.ReadOnlyCanDelete {
+				continue
+			}
 			writableLocations++
 			if location.Url != selfUrl {
 				remoteLocations = append(remoteLocations, location)

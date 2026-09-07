@@ -24,7 +24,7 @@ func changedTierVolume(id uint32, size uint64, remoteStorageName string) *master
 func announceChangedVolumes(topo *topology.Topology, dn *topology.DataNode, changed []*master_pb.VolumeInformationMessage) (newVids, remoteVids, readOnlyVids []uint32) {
 	message := &master_pb.VolumeLocation{}
 	for _, v := range topo.ApplyVolumeChanges(changed, dn) {
-		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
+		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly, v.ReadOnlyCanDelete)
 	}
 	return message.NewVids, message.RemoteVids, message.ReadOnlyVids
 }
@@ -94,6 +94,22 @@ func TestChangedVolumesSuppressNoOpTierReport(t *testing.T) {
 	}
 }
 
+func TestChangedVolumesAnnounceSameTierReadOnlyTransition(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)}, dn)
+
+	readOnly := changedTestVolume(1, 1024)
+	readOnly.ReadOnly = true
+	_, _, readOnlyVids := announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{readOnly})
+	if !containsUint32(readOnlyVids, 1) {
+		t.Fatalf("writable-to-read-only transition was not announced: %v", readOnlyVids)
+	}
+	_, _, readOnlyVids = announceChangedVolumes(topo, dn, []*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)})
+	if containsUint32(readOnlyVids, 1) {
+		t.Fatalf("read-only-to-writable transition retained ReadOnlyVids: %v", readOnlyVids)
+	}
+}
+
 // A heartbeat that mixes a pure growth with a tier transition only announces
 // the tier-transitioned replica: a growth is local state, not a re-route, and
 // must not push other topology updates out of a bounded client queue.
@@ -153,6 +169,22 @@ func TestFullReconciliationAnnouncesTierTransition(t *testing.T) {
 	}
 }
 
+func TestFullReconciliationAnnounceSameTierReadOnlyTransition(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)}, dn)
+
+	readOnly := changedTestVolume(1, 1024)
+	readOnly.ReadOnly = true
+	_, _, readOnlyVids := announceFullReconciliation(topo, dn, []*master_pb.VolumeInformationMessage{readOnly})
+	if !containsUint32(readOnlyVids, 1) {
+		t.Fatalf("writable-to-read-only reconciliation was not announced: %v", readOnlyVids)
+	}
+	_, _, readOnlyVids = announceFullReconciliation(topo, dn, []*master_pb.VolumeInformationMessage{changedTestVolume(1, 1024)})
+	if containsUint32(readOnlyVids, 1) {
+		t.Fatalf("read-only-to-writable reconciliation retained ReadOnlyVids: %v", readOnlyVids)
+	}
+}
+
 // announceFullReconciliation runs the same routing loop master_grpc_server's
 // SendHeartbeat does on a full Volumes heartbeat, including the changed-set
 // re-route added so digest-mismatch recovery propagates tier transitions.
@@ -160,7 +192,7 @@ func announceFullReconciliation(topo *topology.Topology, dn *topology.DataNode, 
 	message := &master_pb.VolumeLocation{}
 	newOnes, _, changedOnes := topo.SyncDataNodeRegistration(volumes, dn)
 	for _, v := range append(newOnes, changedOnes...) {
-		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
+		announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly, v.ReadOnlyCanDelete)
 	}
 	return message.NewVids, message.RemoteVids, message.ReadOnlyVids
 }

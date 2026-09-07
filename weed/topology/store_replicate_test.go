@@ -132,7 +132,7 @@ func TestGetWritableRemoteReplicationsRefreshesReadOnlyReplicas(t *testing.T) {
 	master.mu.Lock()
 	master.locations = []*master_pb.Location{
 		{Url: "127.0.0.1:8080"},
-		{Url: "127.0.0.2:8080", ReadOnly: true},
+		{Url: "127.0.0.2:8080", ReadOnly: true, ReadOnlyCanDelete: true},
 	}
 	master.mu.Unlock()
 
@@ -154,7 +154,7 @@ func TestGetWritableRemoteReplicationsRefreshesReadOnlyReplicas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete lookup: %v", err)
 	}
-	if len(locations) != 1 || !locations[0].ReadOnly {
+	if len(locations) != 1 || !locations[0].ReadOnly || !locations[0].ReadOnlyCanDelete {
 		t.Fatalf("read-only-can-delete target was dropped: %v", locations)
 	}
 }
