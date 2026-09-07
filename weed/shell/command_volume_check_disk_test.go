@@ -82,9 +82,11 @@ func TestLiveDivergenceClassifiesOneSidedVsTwoSided(t *testing.T) {
 
 // TestReportDivergenceVerdictEmitsCopyCommand checks that a one-sided verdict
 // prints the exact volume.copy command (complete -> lagging, dialable address),
-// that the command never uses the logical node Id, that a vacuumed lagging
-// replica carries the resurrection caveat, and that a two-sided verdict warns
-// instead of auto-repairing.
+// that the command never uses the logical node Id, that a vacuumed (or
+// unproven) lagging replica gets the no-re-copy warning instead of a copy
+// command, that a proven never-vacuumed lagging replica gets the safe copy
+// command — including in unidirectional mode where only the target's revision
+// is known — and that a two-sided verdict warns instead of auto-repairing.
 func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
 	// Id is a logical node identifier (NOT dialable); Address is the real
 	// ip:port the copy command must use.
@@ -92,33 +94,36 @@ func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
 	tgt := &VolumeReplica{location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "node-2", Address: "10.0.0.2:8083"}}, info: &master_pb.VolumeInformationMessage{Id: 42}}
 
 	// Case A: source has 5 unique live, target has none -> target is lagging.
-	// Revisions were not read (revKnown=false), so the caveat must be present.
+	// Revisions were not read (both known flags false), so no copy command.
 	var one bytes.Buffer
 	vcd := &volumeCheckDisk{writer: &one, now: time.Now()}
-	vcd.reportDivergenceVerdict(src, tgt, 5, 0, 0, 0, false, false)
+	vcd.reportDivergenceVerdict(src, tgt, 5, 0, 0, 0, false, false, false)
 	got := one.String()
 	if !strings.Contains(got, "ONE-SIDED") {
 		t.Fatalf("expected ONE-SIDED verdict, got: %s", got)
 	}
-	if !strings.Contains(got, "volume.copy -source 10.0.0.1:8081 -target 10.0.0.2:8083 -volumeId 42") {
-		t.Fatalf("expected copy complete(10.0.0.1:8081)->lagging(10.0.0.2:8083), got: %s", got)
+	if strings.Contains(got, "volume.copy") {
+		t.Fatalf("unproven lagging replica must not get a volume.copy command, got: %s", got)
+	}
+	if !strings.Contains(got, "Do NOT re-copy the whole volume") {
+		t.Fatalf("expected no-re-copy warning for unproven lagging replica, got: %s", got)
+	}
+	if !strings.Contains(got, "10.0.0.1:8081") || !strings.Contains(got, "10.0.0.2:8083") {
+		t.Fatalf("expected dialable addresses in verdict, got: %s", got)
 	}
 	if strings.Contains(got, "node-1") || strings.Contains(got, "node-2") {
-		t.Fatalf("copy command must use dialable Address, not logical node Id, got: %s", got)
-	}
-	if !strings.Contains(got, "Caveat") {
-		t.Fatalf("unproven lagging replica must carry the resurrection caveat, got: %s", got)
+		t.Fatalf("verdict must use dialable Address, not logical node Id, got: %s", got)
 	}
 	if !strings.Contains(got, "5") {
 		t.Fatalf("expected missing-needle count 5, got: %s", got)
 	}
 
-	// Case B: source is lagging (target complete). The command must go
+	// Case B: source is lagging (target complete). The safe command must go
 	// complete -> lagging, i.e. -source <target> -target <source>.
-	var rev bytes.Buffer
-	vcdRev := &volumeCheckDisk{writer: &rev, now: time.Now()}
-	vcdRev.reportDivergenceVerdict(src, tgt, 0, 5, 0, 0, false, false)
-	gotRev := rev.String()
+	var safeRev bytes.Buffer
+	vcdSafeRev := &volumeCheckDisk{writer: &safeRev, now: time.Now()}
+	vcdSafeRev.reportDivergenceVerdict(src, tgt, 0, 5, 0, 0, true, false, true)
+	gotRev := safeRev.String()
 	if !strings.Contains(gotRev, "volume.copy -source 10.0.0.2:8083 -target 10.0.0.1:8081 -volumeId 42") {
 		t.Fatalf("expected copy complete(10.0.0.2:8083)->lagging(10.0.0.1:8081), got: %s", gotRev)
 	}
@@ -126,27 +131,41 @@ func TestReportDivergenceVerdictEmitsCopyCommand(t *testing.T) {
 		t.Fatalf("reversed direction: must not copy lagging source over complete target, got: %s", gotRev)
 	}
 
-	// Case C: lagging replica proven never-vacuumed under the resurrection
-	// flag (revKnown=true, its revision 0) -> absent needles are missing
-	// writes, the re-copy is safe, and the caveat must NOT be printed.
-	var safe bytes.Buffer
-	vcdSafe := &volumeCheckDisk{writer: &safe, now: time.Now()}
-	vcdSafe.reportDivergenceVerdict(src, tgt, 5, 0, 17, 0, true, true)
-	gotSafe := safe.String()
-	if !strings.Contains(gotSafe, "ONE-SIDED") {
-		t.Fatalf("expected ONE-SIDED verdict, got: %s", gotSafe)
+	// Case C: target-lagging, unidirectional run (-resurrectMissingNeedles,
+	// not -bidirectional): sourceRevision was never read (srcRevKnown=false)
+	// but targetRevision was (tgtRevKnown=true) and is 0. The safe copy
+	// command must still be emitted — the false-warning regression.
+	var uni bytes.Buffer
+	vcdUni := &volumeCheckDisk{writer: &uni, now: time.Now()}
+	vcdUni.reportDivergenceVerdict(src, tgt, 5, 0, 0, 0, false, true, true)
+	gotUni := uni.String()
+	if !strings.Contains(gotUni, "ONE-SIDED") {
+		t.Fatalf("expected ONE-SIDED verdict, got: %s", gotUni)
 	}
-	if strings.Contains(gotSafe, "Caveat") {
-		t.Fatalf("proven never-vacuumed lagging replica must not carry the caveat, got: %s", gotSafe)
+	if !strings.Contains(gotUni, "volume.copy -source 10.0.0.1:8081 -target 10.0.0.2:8083 -volumeId 42") {
+		t.Fatalf("unidirectional run with proven never-vacuumed target must emit the safe copy command, got: %s", gotUni)
 	}
-	if !strings.Contains(gotSafe, "volume.copy -source 10.0.0.1:8081 -target 10.0.0.2:8083 -volumeId 42") {
-		t.Fatalf("expected copy complete->lagging, got: %s", gotSafe)
+	if strings.Contains(gotUni, "Do NOT re-copy the whole volume") {
+		t.Fatalf("false warning: proven never-vacuumed lagging target must not get the no-re-copy warning, got: %s", gotUni)
 	}
 
-	// Case D: two-sided split-brain warns instead of auto-repairing.
+	// Case D: target-lagging but the lagging side was vacuumed (rev 17) ->
+	// no copy command, even though the proof was taken under the flag.
+	var vac bytes.Buffer
+	vcdVac := &volumeCheckDisk{writer: &vac, now: time.Now()}
+	vcdVac.reportDivergenceVerdict(src, tgt, 5, 0, 17, 17, true, true, true)
+	gotVac := vac.String()
+	if strings.Contains(gotVac, "volume.copy") {
+		t.Fatalf("vacuumed lagging replica must not get a volume.copy command, got: %s", gotVac)
+	}
+	if !strings.Contains(gotVac, "Do NOT re-copy the whole volume") {
+		t.Fatalf("expected no-re-copy warning for vacuumed lagging replica, got: %s", gotVac)
+	}
+
+	// Case E: two-sided split-brain warns instead of auto-repairing.
 	var two bytes.Buffer
 	vcd2 := &volumeCheckDisk{writer: &two, now: time.Now()}
-	vcd2.reportDivergenceVerdict(src, tgt, 3, 4, 0, 0, false, false)
+	vcd2.reportDivergenceVerdict(src, tgt, 3, 4, 0, 0, false, false, false)
 	got2 := two.String()
 	if !strings.Contains(got2, "TWO-SIDED") || !strings.Contains(got2, "split-brain") {
 		t.Fatalf("expected TWO-SIDED split-brain warning, got: %s", got2)

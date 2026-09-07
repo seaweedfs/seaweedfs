@@ -561,7 +561,7 @@ func (vcd *volumeCheckDisk) checkBoth(source, target *VolumeReplica, bidi bool) 
 		if sourceOnly > 0 || targetOnly > 0 {
 			vcd.reportDivergenceVerdict(source, target, sourceOnly, targetOnly,
 				sourceRevision, targetRevision,
-				vcd.resurrectMissingNeedles && bidi, vcd.resurrectMissingNeedles)
+				vcd.resurrectMissingNeedles && bidi, vcd.resurrectMissingNeedles, vcd.resurrectMissingNeedles)
 		}
 	}
 
@@ -602,50 +602,58 @@ func (vcd *volumeCheckDisk) liveDivergence(a, b *needle_map.MemDb) (aOnly, bOnly
 // reportDivergenceVerdict prints the actionable outcome for a diverged replica
 // pair that check.disk could not repair in place. revSrc/revTgt are the
 // replicas' compaction revisions (0 = never vacuumed; >0 = at least one
-// vacuum dropped deleted entries from the index); revKnown reports whether
-// those revisions were actually read. resurrectFlag is the command line's
-// -resurrectMissingNeedles.
+// vacuum dropped deleted entries from the index); srcRevKnown/tgtRevKnown
+// report whether each revision was actually read (target is read even in
+// unidirectional mode; source only under -bidirectional). resurrectFlag is
+// the command line's -resurrectMissingNeedles.
 //
 // The verdict is tombstone-aware: when the lagging replica has been vacuumed,
 // a needle that is live on the complete side but absent on the lagging side is
 // ambiguous — either a missing write, or a valid deletion whose tombstone the
-// lagging side's vacuum already dropped. A whole-volume re-copy converges
-// either way, but in the latter case it resurrects deleted data, so the
-// command is only advertised as safe when the lagging side can be proven
-// never-vacuumed.
-func (vcd *volumeCheckDisk) reportDivergenceVerdict(source, target *VolumeReplica, sourceOnly, targetOnly int, revSrc, revTgt uint32, revKnown, resurrectFlag bool) {
+// lagging side's vacuum already dropped. A whole-volume re-copy converges the
+// divergence either way, but in the latter case it resurrects deleted data, so
+// the volume.copy command is only emitted when the lagging side is proven
+// never-vacuumed; otherwise the verdict points at a non-destructive
+// needle-level repair instead.
+func (vcd *volumeCheckDisk) reportDivergenceVerdict(source, target *VolumeReplica, sourceOnly, targetOnly int, revSrc, revTgt uint32, srcRevKnown, tgtRevKnown, resurrectFlag bool) {
 	srcAddr := pb.NewServerAddressFromDataNode(source.location.dataNode)
 	tgtAddr := pb.NewServerAddressFromDataNode(target.location.dataNode)
 	vid := source.info.Id
-	caveat := ""
 	switch {
 	case sourceOnly > 0 && targetOnly == 0:
 		// target is lagging: it holds no unique live data.
-		caveat = deletionCaveat(resurrectFlag, revKnown, revTgt == 0)
-		vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data.%s Repair (whole-volume re-copy, complete -> lagging; verify-before-destroy is enforced): volume.copy -source %s -target %s -volumeId %d",
-			vid, tgtAddr, sourceOnly, srcAddr, tgtAddr, caveat, srcAddr, tgtAddr, vid)
+		safe := deletionCaveat(resurrectFlag, tgtRevKnown, revTgt == 0)
+		if safe {
+			vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data. Safe repair (whole-volume re-copy, complete -> lagging; verify-before-destroy is enforced): volume.copy -source %s -target %s -volumeId %d",
+				vid, tgtAddr, sourceOnly, srcAddr, tgtAddr, srcAddr, tgtAddr, vid)
+		} else {
+			vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data. Do NOT re-copy the whole volume: the absent needles may be valid deletions already vacuumed away on the lagging side, which a re-copy would resurrect. Restore only the confirmed-missing needles (volume.fsck -collection <c> -volumeId %d -findMissingChunksInFiler, then needle-level repair), or re-copy only after accepting that risk.",
+				vid, tgtAddr, sourceOnly, srcAddr, tgtAddr, vid)
+		}
 	case targetOnly > 0 && sourceOnly == 0:
 		// source is lagging: it holds no unique live data.
-		caveat = deletionCaveat(resurrectFlag, revKnown, revSrc == 0)
-		vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data.%s Repair (whole-volume re-copy, complete -> lagging; verify-before-destroy is enforced): volume.copy -source %s -target %s -volumeId %d",
-			vid, srcAddr, targetOnly, tgtAddr, srcAddr, caveat, tgtAddr, srcAddr, vid)
+		safe := deletionCaveat(resurrectFlag, srcRevKnown, revSrc == 0)
+		if safe {
+			vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data. Safe repair (whole-volume re-copy, complete -> lagging; verify-before-destroy is enforced): volume.copy -source %s -target %s -volumeId %d",
+				vid, srcAddr, targetOnly, tgtAddr, srcAddr, tgtAddr, srcAddr, vid)
+		} else {
+			vcd.write("volume %d: ONE-SIDED divergence — %s is missing %d live needle(s) that exist on %s; %s holds no unique live data. Do NOT re-copy the whole volume: the absent needles may be valid deletions already vacuumed away on the lagging side, which a re-copy would resurrect. Restore only the confirmed-missing needles (volume.fsck -collection <c> -volumeId %d -findMissingChunksInFiler, then needle-level repair), or re-copy only after accepting that risk.",
+				vid, srcAddr, targetOnly, tgtAddr, srcAddr, vid)
+		}
 	case sourceOnly > 0 && targetOnly > 0:
 		vcd.write("volume %d: TWO-SIDED (split-brain) divergence — %s has %d unique live needle(s) AND %s has %d. Do NOT auto-repair: each side may hold data the other lacks. Confirm orphans with volume.fsck -collection <c> -volumeId %d -findMissingChunksInFiler before re-copying the complete replica, or restore the missing needles manually.",
 			vid, srcAddr, sourceOnly, tgtAddr, targetOnly, vid)
 	}
 }
 
-// deletionCaveat is the one-sided verdict's warning that a re-copy can
-// resurrect deleted data when the lagging side's vacuum has already dropped
-// the tombstones proving those deletions. Returns the empty string when the
-// lagging side is proven never-vacuumed (absent live needles are missing
-// writes by the same proof the resurrection gate uses) — but only when that
-// proof was actually taken under the -resurrectMissingNeedles flag.
-func deletionCaveat(resurrectFlag, revKnown, laggingNeverVacuumed bool) string {
-	if resurrectFlag && revKnown && laggingNeverVacuumed {
-		return ""
-	}
-	return " Caveat: the absent needles may be valid deletions already vacuumed away on the lagging side — the re-copy would resurrect them. If that is not acceptable, restore only the confirmed-missing needles instead (volume.fsck -findMissingChunksInFiler, then needle-level repair)."
+// deletionCaveat reports whether a one-sided divergence's complete -> lagging
+// re-copy is safe: the lagging side is proven never-vacuumed (compaction
+// revision 0) and that proof was actually taken under the
+// -resurrectMissingNeedles flag, so its absent live needles are missing
+// writes by the same proof the resurrection gate uses — not vacuumed
+// deletions.
+func deletionCaveat(resurrectFlag, laggingRevKnown, laggingNeverVacuumed bool) bool {
+	return resurrectFlag && laggingRevKnown && laggingNeverVacuumed
 }
 
 func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, resurrectAbsent bool, targetRevision uint32) (hasChanges bool, err error) {
