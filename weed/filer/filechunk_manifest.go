@@ -181,6 +181,37 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 
 	// Recurse only after this level's reads release their worker slots. A
 	// worker must never wait for a child manifest while holding a slot.
+	//
+	// Pre-scan for the first real (non-internal-cancel) error before
+	// recursing. If a later manifest already failed, return its error
+	// promptly with data chunks that are already in hand, instead of
+	// blocking on recursive reads of earlier manifests' children.
+	for i, slot := range slots {
+		if slot.chunk == nil {
+			continue
+		}
+		if slot.result.err != nil {
+			if slot.result.internalCancel {
+				continue
+			}
+			for j := 0; j < i; j++ {
+				if slots[j].chunk == nil {
+					continue
+				}
+				if !slots[j].chunk.IsChunkManifest {
+					dataChunks = append(dataChunks, slots[j].chunk)
+					continue
+				}
+				for _, c := range slots[j].result.chunks {
+					if !c.IsChunkManifest {
+						dataChunks = append(dataChunks, c)
+					}
+				}
+			}
+			return dataChunks, nil, slot.result.err
+		}
+	}
+
 	for _, slot := range slots {
 		if slot.chunk == nil {
 			continue

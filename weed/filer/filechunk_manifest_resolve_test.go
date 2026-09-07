@@ -429,26 +429,30 @@ func TestResolveChunkManifestKeepsRealErrorAfterInternalCancellation(t *testing.
 	}
 }
 
-func TestResolveChunkManifestPreservesEarlierManifestChildrenOnLaterFailure(t *testing.T) {
+func TestResolveChunkManifestReturnsLaterFailureWithoutRecursingEarlierChildren(t *testing.T) {
 	fixture := newManifestReadFixture(t,
 		map[string][]*filer_pb.FileChunk{
 			"a":       {resolveTestManifest("a-child", 0)},
 			"a-child": {resolveTestData("a-child-data", 0)},
 			"b":       nil,
 		},
-		map[string]time.Duration{"a": 5 * time.Millisecond, "b": 50 * time.Millisecond},
+		map[string]time.Duration{"a": 5 * time.Millisecond, "b": 50 * time.Millisecond, "a-child": 2 * time.Second},
 	)
 	fixture.manifests["b"] = []byte("not a protobuf manifest")
 
+	start := time.Now()
 	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
 		resolveTestManifest("a", 0),
 		resolveTestManifest("b", 100),
 	}, 0, 200, nil)
+	elapsed := time.Since(start)
+
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "fail to unmarshal manifest b")
-	require.Equal(t, []string{"a-child-data"}, fileIDs(data), "earlier manifest's children must be resolved even when a later manifest fails")
+	require.Empty(t, data, "earlier manifest's children must not be recursed when a later manifest already failed")
 	require.Nil(t, meta)
-	require.Equal(t, int32(3), fixture.loads.Load(), "both the earlier manifest, the failing manifest, and the earlier manifest's child must be read")
+	require.Equal(t, int32(2), fixture.loads.Load(), "only the two top-level manifests must be read, not a-child")
+	require.Less(t, elapsed, time.Second, "must return promptly without waiting for a-child's slow read")
 }
 
 func fileIDs(chunks []*filer_pb.FileChunk) []string {
