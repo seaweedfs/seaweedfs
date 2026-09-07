@@ -110,6 +110,10 @@ func (httpClient *HTTPClient) GetHttpScheme() string {
 	return "http"
 }
 
+func (httpClient *HTTPClient) IsTLSVerified() bool {
+	return httpClient.expectHttpsScheme && httpClient.Transport != nil && (httpClient.Transport.TLSClientConfig == nil || !httpClient.Transport.TLSClientConfig.InsecureSkipVerify)
+}
+
 func (httpClient *HTTPClient) NormalizeHttpScheme(rawURL string) (string, error) {
 	expectedScheme := httpClient.GetHttpScheme()
 
@@ -184,6 +188,12 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	}
 	httpClient.Client = &http.Client{
 		Transport: httpClient.Transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) > 0 && via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
 	}
 
 	for _, opt := range opts {
