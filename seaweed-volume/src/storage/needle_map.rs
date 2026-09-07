@@ -1655,10 +1655,37 @@ mod tests {
 
     #[cfg(feature = "redb-experimental-cursor")]
     #[test]
-    fn test_redb_full_rebuild_insert_before_matches_shuffled_live_set() {
+    fn test_redb_full_rebuild_insert_before_reads_back_thousands_of_shuffled_keys() {
+        // Enough keys to split leaves. insert_before vs table.insert only
+        // diverges across page boundaries (pending-insert buffer / close).
+        const N: u64 = 4000;
+        let mut idx_data = Vec::new();
+        for i in (1..=N).rev() {
+            idx::write_index_entry(
+                &mut idx_data,
+                NeedleId(i),
+                Offset::from_actual_offset((8 * i) as i64),
+                Size(i as i32),
+            )
+            .unwrap();
+        }
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(1),
+            Offset::from_actual_offset(200),
+            Size(200),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(2),
+            Offset::default(),
+            TOMBSTONE_FILE_SIZE,
+        )
+        .unwrap();
+
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
-        let idx_data = shuffled_idx_with_overwrite_and_delete();
         let mut cursor = Cursor::new(idx_data);
         let nm = RedbNeedleMap::load_from_idx(
             db_path.to_str().unwrap(),
@@ -1667,11 +1694,24 @@ mod tests {
             redb_test_cache(),
         )
         .unwrap();
-        let v10 = nm.get(NeedleId(10)).unwrap().unwrap();
-        assert_eq!(v10.size, Size(100));
+
         let v1 = nm.get(NeedleId(1)).unwrap().unwrap();
         assert_eq!(v1.size, Size(200));
-        assert!(nm.get(NeedleId(5)).unwrap().is_none());
+        assert_eq!(v1.offset, Offset::from_actual_offset(200));
+        assert!(nm.get(NeedleId(2)).unwrap().is_none());
+        let v_n = nm.get(NeedleId(N)).unwrap().unwrap();
+        assert_eq!(v_n.size, Size(N as i32));
+        let v3 = nm.get(NeedleId(3)).unwrap().unwrap();
+        assert_eq!(v3.size, Size(3));
+        assert_eq!(v3.offset, Offset::from_actual_offset(24));
+
+        let mut live = 0u64;
+        nm.ascending_visit(|_, _| {
+            live += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(live, N - 1);
     }
 
     #[test]

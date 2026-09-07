@@ -63,7 +63,7 @@ jobs:
         run: cd seaweed-volume && cargo test
 
       - name: Run Rust unit tests (redb experimental cursor)
-        run: cd seaweed-volume && cargo test --features redb-experimental-cursor
+        run: cd seaweed-volume && cargo test --features redb-experimental-cursor --lib storage::needle_map
 
   rust-integration-tests:
     name: Rust Integration Tests
