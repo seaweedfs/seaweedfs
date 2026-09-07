@@ -708,11 +708,11 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	}
 	dn.DeltaUpdateVolumes(newVis, oldVis)
 
-	for _, vi := range newVis {
-		t.RegisterVolumeLayout(vi, dn)
-	}
 	for _, vi := range oldVis {
 		t.UnRegisterVolumeLayout(vi, dn)
+	}
+	for _, vi := range newVis {
+		t.RegisterVolumeLayout(vi, dn)
 	}
 
 	return
