@@ -138,9 +138,10 @@ func (r *chunkManifestResolver) submit(job chunkManifestResolveJob) bool {
 		return false
 	case <-job.batchCtx.Done():
 		// Batch was cancelled by a sibling failure; don't queue this job.
+		// Set the result so the caller doesn't overwrite it; the caller
+		// owns the WaitGroup decrement.
 		job.result.err = job.batchCtx.Err()
 		job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
-		job.done.Done()
 		return false
 	}
 }
@@ -180,8 +181,12 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 			batchCancel: batchCancel,
 			batchOnce:   &batchOnce,
 		}) {
-			slots[i].result.err = r.ctx.Err()
-			slots[i].result.internalCancel = r.parentCtx.Err() == nil && slots[i].result.err != nil
+			// submit may have already set the result (batch cancellation).
+			// Only set it here for the resolver-cancellation case.
+			if slots[i].result.err == nil {
+				slots[i].result.err = r.ctx.Err()
+				slots[i].result.internalCancel = r.parentCtx.Err() == nil && slots[i].result.err != nil
+			}
 			reads.Done()
 		}
 	}
