@@ -213,6 +213,9 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 			if normalizeErr != nil {
 				return normalizeErr
 			}
+			if jwt != "" && !strings.HasPrefix(url, "https://") {
+				return fmt.Errorf("refusing to forward delete authorization to %s without HTTPS", location.Url)
+			}
 			return util_http.Delete(url, string(jwt))
 		}); err != nil {
 			reason := classifyReplicationError(err)
