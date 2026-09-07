@@ -16,6 +16,9 @@ path = "src/main.rs"
 # Disable with --no-default-features for 4-byte offsets (32GB max volume size).
 default = ["5bytes"]
 5bytes = []
+# Unstable redb cursor bulk-load for full_rebuild. Off in production.
+# Pulls redb's experimental_cursor (and therefore experimental-api-5).
+redb-experimental-cursor = ["redb/experimental_cursor"]
 
 [dependencies]
 # Async runtime

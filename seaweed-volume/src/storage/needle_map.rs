@@ -13,6 +13,9 @@ use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
+#[cfg(feature = "redb-experimental-cursor")]
+use std::ops::Bound;
+
 mod compact_map;
 pub mod file_pool;
 mod idx_metric;
@@ -570,14 +573,18 @@ impl RedbNeedleMap {
         let meta = txn
             .open_table(META_TABLE)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e)))?;
-        match meta.get(META_IDX_SIZE) {
+        // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
+        // ReadableTable::get guard borrows `meta`; bind the match so the
+        // temporary Result is dropped before `meta`.
+        let result = match meta.get(META_IDX_SIZE) {
             Ok(Some(guard)) => Ok(Some(guard.value())),
             Ok(None) => Ok(None),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("redb get meta: {}", e),
             )),
-        }
+        };
+        result
     }
 
     /// Load from an .idx file, reusing an existing .rdb if it is consistent.
@@ -767,11 +774,38 @@ impl RedbNeedleMap {
                     })?;
                 }
 
-                for (key, nv) in &entries {
-                    let key_u64: u64 = (*key).into();
-                    let packed = pack_needle_value(nv);
-                    table.insert(key_u64, packed.as_slice()).map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
+                #[cfg(not(feature = "redb-experimental-cursor"))]
+                {
+                    for (key, nv) in &entries {
+                        let key_u64: u64 = (*key).into();
+                        let packed = pack_needle_value(nv);
+                        table.insert(key_u64, packed.as_slice()).map_err(|e| {
+                            io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
+                        })?;
+                    }
+                }
+                #[cfg(feature = "redb-experimental-cursor")]
+                {
+                    let mut cursor = table
+                        .upper_bound_mut(Bound::<u64>::Unbounded)
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("redb upper_bound_mut: {}", e),
+                            )
+                        })?;
+                    for (key, nv) in &entries {
+                        let key_u64: u64 = (*key).into();
+                        let packed = pack_needle_value(nv);
+                        cursor.insert_before(key_u64, packed.as_slice()).map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("redb insert_before: {}", e),
+                            )
+                        })?;
+                    }
+                    cursor.close().map_err(|e| {
+                        io::Error::new(io::ErrorKind::Other, format!("redb cursor close: {}", e))
                     })?;
                 }
             }
@@ -867,14 +901,18 @@ impl RedbNeedleMap {
         let table = txn
             .open_table(NEEDLE_TABLE)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
-        match table.get(key_u64) {
+        // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
+        // ReadableTable::get guard borrows `table`; bind the match so the
+        // temporary Result is dropped before `table`.
+        let result = match table.get(key_u64) {
             Ok(Some(guard)) => Ok(packed_to_needle_value(guard.value())),
             Ok(None) => Ok(None),
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("redb get: {}", e),
             )),
-        }
+        };
+        result
     }
 
     /// Mark a needle as deleted. Appends tombstone to .idx file, negates size in redb.
@@ -1613,6 +1651,27 @@ mod tests {
             reloaded.get(NeedleId(99)).unwrap().is_none(),
             "full_rebuild must not keep keys that are not in the .idx"
         );
+    }
+
+    #[cfg(feature = "redb-experimental-cursor")]
+    #[test]
+    fn test_redb_full_rebuild_insert_before_matches_shuffled_live_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.rdb");
+        let idx_data = shuffled_idx_with_overwrite_and_delete();
+        let mut cursor = Cursor::new(idx_data);
+        let nm = RedbNeedleMap::load_from_idx(
+            db_path.to_str().unwrap(),
+            &mut cursor,
+            Version::current(),
+            redb_test_cache(),
+        )
+        .unwrap();
+        let v10 = nm.get(NeedleId(10)).unwrap().unwrap();
+        assert_eq!(v10.size, Size(100));
+        let v1 = nm.get(NeedleId(1)).unwrap().unwrap();
+        assert_eq!(v1.size, Size(200));
+        assert!(nm.get(NeedleId(5)).unwrap().is_none());
     }
 
     #[test]

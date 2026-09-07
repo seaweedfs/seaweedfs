@@ -62,6 +62,9 @@ jobs:
       - name: Run Rust unit tests
         run: cd seaweed-volume && cargo test
 
+      - name: Run Rust unit tests (redb experimental cursor)
+        run: cd seaweed-volume && cargo test --features redb-experimental-cursor
+
   rust-integration-tests:
     name: Rust Integration Tests
     runs-on: ubuntu-22.04
