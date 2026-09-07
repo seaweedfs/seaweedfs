@@ -15,11 +15,13 @@ import (
 )
 
 type Location struct {
-	Url          string `json:"url,omitempty"`
-	PublicUrl    string `json:"publicUrl,omitempty"`
-	DataCenter   string `json:"dataCenter,omitempty"`
-	GrpcPort     int    `json:"grpcPort,omitempty"`
-	DataInRemote bool   `json:"dataInRemote,omitempty"`
+	Url               string `json:"url,omitempty"`
+	PublicUrl         string `json:"publicUrl,omitempty"`
+	DataCenter        string `json:"dataCenter,omitempty"`
+	GrpcPort          int    `json:"grpcPort,omitempty"`
+	DataInRemote      bool   `json:"dataInRemote,omitempty"`
+	ReadOnly          bool   `json:"readOnly,omitempty"`
+	ReadOnlyCanDelete bool   `json:"readOnlyCanDelete,omitempty"`
 }
 
 func (l *Location) ServerAddress() pb.ServerAddress {
@@ -87,18 +89,21 @@ func InvalidateVolumeIdLocationCache(vid string) {
 }
 
 // LookupVolumeIds find volume locations by cache and actual lookup
-func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string) (map[string]*LookupResult, error) {
+func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string, useCache ...bool) (map[string]*LookupResult, error) {
 	ret := make(map[string]*LookupResult)
 	var unknown_vids []string
+	cacheLocations := len(useCache) == 0 || useCache[0]
 
 	//check vid cache first
 	for _, vid := range vids {
-		locations, cacheErr := vc.Get(vid)
-		if cacheErr == nil {
-			ret[vid] = &LookupResult{VolumeOrFileId: vid, Locations: locations}
-		} else {
-			unknown_vids = append(unknown_vids, vid)
+		if cacheLocations {
+			locations, cacheErr := vc.Get(vid)
+			if cacheErr == nil {
+				ret[vid] = &LookupResult{VolumeOrFileId: vid, Locations: locations}
+				continue
+			}
 		}
+		unknown_vids = append(unknown_vids, vid)
 	}
 	//return success if all volume ids are known
 	if len(unknown_vids) == 0 {
@@ -122,14 +127,16 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 			var locations []Location
 			for _, loc := range vidLocations.Locations {
 				locations = append(locations, Location{
-					Url:          loc.Url,
-					PublicUrl:    loc.PublicUrl,
-					DataCenter:   loc.DataCenter,
-					GrpcPort:     int(loc.GrpcPort),
-					DataInRemote: loc.DataInRemote,
+					Url:               loc.Url,
+					PublicUrl:         loc.PublicUrl,
+					DataCenter:        loc.DataCenter,
+					GrpcPort:          int(loc.GrpcPort),
+					DataInRemote:      loc.DataInRemote,
+					ReadOnly:          loc.ReadOnly,
+					ReadOnlyCanDelete: loc.ReadOnlyCanDelete,
 				})
 			}
-			if vidLocations.Error == "" {
+			if cacheLocations && vidLocations.Error == "" {
 				vc.Set(vidLocations.VolumeOrFileId, locations, 10*time.Minute)
 			}
 			ret[vidLocations.VolumeOrFileId] = &LookupResult{

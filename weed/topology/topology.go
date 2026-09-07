@@ -708,11 +708,31 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	}
 	dn.DeltaUpdateVolumes(newVis, oldVis)
 
+	type layoutKey struct {
+		id               needle.VolumeId
+		collection       string
+		replicaPlacement byte
+		ttl              uint32
+		diskType         types.DiskType
+	}
+	key := func(vi storage.VolumeInfo) layoutKey {
+		return layoutKey{
+			id:               vi.Id,
+			collection:       vi.Collection,
+			replicaPlacement: vi.ReplicaPlacement.Byte(),
+			ttl:              vi.Ttl.ToUint32(),
+			diskType:         types.ToDiskType(vi.DiskType),
+		}
+	}
+	replacements := make(map[layoutKey]struct{}, len(newVis))
 	for _, vi := range newVis {
+		replacements[key(vi)] = struct{}{}
 		t.RegisterVolumeLayout(vi, dn)
 	}
-	for _, vi := range oldVis {
-		t.UnRegisterVolumeLayout(vi, dn)
+	for _, oldVi := range oldVis {
+		if _, replaced := replacements[key(oldVi)]; !replaced {
+			t.UnRegisterVolumeLayout(oldVi, dn)
+		}
 	}
 
 	return
@@ -741,7 +761,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 	}
 
 	for _, vi := range volumeInfos {
-		isNew, _, tierTransition := dn.AddOrUpdateVolume(vi)
+		isNew, isChanged, tierTransition := dn.AddOrUpdateVolume(vi)
 		if vi.ReplicaPlacement == nil {
 			if isNew {
 				newVolumes = append(newVolumes, vi)
@@ -757,7 +777,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			// Dropped with its collection; the next lookup creates a fresh one.
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
-		if isNew || becameServable || tierTransition {
+		if isNew || becameServable || tierTransition || isChanged {
 			newVolumes = append(newVolumes, vi)
 		}
 		vl.UpdateOversizedState(&vi, dn)
