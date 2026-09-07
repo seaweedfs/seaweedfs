@@ -477,6 +477,59 @@ func TestResolveChunkManifestExcludesOutOfRangeChildrenOnLaterFailure(t *testing
 	require.Equal(t, []string{"a-in-range"}, fileIDs(data), "out-of-range child chunks must be excluded from partial results")
 }
 
+func TestResolveChunkManifestQueuesJobsBeyondWorkerCount(t *testing.T) {
+	// More manifests than workers. The first four stall; the fifth fails
+	// promptly. With a buffered job channel, the fifth job is queued without
+	// blocking submission. When a stalled read is released, a worker picks up
+	// the failing job, which cancels the batch and unblocks the rest.
+	stallRelease := make(chan struct{})
+	stallStarted := make(chan struct{}, 4)
+	lookup := func(ctx context.Context, fileID string) ([]string, error) {
+		switch fileID {
+		case "stall-0", "stall-1", "stall-2", "stall-3":
+			stallStarted <- struct{}{}
+			select {
+			case <-stallRelease:
+				return nil, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		case "fail":
+			return nil, errors.New("prompt lookup failure")
+		default:
+			return nil, fmt.Errorf("unexpected manifest %s", fileID)
+		}
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := ResolveChunkManifest(context.Background(), lookup, []*filer_pb.FileChunk{
+			resolveTestManifest("stall-0", 0),
+			resolveTestManifest("stall-1", 100),
+			resolveTestManifest("stall-2", 200),
+			resolveTestManifest("stall-3", 300),
+			resolveTestManifest("fail", 400),
+		}, 0, 500, nil)
+		result <- err
+	}()
+
+	// Wait until all 4 workers are stalled.
+	for i := 0; i < 4; i++ {
+		waitForManifestFailureSignal(t, stallStarted)
+	}
+
+	// Release the stalled reads so workers can pick up the queued failing job.
+	close(stallRelease)
+
+	select {
+	case err := <-result:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "fail to read manifest fail")
+	case <-time.After(2 * time.Second):
+		t.Fatal("failing job was not picked up after releasing stalled workers")
+	}
+}
+
 func fileIDs(chunks []*filer_pb.FileChunk) []string {
 	ids := make([]string, 0, len(chunks))
 	for _, chunk := range chunks {

@@ -29,6 +29,11 @@ var bytesBufferPool = sync.Pool{
 // Keep Manifest reads bounded across all recursion levels of one resolution.
 const maxChunkManifestResolveWorkers = 4
 
+// Size of the job queue buffer. Large enough that submission does not block
+// under normal chunk counts, so a promptly-failing manifest is always queued
+// and can cancel stalled sibling reads once a worker picks it up.
+const chunkManifestResolveJobBufferSize = 128
+
 func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
 	for _, chunk := range chunks {
 		if chunk.IsChunkManifest {
@@ -90,7 +95,7 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 		cancel:         cancel,
 		lookupFileIdFn: lookupFileIdFn,
 		invalidator:    invalidator,
-		jobs:           make(chan chunkManifestResolveJob),
+		jobs:           make(chan chunkManifestResolveJob, chunkManifestResolveJobBufferSize),
 	}
 	return resolver
 }
@@ -130,6 +135,12 @@ func (r *chunkManifestResolver) submit(job chunkManifestResolveJob) bool {
 	case r.jobs <- job:
 		return true
 	case <-r.ctx.Done():
+		return false
+	case <-job.batchCtx.Done():
+		// Batch was cancelled by a sibling failure; don't queue this job.
+		job.result.err = job.batchCtx.Err()
+		job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
+		job.done.Done()
 		return false
 	}
 }
