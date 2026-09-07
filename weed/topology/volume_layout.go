@@ -1066,11 +1066,14 @@ func (vl *VolumeLayout) setVolumeCrowded(vid needle.VolumeId) {
 }
 
 func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
-	// since delete is guarded by accessLock.Lock(),
-	// and is always called in sequential order,
-	// RLock() should be safe enough
-	vl.accessLock.RLock()
-	defer vl.accessLock.RUnlock()
+	// setVolumeCrowded mutates the crowded map, and GetWritableVolumeCount
+	// reads it under RLock on the Assign hot path. Two concurrent RLock
+	// holders with one writing the map triggers a fatal
+	// "concurrent map read and map write". Take the write lock: this path
+	// is a low-frequency single consumer driven by the crowded-volume
+	// event loop, and every other mutation of crowded already holds Lock().
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
 
 	vl.setVolumeCrowded(vid)
 }
