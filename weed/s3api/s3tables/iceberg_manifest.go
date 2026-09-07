@@ -40,13 +40,20 @@ func ReadManifest(m iceberg.ManifestFile, manifest []byte, discardDeleted bool, 
 	}
 
 	var partitionFields []iceberg.NestedField
-	if spec, found := specs[int(m.PartitionSpecID())]; found && schema != nil {
-		if partitionType := spec.PartitionType(schema); partitionType != nil {
-			partitionFields = partitionType.FieldList
+	var spec iceberg.PartitionSpec
+	var specFound bool
+	if schema != nil {
+		spec, specFound = specs[int(m.PartitionSpecID())]
+		if specFound {
+			if partitionType := spec.PartitionType(schema); partitionType != nil {
+				partitionFields = partitionType.FieldList
+			}
 		}
 	}
-	for _, entry := range entries {
+
+	for i, entry := range entries {
 		partition := entry.DataFile().Partition()
+		changed := false
 		for _, field := range partitionFields {
 			value, ok := partition[field.ID]
 			if !ok {
@@ -54,11 +61,103 @@ func ReadManifest(m iceberg.ManifestFile, manifest []byte, discardDeleted bool, 
 			}
 			if normalized, ok := normalizePartitionValue(value, field.Type); ok {
 				partition[field.ID] = normalized
+				changed = true
 			}
+		}
+		if changed {
+			// iceberg-go returns a defensive copy from Partition(), so the
+			// in-place edits above never reach the underlying DataFile.
+			// Rebuild the entry with a DataFile that carries the normalized
+			// partition so a subsequent write encodes the Iceberg values.
+			entries[i] = rebuildManifestEntry(entry, spec, partition)
 		}
 	}
 	return entries, nil
 }
+
+// rebuildManifestEntry returns a copy of entry whose DataFile carries the
+// given partition map. It is used to persist partition values normalized
+// after a read, since iceberg-go's Partition() getter hands back a clone
+// rather than the live map. Only the partition changes; every other DataFile
+// field is copied through the builder so manifest round-trips are preserved.
+func rebuildManifestEntry(entry iceberg.ManifestEntry, spec iceberg.PartitionSpec, partition map[int]any) iceberg.ManifestEntry {
+	df := entry.DataFile()
+	builder, err := iceberg.NewDataFileBuilder(
+		spec,
+		df.ContentType(),
+		df.FilePath(),
+		df.FileFormat(),
+		partition,
+		nil, // logical types are derived from the spec at write time
+		nil,
+		df.Count(),
+		df.FileSizeBytes(),
+	)
+	if err != nil {
+		// The original DataFile already validated these fields, so the only
+		// way to get here is a nil spec, which rebuildManifestEntry's caller
+		// guards against. Fall back to the original entry rather than panic.
+		return entry
+	}
+
+	builder.BlockSizeInBytes(0) // deprecated in v2; the original is not exposed
+	if sizes := df.ColumnSizes(); sizes != nil {
+		builder.ColumnSizes(sizes)
+	}
+	if counts := df.ValueCounts(); counts != nil {
+		builder.ValueCounts(counts)
+	}
+	if counts := df.NullValueCounts(); counts != nil {
+		builder.NullValueCounts(counts)
+	}
+	if counts := df.NaNValueCounts(); counts != nil {
+		builder.NaNValueCounts(counts)
+	}
+	if counts := df.DistinctValueCounts(); counts != nil {
+		builder.DistinctValueCounts(counts)
+	}
+	if bounds := df.LowerBoundValues(); bounds != nil {
+		builder.LowerBoundValues(bounds)
+	}
+	if bounds := df.UpperBoundValues(); bounds != nil {
+		builder.UpperBoundValues(bounds)
+	}
+	if key := df.KeyMetadata(); key != nil {
+		builder.KeyMetadata(key)
+	}
+	if offsets := df.SplitOffsets(); offsets != nil {
+		builder.SplitOffsets(offsets)
+	}
+	if ids := df.EqualityFieldIDs(); ids != nil {
+		builder.EqualityFieldIDs(ids)
+	}
+	if id := df.SortOrderID(); id != nil {
+		builder.SortOrderID(*id)
+	}
+	if id := df.FirstRowID(); id != nil {
+		builder.FirstRowID(*id)
+	}
+	if ref := df.ReferencedDataFile(); ref != nil {
+		builder.ReferencedDataFile(*ref)
+	}
+	if off := df.ContentOffset(); off != nil {
+		builder.ContentOffset(*off)
+	}
+	if size := df.ContentSizeInBytes(); size != nil {
+		builder.ContentSizeInBytes(*size)
+	}
+
+	newEntry := iceberg.NewManifestEntryBuilder(entry.Status(), ptrInt64(entry.SnapshotID()), builder.Build())
+	if seq := entry.SequenceNum(); seq != -1 {
+		newEntry.SequenceNum(seq)
+	}
+	if fileSeq := entry.FileSequenceNum(); fileSeq != nil {
+		newEntry.FileSequenceNum(*fileSeq)
+	}
+	return newEntry.Build()
+}
+
+func ptrInt64(v int64) *int64 { return &v }
 
 // normalizePartitionValue converts one value the Avro decoder returned for a
 // logical type to the Iceberg representation the manifest writer expects,

@@ -30,6 +30,9 @@ func TestReadManifestNormalizesForeignPartitions(t *testing.T) {
 		// nullFirst spells the union the way Java and iceberg-rust do, which
 		// iceberg-go converts on its own once the partition is read.
 		nullFirst bool
+		// rawIsNormalized marks transforms iceberg-go now converts itself on
+		// read (day transforms), so the raw value already matches want.
+		rawIsNormalized bool
 	}{
 		{
 			name:        "day transform written null-first converts on read",
@@ -47,6 +50,10 @@ func TestReadManifestNormalizesForeignPartitions(t *testing.T) {
 			logicalType: "date",
 			decoded:     day,
 			want:        iceberg.Date(20737),
+			// iceberg-go now converts day-transform partitions to iceberg.Date
+			// itself (applyDayTransformDates), so the raw read already yields
+			// the Iceberg value regardless of union branch ordering.
+			rawIsNormalized: true,
 		},
 		{
 			name:        "identity transform on a date column",
@@ -99,7 +106,7 @@ func TestReadManifestNormalizesForeignPartitions(t *testing.T) {
 			// the ordering decides whether the entry arrives as an Iceberg value
 			// or as whatever the Avro decoder produced.
 			rawWant := any(c.decoded)
-			if c.nullFirst {
+			if c.nullFirst || c.rawIsNormalized {
 				rawWant = c.want
 			}
 			raw, err := iceberg.ReadManifest(foreignManifest, bytes.NewReader(foreignBytes), true)
@@ -155,12 +162,14 @@ func TestReadManifestUnknownSpec(t *testing.T) {
 	}
 }
 
-// iceberg-go converts a partition value on the first Partition() call, with
-// whatever logical types are installed then, and ManifestWriter.addEntry
-// rebinds them to the manifest it is about to write before it makes that call.
-// A day partition has no date logical type there, so an entry nobody looked at
-// between reading and writing never converts at all -- the failure Doris and
-// iceberg-rust tables hit, whose manifests spell the union null-first.
+// iceberg-go now converts day-transform partitions to iceberg.Date during read
+// (applyDayTransformDates), so an entry nobody looked at between reading and
+// writing still carries an Iceberg value and writes cleanly. This used to fail
+// because conversion was lazy and ManifestWriter.addEntry rebound the logical
+// types to the output manifest — whose day transform carries no date logical
+// type — before the first Partition() call, leaving a time.Time that the
+// encoder rejected. The shim keeps the round-trip working for the identity
+// transforms iceberg-go still does not convert (see TestReadManifestNormalizesForeignPartitions).
 func TestReadManifestConvertsBeforeTheWriterRebindsLogicalTypes(t *testing.T) {
 	schema := iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "event_time", Type: iceberg.PrimitiveTypes.Timestamp, Required: true},
@@ -183,9 +192,13 @@ func TestReadManifestConvertsBeforeTheWriterRebindsLogicalTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read foreign manifest: %v", err)
 	}
+	got := untouched[0].DataFile().Partition()[1000]
+	if _, ok := got.(iceberg.Date); !ok {
+		t.Fatalf("iceberg-go now converts day partitions on read; got %T, want iceberg.Date", got)
+	}
 	var buf bytes.Buffer
-	if _, err := iceberg.WriteManifest("metadata/manifest.avro", &buf, 2, spec, schema, snapshotID, untouched); err == nil {
-		t.Fatal("writing an entry whose partition was never read should still hold a time.Time")
+	if _, err := iceberg.WriteManifest("metadata/manifest.avro", &buf, 2, spec, schema, snapshotID, untouched); err != nil {
+		t.Fatalf("write manifest read directly through iceberg-go: %v", err)
 	}
 
 	entries, err := ReadManifest(foreignManifest, foreignBytes, true, specs, schema)
