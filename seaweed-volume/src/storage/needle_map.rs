@@ -1031,10 +1031,7 @@ impl RedbNeedleMap {
             })?;
             let key_u64: u64 = key_guard.value();
             let bytes: &[u8] = val_guard.value();
-            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                arr.copy_from_slice(bytes);
-                let nv = unpack_needle_value(&arr);
+            if let Some(nv) = packed_to_needle_value(bytes) {
                 if nv.size.is_valid() {
                     idx::write_index_entry(&mut file, NeedleId(key_u64), nv.offset, nv.size)?;
                 }
@@ -1062,10 +1059,7 @@ impl RedbNeedleMap {
             let (key_guard, val_guard) = entry.map_err(|e| format!("redb iter next: {}", e))?;
             let key_u64: u64 = key_guard.value();
             let bytes: &[u8] = val_guard.value();
-            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                arr.copy_from_slice(bytes);
-                let nv = unpack_needle_value(&arr);
+            if let Some(nv) = packed_to_needle_value(bytes) {
                 f(NeedleId(key_u64), &nv)?;
             }
         }
@@ -1090,10 +1084,7 @@ impl RedbNeedleMap {
                 entry.map_err(|e| io::Error::other(format!("redb entry: {e}")))?;
             let key_u64: u64 = key_guard.value();
             let bytes: &[u8] = val_guard.value();
-            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
-                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
-                arr.copy_from_slice(bytes);
-                let nv = unpack_needle_value(&arr);
+            if let Some(nv) = packed_to_needle_value(bytes) {
                 result.push((NeedleId(key_u64), nv));
             }
         }
