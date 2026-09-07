@@ -708,11 +708,31 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	}
 	dn.DeltaUpdateVolumes(newVis, oldVis)
 
-	for _, vi := range oldVis {
-		t.UnRegisterVolumeLayout(vi, dn)
+	type layoutKey struct {
+		id               needle.VolumeId
+		collection       string
+		replicaPlacement byte
+		ttl              uint32
+		diskType         types.DiskType
 	}
+	key := func(vi storage.VolumeInfo) layoutKey {
+		return layoutKey{
+			id:               vi.Id,
+			collection:       vi.Collection,
+			replicaPlacement: vi.ReplicaPlacement.Byte(),
+			ttl:              vi.Ttl.ToUint32(),
+			diskType:         types.ToDiskType(vi.DiskType),
+		}
+	}
+	replacements := make(map[layoutKey]struct{}, len(newVis))
 	for _, vi := range newVis {
+		replacements[key(vi)] = struct{}{}
 		t.RegisterVolumeLayout(vi, dn)
+	}
+	for _, oldVi := range oldVis {
+		if _, replaced := replacements[key(oldVi)]; !replaced {
+			t.UnRegisterVolumeLayout(oldVi, dn)
+		}
 	}
 
 	return

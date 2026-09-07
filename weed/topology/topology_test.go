@@ -3,6 +3,7 @@ package topology
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -213,6 +214,54 @@ func TestIncrementalSyncReplacesVolumeReadOnlyState(t *testing.T) {
 				t.Fatal("replacement left the held and servable volume indexes inconsistent")
 			}
 		})
+	}
+}
+
+func TestIncrementalSyncRegistersMovedVolumeBeforeRemoval(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25, "ssd": 25})
+	oldVolume := &master_pb.VolumeShortInformationMessage{
+		Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()),
+	}
+	newVolume := &master_pb.VolumeShortInformationMessage{
+		Id: 1, Collection: "c", Version: uint32(needle.GetCurrentVersion()), DiskType: "ssd",
+	}
+	topo.IncrementalSyncDataNodeRegistration([]*master_pb.VolumeShortInformationMessage{oldVolume}, nil, dn)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	oldLayout := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+	newLayout := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.SsdType)
+	oldLayout.accessLock.Lock()
+	done := make(chan struct{})
+	go func() {
+		topo.IncrementalSyncDataNodeRegistration(
+			[]*master_pb.VolumeShortInformationMessage{newVolume},
+			[]*master_pb.VolumeShortInformationMessage{oldVolume}, dn)
+		close(done)
+	}()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	movedBeforeRemoval := false
+	for !movedBeforeRemoval {
+		select {
+		case <-deadline.C:
+			oldLayout.accessLock.Unlock()
+			<-done
+			t.Fatal("destination layout was not registered before source removal")
+		case <-ticker.C:
+			movedBeforeRemoval = len(newLayout.Lookup(needle.VolumeId(1))) == 1
+		}
+	}
+	oldLayout.accessLock.Unlock()
+	<-done
+
+	locations := topo.Lookup("c", needle.VolumeId(1))
+	if len(locations) != 1 || locations[0] != dn {
+		t.Fatalf("lookup locations = %v, want only %v", locations, dn)
 	}
 }
 
