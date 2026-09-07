@@ -403,6 +403,7 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 		DiskType:         v.DiskType().String(),
 		DiskId:           v.diskId,
 	}
+	_, _, s.ReadOnlyCanDelete, _ = v.ReadOnlyReasons()
 	s.RemoteStorageName, _ = v.RemoteStorageNameKey()
 
 	v.dataFileAccessLock.RLock()

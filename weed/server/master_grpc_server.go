@@ -88,13 +88,16 @@ func (ms *MasterServer) UnRegisterUuids(ip string, port int) {
 // goes on both lists: RemoteVids carries the classification, and NewVids keeps
 // a client too old to read RemoteVids from losing the volume altogether during
 // a rolling upgrade.
-func announceVolume(message *master_pb.VolumeLocation, vid uint32, isRemote, isReadOnly bool) {
+func announceVolume(message *master_pb.VolumeLocation, vid uint32, isRemote, isReadOnly, readOnlyCanDelete bool) {
 	message.NewVids = append(message.NewVids, vid)
 	if isRemote {
 		message.RemoteVids = append(message.RemoteVids, vid)
 	}
 	if isReadOnly {
 		message.ReadOnlyVids = append(message.ReadOnlyVids, vid)
+		if readOnlyCanDelete {
+			message.ReadOnlyCanDeleteVids = append(message.ReadOnlyCanDeleteVids, vid)
+		}
 	}
 }
 
@@ -241,7 +244,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			for _, volInfo := range heartbeat.NewVolumes {
 				// The short form carries no remote-storage name, so the volume
 				// reads as local until a changed or full report names its tier.
-				announceVolume(message, volInfo.Id, false, false)
+				announceVolume(message, volInfo.Id, false, false, false)
 			}
 			for _, volInfo := range heartbeat.DeletedVolumes {
 				if !shouldBroadcastVolumeRemoval(dn, needle.VolumeId(volInfo.Id)) {
@@ -257,7 +260,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				// Changed volumes include both newly-added replicas and existing
 				// replicas whose tier classification flipped, which the client
 				// has to be told about to refresh its replica priority.
-				announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
+				announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly, v.ReadOnlyCanDelete)
 			}
 		}
 
@@ -273,7 +276,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			for _, v := range newVolumes {
 				glog.V(1).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
-				announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
+				announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly, v.ReadOnlyCanDelete)
 			}
 			// A full reconciliation is the digest mismatch recovery path, and
 			// the only way a re-tiered replica reaches the master without a
@@ -281,7 +284,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			// too is what stops the client keeping the old classification.
 			for _, v := range changedVolumes {
 				glog.V(1).Infof("master see tier/readonly change on volume %d from %s", uint32(v.Id), dn.Url())
-				announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly)
+				announceVolume(message, uint32(v.Id), v.IsRemote(), v.ReadOnly, v.ReadOnlyCanDelete)
 			}
 			for _, v := range deletedVolumes {
 				glog.V(1).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())

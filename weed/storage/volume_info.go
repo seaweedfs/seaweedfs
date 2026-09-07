@@ -36,8 +36,9 @@ type VolumeInfo struct {
 	FileCount   uint32
 	DeleteCount uint32
 
-	Version  needle.Version
-	ReadOnly bool
+	Version           needle.Version
+	ReadOnly          bool
+	ReadOnlyCanDelete bool
 }
 
 // countAsUint32 narrows a reported count without letting it wrap. Nothing
@@ -59,6 +60,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		DeleteCount:       countAsUint32(m.DeleteCount),
 		DeletedByteCount:  m.DeletedByteCount,
 		ReadOnly:          m.ReadOnly,
+		ReadOnlyCanDelete: m.ReadOnlyCanDelete,
 		Version:           needle.Version(m.Version),
 		CompactRevision:   m.CompactRevision,
 		ModifiedAtSecond:  m.ModifiedAtSecond,
@@ -166,6 +168,7 @@ func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMe
 		DeleteCount:       uint64(vi.DeleteCount),
 		DeletedByteCount:  vi.DeletedByteCount,
 		ReadOnly:          vi.ReadOnly,
+		ReadOnlyCanDelete: vi.ReadOnlyCanDelete,
 		ReplicaPlacement:  uint32(vi.ReplicaPlacement.Byte()),
 		Version:           uint32(vi.Version),
 		Ttl:               vi.Ttl.ToUint32(),

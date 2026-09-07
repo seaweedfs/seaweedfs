@@ -535,7 +535,7 @@ func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMes
 	volumeInfo.FileCount = fileCount
 	volumeInfo.DeleteCount = deletedCount
 	volumeInfo.DeletedByteCount = deletedSize
-	volumeInfo.ReadOnly = v.IsReadOnly()
+	volumeInfo.ReadOnly, _, volumeInfo.ReadOnlyCanDelete, _ = v.ReadOnlyReasons()
 	volumeInfo.ReplicaPlacement = uint32(v.ReplicaPlacement.Byte())
 	volumeInfo.Version = uint32(v.Version())
 	volumeInfo.Ttl = v.Ttl.ToUint32()

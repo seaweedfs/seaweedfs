@@ -21,12 +21,13 @@ type HasLookupFileIdFunction interface {
 type LookupFileIdFunctionType func(ctx context.Context, fileId string) (targetUrls []string, err error)
 
 type Location struct {
-	Url          string `json:"url,omitempty"`
-	PublicUrl    string `json:"publicUrl,omitempty"`
-	DataCenter   string `json:"dataCenter,omitempty"`
-	GrpcPort     int    `json:"grpcPort,omitempty"`
-	DataInRemote bool   `json:"dataInRemote,omitempty"`
-	ReadOnly     bool   `json:"readOnly,omitempty"`
+	Url               string `json:"url,omitempty"`
+	PublicUrl         string `json:"publicUrl,omitempty"`
+	DataCenter        string `json:"dataCenter,omitempty"`
+	GrpcPort          int    `json:"grpcPort,omitempty"`
+	DataInRemote      bool   `json:"dataInRemote,omitempty"`
+	ReadOnly          bool   `json:"readOnly,omitempty"`
+	ReadOnlyCanDelete bool   `json:"readOnlyCanDelete,omitempty"`
 }
 
 func (l Location) ServerAddress() pb.ServerAddress {
@@ -287,7 +288,7 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 
 	for i, loc := range entry.locations {
 		if loc.Url == location.Url {
-			if loc.DataInRemote == location.DataInRemote && loc.ReadOnly == location.ReadOnly {
+			if loc.DataInRemote == location.DataInRemote && loc.ReadOnly == location.ReadOnly && loc.ReadOnlyCanDelete == location.ReadOnlyCanDelete {
 				return
 			}
 			// A reader holds the slice GetLocations handed it after the lock

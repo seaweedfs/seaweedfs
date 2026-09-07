@@ -15,7 +15,7 @@ import (
 // the message they are about to send, masters hash what they already hold, and
 // the two match only when the master is up to date.
 func (vi VolumeInfo) ReportHash() uint64 {
-	var buf [57]byte
+	var buf [58]byte
 	binary.LittleEndian.PutUint32(buf[0:], uint32(vi.Id))
 	binary.LittleEndian.PutUint64(buf[4:], vi.Size)
 	binary.LittleEndian.PutUint64(buf[12:], uint64(vi.FileCount))
@@ -28,6 +28,9 @@ func (vi VolumeInfo) ReportHash() uint64 {
 	binary.LittleEndian.PutUint32(buf[52:], vi.DiskId)
 	if vi.ReadOnly {
 		buf[56] = 1
+	}
+	if vi.ReadOnlyCanDelete {
+		buf[57] = 1
 	}
 	h := xxhash.Sum64(buf[:])
 

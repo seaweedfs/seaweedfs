@@ -145,6 +145,7 @@ message VolumeInformationMessage {
   uint64 delete_count = 5;
   uint64 deleted_byte_count = 6;
   bool read_only = 7;
+  bool read_only_can_delete = 17;
   uint32 replica_placement = 8;
   uint32 version = 9;
   uint32 ttl = 10;
@@ -224,6 +225,7 @@ message VolumeLocation {
   repeated uint32 deleted_ec_vids = 9;
   repeated uint32 remote_vids = 10;
   repeated uint32 read_only_vids = 11;
+  repeated uint32 read_only_can_delete_vids = 12;
 }
 
 message ClusterNodeUpdate {

@@ -741,7 +741,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 	}
 
 	for _, vi := range volumeInfos {
-		isNew, _, tierTransition := dn.AddOrUpdateVolume(vi)
+		isNew, isChanged, tierTransition := dn.AddOrUpdateVolume(vi)
 		if vi.ReplicaPlacement == nil {
 			if isNew {
 				newVolumes = append(newVolumes, vi)
@@ -757,7 +757,7 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 			// Dropped with its collection; the next lookup creates a fresh one.
 			vl = t.GetVolumeLayout(vi.Collection, vi.ReplicaPlacement, vi.Ttl, types.ToDiskType(vi.DiskType))
 		}
-		if isNew || becameServable || tierTransition {
+		if isNew || becameServable || tierTransition || isChanged {
 			newVolumes = append(newVolumes, vi)
 		}
 		vl.UpdateOversizedState(&vi, dn)
