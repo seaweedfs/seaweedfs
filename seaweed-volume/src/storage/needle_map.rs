@@ -8,7 +8,7 @@
 //! Loaded from .idx file on volume mount. Supports Get, Put, Delete with
 //! metrics tracking (file count, byte count, deleted count, deleted bytes).
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -707,12 +707,13 @@ impl RedbNeedleMap {
         }
     }
 
-    /// Full rebuild: unlink any existing .rdb and rebuild from the entire .idx.
+    /// Full rebuild: prefer a fresh `.rdb`, then rebuild from the entire `.idx`.
     ///
     /// `Database::create` opens an existing file (`truncate(false)`). Unlink
-    /// must succeed (or the path must be absent) so the needles table is empty
-    /// before we insert. Inserts are in needle-id order so redb 4.2.0 packs
-    /// leaves.
+    /// is best-effort: if it fails (sticky bit, foreign owner) but the path is
+    /// still writable, clear the leftover needles table before inserting.
+    /// Live keys come from a `BTreeMap` so inserts are in needle-id order and
+    /// redb 4.2.0 packs leaves, without a second Vec + sort scratch.
     fn full_rebuild<R: Read + Seek>(
         db_path: &str,
         reader: &mut R,
@@ -720,11 +721,14 @@ impl RedbNeedleMap {
         version: Version,
         cache_bytes: usize,
     ) -> io::Result<Self> {
-        match std::fs::remove_file(db_path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
+        let unlinked = match std::fs::remove_file(db_path) {
+            Ok(()) => true,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => true,
+            Err(e) => {
+                tracing::warn!("redb unlink before rebuild failed: {}", e);
+                false
+            }
+        };
 
         let mut nm = match RedbNeedleMap::new(db_path, cache_bytes) {
             Ok(nm) => nm,
@@ -735,29 +739,32 @@ impl RedbNeedleMap {
         };
 
         let result = (|| -> io::Result<()> {
-            let mut entries: HashMap<NeedleId, Option<NeedleValue>> = HashMap::new();
+            // Seek independently of walk_index_file. Run before the write txn
+            // so a metric-read error does not unlink a committed rebuild.
+            nm.metric = metrics_from_idx(reader, version)?;
+
+            let mut entries: BTreeMap<NeedleId, NeedleValue> = BTreeMap::new();
             idx::walk_index_file(reader, 0, |key, offset, size| {
                 if offset.is_zero() || size.is_deleted() {
-                    entries.insert(key, None);
+                    entries.remove(&key);
                 } else {
-                    entries.insert(key, Some(NeedleValue { offset, size }));
+                    entries.insert(key, NeedleValue { offset, size });
                 }
                 Ok(())
             })?;
-
-            let mut live: Vec<(NeedleId, NeedleValue)> = entries
-                .into_iter()
-                .filter_map(|(k, v)| v.map(|nv| (k, nv)))
-                .collect();
-            live.sort_by_key(|(k, _)| *k);
 
             let txn = Self::begin_write_no_fsync(&nm.db)?;
             {
                 let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
                     io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
                 })?;
+                if !unlinked {
+                    table.retain(|_, _| false).map_err(|e| {
+                        io::Error::new(io::ErrorKind::Other, format!("redb retain: {}", e))
+                    })?;
+                }
 
-                for (key, nv) in &live {
+                for (key, nv) in &entries {
                     let key_u64: u64 = (*key).into();
                     let packed = pack_needle_value(nv);
                     table.insert(key_u64, packed.as_slice()).map_err(|e| {
@@ -769,7 +776,6 @@ impl RedbNeedleMap {
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
 
             nm.save_idx_size_meta(idx_size)?;
-            nm.metric = metrics_from_idx(reader, version)?;
             Ok(())
         })();
 
