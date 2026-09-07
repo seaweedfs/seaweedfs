@@ -885,14 +885,17 @@ func (s *Store) MountVolume(i needle.VolumeId) error {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting
+			readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
-				Id:               uint32(v.Id),
-				Collection:       v.Collection,
-				ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-				Version:          uint32(v.Version()),
-				Ttl:              v.Ttl.ToUint32(),
-				DiskType:         string(v.location.DiskType),
-				DiskId:           uint32(diskId),
+				Id:                uint32(v.Id),
+				Collection:        v.Collection,
+				ReplicaPlacement:  uint32(v.ReplicaPlacement.Byte()),
+				Version:           uint32(v.Version()),
+				Ttl:               v.Ttl.ToUint32(),
+				DiskType:          string(v.location.DiskType),
+				DiskId:            uint32(diskId),
+				ReadOnly:          readOnly,
+				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
 			return nil
 		}

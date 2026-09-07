@@ -120,3 +120,35 @@ func TestMarkVolumeReadonlyCanDelete_AfterReadonlyBoot(t *testing.T) {
 	require.NoError(t, err, "deletes must land once canDelete is set")
 	store2.Close()
 }
+
+func TestMountVolumeAnnouncesReadOnlyState(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		canDelete bool
+	}{
+		{name: "plain read-only"},
+		{name: "read-only can delete", canDelete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
+				[]string{dir}, []int32{100}, []util.MinFreeSpace{{}}, "",
+				NeedleMapInMemory, []types.DiskType{types.HardDriveType}, nil, 3,
+				stats.DefaultDiskIOProbeConfig())
+			t.Cleanup(store.Close)
+			const vid = needle.VolumeId(13)
+
+			require.NoError(t, store.AddVolume(vid, "", NeedleMapInMemory, "000", "", 0,
+				needle.GetCurrentVersion(), 0, types.HardDriveType, 0))
+			<-store.NewVolumesChan
+			require.NoError(t, store.MarkVolumeReadonly(vid, tc.canDelete, true))
+			require.NoError(t, store.UnmountVolume(vid))
+			<-store.DeletedVolumesChan
+			require.NoError(t, store.MountVolume(vid))
+
+			message := <-store.NewVolumesChan
+			require.True(t, message.ReadOnly)
+			require.Equal(t, tc.canDelete, message.ReadOnlyCanDelete)
+		})
+	}
+}
