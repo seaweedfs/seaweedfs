@@ -744,6 +744,8 @@ struct VolumeIdentity {
     replica_placement: u32,
     ttl: u32,
     disk_id: u32,
+    read_only: bool,
+    read_only_can_delete: bool,
 }
 
 impl VolumeIdentity {
@@ -755,6 +757,8 @@ impl VolumeIdentity {
             replica_placement: v.replica_placement,
             ttl: v.ttl,
             disk_id: v.disk_id,
+            read_only: v.read_only,
+            read_only_can_delete: v.read_only_can_delete,
         }
     }
 
@@ -767,6 +771,8 @@ impl VolumeIdentity {
             ttl: self.ttl,
             disk_type: self.disk_type.clone(),
             disk_id: self.disk_id,
+            read_only: self.read_only,
+            read_only_can_delete: self.read_only_can_delete,
         }
     }
 }

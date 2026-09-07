@@ -165,6 +165,8 @@ message VolumeShortInformationMessage {
   uint32 ttl = 10;
   string disk_type = 15;
   uint32 disk_id = 16;
+  bool read_only = 17;
+  bool read_only_can_delete = 18;
 }
 
 message VolumeEcShardInformationMessage {

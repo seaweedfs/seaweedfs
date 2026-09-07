@@ -624,16 +624,18 @@ func (x *VolumeInformationMessage) GetDiskId() uint32 {
 }
 
 type VolumeShortInformationMessage struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Id               uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Collection       string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
-	ReplicaPlacement uint32                 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`
-	Version          uint32                 `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
-	Ttl              uint32                 `protobuf:"varint,10,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	DiskType         string                 `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	DiskId           uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Id                uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Collection        string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
+	ReplicaPlacement  uint32                 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`
+	Version           uint32                 `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
+	Ttl               uint32                 `protobuf:"varint,10,opt,name=ttl,proto3" json:"ttl,omitempty"`
+	DiskType          string                 `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	DiskId            uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
+	ReadOnly          bool                   `protobuf:"varint,17,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	ReadOnlyCanDelete bool                   `protobuf:"varint,18,opt,name=read_only_can_delete,json=readOnlyCanDelete,proto3" json:"read_only_can_delete,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *VolumeShortInformationMessage) Reset() {
@@ -713,6 +715,20 @@ func (x *VolumeShortInformationMessage) GetDiskId() uint32 {
 		return x.DiskId
 	}
 	return 0
+}
+
+func (x *VolumeShortInformationMessage) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *VolumeShortInformationMessage) GetReadOnlyCanDelete() bool {
+	if x != nil {
+		return x.ReadOnlyCanDelete
+	}
+	return false
 }
 
 type VolumeEcShardInformationMessage struct {
@@ -5075,7 +5091,7 @@ const file_master_proto_rawDesc = "" +
 	"\x13remote_storage_name\x18\r \x01(\tR\x11remoteStorageName\x12,\n" +
 	"\x12remote_storage_key\x18\x0e \x01(\tR\x10remoteStorageKey\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xde\x01\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xac\x02\n" +
 	"\x1dVolumeShortInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -5086,7 +5102,9 @@ const file_master_proto_rawDesc = "" +
 	"\x03ttl\x18\n" +
 	" \x01(\rR\x03ttl\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xd4\x02\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\x12\x1b\n" +
+	"\tread_only\x18\x11 \x01(\bR\breadOnly\x12/\n" +
+	"\x14read_only_can_delete\x18\x12 \x01(\bR\x11readOnlyCanDelete\"\xd4\x02\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
