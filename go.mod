@@ -154,7 +154,7 @@ require (
 	github.com/tarantool/go-tarantool/v3 v3.0.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/tikv/client-go/v2 v2.0.7
-	github.com/twmb/avro v1.7.2
+	github.com/twmb/avro v1.8.0
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.151.1
