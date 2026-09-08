@@ -51,17 +51,17 @@ type AdminOptions struct {
 	readOnlyUser     *string
 	readOnlyPassword *string
 	// nil for callers other than runAdmin (e.g. `weed mini`)
-	allowInsecureNoAuth *bool
-	dataDir             *string
-	icebergPort         *int
-	lancePort           *int
-	urlPrefix           *string
-	metricsHttpPort     *int
-	metricsHttpIp       *string
-	debug               *bool
-	debugPort           *int
-	cpuProfile          *string
-	memProfile          *string
+	allowInsecureBind *bool
+	dataDir           *string
+	icebergPort       *int
+	lancePort         *int
+	urlPrefix         *string
+	metricsHttpPort   *int
+	metricsHttpIp     *string
+	debug             *bool
+	debugPort         *int
+	cpuProfile        *string
+	memProfile        *string
 
 	// workerGrpcListener, when set, is a listener already bound to grpcPort by
 	// the caller. `weed mini` reserves the port this way because the admin
@@ -88,7 +88,7 @@ func init() {
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
-	a.allowInsecureNoAuth = cmdAdmin.Flag.Bool("allowInsecureNoAuth", false, "INSECURE: allow binding a non-loopback ip without adminPassword or mTLS, exposing the admin API unauthenticated on the network")
+	a.allowInsecureBind = cmdAdmin.Flag.Bool("allowInsecureBind", false, "INSECURE: allow binding a non-loopback ip without adminPassword or mTLS, exposing the admin API unauthenticated on the network")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 	a.lancePort = cmdAdmin.Flag.Int("lance.port", 9101, "Lance Namespace port (0 to hide in UI)")
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
@@ -148,7 +148,7 @@ var cmdAdmin = &Command{
     - When binding to a non-loopback address, authentication MUST be enabled
       (-adminPassword) or mTLS configured ([https.admin] key and ca in security.toml).
       Otherwise the server refuses to start.
-    - Use -allowInsecureNoAuth to start anyway with an unauthenticated admin API
+    - Use -allowInsecureBind to start anyway with an unauthenticated admin API
       exposed on the network. INSECURE; only for trusted isolated networks.
 
   Security Configuration:
@@ -293,10 +293,10 @@ func runAdmin(cmd *Command, args []string) bool {
 	// (https.admin.key without ca) encrypts transport but does not authenticate
 	// clients, so it is not sufficient — the operator must also set a password
 	// or configure mTLS (both key and ca).
-	// -allowInsecureNoAuth opts out of this check for operators who knowingly
+	// -allowInsecureBind opts out of this check for operators who knowingly
 	// keep the pre-existing unauthenticated setup.
 	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
-	insecureAllowed := a.allowInsecureNoAuth != nil && *a.allowInsecureNoAuth
+	insecureAllowed := a.allowInsecureBind != nil && *a.allowInsecureBind
 	if !isLoopbackIp(*a.ip) && *a.adminPassword == "" && !hasMTLS {
 		if !insecureAllowed {
 			fmt.Printf("Error: the admin server is configured to bind to %s (non-loopback) with\n", *a.ip)
@@ -306,10 +306,10 @@ func runAdmin(cmd *Command, args []string) bool {
 			fmt.Printf("         - set -adminPassword to enable authentication, or\n")
 			fmt.Printf("         - configure [https.admin] key and ca in security.toml for mTLS, or\n")
 			fmt.Printf("         - set -ip=127.0.0.1 to bind to loopback only, or\n")
-			fmt.Printf("         - set -allowInsecureNoAuth to start anyway (INSECURE).\n")
+			fmt.Printf("         - set -allowInsecureBind to start anyway (INSECURE).\n")
 			return false
 		}
-		fmt.Printf("WARNING: -allowInsecureNoAuth is set: the admin API is exposed on %s without\n", *a.ip)
+		fmt.Printf("WARNING: -allowInsecureBind is set: the admin API is exposed on %s without\n", *a.ip)
 		fmt.Printf("         authentication. Anyone who can reach this address has full control\n")
 		fmt.Printf("         of the cluster. Set -adminPassword or configure mTLS instead.\n")
 	}
