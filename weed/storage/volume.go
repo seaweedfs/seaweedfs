@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -583,10 +585,16 @@ func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) error {
 	v.volumeInfo.ReadOnly = readOnly
 	v.volumeInfo.ReadOnlyCanDelete = readOnly && canDelete
 	if err := v.SaveVolumeInfo(); err != nil {
-		// Roll back the in-memory state so a failed .vif write does not
-		// leave the volume acting on a mode that restart will revert.
-		v.volumeInfo.ReadOnly = prevReadOnly
-		v.volumeInfo.ReadOnlyCanDelete = prevReadOnlyCanDelete
+		// A pre-commit failure (write/sync/close/rename) leaves the old
+		// .vif intact, so roll back in-memory state to match it. A
+		// NotCrashDurableError means the rename already committed the
+		// new mode to disk; rolling back would split in-memory state
+		// from the durable file, so keep the new state and propagate.
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			v.volumeInfo.ReadOnly = prevReadOnly
+			v.volumeInfo.ReadOnlyCanDelete = prevReadOnlyCanDelete
+		}
 		return fmt.Errorf("persist volume read-only state: %w", err)
 	}
 	return nil

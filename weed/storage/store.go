@@ -849,10 +849,14 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 	}
 	if persist {
 		if err := v.PersistReadOnly(true, canDelete); err != nil {
-			// Roll back the in-memory flags so a failed .vif write does
-			// not leave the volume in a mode that restart will revert.
-			v.noWriteOrDelete = prevNoWriteOrDelete
-			v.noWriteCanDelete = prevNoWriteCanDelete
+			// A pre-commit failure leaves the old .vif intact, so roll
+			// back the in-memory flags. A NotCrashDurableError means the
+			// rename already committed; keep flags aligned with the file.
+			var ndErr *volume_info.NotCrashDurableError
+			if !errors.As(err, &ndErr) {
+				v.noWriteOrDelete = prevNoWriteOrDelete
+				v.noWriteCanDelete = prevNoWriteCanDelete
+			}
 			v.noWriteLock.Unlock()
 			return fmt.Errorf("volume %d persist read-only: %w", i, err)
 		}
@@ -882,10 +886,14 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		v.noWriteCanDelete = false
 	}
 	if err := v.PersistReadOnly(false, false); err != nil {
-		// Roll back the in-memory flags so a failed .vif write does not
-		// leave the volume writable in memory but read-only after restart.
-		v.noWriteOrDelete = prevNoWriteOrDelete
-		v.noWriteCanDelete = prevNoWriteCanDelete
+		// A pre-commit failure leaves the old .vif intact, so roll back
+		// the in-memory flags. A NotCrashDurableError means the rename
+		// already committed; keep flags aligned with the file.
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			v.noWriteOrDelete = prevNoWriteOrDelete
+			v.noWriteCanDelete = prevNoWriteCanDelete
+		}
 		v.noWriteLock.Unlock()
 		return fmt.Errorf("volume %d persist writable: %w", i, err)
 	}
