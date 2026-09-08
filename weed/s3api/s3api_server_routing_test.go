@@ -205,6 +205,72 @@ func TestRouting_AuthenticatedIAM(t *testing.T) {
 	assert.Contains(t, []int{http.StatusBadRequest, http.StatusForbidden}, rr.Code, "Should route to IAM handler (400/403 due to invalid signature)")
 }
 
+// setupRoutingTestServerWithCreator seeds a non-admin identity (creator) that
+// holds only the iam:CreateServiceAccount action, plus a victim identity, so a
+// SigV4-signed CreateServiceAccount request can exercise UnifiedPostHandler's
+// authorization against the ParentUser target.
+func setupRoutingTestServerWithCreator(t *testing.T) *S3ApiServer {
+	s3a := setupRoutingTestServer(t)
+	const creatorAK, creatorSK = "creator-ak", "creator-sk"
+	creator := &Identity{
+		Name:     "creator",
+		Actions:  []Action{Action("iam:CreateServiceAccount")},
+		IsStatic: true,
+		Credentials: []*Credential{{
+			AccessKey: creatorAK,
+			SecretKey: creatorSK,
+		}},
+	}
+	victim := &Identity{Name: "victim", IsStatic: true}
+	s3a.iam.m.Lock()
+	s3a.iam.identities = append(s3a.iam.identities, creator, victim)
+	s3a.iam.accessKeyIdent[creatorAK] = creator
+	s3a.iam.nameToIdentity["creator"] = creator
+	s3a.iam.nameToIdentity["victim"] = victim
+	s3a.iam.m.Unlock()
+	s3a.cb = NewCircuitBreaker(s3a.option)
+	return s3a
+}
+
+// TestRouting_CreateServiceAccountBindsParentUser verifies that on the S3-port
+// IAM route a non-admin holding iam:CreateServiceAccount cannot mint a service
+// account for another identity (ParentUser=victim), and can for itself.
+func TestRouting_CreateServiceAccountBindsParentUser(t *testing.T) {
+	router := mux.NewRouter()
+	s3a := setupRoutingTestServerWithCreator(t)
+	s3a.registerRouter(router)
+
+	signCreator := func(t *testing.T, req *http.Request, body string) {
+		t.Helper()
+		creds := credentials.NewStaticCredentials("creator-ak", "creator-sk", "")
+		if _, err := v4.NewSigner(creds).Sign(req, strings.NewReader(body), "iam", "us-east-1", time.Now()); err != nil {
+			t.Fatalf("sign request: %v", err)
+		}
+	}
+
+	makeReq := func(parentUser string) *http.Request {
+		data := url.Values{}
+		data.Set("Action", "CreateServiceAccount")
+		data.Set("Version", "2010-05-08")
+		data.Set("ParentUser", parentUser)
+		body := data.Encode()
+		req, _ := http.NewRequest("POST", "http://localhost/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		signCreator(t, req, body)
+		return req
+	}
+
+	// Targeting another identity must be denied at authorization.
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, makeReq("victim"))
+	assert.Equal(t, http.StatusForbidden, rr.Code, "cross-identity ParentUser must be denied; got body=%s", rr.Body.String())
+
+	// Targeting self must pass authorization (handler may still error, but not 403).
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, makeReq("creator"))
+	assert.NotEqual(t, http.StatusForbidden, rr2.Code, "self ParentUser must pass authorization; got body=%s", rr2.Body.String())
+}
+
 // TestRouting_IAMMatcherLogic verifies the iamMatcher correctly distinguishes auth types
 func TestRouting_IAMMatcherLogic(t *testing.T) {
 	tests := []struct {
