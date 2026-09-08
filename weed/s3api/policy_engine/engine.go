@@ -519,23 +519,11 @@ func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) 
 	return modified
 }
 
-// extractSourceIP returns the best-effort client IP address for condition evaluation.
-// Preference order: X-Forwarded-For (first valid IP), X-Real-Ip, then RemoteAddr.
-// IMPORTANT: X-Forwarded-For and X-Real-Ip are trusted without validation.
-// When the service is exposed directly, clients can spoof aws:SourceIp unless a
-// reverse proxy overwrites these headers.
-
-// isPrivateIP returns true if the given IP is considered a "trusted proxy"
-// address, such as loopback, link-local, or RFC1918 private ranges.
-// isPrivateIP returns true if the given IP is considered a "trusted proxy"
-// address, such as loopback, link-local, or private ranges.
-func isPrivateIP(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate()
-}
-
+// extractSourceIP returns the direct TCP peer address for aws:SourceIp
+// condition evaluation. Forwarding headers (X-Forwarded-For, X-Real-Ip) are
+// intentionally ignored: without a configurable trusted-proxy allowlist they
+// are client-controlled and spoofable, which would let a caller behind a
+// private-looking peer bypass any aws:SourceIp restriction.
 func extractSourceIP(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -546,7 +534,6 @@ func extractSourceIP(r *http.Request) string {
 		return ""
 	}
 
-	// Fall back to unix socket markers or other non-IP placeholders.
 	if remoteAddr == "@" {
 		return remoteAddr
 	}
@@ -558,59 +545,9 @@ func extractSourceIP(r *http.Request) string {
 
 	remoteIP := net.ParseIP(host)
 	if remoteIP == nil {
-		// Do not return DNS names or unparseable values.
 		return ""
 	}
 
-	// Only trust forwarding headers when the connection appears to come from
-	// a trusted proxy (e.g., private/loopback address).
-	if isPrivateIP(remoteIP) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Iterate right-to-left to find the first non-trusted (public) IP
-			entries := strings.Split(xff, ",")
-			for i := len(entries) - 1; i >= 0; i-- {
-				candidate := strings.TrimSpace(entries[i])
-				if candidate == "" {
-					continue
-				}
-
-				ip := net.ParseIP(candidate)
-				if ip == nil {
-					continue
-				}
-
-				// If the IP is trusted/private, we treat it as another proxy in the chain and continue
-				if isPrivateIP(ip) {
-					continue
-				}
-
-				// Found a public/non-trusted IP, return it as the client IP
-				return ip.String()
-			}
-
-			// If we exhausted the list (all were private/trusted) or found no valid IPs,
-			// fallback related logic could go here.
-			// For now, if all are private, we continue to check X-Real-Ip or return RemoteIP?
-			// The prompt implies we should prefer the extracted IP.
-			// If all in XFF are private, likely the original client IS private (internal network).
-			// The best guess for "original client" in a fully trusted chain is the left-most valid IP.
-			for _, candidate := range entries {
-				candidate = strings.TrimSpace(candidate)
-				if ip := net.ParseIP(candidate); ip != nil {
-					return ip.String()
-				}
-			}
-		}
-
-		if xRealIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xRealIP != "" {
-			if ip := net.ParseIP(xRealIP); ip != nil {
-				return ip.String()
-			}
-		}
-	}
-
-	// Default to the actual peer IP when no trusted proxy is detected or the
-	// forwarding headers are absent/invalid.
 	return remoteIP.String()
 }
 
