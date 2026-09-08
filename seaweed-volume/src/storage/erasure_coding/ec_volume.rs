@@ -1120,8 +1120,10 @@ impl EcVolume {
                 // reported with TOMBSTONE_FILE_SIZE even though the .ecx
                 // record itself is untouched.
                 if self.is_needle_deleted(needle_id) {
+                    self.check_read_write_error(None);
                     return Ok(Some((offset, TOMBSTONE_FILE_SIZE)));
                 }
+                self.check_read_write_error(None);
                 return Ok(Some((offset, size)));
             } else if key < needle_id {
                 lo = mid + 1;
@@ -1130,6 +1132,7 @@ impl EcVolume {
             }
         }
 
+        self.check_read_write_error(None);
         Ok(None)
     }
 

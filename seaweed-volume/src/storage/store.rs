@@ -1044,31 +1044,16 @@ impl Store {
             }
 
             for vid in io_quarantined_vids {
-                let messages = loc
-                    .find_ec_volume(vid)
-                    .map(|ec_vol| {
-                        let (_, io_count, quarantined) = ec_vol.get_io_error_state();
-                        if !quarantined {
-                            ec_vol.mark_io_quarantined();
-                            tracing::warn!(
-                                volume_id = vid.0,
-                                io_count,
-                                "ec volume unmounted after consecutive IO errors"
-                            );
-                        }
-                        ec_vol.to_volume_ec_shard_information_messages(disk_id as u32)
-                    })
-                    .unwrap_or_default();
-                if let Some(ec_vol) = loc.remove_ec_volume(vid) {
-                    for _ in 0..ec_vol.shard_count() {
-                        crate::metrics::VOLUME_GAUGE
-                            .with_label_values(&[&ec_vol.collection, "ec_shards"])
-                            .dec();
+                if let Some(ec_vol) = loc.find_ec_volume(vid) {
+                    let (_, io_count, quarantined) = ec_vol.get_io_error_state();
+                    if !quarantined {
+                        ec_vol.mark_io_quarantined();
+                        tracing::warn!(
+                            volume_id = vid.0,
+                            io_count,
+                            "ec volume quarantined after consecutive IO errors"
+                        );
                     }
-                    drop(ec_vol);
-                    deleted.extend(messages);
-                } else {
-                    ec_shards.extend(messages);
                 }
             }
         }

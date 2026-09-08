@@ -1104,9 +1104,22 @@ fn build_heartbeat_with_ec_status(
     };
     let (location_uuids, disk_tags) = collect_location_metadata(store, &disk_max_by_id);
 
+    let mut quarantined_ec_shards: u32 = 0;
+    for loc in &store.locations {
+        for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                quarantined_ec_shards += ec_vol.shard_count() as u32;
+            }
+        }
+    }
+
     crate::metrics::IO_QUARANTINE_GAUGE
         .with_label_values(&["volume"])
         .set(quarantined_volumes as i64);
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["ec_shard"])
+        .set(quarantined_ec_shards as i64);
 
     let heartbeat = master_pb::Heartbeat {
         id: store.id.clone(),

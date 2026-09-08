@@ -658,7 +658,18 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		state = s.State.Proto()
 	}
 
+	quarantinedEcShards := 0
+	for _, location := range s.Locations {
+		location.ecVolumesLock.RLock()
+		for _, ev := range location.ecVolumes {
+			if _, _, quarantined := ev.GetIoErrorState(); quarantined {
+				quarantinedEcShards += len(ev.Shards)
+			}
+		}
+		location.ecVolumesLock.RUnlock()
+	}
 	stats.VolumeServerIoQuarantineGauge.WithLabelValues("volume").Set(float64(quarantinedVolumes))
+	stats.VolumeServerIoQuarantineGauge.WithLabelValues("ec_shard").Set(float64(quarantinedEcShards))
 
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,
@@ -753,19 +764,17 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 			deleted = append(deleted, messages...)
 		}
 
-		// Unmount EC volumes on faulty media without deleting files; the
-		// master re-replicates from healthy peers and an operator can
-		// re-mount once the disk is repaired.
+		// Quarantine EC volumes on faulty media: keep them in memory (so
+		// healthz can observe the quarantine state and an operator can
+		// recover) but stop reporting them so the master re-replicates
+		// from healthy peers. Mirrors the regular volume quarantine.
 		for _, ev := range ioQuarantinedEvs {
 			ioErr, ioCount, quarantined := ev.GetIoErrorState()
 			if !quarantined {
 				ev.MarkIoQuarantined()
-				glog.Warningf("ec volume %d unmounted after %d consecutive IO errors: %v",
+				glog.Warningf("ec volume %d quarantined after %d consecutive IO errors: %v",
 					ev.VolumeId, ioCount, ioErr)
 			}
-			messages := ev.ToVolumeEcShardInformationMessage(uint32(diskId))
-			location.unloadEcVolume(ev.VolumeId)
-			deleted = append(deleted, messages...)
 		}
 	}
 	return
