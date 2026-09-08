@@ -1047,6 +1047,7 @@ impl EcVolume {
                 if let Ok(mut guard) = self.last_io_error.lock() {
                     *guard = Some(e.to_string());
                 }
+                crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
                 return;
             }
         }

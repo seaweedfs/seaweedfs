@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -100,6 +101,7 @@ func (ev *EcVolume) noteIoError(err error) {
 	defer ev.lastIoErrorLock.Unlock()
 	ev.lastIoError = err
 	ev.lastIoErrorCount++
+	stats.VolumeServerStorageIoErrorCounter.Inc()
 }
 
 func (ev *EcVolume) clearIoError() {

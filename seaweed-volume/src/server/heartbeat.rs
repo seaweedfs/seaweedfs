@@ -895,6 +895,7 @@ fn build_heartbeat_with_ec_status(
     // master can tell whether applying what it was sent leaves it current.
     // Volumes skipped below -- quarantined, phantom, expired -- are in neither.
     let mut volume_digest: u64 = 0;
+    let mut quarantined_volumes: u32 = 0;
     let (send_full_list, report_generation, report_pass) = store.volume_report.begin();
     let mut changed_volumes = Vec::new();
     let mut max_file_key = NeedleId(0);
@@ -947,6 +948,7 @@ fn build_heartbeat_with_ec_status(
             let mut should_delete_volume = false;
 
             if vol.last_io_error().is_some() {
+                quarantined_volumes += 1;
                 delete_vids.push(vol.id);
                 should_delete_volume = true;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
@@ -1101,6 +1103,10 @@ fn build_heartbeat_with_ec_status(
         (Vec::new(), changed_volumes, false)
     };
     let (location_uuids, disk_tags) = collect_location_metadata(store, &disk_max_by_id);
+
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["volume"])
+        .set(quarantined_volumes as i64);
 
     let heartbeat = master_pb::Heartbeat {
         id: store.id.clone(),

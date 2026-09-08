@@ -451,6 +451,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	// master can tell whether applying what it was sent leaves it current.
 	// Volumes skipped below -- quarantined, phantom, expired -- are in neither.
 	var volumeDigest uint64
+	var quarantinedVolumes int
 	sendFullList, reportGeneration, reportPass := s.volumeReport.begin()
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
@@ -514,6 +515,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 						v.Id, ioCount, ioErr)
 					v.markIoQuarantined()
 				}
+				quarantinedVolumes++
 				v.noWriteLock.Lock()
 				v.noWriteOrDelete = true
 				v.noWriteLock.Unlock()
@@ -655,6 +657,8 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	if s.State != nil {
 		state = s.State.Proto()
 	}
+
+	stats.VolumeServerIoQuarantineGauge.WithLabelValues("volume").Set(float64(quarantinedVolumes))
 
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,

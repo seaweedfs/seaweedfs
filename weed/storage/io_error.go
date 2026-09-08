@@ -4,6 +4,8 @@ import (
 	"errors"
 	"sync"
 	"syscall"
+
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 const IoErrorTolerance = 3
@@ -32,6 +34,7 @@ func (t *IoErrorTracker) noteIoError(err error) {
 	defer t.lastIoErrorLock.Unlock()
 	t.lastIoError = err
 	t.lastIoErrorCount++
+	stats.VolumeServerStorageIoErrorCounter.Inc()
 }
 
 func (t *IoErrorTracker) clearIoError() {
