@@ -363,6 +363,22 @@ If `adminPassword` is empty or not set, the admin interface runs without authent
 
 As an alternative, a kubernetes Secret can be used (`admin.secret.existingSecret`).
 
+### Admin listen address
+
+Since SeaweedFS 4.46, `weed admin` defaults to listening on loopback (`127.0.0.1`).
+The chart's httpGet readiness/liveness probes dial the pod IP, so the admin
+server must bind a non-loopback address for the probes to succeed. The chart
+therefore passes `-ip={{ .Values.admin.ip }}`, defaulting `admin.ip` to `0.0.0.0`
+(the pre-4.46 behaviour of listening on all interfaces).
+
+Binding a non-loopback address requires authentication: `weed admin` refuses to
+start on a non-loopback address without `-adminPassword` or `[https.admin]` mTLS
+in `security.toml`, to avoid exposing the unauthenticated admin API on the
+network. The chart fails at render time if `admin.ip` is non-loopback and neither
+`admin.secret.adminPassword` nor `admin.secret.existingSecret` is set. Set
+`admin.ip: "127.0.0.1"` only if you also replace the httpGet probes (e.g. with an
+`exec` probe that checks `127.0.0.1`).
+
 ### Admin Data Persistence
 
 The admin component can store configuration and maintenance data. You can configure storage in several ways:

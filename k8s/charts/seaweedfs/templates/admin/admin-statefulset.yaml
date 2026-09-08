@@ -6,6 +6,11 @@
 {{- if and (not .Values.admin.masters) (not .Values.global.seaweedfs.masterServer) (not .Values.master.enabled) }}
 {{- fail "admin.masters or global.seaweedfs.masterServer must be set if master.enabled is false" -}}
 {{- end }}
+{{- $adminAuthEnabled := or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword }}
+{{- $adminIp := .Values.admin.ip | default "0.0.0.0" }}
+{{- if and (ne $adminIp "127.0.0.1") (ne $adminIp "::1") (ne $adminIp "localhost") (not $adminAuthEnabled) }}
+{{- fail (printf "admin.ip is set to %q (non-loopback) but admin authentication is not configured. Since `weed admin` 4.46 refuses to bind a non-loopback address without authentication, the admin container would exit on startup. Set admin.secret.adminPassword or admin.secret.existingSecret, or set admin.ip to \"127.0.0.1\" (note: a loopback bind makes the chart's httpGet readiness/liveness probes fail)." $adminIp) -}}
+{{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -162,6 +167,7 @@ spec:
               -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               admin \
+              -ip={{ .Values.admin.ip | default "0.0.0.0" }} \
               -port={{ .Values.admin.port }} \
               -port.grpc={{ .Values.admin.grpcPort }} \
               {{- if or (eq .Values.admin.data.type "hostPath") (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.data.type "emptyDir") (eq .Values.admin.data.type "existingClaim") }}
