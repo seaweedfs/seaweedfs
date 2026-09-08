@@ -128,8 +128,11 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 	if entry != nil {
 		fileSize := filer.FileSize(entry)
 		entry.Attributes.FileSize = fileSize
+		if fh.entryChunkGroup != nil {
+			_ = fh.entryChunkGroup.Close()
+		}
 		var resolveManifestErr error
-		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks, fh.wfs.option.ConcurrentReaders, fh.wfs.CacheInvalidator())
+		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks, fh.wfs.option.ConcurrentReaders, fh.wfs.CacheInvalidator(), fh.wfs.readerCacheBudget)
 		if resolveManifestErr != nil {
 			glog.Warningf("failed to resolve manifest chunks in %+v", entry)
 		}
@@ -219,6 +222,9 @@ func (fh *FileHandle) ReleaseHandle() {
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("ReleaseHandle", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
+	if fh.entryChunkGroup != nil {
+		_ = fh.entryChunkGroup.Close()
+	}
 	fh.dirtyPages.Destroy()
 	if IsDebugFileReadWrite {
 		fh.mirrorFile.Close()

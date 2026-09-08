@@ -39,6 +39,13 @@ func getSlotPool(size int) (*sync.Pool, bool) {
 	return pools[index], true
 }
 
+func AllocationSize(size int) int {
+	if _, found := getSlotPool(size); found {
+		return min_size << bitCount(size)
+	}
+	return size
+}
+
 func Allocate(size int) []byte {
 	if pool, found := getSlotPool(size); found {
 		slab := *pool.Get().(*[]byte)
