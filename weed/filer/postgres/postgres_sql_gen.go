@@ -29,15 +29,14 @@ var (
 )
 
 // ResolveCreateTableQuery normalizes the createTable config value. A boolean
-// true (read by viper as the string "true") selects the default template; an
-// empty value does the same. A boolean false ("false") disables table
-// creation by returning an empty template. Any other value is treated as a
-// custom SQL template.
+// true (read by viper as the string "true") selects the default template.
+// An empty or false value returns an empty string so the caller can skip
+// table creation. Any other value is treated as a custom SQL template.
 func ResolveCreateTableQuery(createTable string) string {
 	switch createTable {
-	case "", "true":
+	case "true":
 		return DefaultCreateTableQuery
-	case "false":
+	case "false", "":
 		return ""
 	default:
 		return createTable

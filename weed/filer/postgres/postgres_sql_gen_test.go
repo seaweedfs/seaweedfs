@@ -81,7 +81,7 @@ func TestResolveCreateTableQuery(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"", DefaultCreateTableQuery},
+		{"", ""},
 		{"true", DefaultCreateTableQuery},
 		{"false", ""},
 		{"CREATE TABLE custom", "CREATE TABLE custom"},
