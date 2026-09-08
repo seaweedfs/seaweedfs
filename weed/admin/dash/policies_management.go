@@ -157,6 +157,53 @@ func (s *AdminServer) DeletePolicy(name string) error {
 	return policyManager.DeletePolicy(ctx, name)
 }
 
+// IsPolicyAttached returns the names of users and groups that still have the
+// given managed policy attached. The returned entries are prefixed with
+// "user:" or "group:". Returns nil when the policy is not attached anywhere.
+func (s *AdminServer) IsPolicyAttached(ctx context.Context, policyName string) ([]string, error) {
+	if s.credentialManager == nil {
+		return nil, fmt.Errorf("credential manager not available")
+	}
+
+	var attached []string
+
+	usernames, err := s.credentialManager.ListUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	for _, username := range usernames {
+		policies, err := s.credentialManager.ListAttachedUserPolicies(ctx, username)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list policies for user %s: %w", username, err)
+		}
+		for _, p := range policies {
+			if p == policyName {
+				attached = append(attached, "user:"+username)
+				break
+			}
+		}
+	}
+
+	groupNames, err := s.credentialManager.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	for _, groupName := range groupNames {
+		group, err := s.credentialManager.GetGroup(ctx, groupName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get group %s: %w", groupName, err)
+		}
+		for _, p := range group.PolicyNames {
+			if p == policyName {
+				attached = append(attached, "group:"+groupName)
+				break
+			}
+		}
+	}
+
+	return attached, nil
+}
+
 // GetPolicy retrieves a specific IAM policy
 func (s *AdminServer) GetPolicy(name string) (*IAMPolicy, error) {
 	policyManager := s.GetPolicyManager()
