@@ -187,7 +187,9 @@ func TestWriteNeedleBlobRejectedOnReadOnlyVolume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read needle blob: %v", err)
 	}
-	v.PersistReadOnly(true, false)
+	if err := v.PersistReadOnly(true, false); err != nil {
+		t.Fatalf("persist read-only: %v", err)
+	}
 	v.Close()
 
 	v, err = NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)

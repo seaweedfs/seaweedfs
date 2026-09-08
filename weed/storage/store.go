@@ -838,6 +838,8 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 		}
 	}
 	v.noWriteLock.Lock()
+	prevNoWriteOrDelete := v.noWriteOrDelete
+	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = !canDelete
 	if canDelete {
 		v.noWriteCanDelete = true
@@ -846,7 +848,18 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 		v.noWriteCanDelete = false
 	}
 	if persist {
-		v.PersistReadOnly(true, canDelete)
+		if err := v.PersistReadOnly(true, canDelete); err != nil {
+			// A pre-commit failure leaves the old .vif intact, so roll
+			// back the in-memory flags. A NotCrashDurableError means the
+			// rename already committed; keep flags aligned with the file.
+			var ndErr *volume_info.NotCrashDurableError
+			if !errors.As(err, &ndErr) {
+				v.noWriteOrDelete = prevNoWriteOrDelete
+				v.noWriteCanDelete = prevNoWriteCanDelete
+			}
+			v.noWriteLock.Unlock()
+			return fmt.Errorf("volume %d persist read-only: %w", i, err)
+		}
 	}
 	v.noWriteLock.Unlock()
 	return nil
@@ -865,18 +878,36 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 	}
 	v.noWriteLock.Lock()
+	prevNoWriteOrDelete := v.noWriteOrDelete
+	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false
 	// Remote-tiered volumes must stay noWriteCanDelete regardless of marks.
 	if !v.HasRemoteFile() {
 		v.noWriteCanDelete = false
 	}
-	v.PersistReadOnly(false, false)
+	persistErr := v.PersistReadOnly(false, false)
+	if persistErr != nil {
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(persistErr, &ndErr) {
+			// Pre-commit failure: the old .vif is intact, so roll back
+			// the in-memory flags and return early.
+			v.noWriteOrDelete = prevNoWriteOrDelete
+			v.noWriteCanDelete = prevNoWriteCanDelete
+			v.noWriteLock.Unlock()
+			return fmt.Errorf("volume %d persist writable: %w", i, persistErr)
+		}
+		// Post-rename durability failure: the file already holds the new
+		// mode. Wrap the error but continue with post-commit work so the
+		// volume is usable in memory even though the rename may not
+		// survive a crash.
+		persistErr = fmt.Errorf("volume %d persist writable: %w", i, persistErr)
+	}
 	v.noWriteLock.Unlock()
 	// Clear the EIO streak and the sticky quarantine flag so the next
 	// CollectHeartbeat can announce the volume again. If the disk is
 	// still bad, the next failed op will re-arm the streak.
 	v.resetIoErrorState()
-	return nil
+	return persistErr
 }
 
 func (s *Store) MountVolume(i needle.VolumeId) error {

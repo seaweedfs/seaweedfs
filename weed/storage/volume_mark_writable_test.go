@@ -27,7 +27,9 @@ func TestMarkVolumeWritable_ReopensPersistedReadOnly(t *testing.T) {
 
 	// Persist read-only state into .vif, then simulate a server restart by
 	// closing and re-opening the volume from the same directory.
-	v.PersistReadOnly(true, false)
+	if err := v.PersistReadOnly(true, false); err != nil {
+		t.Fatalf("persist read-only: %v", err)
+	}
 	v.Close()
 
 	v2, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)

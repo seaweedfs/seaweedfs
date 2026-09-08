@@ -355,14 +355,29 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                     </h6>
                 </div>
                 <div class="card-body">
-                    <div class="btn-group" role="group">
+                    <div class="d-flex flex-wrap gap-2">
                         <button type="button" class="btn btn-outline-danger vacuum-btn" 
                                 title="Vacuum Volume" 
                                 data-volume-id={fmt.Sprintf("%d", data.Volume.Id)} 
                                 data-server={data.Volume.Server}>
                             <i class="fas fa-compress-alt me-1"></i>Vacuum
                         </button>
+                        if !dash.IsReadOnlyRole(dash.RoleFromContext(ctx)) {
+                            <button type="button" class="btn btn-outline-warning volume-access-btn"
+                                    data-volume-id={fmt.Sprintf("%d", data.Volume.Id)}
+                                    data-server={data.Volume.Server} data-read-only="true">
+                                <i class="fas fa-lock me-1"></i>Set Read-Only
+                            </button>
+                            <button type="button" class="btn btn-outline-success volume-access-btn"
+                                    data-volume-id={fmt.Sprintf("%d", data.Volume.Id)}
+                                    data-server={data.Volume.Server} data-read-only="false">
+                                <i class="fas fa-unlock me-1"></i>Set Read/Write
+                            </button>
+                        }
                     </div>
+                    if !dash.IsReadOnlyRole(dash.RoleFromContext(ctx)) {
+                        <div class="mt-3"><small class="text-muted">Access mode changes apply only to this replica and persist across restarts. Volume size and disk limits still apply.</small></div>
+                    }
                     <div class="mt-3">
                         <small class="text-muted">
                             <i class="fas fa-info-circle me-1"></i>
@@ -396,7 +411,37 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                     performVacuum(volumeId, server, this);
                 });
             }
+            document.querySelectorAll('.volume-access-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    setVolumeReadOnly(this.dataset.volumeId, this.dataset.server, this.dataset.readOnly === 'true');
+                });
+            });
         });
+
+        async function setVolumeReadOnly(volumeId, server, readOnly) {
+            const mode = readOnly ? 'read-only' : 'read/write';
+            if (!confirm(`Set volume ${volumeId} on ${server} to ${mode}? This applies only to this replica.`)) {
+                return;
+            }
+            const buttons = document.querySelectorAll('.volume-access-btn');
+            buttons.forEach(button => { button.disabled = true; });
+            try {
+                const response = await fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/read-only`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ read_only: readOnly })
+                });
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || 'Failed to change volume access mode');
+                }
+                showMessage(data.message, 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } catch (error) {
+                showMessage(error.message, 'error');
+                buttons.forEach(button => { button.disabled = false; });
+            }
+        }
 
         function performVacuum(volumeId, server, button) {
             // Disable button and show loading state
@@ -443,10 +488,13 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
             toast.style.zIndex = '9999';
             toast.style.minWidth = '300px';
             
-            toast.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
+            toast.textContent = message;
+            const closeButton = document.createElement('button');
+            closeButton.type = 'button';
+            closeButton.className = 'btn-close';
+            closeButton.setAttribute('data-bs-dismiss', 'alert');
+            closeButton.setAttribute('aria-label', 'Close');
+            toast.appendChild(closeButton);
             
             document.body.appendChild(toast);
             
