@@ -92,8 +92,10 @@ func TestDeletePolicyRejectsWhenAttachedToUser(t *testing.T) {
 		t.Fatalf("expected ErrPolicyStillAttached, got %v", err)
 	}
 
-	if _, err := server.GetPolicy(policyName); err != nil {
+	if p, err := server.GetPolicy(policyName); err != nil {
 		t.Fatalf("policy should still exist after rejected deletion: %v", err)
+	} else if p == nil {
+		t.Fatal("policy should still exist after rejected deletion, got nil")
 	}
 
 	attached, err := server.credentialManager.ListAttachedUserPolicies(ctx, "bob")
@@ -109,6 +111,11 @@ func TestDeletePolicyRejectsWhenAttachedToUser(t *testing.T) {
 	}
 	if err := server.DeletePolicy(policyName); err != nil {
 		t.Fatalf("DeletePolicy after detach failed: %v", err)
+	}
+	if p, err := server.GetPolicy(policyName); err != nil {
+		t.Fatalf("GetPolicy after detach-delete: %v", err)
+	} else if p != nil {
+		t.Fatalf("policy should be gone after deletion, got %v", p)
 	}
 }
 
@@ -128,8 +135,10 @@ func TestDeletePolicyRejectsWhenAttachedToGroup(t *testing.T) {
 		t.Fatalf("expected ErrPolicyStillAttached, got %v", err)
 	}
 
-	if _, err := server.GetPolicy(policyName); err != nil {
+	if p, err := server.GetPolicy(policyName); err != nil {
 		t.Fatalf("policy should still exist after rejected deletion: %v", err)
+	} else if p == nil {
+		t.Fatal("policy should still exist after rejected deletion, got nil")
 	}
 }
 
@@ -143,7 +152,9 @@ func TestDeletePolicySucceedsWhenNotAttached(t *testing.T) {
 	if err := server.DeletePolicy(policyName); err != nil {
 		t.Fatalf("DeletePolicy for unattached policy failed: %v", err)
 	}
-	if _, err := server.GetPolicy(policyName); err != nil {
+	if p, err := server.GetPolicy(policyName); err != nil {
 		t.Fatalf("GetPolicy after delete: %v", err)
+	} else if p != nil {
+		t.Fatalf("policy should be gone after deletion, got %v", p)
 	}
 }
