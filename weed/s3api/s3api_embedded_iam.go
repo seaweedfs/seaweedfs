@@ -2548,7 +2548,13 @@ func (iam *IdentityAccessManagement) AuthIamManagement(f http.HandlerFunc) http.
 
 		// UserName comes from the body only, the same place the handlers read it
 		// from, so the authorized target and the acted-on target cannot differ.
-		if errCode := iam.AuthorizeIamAction(r, identity, r.Form.Get("Action"), r.PostForm.Get("UserName")); errCode != s3err.ErrNone {
+		// CreateServiceAccount targets ParentUser instead of UserName.
+		action := r.Form.Get("Action")
+		target := r.PostForm.Get("UserName")
+		if action == "CreateServiceAccount" {
+			target = r.PostForm.Get("ParentUser")
+		}
+		if errCode := iam.AuthorizeIamAction(r, identity, action, target); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
