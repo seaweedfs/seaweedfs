@@ -854,7 +854,7 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 			v.noWriteOrDelete = prevNoWriteOrDelete
 			v.noWriteCanDelete = prevNoWriteCanDelete
 			v.noWriteLock.Unlock()
-			return fmt.Errorf("volume %d persist read-only: %v", i, err)
+			return fmt.Errorf("volume %d persist read-only: %w", i, err)
 		}
 	}
 	v.noWriteLock.Unlock()
@@ -887,7 +887,7 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		v.noWriteOrDelete = prevNoWriteOrDelete
 		v.noWriteCanDelete = prevNoWriteCanDelete
 		v.noWriteLock.Unlock()
-		return fmt.Errorf("volume %d persist writable: %v", i, err)
+		return fmt.Errorf("volume %d persist writable: %w", i, err)
 	}
 	v.noWriteLock.Unlock()
 	// Clear the EIO streak and the sticky quarantine flag so the next

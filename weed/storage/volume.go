@@ -587,7 +587,7 @@ func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) error {
 		// leave the volume acting on a mode that restart will revert.
 		v.volumeInfo.ReadOnly = prevReadOnly
 		v.volumeInfo.ReadOnlyCanDelete = prevReadOnlyCanDelete
-		return fmt.Errorf("persist volume read-only state: %v", err)
+		return fmt.Errorf("persist volume read-only state: %w", err)
 	}
 	return nil
 }

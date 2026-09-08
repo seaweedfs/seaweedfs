@@ -3,6 +3,7 @@ package volume_info
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -85,8 +86,21 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 		return fmt.Errorf("failed to marshal %s: %v", fileName, marshalErr)
 	}
 
-	if err := util.WriteFile(fileName, text, 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %v", fileName, err)
+	// Write atomically so a write/sync/close failure leaves the existing
+	// .vif file intact. PersistReadOnly rolls back in-memory state on
+	// error; the atomic rename guarantees the durable file still matches
+	// that rolled-back state rather than the requested mode.
+	tmpName := fileName + ".tmp"
+	if err := util.WriteFile(tmpName, text, 0644); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to write %s: %w", fileName, err)
+	}
+	if err := os.Rename(tmpName, fileName); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to rename %s: %w", fileName, err)
+	}
+	if err := util.FsyncDir(filepath.Dir(fileName)); err != nil {
+		return fmt.Errorf("failed to fsync dir for %s: %w", fileName, err)
 	}
 
 	return nil
