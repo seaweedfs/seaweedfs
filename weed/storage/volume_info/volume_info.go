@@ -99,8 +99,13 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 		os.Remove(tmpName)
 		return fmt.Errorf("failed to rename %s: %w", fileName, err)
 	}
+	// The rename has committed the new mode to the on-disk file. A
+	// directory fsync failure only risks losing the rename across a
+	// crash; the file content is already correct, so log a warning
+	// rather than failing and causing PersistReadOnly to roll back
+	// in-memory state into a split with the durable file.
 	if err := util.FsyncDir(filepath.Dir(fileName)); err != nil {
-		return fmt.Errorf("failed to fsync dir for %s: %w", fileName, err)
+		glog.Warningf("fsync dir for %s: %v", fileName, err)
 	}
 
 	return nil
