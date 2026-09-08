@@ -20,8 +20,6 @@ type CacheInvalidator interface {
 
 type fetchChunkDataFnType func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (n int, err error)
 
-const readerCacheMemoryLimit = 64 << 20
-
 type ReaderCache struct {
 	chunkCache       chunk_cache.ChunkCache
 	lookupFileIdFn   wdclient.LookupFileIdFunctionType
@@ -30,6 +28,7 @@ type ReaderCache struct {
 	sync.Mutex
 	downloaders map[string]*SingleChunkCacher
 	limit       int
+	budget      *ReaderCacheBudget
 }
 
 type SingleChunkCacher struct {
@@ -48,9 +47,17 @@ type SingleChunkCacher struct {
 	done           chan struct{} // signals when download is complete
 }
 
-func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidator CacheInvalidator) *ReaderCache {
+func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidator CacheInvalidator, budgets ...*ReaderCacheBudget) *ReaderCache {
+	var budget *ReaderCacheBudget
+	if len(budgets) > 0 {
+		budget = budgets[0]
+	}
+	if budget == nil {
+		budget = NewReaderCacheBudget(DefaultReaderCacheMemoryLimit)
+	}
 	return &ReaderCache{
 		limit:            limit,
+		budget:           budget,
 		chunkCache:       chunkCache,
 		lookupFileIdFn:   lookupFileIdFn,
 		cacheInvalidator: cacheInvalidator,
@@ -107,6 +114,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 }
 
 func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
+retry:
 	rc.Lock()
 
 	for {
@@ -153,7 +161,9 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 		if oldestFid != "" {
 			oldDownloader := rc.downloaders[oldestFid]
 			delete(rc.downloaders, oldestFid)
+			rc.Unlock()
 			oldDownloader.destroy()
+			goto retry
 		}
 	}
 
@@ -171,46 +181,31 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 
 func (rc *ReaderCache) UnCache(fileId string) {
 	rc.Lock()
-	defer rc.Unlock()
-	// glog.V(4).Infof("uncache %s", fileId)
-	if downloader, found := rc.downloaders[fileId]; found {
+	downloader := rc.downloaders[fileId]
+	delete(rc.downloaders, fileId)
+	rc.Unlock()
+	if downloader != nil {
 		downloader.destroy()
-		delete(rc.downloaders, fileId)
 	}
 }
 
-func (rc *ReaderCache) trim() {
+func (rc *ReaderCache) remove(downloader *SingleChunkCacher) {
 	rc.Lock()
-	defer rc.Unlock()
-
-	for {
-		var retained int64
-		var oldest *SingleChunkCacher
-		for _, downloader := range rc.downloaders {
-			downloader.Lock()
-			size := cap(downloader.data)
-			downloader.Unlock()
-			retained += int64(size)
-			if size > 0 && (oldest == nil || atomic.LoadInt64(&downloader.completedTimeNew) < atomic.LoadInt64(&oldest.completedTimeNew)) {
-				oldest = downloader
-			}
-		}
-		if retained <= readerCacheMemoryLimit {
-			return
-		}
-		delete(rc.downloaders, oldest.chunkFileId)
-		oldest.destroy()
+	if rc.downloaders[downloader.chunkFileId] == downloader {
+		delete(rc.downloaders, downloader.chunkFileId)
 	}
+	rc.Unlock()
+	downloader.destroy()
 }
 
 func (rc *ReaderCache) destroy() {
 	rc.Lock()
-	defer rc.Unlock()
-
-	for _, downloader := range rc.downloaders {
+	downloaders := rc.downloaders
+	rc.downloaders = make(map[string]*SingleChunkCacher)
+	rc.Unlock()
+	for _, downloader := range downloaders {
 		downloader.destroy()
 	}
-
 }
 
 func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, isGzipped bool, chunkSize int, shouldCache bool) *SingleChunkCacher {
@@ -232,11 +227,14 @@ func (s *SingleChunkCacher) startCaching() {
 	defer func() {
 		close(s.done)
 		s.wg.Done()
-		// Release download waiters before eviction waits for active readers.
-		s.parent.trim()
+		s.parent.budget.complete(s)
 	}()
 
-	s.cacheStartedCh <- struct{}{} // signal that we've started
+	s.cacheStartedCh <- struct{}{}
+	if err := s.parent.budget.reserve(s); err != nil {
+		s.setError(err)
+		return
+	}
 
 	// Request cancellation must not abort a download shared by other readers.
 	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
@@ -313,12 +311,12 @@ func (s *SingleChunkCacher) destroy() {
 	// wait for all reads to finish before destroying the data
 	s.wg.Wait()
 	s.Lock()
-	defer s.Unlock()
-
 	if s.data != nil {
 		mem.Free(s.data)
 		s.data = nil
 	}
+	s.Unlock()
+	s.parent.budget.release(s)
 }
 
 // readChunkAt reads data from the cached chunk.

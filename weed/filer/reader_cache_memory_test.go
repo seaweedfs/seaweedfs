@@ -11,100 +11,156 @@ import (
 )
 
 func TestChunkGroupReaderCacheMemory(t *testing.T) {
-	for _, tt := range []struct {
-		name      string
-		chunkSize int
-		chunks    int
-		mode      string
-	}{
-		{"default chunks", 2 << 20, 40, "sequential"},
-		{"pooled buffers", 3 << 20, 20, "sequential"},
-		{"oversized chunk", 65 << 20, 1, "sequential"},
-		{"concurrent readers", 2 << 20, 40, "concurrent"},
-		{"prefetch", 2 << 20, 40, "prefetch"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			group, err := NewChunkGroup(func(context.Context, string) ([]string, error) {
-				return []string{"unused"}, nil
-			}, newMockChunkCacheForReaderCache(), nil, 128, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			rc := group.readerCache
-			defer rc.destroy()
-			started := make(chan struct{}, tt.chunks)
-			gate := make(chan struct{})
-			if tt.mode == "sequential" {
-				close(gate)
-			}
-			rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
-				started <- struct{}{}
-				<-gate
-				buffer[0] = 42
-				return len(buffer), nil
-			}
-			var readers sync.WaitGroup
-			var views *Interval[*ChunkView]
-			for i := 0; i < tt.chunks; i++ {
-				read := func() {
-					buffer := make([]byte, 1)
-					n, err := rc.ReadChunkAt(context.Background(), buffer, fmt.Sprint(i), nil, false, 0, tt.chunkSize, false)
-					if err != nil || n != 1 || buffer[0] != 42 {
-						t.Errorf("read %d: n=%d, data=%v, err=%v", i, n, buffer, err)
-					}
-				}
-				switch tt.mode {
-				case "sequential":
-					read()
-				case "concurrent":
-					readers.Add(1)
-					go func() { defer readers.Done(); read() }()
-				case "prefetch":
-					views = &Interval[*ChunkView]{Value: &ChunkView{FileId: fmt.Sprint(i), ChunkSize: uint64(tt.chunkSize)}, Next: views}
-				}
-			}
-			if tt.mode == "prefetch" {
-				rc.MaybeCache(views, tt.chunks)
-			}
-			if tt.mode != "sequential" {
-				for i := 0; i < tt.chunks; i++ {
-					<-started
-				}
-				rc.trim()
-				rc.Lock()
-				downloading := len(rc.downloaders)
-				rc.Unlock()
-				if downloading != tt.chunks {
-					t.Errorf("trim evicted in-flight downloads: got %d, want %d", downloading, tt.chunks)
-				}
-				close(gate)
-				readers.Wait()
-			}
+	budget := NewReaderCacheBudget(8 << 10)
+	groups := make([]*ChunkGroup, 32)
+	for i := range groups {
+		group, err := NewChunkGroup(func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, newMockChunkCacheForReaderCache(), nil, 128, nil, budget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		groups[i] = group
+		defer group.Close()
+		group.readerCache.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+			buffer[0] = 42
+			return len(buffer), nil
+		}
+		buffer := make([]byte, 1)
+		n, err := group.readerCache.ReadChunkAt(context.Background(), buffer, fmt.Sprint(i), nil, false, 0, 3<<10, false)
+		if err != nil || n != 1 || buffer[0] != 42 {
+			t.Fatalf("read %d: n=%d data=%v err=%v", i, n, buffer, err)
+		}
+		budget.Lock()
+		used := budget.used
+		budget.Unlock()
+		if used > 8<<10 {
+			t.Fatalf("shared budget used %d bytes", used)
+		}
+	}
+	groups[0].readerCache.Lock()
+	retained := len(groups[0].readerCache.downloaders)
+	groups[0].readerCache.Unlock()
+	if retained != 0 {
+		t.Fatalf("first file still retains %d downloaders", retained)
+	}
+	for _, group := range groups {
+		_ = group.Close()
+	}
+	budget.Lock()
+	defer budget.Unlock()
+	if budget.used != 0 {
+		t.Fatalf("closed files still reserve %d bytes", budget.used)
+	}
+}
 
-			deadline := time.Now().Add(time.Second)
-			for {
-				rc.Lock()
-				retained := 0
-				completed := true
-				for _, downloader := range rc.downloaders {
-					select {
-					case <-downloader.done:
-					default:
-						completed = false
-					}
-					downloader.Lock()
-					retained += cap(downloader.data)
-					downloader.Unlock()
+func TestReaderCacheBudgetInFlight(t *testing.T) {
+	for _, prefetch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prefetch=%t", prefetch), func(t *testing.T) {
+			budget := NewReaderCacheBudget(8 << 10)
+			started := make(chan struct{}, 4)
+			gate := make(chan struct{})
+			var readers sync.WaitGroup
+			var caches []*ReaderCache
+			for i := 0; i < 4; i++ {
+				rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, nil, budget)
+				caches = append(caches, rc)
+				defer rc.destroy()
+				rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+					started <- struct{}{}
+					<-gate
+					buffer[0] = 42
+					return len(buffer), nil
 				}
-				rc.Unlock()
-				if completed && retained <= 64<<20 {
-					break
+				if prefetch {
+					rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ChunkSize: 3 << 10}}, 1)
+				} else {
+					readers.Add(1)
+					go func() {
+						defer readers.Done()
+						buffer := make([]byte, 1)
+						n, err := rc.ReadChunkAt(context.Background(), buffer, "chunk", nil, false, 0, 3<<10, false)
+						if err != nil || n != 1 || buffer[0] != 42 {
+							t.Errorf("read: n=%d data=%v err=%v", n, buffer, err)
+						}
+					}()
 				}
-				if time.Now().After(deadline) {
-					t.Fatalf("reader cache retained %d MiB, want at most 64 MiB", retained>>20)
+			}
+			for i := 0; i < 2; i++ {
+				<-started
+			}
+			select {
+			case <-started:
+				t.Error("third download allocated before budget was released")
+			case <-time.After(50 * time.Millisecond):
+			}
+			budget.Lock()
+			used := budget.used
+			budget.Unlock()
+			if used != 8<<10 {
+				t.Errorf("in-flight reservations = %d, want 8192", used)
+			}
+			close(gate)
+			readers.Wait()
+			for i := 0; i < 2; i++ {
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					t.Fatal("download did not resume after eviction")
 				}
-				time.Sleep(time.Millisecond)
+			}
+			for _, rc := range caches {
+				rc.destroy()
+			}
+			budget.Lock()
+			defer budget.Unlock()
+			if budget.used != 0 {
+				t.Errorf("reservations leaked: %d", budget.used)
 			}
 		})
+	}
+}
+
+func TestReaderCacheBudgetOversizedChunk(t *testing.T) {
+	rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		t.Error("oversized chunk performed lookup")
+		return nil, nil
+	}, nil, NewReaderCacheBudget(3<<10))
+	defer rc.destroy()
+	_, err := rc.ReadChunkAt(context.Background(), make([]byte, 1), "chunk", nil, false, 0, 3<<10, false)
+	if err == nil {
+		t.Fatal("expected pooled buffer larger than budget to be rejected")
+	}
+}
+
+func TestReaderCacheEvictionDoesNotHoldCacheLock(t *testing.T) {
+	rc := NewReaderCache(2, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, nil)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		return len(buffer), nil
+	}
+	if _, err := rc.ReadChunkAt(context.Background(), make([]byte, 1), "chunk", nil, false, 0, 1024, false); err != nil {
+		t.Fatal(err)
+	}
+	rc.Lock()
+	downloader := rc.downloaders["chunk"]
+	downloader.wg.Add(1)
+	rc.Unlock()
+	evicted := make(chan struct{})
+	go func() { rc.UnCache("chunk"); close(evicted) }()
+	deadline := time.Now().Add(time.Second)
+	available := false
+	for time.Now().Before(deadline) {
+		if rc.TryLock() {
+			available = rc.downloaders["chunk"] == nil
+			rc.Unlock()
+			if available {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	downloader.wg.Done()
+	<-evicted
+	if !available {
+		t.Fatal("cache lock held while eviction waited for a reader")
 	}
 }
