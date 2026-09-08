@@ -8,7 +8,9 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"strconv"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -39,6 +41,7 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	// poisoning on Postgres; an explicit false still disables it.
 	configuration.SetDefault(prefix+"enableUpsert", true)
 	return store.initialize(
+		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"upsertQuery"),
 		configuration.GetBool(prefix+"enableUpsert"),
 		configuration.GetString(prefix+"username"),
@@ -59,16 +62,19 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	)
 }
 
-func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
+func (store *PostgresStore) initialize(createTable, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
+	if createTable == "" {
+		createTable = DefaultCreateTableQuery
+	}
 	if !enableUpsert {
 		upsertQuery = ""
 	} else if upsertQuery == "" {
 		upsertQuery = DefaultUpsertQuery
 	}
 	gen := &SqlGenPostgres{
-		CreateTableSqlTemplate: "",
+		CreateTableSqlTemplate: createTable,
 		DropTableSqlTemplate:   `drop table if exists "%s"`,
 		UpsertQueryTemplate:    upsertQuery,
 	}
@@ -124,6 +130,10 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		return OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
 	}, maxIdle, maxOpen, maxLifetimeSeconds); err != nil {
 		return err
+	}
+
+	if _, err = store.DB.ExecContext(context.Background(), gen.GetSqlCreateTable(abstract_sql.DEFAULT_TABLE)); err != nil {
+		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
 
 	ConfigureListOrdering(store.DB, gen)
