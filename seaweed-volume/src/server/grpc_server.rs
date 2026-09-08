@@ -758,7 +758,11 @@ impl VolumeGrpcService {
                     };
                     total_volumes += 1;
                     // Synchronous CPU + file I/O: keep it off the async workers.
-                    let (blocks_scanned, broken, errs) =
+                    // `plan.run()`'s first return is blocks scanned, not a file
+                    // count — Go discards it (`_, shardInfos, serrs = v.ChecksumScrub()`)
+                    // so TotalFiles stays a needle/file count and is not inflated
+                    // by the block count.
+                    let (_blocks_scanned, broken, errs) =
                         match tokio::task::spawn_blocking(move || plan.run()).await {
                             Ok(v) => v,
                             Err(e) => {
@@ -772,7 +776,6 @@ impl VolumeGrpcService {
                                 continue;
                             }
                         };
-                    total_files += blocks_scanned;
                     if !errs.is_empty() || !broken.is_empty() {
                         broken_volume_ids.push(vid.0);
                         for b in broken {

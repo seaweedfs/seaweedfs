@@ -270,6 +270,7 @@ pub async fn scrub_ec_volume_distributed(
         ecx_path,
         collection,
         index_plan,
+        ecx_walk,
         cached_locations,
         cache_refreshed_at,
         data_shards,
@@ -288,6 +289,17 @@ pub async fn scrub_ec_volume_distributed(
         };
         // full scan means verifying the index as well
         let index_plan = ecv.scrub_index_plan();
+        // A SECOND .ecx descriptor, opened under the guard for the needle walk
+        // below. The index plan's handle is consumed by its own structural walk,
+        // and both seek, so a `dup` would race the cursor. Reopening by PATH
+        // after the guard is dropped would let a teardown that legitimately
+        // unlinks or replaces the .ecx (the heartbeat's
+        // delete_expired_ec_volumes, volume_ec_shards_delete) surface an
+        // intentional removal as a scrub error or mix index generations within
+        // one scrub — the same race the vanished-volume policy exists to hide.
+        // The descriptor outlives the name, the same way the checksum plan's
+        // shard handles do.
+        let ecx_walk = fs::File::open(&ecv.ecx_file_name());
         // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
         let cached_locations = ecv.shard_locations.read().unwrap().clone();
         let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
@@ -297,6 +309,7 @@ pub async fn scrub_ec_volume_distributed(
             ecv.ecx_file_name(),
             ecv.collection.clone(),
             index_plan,
+            ecx_walk,
             cached_locations,
             cache_refreshed_at,
             data_shards,
@@ -363,10 +376,14 @@ pub async fn scrub_ec_volume_distributed(
         map
     };
 
-    // Walk the .ecx (private fd, no lock) for the row count + live (id, offset, size).
+    // Walk the .ecx (private fd captured under the lock, no lock held) for the
+    // row count + live (id, offset, size). Reading through the captured
+    // descriptor — not a pathname reopen — keeps a concurrent teardown from
+    // surfacing an intentional removal as a scrub error or mixing index
+    // generations, the same invariant the vanished-volume policy enforces.
     let mut count: i64 = 0;
     let mut needles: Vec<(NeedleId, Offset, Size)> = Vec::new();
-    match fs::File::open(&ecx_path) {
+    match ecx_walk {
         Ok(mut f) => {
             if let Err(e) = crate::storage::idx::walk_index_file(&mut f, 0, |id, offset, size| {
                 count += 1;
