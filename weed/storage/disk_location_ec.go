@@ -160,11 +160,6 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 			return nil, fmt.Errorf("failed to create ec volume %d: %w", vid, err)
 		}
 		l.ecVolumes[vid] = ecVolume
-	} else {
-		// Re-mounting shards clears a sticky IO quarantine so the EC
-		// volume re-enters heartbeat rotation; if the disk is still
-		// bad, the next failed read re-arms the streak.
-		ecVolume.ResetIoErrorState()
 	}
 	added, err := ecVolume.AddEcVolumeShard(ecVolumeShard)
 	if err != nil {

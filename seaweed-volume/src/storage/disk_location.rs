@@ -848,13 +848,6 @@ impl DiskLocation {
             let ec_vol = EcVolume::new(&dir, idx_dir, collection, vid)
                 .map_err(VolumeError::Io)?;
             self.ec_volumes.insert(vid, ec_vol);
-        } else {
-            // Re-mounting shards clears a sticky IO quarantine so the EC
-            // volume re-enters heartbeat rotation; if the disk is still
-            // bad, the next failed read re-arms the streak.
-            if let Some(ec_vol) = self.ec_volumes.get_mut(&vid) {
-                ec_vol.reset_io_error_state();
-            }
         }
         let ec_vol = self
             .ec_volumes
