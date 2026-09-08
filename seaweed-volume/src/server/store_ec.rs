@@ -328,7 +328,27 @@ pub async fn scrub_ec_volume_distributed(
     };
     // Lock released: walk the index now, before anything else appends to errs,
     // so the seeded errors keep their position in the reported details.
-    let (_, seed_errs) = index_plan.run();
+    //
+    // `index_plan.run()` reads the whole .ecx synchronously, so run it in the
+    // blocking pool rather than on this async worker — a large index scan would
+    // otherwise block unrelated RPC work handled on the same executor. Same
+    // treatment as the CHECKSUM/LOCAL plans in the gRPC handler.
+    let (_, seed_errs) = match tokio::task::spawn_blocking(move || index_plan.run()).await {
+        Ok(v) => v,
+        Err(e) => {
+            // A panic or cancellation from the index scan: report it as a seed
+            // error so the per-volume findings below are not silently dropped,
+            // matching how the handler arms record a join failure.
+            return (
+                0,
+                Vec::new(),
+                vec![format!(
+                    "EC volume {} index scrub task failed: {}",
+                    vid.0, e
+                )],
+            )
+        }
+    };
     let mut errs = seed_errs;
 
     // Refresh the shard-location cache once up front (mirrors Go's
