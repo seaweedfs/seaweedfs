@@ -432,7 +432,8 @@ impl Store {
     pub fn has_io_quarantine(&self) -> bool {
         for loc in &self.locations {
             for (_, vol) in loc.iter_volumes() {
-                if vol.last_io_error().is_some() {
+                let (_, _, quarantined) = vol.get_io_error_state();
+                if quarantined {
                     return true;
                 }
             }

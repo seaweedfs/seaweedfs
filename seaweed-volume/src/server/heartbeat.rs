@@ -24,6 +24,7 @@ use crate::storage::volume_report::VolumeReportKey;
 use crate::storage::volume_report_hash::report_hash;
 
 const DUPLICATE_UUID_RETRY_MESSAGE: &str = "duplicate UUIDs detected, retrying connection";
+const VOLUME_IO_ERROR_TOLERANCE: i32 = 3;
 const MAX_DUPLICATE_UUID_RETRIES: u32 = 3;
 
 /// Configuration for the heartbeat client.
@@ -315,6 +316,10 @@ fn collect_ec_shard_delta_messages(
 
     for (disk_id, loc) in store.locations.iter().enumerate() {
         for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
             for shard in ec_vol.shards.iter().flatten() {
                 messages.insert(
                     (
@@ -947,10 +952,17 @@ fn build_heartbeat_with_ec_status(
             let volume_size = vol.dat_file_size().unwrap_or(0);
             let mut should_delete_volume = false;
 
-            if vol.last_io_error().is_some() {
+            let (_, io_count, io_quarantined) = vol.get_io_error_state();
+            if io_quarantined || io_count >= VOLUME_IO_ERROR_TOLERANCE {
+                if !io_quarantined {
+                    vol.mark_io_quarantined();
+                    warn!(
+                        "Volume {} quarantined after {} consecutive IO errors",
+                        vol.id.0, io_count
+                    );
+                }
                 quarantined_volumes += 1;
-                delete_vids.push(vol.id);
-                should_delete_volume = true;
+                continue;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
                 // Detect phantom volumes: the .dat was unlinked from disk but is still
                 // held open as a deleted FD, so the volume keeps serving and heartbeating
@@ -1156,6 +1168,10 @@ fn collect_live_ec_shards(
 
     for (disk_id, loc) in store.locations.iter().enumerate() {
         for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
             for message in ec_vol.to_volume_ec_shard_information_messages(disk_id as u32) {
                 if update_metrics {
                     let total_size: u64 = message

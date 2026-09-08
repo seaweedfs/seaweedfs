@@ -547,6 +547,11 @@ pub struct Volume {
     /// Tracks the last I/O error (EIO) for volume health monitoring.
     /// Uses Mutex for interior mutability so reads (&self) can clear/set it.
     last_io_error: Mutex<Option<String>>,
+    /// Consecutive EIO count; reset on success or non-EIO errors.
+    io_error_count: std::sync::atomic::AtomicI32,
+    /// Sticky quarantine flag set after sustained EIO; cleared only by
+    /// explicit recovery (mirrors Go's markIoQuarantined).
+    io_error_quarantined: std::sync::atomic::AtomicBool,
 
     /// Protobuf VolumeInfo for tiered storage (.vif file).
     pub volume_info: PbVolumeInfo,
@@ -617,6 +622,8 @@ impl Volume {
             is_compacting: false,
             compaction_byte_per_second: 0,
             last_io_error: Mutex::new(None),
+            io_error_count: std::sync::atomic::AtomicI32::new(0),
+            io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
             volume_info: PbVolumeInfo::default(),
             has_remote_file: false,
         };
@@ -655,6 +662,8 @@ impl Volume {
             is_compacting: false,
             compaction_byte_per_second: 0,
             last_io_error: Mutex::new(None),
+            io_error_count: std::sync::atomic::AtomicI32::new(0),
+            io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
             volume_info: PbVolumeInfo::default(),
             has_remote_file: false,
         }
@@ -4163,20 +4172,21 @@ impl Volume {
     /// On success (None), clears any previously recorded EIO error.
     /// Matches Go's `checkReadWriteError` in volume_write.go.
     fn check_read_write_error(&self, err: Option<&io::Error>) {
+        use std::sync::atomic::Ordering;
         if let Some(e) = err {
             if e.raw_os_error() == Some(5) {
-                // EIO — record it
+                self.io_error_count.fetch_add(1, Ordering::Relaxed);
                 if let Ok(mut guard) = self.last_io_error.lock() {
                     *guard = Some(e.to_string());
                 }
                 crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
+                return;
             }
-        } else {
-            // Success — clear any previous EIO
-            if let Ok(mut guard) = self.last_io_error.lock() {
-                if guard.is_some() {
-                    *guard = None;
-                }
+        }
+        self.io_error_count.store(0, Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            if guard.is_some() {
+                *guard = None;
             }
         }
     }
@@ -4185,6 +4195,28 @@ impl Volume {
     #[allow(dead_code)]
     pub fn last_io_error(&self) -> Option<String> {
         self.last_io_error.lock().ok()?.clone()
+    }
+
+    pub fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
+        use std::sync::atomic::Ordering;
+        let err = self.last_io_error.lock().ok().and_then(|g| g.clone());
+        let count = self.io_error_count.load(Ordering::Relaxed);
+        let quarantined = self.io_error_quarantined.load(Ordering::Relaxed);
+        (err, count, quarantined)
+    }
+
+    pub fn mark_io_quarantined(&self) {
+        self.io_error_quarantined
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn reset_io_error_state(&self) {
+        use std::sync::atomic::Ordering;
+        self.io_error_count.store(0, Ordering::Relaxed);
+        self.io_error_quarantined.store(false, Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            *guard = None;
+        }
     }
 
     #[cfg(test)]

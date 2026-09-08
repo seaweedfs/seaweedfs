@@ -210,6 +210,9 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	for diskId, location := range s.Locations {
 		location.ecVolumesLock.RLock()
 		for _, ecShards := range location.ecVolumes {
+			if _, _, quarantined := ecShards.GetIoErrorState(); quarantined {
+				continue
+			}
 			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeEcShardInformationMessage(uint32(diskId))...)
 
 			for _, ecShard := range ecShards.Shards {
