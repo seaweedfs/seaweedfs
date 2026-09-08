@@ -2452,12 +2452,22 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 	return iamAuthPathNone
 }
 
-// evaluateIAMPolicies evaluates attached IAM policies for a user identity.
-// Returns true if any matching statement explicitly allows the action.
-// Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
-func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+// attachedIAMPolicyResult is the tri-state outcome of evaluating an identity's
+// attached IAM policies: explicit Allow, explicit Deny, or no match.
+type attachedIAMPolicyResult int
+
+const (
+	attachedIAMPolicyNoMatch attachedIAMPolicyResult = iota
+	attachedIAMPolicyAllow
+	attachedIAMPolicyDeny
+)
+
+// evaluateAttachedIAMPolicies evaluates the identity's own and group attached
+// IAM policies and reports whether they explicitly allow, deny, or do not
+// match the action.
+func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) attachedIAMPolicyResult {
 	if identity == nil {
-		return false
+		return attachedIAMPolicyNoMatch
 	}
 
 	iam.m.RLock()
@@ -2479,11 +2489,11 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 
 	// Collect all policy names: user policies + group policies
 	if len(identity.PolicyNames) == 0 && len(groupPolicies) == 0 {
-		return false
+		return attachedIAMPolicyNoMatch
 	}
 
 	if engine == nil {
-		return false
+		return attachedIAMPolicyNoMatch
 	}
 
 	// List is bucket-level; the prefix promoted into object (for the legacy
@@ -2514,7 +2524,7 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 	for _, policyName := range identity.PolicyNames {
 		result := engine.EvaluatePolicy(policyName, evalArgs)
 		if result == policy_engine.PolicyResultDeny {
-			return false
+			return attachedIAMPolicyDeny
 		}
 		if result == policy_engine.PolicyResultAllow {
 			explicitAllow = true
@@ -2526,7 +2536,7 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		for _, policyName := range policyNames {
 			result := engine.EvaluatePolicy(policyName, evalArgs)
 			if result == policy_engine.PolicyResultDeny {
-				return false
+				return attachedIAMPolicyDeny
 			}
 			if result == policy_engine.PolicyResultAllow {
 				explicitAllow = true
@@ -2534,7 +2544,16 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		}
 	}
 
-	return explicitAllow
+	if explicitAllow {
+		return attachedIAMPolicyAllow
+	}
+	return attachedIAMPolicyNoMatch
+}
+
+// evaluateIAMPolicies is a bool projection of evaluateAttachedIAMPolicies for
+// callers that only need the allow outcome.
+func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	return iam.evaluateAttachedIAMPolicies(r, identity, action, bucket, object) == attachedIAMPolicyAllow
 }
 
 // isActionExplicitlyDeniedByIAM reports whether the identity's attached IAM
