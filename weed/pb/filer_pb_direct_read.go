@@ -19,7 +19,7 @@ import (
 type LogFileReaderFn func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error)
 
 // logEntryChannelSize bounds decoded entries in flight per filer stream.
-const logEntryChannelSize = 512
+const logEntryChannelSize = 4096
 
 // maxLogEntrySize guards the per-entry allocation against a corrupt size
 // prefix, mirroring the filer package's unexported constant.

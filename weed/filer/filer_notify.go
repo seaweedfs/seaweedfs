@@ -375,7 +375,7 @@ func (f *Filer) ReadPersistedLogBuffer(ctx context.Context, startPosition log_bu
 
 	// Readahead: run the visitor in a background goroutine so volume server I/O
 	// for the next log file overlaps with event processing and gRPC delivery.
-	const readaheadSize = 1024
+	const readaheadSize = 8192
 	type entryOrErr struct {
 		entry *filer_pb.LogEntry
 		err   error
