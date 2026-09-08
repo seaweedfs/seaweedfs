@@ -90,14 +90,17 @@ true
 
 {{/* Classify an admin bind address as loopback, mirroring weed admin's
      isLoopbackIp (net.ParseIP + IsLoopback). Helm templates cannot call
-     net.ParseIP, so we approximate: the whole 127.0.0.0/8 range (any
-     address beginning with "127.") and the IPv6 loopback "::1" are
+     net.ParseIP, so we approximate: valid IPv4 addresses in 127.0.0.0/8
+     (validated via regex to reject malformed values like "127.not-an-ip")
+     and the IPv6 loopback "::1" / its expanded form "0:0:0:0:0:0:0:1" are
      loopback. Hostnames (e.g. "localhost") and wildcard addresses
      ("0.0.0.0", "::") are non-loopback, matching the binary, which
-     treats unparseable hostnames as non-loopback to be safe. */}}
+     treats unparseable hostnames as non-loopback to be safe. Other IPv6
+     loopback representations are not matched; the binary's own runtime
+     validation is the authoritative guard. */}}
 {{- define "seaweedfs.admin.isLoopbackIp" -}}
 {{- $ip := toString . -}}
-{{- if or (hasPrefix "127." $ip) (eq $ip "::1") -}}
+{{- if or (regexMatch "^127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$" $ip) (eq $ip "::1") (eq $ip "0:0:0:0:0:0:0:1") -}}
 true
 {{- end -}}
 {{- end -}}
