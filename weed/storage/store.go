@@ -720,10 +720,13 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 
 		// Collect ecVolume to be deleted
 		var toDeleteEvs []*erasure_coding.EcVolume
+		var ioQuarantinedEvs []*erasure_coding.EcVolume
 		location.ecVolumesLock.RLock()
 		for _, ev := range location.ecVolumes {
 			if ev.IsTimeToDestroy() {
 				toDeleteEvs = append(toDeleteEvs, ev)
+			} else if ioErr, ioCount, quarantined := ev.GetIoErrorState(); quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
+				ioQuarantinedEvs = append(ioQuarantinedEvs, ev)
 			} else {
 				messages := ev.ToVolumeEcShardInformationMessage(uint32(diskId))
 				ecShards = append(ecShards, messages...)
@@ -743,6 +746,21 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 			}
 			// No need for additional lock here since we only need the messages
 			// from volumes that were already collected
+			deleted = append(deleted, messages...)
+		}
+
+		// Unmount EC volumes on faulty media without deleting files; the
+		// master re-replicates from healthy peers and an operator can
+		// re-mount once the disk is repaired.
+		for _, ev := range ioQuarantinedEvs {
+			ioErr, ioCount, quarantined := ev.GetIoErrorState()
+			if !quarantined {
+				ev.MarkIoQuarantined()
+				glog.Warningf("ec volume %d unmounted after %d consecutive IO errors: %v",
+					ev.VolumeId, ioCount, ioErr)
+			}
+			messages := ev.ToVolumeEcShardInformationMessage(uint32(diskId))
+			location.unloadEcVolume(ev.VolumeId)
 			deleted = append(deleted, messages...)
 		}
 	}

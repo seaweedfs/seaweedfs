@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -75,6 +76,57 @@ type EcVolume struct {
 	bitrotLock   sync.RWMutex
 	bitrot       *volume_server_pb.EcBitrotProtection
 	bitrotStatus BitrotStatus
+
+	lastIoError        error
+	lastIoErrorCount   int32
+	ioErrorQuarantined bool
+	lastIoErrorLock    sync.RWMutex
+}
+
+func (ev *EcVolume) CheckReadWriteError(err error) {
+	if err == nil {
+		ev.clearIoError()
+		return
+	}
+	if errors.Is(err, syscall.EIO) {
+		ev.noteIoError(err)
+		return
+	}
+	ev.clearIoError()
+}
+
+func (ev *EcVolume) noteIoError(err error) {
+	ev.lastIoErrorLock.Lock()
+	defer ev.lastIoErrorLock.Unlock()
+	ev.lastIoError = err
+	ev.lastIoErrorCount++
+}
+
+func (ev *EcVolume) clearIoError() {
+	ev.lastIoErrorLock.Lock()
+	defer ev.lastIoErrorLock.Unlock()
+	ev.lastIoError = nil
+	ev.lastIoErrorCount = 0
+}
+
+func (ev *EcVolume) ResetIoErrorState() {
+	ev.lastIoErrorLock.Lock()
+	defer ev.lastIoErrorLock.Unlock()
+	ev.lastIoError = nil
+	ev.lastIoErrorCount = 0
+	ev.ioErrorQuarantined = false
+}
+
+func (ev *EcVolume) MarkIoQuarantined() {
+	ev.lastIoErrorLock.Lock()
+	defer ev.lastIoErrorLock.Unlock()
+	ev.ioErrorQuarantined = true
+}
+
+func (ev *EcVolume) GetIoErrorState() (error, int32, bool) {
+	ev.lastIoErrorLock.RLock()
+	defer ev.lastIoErrorLock.RUnlock()
+	return ev.lastIoError, ev.lastIoErrorCount, ev.ioErrorQuarantined
 }
 
 // statEcxSize returns the size of an .ecx file, os.ErrNotExist when it is absent
@@ -634,9 +686,10 @@ func (ev *EcVolume) IntervalToShardIdAndOffset(interval Interval) (ShardId, int6
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {
 	offset, size, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
 	if err != nil {
+		ev.CheckReadWriteError(err)
 		return
 	}
-	// Apply runtime deletion state on top of the sealed .ecx lookup.
+	ev.CheckReadWriteError(nil)
 	if ev.IsNeedleDeleted(needleId) {
 		size = types.TombstoneFileSize
 	}
@@ -651,7 +704,7 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 		m := (l + h) / 2
 		if n, err := ecxFile.ReadAt(buf, m*types.NeedleMapEntrySize); err != nil {
 			if n != types.NeedleMapEntrySize {
-				return types.Offset{}, types.TombstoneFileSize, fmt.Errorf("ecx file %d read at %d: %v", ecxFileSize, m*types.NeedleMapEntrySize, err)
+				return types.Offset{}, types.TombstoneFileSize, fmt.Errorf("ecx file %d read at %d: %w", ecxFileSize, m*types.NeedleMapEntrySize, err)
 			}
 		}
 		key, offset, size = idx.IdxFileEntry(buf)
