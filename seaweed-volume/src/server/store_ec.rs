@@ -336,17 +336,26 @@ pub async fn scrub_ec_volume_distributed(
     let (_, seed_errs) = match tokio::task::spawn_blocking(move || index_plan.run()).await {
         Ok(v) => v,
         Err(e) => {
-            // A panic or cancellation from the index scan: report it as a seed
-            // error so the per-volume findings below are not silently dropped,
-            // matching how the handler arms record a join failure.
-            return (
-                0,
-                Vec::new(),
-                vec![format!(
-                    "EC volume {} index scrub task failed: {}",
-                    vid.0, e
-                )],
-            )
+            // A panic is evidence about the volume and counts as broken; a
+            // cancellation is not — spawn_blocking only reports it when the
+            // runtime is going down, the volume was never scanned, and the
+            // caller (FULL/READS) would put a false corruption into
+            // broken_volume_ids if it reached the errs path. Match the
+            // record_scrub_join_failure distinction used by the handler arms.
+            if e.is_panic() {
+                return (
+                    0,
+                    Vec::new(),
+                    vec![format!(
+                        "EC volume {} index scrub task panicked: {}",
+                        vid.0, e
+                    )],
+                )
+            }
+            // Cancellation: the runtime is shutting down, so this response is
+            // unlikely to reach anyone. Return clean rather than inventing a
+            // corruption for a volume that was never scanned.
+            return (0, Vec::new(), Vec::new());
         }
     };
     let mut errs = seed_errs;
@@ -411,27 +420,55 @@ pub async fn scrub_ec_volume_distributed(
     // descriptor — not a pathname reopen — keeps a concurrent teardown from
     // surfacing an intentional removal as a scrub error or mixing index
     // generations, the same invariant the vanished-volume policy enforces.
-    let mut count: i64 = 0;
-    let mut needles: Vec<(NeedleId, Offset, Size)> = Vec::new();
-    match ecx_walk {
-        Ok(mut f) => {
-            if let Err(e) = crate::storage::idx::walk_index_file(&mut f, 0, |id, offset, size| {
-                count += 1;
-                // Skip ALL deleted entries: -1 tombstones (runtime delete folded
-                // into .ecx) and -originalSize entries (a needle deleted on the
-                // regular volume before EC encode). get_actual_size uses the raw
-                // signed size, so a negative would yield empty intervals
-                // (false-positive) or an under-16-byte buffer (parse panic).
-                if !size.is_deleted() {
-                    needles.push((id, offset, size));
+    //
+    // `walk_index_file` reads the full .ecx synchronously, so run it in the
+    // blocking pool rather than on this async worker — same reason as
+    // `index_plan.run()` above.
+    let (count, needles, walk_errs) =
+        match tokio::task::spawn_blocking(move || -> (i64, Vec<(NeedleId, Offset, Size)>, Vec<String>) {
+            let mut count: i64 = 0;
+            let mut needles: Vec<(NeedleId, Offset, Size)> = Vec::new();
+            let mut walk_errs: Vec<String> = Vec::new();
+            match ecx_walk {
+                Ok(mut f) => {
+                    if let Err(e) = crate::storage::idx::walk_index_file(&mut f, 0, |id, offset, size| {
+                        count += 1;
+                        // Skip ALL deleted entries: -1 tombstones (runtime delete folded
+                        // into .ecx) and -originalSize entries (a needle deleted on the
+                        // regular volume before EC encode). get_actual_size uses the raw
+                        // signed size, so a negative would yield empty intervals
+                        // (false-positive) or an under-16-byte buffer (parse panic).
+                        if !size.is_deleted() {
+                            needles.push((id, offset, size));
+                        }
+                        Ok(())
+                    }) {
+                        walk_errs.push(format!("walk ECX file {}: {}", ecx_path, e));
+                    }
                 }
-                Ok(())
-            }) {
-                errs.push(format!("walk ECX file {}: {}", ecx_path, e));
+                Err(e) => walk_errs.push(format!("open ECX file {}: {}", ecx_path, e)),
             }
-        }
-        Err(e) => errs.push(format!("open ECX file {}: {}", ecx_path, e)),
-    }
+            (count, needles, walk_errs)
+        }).await {
+            Ok(v) => v,
+            Err(e) => {
+                // A panic is evidence about the volume and counts as broken; a
+                // cancellation is not — see the index_plan join above for the
+                // same reasoning.
+                if e.is_panic() {
+                    return (
+                        0,
+                        Vec::new(),
+                        vec![format!(
+                            "EC volume {} ecx walk task panicked: {}",
+                            vid.0, e
+                        )],
+                    )
+                }
+                return (0, Vec::new(), Vec::new());
+            }
+        };
+    errs.extend(walk_errs);
 
     // reads for EC chunks can hit the same shard repeatedly, so dedupe broken shards
     let mut broken_shards: HashMap<ShardId, crate::pb::volume_server_pb::EcShardInfo> = HashMap::new();
@@ -626,7 +663,15 @@ fn scrub_snapshot_under_lock(
     // the old generation; applying them to the replacement's shards would
     // falsely report corruption. Abort like a mid-scan unmount instead of
     // mixing generations within one scrub.
-    if ecv.encode_ts_ns != expected_encode_ts {
+    //
+    // `encode_ts_ns == 0` means the .vif carried no encode-run identity (a
+    // legacy or pre-feature volume). Two such volumes are NOT the same mount
+    // by this check alone — 0 == 0 would accept a teardown-and-remount and
+    // apply the old .ecx's offsets to the replacement's shards. Only treat a
+    // match as verified when the identity is non-zero; when it is zero, fall
+    // back to the pre-check behavior (no generation binding) rather than
+    // aborting a scrub that was already running without the guard.
+    if expected_encode_ts != 0 && ecv.encode_ts_ns != expected_encode_ts {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!(
