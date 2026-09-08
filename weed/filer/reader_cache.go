@@ -240,7 +240,12 @@ func (s *SingleChunkCacher) startCaching() {
 		return
 	}
 
-	// Request cancellation must not abort a download shared by other readers.
+	// Intentionally use context.Background(), not a request-specific context.
+	// The downloaded chunk is a shared resource: multiple concurrent readers may
+	// wait on this same download via s.done. A request-scoped context that got
+	// cancelled would abort the download and error every other waiting reader.
+	// The download always runs to completion once started; readers that cancel
+	// individually drop out via readChunkAt's select on ctx.Done().
 	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
 		s.setError(fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err))
