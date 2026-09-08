@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -164,7 +165,14 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		req.VolumeId, ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total())
 
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
-		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+		}
+		// The .vif is committed but may not be crash-durable. The EC
+		// config is already on disk, so do not clean up the generated
+		// shard files; a restart will find them and the matching metadata.
+		glog.Warningf("SaveVolumeInfo %s saved but not crash-durable: %v", baseFileName, err)
 	}
 
 	shouldCleanup = false
