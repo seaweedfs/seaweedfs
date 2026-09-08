@@ -100,18 +100,22 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 	return resolver
 }
 
+func (r *chunkManifestResolver) executeJob(job chunkManifestResolveJob) {
+	job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator)
+	if job.result.err != nil && r.parentCtx.Err() == nil {
+		if job.batchCtx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
+			job.result.internalCancel = true
+		} else if job.batchCtx.Err() == nil {
+			job.batchOnce.Do(job.batchCancel)
+		}
+	}
+	job.done.Done()
+}
+
 func (r *chunkManifestResolver) worker() {
 	defer r.workers.Done()
 	for job := range r.jobs {
-		job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator)
-		if job.result.err != nil && r.parentCtx.Err() == nil {
-			if job.batchCtx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
-				job.result.internalCancel = true
-			} else if job.batchCtx.Err() == nil {
-				job.batchOnce.Do(job.batchCancel)
-			}
-		}
-		job.done.Done()
+		r.executeJob(job)
 	}
 }
 
@@ -143,6 +147,12 @@ func (r *chunkManifestResolver) submit(job chunkManifestResolveJob) bool {
 		job.result.err = job.batchCtx.Err()
 		job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
 		return false
+	default:
+		// Buffer is full (exceedingly rare: more than chunkManifestResolveJobBufferSize
+		// in-range manifests at one level). Run the job directly so a promptly-failing
+		// manifest can still cancel the batch without waiting for a worker slot.
+		go r.executeJob(job)
+		return true
 	}
 }
 
