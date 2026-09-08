@@ -3334,9 +3334,14 @@ impl VolumeServer for VolumeGrpcService {
         while bytes_read < total_size {
             let chunk_size = std::cmp::min(BUFFER_SIZE_LIMIT, total_size - bytes_read);
             let mut buf = vec![0u8; chunk_size];
-            let n = shard
-                .read_at(&mut buf, current_offset)
-                .map_err(|e| Status::internal(e.to_string()))?;
+            let n = match shard.read_at(&mut buf, current_offset) {
+                Ok(n) => n,
+                Err(e) => {
+                    ec_vol.check_read_write_error(Some(&e));
+                    return Err(Status::internal(e.to_string()));
+                }
+            };
+            ec_vol.check_read_write_error(None);
             if n == 0 {
                 break;
             }
