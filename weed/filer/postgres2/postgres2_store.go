@@ -67,9 +67,10 @@ func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix
 
 func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
-	store.SupportBucketTable = createTable != "false"
+	store.SupportBucketTable = true
+	skipCreate := createTable == "false"
 	createTable = postgres.ResolveCreateTableQuery(createTable)
-	if createTable == "" && store.SupportBucketTable {
+	if createTable == "" && !skipCreate {
 		createTable = postgres.DefaultCreateTableQuery
 	}
 	if !enableUpsert {
@@ -136,7 +137,7 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 		return err
 	}
 
-	if store.SupportBucketTable {
+	if !skipCreate {
 		if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 			return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 		}

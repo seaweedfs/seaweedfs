@@ -461,7 +461,11 @@ func (store *AbstractSqlStore) CreateTable(ctx context.Context, bucket string) e
 	if !store.SupportBucketTable {
 		return nil
 	}
-	_, err := store.DB.ExecContext(ctx, store.SqlGenerator.GetSqlCreateTable(bucket))
+	sql := store.SqlGenerator.GetSqlCreateTable(bucket)
+	if sql == "" {
+		return nil
+	}
+	_, err := store.DB.ExecContext(ctx, sql)
 	return err
 }
 

@@ -86,6 +86,9 @@ func (gen *SqlGenPostgres) GetSqlListInclusive(tableName string) string {
 }
 
 func (gen *SqlGenPostgres) GetSqlCreateTable(tableName string) string {
+	if gen.CreateTableSqlTemplate == "" {
+		return ""
+	}
 	return fmt.Sprintf(gen.CreateTableSqlTemplate, tableName)
 }
 
