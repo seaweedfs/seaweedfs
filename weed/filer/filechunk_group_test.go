@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -398,6 +399,24 @@ func TestChunkGroup_SearchChunks(t *testing.T) {
 			args:       args{offset: 2 * SectionSize, fileSize: 2*SectionSize + 32, whence: seekHole},
 			wantFound:  true,
 			wantOffset: 2 * SectionSize,
+		},
+		{
+			name: "SEEK_DATA finds data in the final section at MaxInt64 file size",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "final-data", Offset: math.MaxInt64 - 1, Size: 1},
+			},
+			args:       args{offset: math.MaxInt64 - 1, fileSize: math.MaxInt64, whence: SEEK_DATA},
+			wantFound:  true,
+			wantOffset: math.MaxInt64 - 1,
+		},
+		{
+			name: "SEEK_HOLE finds the final section hole at MaxInt64 file size",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "final-data", Offset: math.MaxInt64 - 2, Size: 1},
+			},
+			args:       args{offset: math.MaxInt64 - 2, fileSize: math.MaxInt64, whence: seekHole},
+			wantFound:  true,
+			wantOffset: math.MaxInt64 - 1,
 		},
 	}
 	for _, tt := range tests {

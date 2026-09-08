@@ -273,8 +273,8 @@ func (group *ChunkGroup) doSearchChunks(ctx context.Context, offset, fileSize in
 
 	sectionIndex, maxSectionIndex := SectionIndex(offset/SectionSize), SectionIndex(fileSize/SectionSize)
 	for si := sectionIndex; si <= maxSectionIndex; si++ {
-		sectionStart := max(offset, int64(si)*SectionSize)
-		sectionStop := min(fileSize, int64(si+1)*SectionSize)
+		sectionStart, sectionStop := sectionBounds(si, fileSize)
+		sectionStart = max(offset, sectionStart)
 		if sectionStart >= sectionStop {
 			continue
 		}

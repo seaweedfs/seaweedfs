@@ -19,6 +19,15 @@ type FileChunkSection struct {
 	isPrepared       bool
 }
 
+func sectionBounds(sectionIndex SectionIndex, fileSize int64) (start, stop int64) {
+	start = int64(sectionIndex) * SectionSize
+	stop = fileSize
+	if sectionIndex < SectionIndex(fileSize/SectionSize) {
+		stop = start + SectionSize
+	}
+	return
+}
+
 func NewFileChunkSection(si SectionIndex) *FileChunkSection {
 	return &FileChunkSection{
 		sectionIndex: si,
@@ -67,13 +76,15 @@ func (section *FileChunkSection) setupForRead(ctx context.Context, group *ChunkG
 	section.lock.Lock()
 	defer section.lock.Unlock()
 
+	sectionStart, sectionStop := sectionBounds(section.sectionIndex, fileSize)
+
 	if section.isPrepared {
 		section.reader.fileSize = fileSize
 		return
 	}
 
 	if section.visibleIntervals == nil {
-		section.visibleIntervals = readResolvedChunks(section.chunks, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
+		section.visibleIntervals = readResolvedChunks(section.chunks, sectionStart, sectionStop)
 		section.chunks, _ = SeparateGarbageChunks(section.visibleIntervals, section.chunks)
 		if section.reader != nil {
 			_ = section.reader.Close()
@@ -81,11 +92,11 @@ func (section *FileChunkSection) setupForRead(ctx context.Context, group *ChunkG
 		}
 	}
 	if section.chunkViews == nil {
-		section.chunkViews = ViewFromVisibleIntervals(section.visibleIntervals, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
+		section.chunkViews = ViewFromVisibleIntervals(section.visibleIntervals, sectionStart, sectionStop)
 	}
 
 	if section.reader == nil {
-		section.reader = NewChunkReaderAtFromClient(ctx, group.readerCache, section.chunkViews, min(int64(section.sectionIndex+1)*SectionSize, fileSize), group.GetPrefetchCount())
+		section.reader = NewChunkReaderAtFromClient(ctx, group.readerCache, section.chunkViews, sectionStop, group.GetPrefetchCount())
 	}
 
 	section.isPrepared = true
