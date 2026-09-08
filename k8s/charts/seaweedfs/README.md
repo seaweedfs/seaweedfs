@@ -372,12 +372,17 @@ therefore passes `-ip={{ .Values.admin.ip }}`, defaulting `admin.ip` to `0.0.0.0
 (the pre-4.46 behaviour of listening on all interfaces).
 
 Binding a non-loopback address requires authentication: `weed admin` refuses to
-start on a non-loopback address without `-adminPassword` or `[https.admin]` mTLS
-in `security.toml`, to avoid exposing the unauthenticated admin API on the
-network. The chart fails at render time if `admin.ip` is non-loopback and neither
-`admin.secret.adminPassword` nor `admin.secret.existingSecret` is set. Set
-`admin.ip: "127.0.0.1"` only if you also replace the httpGet probes (e.g. with an
-`exec` probe that checks `127.0.0.1`).
+start on a non-loopback address without `-adminPassword`, so the chart fails at
+render time if `admin.ip` is non-loopback and authentication is not configured via
+`admin.secret.adminPassword`, `admin.secret.existingSecret`, or
+`WEED_ADMIN_PASSWORD` supplied through `admin.extraEnvironmentVars` /
+`admin.secretExtraEnvironmentVars`. The whole `127.0.0.0/8` range and `::1` are
+treated as loopback (matching `weed admin`); `localhost` is treated as
+non-loopback. Set `admin.ip` to a loopback address only if you also replace the
+httpGet probes (e.g. with an `exec` probe that checks `127.0.0.1`).
+
+The `-ip` flag requires SeaweedFS 4.46 or newer; pinning `admin.imageOverride`
+to an older image is not supported with this chart version.
 
 ### Admin Data Persistence
 

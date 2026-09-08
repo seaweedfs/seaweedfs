@@ -88,6 +88,40 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* Classify an admin bind address as loopback, mirroring weed admin's
+     isLoopbackIp (net.ParseIP + IsLoopback). Helm templates cannot call
+     net.ParseIP, so we approximate: the whole 127.0.0.0/8 range (any
+     address beginning with "127.") and the IPv6 loopback "::1" are
+     loopback. Hostnames (e.g. "localhost") and wildcard addresses
+     ("0.0.0.0", "::") are non-loopback, matching the binary, which
+     treats unparseable hostnames as non-loopback to be safe. */}}
+{{- define "seaweedfs.admin.isLoopbackIp" -}}
+{{- $ip := toString . -}}
+{{- if or (hasPrefix "127." $ip) (eq $ip "::1") -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/* Whether admin authentication is enabled from any supported source:
+     admin.secret (adminPassword or existingSecret), or WEED_ADMIN_PASSWORD
+     supplied via extraEnvironmentVars / secretExtraEnvironmentVars (which
+     weed admin picks up through viper's AutomaticEnv). A secret-backed
+     entry counts as enabled even though the chart cannot read its value. */}}
+{{- define "seaweedfs.admin.authEnabled" -}}
+{{- if or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword -}}
+true
+{{- else -}}
+{{- $merged := dict -}}
+{{- $_ := include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.admin "target" $merged) -}}
+{{- $envPassword := index $merged "WEED_ADMIN_PASSWORD" -}}
+{{- if or (kindIs "map" $envPassword) (hasKey (.Values.admin.secretExtraEnvironmentVars | default dict) "WEED_ADMIN_PASSWORD") -}}
+true
+{{- else if and $envPassword (ne (toString $envPassword) "") -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Return the proper filer image */}}
 {{- define "seaweedfs.filer.image" -}}
 {{- if .Values.filer.imageOverride -}}
