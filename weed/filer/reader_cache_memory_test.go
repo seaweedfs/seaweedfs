@@ -164,3 +164,38 @@ func TestReaderCacheEvictionDoesNotHoldCacheLock(t *testing.T) {
 		t.Fatal("cache lock held while eviction waited for a reader")
 	}
 }
+
+func TestReaderCacheFailedPrefetchReleasesBudget(t *testing.T) {
+	for _, lookupFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("lookupFailure=%t", lookupFailure), func(t *testing.T) {
+			budget := NewReaderCacheBudget(1024)
+			rc := NewReaderCache(1, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+				if lookupFailure {
+					return nil, fmt.Errorf("lookup failed")
+				}
+				return []string{"unused"}, nil
+			}, nil, budget)
+			defer rc.destroy()
+			rc.fetchChunkDataFn = func(_ context.Context, _ []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+				return 0, fmt.Errorf("fetch failed")
+			}
+			rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "failed", ChunkSize: 1024}}, 1)
+			deadline := time.Now().Add(time.Second)
+			for {
+				rc.Lock()
+				count := len(rc.downloaders)
+				rc.Unlock()
+				budget.Lock()
+				used := budget.used
+				budget.Unlock()
+				if count == 0 && used == 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("failed prefetch retains %d slots and %d bytes", count, used)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		})
+	}
+}

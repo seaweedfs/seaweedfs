@@ -227,7 +227,11 @@ func (s *SingleChunkCacher) startCaching() {
 	defer func() {
 		close(s.done)
 		s.wg.Done()
-		s.parent.budget.complete(s)
+		if s.hasCompletedError() {
+			s.parent.remove(s)
+		} else {
+			s.parent.budget.complete(s)
+		}
 	}()
 
 	s.cacheStartedCh <- struct{}{}
