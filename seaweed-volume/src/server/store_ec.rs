@@ -259,12 +259,17 @@ pub async fn scrub_ec_volume_distributed(
     force_deleted_needles_check: bool,
     recover_unreadable: bool,
 ) -> (i64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
-    // Phase A — under the Store read lock, run the index scrub and grab the
+    // Phase A — under the Store read lock, snapshot the index scrub and grab the
     // paths/scalars + shard-location staleness; release the lock before any await.
+    //
+    // The index walk itself runs AFTER the guard: scrub_index() reads the whole
+    // .ecx, and doing that under store.read() parks the periodic heartbeat's
+    // store.write(), which a write-preferring RwLock then makes every later
+    // reader queue behind. See EcChecksumScrubPlan.
     let (
         ecx_path,
         collection,
-        seed_errs,
+        index_plan,
         cached_locations,
         cache_refreshed_at,
         data_shards,
@@ -282,7 +287,7 @@ pub async fn scrub_ec_volume_distributed(
             }
         };
         // full scan means verifying the index as well
-        let (_, errs) = ecv.scrub_index();
+        let index_plan = ecv.scrub_index_plan();
         // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
         let cached_locations = ecv.shard_locations.read().unwrap().clone();
         let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
@@ -291,13 +296,16 @@ pub async fn scrub_ec_volume_distributed(
         (
             ecv.ecx_file_name(),
             ecv.collection.clone(),
-            errs,
+            index_plan,
             cached_locations,
             cache_refreshed_at,
             data_shards,
             total_shards,
         )
     };
+    // Lock released: walk the index now, before anything else appends to errs,
+    // so the seeded errors keep their position in the reported details.
+    let (_, seed_errs) = index_plan.run();
     let mut errs = seed_errs;
 
     // Refresh the shard-location cache once up front (mirrors Go's
