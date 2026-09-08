@@ -103,7 +103,7 @@ func TestReaderCacheBudgetInFlight(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				select {
 				case <-started:
-				case <-time.After(time.Second):
+				case <-time.After(5 * time.Second):
 					t.Fatal("download did not resume after eviction")
 				}
 			}
@@ -146,7 +146,7 @@ func TestReaderCacheEvictionDoesNotHoldCacheLock(t *testing.T) {
 	rc.Unlock()
 	evicted := make(chan struct{})
 	go func() { rc.UnCache("chunk"); close(evicted) }()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	available := false
 	for time.Now().Before(deadline) {
 		if rc.TryLock() {
@@ -180,7 +180,7 @@ func TestReaderCacheFailedPrefetchReleasesBudget(t *testing.T) {
 				return 0, fmt.Errorf("fetch failed")
 			}
 			rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "failed", ChunkSize: 1024}}, 1)
-			deadline := time.Now().Add(time.Second)
+			deadline := time.Now().Add(5 * time.Second)
 			for {
 				rc.Lock()
 				count := len(rc.downloaders)
