@@ -2474,8 +2474,20 @@ func iamRequiresAdminForOthers(action string) bool {
 	return iamSelfServiceActions[action]
 }
 
+// iamSelfTargetActions require an explicit iam:<Action> grant, but a non-admin
+// grant holder may only target their own identity. The target parameter is
+// action-specific (UserName for most, ParentUser for CreateServiceAccount).
+var iamSelfTargetActions = map[string]bool{
+	"CreateServiceAccount": true,
+}
+
+func iamRequiresSelfTarget(action string) bool {
+	return iamSelfTargetActions[action]
+}
+
 // AuthorizeIamAction authorizes an IAM management action for identity, with
-// targetUserName taken from the request's UserName parameter.
+// targetUserName taken from the request's target parameter (UserName, or
+// ParentUser for CreateServiceAccount).
 //
 // IAM management is not part of the S3 data plane, so the grant is checked as
 // iam:<Action>. A coarse S3 action would instead be matched by an ordinary
@@ -2496,7 +2508,13 @@ func (iam *IdentityAccessManagement) AuthorizeIamAction(r *http.Request, identit
 	if identity.isAdmin() {
 		return s3err.ErrNone
 	}
-	return iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "")
+	if errCode := iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", ""); errCode != s3err.ErrNone {
+		return errCode
+	}
+	if iamRequiresSelfTarget(action) && targetUserName != "" && targetUserName != identity.Name {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
 }
 
 // AuthIamManagement authenticates an IAM management request and authorizes the
