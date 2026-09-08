@@ -2,13 +2,19 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
+
+// ErrPolicyStillAttached is returned when deleting a managed policy that is
+// still attached to one or more users or groups.
+var ErrPolicyStillAttached = errors.New("policy is still attached")
 
 type IAMPolicy struct {
 	Name         string                       `json:"name"`
@@ -146,7 +152,10 @@ func (s *AdminServer) UpdatePolicy(name string, document policy_engine.PolicyDoc
 	return policyManager.UpdatePolicy(ctx, name, document)
 }
 
-// DeletePolicy deletes an IAM policy
+// DeletePolicy deletes an IAM policy. Deletion is rejected while the policy is
+// still attached to any user or group, matching AWS IAM behavior and the IAM
+// API handler, so a deleted policy name never lingers in an attached policy
+// list.
 func (s *AdminServer) DeletePolicy(name string) error {
 	policyManager := s.GetPolicyManager()
 	if policyManager == nil {
@@ -154,6 +163,14 @@ func (s *AdminServer) DeletePolicy(name string) error {
 	}
 
 	ctx := context.Background()
+	attached, err := s.IsPolicyAttached(ctx, name)
+	if err != nil {
+		return fmt.Errorf("failed to check policy attachments: %w", err)
+	}
+	if len(attached) > 0 {
+		return fmt.Errorf("policy %s is still attached to: %s: %w", name, strings.Join(attached, ", "), ErrPolicyStillAttached)
+	}
+
 	return policyManager.DeletePolicy(ctx, name)
 }
 
