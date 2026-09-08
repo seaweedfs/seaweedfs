@@ -742,7 +742,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 
 		// UserName comes from the body only, the same place DoActions reads it
 		// from, so the authorized target and the acted-on target cannot differ.
-		if s3a.iam.AuthorizeIamAction(r, identity, action, r.PostForm.Get("UserName")) != s3err.ErrNone {
+		if s3a.iam.AuthorizeIamAction(r, identity, action, iamTargetUserName(action, r)) != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}

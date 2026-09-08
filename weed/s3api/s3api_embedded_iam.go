@@ -2485,6 +2485,17 @@ func iamRequiresSelfTarget(action string) bool {
 	return iamSelfTargetActions[action]
 }
 
+// iamTargetUserName returns the request's target identity for authorization.
+// Most IAM actions target UserName; CreateServiceAccount targets ParentUser.
+// Both IAM dispatch surfaces (AuthIamManagement and UnifiedPostHandler) use
+// this so the authorized target and the acted-on target cannot differ.
+func iamTargetUserName(action string, r *http.Request) string {
+	if action == "CreateServiceAccount" {
+		return r.PostForm.Get("ParentUser")
+	}
+	return r.PostForm.Get("UserName")
+}
+
 // AuthorizeIamAction authorizes an IAM management action for identity, with
 // targetUserName taken from the request's target parameter (UserName, or
 // ParentUser for CreateServiceAccount).
@@ -2548,13 +2559,8 @@ func (iam *IdentityAccessManagement) AuthIamManagement(f http.HandlerFunc) http.
 
 		// UserName comes from the body only, the same place the handlers read it
 		// from, so the authorized target and the acted-on target cannot differ.
-		// CreateServiceAccount targets ParentUser instead of UserName.
 		action := r.Form.Get("Action")
-		target := r.PostForm.Get("UserName")
-		if action == "CreateServiceAccount" {
-			target = r.PostForm.Get("ParentUser")
-		}
-		if errCode := iam.AuthorizeIamAction(r, identity, action, target); errCode != s3err.ErrNone {
+		if errCode := iam.AuthorizeIamAction(r, identity, action, iamTargetUserName(action, r)); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
