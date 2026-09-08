@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -314,6 +315,14 @@ func lastSegment(p string) string {
 func configureMountMemory(option *MountOptions) error {
 	if option.readerCacheSizeMB != nil && (*option.readerCacheSizeMB <= 0 || *option.readerCacheSizeMB > math.MaxInt64>>20) {
 		return fmt.Errorf("readerCacheSizeMB must be positive and fit in an int64 byte budget")
+	}
+	if option.memoryLimitMB != nil {
+		if *option.memoryLimitMB < 0 || *option.memoryLimitMB > math.MaxInt64>>20 {
+			return fmt.Errorf("memoryLimitMB must be non-negative and fit in an int64 byte limit")
+		}
+		if *option.memoryLimitMB > 0 {
+			debug.SetMemoryLimit(*option.memoryLimitMB << 20)
+		}
 	}
 	return nil
 }
