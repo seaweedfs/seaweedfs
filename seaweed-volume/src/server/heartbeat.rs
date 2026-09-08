@@ -2019,8 +2019,13 @@ mod tests {
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
 
+        // A sustained IO error quarantines the volume: it stays mounted
+        // (so healthz can observe the quarantine state) but is not
+        // advertised to the master.
         assert!(heartbeat.volumes.is_empty());
-        assert!(!store.has_volume(VolumeId(51)));
+        assert!(store.has_volume(VolumeId(51)));
+        let (_, volume) = store.find_volume_mut(VolumeId(51)).unwrap();
+        assert!(volume.is_no_write_or_delete());
     }
 
     #[test]

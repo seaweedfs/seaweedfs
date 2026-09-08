@@ -4226,8 +4226,16 @@ impl Volume {
 
     #[cfg(test)]
     pub(crate) fn set_last_io_error_for_test(&self, err: Option<&str>) {
+        use std::sync::atomic::Ordering;
         if let Ok(mut guard) = self.last_io_error.lock() {
             *guard = err.map(|value| value.to_string());
+        }
+        // Set count at/above the heartbeat tolerance (3) so the test
+        // helper reflects a sustained error, not a single transient one.
+        if err.is_some() {
+            self.io_error_count.store(3, Ordering::Relaxed);
+        } else {
+            self.io_error_count.store(0, Ordering::Relaxed);
         }
     }
 
