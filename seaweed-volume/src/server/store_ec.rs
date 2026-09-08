@@ -271,6 +271,7 @@ pub async fn scrub_ec_volume_distributed(
         collection,
         index_plan,
         ecx_walk,
+        encode_ts_ns,
         cached_locations,
         cache_refreshed_at,
         data_shards,
@@ -300,6 +301,14 @@ pub async fn scrub_ec_volume_distributed(
         // The descriptor outlives the name, the same way the checksum plan's
         // shard handles do.
         let ecx_walk = fs::File::open(&ecv.ecx_file_name());
+        // Encode-run identity of the volume this scrub started against. The
+        // per-needle `scrub_snapshot_under_lock` re-resolves the volume by id
+        // under a fresh guard, so a teardown-and-remount of the same vid between
+        // two rows would otherwise apply the captured .ecx's offsets to a
+        // replacement volume's shards. Bind the walk to this generation: if the
+        // mounted volume's encode_ts_ns no longer matches, abort like a
+        // mid-scan unmount rather than mixing generations.
+        let encode_ts_ns = ecv.encode_ts_ns;
         // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
         let cached_locations = ecv.shard_locations.read().unwrap().clone();
         let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
@@ -310,6 +319,7 @@ pub async fn scrub_ec_volume_distributed(
             ecv.collection.clone(),
             index_plan,
             ecx_walk,
+            encode_ts_ns,
             cached_locations,
             cache_refreshed_at,
             data_shards,
@@ -409,10 +419,11 @@ pub async fn scrub_ec_volume_distributed(
     for (id, offset, size) in needles {
         // Per-needle snapshot under the lock from the RAW .ecx (offset, size) so
         // logically-deleted needles are still verified; lock dropped before await.
-        let snapshot = match scrub_snapshot_under_lock(state, vid, offset, size) {
+        let snapshot = match scrub_snapshot_under_lock(state, vid, offset, size, encode_ts_ns) {
             Ok(s) => s,
-            // Volume unmounted mid-scan: abort with an error rather than skipping
-            // every remaining needle, which would report a false-CLEAN result.
+            // Volume unmounted (or remounted as a different encode run) mid-scan:
+            // abort with an error rather than skipping every remaining needle,
+            // which would report a false-CLEAN result.
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 errs.push(format!("EC volume {} unmounted during scrub: {}", vid.0, e));
                 break;
@@ -576,6 +587,7 @@ fn scrub_snapshot_under_lock(
     vid: VolumeId,
     offset: Offset,
     size: Size,
+    expected_encode_ts: i64,
 ) -> io::Result<ScrubSnapshot> {
     let store = state.store.read().unwrap();
     let ecv = match store.find_ec_volume(vid) {
@@ -589,6 +601,20 @@ fn scrub_snapshot_under_lock(
             ))
         }
     };
+    // The volume was torn down and remounted as a DIFFERENT encode run between
+    // two rows. The .ecx offsets captured at the start of the walk belong to
+    // the old generation; applying them to the replacement's shards would
+    // falsely report corruption. Abort like a mid-scan unmount instead of
+    // mixing generations within one scrub.
+    if ecv.encode_ts_ns != expected_encode_ts {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "EC volume {} remounted as a different encode run during scrub (was {}, now {})",
+                vid.0, expected_encode_ts, ecv.encode_ts_ns
+            ),
+        ));
+    }
     let intervals = ecv.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
     if intervals.is_empty() {
         return Err(io::Error::new(
