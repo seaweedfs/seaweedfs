@@ -427,6 +427,25 @@ impl Store {
         false
     }
 
+    /// Reports whether any local volume or EC shard is currently quarantined
+    /// due to sustained storage-media EIO. Mirrors Go's Store.HasIoQuarantine.
+    pub fn has_io_quarantine(&self) -> bool {
+        for loc in &self.locations {
+            for (_, vol) in loc.iter_volumes() {
+                if vol.last_io_error().is_some() {
+                    return true;
+                }
+            }
+            for (_, ec_vol) in loc.ec_volumes() {
+                let (_, _, quarantined) = ec_vol.get_io_error_state();
+                if quarantined {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Mount a volume from an existing .dat file.
     pub fn mount_volume(
         &mut self,

@@ -782,6 +782,31 @@ func (s *Store) IsStopping() bool {
 	return s.isStopping.Load()
 }
 
+// HasIoQuarantine reports whether any local volume or EC shard is currently
+// quarantined due to sustained storage-media EIO. Used by /healthz so a
+// load balancer can drain a server whose underlying media is faulty.
+func (s *Store) HasIoQuarantine() bool {
+	for _, location := range s.Locations {
+		location.volumesLock.RLock()
+		for _, v := range location.volumes {
+			if _, _, quarantined := v.getIoErrorState(); quarantined {
+				location.volumesLock.RUnlock()
+				return true
+			}
+		}
+		location.volumesLock.RUnlock()
+		location.ecVolumesLock.RLock()
+		for _, ev := range location.ecVolumes {
+			if _, _, quarantined := ev.GetIoErrorState(); quarantined {
+				location.ecVolumesLock.RUnlock()
+				return true
+			}
+		}
+		location.ecVolumesLock.RUnlock()
+	}
+	return false
+}
+
 func (s *Store) LoadNewVolumes() {
 	for _, location := range s.Locations {
 		location.loadExistingVolumes(s.NeedleMapKind, 0)
