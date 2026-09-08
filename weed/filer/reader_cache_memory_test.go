@@ -70,6 +70,13 @@ func TestChunkGroupReaderCacheMemory(t *testing.T) {
 				for i := 0; i < tt.chunks; i++ {
 					<-started
 				}
+				rc.trim()
+				rc.Lock()
+				downloading := len(rc.downloaders)
+				rc.Unlock()
+				if downloading != tt.chunks {
+					t.Errorf("trim evicted in-flight downloads: got %d, want %d", downloading, tt.chunks)
+				}
 				close(gate)
 				readers.Wait()
 			}
