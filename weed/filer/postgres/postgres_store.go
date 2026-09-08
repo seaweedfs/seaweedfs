@@ -65,9 +65,7 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 func (store *PostgresStore) initialize(createTable, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
-	if createTable == "" {
-		createTable = DefaultCreateTableQuery
-	}
+	createTable = ResolveCreateTableQuery(createTable)
 	if !enableUpsert {
 		upsertQuery = ""
 	} else if upsertQuery == "" {
@@ -132,8 +130,10 @@ func (store *PostgresStore) initialize(createTable, upsertQuery string, enableUp
 		return err
 	}
 
-	if _, err = store.DB.ExecContext(context.Background(), gen.GetSqlCreateTable(abstract_sql.DEFAULT_TABLE)); err != nil {
-		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
+	if createTable != "" {
+		if _, err = store.DB.ExecContext(context.Background(), gen.GetSqlCreateTable(abstract_sql.DEFAULT_TABLE)); err != nil {
+			return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
+		}
 	}
 
 	ConfigureListOrdering(store.DB, gen)
