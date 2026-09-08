@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -25,6 +26,14 @@ var bytesBufferPool = sync.Pool{
 	},
 }
 
+// Keep Manifest reads bounded across all recursion levels of one resolution.
+const maxChunkManifestResolveWorkers = 4
+
+// Size of the job queue buffer. Large enough that submission does not block
+// under normal chunk counts, so a promptly-failing manifest is always queued
+// and can cancel stalled sibling reads once a worker picks it up.
+const chunkManifestResolveJobBufferSize = 128
+
 func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
 	for _, chunk := range chunks {
 		if chunk.IsChunkManifest {
@@ -46,26 +55,229 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 }
 
 func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
-	// TODO maybe parallel this
-	for _, chunk := range chunks {
+	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator)
+	defer resolver.close()
+	return resolver.resolve(chunks, startOffset, stopOffset)
+}
 
+type chunkManifestResolveJob struct {
+	chunk       *filer_pb.FileChunk
+	result      *chunkManifestResolveResult
+	done        *sync.WaitGroup
+	batchCtx    context.Context
+	batchCancel context.CancelFunc
+	batchOnce   *sync.Once
+}
+
+type chunkManifestResolveResult struct {
+	chunks         []*filer_pb.FileChunk
+	err            error
+	internalCancel bool
+}
+
+type chunkManifestResolver struct {
+	ctx            context.Context
+	parentCtx      context.Context
+	cancel         context.CancelFunc
+	lookupFileIdFn wdclient.LookupFileIdFunctionType
+	invalidator    CacheInvalidator
+	jobs           chan chunkManifestResolveJob
+	overflowSem    chan struct{}
+	workers        sync.WaitGroup
+	startOnce      sync.Once
+	started        bool
+}
+
+func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator) *chunkManifestResolver {
+	workCtx, cancel := context.WithCancel(ctx)
+	resolver := &chunkManifestResolver{
+		ctx:            workCtx,
+		parentCtx:      ctx,
+		cancel:         cancel,
+		lookupFileIdFn: lookupFileIdFn,
+		invalidator:    invalidator,
+		jobs:           make(chan chunkManifestResolveJob, chunkManifestResolveJobBufferSize),
+		overflowSem:    make(chan struct{}, maxChunkManifestResolveWorkers),
+	}
+	return resolver
+}
+
+func (r *chunkManifestResolver) executeJob(job chunkManifestResolveJob) {
+	job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator)
+	if job.result.err != nil && r.parentCtx.Err() == nil {
+		if job.batchCtx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
+			job.result.internalCancel = true
+		} else if job.batchCtx.Err() == nil {
+			job.batchOnce.Do(job.batchCancel)
+		}
+	}
+	job.done.Done()
+}
+
+func (r *chunkManifestResolver) executeOverflowJob(job chunkManifestResolveJob) {
+	select {
+	case r.overflowSem <- struct{}{}:
+		defer func() { <-r.overflowSem }()
+		r.executeJob(job)
+	case <-job.batchCtx.Done():
+		if job.result.err == nil {
+			job.result.err = job.batchCtx.Err()
+			job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
+		}
+		job.done.Done()
+	case <-r.ctx.Done():
+		if job.result.err == nil {
+			job.result.err = r.ctx.Err()
+			job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
+		}
+		job.done.Done()
+	}
+}
+
+func (r *chunkManifestResolver) worker() {
+	defer r.workers.Done()
+	for job := range r.jobs {
+		r.executeJob(job)
+	}
+}
+
+func (r *chunkManifestResolver) close() {
+	r.cancel()
+	close(r.jobs)
+	if r.started {
+		r.workers.Wait()
+	}
+}
+
+func (r *chunkManifestResolver) submit(job chunkManifestResolveJob) bool {
+	r.startOnce.Do(func() {
+		r.workers.Add(maxChunkManifestResolveWorkers)
+		for i := 0; i < maxChunkManifestResolveWorkers; i++ {
+			go r.worker()
+		}
+		r.started = true
+	})
+	select {
+	case r.jobs <- job:
+		return true
+	case <-r.ctx.Done():
+		return false
+	case <-job.batchCtx.Done():
+		// Batch was cancelled by a sibling failure; don't queue this job.
+		// Set the result so the caller doesn't overwrite it; the caller
+		// owns the WaitGroup decrement.
+		job.result.err = job.batchCtx.Err()
+		job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
+		return false
+	default:
+		// Buffer is full (exceedingly rare: more than chunkManifestResolveJobBufferSize
+		// in-range manifests at one level). Run the job in a bounded overflow goroutine
+		// so a promptly-failing manifest can still cancel the batch without waiting for
+		// a worker slot, while keeping total concurrency bounded.
+		go r.executeOverflowJob(job)
+		return true
+	}
+}
+
+func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffset, stopOffset int64) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	type resolveSlot struct {
+		chunk  *filer_pb.FileChunk
+		result chunkManifestResolveResult
+	}
+
+	// Cancellation is scoped to this parallel read batch so a failure in a
+	// later manifest does not cancel recursive work for an earlier manifest
+	// that already completed. Recursion creates its own batch context derived
+	// from the still-alive resolver context.
+	batchCtx, batchCancel := context.WithCancel(r.ctx)
+	defer batchCancel()
+	var batchOnce sync.Once
+
+	slots := make([]resolveSlot, len(chunks))
+	var reads sync.WaitGroup
+	for i, chunk := range chunks {
 		if max(chunk.Offset, startOffset) >= min(chunk.Offset+int64(chunk.Size), stopOffset) {
 			continue
 		}
 
+		slots[i].chunk = chunk
 		if !chunk.IsChunkManifest {
-			dataChunks = append(dataChunks, chunk)
 			continue
 		}
 
-		resolvedChunks, err := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator)
-		if err != nil {
-			return dataChunks, nil, err
+		reads.Add(1)
+		if !r.submit(chunkManifestResolveJob{
+			chunk:       chunk,
+			result:      &slots[i].result,
+			done:        &reads,
+			batchCtx:    batchCtx,
+			batchCancel: batchCancel,
+			batchOnce:   &batchOnce,
+		}) {
+			// submit may have already set the result (batch cancellation).
+			// Only set it here for the resolver-cancellation case.
+			if slots[i].result.err == nil {
+				slots[i].result.err = r.ctx.Err()
+				slots[i].result.internalCancel = r.parentCtx.Err() == nil && slots[i].result.err != nil
+			}
+			reads.Done()
+		}
+	}
+	reads.Wait()
+	if err := r.parentCtx.Err(); err != nil {
+		return dataChunks, nil, err
+	}
+
+	// Recurse only after this level's reads release their worker slots. A
+	// worker must never wait for a child manifest while holding a slot.
+	//
+	// Pre-scan for the first real (non-internal-cancel) error before
+	// recursing. If a later manifest already failed, return its error
+	// promptly with data chunks that are already in hand, instead of
+	// blocking on recursive reads of earlier manifests' children.
+	for i, slot := range slots {
+		if slot.chunk == nil {
+			continue
+		}
+		if slot.result.err != nil {
+			if slot.result.internalCancel {
+				continue
+			}
+			for j := 0; j < i; j++ {
+				if slots[j].chunk == nil {
+					continue
+				}
+				if !slots[j].chunk.IsChunkManifest {
+					dataChunks = append(dataChunks, slots[j].chunk)
+					continue
+				}
+				for _, c := range slots[j].result.chunks {
+					if !c.IsChunkManifest && max(c.Offset, startOffset) < min(c.Offset+int64(c.Size), stopOffset) {
+						dataChunks = append(dataChunks, c)
+					}
+				}
+			}
+			return dataChunks, nil, slot.result.err
+		}
+	}
+
+	for _, slot := range slots {
+		if slot.chunk == nil {
+			continue
+		}
+		if slot.result.err != nil {
+			if slot.result.internalCancel {
+				continue
+			}
+			return dataChunks, nil, slot.result.err
+		}
+		if !slot.chunk.IsChunkManifest {
+			dataChunks = append(dataChunks, slot.chunk)
+			continue
 		}
 
-		manifestChunks = append(manifestChunks, chunk)
-		// recursive
-		subDataChunks, subManifestChunks, subErr := ResolveChunkManifest(ctx, lookupFileIdFn, resolvedChunks, startOffset, stopOffset, invalidator)
+		manifestChunks = append(manifestChunks, slot.chunk)
+		subDataChunks, subManifestChunks, subErr := r.resolve(slot.result.chunks, startOffset, stopOffset)
 		if subErr != nil {
 			return dataChunks, nil, subErr
 		}
