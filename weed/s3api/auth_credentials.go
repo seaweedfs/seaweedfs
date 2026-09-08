@@ -2690,10 +2690,20 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 		// field is a lossy projection that cannot represent deny statements,
 		// conditions, or fine-grained action differences such as PutObject vs
 		// DeleteObject.
-		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
+		switch iam.evaluateAttachedIAMPolicies(r, identity, action, bucket, object) {
+		case attachedIAMPolicyAllow:
 			return s3err.ErrNone
+		case attachedIAMPolicyDeny:
+			return s3err.ErrAccessDenied
+		default:
+			// No matching statement: a native bare Admin grant survives
+			// attaching a policy (issue #11226). Scoped actions are not
+			// consulted because inline policies flatten lossily into Actions.
+			if identity.isAdmin() {
+				return s3err.ErrNone
+			}
+			return s3err.ErrAccessDenied
 		}
-		return s3err.ErrAccessDenied
 	case authorizeViaLegacyActions:
 		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
@@ -2943,8 +2953,31 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		return s3err.ErrAccessDenied
 	}
 
+	// A native bare Admin grant survives attaching a policy (issue #11226);
+	// an explicit Deny in an attached policy still wins.
+	if identity.isAdmin() {
+		s3Action, resourceArn := resolveS3AuthTarget(action, bucket, object, r)
+		if !iam.isActionExplicitlyDeniedByIAM(r, identity, iamIdentity.Principal, s3Action, resourceArn) {
+			return s3err.ErrNone
+		}
+		return s3err.ErrAccessDenied
+	}
+
 	// Use IAM integration for authorization
 	return iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
+}
+
+// resolveS3AuthTarget mirrors the action and resource resolution that
+// AuthorizeAction applies, so the native-permission floor's explicit-deny
+// check evaluates the same action and resource ARN as the policy engine.
+func resolveS3AuthTarget(action Action, bucket, object string, r *http.Request) (s3Action, resourceArn string) {
+	resourceObjectKey := object
+	if action == s3_constants.ACTION_LIST {
+		resourceObjectKey = ""
+	}
+	resourceArn = buildS3ResourceArn(bucket, resourceObjectKey)
+	s3Action = ResolveS3Action(r, string(action), bucket, object)
+	return
 }
 
 // PutPolicy adds or updates a policy
