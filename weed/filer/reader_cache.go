@@ -20,6 +20,8 @@ type CacheInvalidator interface {
 
 type fetchChunkDataFnType func(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls util_http.RefreshUrlsFunc) (n int, err error)
 
+const readerCacheMemoryLimit = 64 << 20
+
 type ReaderCache struct {
 	chunkCache       chunk_cache.ChunkCache
 	lookupFileIdFn   wdclient.LookupFileIdFunctionType
@@ -177,6 +179,30 @@ func (rc *ReaderCache) UnCache(fileId string) {
 	}
 }
 
+func (rc *ReaderCache) trim() {
+	rc.Lock()
+	defer rc.Unlock()
+
+	for {
+		var retained int64
+		var oldest *SingleChunkCacher
+		for _, downloader := range rc.downloaders {
+			downloader.Lock()
+			size := cap(downloader.data)
+			downloader.Unlock()
+			retained += int64(size)
+			if size > 0 && (oldest == nil || atomic.LoadInt64(&downloader.completedTimeNew) < atomic.LoadInt64(&oldest.completedTimeNew)) {
+				oldest = downloader
+			}
+		}
+		if retained <= readerCacheMemoryLimit {
+			return
+		}
+		delete(rc.downloaders, oldest.chunkFileId)
+		oldest.destroy()
+	}
+}
+
 func (rc *ReaderCache) destroy() {
 	rc.Lock()
 	defer rc.Unlock()
@@ -200,27 +226,19 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 	}
 }
 
-// startCaching downloads the chunk data in the background.
-// It does NOT hold the lock during the HTTP download to allow concurrent readers
-// to wait efficiently using the done channel.
-//
-// Concurrent downloads of the same chunk are already deduplicated by the
-// ReaderCache.downloaders map (guarded by the ReaderCache mutex). Each fileId
-// has at most one active SingleChunkCacher at any time.
+// startCaching downloads a chunk shared by concurrent readers.
 func (s *SingleChunkCacher) startCaching() {
 	s.wg.Add(1)
-	defer s.wg.Done()
-	defer close(s.done) // guarantee completion signal even on panic
+	defer func() {
+		close(s.done)
+		s.wg.Done()
+		// Release download waiters before eviction waits for active readers.
+		s.parent.trim()
+	}()
 
 	s.cacheStartedCh <- struct{}{} // signal that we've started
 
-	// Note: We intentionally use context.Background() here, NOT a request-specific context.
-	// The downloaded chunk is a shared resource - multiple concurrent readers may be waiting
-	// for this same download to complete. If we used a request context and that request was
-	// cancelled, it would abort the download and cause errors for all other waiting readers.
-	// The download should always complete once started to serve all potential consumers.
-
-	// Lookup file ID without holding the lock
+	// Request cancellation must not abort a download shared by other readers.
 	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
 		s.setError(fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err))
