@@ -885,24 +885,29 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	if !v.HasRemoteFile() {
 		v.noWriteCanDelete = false
 	}
-	if err := v.PersistReadOnly(false, false); err != nil {
-		// A pre-commit failure leaves the old .vif intact, so roll back
-		// the in-memory flags. A NotCrashDurableError means the rename
-		// already committed; keep flags aligned with the file.
+	persistErr := v.PersistReadOnly(false, false)
+	if persistErr != nil {
 		var ndErr *volume_info.NotCrashDurableError
-		if !errors.As(err, &ndErr) {
+		if !errors.As(persistErr, &ndErr) {
+			// Pre-commit failure: the old .vif is intact, so roll back
+			// the in-memory flags and return early.
 			v.noWriteOrDelete = prevNoWriteOrDelete
 			v.noWriteCanDelete = prevNoWriteCanDelete
+			v.noWriteLock.Unlock()
+			return fmt.Errorf("volume %d persist writable: %w", i, persistErr)
 		}
-		v.noWriteLock.Unlock()
-		return fmt.Errorf("volume %d persist writable: %w", i, err)
+		// Post-rename durability failure: the file already holds the new
+		// mode. Wrap the error but continue with post-commit work so the
+		// volume is usable in memory even though the rename may not
+		// survive a crash.
+		persistErr = fmt.Errorf("volume %d persist writable: %w", i, persistErr)
 	}
 	v.noWriteLock.Unlock()
 	// Clear the EIO streak and the sticky quarantine flag so the next
 	// CollectHeartbeat can announce the volume again. If the disk is
 	// still bad, the next failed op will re-arm the streak.
 	v.resetIoErrorState()
-	return nil
+	return persistErr
 }
 
 func (s *Store) MountVolume(i needle.VolumeId) error {
