@@ -357,7 +357,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 			return fmt.Errorf("findDB %s : %w", fullpath, err)
 		}
 
-		if isValidBucket(bucket) && shortPath == "/" {
+		if isValidBucket(bucket) && shortPath == "/" && store.CanDropWholeBucket() {
 			if err = store.deleteTable(ctx, bucket); err == nil {
 				store.dbsLock.Lock()
 				delete(store.dbs, bucket)
