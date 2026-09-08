@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -186,8 +187,13 @@ func (h *PolicyHandlers) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 	// Delete the policy
 	err = h.adminServer.DeletePolicy(policyName)
 	if err != nil {
-		glog.Errorf("Failed to delete policy %s: %v", policyName, err)
-		writeJSONError(w, http.StatusInternalServerError, "Failed to delete policy: "+err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, dash.ErrPolicyStillAttached) {
+			status = http.StatusConflict
+		} else {
+			glog.Errorf("Failed to delete policy %s: %v", policyName, err)
+		}
+		writeJSONError(w, status, "Failed to delete policy: "+err.Error())
 		return
 	}
 
