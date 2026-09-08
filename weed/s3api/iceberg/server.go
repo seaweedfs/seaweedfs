@@ -3,6 +3,7 @@ package iceberg
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -217,15 +218,26 @@ func (w *responseWriter) WriteHeader(code int) {
 
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Try Bearer token authentication first (from OAuth2 flow)
-		if identityName, identity, ok := s.authenticateBearer(r); ok {
-			ctx := r.Context()
-			ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
-			if identity != nil {
-				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+		// A request carrying a Bearer token is an Iceberg REST client. When
+		// the token is invalid or expired, answer 401 immediately so clients
+		// (Iceberg Java OAuth2Manager, pyiceberg) refresh their token and
+		// retry. Falling through to the S3 authenticator instead would parse
+		// the Authorization header as SigV4, fail with NotImplemented (501),
+		// and clients would retry the dead token forever.
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			if identityName, identity, ok := s.authenticateBearer(r); ok {
+				ctx := r.Context()
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				if identity != nil {
+					ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				}
+				r = r.WithContext(ctx)
+				handler(w, r)
+				return
 			}
-			r = r.WithContext(ctx)
-			handler(w, r)
+			// RFC 6750 / Iceberg REST spec: 401 is the refresh signal.
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Bearer token is invalid or expired")
 			return
 		}
 
