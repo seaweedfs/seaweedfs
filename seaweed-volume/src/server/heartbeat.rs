@@ -19,7 +19,7 @@ use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
 use crate::storage::store::Store;
-use crate::storage::types::NeedleId;
+use crate::storage::types::{NeedleId, VolumeId};
 use crate::storage::volume_report::VolumeReportKey;
 use crate::storage::volume_report_hash::report_hash;
 
@@ -943,6 +943,7 @@ fn build_heartbeat_with_ec_status(
             loc.disk_free_bytes.load(Ordering::Relaxed);
 
         let mut delete_vids = Vec::new();
+        let mut quarantine_vids: Vec<VolumeId> = Vec::new();
         for (_, vol) in loc.iter_volumes() {
             let cur_max = vol.max_file_key();
             if cur_max > max_file_key {
@@ -962,6 +963,7 @@ fn build_heartbeat_with_ec_status(
                     );
                 }
                 quarantined_volumes += 1;
+                quarantine_vids.push(vol.id);
                 continue;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
                 // Detect phantom volumes: the .dat was unlinked from disk but is still
@@ -1059,6 +1061,12 @@ fn build_heartbeat_with_ec_status(
 
         for vid in delete_vids {
             let _ = loc.delete_volume(vid, false, false);
+        }
+
+        for vid in quarantine_vids {
+            if let Some(vol) = loc.find_volume_mut(vid) {
+                vol.set_no_write_or_delete(true);
+            }
         }
     }
 

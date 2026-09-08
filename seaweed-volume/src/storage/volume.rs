@@ -2095,6 +2095,10 @@ impl Volume {
         self.no_write_or_delete
     }
 
+    pub fn set_no_write_or_delete(&mut self, value: bool) {
+        self.no_write_or_delete = value;
+    }
+
     pub fn is_no_write_can_delete(&self) -> bool {
         self.no_write_can_delete
     }
@@ -2853,6 +2857,7 @@ impl Volume {
             self.no_write_can_delete = was_no_write_can_delete;
             return Err(e);
         }
+        self.reset_io_error_state();
         Ok(())
     }
 
