@@ -207,6 +207,9 @@ func (s *AdminServer) IsPolicyAttached(ctx context.Context, policyName string) (
 	}
 	for _, groupName := range groupNames {
 		group, err := s.credentialManager.GetGroup(ctx, groupName)
+		if errors.Is(err, credential.ErrGroupNotFound) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to get group %s: %w", groupName, err)
 		}
