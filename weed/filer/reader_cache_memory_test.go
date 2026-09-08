@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -197,5 +198,52 @@ func TestReaderCacheFailedPrefetchReleasesBudget(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		})
+	}
+}
+
+// TestReaderCacheReReadAfterEviction verifies that a chunk evicted by budget
+// pressure is transparently re-downloaded on the next read and returns the
+// correct data. This is the core correctness property of eviction: a reader
+// must never observe missing or stale data after a chunk has been evicted.
+func TestReaderCacheReReadAfterEviction(t *testing.T) {
+	budget := NewReaderCacheBudget(4 << 10) // fits exactly one 4 KiB pooled chunk
+	rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil, budget)
+	defer rc.destroy()
+
+	var fetchCount int32
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		n := atomic.AddInt32(&fetchCount, 1)
+		buffer[0] = byte(n) // each download writes a distinct value
+		return len(buffer), nil
+	}
+
+	// Read chunk "a": triggers download #1, fills the budget.
+	buf := make([]byte, 1)
+	if n, err := rc.ReadChunkAt(context.Background(), buf, "a", nil, false, 0, 4<<10, false); err != nil || n != 1 || buf[0] != 1 {
+		t.Fatalf("first read of 'a': n=%d data=%d err=%v", n, buf[0], err)
+	}
+
+	// Read chunk "b": budget only fits one chunk, so "a" is evicted to make room.
+	if n, err := rc.ReadChunkAt(context.Background(), buf, "b", nil, false, 0, 4<<10, false); err != nil || n != 1 || buf[0] != 2 {
+		t.Fatalf("read of 'b': n=%d data=%d err=%v", n, buf[0], err)
+	}
+
+	// "a" should no longer be in the cache.
+	rc.Lock()
+	_, stillCached := rc.downloaders["a"]
+	rc.Unlock()
+	if stillCached {
+		t.Fatal("chunk 'a' was not evicted by budget pressure")
+	}
+
+	// Re-read "a": must trigger download #3 and return the fresh value.
+	if n, err := rc.ReadChunkAt(context.Background(), buf, "a", nil, false, 0, 4<<10, false); err != nil || n != 1 || buf[0] != 3 {
+		t.Fatalf("re-read of 'a': n=%d data=%d err=%v (expected re-download with value 3)", n, buf[0], err)
+	}
+
+	if got := atomic.LoadInt32(&fetchCount); got != 3 {
+		t.Fatalf("fetchCount=%d, want 3 (a, b, a-re-read)", got)
 	}
 }
