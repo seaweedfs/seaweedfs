@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -231,32 +232,184 @@ func TestChunkGroup_SearchChunks_Cancellation(t *testing.T) {
 	})
 }
 
-func TestChunkGroup_doSearchChunks(t *testing.T) {
-	type fields struct {
-		sections map[SectionIndex]*FileChunkSection
-	}
+func TestChunkGroup_SearchChunks(t *testing.T) {
+	const seekHole uint32 = 4
+
 	type args struct {
 		offset   int64
 		fileSize int64
 		whence   uint32
 	}
 	tests := []struct {
-		name      string
-		fields    fields
-		args      args
-		wantFound bool
-		wantOut   int64
+		name       string
+		chunks     []*filer_pb.FileChunk
+		args       args
+		wantFound  bool
+		wantOffset int64
 	}{
-		// TODO: Add test cases.
+		{
+			name: "SEEK_DATA starts at the first data range after a hole",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 0, fileSize: 500, whence: SEEK_DATA},
+			wantFound:  true,
+			wantOffset: 100,
+		},
+		{
+			name: "SEEK_DATA preserves an offset inside a data range",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 150, fileSize: 500, whence: SEEK_DATA},
+			wantFound:  true,
+			wantOffset: 150,
+		},
+		{
+			name: "SEEK_DATA crosses a hole between data ranges",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 200, fileSize: 500, whence: SEEK_DATA},
+			wantFound:  true,
+			wantOffset: 300,
+		},
+		{
+			name: "SEEK_DATA returns no match after the final data range",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 400, fileSize: 500, whence: SEEK_DATA},
+			wantFound:  false,
+			wantOffset: 0,
+		},
+		{
+			name: "SEEK_HOLE starts at the sparse prefix",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 0, fileSize: 500, whence: seekHole},
+			wantFound:  true,
+			wantOffset: 0,
+		},
+		{
+			name: "SEEK_HOLE finds the transition after data",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 150, fileSize: 500, whence: seekHole},
+			wantFound:  true,
+			wantOffset: 200,
+		},
+		{
+			name: "SEEK_HOLE preserves an offset inside a hole",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 250, fileSize: 500, whence: seekHole},
+			wantFound:  true,
+			wantOffset: 250,
+		},
+		{
+			name: "SEEK_HOLE returns the implicit trailing hole",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-1", Offset: 100, Size: 100},
+				{FileId: "data-2", Offset: 300, Size: 100},
+			},
+			args:       args{offset: 400, fileSize: 500, whence: seekHole},
+			wantFound:  true,
+			wantOffset: 400,
+		},
+		{
+			name:       "SEEK_DATA at EOF has no match",
+			chunks:     []*filer_pb.FileChunk{{FileId: "data", Offset: 0, Size: 500}},
+			args:       args{offset: 500, fileSize: 500, whence: SEEK_DATA},
+			wantFound:  false,
+			wantOffset: 0,
+		},
+		{
+			name:       "SEEK_HOLE at EOF returns EOF",
+			chunks:     []*filer_pb.FileChunk{{FileId: "data", Offset: 0, Size: 500}},
+			args:       args{offset: 500, fileSize: 500, whence: seekHole},
+			wantFound:  true,
+			wantOffset: 500,
+		},
+		{
+			name:       "empty file has neither data nor a non-EOF hole",
+			chunks:     nil,
+			args:       args{offset: 0, fileSize: 0, whence: SEEK_DATA},
+			wantFound:  false,
+			wantOffset: 0,
+		},
+		{
+			name:       "empty file reports EOF for SEEK_HOLE",
+			chunks:     nil,
+			args:       args{offset: 0, fileSize: 0, whence: seekHole},
+			wantFound:  true,
+			wantOffset: 0,
+		},
+		{
+			name: "SEEK_DATA crosses a section boundary",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-0", Offset: 0, Size: 16},
+				{FileId: "data-0-tail", Offset: SectionSize - 16, Size: 16},
+				{FileId: "data-1", Offset: SectionSize + 16, Size: 16},
+			},
+			args:       args{offset: 16, fileSize: 2*SectionSize + 32, whence: SEEK_DATA},
+			wantFound:  true,
+			wantOffset: SectionSize - 16,
+		},
+		{
+			name: "SEEK_DATA finds data after a section boundary hole",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-0", Offset: 0, Size: 16},
+				{FileId: "data-0-tail", Offset: SectionSize - 16, Size: 16},
+				{FileId: "data-1", Offset: SectionSize + 16, Size: 16},
+			},
+			args:       args{offset: SectionSize, fileSize: 2*SectionSize + 32, whence: SEEK_DATA},
+			wantFound:  true,
+			wantOffset: SectionSize + 16,
+		},
+		{
+			name: "SEEK_HOLE finds a hole at a section boundary",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-0", Offset: 0, Size: 16},
+				{FileId: "data-0-tail", Offset: SectionSize - 16, Size: 16},
+				{FileId: "data-1", Offset: SectionSize + 16, Size: 16},
+			},
+			args:       args{offset: SectionSize - 16, fileSize: 2*SectionSize + 32, whence: seekHole},
+			wantFound:  true,
+			wantOffset: SectionSize,
+		},
+		{
+			name: "SEEK_HOLE finds a missing section",
+			chunks: []*filer_pb.FileChunk{
+				{FileId: "data-0", Offset: 0, Size: 16},
+				{FileId: "data-0-tail", Offset: SectionSize - 16, Size: 16},
+				{FileId: "data-1", Offset: SectionSize + 16, Size: 16},
+			},
+			args:       args{offset: 2 * SectionSize, fileSize: 2*SectionSize + 32, whence: seekHole},
+			wantFound:  true,
+			wantOffset: 2 * SectionSize,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			group := &ChunkGroup{
-				sections: tt.fields.sections,
+			group, err := NewChunkGroup(nil, nil, tt.chunks, 1, nil)
+			if !assert.NoError(t, err) {
+				return
 			}
-			gotFound, gotOut := group.doSearchChunks(context.Background(), tt.args.offset, tt.args.fileSize, tt.args.whence)
-			assert.Equalf(t, tt.wantFound, gotFound, "doSearchChunks(%v, %v, %v)", tt.args.offset, tt.args.fileSize, tt.args.whence)
-			assert.Equalf(t, tt.wantOut, gotOut, "doSearchChunks(%v, %v, %v)", tt.args.offset, tt.args.fileSize, tt.args.whence)
+
+			gotFound, gotOffset := group.SearchChunks(context.Background(), tt.args.offset, tt.args.fileSize, tt.args.whence)
+			assert.Equalf(t, tt.wantFound, gotFound, "SearchChunks(%v, %v, %v) found", tt.args.offset, tt.args.fileSize, tt.args.whence)
+			assert.Equalf(t, tt.wantOffset, gotOffset, "SearchChunks(%v, %v, %v) offset", tt.args.offset, tt.args.fileSize, tt.args.whence)
 		})
 	}
 }

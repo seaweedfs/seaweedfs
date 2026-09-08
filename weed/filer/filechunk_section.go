@@ -113,7 +113,7 @@ func (section *FileChunkSection) DataStartOffset(ctx context.Context, group *Chu
 			continue
 		}
 		if offset < visible.start {
-			return offset
+			return visible.start
 		}
 		return offset
 	}
