@@ -82,6 +82,7 @@ type chunkManifestResolver struct {
 	lookupFileIdFn wdclient.LookupFileIdFunctionType
 	invalidator    CacheInvalidator
 	jobs           chan chunkManifestResolveJob
+	overflowSem    chan struct{}
 	workers        sync.WaitGroup
 	startOnce      sync.Once
 	started        bool
@@ -96,6 +97,7 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 		lookupFileIdFn: lookupFileIdFn,
 		invalidator:    invalidator,
 		jobs:           make(chan chunkManifestResolveJob, chunkManifestResolveJobBufferSize),
+		overflowSem:    make(chan struct{}, maxChunkManifestResolveWorkers),
 	}
 	return resolver
 }
@@ -110,6 +112,26 @@ func (r *chunkManifestResolver) executeJob(job chunkManifestResolveJob) {
 		}
 	}
 	job.done.Done()
+}
+
+func (r *chunkManifestResolver) executeOverflowJob(job chunkManifestResolveJob) {
+	select {
+	case r.overflowSem <- struct{}{}:
+		defer func() { <-r.overflowSem }()
+		r.executeJob(job)
+	case <-job.batchCtx.Done():
+		if job.result.err == nil {
+			job.result.err = job.batchCtx.Err()
+			job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
+		}
+		job.done.Done()
+	case <-r.ctx.Done():
+		if job.result.err == nil {
+			job.result.err = r.ctx.Err()
+			job.result.internalCancel = r.parentCtx.Err() == nil && job.result.err != nil
+		}
+		job.done.Done()
+	}
 }
 
 func (r *chunkManifestResolver) worker() {
@@ -149,9 +171,10 @@ func (r *chunkManifestResolver) submit(job chunkManifestResolveJob) bool {
 		return false
 	default:
 		// Buffer is full (exceedingly rare: more than chunkManifestResolveJobBufferSize
-		// in-range manifests at one level). Run the job directly so a promptly-failing
-		// manifest can still cancel the batch without waiting for a worker slot.
-		go r.executeJob(job)
+		// in-range manifests at one level). Run the job in a bounded overflow goroutine
+		// so a promptly-failing manifest can still cancel the batch without waiting for
+		// a worker slot, while keeping total concurrency bounded.
+		go r.executeOverflowJob(job)
 		return true
 	}
 }
