@@ -67,6 +67,35 @@ func TestNativeAdminSurvivesDeletedPolicy(t *testing.T) {
 		"native Admin must remain effective after the attached policy is deleted")
 }
 
+// TestNativeAdminSurvivesAttachedPolicyWithoutPrincipalArn covers the IAM
+// integration path when the Admin identity has no PrincipalArn (and no session
+// token), so the auth-path switch would otherwise deny before the native floor.
+func TestNativeAdminSurvivesAttachedPolicyWithoutPrincipalArn(t *testing.T) {
+	mgr := newTestIAMManager(t)
+	iam := &IdentityAccessManagement{}
+	iam.SetIAMIntegration(NewS3IAMIntegration(mgr, ""))
+
+	doc, _ := json.Marshal(map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{"Effect": "Allow", "Action": "s3:ListAllMyBuckets", "Resource": "*"},
+		},
+	})
+	require.NoError(t, iam.PutPolicy("ListBucketsOnly", string(doc)))
+
+	identity := &Identity{
+		Name:        "admin",
+		Account:     &Account{DisplayName: "admin", Id: "admin"},
+		Actions:     []Action{s3_constants.ACTION_ADMIN},
+		PolicyNames: []string{"ListBucketsOnly"},
+	}
+
+	errCode := iam.VerifyActionPermission(putObjectRequest(), identity,
+		s3_constants.ACTION_WRITE, "mybucket", "file.txt")
+	assert.Equal(t, s3err.ErrNone, errCode,
+		"native Admin must remain effective without a PrincipalArn")
+}
+
 // TestAttachedPolicyExplicitDenyOverridesNativeAdmin ensures deny-always-wins:
 // an explicit Deny in an attached policy still constrains a native admin.
 func TestAttachedPolicyExplicitDenyOverridesNativeAdmin(t *testing.T) {

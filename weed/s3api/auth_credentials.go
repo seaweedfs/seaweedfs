@@ -2930,6 +2930,19 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		Claims:      identity.Claims, // Copy claims for policy variable substitution
 	}
 
+	// A native bare Admin grant survives attaching a policy (issue #11226);
+	// an explicit Deny in an attached policy still wins. This runs before the
+	// auth-path switch so an Admin identity without a session principal or
+	// PrincipalArn is still authorized through its native grant.
+	if identity.isAdmin() {
+		s3Action, resourceArn := resolveS3AuthTarget(action, bucket, object, r)
+		principal := buildPrincipalARN(identity, r)
+		if !iam.isActionExplicitlyDeniedByIAM(r, identity, principal, s3Action, resourceArn) {
+			return s3err.ErrNone
+		}
+		return s3err.ErrAccessDenied
+	}
+
 	// Determine authorization path and configure identity
 	authPath := determineIAMAuthPath(sessionToken, principal, identity.PrincipalArn)
 	switch authPath {
@@ -2950,16 +2963,6 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		glog.V(3).Infof("Using static V4 signature IAM authorization for principal: %s", identity.PrincipalArn)
 	default:
 		glog.V(3).Info("No valid principal information for IAM authorization")
-		return s3err.ErrAccessDenied
-	}
-
-	// A native bare Admin grant survives attaching a policy (issue #11226);
-	// an explicit Deny in an attached policy still wins.
-	if identity.isAdmin() {
-		s3Action, resourceArn := resolveS3AuthTarget(action, bucket, object, r)
-		if !iam.isActionExplicitlyDeniedByIAM(r, identity, iamIdentity.Principal, s3Action, resourceArn) {
-			return s3err.ErrNone
-		}
 		return s3err.ErrAccessDenied
 	}
 
