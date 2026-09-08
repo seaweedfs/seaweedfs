@@ -1042,7 +1042,7 @@ impl EcVolume {
     pub fn check_read_write_error(&self, err: Option<&io::Error>) {
         use std::sync::atomic::Ordering;
         if let Some(e) = err {
-            if e.raw_os_error() == Some(5) {
+            if crate::storage::volume::is_storage_io_error(e) {
                 self.io_error_count.fetch_add(1, Ordering::Relaxed);
                 if let Ok(mut guard) = self.last_io_error.lock() {
                     *guard = Some(e.to_string());

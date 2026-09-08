@@ -22,11 +22,21 @@ func (t *IoErrorTracker) checkReadWriteError(err error) {
 		t.clearIoError()
 		return
 	}
-	if errors.Is(err, syscall.EIO) {
+	if isStorageIoError(err) {
 		t.noteIoError(err)
 		return
 	}
 	t.clearIoError()
+}
+
+func isStorageIoError(err error) bool {
+	if errors.Is(err, syscall.EIO) {
+		return true
+	}
+	if isWindowsStorageIoError(err) {
+		return true
+	}
+	return false
 }
 
 func (t *IoErrorTracker) noteIoError(err error) {

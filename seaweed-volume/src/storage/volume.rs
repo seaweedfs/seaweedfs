@@ -94,6 +94,26 @@ fn is_skippable_needle_read_error(e: &VolumeError) -> bool {
     }
 }
 
+/// Returns true for I/O errors that indicate faulty storage media, not
+/// transient/network failures. On Unix this is EIO (errno 5); on Windows
+/// it also covers ERROR_CRC (23) and ERROR_IO_DEVICE (1117), which the
+/// kernel returns for failing disks.
+pub fn is_storage_io_error(e: &io::Error) -> bool {
+    if e.raw_os_error() == Some(5) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        const ERROR_CRC: i32 = 23;
+        const ERROR_IO_DEVICE: i32 = 1117;
+        return e.raw_os_error() == Some(ERROR_CRC) || e.raw_os_error() == Some(ERROR_IO_DEVICE);
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 // ============================================================================
 // VolumeInfo (.vif persistence)
 // ============================================================================
@@ -1885,6 +1905,11 @@ impl Volume {
 
         self.maybe_checkpoint_index(fsync);
 
+        // Clear the EIO streak only after the full write (data + flush +
+        // index) succeeds, so a successful write_all followed by a failed
+        // fsync does not reset the counter before the EIO is recorded.
+        self.check_read_write_error(None);
+
         // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
         Ok((offset, Size(n.data_size as i32), false))
     }
@@ -2002,7 +2027,6 @@ impl Volume {
             self.check_read_write_error(Some(&e));
             return Err(VolumeError::Io(e));
         }
-        self.check_read_write_error(None);
 
         Ok((offset, n.size, actual_size))
     }
@@ -4173,13 +4197,13 @@ impl Volume {
             && has_ecx(&volume_file_name(&self.dir, &self.collection, self.id))
     }
 
-    /// Check if an I/O error is EIO (errno 5) and record it for health monitoring.
-    /// On success (None), clears any previously recorded EIO error.
-    /// Matches Go's `checkReadWriteError` in volume_write.go.
+    /// Check if an I/O error is a storage-media failure and record it for
+    /// health monitoring. On success (None), clears any previously recorded
+    /// EIO error. Matches Go's `checkReadWriteError` in volume_write.go.
     fn check_read_write_error(&self, err: Option<&io::Error>) {
         use std::sync::atomic::Ordering;
         if let Some(e) = err {
-            if e.raw_os_error() == Some(5) {
+            if is_storage_io_error(e) {
                 self.io_error_count.fetch_add(1, Ordering::Relaxed);
                 if let Ok(mut guard) = self.last_io_error.lock() {
                     *guard = Some(e.to_string());
