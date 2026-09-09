@@ -4,7 +4,10 @@ A drop-in replacement for the [SeaweedFS](https://github.com/seaweedfs/seaweedfs
 
 ## Building
 
-Requires Rust 1.75+ (2021 edition).
+Requires Rust 1.91.1+ (2024 edition), matching `rust-version` in `Cargo.toml`.
+The patch release matters: 1.91.0 does not build. The edition itself only needs
+1.85; the higher floor comes from the dependency tree — chiefly the AWS SDK — so
+it moves with those crates. CI builds on the latest stable.
 
 ```bash
 cd seaweed-volume

@@ -3,7 +3,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // one, so the build needs no package manager and always sees the same
     // version. An explicit PROTOC still wins, for packagers supplying their own.
     if std::env::var_os("PROTOC").is_none() {
-        std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
+        // SAFETY: a build script's main runs single-threaded before anything
+        // else in this process, so no other thread can be reading the
+        // environment concurrently.
+        unsafe {
+            std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
+        }
     }
 
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);

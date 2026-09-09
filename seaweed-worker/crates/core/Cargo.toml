@@ -2,6 +2,7 @@
 name = "seaweed-worker-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "SeaweedFS plugin.proto worker contract"
 
 [lib]

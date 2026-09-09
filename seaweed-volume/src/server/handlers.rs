@@ -2425,7 +2425,7 @@ pub async fn post_handler(
     } else {
         None
     };
-    if let (Some(ref expected_md5), Some(ref actual_md5)) = (&content_md5, &original_content_md5) {
+    if let (Some(expected_md5), Some(actual_md5)) = (&content_md5, &original_content_md5) {
         if expected_md5 != actual_md5 {
             return json_error_with_query(
                 StatusCode::BAD_REQUEST,
@@ -3382,7 +3382,7 @@ async fn try_expand_chunk_manifest(
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
     // Last-Modified — Go sets this on the response writer before tryHandleChunkedFile
-    if let Some(ref lm) = last_modified_str {
+    if let Some(lm) = last_modified_str {
         if let Ok(hval) = lm.parse() {
             response_headers.insert(header::LAST_MODIFIED, hval);
         }

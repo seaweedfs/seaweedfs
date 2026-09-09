@@ -10,7 +10,11 @@ members = ["crates/core", "crates/lance", "crates/sort"]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+# The edition needs 1.85; the dependency tree needs more. Verified with
+# `cargo +1.94.1 check --all-targets` (1.94.0 fails on the AWS SDK that
+# lance's `aws` feature pulls in).
+rust-version = "1.94.1"
 
 [workspace.dependencies]
 anyhow = "1"
