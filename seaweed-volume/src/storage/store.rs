@@ -507,37 +507,97 @@ impl Store {
             return Err(VolumeError::AlreadyExists);
         }
         if let Some(collection) = collection {
-            for loc in &mut self.locations {
-                let base =
-                    crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
-                for ext in [".vif", ".idx"] {
-                    if let Ok(meta) = std::fs::metadata(format!("{}{}", base, ext)) {
-                        if !meta.is_dir() {
-                            return loc.create_volume(
-                                vid,
-                                collection,
-                                self.needle_map_kind,
-                                None,
-                                None,
-                                0,
-                                Version::current(),
-                            );
-                        }
+            // The hint is only an optimization: a collection carrying a path
+            // separator or parent reference could route file creation outside
+            // the storage directory, so skip the shortcut and let the safe
+            // directory scan resolve the volume instead.
+            let hint_safe = !collection.is_empty()
+                && !collection.contains('/')
+                && !collection.contains('\\')
+                && !collection.contains("..");
+            if hint_safe {
+                for loc in &mut self.locations {
+                    let base = crate::storage::volume::volume_file_name(
+                        &loc.directory,
+                        collection,
+                        vid,
+                    );
+                    // Confirm a collection-named sidecar exists before using the
+                    // hint. A lone .vif/.idx (e.g. an EC sidecar whose .ecx is on
+                    // a sibling disk) must NOT mount here: create_volume would
+                    // write an empty .dat and register a phantom normal volume
+                    // that shadows the real EC volume. Match the guard in
+                    // load_existing_volumes: only mount when a real .dat is
+                    // present, or the .vif points at a remote-tiered file.
+                    let sidecar_present = [".vif", ".idx"].iter().any(|ext| {
+                        std::fs::metadata(format!("{}{}", base, ext))
+                            .map(|m| !m.is_dir())
+                            .unwrap_or(false)
+                    });
+                    if !sidecar_present {
+                        continue;
                     }
+                    let dat_path = format!("{}.dat", base);
+                    let dat_exists = std::fs::metadata(&dat_path)
+                        .map(|m| !m.is_dir())
+                        .unwrap_or(false);
+                    let idx_base = crate::storage::volume::volume_file_name(
+                        &loc.idx_directory,
+                        collection,
+                        vid,
+                    );
+                    let has_remote = crate::storage::disk_location::vif_references_remote_file(
+                        &format!("{}.vif", base),
+                    ) || crate::storage::disk_location::vif_references_remote_file(
+                        &format!("{}.vif", idx_base),
+                    );
+                    if dat_exists || has_remote {
+                        return loc.create_volume(
+                            vid,
+                            collection,
+                            self.needle_map_kind,
+                            None,
+                            None,
+                            0,
+                            Version::current(),
+                        );
+                    }
+                    // Lone sidecar: leave it for the directory scan below.
                 }
             }
         }
-        if let Some((loc_idx, _base_path, collection)) = self.find_volume_file_base(vid) {
-            let loc = &mut self.locations[loc_idx];
-            return loc.create_volume(
-                vid,
+        if let Some((loc_idx, base_path, collection)) = self.find_volume_file_base(vid) {
+            // The scan matches any volume file (.dat/.vif/.idx). A lone .vif/.idx
+            // sidecar (e.g. an EC sidecar whose .ecx is on a sibling disk) must
+            // NOT mount here: create_volume would write an empty .dat and
+            // register a phantom normal volume that shadows the real EC volume.
+            // Match the guard in load_existing_volumes: only mount when a real
+            // .dat is present, or the .vif points at a remote-tiered file.
+            let dat_exists = std::fs::metadata(&format!("{}.dat", base_path))
+                .map(|m| !m.is_dir())
+                .unwrap_or(false);
+            let idx_base = crate::storage::volume::volume_file_name(
+                &self.locations[loc_idx].idx_directory,
                 &collection,
-                self.needle_map_kind,
-                None,
-                None,
-                0,
-                Version::current(),
+                vid,
             );
+            let has_remote = crate::storage::disk_location::vif_references_remote_file(
+                &format!("{}.vif", base_path),
+            ) || crate::storage::disk_location::vif_references_remote_file(
+                &format!("{}.vif", idx_base),
+            );
+            if dat_exists || has_remote {
+                let loc = &mut self.locations[loc_idx];
+                return loc.create_volume(
+                    vid,
+                    &collection,
+                    self.needle_map_kind,
+                    None,
+                    None,
+                    0,
+                    Version::current(),
+                );
+            }
         }
         Err(VolumeError::Io(io::Error::new(
             io::ErrorKind::NotFound,
@@ -1529,6 +1589,97 @@ mod tests {
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
         assert_eq!(store.total_volume_count(), 1);
+    }
+
+    #[test]
+    fn test_mount_volume_by_id_hint_skips_lone_sidecar() {
+        // A lone .vif/.idx sidecar (e.g. an EC sidecar whose .ecx is on a
+        // sibling disk) must NOT make the collection hint create a phantom
+        // empty .dat. The hint is skipped and the directory scan finds nothing.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+
+        let base = volume_file_name(dir, "coll", VolumeId(5));
+        std::fs::write(format!("{}.vif", base), "{}").unwrap();
+        std::fs::write(format!("{}.idx", base), b"").unwrap();
+        // No .dat, and the .vif does not reference a remote file.
+
+        let err = store
+            .mount_volume_by_id(VolumeId(5), Some("coll"))
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Io(ref e)
+            if e.kind() == std::io::ErrorKind::NotFound));
+        // No phantom .dat was created.
+        assert!(!std::path::Path::new(&format!("{}.dat", base)).exists());
+        assert!(store.find_volume(VolumeId(5)).is_none());
+    }
+
+    #[test]
+    fn test_mount_volume_by_id_hint_rejects_traversal_collection() {
+        // A collection carrying a parent reference must not route file
+        // creation outside the storage directory; the hint is dropped.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+
+        let escaped = format!(
+            "{}/../evil_5.dat",
+            dir
+        );
+        let err = store
+            .mount_volume_by_id(VolumeId(5), Some("../evil"))
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Io(ref e)
+            if e.kind() == std::io::ErrorKind::NotFound));
+        assert!(!std::path::Path::new(&escaped).exists());
+        assert!(store.find_volume(VolumeId(5)).is_none());
+    }
+
+    #[test]
+    fn test_mount_volume_by_id_hint_loads_real_volume() {
+        // With a real .dat on disk, the collection hint mounts the volume
+        // directly without scanning the directory.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+        store
+            .add_volume(
+                VolumeId(7),
+                "coll",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        // Write a needle so the volume has real data, then unmount it so the
+        // .dat stays on disk but is no longer registered.
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"hint me".to_vec(),
+            data_size: 7,
+            ..Needle::default()
+        };
+        store
+            .write_volume_needle(VolumeId(7), &mut n, false)
+            .unwrap();
+        assert!(store.unmount_volume(VolumeId(7)));
+
+        store
+            .mount_volume_by_id(VolumeId(7), Some("coll"))
+            .unwrap();
+        assert!(store.find_volume(VolumeId(7)).is_some());
+
+        let mut got = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let count = store.read_volume_needle(VolumeId(7), &mut got).unwrap();
+        assert_eq!(count, 7);
+        assert_eq!(got.data, b"hint me");
     }
 
     #[test]
