@@ -1234,6 +1234,52 @@ mod tests {
         assert_eq!(deduped[0], vid, "first-seen order must be preserved");
     }
 
+    /// End-to-end: with the vid mounted on two disks, a scrub driven through
+    /// the Store must reach BOTH disks' shards. Before the aggregation fix
+    /// `find_ec_volume` returned disk 0 and disk 1's shard 1 was never read.
+    #[test]
+    fn test_scrub_plans_reach_every_disk_through_the_store() {
+        use crate::storage::erasure_coding::ec_volume::{
+            merge_ec_runtimes, EcChecksumScrubPlan, EcLocalScrubPlan,
+        };
+
+        let (store, _tmp) = build_split_disk_store(7030);
+        let vid = VolumeId(7030);
+
+        let runtimes = store.find_all_ec_volumes(vid);
+        assert_eq!(runtimes.len(), 2);
+
+        // Reachability is the invariant, so assert on the resolved slots rather
+        // than on scrub message text: shards 0 and 12 live on disk 0, shard 1 on
+        // disk 1. The old first-match lookup could never see shard 1.
+        let merged = merge_ec_runtimes(&runtimes).expect("two runtimes merge");
+        assert!(merged.slots[0].is_some(), "disk 0's shard 0 unreachable");
+        assert!(merged.slots[12].is_some(), "disk 0's shard 12 unreachable");
+        assert!(merged.slots[1].is_some(), "disk 1's shard 1 unreachable — the bug");
+        assert!(merged.skipped.is_empty(), "same generation: {:?}", merged.skipped);
+
+        // Shard 1 is owned by the sibling runtime, not the anchor.
+        let (owner, _) = merged.slots[1].unwrap();
+        assert!(std::ptr::eq(owner, runtimes[1]));
+
+        // Both plans build over the union rather than over disk 0 alone.
+        assert!(EcChecksumScrubPlan::for_volumes(&runtimes).is_some());
+        assert!(EcLocalScrubPlan::for_volumes(&runtimes).is_some());
+        // ...and `is_some()` is a real question: `for_volumes` has exactly one
+        // `None` (the vanished-volume case), so without this the two lines above
+        // would hold for any input at all.
+        assert!(EcChecksumScrubPlan::for_volumes(&[]).is_none());
+        assert!(EcLocalScrubPlan::for_volumes(&[]).is_none());
+
+        // Regression guard: a single-runtime view still sees only its own disk,
+        // which is exactly what made aggregation necessary.
+        let disk0 = merge_ec_runtimes(&[runtimes[0]]).unwrap();
+        assert!(
+            disk0.slots.get(1).copied().flatten().is_none(),
+            "disk 0's runtime must not see the sibling's shard"
+        );
+    }
+
     /// `Store::unmount_ec_shards` used to return after the first
     /// location with the vid, so a request to unmount a shard that
     /// lives on a sibling disk became a silent no-op. After the fix,
