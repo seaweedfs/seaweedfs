@@ -24,6 +24,10 @@ import (
 )
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
+	if err := configureMountMemory(option); err != nil {
+		fmt.Println(err)
+		return false
+	}
 
 	// basic checks
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB

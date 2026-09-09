@@ -427,6 +427,26 @@ impl Store {
         false
     }
 
+    /// Reports whether any local volume or EC shard is currently quarantined
+    /// due to sustained storage-media EIO. Mirrors Go's Store.HasIoQuarantine.
+    pub fn has_io_quarantine(&self) -> bool {
+        for loc in &self.locations {
+            for (_, vol) in loc.iter_volumes() {
+                let (_, _, quarantined) = vol.get_io_error_state();
+                if quarantined {
+                    return true;
+                }
+            }
+            for (_, ec_vol) in loc.ec_volumes() {
+                let (_, _, quarantined) = ec_vol.get_io_error_state();
+                if quarantined {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Mount a volume from an existing .dat file.
     pub fn mount_volume(
         &mut self,
@@ -1017,12 +1037,19 @@ impl Store {
 
         for (disk_id, loc) in self.locations.iter_mut().enumerate() {
             let mut expired_vids = Vec::new();
+            let mut io_quarantined_vids = Vec::new();
             for (vid, ec_vol) in loc.ec_volumes() {
                 if ec_vol.is_time_to_destroy() {
                     expired_vids.push(*vid);
                 } else {
-                    ec_shards
-                        .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
+                    let (_, io_count, quarantined) = ec_vol.get_io_error_state();
+                    if quarantined || io_count >= crate::storage::erasure_coding::ec_volume::IO_ERROR_TOLERANCE
+                    {
+                        io_quarantined_vids.push(*vid);
+                    } else {
+                        ec_shards
+                            .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
+                    }
                 }
             }
 
@@ -1041,6 +1068,20 @@ impl Store {
                     deleted.extend(messages);
                 } else {
                     ec_shards.extend(messages);
+                }
+            }
+
+            for vid in io_quarantined_vids {
+                if let Some(ec_vol) = loc.find_ec_volume(vid) {
+                    let (_, io_count, quarantined) = ec_vol.get_io_error_state();
+                    if !quarantined {
+                        ec_vol.mark_io_quarantined();
+                        tracing::warn!(
+                            volume_id = vid.0,
+                            io_count,
+                            "ec volume quarantined after consecutive IO errors"
+                        );
+                    }
                 }
             }
         }

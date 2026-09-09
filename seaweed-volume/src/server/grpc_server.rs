@@ -52,6 +52,71 @@ fn unix_now_seconds() -> f64 {
 
 /// Record scrub metrics. `broken_shards` is `Some` only for EC scrubs so the
 /// shard-failures family stays untouched on regular volume scrubs (matching Go).
+/// How a scrub reacts to a volume that is not in the store when its turn comes.
+///
+/// Nothing is held across the scan, so the volume set is free to change under a
+/// node-wide scrub: the heartbeat drops a volume that reported an I/O error and
+/// expires an EC volume whose destroy time passed, and a delete or an unmount
+/// can land between any two volumes. Failing there would discard every result
+/// gathered so far and leave every later volume unscrubbed.
+///
+/// `Some(status)` means fail the request; `None` means skip this volume and
+/// keep going. A volume the caller NAMED is always the former — that one is a
+/// caller mistake, not a concurrent change, and callers match on the message.
+fn scrub_vanished_volume(explicit: bool, kind: &str, vid: VolumeId) -> Option<Status> {
+    if explicit {
+        return Some(Status::not_found(format!("{} id {} not found", kind, vid.0)));
+    }
+    tracing::info!(
+        volume_id = vid.0,
+        "scrub: {} {} is no longer mounted, skipping",
+        kind,
+        vid.0
+    );
+    None
+}
+
+/// How a scrub reacts to a `spawn_blocking` scan that failed to join.
+///
+/// The scan runs on the blocking pool, so a panic in it reaches the loop as a
+/// `JoinError` instead of unwinding here. Propagating it would discard every
+/// volume already scanned AND skip `emit_scrub_metrics`: a panic scrubbing one
+/// volume would hide real corruption found on the others and leave the
+/// staleness alert firing with nothing recorded to explain it. Record it
+/// against this volume and let the loop finish, the same way `scrub_volumes`
+/// treats a per-volume scrub error.
+///
+/// A panic is evidence about the volume, so it counts as broken. A join error
+/// from runtime shutdown is not -- the volume was never scanned, and counting
+/// it would put a false corruption into SCRUB_VOLUME_FAILURES.
+fn record_scrub_join_failure(
+    e: &tokio::task::JoinError,
+    vid: VolumeId,
+    what: &str,
+    broken_volume_ids: &mut Vec<u32>,
+    details: &mut Vec<String>,
+) {
+    if e.is_panic() {
+        tracing::error!(
+            volume_id = vid.0,
+            "scrub: {} task for EC volume {} panicked: {}",
+            what,
+            vid.0,
+            e
+        );
+        broken_volume_ids.push(vid.0);
+        details.push(format!("ecvol {}: {} task panicked: {}", vid.0, what, e));
+    } else {
+        tracing::info!(
+            volume_id = vid.0,
+            "scrub: {} task for EC volume {} was cancelled, skipping",
+            what,
+            vid.0
+        );
+        details.push(format!("ecvol {}: {} task cancelled; skipped", vid.0, what));
+    }
+}
+
 fn emit_scrub_metrics(mode: i32, broken_volumes: usize, broken_shards: Option<usize>) {
     let mode_label = scrub_mode_label(mode);
     crate::metrics::SCRUB_LAST_TIME_SECONDS
@@ -341,6 +406,408 @@ impl VolumeGrpcService {
         // Step 3: notify master again to cover heartbeat race
         self.notify_master_volume_readonly(&info, true).await?;
         Ok(())
+    }
+
+    /// The scrub loop over an already-resolved volume list.
+    ///
+    /// Split out of `scrub_volume` so a test can hand it a list containing an
+    /// id that is not in the store: listing and lookup read the same map under
+    /// the same lock, so nothing outside can make an id vanish between them.
+    async fn scrub_volumes(
+        &self,
+        req: &volume_server_pb::ScrubVolumeRequest,
+        vids: Vec<VolumeId>,
+        explicit: bool,
+    ) -> Result<Response<volume_server_pb::ScrubVolumeResponse>, Status> {
+        let mode = req.mode;
+        let mut total_volumes: u64 = 0;
+        let mut total_files: u64 = 0;
+        let mut broken_volume_ids: Vec<u32> = Vec::new();
+        let mut details: Vec<String> = Vec::new();
+        let mut broken_vids: Vec<VolumeId> = Vec::new();
+
+        // Scrub phase. The store read guard is taken PER VOLUME, never across the
+        // whole loop.
+        //
+        // Holding one guard for the entire loop meant a node-wide scrub pinned the
+        // store lock for the full scan of every volume it holds. The periodic
+        // heartbeat takes store.write(); once that writer is pending, a
+        // write-preferring std::sync::RwLock queues every later reader behind it,
+        // so every HTTP handler blocks and the node stops serving and
+        // heart-beating until the scrub finishes. Re-acquiring per volume lets the
+        // writer land between volumes.
+        //
+        // NOTE: v.scrub() still runs under the guard for the duration of ONE
+        // volume, which for a large volume is still a long hold. In
+        // scrub_ec_volume the INDEX, LOCAL and CHECKSUM arms snapshot a plan and
+        // scan with the guard released; FULL/READS releases it across the index
+        // walk but still re-takes it per needle, in
+        // store_ec::scrub_snapshot_under_lock. The same treatment here needs
+        // Volume to expose an equivalent plan and is left as a follow-up.
+        for vid in &vids {
+            // Re-resolve under a fresh guard each iteration; the volume set can
+            // legitimately change between volumes now that the lock is released.
+            let Some((scrub_result, file_count)) = ({
+                let store = self.state.store.read().unwrap();
+                store.find_volume(*vid).map(|(_, v)| {
+                    // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
+                    let r = if mode == 1 { v.scrub_index() } else { v.scrub() };
+                    (r, v.file_count())
+                })
+            }) else {
+                if let Some(status) = scrub_vanished_volume(explicit, "volume", *vid) {
+                    return Err(status);
+                }
+                continue;
+            };
+            total_volumes += 1;
+
+            match scrub_result {
+                Ok((files, broken)) => {
+                    total_files += files;
+                    if !broken.is_empty() {
+                        broken_vids.push(*vid);
+                        broken_volume_ids.push(vid.0);
+                        for msg in broken {
+                            details.push(format!("vol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                Err(e) => {
+                    total_files += file_count.max(0) as u64;
+                    broken_vids.push(*vid);
+                    broken_volume_ids.push(vid.0);
+                    details.push(format!("vol {}: scrub error: {}", vid.0, e));
+                }
+            }
+        }
+
+        // Match Go: if mark_broken_volumes_readonly, call makeVolumeReadonly on each broken volume.
+        // Collect errors via errors.Join semantics (return joined error if any fail).
+        let mut errs: Vec<String> = Vec::new();
+        if req.mark_broken_volumes_readonly {
+            for vid in &broken_vids {
+                match self.make_volume_readonly(*vid, false, true).await {
+                    Ok(()) => {
+                        details.push(format!("volume {} is now read-only", vid.0));
+                    }
+                    // The volume was scrubbed, found broken, and then removed —
+                    // the same concurrent teardown the scrub loop tolerates, one
+                    // step later. There is nothing left to mark read-only, and
+                    // failing here would throw away the whole scrub report. Go
+                    // never reaches this at all: it passes makeVolumeReadonly the
+                    // *storage.Volume it already holds, so a volume that left the
+                    // store is still addressable there.
+                    Err(e) if e.code() == tonic::Code::NotFound => {
+                        tracing::info!(
+                            volume_id = vid.0,
+                            "scrub: volume {} vanished before mark-readonly, skipping",
+                            vid.0
+                        );
+                        details.push(format!(
+                            "volume {} vanished before mark-readonly; skipped",
+                            vid.0
+                        ));
+                    }
+                    Err(e) => {
+                        errs.push(e.message().to_string());
+                        details.push(e.message().to_string());
+                    }
+                }
+            }
+        }
+
+        // Record metrics before the post-scrub error check so scrub failures are
+        // persisted even when a follow-up admin action (mark-readonly) fails.
+        emit_scrub_metrics(mode, broken_vids.len(), None);
+
+        if !errs.is_empty() {
+            return Err(Status::internal(errs.join("\n")));
+        }
+
+        Ok(Response::new(volume_server_pb::ScrubVolumeResponse {
+            total_volumes,
+            total_files,
+            broken_volume_ids,
+            details,
+        }))
+    }
+
+    /// The EC scrub loop over an already-resolved volume list. Same split, and
+    /// same vanished-volume rule, as `scrub_volumes` — see its comment.
+    async fn scrub_ec_volumes(
+        &self,
+        req: &volume_server_pb::ScrubEcVolumeRequest,
+        vids: Vec<VolumeId>,
+        explicit: bool,
+    ) -> Result<Response<volume_server_pb::ScrubEcVolumeResponse>, Status> {
+        let mode = req.mode;
+        let force_deleted_needles_check = req.force_deleted_needles_check;
+        let mut total_volumes: u64 = 0;
+        let mut total_files: u64 = 0;
+        let mut broken_volume_ids: Vec<u32> = Vec::new();
+        let mut broken_shard_infos: Vec<volume_server_pb::EcShardInfo> = Vec::new();
+        let mut details: Vec<String> = Vec::new();
+
+        for vid in vids {
+            match mode {
+                1 => {
+                    // INDEX mode: check ecx index integrity only, no shard verification.
+                    // Same shape as the CHECKSUM arm below: snapshot, release
+                    // the store lock, then walk the index.
+                    let Some(plan) = ({
+                        let store = self.state.store.read().unwrap();
+                        store.find_ec_volume(vid).map(|ecv| ecv.scrub_index_plan())
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    // Counted as attempted BEFORE the join, so a failed join
+                    // cannot silently shrink total_volumes.
+                    total_volumes += 1;
+                    let (count, errs) = match tokio::task::spawn_blocking(move || plan.run()).await
+                    {
+                        Ok(v) => v,
+                        Err(e) => {
+                            record_scrub_join_failure(
+                                &e,
+                                vid,
+                                "index scrub",
+                                &mut broken_volume_ids,
+                                &mut details,
+                            );
+                            continue;
+                        }
+                    };
+                    total_files += count;
+                    if !errs.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                2 | 5 => {
+                    // FULL/READS: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
+                    // local Reed-Solomon parity check. The needle walk only reads
+                    // DATA-shard intervals of LIVE needles, so on its own it can't
+                    // catch silent bitrot in a PARITY shard or an unwalked cold
+                    // region. Go closes that gap with a separate CHECKSUM mode over
+                    // .ecsum, which Rust does not have yet; running both here is a
+                    // deliberate divergence from Go FULL to preserve coverage. Drop
+                    // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
+                    //
+                    // The RS recompute needs every shard co-located, so only run it
+                    // when this node holds all data+parity shards (single-node EC);
+                    // on a distributed layout it would report every non-local shard
+                    // as missing. Snapshot under a brief lock; release before await.
+                    let Some((dir, collection, data_shards, parity_shards, all_local)) = ({
+                        let store = self.state.store.read().unwrap();
+                        store.find_ec_volume(vid).map(|ecv| {
+                            let total = (ecv.data_shards + ecv.parity_shards) as usize;
+                            let local = ecv.shards.iter().filter(|s| s.is_some()).count();
+                            (
+                                ecv.dir.clone(),
+                                ecv.collection.clone(),
+                                ecv.data_shards as usize,
+                                ecv.parity_shards as usize,
+                                local == total,
+                            )
+                        })
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    total_volumes += 1;
+
+                    // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
+                    let (files, mut shard_infos, mut errs) =
+                        crate::server::store_ec::scrub_ec_volume_distributed(
+                            &self.state,
+                            vid,
+                            force_deleted_needles_check,
+                            mode == 5,
+                        )
+                        .await;
+                    total_files += files as u64; // count comes from the needle walk only
+
+                    // (2) Local parity check, gated on all-shards-local. Blocking RS
+                    // verify -> spawn_blocking; inputs are owned, no lock held.
+                    if all_local && !dir.is_empty() {
+                        let collection_pc = collection.clone();
+                        let join = tokio::task::spawn_blocking(move || {
+                            crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
+                                &dir,
+                                &collection_pc,
+                                vid,
+                                data_shards,
+                                parity_shards,
+                            )
+                        })
+                        .await;
+                        // Unlike the other arms this must NOT `continue`: the
+                        // needle walk above already produced findings for this
+                        // volume, and dropping them here would recreate the bug
+                        // this handles, one scope down. So a panic becomes an
+                        // error for the volume, and a cancellation -- which
+                        // spawn_blocking only reports when the runtime is going
+                        // down, so this response is unlikely to reach anyone --
+                        // records in details that the parity half did not run
+                        // rather than inventing a corruption for it.
+                        let (parity_broken, parity_details) = match join {
+                            Ok(r) => r.unwrap_or_else(|e| {
+                                (Vec::new(), vec![format!("verify_ec_shards: {}", e)])
+                            }),
+                            Err(e) if e.is_panic() => (
+                                Vec::new(),
+                                vec![format!("verify_ec_shards task panicked: {}", e)],
+                            ),
+                            Err(e) => {
+                                details.push(format!(
+                                    "ecvol {}: verify_ec_shards task cancelled; parity check skipped ({})",
+                                    vid.0, e
+                                ));
+                                (Vec::new(), Vec::new())
+                            }
+                        };
+
+                        let mut seen: std::collections::HashSet<u32> =
+                            shard_infos.iter().map(|s| s.shard_id).collect();
+                        for sid in parity_broken {
+                            if seen.insert(sid) {
+                                shard_infos.push(volume_server_pb::EcShardInfo {
+                                    shard_id: sid,
+                                    collection: collection.clone(),
+                                    volume_id: vid.0,
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                        shard_infos.sort_by_key(|s| s.shard_id);
+                        errs.extend(parity_details);
+                    }
+
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                3 => {
+                    // LOCAL: verify each needle against the locally-held shards.
+                    // Snapshot under a brief lock, then walk with the lock
+                    // RELEASED: this reads every local needle's bytes, which
+                    // under the guard stalls the node. See EcChecksumScrubPlan.
+                    let Some(plan) = ({
+                        let store = self.state.store.read().unwrap();
+                        store.find_ec_volume(vid).map(|ecv| ecv.scrub_local_plan())
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    total_volumes += 1;
+                    // Synchronous CPU + file I/O: keep it off the async workers.
+                    let (files, shard_infos, errs) =
+                        match tokio::task::spawn_blocking(move || plan.run()).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                record_scrub_join_failure(
+                                    &e,
+                                    vid,
+                                    "local scrub",
+                                    &mut broken_volume_ids,
+                                    &mut details,
+                                );
+                                continue;
+                            }
+                        };
+                    total_files += files;
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                4 => {
+                    // CHECKSUM: verify each local shard's raw bytes against the
+                    // bitrot checksum sidecar, exercising cold parity shards.
+                    // Read-only. Mirrors Go's v.ChecksumScrub().
+                    // Snapshot under a brief lock, then verify with the lock
+                    // RELEASED: this reads every byte of every local shard, which
+                    // under the guard stalls the node. See EcChecksumScrubPlan.
+                    let Some((plan, collection)) = ({
+                        let store = self.state.store.read().unwrap();
+                        store
+                            .find_ec_volume(vid)
+                            .map(|ecv| (ecv.checksum_scrub_plan(), ecv.collection.clone()))
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    total_volumes += 1;
+                    // Synchronous CPU + file I/O: keep it off the async workers.
+                    // `plan.run()`'s first return is blocks scanned, not a file
+                    // count — Go discards it (`_, shardInfos, serrs = v.ChecksumScrub()`)
+                    // so TotalFiles stays a needle/file count and is not inflated
+                    // by the block count.
+                    let (_blocks_scanned, broken, errs) =
+                        match tokio::task::spawn_blocking(move || plan.run()).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                record_scrub_join_failure(
+                                    &e,
+                                    vid,
+                                    "checksum scrub",
+                                    &mut broken_volume_ids,
+                                    &mut details,
+                                );
+                                continue;
+                            }
+                        };
+                    if !errs.is_empty() || !broken.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for b in broken {
+                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
+                                volume_id: vid.0,
+                                collection: collection.clone(),
+                                shard_id: b,
+                                ..Default::default()
+                            });
+                        }
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                _ => unreachable!(), // validated above
+            }
+        }
+
+        emit_scrub_metrics(
+            mode,
+            broken_volume_ids.len(),
+            Some(broken_shard_infos.len()),
+        );
+
+        Ok(Response::new(volume_server_pb::ScrubEcVolumeResponse {
+            total_volumes,
+            total_files,
+            broken_volume_ids,
+            broken_shard_infos,
+            details,
+        }))
     }
 }
 
@@ -3334,9 +3801,14 @@ impl VolumeServer for VolumeGrpcService {
         while bytes_read < total_size {
             let chunk_size = std::cmp::min(BUFFER_SIZE_LIMIT, total_size - bytes_read);
             let mut buf = vec![0u8; chunk_size];
-            let n = shard
-                .read_at(&mut buf, current_offset)
-                .map_err(|e| Status::internal(e.to_string()))?;
+            let n = match shard.read_at(&mut buf, current_offset) {
+                Ok(n) => n,
+                Err(e) => {
+                    ec_vol.check_read_write_error(Some(&e));
+                    return Err(Status::internal(e.to_string()));
+                }
+            };
+            ec_vol.check_read_write_error(None);
             if n == 0 {
                 break;
             }
@@ -4430,85 +4902,14 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        let mut total_volumes: u64 = 0;
-        let mut total_files: u64 = 0;
-        let mut broken_volume_ids: Vec<u32> = Vec::new();
-        let mut details: Vec<String> = Vec::new();
-        let mut broken_vids: Vec<VolumeId> = Vec::new();
+        let explicit = !req.volume_ids.is_empty();
+        let vids: Vec<VolumeId> = if explicit {
+            req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+        } else {
+            self.state.store.read().unwrap().all_volume_ids()
+        };
 
-        // Scrub phase: hold store read lock, then drop before async readonly calls.
-        {
-            let store = self.state.store.read().unwrap();
-            let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
-                store.all_volume_ids()
-            } else {
-                req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
-            };
-
-            for vid in &vids {
-                let (_, v) = store
-                    .find_volume(*vid)
-                    .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
-                total_volumes += 1;
-
-                // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
-                let scrub_result = if mode == 1 {
-                    v.scrub_index()
-                } else {
-                    v.scrub()
-                };
-                match scrub_result {
-                    Ok((files, broken)) => {
-                        total_files += files;
-                        if !broken.is_empty() {
-                            broken_vids.push(*vid);
-                            broken_volume_ids.push(vid.0);
-                            for msg in broken {
-                                details.push(format!("vol {}: {}", vid.0, msg));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        total_files += v.file_count().max(0) as u64;
-                        broken_vids.push(*vid);
-                        broken_volume_ids.push(vid.0);
-                        details.push(format!("vol {}: scrub error: {}", vid.0, e));
-                    }
-                }
-            }
-        } // store lock dropped here
-
-        // Match Go: if mark_broken_volumes_readonly, call makeVolumeReadonly on each broken volume.
-        // Collect errors via errors.Join semantics (return joined error if any fail).
-        let mut errs: Vec<String> = Vec::new();
-        if req.mark_broken_volumes_readonly {
-            for vid in &broken_vids {
-                match self.make_volume_readonly(*vid, false, true).await {
-                    Ok(()) => {
-                        details.push(format!("volume {} is now read-only", vid.0));
-                    }
-                    Err(e) => {
-                        errs.push(e.message().to_string());
-                        details.push(e.message().to_string());
-                    }
-                }
-            }
-        }
-
-        // Record metrics before the post-scrub error check so scrub failures are
-        // persisted even when a follow-up admin action (mark-readonly) fails.
-        emit_scrub_metrics(mode, broken_vids.len(), None);
-
-        if !errs.is_empty() {
-            return Err(Status::internal(errs.join("\n")));
-        }
-
-        Ok(Response::new(volume_server_pb::ScrubVolumeResponse {
-            total_volumes,
-            total_files,
-            broken_volume_ids,
-            details,
-        }))
+        self.scrub_volumes(&req, vids, explicit).await
     }
 
     async fn scrub_ec_volume(
@@ -4540,194 +4941,21 @@ impl VolumeServer for VolumeGrpcService {
 
         // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
         // reads remote shards and must not hold the !Send store guard across .await.
-        let vids: Vec<VolumeId> = {
+        // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
+        // reads remote shards and must not hold the !Send store guard across .await.
+        let explicit = !req.volume_ids.is_empty();
+        let vids: Vec<VolumeId> = if explicit {
+            req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+        } else {
             let store = self.state.store.read().unwrap();
-            if req.volume_ids.is_empty() {
-                store
-                    .locations
-                    .iter()
-                    .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
-                    .collect()
-            } else {
-                req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
-            }
+            store
+                .locations
+                .iter()
+                .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
+                .collect()
         };
 
-        let mut total_volumes: u64 = 0;
-        let mut total_files: u64 = 0;
-        let mut broken_volume_ids: Vec<u32> = Vec::new();
-        let mut broken_shard_infos: Vec<volume_server_pb::EcShardInfo> = Vec::new();
-        let mut details: Vec<String> = Vec::new();
-
-        for vid in vids {
-            match mode {
-                1 => {
-                    // INDEX mode: check ecx index integrity only, no shard verification.
-                    let (count, errs) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        ecv.scrub_index()
-                    };
-                    total_volumes += 1;
-                    total_files += count;
-                    if !errs.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                2 | 5 => {
-                    // FULL/READS: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
-                    // local Reed-Solomon parity check. The needle walk only reads
-                    // DATA-shard intervals of LIVE needles, so on its own it can't
-                    // catch silent bitrot in a PARITY shard or an unwalked cold
-                    // region. Go closes that gap with a separate CHECKSUM mode over
-                    // .ecsum, which Rust does not have yet; running both here is a
-                    // deliberate divergence from Go FULL to preserve coverage. Drop
-                    // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
-                    //
-                    // The RS recompute needs every shard co-located, so only run it
-                    // when this node holds all data+parity shards (single-node EC);
-                    // on a distributed layout it would report every non-local shard
-                    // as missing. Snapshot under a brief lock; release before await.
-                    let (dir, collection, data_shards, parity_shards, all_local) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        let total = (ecv.data_shards + ecv.parity_shards) as usize;
-                        let local = ecv.shards.iter().filter(|s| s.is_some()).count();
-                        (
-                            ecv.dir.clone(),
-                            ecv.collection.clone(),
-                            ecv.data_shards as usize,
-                            ecv.parity_shards as usize,
-                            local == total,
-                        )
-                    };
-                    total_volumes += 1;
-
-                    // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
-                    let (files, mut shard_infos, mut errs) =
-                        crate::server::store_ec::scrub_ec_volume_distributed(
-                            &self.state,
-                            vid,
-                            force_deleted_needles_check,
-                            mode == 5,
-                        )
-                        .await;
-                    total_files += files as u64; // count comes from the needle walk only
-
-                    // (2) Local parity check, gated on all-shards-local. Blocking RS
-                    // verify -> spawn_blocking; inputs are owned, no lock held.
-                    if all_local && !dir.is_empty() {
-                        let collection_pc = collection.clone();
-                        let (parity_broken, parity_details) = tokio::task::spawn_blocking(move || {
-                            crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
-                                &dir,
-                                &collection_pc,
-                                vid,
-                                data_shards,
-                                parity_shards,
-                            )
-                        })
-                        .await
-                        .map_err(|e| Status::internal(format!("verify_ec_shards join: {}", e)))?
-                        .unwrap_or_else(|e| (Vec::new(), vec![format!("verify_ec_shards: {}", e)]));
-
-                        let mut seen: std::collections::HashSet<u32> =
-                            shard_infos.iter().map(|s| s.shard_id).collect();
-                        for sid in parity_broken {
-                            if seen.insert(sid) {
-                                shard_infos.push(volume_server_pb::EcShardInfo {
-                                    shard_id: sid,
-                                    collection: collection.clone(),
-                                    volume_id: vid.0,
-                                    ..Default::default()
-                                });
-                            }
-                        }
-                        shard_infos.sort_by_key(|s| s.shard_id);
-                        errs.extend(parity_details);
-                    }
-
-                    if !errs.is_empty() || !shard_infos.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        broken_shard_infos.extend(shard_infos);
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                3 => {
-                    // LOCAL: verify each needle against the locally-held shards.
-                    let (files, shard_infos, errs) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        ecv.scrub_local()
-                    };
-                    total_volumes += 1;
-                    total_files += files;
-                    if !errs.is_empty() || !shard_infos.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        broken_shard_infos.extend(shard_infos);
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                4 => {
-                    // CHECKSUM: verify each local shard's raw bytes against the
-                    // bitrot checksum sidecar, exercising cold parity shards.
-                    // Read-only. Mirrors Go's v.ChecksumScrub().
-                    let (blocks_scanned, broken, errs, collection) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        let collection = ecv.collection.clone();
-                        let (blocks, broken, errs) = ecv.checksum_scrub();
-                        (blocks, broken, errs, collection)
-                    };
-                    total_volumes += 1;
-                    total_files += blocks_scanned;
-                    if !errs.is_empty() || !broken.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        for b in broken {
-                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
-                                volume_id: vid.0,
-                                collection: collection.clone(),
-                                shard_id: b,
-                                ..Default::default()
-                            });
-                        }
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                _ => unreachable!(), // validated above
-            }
-        }
-
-        emit_scrub_metrics(
-            mode,
-            broken_volume_ids.len(),
-            Some(broken_shard_infos.len()),
-        );
-
-        Ok(Response::new(volume_server_pb::ScrubEcVolumeResponse {
-            total_volumes,
-            total_files,
-            broken_volume_ids,
-            broken_shard_infos,
-            details,
-        }))
+        self.scrub_ec_volumes(&req, vids, explicit).await
     }
 
     type QueryStream = BoxStream<volume_server_pb::QueriedStripe>;
@@ -6911,6 +7139,137 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(vif_path).unwrap()).unwrap();
         assert!(vif.expire_at_sec >= before + ttl.to_seconds());
         assert!(vif.expire_at_sec <= before + ttl.to_seconds() + 5);
+    }
+
+    /// REGRESSION: a node-wide scrub must survive a volume that legitimately
+    /// disappears while it runs.
+    ///
+    /// Nothing is held across the scan, so the volume set changes under the
+    /// loop: the heartbeat drops a volume that reported an I/O error, and a
+    /// delete or an unmount can land between any two volumes. Aborting there
+    /// discards every result gathered so far and leaves every later volume
+    /// unscrubbed — on a large node, one expiry costs a whole scrub pass.
+    ///
+    /// The absent id goes FIRST, so the assertion fails if the abort ever comes
+    /// back: the volume behind it would never be reached.
+    #[tokio::test]
+    async fn test_scrub_skips_a_vanished_volume_and_scrubs_the_rest() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        let resp = service
+            .scrub_volumes(
+                &volume_server_pb::ScrubVolumeRequest {
+                    mode: 1,
+                    volume_ids: Vec::new(),
+                    mark_broken_volumes_readonly: false,
+                },
+                vec![VolumeId(17), VolumeId(1)],
+                false,
+            )
+            .await
+            .expect("a volume missing from the node's own listing must not fail the scrub")
+            .into_inner();
+
+        assert_eq!(
+            resp.total_volumes, 1,
+            "the volume behind the vanished one must still be scrubbed"
+        );
+    }
+
+    /// A caller who NAMES a volume that is not here is making a mistake, not
+    /// racing a teardown, and still gets told — callers match on the message.
+    #[tokio::test]
+    async fn test_scrub_fails_on_an_explicitly_requested_missing_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        let err = service
+            .scrub_volumes(
+                &volume_server_pb::ScrubVolumeRequest {
+                    mode: 1,
+                    volume_ids: vec![17],
+                    mark_broken_volumes_readonly: false,
+                },
+                vec![VolumeId(17)],
+                true,
+            )
+            .await
+            .expect_err("an explicitly requested missing volume must still fail");
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert!(err.message().contains("volume id 17 not found"), "{}", err);
+    }
+
+    /// Same rule for EC volumes, which the heartbeat also expires under a store
+    /// write: delete_expired_ec_volumes destroys a volume whose destroy time has
+    /// passed, and volume_ec_shards_delete unmounts one on demand.
+    #[tokio::test]
+    async fn test_ec_scrub_skips_a_vanished_volume_and_scrubs_the_rest() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .volume_ec_shards_generate(Request::new(
+                volume_server_pb::VolumeEcShardsGenerateRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                },
+            ))
+            .await
+            .unwrap();
+        service
+            .volume_ec_shards_mount(Request::new(
+                volume_server_pb::VolumeEcShardsMountRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    shard_ids: (0..14).collect(),
+                    source_disk_type: String::new(),
+                    recover_missing_index: false,
+                },
+            ))
+            .await
+            .unwrap();
+
+        let resp = service
+            .scrub_ec_volumes(
+                &volume_server_pb::ScrubEcVolumeRequest {
+                    mode: 1,
+                    volume_ids: Vec::new(),
+                    force_deleted_needles_check: false,
+                },
+                vec![VolumeId(17), VolumeId(1)],
+                false,
+            )
+            .await
+            .expect("an EC volume missing from the node's own listing must not fail the scrub")
+            .into_inner();
+
+        assert_eq!(
+            resp.total_volumes, 1,
+            "the EC volume behind the vanished one must still be scrubbed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ec_scrub_fails_on_an_explicitly_requested_missing_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        let err = service
+            .scrub_ec_volumes(
+                &volume_server_pb::ScrubEcVolumeRequest {
+                    mode: 1,
+                    volume_ids: vec![17],
+                    force_deleted_needles_check: false,
+                },
+                vec![VolumeId(17)],
+                true,
+            )
+            .await
+            .expect_err("an explicitly requested missing EC volume must still fail");
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert!(
+            err.message().contains("EC volume id 17 not found"),
+            "{}",
+            err
+        );
     }
 
     async fn scrub_ec_volume_1(

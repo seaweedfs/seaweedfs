@@ -3,8 +3,8 @@
 //! Mirrors the Go SeaweedFS volume server metrics.
 
 use prometheus::{
-    self, Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec,
-    Opts, Registry, TextEncoder,
+    self, Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
+    IntGaugeVec, Opts, Registry, TextEncoder,
 };
 use std::sync::Once;
 
@@ -171,6 +171,23 @@ lazy_static::lazy_static! {
         &["mode"],
     ).expect("metric can be created");
 
+    /// Counter of storage read/write EIO errors on volumes and EC shards.
+    /// Mirrors Go's VolumeServerStorageIoErrorCounter.
+    pub static ref STORAGE_IO_ERROR_COUNTER: IntCounter = IntCounter::new(
+        "SeaweedFS_volumeServer_storage_io_error_total",
+        "Counter of storage read/write EIO errors on volumes and EC shards.",
+    ).expect("metric can be created");
+
+    /// Number of volumes quarantined due to storage IO errors.
+    /// Mirrors Go's VolumeServerIoQuarantineGauge.
+    pub static ref IO_QUARANTINE_GAUGE: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_io_quarantine",
+            "Number of volumes or EC shards quarantined due to storage IO errors.",
+        ),
+        &["kind"],
+    ).expect("metric can be created");
+
     // ---- Legacy aliases for backward compat with existing code ----
 
     /// Total number of volumes on this server (flat gauge).
@@ -283,6 +300,8 @@ pub fn register_metrics() {
             Box::new(SCRUB_LAST_TIME_SECONDS.clone()),
             Box::new(SCRUB_VOLUME_FAILURES.clone()),
             Box::new(SCRUB_SHARD_FAILURES.clone()),
+            Box::new(STORAGE_IO_ERROR_COUNTER.clone()),
+            Box::new(IO_QUARANTINE_GAUGE.clone()),
             // Legacy metrics
             Box::new(VOLUMES_TOTAL.clone()),
             Box::new(DISK_SIZE_BYTES.clone()),

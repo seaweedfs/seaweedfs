@@ -933,6 +933,12 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 		}
 		bytesread, err := ecShard.ReadAt(buffer[0:bufferSize], startOffset)
 
+		if err != nil && err != io.EOF {
+			ecVolume.CheckReadWriteError(err)
+		} else {
+			ecVolume.CheckReadWriteError(nil)
+		}
+
 		// println("read", ecShard.FileName(), "startOffset", startOffset, bytesread, "bytes, with target", bufferSize)
 		if bytesread > 0 {
 

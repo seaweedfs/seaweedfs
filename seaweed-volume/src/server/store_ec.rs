@@ -259,12 +259,19 @@ pub async fn scrub_ec_volume_distributed(
     force_deleted_needles_check: bool,
     recover_unreadable: bool,
 ) -> (i64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
-    // Phase A — under the Store read lock, run the index scrub and grab the
+    // Phase A — under the Store read lock, snapshot the index scrub and grab the
     // paths/scalars + shard-location staleness; release the lock before any await.
+    //
+    // The index walk itself runs AFTER the guard: scrub_index() reads the whole
+    // .ecx, and doing that under store.read() parks the periodic heartbeat's
+    // store.write(), which a write-preferring RwLock then makes every later
+    // reader queue behind. See EcChecksumScrubPlan.
     let (
         ecx_path,
         collection,
-        seed_errs,
+        index_plan,
+        ecx_walk,
+        encode_ts_ns,
         cached_locations,
         cache_refreshed_at,
         data_shards,
@@ -282,7 +289,26 @@ pub async fn scrub_ec_volume_distributed(
             }
         };
         // full scan means verifying the index as well
-        let (_, errs) = ecv.scrub_index();
+        let index_plan = ecv.scrub_index_plan();
+        // A SECOND .ecx descriptor, opened under the guard for the needle walk
+        // below. The index plan's handle is consumed by its own structural walk,
+        // and both seek, so a `dup` would race the cursor. Reopening by PATH
+        // after the guard is dropped would let a teardown that legitimately
+        // unlinks or replaces the .ecx (the heartbeat's
+        // delete_expired_ec_volumes, volume_ec_shards_delete) surface an
+        // intentional removal as a scrub error or mix index generations within
+        // one scrub — the same race the vanished-volume policy exists to hide.
+        // The descriptor outlives the name, the same way the checksum plan's
+        // shard handles do.
+        let ecx_walk = fs::File::open(&ecv.ecx_file_name());
+        // Encode-run identity of the volume this scrub started against. The
+        // per-needle `scrub_snapshot_under_lock` re-resolves the volume by id
+        // under a fresh guard, so a teardown-and-remount of the same vid between
+        // two rows would otherwise apply the captured .ecx's offsets to a
+        // replacement volume's shards. Bind the walk to this generation: if the
+        // mounted volume's encode_ts_ns no longer matches, abort like a
+        // mid-scan unmount rather than mixing generations.
+        let encode_ts_ns = ecv.encode_ts_ns;
         // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
         let cached_locations = ecv.shard_locations.read().unwrap().clone();
         let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
@@ -291,12 +317,46 @@ pub async fn scrub_ec_volume_distributed(
         (
             ecv.ecx_file_name(),
             ecv.collection.clone(),
-            errs,
+            index_plan,
+            ecx_walk,
+            encode_ts_ns,
             cached_locations,
             cache_refreshed_at,
             data_shards,
             total_shards,
         )
+    };
+    // Lock released: walk the index now, before anything else appends to errs,
+    // so the seeded errors keep their position in the reported details.
+    //
+    // `index_plan.run()` reads the whole .ecx synchronously, so run it in the
+    // blocking pool rather than on this async worker — a large index scan would
+    // otherwise block unrelated RPC work handled on the same executor. Same
+    // treatment as the CHECKSUM/LOCAL plans in the gRPC handler.
+    let (_, seed_errs) = match tokio::task::spawn_blocking(move || index_plan.run()).await {
+        Ok(v) => v,
+        Err(e) => {
+            // A panic is evidence about the volume and counts as broken; a
+            // cancellation is not — spawn_blocking only reports it when the
+            // runtime is going down, the volume was never scanned, and the
+            // caller (FULL/READS) would put a false corruption into
+            // broken_volume_ids if it reached the errs path. Match the
+            // record_scrub_join_failure distinction used by the handler arms.
+            if e.is_panic() {
+                return (
+                    0,
+                    Vec::new(),
+                    vec![format!(
+                        "EC volume {} index scrub task panicked: {}",
+                        vid.0, e
+                    )],
+                )
+            }
+            // Cancellation: the runtime is shutting down, so this response is
+            // unlikely to reach anyone. Return clean rather than inventing a
+            // corruption for a volume that was never scanned.
+            return (0, Vec::new(), Vec::new());
+        }
     };
     let mut errs = seed_errs;
 
@@ -355,28 +415,60 @@ pub async fn scrub_ec_volume_distributed(
         map
     };
 
-    // Walk the .ecx (private fd, no lock) for the row count + live (id, offset, size).
-    let mut count: i64 = 0;
-    let mut needles: Vec<(NeedleId, Offset, Size)> = Vec::new();
-    match fs::File::open(&ecx_path) {
-        Ok(mut f) => {
-            if let Err(e) = crate::storage::idx::walk_index_file(&mut f, 0, |id, offset, size| {
-                count += 1;
-                // Skip ALL deleted entries: -1 tombstones (runtime delete folded
-                // into .ecx) and -originalSize entries (a needle deleted on the
-                // regular volume before EC encode). get_actual_size uses the raw
-                // signed size, so a negative would yield empty intervals
-                // (false-positive) or an under-16-byte buffer (parse panic).
-                if !size.is_deleted() {
-                    needles.push((id, offset, size));
+    // Walk the .ecx (private fd captured under the lock, no lock held) for the
+    // row count + live (id, offset, size). Reading through the captured
+    // descriptor — not a pathname reopen — keeps a concurrent teardown from
+    // surfacing an intentional removal as a scrub error or mixing index
+    // generations, the same invariant the vanished-volume policy enforces.
+    //
+    // `walk_index_file` reads the full .ecx synchronously, so run it in the
+    // blocking pool rather than on this async worker — same reason as
+    // `index_plan.run()` above.
+    let (count, needles, walk_errs) =
+        match tokio::task::spawn_blocking(move || -> (i64, Vec<(NeedleId, Offset, Size)>, Vec<String>) {
+            let mut count: i64 = 0;
+            let mut needles: Vec<(NeedleId, Offset, Size)> = Vec::new();
+            let mut walk_errs: Vec<String> = Vec::new();
+            match ecx_walk {
+                Ok(mut f) => {
+                    if let Err(e) = crate::storage::idx::walk_index_file(&mut f, 0, |id, offset, size| {
+                        count += 1;
+                        // Skip ALL deleted entries: -1 tombstones (runtime delete folded
+                        // into .ecx) and -originalSize entries (a needle deleted on the
+                        // regular volume before EC encode). get_actual_size uses the raw
+                        // signed size, so a negative would yield empty intervals
+                        // (false-positive) or an under-16-byte buffer (parse panic).
+                        if !size.is_deleted() {
+                            needles.push((id, offset, size));
+                        }
+                        Ok(())
+                    }) {
+                        walk_errs.push(format!("walk ECX file {}: {}", ecx_path, e));
+                    }
                 }
-                Ok(())
-            }) {
-                errs.push(format!("walk ECX file {}: {}", ecx_path, e));
+                Err(e) => walk_errs.push(format!("open ECX file {}: {}", ecx_path, e)),
             }
-        }
-        Err(e) => errs.push(format!("open ECX file {}: {}", ecx_path, e)),
-    }
+            (count, needles, walk_errs)
+        }).await {
+            Ok(v) => v,
+            Err(e) => {
+                // A panic is evidence about the volume and counts as broken; a
+                // cancellation is not — see the index_plan join above for the
+                // same reasoning.
+                if e.is_panic() {
+                    return (
+                        0,
+                        Vec::new(),
+                        vec![format!(
+                            "EC volume {} ecx walk task panicked: {}",
+                            vid.0, e
+                        )],
+                    )
+                }
+                return (0, Vec::new(), Vec::new());
+            }
+        };
+    errs.extend(walk_errs);
 
     // reads for EC chunks can hit the same shard repeatedly, so dedupe broken shards
     let mut broken_shards: HashMap<ShardId, crate::pb::volume_server_pb::EcShardInfo> = HashMap::new();
@@ -384,10 +476,11 @@ pub async fn scrub_ec_volume_distributed(
     for (id, offset, size) in needles {
         // Per-needle snapshot under the lock from the RAW .ecx (offset, size) so
         // logically-deleted needles are still verified; lock dropped before await.
-        let snapshot = match scrub_snapshot_under_lock(state, vid, offset, size) {
+        let snapshot = match scrub_snapshot_under_lock(state, vid, offset, size, encode_ts_ns) {
             Ok(s) => s,
-            // Volume unmounted mid-scan: abort with an error rather than skipping
-            // every remaining needle, which would report a false-CLEAN result.
+            // Volume unmounted (or remounted as a different encode run) mid-scan:
+            // abort with an error rather than skipping every remaining needle,
+            // which would report a false-CLEAN result.
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 errs.push(format!("EC volume {} unmounted during scrub: {}", vid.0, e));
                 break;
@@ -551,6 +644,7 @@ fn scrub_snapshot_under_lock(
     vid: VolumeId,
     offset: Offset,
     size: Size,
+    expected_encode_ts: i64,
 ) -> io::Result<ScrubSnapshot> {
     let store = state.store.read().unwrap();
     let ecv = match store.find_ec_volume(vid) {
@@ -564,6 +658,28 @@ fn scrub_snapshot_under_lock(
             ))
         }
     };
+    // The volume was torn down and remounted as a DIFFERENT encode run between
+    // two rows. The .ecx offsets captured at the start of the walk belong to
+    // the old generation; applying them to the replacement's shards would
+    // falsely report corruption. Abort like a mid-scan unmount instead of
+    // mixing generations within one scrub.
+    //
+    // `encode_ts_ns == 0` means the .vif carried no encode-run identity (a
+    // legacy or pre-feature volume). Two such volumes are NOT the same mount
+    // by this check alone — 0 == 0 would accept a teardown-and-remount and
+    // apply the old .ecx's offsets to the replacement's shards. Only treat a
+    // match as verified when the identity is non-zero; when it is zero, fall
+    // back to the pre-check behavior (no generation binding) rather than
+    // aborting a scrub that was already running without the guard.
+    if expected_encode_ts != 0 && ecv.encode_ts_ns != expected_encode_ts {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "EC volume {} remounted as a different encode run during scrub (was {}, now {})",
+                vid.0, expected_encode_ts, ecv.encode_ts_ns
+            ),
+        ));
+    }
     let intervals = ecv.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
     if intervals.is_empty() {
         return Err(io::Error::new(

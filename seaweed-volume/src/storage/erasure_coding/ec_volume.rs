@@ -17,6 +17,8 @@ use crate::storage::types::*;
 use crate::storage::volume_open::open_volume_file;
 
 /// An erasure-coded volume managing its local shards and index.
+pub const IO_ERROR_TOLERANCE: i32 = 3;
+
 pub struct EcVolume {
     pub volume_id: VolumeId,
     pub collection: String,
@@ -79,6 +81,10 @@ pub struct EcVolume {
     /// so `bitrot_protection()` can return the `Off`/`Invalid` distinction without
     /// re-reading, mirroring Go's `EcVolume.bitrotStatus`.
     pub(crate) bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+
+    io_error_count: std::sync::atomic::AtomicI32,
+    io_error_quarantined: std::sync::atomic::AtomicBool,
+    last_io_error: std::sync::Mutex<Option<String>>,
 }
 
 /// Locate the `.vif` for a (collection, vid) by preferring the data dir
@@ -430,6 +436,9 @@ impl EcVolume {
             encode_ts_ns,
             bitrot: None,
             bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
+            io_error_count: std::sync::atomic::AtomicI32::new(0),
+            io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
+            last_io_error: std::sync::Mutex::new(None),
         };
 
         // Open .ecx file (sorted index) in read/write mode for in-place deletion marking.
@@ -621,111 +630,36 @@ impl EcVolume {
     /// raising false shard-corruption alarms.
     ///
     /// This method NEVER deletes or mutates anything — it is purely diagnostic.
-    pub fn checksum_scrub(&self) -> (u64, Vec<u32>, Vec<String>) {
-        use crate::storage::erasure_coding::ec_bitrot;
-        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+    /// Duplicates the mounted shard handles so `run()` can scan with the store
+    /// guard released; see `EcChecksumScrubPlan` for why that matters.
+    pub fn checksum_scrub_plan(&self) -> EcChecksumScrubPlan {
+        let (prot, status) = self.bitrot_protection();
 
-        let mut errors: Vec<String> = Vec::new();
-
-        // Resolve the active-generation protection AND its status, mirroring
-        // Go's `ChecksumScrub` (`prot, status := ecv.BitrotProtection()`):
-        //   - BitrotOff   => sidecars are OPTIONAL; an absent (or generation/
-        //     config-mismatched) sidecar simply means protection is not enabled
-        //     for this generation. Return a CLEAN, EMPTY result — NOT an error —
-        //     so legacy/intentionally-unprotected volumes are never reported
-        //     broken. (Go: `case BitrotOff: return 0, nil, nil`.)
-        //   - BitrotInvalid => the sidecar is PRESENT but malformed/unverifiable
-        //     (self-integrity or manifest failure). That is the only status that
-        //     yields an integrity error here.
-        //   - BitrotOn    => scan local shards against it.
-        let prot = match self.bitrot_protection() {
-            (_, BitrotStatus::Off) => {
-                // Unprotected generation: nothing to verify. Not an error.
-                return (0, Vec::new(), Vec::new());
-            }
-            (_, BitrotStatus::Invalid) => {
-                return (
-                    0,
-                    Vec::new(),
-                    vec![format!(
-                        "EC volume {} bitrot sidecar is malformed/unverifiable (sidecar integrity)",
-                        self.volume_id.0
-                    )],
-                );
-            }
-            (Some(p), BitrotStatus::On) => p,
-            (None, BitrotStatus::On) => {
-                // Unreachable: BitrotOn always carries a loaded sidecar. Treat a
-                // missing payload defensively as protection off (clean no-op).
-                return (0, Vec::new(), Vec::new());
-            }
+        // Only BitrotOn reaches the shard loop in `run()`; the other statuses
+        // return before touching a handle, so cloning for them buys nothing.
+        let shards = match status {
+            crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On => self
+                .shards
+                .iter()
+                .enumerate()
+                .filter_map(|(i, slot)| slot.as_ref().map(|s| (i as u32, s.try_clone_file())))
+                .collect(),
+            _ => Vec::new(),
         };
 
-        let block_size = prot.block_size as i64;
-        let generation = prot.generation;
-        let base = self.base_name();
-
-        let mut blocks_scanned: u64 = 0;
-        let mut mismatched_shards: Vec<u32> = Vec::new();
-        // Track shards whose blocks ALL mismatch (wholesale) to detect a
-        // stale/wrong sidecar.
-        let mut wholesale_mismatch = 0usize;
-
-        for (i, slot) in self.shards.iter().enumerate() {
-            if slot.is_none() {
-                continue; // not local
-            }
-            let shard_id = i as u32;
-            let Some(entry) = ec_bitrot::shard_checksums(&prot, shard_id) else {
-                errors.push(format!(
-                    "EC volume {} shard {} present but missing from sidecar manifest",
-                    self.volume_id.0, shard_id
-                ));
-                continue;
-            };
-
-            // Resolve the on-disk shard file path for the active generation,
-            // mirroring EcVolumeShard::reopen_against_generation's convention.
-            let path = if generation == 0 {
-                format!("{}.ec{:02}", base, shard_id)
-            } else {
-                format!("{}.ec{:02}.v{}", base, shard_id, generation)
-            };
-
-            let expected_blocks = entry.block_crc32c.len() / 4;
-            match ec_bitrot::verify_shard_file_blocks(&path, entry, block_size) {
-                Ok(mismatched) => {
-                    blocks_scanned += expected_blocks as u64;
-                    if !mismatched.is_empty() {
-                        mismatched_shards.push(shard_id);
-                        if expected_blocks > 0 && mismatched.len() == expected_blocks {
-                            wholesale_mismatch += 1;
-                        }
-                    }
-                }
-                Err(e) => {
-                    errors.push(format!(
-                        "EC volume {} shard {} scrub read error: {}",
-                        self.volume_id.0, shard_id, e
-                    ));
-                }
-            }
+        EcChecksumScrubPlan {
+            volume_id: self.volume_id,
+            prot,
+            status,
+            parity_shards: self.parity_shards,
+            shards,
         }
+    }
 
-        // If more shards mismatch wholesale than parity can mask, the sidecar
-        // itself is the likely culprit (stale generation / wrong volume), so
-        // suppress the shard-corruption verdict and flag a sidecar-integrity
-        // issue instead.
-        if wholesale_mismatch > self.parity_shards as usize {
-            errors.push(format!(
-                "EC volume {}: {} shards mismatch wholesale (> {} parity); suspect stale/wrong sidecar, not shard corruption",
-                self.volume_id.0, wholesale_mismatch, self.parity_shards
-            ));
-            mismatched_shards.clear();
-        }
-
-        mismatched_shards.sort_unstable();
-        (blocks_scanned, mismatched_shards, errors)
+    /// Convenience wrapper preserving the original call shape. Callers that
+    /// hold the store lock MUST use `checksum_scrub_plan()` + `run()` instead.
+    pub fn checksum_scrub(&self) -> (u64, Vec<u32>, Vec<String>) {
+        self.checksum_scrub_plan().run()
     }
 
     /// Walk the .ecj journal and populate `deleted_needles`. Called once
@@ -1028,6 +962,50 @@ impl EcVolume {
             .unwrap_or_default()
     }
 
+    // ---- I/O error tracking (mirrors Go's EcVolume IoErrorTracker) ----
+
+    pub fn check_read_write_error(&self, err: Option<&io::Error>) {
+        use std::sync::atomic::Ordering;
+        if let Some(e) = err {
+            if crate::storage::volume::is_storage_io_error(e) {
+                self.io_error_count.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut guard) = self.last_io_error.lock() {
+                    *guard = Some(e.to_string());
+                }
+                crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
+                return;
+            }
+        }
+        self.io_error_count.store(0, Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            if guard.is_some() {
+                *guard = None;
+            }
+        }
+    }
+
+    pub fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
+        use std::sync::atomic::Ordering;
+        let err = self.last_io_error.lock().ok().and_then(|g| g.clone());
+        let count = self.io_error_count.load(Ordering::Relaxed);
+        let quarantined = self.io_error_quarantined.load(Ordering::Relaxed);
+        (err, count, quarantined)
+    }
+
+    pub fn mark_io_quarantined(&self) {
+        self.io_error_quarantined
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn reset_io_error_state(&self) {
+        use std::sync::atomic::Ordering;
+        self.io_error_count.store(0, Ordering::Relaxed);
+        self.io_error_quarantined.store(false, Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            *guard = None;
+        }
+    }
+
     // ---- Index operations ----
 
     /// Find a needle's offset and size in the sorted .ecx index via binary search.
@@ -1054,7 +1032,22 @@ impl EcVolume {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::FileExt;
-                ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
+                if let Err(e) = ecx_file.read_exact_at(&mut entry_buf, file_offset) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                use std::io::{Read, Seek, SeekFrom};
+                if let Err(e) = ecx_file.seek(SeekFrom::Start(file_offset)) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
+                if let Err(e) = ecx_file.read_exact(&mut entry_buf) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
             }
 
             let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
@@ -1064,8 +1057,10 @@ impl EcVolume {
                 // reported with TOMBSTONE_FILE_SIZE even though the .ecx
                 // record itself is untouched.
                 if self.is_needle_deleted(needle_id) {
+                    self.check_read_write_error(None);
                     return Ok(Some((offset, TOMBSTONE_FILE_SIZE)));
                 }
+                self.check_read_write_error(None);
                 return Ok(Some((offset, size)));
             } else if key < needle_id {
                 lo = mid + 1;
@@ -1074,6 +1069,7 @@ impl EcVolume {
             }
         }
 
+        self.check_read_write_error(None);
         Ok(None)
     }
 
@@ -1281,187 +1277,83 @@ impl EcVolume {
     /// ScrubIndex verifies index integrity of an EC volume.
     /// Matches Go's `(ev *EcVolume) ScrubIndex()` → `idx.CheckIndexFile()`.
     /// Returns (entry_count, errors).
-    pub fn scrub_index(&self) -> (u64, Vec<String>) {
-        if self.ecx_file.is_none() {
-            return (
-                0,
-                vec![format!(
-                    "no ECX file associated with EC volume {}",
-                    self.volume_id.0
-                )],
-            );
-        }
-        if self.ecx_file_size == 0 {
-            return (
-                0,
-                vec![format!("zero-size ECX file for EC volume {}", self.volume_id.0)],
-            );
-        }
-
-        // Walk a private fd so the structural scan never moves the shared
-        // ecx_file cursor (the cached handle is read positionally elsewhere).
+    /// Snapshot for `scrub_index`, so the index walk can run with the store
+    /// lock released. Same rationale as `checksum_scrub_plan`.
+    pub fn scrub_index_plan(&self) -> EcIndexScrubPlan {
         let ecx_path = self.ecx_file_name();
-        let mut ecx_file = match File::open(&ecx_path) {
-            Ok(f) => f,
-            Err(e) => return (0, vec![format!("open ECX file {}: {}", ecx_path, e)]),
-        };
-        crate::storage::idx::check_index_file(&mut ecx_file, self.ecx_file_size, self.version)
+        // Opened under the guard, for the same reason the checksum plan
+        // duplicates its shard handles. A fresh open rather than a clone of the
+        // cached handle: `check_index_file` seeks, and `dup` would share the
+        // cursor the shared handle is read from elsewhere.
+        let ecx_handle = File::open(&ecx_path);
+        EcIndexScrubPlan {
+            volume_id: self.volume_id,
+            has_ecx_file: self.ecx_file.is_some(),
+            ecx_path,
+            ecx_file_size: self.ecx_file_size,
+            version: self.version,
+            ecx_handle,
+        }
+    }
+
+    /// Convenience wrapper preserving the original call shape. Callers holding
+    /// the store lock MUST use `scrub_index_plan()` + `run()` instead.
+    pub fn scrub_index(&self) -> (u64, Vec<String>) {
+        self.scrub_index_plan().run()
+    }
+
+    /// Snapshot for `scrub_local`, so the needle walk can run with the store
+    /// lock released. Same rationale as `checksum_scrub_plan`: this reads every
+    /// local needle's bytes, which is GB-scale on a real volume.
+    ///
+    /// The shard vector keeps its SLOT structure — index is the shard id, gaps
+    /// are the shards this node does not hold. `scrub_local` reads that
+    /// distinction to decide whether a needle can be reassembled locally at
+    /// all, so compacting it would silently change which needles get verified.
+    pub fn scrub_local_plan(&self) -> EcLocalScrubPlan {
+        EcLocalScrubPlan {
+            volume_id: self.volume_id,
+            version: self.version,
+            data_shards: self.data_shards,
+            // locate_data wants shardSize = datFileSize / DataShards when known,
+            // else ecdFileSize - 1 (shards are padded to the small block size;
+            // the -1 avoids an off-by-one in the large-block row count).
+            shard_size: if self.dat_file_size > 0 {
+                self.dat_file_size / self.data_shards as i64
+            } else {
+                self.shard_file_size() - 1
+            },
+            large_block_size: self.large_block_size(),
+            small_block_size: self.small_block_size(),
+            index: self.scrub_index_plan(),
+            ecx_path: self.ecx_file_name(),
+            // A second descriptor: the index plan's is consumed by its own walk,
+            // and both seek.
+            ecx_walk: File::open(self.ecx_file_name()),
+            shards: self
+                .shards
+                .iter()
+                .map(|slot| {
+                    slot.as_ref().map(|s| EcLocalShard {
+                        file: s.try_clone_file(),
+                        file_size: s.file_size(),
+                        info: s.to_ec_shard_info(),
+                    })
+                })
+                .collect(),
+        }
     }
 
     /// ScrubLocal verifies each needle against the LOCAL shards only; it cannot
     /// CRC-check a needle whose intervals span shards held on other servers.
     /// Mirrors Go's EcVolume.ScrubLocal. Returns (rows walked, broken shards, errors).
+    ///
+    /// Convenience wrapper preserving the original call shape. Callers that
+    /// hold the store lock MUST use `scrub_local_plan()` + `run()` instead.
     pub fn scrub_local(
         &self,
     ) -> (u64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
-        // Local scan also verifies the index.
-        let (_, mut errs) = self.scrub_index();
-
-        let mut broken_shards: HashSet<ShardId> = HashSet::new();
-        let mut count: u64 = 0;
-
-        let ecx_path = self.ecx_file_name();
-        let mut ecx_file = match File::open(&ecx_path) {
-            Ok(f) => f,
-            Err(e) => {
-                errs.push(format!("open ECX file {}: {}", ecx_path, e));
-                return (count, Vec::new(), errs);
-            }
-        };
-
-        // Reused across every needle/chunk to avoid a per-chunk allocation.
-        let mut chunk_buf: Vec<u8> = Vec::new();
-        let walk = crate::storage::idx::walk_index_file(&mut ecx_file, 0, |id, offset, size| {
-            count += 1;
-            if size.is_tombstone() {
-                return Ok(());
-            }
-
-            let locations = self.locate_ec_shard_needle_interval(offset.to_actual_offset(), size);
-            // A needle is verifiable locally only if every shard it spans is local;
-            // when any is remote, skip the reassembly buffer entirely.
-            let has_remote_chunks = locations.iter().any(|iv| {
-                let (sid, _) = self.interval_to_shard_id_and_offset(iv);
-                self.shards.get(sid as usize).and_then(|s| s.as_ref()).is_none()
-            });
-            let mut read: i64 = 0;
-            let mut data: Vec<u8> = if has_remote_chunks {
-                Vec::new()
-            } else {
-                Vec::with_capacity(get_actual_size(size, self.version) as usize)
-            };
-            let mut local_shard_ids: Vec<ShardId> = Vec::new();
-
-            for (i, iv) in locations.iter().enumerate() {
-                let (sid, soffset) = self.interval_to_shard_id_and_offset(iv);
-                let ssize = iv.size;
-                let shard = match self.shards.get(sid as usize).and_then(|s| s.as_ref()) {
-                    Some(s) => s,
-                    None => {
-                        // Shard is not local; we can't verify it without decoding.
-                        read += ssize;
-                        continue;
-                    }
-                };
-                local_shard_ids.push(sid);
-
-                if soffset + ssize > shard.file_size() {
-                    broken_shards.insert(sid);
-                    errs.push(format!(
-                        "local shard {} for needle {} is too short ({}), cannot read chunk {}/{}",
-                        sid,
-                        id.0,
-                        shard.file_size(),
-                        i + 1,
-                        locations.len()
-                    ));
-                    continue;
-                }
-
-                chunk_buf.resize(ssize as usize, 0);
-                match shard.read_at(&mut chunk_buf, soffset as u64) {
-                    Err(e) => {
-                        broken_shards.insert(sid);
-                        errs.push(format!(
-                            "failed to read chunk {}/{} for needle {} from local shard {} at offset {}: {}",
-                            i + 1,
-                            locations.len(),
-                            id.0,
-                            sid,
-                            soffset,
-                            e
-                        ));
-                        continue;
-                    }
-                    Ok(got) if got as i64 != ssize => {
-                        broken_shards.insert(sid);
-                        errs.push(format!(
-                            "expected {} bytes for chunk {}/{} for needle {} from local shard {}, got {}",
-                            ssize,
-                            i + 1,
-                            locations.len(),
-                            id.0,
-                            sid,
-                            got
-                        ));
-                        continue;
-                    }
-                    Ok(_) => {}
-                }
-
-                if !has_remote_chunks {
-                    data.extend_from_slice(&chunk_buf);
-                }
-                read += ssize;
-            }
-
-            local_shard_ids.sort_unstable();
-
-            let want = get_actual_size(size, self.version);
-            if read != want {
-                // Like Go, returning from the walk callback aborts the scan.
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "expected {} bytes for needle {} on volume {}, got {}",
-                        want, id.0, self.volume_id.0, read
-                    ),
-                ));
-            }
-
-            // Only a fully-local needle can be reassembled and CRC-checked.
-            if !has_remote_chunks {
-                let mut n = Needle::default();
-                if let Err(e) = n.read_bytes(&data, 0, size, self.version) {
-                    // A delete-state disagreement between the .ecx index and the reassembled
-                    // on-disk header (live index vs zero header size) is not corruption.
-                    let delete_state_disagrees = matches!(
-                        &e,
-                        NeedleError::SizeMismatch { found, .. } if size.is_deleted() != (found.0 == 0)
-                    );
-                    if !delete_state_disagrees {
-                        errs.push(format!(
-                            "needle {} on volume {}, shards {:?}: {}",
-                            id.0, self.volume_id.0, local_shard_ids, e
-                        ));
-                    }
-                }
-            }
-            Ok(())
-        });
-        if let Err(e) = walk {
-            // Go appends the walk/callback error verbatim.
-            errs.push(e.to_string());
-        }
-
-        let mut broken: Vec<crate::pb::volume_server_pb::EcShardInfo> = broken_shards
-            .iter()
-            .filter_map(|sid| self.shards.get(*sid as usize).and_then(|s| s.as_ref()))
-            .map(|s| s.to_ec_shard_info())
-            .collect();
-        broken.sort_by(|a, b| a.shard_id.cmp(&b.shard_id));
-
-        (count, broken, errs)
+        self.scrub_local_plan().run()
     }
 
     // ---- Deletion ----
@@ -1962,6 +1854,273 @@ mod tests {
         let (prot, status) = vol.bitrot_protection();
         assert_eq!(status, BitrotStatus::On);
         assert_eq!(prot.unwrap().shards.len(), 14);
+    }
+
+    /// REGRESSION: the scrub plans must be SELF-CONTAINED, so the handler can
+    /// drop the store lock before the scan runs — see `EcChecksumScrubPlan`.
+    ///
+    /// The volume is DROPPED before the plans run, and the plans are moved to
+    /// another thread. A plan that borrowed from `EcVolume` could do neither, so
+    /// this stops COMPILING if the snapshot ever regresses to a borrow.
+    #[test]
+    fn test_scrub_plans_are_self_contained_and_match_direct_call() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=8 {
+            let data = format!("test data for needle {} with a bit more length", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
+            .unwrap();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        for id in 0..14u8 {
+            vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), id))
+                .unwrap();
+        }
+
+        // Baseline via the original call shape, with the volume still alive.
+        let direct_checksum = vol.checksum_scrub();
+        let direct_index = vol.scrub_index();
+        let direct_local = vol.scrub_local();
+        assert!(
+            direct_checksum.0 > 0 && direct_local.0 > 0,
+            "fixture scanned nothing, so the equalities below would be vacuous"
+        );
+
+        let checksum_plan = vol.checksum_scrub_plan();
+        let index_plan = vol.scrub_index_plan();
+        let local_plan = vol.scrub_local_plan();
+
+        // The lock (and here the whole volume) is gone before the scan runs.
+        drop(vol);
+
+        let (from_plan_checksum, from_plan_index, from_plan_local) =
+            std::thread::spawn(move || (checksum_plan.run(), index_plan.run(), local_plan.run()))
+                .join()
+                .expect("scrub plans must be runnable off the owning thread");
+
+        assert_eq!(
+            from_plan_checksum, direct_checksum,
+            "checksum scrub result changed when run from a released-lock plan"
+        );
+        assert_eq!(
+            from_plan_index, direct_index,
+            "index scrub result changed when run from a released-lock plan"
+        );
+        assert_eq!(
+            from_plan_local, direct_local,
+            "local scrub result changed when run from a released-lock plan"
+        );
+    }
+
+    /// REGRESSION: a malformed `.ecx` row must not abort the scrub TASK.
+    ///
+    /// `EcLocalScrubPlan::run()` skips only the -1 tombstone, matching Go's
+    /// `ScrubLocal`, so any OTHER negative size reaches the reassembly buffer
+    /// with a negative `get_actual_size()`. Go pays nothing for that (it
+    /// appends to a nil slice); Rust sizes a per-needle `Vec` from it, and
+    /// `Vec::with_capacity(negative as usize)` aborts the process. Now that the
+    /// plan runs under `spawn_blocking`, that abort comes back as a JoinError
+    /// and would take the whole node-wide scrub RPC down with every result
+    /// already collected. The row must be REPORTED, as Go reports it.
+    #[test]
+    fn test_local_scrub_plan_reports_negative_size_ecx_row() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=8 {
+            let data = format!("test data for needle {} with a bit more length", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
+            .unwrap();
+
+        // Rewrite the first .ecx row's size as -1000: a negative that is NOT
+        // the -1 tombstone the walk skips. A scrub is what you point at an
+        // index you already suspect, so an arbitrary i32 in the size field is
+        // in-scope input, whatever wrote it.
+        let ecx = format!(
+            "{}.ecx",
+            crate::storage::volume::volume_file_name(dir, "", VolumeId(1))
+        );
+        let mut raw = std::fs::read(&ecx).unwrap();
+        assert!(
+            raw.len() >= NEEDLE_MAP_ENTRY_SIZE,
+            "fixture must write at least one .ecx row"
+        );
+        let (key, offset, _) = idx_entry_from_bytes(&raw[..NEEDLE_MAP_ENTRY_SIZE]);
+        idx_entry_to_bytes(&mut raw[..NEEDLE_MAP_ENTRY_SIZE], key, offset, Size(-1000));
+        std::fs::write(&ecx, &raw).unwrap();
+        assert!(
+            get_actual_size(Size(-1000), Version::current()) < 0,
+            "precondition: the row must drive get_actual_size negative"
+        );
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        for id in 0..14u8 {
+            vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), id))
+                .unwrap();
+        }
+        let plan = vol.scrub_local_plan();
+        drop(vol);
+
+        // The join IS the assertion: a panic here is the JoinError that used to
+        // fail the whole ScrubEcVolume RPC.
+        let (_count, _broken, errs) = std::thread::spawn(move || plan.run())
+            .join()
+            .expect("a malformed .ecx row must not abort the scrub task");
+
+        assert!(
+            errs.iter()
+                .any(|e| e.contains(&format!("bytes for needle {}", key.0))),
+            "the malformed row must be reported, got {:?}",
+            errs
+        );
+    }
+
+    /// REGRESSION: a scrub running with the store lock RELEASED must not turn a
+    /// concurrent, intentional removal into a corruption report — see
+    /// `EcChecksumScrubPlan`.
+    ///
+    /// Deleting every file after the plans are built is the whole test: reads
+    /// that resolve a path diverge from the direct call, reads through the
+    /// captured descriptors are identical.
+    #[test]
+    fn test_scrub_plans_survive_files_removed_after_snapshot() {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=8 {
+            let data = format!("test data for needle {} with a bit more length", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
+            .unwrap();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        for id in 0..14u8 {
+            vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), id))
+                .unwrap();
+        }
+
+        // Baseline with every file present and the volume still mounted.
+        let direct_checksum = vol.checksum_scrub();
+        let direct_index = vol.scrub_index();
+        let direct_local = vol.scrub_local();
+        assert!(
+            direct_checksum.0 > 0 && direct_local.0 > 0,
+            "fixture scanned nothing, so the equalities below would be vacuous"
+        );
+        assert!(
+            direct_checksum.2.is_empty() && direct_index.1.is_empty() && direct_local.2.is_empty(),
+            "fixture is not clean, so a false error could not be told apart: {:?} {:?} {:?}",
+            direct_checksum.2,
+            direct_index.1,
+            direct_local.2
+        );
+
+        let checksum_plan = vol.checksum_scrub_plan();
+        let index_plan = vol.scrub_index_plan();
+        let local_plan = vol.scrub_local_plan();
+
+        // The teardown a store writer would perform, after the plans exist.
+        drop(vol);
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        for id in 0..14u8 {
+            std::fs::remove_file(format!("{}.ec{:02}", base, id)).unwrap();
+        }
+        std::fs::remove_file(format!("{}.ecx", base)).unwrap();
+        assert!(
+            !std::path::Path::new(&format!("{}.ec00", base)).exists(),
+            "the removal under test did not happen"
+        );
+
+        assert_eq!(
+            checksum_plan.run(),
+            direct_checksum,
+            "shard files unlinked after the snapshot were reported as corruption"
+        );
+        assert_eq!(
+            index_plan.run(),
+            direct_index,
+            "the .ecx unlinked after the snapshot was reported as an index error"
+        );
+        assert_eq!(
+            local_plan.run(),
+            direct_local,
+            "files unlinked after the snapshot were reported as local-scrub errors"
+        );
     }
 
     /// CHECKSUM scrub verifies clean shards against the sidecar and flags a shard
@@ -2772,5 +2931,437 @@ mod uniform_layout_tests {
         )
         .unwrap();
         assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
+    }
+}
+
+/// Self-contained input for an EC checksum scrub: the sidecar plus a duplicate
+/// of every mounted local shard handle, taken under the store read guard.
+///
+/// Two things follow from holding descriptors rather than paths. `run()` needs
+/// no store access, so the guard is released before a scan that reads every
+/// byte of every local shard — under the guard that scan parks the periodic
+/// heartbeat's `store.write()`, and `std::sync::RwLock` is write-preferring, so
+/// every later reader queues behind it and the node stops serving. And a
+/// teardown that legitimately unlinks the shards mid-scan (the heartbeat's
+/// `delete_expired_ec_volumes`, `volume_ec_shards_delete`) cannot masquerade as
+/// bitrot, because the descriptor outlives the name. Go reads the same way:
+/// `ChecksumScrub` goes through `shard.ReadAt`.
+///
+/// Not `Clone`: it owns those descriptors.
+#[derive(Debug)]
+pub struct EcChecksumScrubPlan {
+    pub volume_id: VolumeId,
+    pub prot: Option<crate::pb::volume_server_pb::EcBitrotProtection>,
+    pub status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+    pub parity_shards: u32,
+    /// One entry per LOCAL shard: its id and a duplicate of the mounted
+    /// handle (or the error to report). Private so the plan can only be built
+    /// by `EcVolume::checksum_scrub_plan`, which is what makes "captured under
+    /// the guard" an invariant rather than a convention.
+    ///
+    /// `dup` shares the kernel file offset, so every read here is positional.
+    shards: Vec<(u32, std::io::Result<File>)>,
+}
+
+impl EcChecksumScrubPlan {
+    /// The byte-verification pass. Touches only the filesystem — no store, no
+    /// lock — so it is safe to hand to `spawn_blocking`.
+    pub fn run(self) -> (u64, Vec<u32>, Vec<String>) {
+        use crate::storage::erasure_coding::ec_bitrot;
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+
+        let mut errors: Vec<String> = Vec::new();
+
+        // Resolve the active-generation protection AND its status, mirroring
+        // Go's `ChecksumScrub` (`prot, status := ecv.BitrotProtection()`):
+        //   - BitrotOff   => sidecars are OPTIONAL; an absent (or generation/
+        //     config-mismatched) sidecar simply means protection is not enabled
+        //     for this generation. Return a CLEAN, EMPTY result — NOT an error —
+        //     so legacy/intentionally-unprotected volumes are never reported
+        //     broken. (Go: `case BitrotOff: return 0, nil, nil`.)
+        //   - BitrotInvalid => the sidecar is PRESENT but malformed/unverifiable
+        //     (self-integrity or manifest failure). That is the only status that
+        //     yields an integrity error here.
+        //   - BitrotOn    => scan local shards against it.
+        let prot = match (self.prot, self.status) {
+            (_, BitrotStatus::Off) => {
+                // Unprotected generation: nothing to verify. Not an error.
+                return (0, Vec::new(), Vec::new());
+            }
+            (_, BitrotStatus::Invalid) => {
+                return (
+                    0,
+                    Vec::new(),
+                    vec![format!(
+                        "EC volume {} bitrot sidecar is malformed/unverifiable (sidecar integrity)",
+                        self.volume_id.0
+                    )],
+                );
+            }
+            (Some(p), BitrotStatus::On) => p,
+            (None, BitrotStatus::On) => {
+                // Unreachable: BitrotOn always carries a loaded sidecar. Treat a
+                // missing payload defensively as protection off (clean no-op).
+                return (0, Vec::new(), Vec::new());
+            }
+        };
+
+        let block_size = prot.block_size as i64;
+
+        let mut blocks_scanned: u64 = 0;
+        let mut mismatched_shards: Vec<u32> = Vec::new();
+        // Track shards whose blocks ALL mismatch (wholesale) to detect a
+        // stale/wrong sidecar.
+        let mut wholesale_mismatch = 0usize;
+
+        for (shard_id, handle) in self.shards {
+            let Some(entry) = ec_bitrot::shard_checksums(&prot, shard_id) else {
+                errors.push(format!(
+                    "EC volume {} shard {} present but missing from sidecar manifest",
+                    self.volume_id.0, shard_id
+                ));
+                continue;
+            };
+
+            // The handle was opened under the store lock; reading through it
+            // means a concurrent unmount/unlink cannot masquerade as bitrot.
+            let file = match &handle {
+                Ok(f) => f,
+                Err(e) => {
+                    errors.push(format!(
+                        "EC volume {} shard {} scrub read error: {}",
+                        self.volume_id.0, shard_id, e
+                    ));
+                    continue;
+                }
+            };
+
+            let expected_blocks = entry.block_crc32c.len() / 4;
+            match ec_bitrot::verify_shard_blocks(file, entry, block_size) {
+                Ok(mismatched) => {
+                    blocks_scanned += expected_blocks as u64;
+                    if !mismatched.is_empty() {
+                        mismatched_shards.push(shard_id);
+                        if expected_blocks > 0 && mismatched.len() == expected_blocks {
+                            wholesale_mismatch += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.push(format!(
+                        "EC volume {} shard {} scrub read error: {}",
+                        self.volume_id.0, shard_id, e
+                    ));
+                }
+            }
+        }
+
+        // If more shards mismatch wholesale than parity can mask, the sidecar
+        // itself is the likely culprit (stale generation / wrong volume), so
+        // suppress the shard-corruption verdict and flag a sidecar-integrity
+        // issue instead.
+        if wholesale_mismatch > self.parity_shards as usize {
+            errors.push(format!(
+                "EC volume {}: {} shards mismatch wholesale (> {} parity); suspect stale/wrong sidecar, not shard corruption",
+                self.volume_id.0, wholesale_mismatch, self.parity_shards
+            ));
+            mismatched_shards.clear();
+        }
+
+        mismatched_shards.sort_unstable();
+        (blocks_scanned, mismatched_shards, errors)
+    }
+}
+
+/// Self-contained input for an EC index scrub.
+///
+/// Not `Clone`: it owns the .ecx handle opened under the store lock.
+#[derive(Debug)]
+pub struct EcIndexScrubPlan {
+    pub volume_id: VolumeId,
+    pub has_ecx_file: bool,
+    pub ecx_path: String,
+    pub ecx_file_size: i64,
+    pub version: Version,
+    /// The .ecx handle opened while the store lock was held. Private, so the
+    /// plan can only come from `EcVolume::scrub_index_plan`.
+    ecx_handle: std::io::Result<File>,
+}
+
+impl EcIndexScrubPlan {
+    /// Structural walk of the .ecx index. Filesystem only — no store, no lock.
+    pub fn run(self) -> (u64, Vec<String>) {
+        if !self.has_ecx_file {
+            return (
+                0,
+                vec![format!(
+                    "no ECX file associated with EC volume {}",
+                    self.volume_id.0
+                )],
+            );
+        }
+        if self.ecx_file_size == 0 {
+            return (
+                0,
+                vec![format!("zero-size ECX file for EC volume {}", self.volume_id.0)],
+            );
+        }
+
+        // A private fd, so the structural scan never moves the shared ecx_file
+        // cursor (the cached handle is read positionally elsewhere). Checked
+        // after the two guards above so the error ordering is unchanged.
+        let mut ecx_file = match self.ecx_handle {
+            Ok(f) => f,
+            Err(e) => {
+                return (
+                    0,
+                    vec![format!("open ECX file {}: {}", self.ecx_path, e)],
+                )
+            }
+        };
+        crate::storage::idx::check_index_file(&mut ecx_file, self.ecx_file_size, self.version)
+    }
+}
+
+/// One local shard as `EcLocalScrubPlan` sees it: the mounted descriptor, the
+/// size the scan compares against, and the identity a broken-shard report needs.
+#[derive(Debug)]
+pub struct EcLocalShard {
+    file: std::io::Result<File>,
+    /// The shard's cached size, as `scrub_local` has always compared against —
+    /// deliberately not a live `metadata()` call in `run()`.
+    file_size: i64,
+    info: crate::pb::volume_server_pb::EcShardInfo,
+}
+
+impl EcLocalShard {
+    /// Positional read through the duplicated handle. `dup` shares the kernel
+    /// offset with the mounted shard, so this must never seek.
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        let file = self
+            .file
+            .as_ref()
+            .map_err(|e| io::Error::new(e.kind(), e.to_string()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            file.read_at(buf, offset)
+        }
+        #[cfg(not(unix))]
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = file.try_clone()?;
+            f.seek(SeekFrom::Start(offset))?;
+            f.read(buf)
+        }
+    }
+}
+
+/// Self-contained input for an EC LOCAL scrub: the index snapshot, a private
+/// .ecx descriptor for the needle walk, and the mounted local shard handles.
+///
+/// Same reasoning as `EcChecksumScrubPlan` — `scrub_local` reads every local
+/// needle's bytes, so it must not run under the store read guard.
+///
+/// Not `Clone`: it owns descriptors.
+#[derive(Debug)]
+pub struct EcLocalScrubPlan {
+    volume_id: VolumeId,
+    version: Version,
+    data_shards: u32,
+    shard_size: i64,
+    large_block_size: i64,
+    small_block_size: i64,
+    index: EcIndexScrubPlan,
+    ecx_path: String,
+    ecx_walk: std::io::Result<File>,
+    /// Indexed BY SHARD ID; `None` is a shard this node does not hold.
+    shards: Vec<Option<EcLocalShard>>,
+}
+
+impl EcLocalScrubPlan {
+    /// The needle walk. Filesystem only — no store, no lock.
+    pub fn run(self) -> (u64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
+        let EcLocalScrubPlan {
+            volume_id,
+            version,
+            data_shards,
+            shard_size,
+            large_block_size,
+            small_block_size,
+            index,
+            ecx_path,
+            ecx_walk,
+            shards,
+        } = self;
+
+        // Local scan also verifies the index.
+        let (_, mut errs) = index.run();
+
+        let mut broken_shards: HashSet<ShardId> = HashSet::new();
+        let mut count: u64 = 0;
+
+        let mut ecx_file = match ecx_walk {
+            Ok(f) => f,
+            Err(e) => {
+                errs.push(format!("open ECX file {}: {}", ecx_path, e));
+                return (count, Vec::new(), errs);
+            }
+        };
+
+        // Reused across every needle/chunk to avoid a per-chunk allocation.
+        let mut chunk_buf: Vec<u8> = Vec::new();
+        let walk = crate::storage::idx::walk_index_file(&mut ecx_file, 0, |id, offset, size| {
+            count += 1;
+            if size.is_tombstone() {
+                return Ok(());
+            }
+
+            // Go recomputes this at the size check below; hoisted because Rust
+            // also sizes the reassembly buffer from it. Any negative size other
+            // than the -1 tombstone skipped above drives it negative.
+            let want = get_actual_size(size, version);
+
+            let locations = ec_locate::locate_data(
+                offset.to_actual_offset(),
+                Size(want as i32),
+                shard_size,
+                data_shards,
+                large_block_size,
+                small_block_size,
+            );
+            // A needle is verifiable locally only if every shard it spans is local;
+            // when any is remote, skip the reassembly buffer entirely.
+            let has_remote_chunks = locations.iter().any(|iv| {
+                let (sid, _) =
+                    iv.to_shard_id_and_offset(data_shards, large_block_size, small_block_size);
+                shards.get(sid as usize).and_then(|s| s.as_ref()).is_none()
+            });
+            let mut read: i64 = 0;
+            // `want <= 0` means the row is malformed. Go pays nothing for it:
+            // it appends to a nil slice and has no capacity hint here. Rust's
+            // per-needle buffer does, and `Vec::with_capacity(negative as usize)`
+            // aborts the process -- inside spawn_blocking that surfaces as a
+            // JoinError and takes the whole node-wide scrub RPC with it. Fall
+            // through with an empty buffer instead: locate_data already returns
+            // no intervals for a non-positive size, so read stays 0 and the
+            // `read != want` check below reports the row, exactly as Go does.
+            let mut data: Vec<u8> = if has_remote_chunks || want <= 0 {
+                Vec::new()
+            } else {
+                Vec::with_capacity(want as usize)
+            };
+            let mut local_shard_ids: Vec<ShardId> = Vec::new();
+
+            for (i, iv) in locations.iter().enumerate() {
+                let (sid, soffset) =
+                    iv.to_shard_id_and_offset(data_shards, large_block_size, small_block_size);
+                let ssize = iv.size;
+                let shard = match shards.get(sid as usize).and_then(|s| s.as_ref()) {
+                    Some(s) => s,
+                    None => {
+                        // Shard is not local; we can't verify it without decoding.
+                        read += ssize;
+                        continue;
+                    }
+                };
+                local_shard_ids.push(sid);
+
+                if soffset + ssize > shard.file_size {
+                    broken_shards.insert(sid);
+                    errs.push(format!(
+                        "local shard {} for needle {} is too short ({}), cannot read chunk {}/{}",
+                        sid,
+                        id.0,
+                        shard.file_size,
+                        i + 1,
+                        locations.len()
+                    ));
+                    continue;
+                }
+
+                chunk_buf.resize(ssize as usize, 0);
+                match shard.read_at(&mut chunk_buf, soffset as u64) {
+                    Err(e) => {
+                        broken_shards.insert(sid);
+                        errs.push(format!(
+                            "failed to read chunk {}/{} for needle {} from local shard {} at offset {}: {}",
+                            i + 1,
+                            locations.len(),
+                            id.0,
+                            sid,
+                            soffset,
+                            e
+                        ));
+                        continue;
+                    }
+                    Ok(got) if got as i64 != ssize => {
+                        broken_shards.insert(sid);
+                        errs.push(format!(
+                            "expected {} bytes for chunk {}/{} for needle {} from local shard {}, got {}",
+                            ssize,
+                            i + 1,
+                            locations.len(),
+                            id.0,
+                            sid,
+                            got
+                        ));
+                        continue;
+                    }
+                    Ok(_) => {}
+                }
+
+                if !has_remote_chunks {
+                    data.extend_from_slice(&chunk_buf);
+                }
+                read += ssize;
+            }
+
+            local_shard_ids.sort_unstable();
+
+            if read != want {
+                // Like Go, returning from the walk callback aborts the scan.
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "expected {} bytes for needle {} on volume {}, got {}",
+                        want, id.0, volume_id.0, read
+                    ),
+                ));
+            }
+
+            // Only a fully-local needle can be reassembled and CRC-checked.
+            if !has_remote_chunks {
+                let mut n = Needle::default();
+                if let Err(e) = n.read_bytes(&data, 0, size, version) {
+                    // A delete-state disagreement between the .ecx index and the reassembled
+                    // on-disk header (live index vs zero header size) is not corruption.
+                    let delete_state_disagrees = matches!(
+                        &e,
+                        NeedleError::SizeMismatch { found, .. } if size.is_deleted() != (found.0 == 0)
+                    );
+                    if !delete_state_disagrees {
+                        errs.push(format!(
+                            "needle {} on volume {}, shards {:?}: {}",
+                            id.0, volume_id.0, local_shard_ids, e
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        });
+        if let Err(e) = walk {
+            // Go appends the walk/callback error verbatim.
+            errs.push(e.to_string());
+        }
+
+        let mut broken: Vec<crate::pb::volume_server_pb::EcShardInfo> = broken_shards
+            .iter()
+            .filter_map(|sid| shards.get(*sid as usize).and_then(|s| s.as_ref()))
+            .map(|s| s.info.clone())
+            .collect();
+        broken.sort_by(|a, b| a.shard_id.cmp(&b.shard_id));
+
+        (count, broken, errs)
     }
 }

@@ -106,13 +106,9 @@ enableUpsert = true
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [postgres] # or cockroachdb, YugabyteDB
-# CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT,
-#   name        VARCHAR(65535),
-#   directory   VARCHAR(65535),
-#   meta        bytea,
-#   PRIMARY KEY (dirhash, name)
-# );
+# createTable = true          # auto-create filemeta with the default schema
+# createTable = false         # skip table creation (default; for restricted DB roles)
+# createTable = """CREATE TABLE IF NOT EXISTS "%s" (...)"""  # custom template
 enabled = false
 hostname = "localhost"
 port = 5432

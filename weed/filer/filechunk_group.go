@@ -28,7 +28,7 @@ type ChunkGroup struct {
 // - Read-ahead prefetch parallelism
 // - Number of concurrent section reads for large files
 // If concurrentReaders <= 0, defaults to 16.
-func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int, cacheInvalidator CacheInvalidator) (*ChunkGroup, error) {
+func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int, cacheInvalidator CacheInvalidator, budgets ...*ReaderCacheBudget) (*ChunkGroup, error) {
 	if concurrentReaders <= 0 {
 		concurrentReaders = 16
 	}
@@ -43,7 +43,7 @@ func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_
 	group := &ChunkGroup{
 		lookupFn:          lookupFn,
 		sections:          make(map[SectionIndex]*FileChunkSection),
-		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn, cacheInvalidator),
+		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn, cacheInvalidator, budgets...),
 		concurrentReaders: concurrentReaders,
 		cacheInvalidator:  cacheInvalidator,
 	}
@@ -262,7 +262,6 @@ const (
 	// SEEK_HOLE uint32 = 4 // seek to next hole after the offset
 )
 
-// FIXME: needa tests
 func (group *ChunkGroup) SearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
 	group.sectionsLock.RLock()
 	defer group.sectionsLock.RUnlock()
@@ -273,32 +272,42 @@ func (group *ChunkGroup) SearchChunks(ctx context.Context, offset, fileSize int6
 func (group *ChunkGroup) doSearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
 
 	sectionIndex, maxSectionIndex := SectionIndex(offset/SectionSize), SectionIndex(fileSize/SectionSize)
-	if whence == SEEK_DATA {
-		for si := sectionIndex; si < maxSectionIndex+1; si++ {
-			section, foundSection := group.sections[si]
+	for si := sectionIndex; si <= maxSectionIndex; si++ {
+		sectionStart, sectionStop := sectionBounds(si, fileSize)
+		sectionStart = max(offset, sectionStart)
+		if sectionStart >= sectionStop {
+			continue
+		}
+
+		section, foundSection := group.sections[si]
+		if whence == SEEK_DATA {
 			if !foundSection {
 				continue
 			}
-			sectionStart := section.DataStartOffset(ctx, group, offset, fileSize)
-			if sectionStart == -1 {
-				continue
+			dataStart := section.DataStartOffset(ctx, group, sectionStart, fileSize)
+			if dataStart >= sectionStart && dataStart < sectionStop {
+				return true, dataStart
 			}
+			continue
+		}
+
+		// whence == SEEK_HOLE
+		if !foundSection {
 			return true, sectionStart
 		}
-		return false, 0
-	} else {
-		// whence == SEEK_HOLE
-		for si := sectionIndex; si < maxSectionIndex; si++ {
-			section, foundSection := group.sections[si]
-			if !foundSection {
-				return true, offset
-			}
-			holeStart := section.NextStopOffset(ctx, group, offset, fileSize)
-			if holeStart%SectionSize == 0 {
-				continue
-			}
+		holeStart := section.NextStopOffset(ctx, group, sectionStart, fileSize)
+		if holeStart < sectionStop {
 			return true, holeStart
 		}
-		return true, fileSize
 	}
+
+	if whence == SEEK_DATA {
+		return false, 0
+	}
+	return true, fileSize
+}
+
+func (group *ChunkGroup) Close() error {
+	group.readerCache.destroy()
+	return nil
 }
