@@ -2671,6 +2671,14 @@ mod tests {
         assert!(merge_ec_runtimes(&[]).is_none());
     }
 
+    /// The vanished-volume case: callers' `let ... else` guards depend on this
+    /// being the ONLY None.
+    #[test]
+    fn test_for_volumes_is_none_only_for_an_empty_slice() {
+        assert!(EcChecksumScrubPlan::for_volumes(&[]).is_none());
+        assert!(EcLocalScrubPlan::for_volumes(&[]).is_none());
+    }
+
     /// The whole point: corruption on a shard that only a sibling runtime holds
     /// must be reported. Before this change the scrub saw disk 0 alone and
     /// returned clean.
@@ -2724,8 +2732,13 @@ mod tests {
         runtimes[1].encode_ts_ns = 200; // anchor
         let refs: Vec<&EcVolume> = runtimes.iter().collect();
 
-        // With protection ON, the skip surfaces as an error line.
-        let (_, _, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        // With protection ON, the skip surfaces as an error line, and the
+        // surviving (anchor) runtime is still actually scanned.
+        let (scanned, _, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            scanned > 0,
+            "excluding one runtime must not stop the rest from being scanned"
+        );
         assert!(
             errs.iter().any(|e| e.contains("not verified")),
             "excluded runtime must be reported, got {:?}",
@@ -2746,19 +2759,6 @@ mod tests {
         );
     }
 
-    /// The single-runtime wrapper must be indistinguishable from the old code.
-    #[test]
-    fn test_checksum_scrub_plan_single_runtime_is_unchanged() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]]);
-
-        assert_eq!(
-            runtimes[0].checksum_scrub_plan().run(),
-            EcChecksumScrubPlan::for_volumes(&[&runtimes[0]]).unwrap().run()
-        );
-    }
-
     /// `for_volumes` must reach every runtime's shards, not just the first's.
     /// A needle walk alone can't prove that with this fixture: ~500 bytes of
     /// data under a legacy 1GiB large block puts every needle interval on
@@ -2770,11 +2770,7 @@ mod tests {
     fn test_scrub_local_for_volumes_merges_slots_across_runtimes() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let runtimes = split_runtimes(
-            dir,
-            VolumeId(1),
-            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9, 10, 11, 12, 13]],
-        );
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[7, 8, 9]]);
         let refs: Vec<&EcVolume> = runtimes.iter().collect();
 
         let (count, broken, errs) = EcLocalScrubPlan::for_volumes(&refs).unwrap().run();
@@ -2786,7 +2782,10 @@ mod tests {
         // plan rather than through a needle walk. With ~500 bytes of fixture
         // data and a legacy 1GiB large block every needle interval lands in
         // shard 0, so no needle walk can ever reach a sibling runtime's
-        // shards -- but the slot vector can.
+        // shards -- but the slot vector can. Neither runtime holds every
+        // shard here, so the gap at shard 3 makes compaction load-bearing:
+        // a compacting implementation could still satisfy a "populated slots
+        // are reachable" check while silently reindexing the vector.
         let merged_plan = EcLocalScrubPlan::for_volumes(&refs).unwrap();
         assert_eq!(
             merged_plan.shards.len(),
@@ -2795,10 +2794,13 @@ mod tests {
         );
         assert!(merged_plan.shards[0].is_some(), "disk 0's shard 0 must be reachable");
         assert!(
+            merged_plan.shards[3].is_none(),
+            "a shard no runtime holds must stay an empty slot -- compaction would fill it"
+        );
+        assert!(
             merged_plan.shards[7].is_some(),
             "disk 1's shard 7 must be reachable -- the bug being fixed"
         );
-        assert!(merged_plan.shards[13].is_some(), "disk 1's shard 13 must be reachable");
 
         // A single-runtime plan still sees only its own disk, which is exactly
         // what made aggregation necessary.
@@ -2860,19 +2862,6 @@ mod tests {
             "excluded runtime must be reported, got {:?}",
             errs
         );
-    }
-
-    /// The single-runtime wrapper must be indistinguishable from the old code.
-    #[test]
-    fn test_scrub_local_plan_single_runtime_is_unchanged() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]]);
-
-        let a = runtimes[0].scrub_local_plan().run();
-        let b = EcLocalScrubPlan::for_volumes(&[&runtimes[0]]).unwrap().run();
-        assert_eq!(a.0, b.0);
-        assert_eq!(a.2, b.2);
     }
 }
 
@@ -3351,9 +3340,11 @@ pub struct EcChecksumScrubPlan {
     pub status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
     pub parity_shards: u32,
     /// One entry per LOCAL shard: its id and a duplicate of the mounted
-    /// handle (or the error to report). Private so the plan can only be built
-    /// by `EcVolume::checksum_scrub_plan`, which is what makes "captured under
-    /// the guard" an invariant rather than a convention.
+    /// handle (or the error to report). Private so a plan can only be built
+    /// (via `checksum_scrub_plan()` or `for_volumes()`) from `&EcVolume`
+    /// references, which cannot be obtained without the store guard — which
+    /// is what makes "captured under the guard" an invariant rather than a
+    /// convention.
     ///
     /// `dup` shares the kernel file offset, so every read here is positional.
     shards: Vec<(u32, std::io::Result<File>)>,
@@ -3614,7 +3605,7 @@ pub struct EcLocalScrubPlan {
     index: EcIndexScrubPlan,
     ecx_path: String,
     ecx_walk: std::io::Result<File>,
-    /// Indexed BY SHARD ID; `None` is a shard this node does not hold.
+    /// Indexed BY SHARD ID; `None` is a shard no merged runtime holds.
     shards: Vec<Option<EcLocalShard>>,
     /// Runtimes the identity fence excluded, one line each. LOCAL has no status
     /// gate, so `run()` always reports these.
