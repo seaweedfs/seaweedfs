@@ -3758,14 +3758,35 @@ impl EcChecksumScrubPlan {
         // steady state for roughly half of all mirrored split-disk layouts.
         //
         // Take the first MERGED runtime that actually has protection instead:
-        // `On` if any has it, else `Invalid`, else the anchor's `Off`. That is
-        // safe because:
-        //   - every runtime that mounted `On` already passed the
-        //     `geometry_matches` gate in `load_bitrot_for_generation`, so its
-        //     manifest agrees with the volume's layout; and
-        //   - all merged runtimes share one `encode_ts_ns` by construction of
-        //     the identity fence, so a sidecar from any of them describes the
-        //     same encode run.
+        // `On` if any has it, else `Invalid`, else the anchor's `Off`.
+        //
+        // What makes that safe is a MONOTONICITY property, checkable right
+        // here. `anchor` is itself an element of `merged`, so the
+        // `.unwrap_or(anchor)` fallback is reached only when no merged runtime
+        // is `On` AND none is `Invalid` -- in which case the anchor is
+        // necessarily `Off` too. The status this selection can produce
+        // therefore only ever moves `Off -> On`, `Off -> Invalid`, or
+        // `Invalid -> On`; never `On -> Off`, never `Invalid -> Off`. So this
+        // cannot stop a volume that was being scanned from being scanned, and
+        // cannot turn a reported integrity error into silence. Every change it
+        // makes is toward MORE verification.
+        //
+        // Be clear about what that does NOT establish. It is not a claim that
+        // the borrowed manifest matches the anchor's layout:
+        //   - `geometry_matches` (ec_bitrot.rs) compares a sidecar against the
+        //     MOUNTING runtime's own data/parity/block size, not the anchor's,
+        //     and returns true vacuously when `ec_shard_config` is `None`. It
+        //     establishes agreement only when all merged runtimes share one
+        //     geometry, which the fence does not guarantee -- see
+        //     `test_checksum_scrub_truncates_slots_to_the_anchors_geometry`,
+        //     which constructs exactly that disagreement.
+        //   - a `.ecsum` records no encode identity at all (see the provenance
+        //     note below), so merged runtimes agreeing on `encode_ts_ns` does
+        //     not transfer to the sidecar either.
+        // Closing that gap means fencing on geometry rather than on
+        // `encode_ts_ns` alone; that is a tracked follow-up, and until it lands
+        // the truncation below is what keeps the two consumers agreeing about
+        // which slots the anchor's manifest is even supposed to describe.
         let protection_source = merged
             .merged
             .iter()
@@ -4131,12 +4152,21 @@ impl EcLocalScrubPlan {
             // same way (`if size > shard_size { shard_size = size }`), so this
             // is the in-tree convention rather than a preference. Reached only
             // on the legacy `dat_file_size == 0` path.
+            //
+            // `.take(..)` honors the `slots` contract: the volume's shard-id
+            // range is the ANCHOR's geometry, and a same-generation runtime with
+            // a disagreeing `.vif` can populate slots beyond it. Scanning those
+            // would let an OUT-OF-GEOMETRY shard -- one nothing in this volume's
+            // layout describes -- set the offset math for every shard that IS in
+            // it, which is a narrower path to exactly the node-wide mis-sizing
+            // this max exists to close.
             shard_size: if anchor.dat_file_size > 0 {
                 anchor.dat_file_size / anchor.data_shards as i64
             } else {
                 merged
                     .slots
                     .iter()
+                    .take((anchor.data_shards + anchor.parity_shards) as usize)
                     .flatten()
                     .map(|(_, s)| s.file_size())
                     .max()
