@@ -131,7 +131,7 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 		return resp, err
 	}
 
-	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId))
+	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
 
 	if err != nil {
 		glog.Errorf("volume mount %v: %v", req, err)
@@ -253,7 +253,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		glog.Errorf("volume configure %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure %v: %v", req, err)
 		// Try to re-mount to restore the volume state
-		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); mountErr != nil {
+		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); mountErr != nil {
 			glog.Errorf("volume configure failed to restore mount %v: %v", req, mountErr)
 			resp.Error += fmt.Sprintf(". Also failed to restore mount: %v", mountErr)
 		}
@@ -261,7 +261,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 	}
 
 	// mount
-	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); err != nil {
+	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); err != nil {
 		glog.Errorf("volume configure mount %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure mount %v: %v", req, err)
 		return resp, nil

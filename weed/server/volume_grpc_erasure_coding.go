@@ -1200,7 +1200,7 @@ func (vs *VolumeServer) adoptStagedVolume(req *volume_server_pb.VolumeEcShardsTo
 	}
 	os.Remove(noteFile)
 
-	if err := vs.store.MountVolume(vid); err != nil {
+	if err := vs.store.MountVolume(vid, &req.Collection); err != nil {
 		return nil, fmt.Errorf("mount staged volume %d: %w", req.VolumeId, err)
 	}
 	glog.V(0).Infof("VolumeEcShardsToVolume: adopted decoded volume %d from staging (%s)", req.VolumeId, base)

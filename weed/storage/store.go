@@ -910,9 +910,9 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	return persistErr
 }
 
-func (s *Store) MountVolume(i needle.VolumeId) error {
+func (s *Store) MountVolume(i needle.VolumeId, collection *string) error {
 	for diskId, location := range s.Locations {
-		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind); found == true {
+		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind, collection); found == true {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting

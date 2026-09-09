@@ -144,7 +144,7 @@ func TestMountVolumeAnnouncesReadOnlyState(t *testing.T) {
 			require.NoError(t, store.MarkVolumeReadonly(vid, tc.canDelete, true))
 			require.NoError(t, store.UnmountVolume(vid))
 			<-store.DeletedVolumesChan
-			require.NoError(t, store.MountVolume(vid))
+			require.NoError(t, store.MountVolume(vid, nil))
 
 			message := <-store.NewVolumesChan
 			require.True(t, message.ReadOnly)

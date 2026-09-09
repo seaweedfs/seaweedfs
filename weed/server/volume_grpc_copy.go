@@ -224,7 +224,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	}
 
 	// mount the volume
-	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId))
+	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection)
 	if err != nil {
 		return fmt.Errorf("failed to mount volume %d: %v", req.VolumeId, err)
 	}
