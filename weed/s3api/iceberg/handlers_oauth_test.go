@@ -158,9 +158,9 @@ func TestBearerTokenNone(t *testing.T) {
 	}
 }
 
-// TestOauthExpirySecondsEnvOverride pins the BUG-0001 mitigation knob: the
-// token TTL must be configurable so clients that cannot refresh on 401 can
-// be given longer-lived tokens instead of dying every hour.
+// TestOauthExpirySecondsEnvOverride pins the TTL knob: the token TTL must
+// be configurable so clients that cannot refresh on 401 can be given
+// longer-lived tokens instead of dying every hour.
 func TestOauthExpirySecondsEnvOverride(t *testing.T) {
 	if got := oauthExpirySeconds(); got != defaultOauthTokenExpiry {
 		t.Fatalf("default TTL = %d, want %d", got, defaultOauthTokenExpiry)

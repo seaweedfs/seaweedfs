@@ -50,17 +50,16 @@ const accessTokenTokenType = "urn:ietf:params:oauth:token-type:access_token"
 
 // grant types accepted by POST /v1/oauth/tokens. Iceberg Java 1.10.x
 // refreshes tokens via token-exchange (exchangeEnabled defaults true), so a
-// server that only accepts client_credentials leaves those clients unable to
-// refresh — see BUG-0001.
+// server that only accepts client_credentials leaves those clients unable
+// to refresh.
 const (
 	grantTypeClientCredentials = "client_credentials"
 	grantTypeTokenExchange     = "urn:ietf:params:oauth:grant-type:token-exchange"
 )
 
-// oauthExpirySeconds returns the OAuth token TTL. Deployments whose clients
-// cannot refresh tokens on 401 (Iceberg Java 1.10.x client_credentials does
-// not re-fetch — see BUG-0001) can raise this to survive client restart
-// cycles instead of dying every hour.
+// oauthExpirySeconds returns the OAuth token TTL. Deployments whose
+// clients cannot refresh tokens on 401 can raise this to survive client
+// restart cycles instead of dying every hour.
 func oauthExpirySeconds() int {
 	if v := os.Getenv("ICEBERG_OAUTH_TOKEN_EXPIRY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

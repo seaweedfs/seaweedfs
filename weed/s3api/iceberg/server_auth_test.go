@@ -55,9 +55,9 @@ func newAuthTestServer() (*Server, *mockS3Authenticator) {
 	return s, auth
 }
 
-// TestAuthExpiredBearerReturns401 is the BUG-0001 regression: an expired
-// Bearer token must get 401 (the refresh signal for Iceberg clients), never
-// fall through to the S3 authenticator and surface as 501 NotImplemented.
+// TestAuthExpiredBearerReturns401: an expired Bearer token must get 401
+// (the refresh signal for Iceberg clients), never fall through to the S3
+// authenticator and surface as 501 NotImplemented.
 func TestAuthExpiredBearerReturns401(t *testing.T) {
 	s, auth := newAuthTestServer()
 	now := time.Now()
@@ -75,7 +75,7 @@ func TestAuthExpiredBearerReturns401(t *testing.T) {
 	handler(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expired Bearer: status = %d, want 401 (BUG-0001: was falling through to 501)", rec.Code)
+		t.Fatalf("expired Bearer: status = %d, want 401 (previously fell through to 501)", rec.Code)
 	}
 	if auth.called {
 		t.Fatalf("expired Bearer must not fall through to the S3 authenticator")
