@@ -4985,10 +4985,15 @@ impl VolumeServer for VolumeGrpcService {
             req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
         } else {
             let store = self.state.store.read().unwrap();
+            // A vid mounted on N disks appears N times here. Left as-is, each
+            // duplicate rescans the same runtime and inflates total_volumes,
+            // while the sibling disks' shards are still never reached.
+            let mut seen = std::collections::HashSet::new();
             store
                 .locations
                 .iter()
                 .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
+                .filter(|vid| seen.insert(*vid))
                 .collect()
         };
 
@@ -7392,6 +7397,138 @@ mod tests {
         assert!(resp.broken_shard_infos.iter().any(|s| s.shard_id == 0));
         assert!(resp.details.is_empty(), "{:?}", resp.details);
         assert_eq!(resp.total_files, 1);
+    }
+
+    /// Two locations, one vid: the split-disk / cross-disk-reconcile layout
+    /// `build_split_disk_store` exercises in store_ec_reconcile.rs. Neither
+    /// disk holds a `.dat`, so each disk's orphan shard survives
+    /// `check_orphaned_shards` and `Store::add_location`'s automatic
+    /// `reconcile_ec_shards_across_disks()` mounts it against its own disk,
+    /// pointing at the sibling's `.ecx` -- the same layout a real
+    /// seaweedfs/seaweedfs#9212 report produces.
+    fn make_local_service_with_split_disk_ec_volume(vid_raw: u32) -> (VolumeGrpcService, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&dir0).unwrap();
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        // dir0: shard 0, no .ecx.
+        std::fs::write(dir0.join(format!("{}.ec00", vid_raw)), b"shard data nonempty").unwrap();
+        // dir1: shard 1 plus the index files.
+        std::fs::write(dir1.join(format!("{}.ec01", vid_raw)), b"shard data nonempty").unwrap();
+        std::fs::write(dir1.join(format!("{}.ecx", vid_raw)), vec![0u8; 20]).unwrap();
+        std::fs::write(dir1.join(format!("{}.ecj", vid_raw)), b"").unwrap();
+        let vif = crate::storage::volume::VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        std::fs::write(
+            dir1.join(format!("{}.vif", vid_raw)),
+            serde_json::to_string(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        let state = Arc::new(VolumeServerState {
+            store: RwLock::new(store),
+            guard: RwLock::new(Guard::new(
+                &[],
+                SigningKey(vec![]),
+                0,
+                SigningKey(vec![]),
+                0,
+            )),
+            is_stopping: RwLock::new(false),
+            maintenance: std::sync::atomic::AtomicBool::new(false),
+            state_version: std::sync::atomic::AtomicU32::new(0),
+            concurrent_upload_limit: 0,
+            concurrent_download_limit: 0,
+            inflight_upload_data_timeout: std::time::Duration::from_secs(60),
+            inflight_download_data_timeout: std::time::Duration::from_secs(60),
+            inflight_upload_bytes: std::sync::atomic::AtomicI64::new(0),
+            inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
+            upload_notify: tokio::sync::Notify::new(),
+            download_notify: tokio::sync::Notify::new(),
+            data_center: String::new(),
+            rack: String::new(),
+            file_size_limit_bytes: 0,
+            maintenance_byte_per_second: 0,
+            is_heartbeating: std::sync::atomic::AtomicBool::new(true),
+            has_master: false,
+            pre_stop_seconds: 0,
+            volume_state_notify: tokio::sync::Notify::new(),
+            write_queue: std::sync::OnceLock::new(),
+            s3_tier_registry: std::sync::RwLock::new(
+                crate::remote_storage::s3_tier::S3TierRegistry::new(),
+            ),
+            read_mode: crate::config::ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
+            master_url: String::new(),
+            master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
+            outgoing_grpc_tls: None,
+            metrics_runtime: std::sync::RwLock::new(
+                crate::server::volume_server::RuntimeMetricsConfig::default(),
+            ),
+            metrics_notify: tokio::sync::Notify::new(),
+            fix_jpg_orientation: false,
+            has_slow_read: false,
+            read_buffer_size_bytes: 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
+            state_file_path: String::new(),
+        });
+
+        (VolumeGrpcService { state }, tmp)
+    }
+
+    /// The dedupe lives on the implicit (empty `volume_ids`) path of
+    /// `scrub_ec_volume` itself -- `scrub_ec_volumes` is handed an
+    /// already-deduped list by every other caller in this test module, so it
+    /// cannot exercise this regression. Before the fix, flat-mapping every
+    /// location's `ec_volumes()` visited this split-disk vid twice and
+    /// `total_volumes` counted it twice.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_node_wide_dedupes_a_split_disk_volume() {
+        let (service, _tmp) = make_local_service_with_split_disk_ec_volume(7040);
+
+        let resp = service
+            .scrub_ec_volume(Request::new(volume_server_pb::ScrubEcVolumeRequest {
+                mode: 1,
+                volume_ids: vec![],
+                force_deleted_needles_check: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(
+            resp.total_volumes, 1,
+            "a vid split across two disks must be scrubbed once, not once per disk"
+        );
     }
 
     #[tokio::test]
