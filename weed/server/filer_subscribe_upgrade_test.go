@@ -1,13 +1,10 @@
 package weed_server
 
 // Regression tests for the aggregated-subscribe entrypoint's peer-discovery
-// window (#11247). SubscribeMetadata delegates to the local loop when the
-// aggregator knows no remote peers yet. Peer discovery is asynchronous - the
-// master announces filers after the gRPC server starts accepting streams - so
-// a subscriber that connects inside that window used to be pinned to a
-// filer-local stream for its whole life, silently missing every other
-// filer's writes. These tests pin the upgrade: the local stream ends when a
-// remote peer appears, so the client reconnects into the aggregated stream.
+// window. SubscribeMetadata delegates to the local loop when the aggregator
+// knows no remote peers yet; these tests pin the upgrade: the local stream
+// ends when a remote peer appears, so the client reconnects into the
+// aggregated stream.
 
 import (
 	"testing"
@@ -28,10 +25,8 @@ func (h *subscribeHarness) startAggregatorWithoutPeers() *filer.MetaAggregator {
 }
 
 // TestSubscribeMetadataLocalStreamEndsWhenRemotePeerAppears pins the upgrade
-// path: a stream that started local-only because no remote peer was known yet
-// must not stay local forever. When the first remote peer appears, the stream
-// ends so the client reconnects (from its persisted offset) into the
-// aggregated stream that carries the whole cluster's events.
+// path: a stream that started local-only must end when the first remote peer
+// appears, so the client reconnects into the aggregated stream.
 func TestSubscribeMetadataLocalStreamEndsWhenRemotePeerAppears(t *testing.T) {
 	h := newSubscribeHarness(t)
 
@@ -43,19 +38,14 @@ func TestSubscribeMetadataLocalStreamEndsWhenRemotePeerAppears(t *testing.T) {
 	localTs := time.Now().UnixNano()
 	h.append(localTs)
 
-	// The subscriber connects inside the discovery window: SubscribeMetadata
-	// takes the local path and delivers the local event.
+	// The subscriber connects inside the discovery window.
 	r := h.subscribeAggregated(0)
 	waitForEvents(t, r, []int64{localTs}, 3*time.Second)
 
-	// The master announces a second filer, exactly as OnPeerUpdate does in
-	// production. TrackPeerForTesting registers the peer without its
-	// subscription goroutine, which keeps the test deterministic.
+	// The master announces a second filer, as OnPeerUpdate does in production.
 	ma.TrackPeerForTesting(testPeerAddress)
 
-	// The local stream must end so the client reconnects into the aggregated
-	// path. Before the fix it never ended and every other filer's writes
-	// were silently invisible to this subscriber.
+	// The local stream must end so the client reconnects to the aggregated path.
 	select {
 	case err := <-r.done:
 		if err == nil {
@@ -66,10 +56,9 @@ func TestSubscribeMetadataLocalStreamEndsWhenRemotePeerAppears(t *testing.T) {
 	}
 }
 
-// TestSubscribeMetadataAggregatedPathAfterPeerArrival pins the other half: the
-// reconnection lands on the aggregated stream, which carries events appended
-// to the aggregated buffer (every peer's writes reach it through the peer
-// subscriptions) after the local events already delivered.
+// TestSubscribeMetadataAggregatedPathAfterPeerArrival pins the other half:
+// after the upgrade, a re-subscribe from the last delivered offset takes the
+// aggregated path and receives the peer's events.
 func TestSubscribeMetadataAggregatedPathAfterPeerArrival(t *testing.T) {
 	h := newSubscribeHarness(t)
 
@@ -90,10 +79,8 @@ func TestSubscribeMetadataAggregatedPathAfterPeerArrival(t *testing.T) {
 		t.Fatal("local-only stream stayed alive after a remote peer appeared")
 	}
 
-	// The client reconnects from the last delivered offset: the aggregated
-	// path now serves the peer's events. The peers report delivery through
-	// the peer event - the aggregated read is held at the low watermark
-	// until then, which is the completeness contract the hold enforces.
+	// The client reconnects from the last delivered offset; the aggregated
+	// path now serves the peer's events.
 	peerTs := time.Now().UnixNano()
 	h.appendAggregated(peerTs)
 	reportPeers(ma, peerTs)
@@ -102,9 +89,7 @@ func TestSubscribeMetadataAggregatedPathAfterPeerArrival(t *testing.T) {
 }
 
 // TestSubscribeMetadataLocalStreamPersistsWithoutPeers pins the boundary: on
-// a genuinely standalone filer the local stream keeps serving indefinitely;
-// ending it on every idle tick would turn a standalone deployment into a
-// reconnect loop.
+// a standalone filer the local stream keeps serving indefinitely.
 func TestSubscribeMetadataLocalStreamPersistsWithoutPeers(t *testing.T) {
 	h := newSubscribeHarness(t)
 

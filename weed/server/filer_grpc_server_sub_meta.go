@@ -41,12 +41,12 @@ var (
 	metadataGapSettledHorizon = 2 * filer.LogFlushInterval
 )
 
-// errAggregationUpgrade ends a delegated local stream whose filer learned
-// remote peers after the stream started, so the client re-subscribes and
-// lands on the aggregated stream (#11247). It is an error, not a clean end:
-// RetryUntil-driven followers (mount, s3api IAM) treat a clean end as
-// "following finished" and stop reconnecting.
-var errAggregationUpgrade = errors.New("remote filer peers discovered after subscription started; reconnect for aggregated metadata")
+// errAggregationUpgrade ends a delegated local stream when remote peers
+// appear, so the client reconnects to the aggregated stream. It is an
+// error, not a clean end: RetryUntil-driven followers treat a clean end as
+// "following finished" and stop reconnecting. It wraps StopReadingError so
+// LoopProcessLogData does not log it.
+var errAggregationUpgrade = fmt.Errorf("remote filer peers discovered after subscription started; reconnect for aggregated metadata: %w", log_buffer.StopReadingError)
 
 const (
 	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
@@ -592,14 +592,10 @@ func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, 
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
 	// A filer that has not learned remote peers yet serves the local log and
-	// upgrades when the first remote peer appears: Peer discovery is
-	// asynchronous with the gRPC server accepting streams, and a subscriber
-	// that connected inside that window would otherwise be pinned to a
-	// filer-local view for the life of the stream (#11247).
-	// RemotePeerArrivedChan takes the arrival channel under the same lock as
-	// the peer check, so a peer learned in between returns nil and the
-	// stream goes straight to the aggregated path. A nil aggregator
-	// (aggregation never started) has no upgrade to wait on.
+	// upgrades when the first one appears. RemotePeerArrivedChan takes the
+	// arrival channel under the same lock as the peer check, so a peer
+	// learned in between returns nil and the stream goes straight to the
+	// aggregated path.
 	if fs.filer.MetaAggregator != nil {
 		if arrival := fs.filer.MetaAggregator.RemotePeerArrivedChan(); arrival != nil {
 			return fs.subscribeLocalMetadata(req, stream, arrival)
@@ -771,7 +767,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				diskPassProvenTsNs = refsStopTsNs
 			}
 			if refsStopTsNs > lastReadTime.Time.UnixNano() {
-				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs)
+				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs, nil)
 			} else {
 				processedTsNs, isDone, readPersistedLogErr = 0, false, nil
 			}
@@ -945,12 +941,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 }
 
 // subscribeLocalMetadata serves the filer's own log to the stream. Peer
-// aggregation streams pass upgradeOnRemotePeer == nil. The SubscribeMetadata
-// delegation, taken while no remote peer was known yet, passes the
-// aggregator's arrival channel instead: the filer learned this cluster has
-// more filers after the stream started, and a filer-local view would silently
-// hide their writes from this subscriber for the rest of the stream, so the
-// stream ends and the client reconnects into the aggregated path (#11247).
+// aggregation streams pass upgradeOnRemotePeer == nil; the SubscribeMetadata
+// delegation passes the aggregator's arrival channel so the stream ends
+// when a remote peer appears and the client reconnects to the aggregated path.
 func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream metadataLocalStream, upgradeOnRemotePeer <-chan struct{}) error {
 
 	ctx := stream.Context()
@@ -1000,6 +993,13 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastFlushReportNs int64
 	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		if upgradeOnRemotePeer != nil {
+			select {
+			case <-upgradeOnRemotePeer:
+				return false, errAggregationUpgrade
+			default:
+			}
+		}
 		lastSeenTsNs = logEntry.TsNs
 		return baseEachLogEntryFn(logEntry)
 	}
@@ -1012,9 +1012,6 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastDiskReadTsNs int64 = -1     // Track the last read position we used for disk read
 	sentRefs := make(map[string]sentRefState)
 
-	// upgradedToAggregation records that the arrival channel fired while this
-	// delegated stream ran local, so the loop exits with the reconnect error
-	// after the read pass unwinds.
 	var upgradedToAggregation bool
 
 	localBuffer := fs.filer.LocalMetaLogBuffer
@@ -1034,9 +1031,6 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	}
 
 	for {
-		// The aggregator learned a remote peer after this stream started:
-		// end it now so the client reconnects to the aggregated stream,
-		// before another disk pass ships more local-only events.
 		if upgradeOnRemotePeer != nil {
 			select {
 			case <-upgradeOnRemotePeer:
@@ -1060,11 +1054,14 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
 			if req.ClientSupportsMetadataChunks {
-				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, req.UntilNs, sentRefs)
+				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, req.UntilNs, sentRefs, upgradeOnRemotePeer)
 			} else {
 				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 			}
 			if readPersistedLogErr != nil {
+				if errors.Is(readPersistedLogErr, errAggregationUpgrade) {
+					return errAggregationUpgrade
+				}
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
 				return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
 			}
@@ -1130,6 +1127,9 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			return errAggregationUpgrade
 		}
 		if readInMemoryLogErr != nil {
+			if errors.Is(readInMemoryLogErr, errAggregationUpgrade) {
+				return errAggregationUpgrade
+			}
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
 				// Fell behind the ring: back to the disk pass (it re-runs when
 				// the flush or the cursor moved), and from there to the gap
@@ -1290,7 +1290,7 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 // empty-notification marker: both chunk consumers buffer refs until a non-ref
 // message, so an idle source would otherwise strand the backlog in the
 // client's pending list until the next mutation.
-func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamSender, startPos log_buffer.MessagePosition, untilNs int64, sent map[string]sentRefState) (processedTsNs int64, isDone bool, err error) {
+func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamSender, startPos log_buffer.MessagePosition, untilNs int64, sent map[string]sentRefState, upgradeOnRemotePeer <-chan struct{}) (processedTsNs int64, isDone bool, err error) {
 	collected, _, err := fs.filer.CollectLogFileRefs(ctx, startPos, untilNs)
 	if err != nil {
 		return 0, false, err
@@ -1301,6 +1301,13 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	}
 	if err := fs.sendRefsBatched(sender, refs); err != nil {
 		return 0, false, err
+	}
+	if upgradeOnRemotePeer != nil {
+		select {
+		case <-upgradeOnRemotePeer:
+			return 0, false, errAggregationUpgrade
+		default:
+		}
 	}
 
 	// Shipped content end, read from the shipped chunks alone - a fresh
