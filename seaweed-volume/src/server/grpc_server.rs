@@ -7407,32 +7407,161 @@ mod tests {
     /// pointing at the sibling's `.ecx` -- the same layout a real
     /// seaweedfs/seaweedfs#9212 report produces.
     fn make_local_service_with_split_disk_ec_volume(vid_raw: u32) -> (VolumeGrpcService, TempDir) {
+        SplitDiskEcFixture::new(vid_raw).build()
+    }
+
+    /// Knobs on the two-location layout above, so one fixture can produce the
+    /// shapes the scrub tests need. `new()` reproduces the layout exactly as
+    /// `make_local_service_with_split_disk_ec_volume` has always built it; every
+    /// field is a deliberate departure from it.
+    struct SplitDiskEcFixture {
+        vid_raw: u32,
+        /// Which shard id each disk gets. Which disk holds the shard a needle
+        /// actually spans is the whole difference between reaching one disk and
+        /// reaching both, so the LOCAL/CHECKSUM tests move shard 0 to disk 1.
+        dir0_shard_id: u8,
+        dir1_shard_id: u8,
+        /// dir0's own `.vif` encode identity. `None` writes NO `.vif` in dir0 at
+        /// all -- the original layout, where `locate_vif_path` falls through to
+        /// dir1's copy and both runtimes therefore agree. `Some(ts)` writes one,
+        /// which is what lets the two disks disagree and drives the identity
+        /// fence in `merge_ec_runtimes`.
+        dir0_encode_ts_ns: Option<i64>,
+        dir1_encode_ts_ns: i64,
+        /// `false` writes the original 20 zero bytes: a structurally invalid
+        /// index, so every scrub that walks it reports something. `true` writes
+        /// one well-formed TOMBSTONE entry instead -- a deleted needle, which the
+        /// walk skips -- so a FULL/READS scrub of this volume is CLEAN and a
+        /// test can pin a clean-to-broken transition rather than a message.
+        clean_index: bool,
+        /// Write a generation-0 `.ecsum` on both disks whose per-shard checksums
+        /// do not describe the placeholder bytes, so a CHECKSUM scrub reports
+        /// every shard it actually reads. Without it `bitrot_status` is `Off` and
+        /// `EcChecksumScrubPlan::run` returns clean before touching a handle.
+        bitrot_sidecar: bool,
+    }
+
+    impl SplitDiskEcFixture {
+        fn new(vid_raw: u32) -> Self {
+            SplitDiskEcFixture {
+                vid_raw,
+                dir0_shard_id: 0,
+                dir1_shard_id: 1,
+                dir0_encode_ts_ns: None,
+                dir1_encode_ts_ns: 0,
+                clean_index: false,
+                bitrot_sidecar: false,
+            }
+        }
+
+        fn build(self) -> (VolumeGrpcService, TempDir) {
+            make_local_service_with_split_disk_ec_volume_from(self)
+        }
+    }
+
+    fn make_local_service_with_split_disk_ec_volume_from(
+        cfg: SplitDiskEcFixture,
+    ) -> (VolumeGrpcService, TempDir) {
+        let SplitDiskEcFixture {
+            vid_raw,
+            dir0_shard_id,
+            dir1_shard_id,
+            dir0_encode_ts_ns,
+            dir1_encode_ts_ns,
+            clean_index,
+            bitrot_sidecar,
+        } = cfg;
+
         let tmp = TempDir::new().unwrap();
         let dir0 = tmp.path().join("data0");
         let dir1 = tmp.path().join("data1");
         std::fs::create_dir_all(&dir0).unwrap();
         std::fs::create_dir_all(&dir1).unwrap();
 
-        // dir0: shard 0, no .ecx.
-        std::fs::write(dir0.join(format!("{}.ec00", vid_raw)), b"shard data nonempty").unwrap();
-        // dir1: shard 1 plus the index files.
-        std::fs::write(dir1.join(format!("{}.ec01", vid_raw)), b"shard data nonempty").unwrap();
-        std::fs::write(dir1.join(format!("{}.ecx", vid_raw)), vec![0u8; 20]).unwrap();
-        std::fs::write(dir1.join(format!("{}.ecj", vid_raw)), b"").unwrap();
-        let vif = crate::storage::volume::VifVolumeInfo {
+        let ec_vif = |encode_ts_ns: i64| crate::storage::volume::VifVolumeInfo {
             version: 3,
             ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
                 data_shards: 10,
                 parity_shards: 4,
+                encode_ts_ns,
                 ..Default::default()
             }),
             ..Default::default()
         };
+
+        // dir0: one shard, no .ecx.
         std::fs::write(
-            dir1.join(format!("{}.vif", vid_raw)),
-            serde_json::to_string(&vif).unwrap(),
+            dir0.join(format!("{}.ec{:02}", vid_raw, dir0_shard_id)),
+            b"shard data nonempty",
         )
         .unwrap();
+        if let Some(ts) = dir0_encode_ts_ns {
+            std::fs::write(
+                dir0.join(format!("{}.vif", vid_raw)),
+                serde_json::to_string(&ec_vif(ts)).unwrap(),
+            )
+            .unwrap();
+        }
+        // dir1: one shard plus the index files.
+        std::fs::write(
+            dir1.join(format!("{}.ec{:02}", vid_raw, dir1_shard_id)),
+            b"shard data nonempty",
+        )
+        .unwrap();
+        let ecx = if clean_index {
+            let mut buf: Vec<u8> = Vec::new();
+            crate::storage::idx::write_index_entry(
+                &mut buf,
+                crate::storage::types::NeedleId(1),
+                crate::storage::types::Offset::from_actual_offset(0),
+                crate::storage::types::TOMBSTONE_FILE_SIZE,
+            )
+            .unwrap();
+            buf
+        } else {
+            vec![0u8; 20]
+        };
+        std::fs::write(dir1.join(format!("{}.ecx", vid_raw)), ecx).unwrap();
+        std::fs::write(dir1.join(format!("{}.ecj", vid_raw)), b"").unwrap();
+        std::fs::write(
+            dir1.join(format!("{}.vif", vid_raw)),
+            serde_json::to_string(&ec_vif(dir1_encode_ts_ns)).unwrap(),
+        )
+        .unwrap();
+
+        if bitrot_sidecar {
+            use crate::pb::volume_server_pb::{
+                ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+            };
+            use crate::storage::erasure_coding::ec_bitrot;
+            let prot = EcBitrotProtection {
+                algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+                block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+                generation: 0,
+                ec_shard_config: Some(ec_bitrot::ec_shard_config(10, 4, 0)),
+                shards: (0..14u32)
+                    .map(|shard_id| EcShardChecksums {
+                        shard_id,
+                        covered_size: 4,
+                        block_crc32c: vec![0u8; 4],
+                    })
+                    .collect(),
+                encode_uuid: vec![0u8; 16],
+            };
+            // Both disks: each runtime resolves its sidecar from its own
+            // directory at mount (`load_bitrot_for_generation` gets no sibling
+            // dirs there), and the CHECKSUM plan reads the ANCHOR's -- which
+            // disk that is depends on the shard layout under test.
+            for d in [&dir0, &dir1] {
+                let base = crate::storage::volume::volume_file_name(
+                    d.to_str().unwrap(),
+                    "",
+                    VolumeId(vid_raw),
+                );
+                ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(&base, 0), &prot)
+                    .unwrap();
+            }
+        }
 
         let mut store = Store::new(NeedleMapKind::InMemory);
         for d in [&dir0, &dir1] {
@@ -7529,6 +7658,196 @@ mod tests {
             resp.total_volumes, 1,
             "a vid split across two disks must be scrubbed once, not once per disk"
         );
+    }
+
+    /// Issue one scrub mode against a single vid on a split-disk service.
+    async fn scrub_split_disk(
+        service: &VolumeGrpcService,
+        vid_raw: u32,
+        mode: i32,
+    ) -> volume_server_pb::ScrubEcVolumeResponse {
+        service
+            .scrub_ec_volume(Request::new(volume_server_pb::ScrubEcVolumeRequest {
+                mode,
+                volume_ids: vec![vid_raw],
+                force_deleted_needles_check: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
+    /// FULL/READS resolves shard locations up front, and with no master
+    /// configured that lookup fails and short-circuits the whole scrub with an
+    /// error of its own. Seed the cache so the needle walk actually runs and the
+    /// response reflects the volume rather than the missing master.
+    fn seed_all_shard_locations(service: &VolumeGrpcService, vid_raw: u32) {
+        let store = service.state.store.read().unwrap();
+        let ecv = store.find_ec_volume(VolumeId(vid_raw)).unwrap();
+        {
+            let mut locs = ecv.shard_locations.write().unwrap();
+            for sid in 0u8..14 {
+                locs.insert(sid, vec!["127.0.0.1:255.1".to_string()]);
+            }
+        }
+        *ecv.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+    }
+
+    /// A disk the identity fence excluded is a disk this scrub did NOT read, and
+    /// FULL/READS must say so. `merge_ec_runtimes` hands the exclusions back as
+    /// `skipped`; the mode 2|5 arm folds them into `errs`, which is what both
+    /// flags the volume broken AND prints the line. Before that, a volume whose
+    /// disks disagreed on encode identity scrubbed the anchor and reported CLEAN
+    /// -- the sibling disk went unmentioned.
+    ///
+    /// Both halves are asserted here: the same layout with the disks AGREEING is
+    /// clean, so the transition is pinned, not just the message text.
+    ///
+    /// Modes 2|5 and 3 report an exclusion; mode 4 is the EXCEPTION and is not
+    /// covered here because it has nothing to cover. `EcChecksumScrubPlan::run`
+    /// returns `(0, [], [])` on `BitrotStatus::Off` BEFORE reporting `skipped`,
+    /// so on an unprotected generation a CHECKSUM scrub of a fenced volume is
+    /// clean and the excluded disk goes unmentioned. Do not read these tests as
+    /// saying the fence is reported uniformly across every scrub mode.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_full_reports_a_fenced_out_disk() {
+        // Control: identical layout, both disks on encode run 200.
+        let (agreeing, _tmp_a) = SplitDiskEcFixture {
+            dir0_encode_ts_ns: None, // no dir0 .vif => falls through to dir1's
+            dir1_encode_ts_ns: 200,
+            clean_index: true,
+            ..SplitDiskEcFixture::new(7050)
+        }
+        .build();
+        seed_all_shard_locations(&agreeing, 7050);
+        {
+            let store = agreeing.state.store.read().unwrap();
+            let gens: Vec<i64> = store
+                .find_all_ec_volumes(VolumeId(7050))
+                .iter()
+                .map(|v| v.encode_ts_ns)
+                .collect();
+            assert_eq!(gens, vec![200, 200], "control fixture must NOT be fenced");
+        }
+
+        // The fenced volume: dir0 carries its own, older encode identity.
+        let (fenced, _tmp_f) = SplitDiskEcFixture {
+            dir0_encode_ts_ns: Some(100),
+            dir1_encode_ts_ns: 200,
+            clean_index: true,
+            ..SplitDiskEcFixture::new(7051)
+        }
+        .build();
+        seed_all_shard_locations(&fenced, 7051);
+        {
+            let store = fenced.state.store.read().unwrap();
+            let gens: Vec<i64> = store
+                .find_all_ec_volumes(VolumeId(7051))
+                .iter()
+                .map(|v| v.encode_ts_ns)
+                .collect();
+            assert_eq!(
+                gens,
+                vec![100, 200],
+                "fixture must mount both disks with DISAGREEING encode identities \
+                 for this to be meaningful"
+            );
+        }
+
+        // Both FULL (2) and READS (5) share the arm, so both must report it.
+        for mode in [2, 5] {
+            let clean = scrub_split_disk(&agreeing, 7050, mode).await;
+            assert!(
+                clean.broken_volume_ids.is_empty() && clean.details.is_empty(),
+                "mode {mode}: agreeing disks must scrub clean, else the fenced \
+                 case below proves nothing: {:?} {:?}",
+                clean.broken_volume_ids,
+                clean.details
+            );
+
+            let resp = scrub_split_disk(&fenced, 7051, mode).await;
+            assert_eq!(
+                resp.broken_volume_ids,
+                vec![7051],
+                "mode {mode}: a fenced-out disk must flag the volume broken, not \
+                 pass silently: {:?}",
+                resp.details
+            );
+            assert_eq!(
+                resp.details.len(),
+                1,
+                "mode {mode}: the exclusion is the only finding: {:?}",
+                resp.details
+            );
+            assert!(
+                resp.details[0].starts_with("ecvol 7051: ")
+                    && resp.details[0].contains("belong to encode run 100")
+                    && resp.details[0].contains("they were not verified"),
+                "mode {mode}: {:?}",
+                resp.details
+            );
+        }
+    }
+
+    /// LOCAL and CHECKSUM must verify the shards on EVERY disk holding the vid,
+    /// not the ones on whichever disk `find_ec_volume` happened to return. The
+    /// layout makes that observable: disk 0 -- the disk the singular lookup
+    /// returns -- holds only shard 5, while shard 0 (the one the volume's single
+    /// needle spans, and the one the checksum sidecar is checked against) lives
+    /// on disk 1. Built from disk 0 alone, both scrubs simply never look at
+    /// shard 0.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_local_and_checksum_reach_the_sibling_disk() {
+        // LOCAL reads only the shards the volume's one needle spans, so shard 5
+        // is never touched; CHECKSUM reads every shard it holds, so both appear.
+        for (vid_raw, mode, bitrot_sidecar, want_broken) in [
+            (7052u32, 3i32, false, &[0u32][..]),
+            (7053, 4, true, &[0, 5][..]),
+        ] {
+            let (service, _tmp) = SplitDiskEcFixture {
+                dir0_shard_id: 5,
+                dir1_shard_id: 0,
+                bitrot_sidecar,
+                ..SplitDiskEcFixture::new(vid_raw)
+            }
+            .build();
+
+            {
+                let store = service.state.store.read().unwrap();
+                let first = store
+                    .find_ec_volume(VolumeId(vid_raw))
+                    .expect("the singular lookup must still resolve the vid");
+                assert!(
+                    !first.has_shard(0) && first.has_shard(5),
+                    "mode {mode}: the first-disk runtime must NOT hold shard 0, or a \
+                     first-disk-only scrub would reach it anyway and this proves nothing"
+                );
+                assert!(
+                    store
+                        .find_all_ec_volumes(VolumeId(vid_raw))
+                        .iter()
+                        .any(|v| v.has_shard(0)),
+                    "mode {mode}: fixture must mount shard 0 on the sibling disk"
+                );
+            }
+
+            let resp = scrub_split_disk(&service, vid_raw, mode).await;
+            let mut broken: Vec<u32> =
+                resp.broken_shard_infos.iter().map(|s| s.shard_id).collect();
+            broken.sort_unstable();
+            assert!(
+                broken.contains(&0),
+                "mode {mode}: shard 0 lives on the sibling disk and was never \
+                 verified: shards={broken:?} details={:?}",
+                resp.details
+            );
+            assert_eq!(
+                broken, want_broken,
+                "mode {mode}: details={:?}",
+                resp.details
+            );
+            assert_eq!(resp.broken_volume_ids, vec![vid_raw]);
+        }
     }
 
     #[tokio::test]
