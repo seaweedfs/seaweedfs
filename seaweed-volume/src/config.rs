@@ -1416,12 +1416,18 @@ mod tests {
 
     #[test]
     fn test_resolve_config_defaults_dir_to_platform_temp_dir() {
+        // resolve_config reads HOME/USERPROFILE and the WEED_* set, so it has to
+        // hold the same lock the mutation helpers take — a concurrent set_var
+        // during this read is exactly what makes those calls unsafe.
+        let _guard = process_state_lock();
         let cfg = resolve_config(Cli::parse_from(["bin"]));
         assert_eq!(cfg.folders, vec![default_volume_dir()]);
     }
 
     #[test]
     fn test_resolve_config_index_accepts_redb_and_leveldb_aliases() {
+        // As above: resolve_config reads the environment.
+        let _guard = process_state_lock();
         let pairs = [
             ("memory", NeedleMapKind::InMemory),
             ("redb", NeedleMapKind::Redb),

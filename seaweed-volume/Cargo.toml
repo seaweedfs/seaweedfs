@@ -2,6 +2,9 @@
 name = "weed-volume"
 version = "0.1.0"
 edition = "2024"
+# The edition needs 1.85; the dependency tree needs more. Verified with
+# `cargo +1.91.1 check --all-targets` (1.90 fails on the AWS SDK).
+rust-version = "1.91.1"
 description = "SeaweedFS Volume Server — Rust implementation"
 
 [lib]
