@@ -18,6 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          # Full history so the chart commit can rebase onto a moved master.
           fetch-depth: 0
 
       - name: Set up Python
@@ -45,5 +46,13 @@ jobs:
           fi
           git add note/star_history.svg
           git commit -m "docs: regenerate star history chart"
-          git pull --rebase origin "$GITHUB_REF_NAME"
-          git push
+          # Rebase and retry so a concurrent push to master doesn't lose the chart.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:"$GITHUB_REF_NAME"; then
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}); rebasing onto latest $GITHUB_REF_NAME"
+            git pull --rebase origin "$GITHUB_REF_NAME"
+          done
+          echo "::error::could not push star history chart after retries"
+          exit 1
