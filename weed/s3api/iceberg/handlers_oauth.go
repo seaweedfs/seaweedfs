@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +35,22 @@ type IcebergClaims struct {
 	jwt.RegisteredClaims
 }
 
-const oauthTokenExpiry = 3600 // 1 hour in seconds
+// defaultOauthTokenExpiry is the token TTL in seconds when
+// ICEBERG_OAUTH_TOKEN_EXPIRY is unset or invalid.
+const defaultOauthTokenExpiry = 3600
+
+// oauthExpirySeconds returns the OAuth token TTL. Deployments whose clients
+// cannot refresh tokens on 401 (Iceberg Java 1.10.x client_credentials does
+// not re-fetch — see BUG-0001) can raise this to survive client restart
+// cycles instead of dying every hour.
+func oauthExpirySeconds() int {
+	if v := os.Getenv("ICEBERG_OAUTH_TOKEN_EXPIRY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultOauthTokenExpiry
+}
 
 // handleOAuthTokens implements the OAuth2 client_credentials flow.
 // POST /v1/oauth/tokens
@@ -95,7 +112,7 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 		AccessKey:    clientID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(oauthTokenExpiry) * time.Second)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(oauthExpirySeconds()) * time.Second)),
 			Issuer:    "seaweedfs-iceberg",
 		},
 	}
@@ -112,7 +129,7 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 	resp := OAuthTokenResponse{
 		AccessToken: tokenString,
 		TokenType:   "bearer",
-		ExpiresIn:   oauthTokenExpiry,
+		ExpiresIn:   oauthExpirySeconds(),
 		Scope:       scope,
 	}
 	w.Header().Set("Cache-Control", "no-store")

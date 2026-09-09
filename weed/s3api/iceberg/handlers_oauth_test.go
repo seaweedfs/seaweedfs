@@ -68,8 +68,8 @@ func TestHandleOAuthTokens_Success(t *testing.T) {
 	if resp.AccessToken == "" {
 		t.Error("expected non-empty access_token")
 	}
-	if resp.ExpiresIn != oauthTokenExpiry {
-		t.Errorf("expected expires_in=%d, got %d", oauthTokenExpiry, resp.ExpiresIn)
+	if resp.ExpiresIn != oauthExpirySeconds() {
+		t.Errorf("expected expires_in=%d, got %d", oauthExpirySeconds(), resp.ExpiresIn)
 	}
 }
 
@@ -151,5 +151,45 @@ func TestBearerTokenNone(t *testing.T) {
 	_, _, ok := s.authenticateBearer(req)
 	if ok {
 		t.Error("expected Bearer auth to fail with no token")
+	}
+}
+
+// TestOauthExpirySecondsEnvOverride pins the BUG-0001 mitigation knob: the
+// token TTL must be configurable so clients that cannot refresh on 401 can
+// be given longer-lived tokens instead of dying every hour.
+func TestOauthExpirySecondsEnvOverride(t *testing.T) {
+	if got := oauthExpirySeconds(); got != defaultOauthTokenExpiry {
+		t.Fatalf("default TTL = %d, want %d", got, defaultOauthTokenExpiry)
+	}
+	t.Setenv("ICEBERG_OAUTH_TOKEN_EXPIRY", "86400")
+	if got := oauthExpirySeconds(); got != 86400 {
+		t.Fatalf("env TTL = %d, want 86400", got)
+	}
+	t.Setenv("ICEBERG_OAUTH_TOKEN_EXPIRY", "-5")
+	if got := oauthExpirySeconds(); got != defaultOauthTokenExpiry {
+		t.Fatalf("negative TTL must fall back to default, got %d", got)
+	}
+	t.Setenv("ICEBERG_OAUTH_TOKEN_EXPIRY", "garbage")
+	if got := oauthExpirySeconds(); got != defaultOauthTokenExpiry {
+		t.Fatalf("invalid TTL must fall back to default, got %d", got)
+	}
+
+	// a token minted under an override carries the override's expiry
+	t.Setenv("ICEBERG_OAUTH_TOKEN_EXPIRY", "7200")
+	s := newTestServerWithOAuth()
+	body := "grant_type=client_credentials&client_id=AKID123&client_secret=secret456"
+	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.handleOAuthTokens(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp OAuthTokenResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ExpiresIn != 7200 {
+		t.Fatalf("minted token expires_in = %d, want 7200", resp.ExpiresIn)
 	}
 }
