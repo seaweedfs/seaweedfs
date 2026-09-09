@@ -163,5 +163,20 @@ func TestBucketPolicyAllowControlPathUnaffected(t *testing.T) {
 // TestAuthorizeObjectKeyActionBucketAllowDoesNotOverrideIdentityDeny covers the
 // secondary object-key authorization path (CopySource, DeleteObjects body
 // keys, POST Object form keys): the same bucket-Allow short-circuit must also
-// honor an applicable explicit identity Deny. Added with the secondary-path
-// fix in a follow-up commit.
+// honor an applicable explicit identity Deny.
+func TestAuthorizeObjectKeyActionBucketAllowDoesNotOverrideIdentityDeny(t *testing.T) {
+	iam := newBucketPolicyDenyIAM(t, bpdBucketPolicyDoc(t, "secret/*", "other/*"))
+	reader := bpdReader(t, iam)
+	req := bpdSignedRequest(t, http.MethodGet, "secret/payroll.txt")
+
+	// CopySource reads the source key; the bucket policy allows it but the
+	// identity policy explicitly denies GetObject on secret/*.
+	assert.Equal(t, s3err.ErrAccessDenied,
+		iam.AuthorizeCopySource(req, reader, bpdBucket, "secret/payroll.txt", ""),
+		"AuthorizeCopySource must honor the identity explicit Deny despite a bucket-policy Allow")
+
+	// other/* has no identity statement, so the bucket Allow supplies access.
+	assert.Equal(t, s3err.ErrNone,
+		iam.AuthorizeCopySource(req, reader, bpdBucket, "other/data.txt", ""),
+		"AuthorizeCopySource must preserve the bucket Allow over an implicit identity denial")
+}

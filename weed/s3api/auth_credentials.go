@@ -2868,6 +2868,9 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 		}
 		if evaluated {
 			if allowed {
+				if iam.isActionExplicitlyDeniedByApplicablePolicies(keyReq, identity, action, bucket, objectKey) {
+					return s3err.ErrAccessDenied
+				}
 				return s3err.ErrNone
 			}
 			return s3err.ErrAccessDenied
