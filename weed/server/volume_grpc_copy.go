@@ -50,10 +50,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	//   send .dat file
 	//   confirm size and timestamp
 	var volFileInfoResp *volume_server_pb.ReadVolumeFileStatusResponse
+	var sourceVolumeStatus *volume_server_pb.VolumeStatusResponse
 	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
 	var hasRemoteDatFile bool
 	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		var err error
+		sourceVolumeStatus, err = client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
+			VolumeId: req.VolumeId,
+		})
+		if err != nil {
+			return fmt.Errorf("read volume status failed, %w", err)
+		}
+
 		volFileInfoResp, err = client.ReadVolumeFileStatus(context.Background(),
 			&volume_server_pb.ReadVolumeFileStatusRequest{
 				VolumeId: req.VolumeId,
@@ -229,6 +237,24 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		return fmt.Errorf("failed to mount volume %d: %v", req.VolumeId, err)
 	}
 
+	// A writable source may change while its files are being copied. In that
+	// case the status snapshot is not a stable reference, so only validate the
+	// record counts for a source that reported itself read-only.
+	if sourceVolumeStatus != nil && sourceVolumeStatus.IsReadOnly {
+		targetVolume := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
+		if targetVolume == nil {
+			err = fmt.Errorf("volume %d not found after mount", req.VolumeId)
+		} else {
+			err = checkCopyCounts(sourceVolumeStatus, targetVolume.FileCount(), targetVolume.DeletedCount())
+		}
+		if err != nil {
+			if unmountErr := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId)); unmountErr != nil {
+				return fmt.Errorf("%w; failed to unmount volume %d: %v", err, req.VolumeId, unmountErr)
+			}
+			return err
+		}
+	}
+
 	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
 		LastAppendAtNs: lastAppendAtNs,
 	}); err != nil {
@@ -266,11 +292,8 @@ func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeSe
 
 }
 
-/*
-*
-only check the differ of the file size
-todo: maybe should check the received count and deleted count of the volume
-*/
+// checkCopyFiles verifies the copied file sizes. Record counts are checked
+// after the target volume is mounted, when the target needle map is available.
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, hasRemoteDatFile bool, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {
@@ -296,6 +319,16 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 	if originFileInf.DatFileSize != uint64(stat.Size()) {
 		return fmt.Errorf("the dat file size [%v] is not same as origin file size [%v]",
 			stat.Size(), originFileInf.DatFileSize)
+	}
+	return nil
+}
+
+func checkCopyCounts(origin *volume_server_pb.VolumeStatusResponse, targetFileCount, targetDeletedCount uint64) error {
+	if origin.FileCount != targetFileCount {
+		return fmt.Errorf("target file count [%d] is not same as origin file count [%d]", targetFileCount, origin.FileCount)
+	}
+	if origin.FileDeletedCount != targetDeletedCount {
+		return fmt.Errorf("target deleted count [%d] is not same as origin deleted count [%d]", targetDeletedCount, origin.FileDeletedCount)
 	}
 	return nil
 }
