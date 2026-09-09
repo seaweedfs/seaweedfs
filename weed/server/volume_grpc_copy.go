@@ -64,7 +64,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			sourceVolumeStatus = nil
 		}
 
-		volFileInfoResp, err = client.ReadVolumeFileStatus(context.Background(),
+		volFileInfoResp, err = client.ReadVolumeFileStatus(stream.Context(),
 			&volume_server_pb.ReadVolumeFileStatusRequest{
 				VolumeId: req.VolumeId,
 			})
