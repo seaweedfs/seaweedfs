@@ -75,7 +75,7 @@ fn main() {
             info!("pinned glibc M_MMAP_THRESHOLD to {} bytes", bytes)
         }
         seaweed_volume::malloc_tuning::MallocTuning::DeferredToEnv => info!(
-            "{} is set; leaving glibc's mmap threshold to the environment",
+            "an allocator mmap-threshold override ({}) is set; leaving glibc's mmap threshold to the environment",
             seaweed_volume::malloc_tuning::MMAP_THRESHOLD_ENV
         ),
         seaweed_volume::malloc_tuning::MallocTuning::Failed => {
