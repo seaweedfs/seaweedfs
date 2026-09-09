@@ -706,7 +706,11 @@ impl VolumeGrpcService {
                     // under the guard stalls the node. See EcChecksumScrubPlan.
                     let Some(plan) = ({
                         let store = self.state.store.read().unwrap();
-                        store.find_ec_volume(vid).map(|ecv| ecv.scrub_local_plan())
+                        // Every disk holding this vid, not just the first: a
+                        // reconciled volume's shards are split across runtimes.
+                        crate::storage::erasure_coding::ec_volume::EcLocalScrubPlan::for_volumes(
+                            &store.find_all_ec_volumes(vid),
+                        )
                     }) else {
                         if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
                             return Err(status);
@@ -747,9 +751,12 @@ impl VolumeGrpcService {
                     // under the guard stalls the node. See EcChecksumScrubPlan.
                     let Some((plan, collection)) = ({
                         let store = self.state.store.read().unwrap();
-                        store
-                            .find_ec_volume(vid)
-                            .map(|ecv| (ecv.checksum_scrub_plan(), ecv.collection.clone()))
+                        let runtimes = store.find_all_ec_volumes(vid);
+                        let collection = runtimes.first().map(|ecv| ecv.collection.clone());
+                        crate::storage::erasure_coding::ec_volume::EcChecksumScrubPlan::for_volumes(
+                            &runtimes,
+                        )
+                        .zip(collection)
                     }) else {
                         if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
                             return Err(status);
