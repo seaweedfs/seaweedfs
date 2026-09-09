@@ -2,6 +2,7 @@
 name = "weed-lance-worker"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "SeaweedFS maintenance worker for Lance tables"
 
 [lib]
