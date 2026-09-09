@@ -201,6 +201,7 @@ def main():
                     "uri": args.catalog_url,
                     "warehouse": args.warehouse,
                     "prefix": args.prefix,
+                    "auth": {"type": "noop"},
                     "s3.anonymous": "true",  # Disable AWS request signing for unauthenticated access
                 }
             )
