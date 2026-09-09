@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  # Only one chart regeneration at a time; a newer run cancels an in-flight one
+  # so overlapping runs never conflict on note/star_history.svg during rebase.
+  group: star-history
+  cancel-in-progress: true
+
 jobs:
   render:
     name: Regenerate star history chart
@@ -48,11 +54,13 @@ jobs:
           git commit -m "docs: regenerate star history chart"
           # Rebase and retry so a concurrent push to master doesn't lose the chart.
           for attempt in 1 2 3 4 5; do
+            if [ "$attempt" -gt 1 ]; then
+              git pull --rebase origin "$GITHUB_REF_NAME"
+            fi
             if git push origin HEAD:"$GITHUB_REF_NAME"; then
               exit 0
             fi
-            echo "push rejected (attempt ${attempt}); rebasing onto latest $GITHUB_REF_NAME"
-            git pull --rebase origin "$GITHUB_REF_NAME"
+            echo "push rejected (attempt ${attempt}); will rebase and retry"
           done
           echo "::error::could not push star history chart after retries"
           exit 1
