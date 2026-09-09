@@ -2565,6 +2565,154 @@ mod tests {
             "a non-zero size mismatch is genuine corruption and must be reported"
         );
     }
+
+    /// Build one real encoded EC volume in `dir`, then hand back N runtimes over
+    /// it, each holding the shard ids it was given. Models the reconciled
+    /// split-disk mount without needing N directories.
+    fn split_runtimes(dir: &str, vid: VolumeId, subsets: &[&[u8]]) -> Vec<EcVolume> {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            vid,
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=8 {
+            let data = format!("test data for needle {} with a bit more length", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", vid, 10, 4)
+            .unwrap();
+
+        subsets
+            .iter()
+            .map(|ids| {
+                let mut ev = EcVolume::new(dir, dir, "", vid).unwrap();
+                for &id in ids.iter() {
+                    ev.add_shard(EcVolumeShard::new(dir, "", vid, id)).unwrap();
+                }
+                ev
+            })
+            .collect()
+    }
+
+    /// The union must reach every disk's shards, and first-disk-wins must
+    /// resolve a shard mounted on two disks — the same rule
+    /// `collect_ec_shard_dirs` and Go's `CollectEcShards` already use.
+    #[test]
+    fn test_merge_ec_runtimes_unions_slots_first_disk_wins() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // Disk 0: 0..=6 plus 9 (9 is also on disk 1 — a duplicate mount).
+        // Disk 1: 7..=13.
+        let runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6, 9], &[7, 8, 9, 10, 11, 12, 13]],
+        );
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).expect("non-empty input merges");
+        assert_eq!(merged.merged.len(), 2, "both runtimes share generation 0");
+        assert!(merged.skipped.is_empty(), "nothing to skip: {:?}", merged.skipped);
+
+        // Every shard 0..=13 is reachable from the merged slots.
+        for id in 0..14usize {
+            assert!(merged.slots[id].is_some(), "shard {} missing from the union", id);
+        }
+        // Shard 9 is held by both; the first disk wins.
+        let (owner, _) = merged.slots[9].unwrap();
+        assert!(std::ptr::eq(owner, refs[0]), "duplicate shard must resolve to the first disk");
+        // A shard nobody holds stays empty.
+        assert!(merged.slots.get(14).copied().flatten().is_none());
+    }
+
+    /// Leniency is keyed on the ANCHOR, never the holder: a known identity must
+    /// not accept an unstamped holder (store_ec.rs:667-673,
+    /// grpc_server.rs:3743-3748). Merging leftover legacy shards beside a
+    /// current encode is what produces false corruption reports.
+    #[test]
+    fn test_merge_ec_runtimes_excludes_incompatible_identities() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9], &[10, 11, 12, 13]],
+        );
+        runtimes[0].encode_ts_ns = 500; // stale, but stamped
+        runtimes[1].encode_ts_ns = 0; // legacy, unstamped
+        runtimes[2].encode_ts_ns = 900; // the live encode run
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+
+        // Anchor is the newest known identity; only exact matches merge.
+        assert_eq!(merged.anchor.encode_ts_ns, 900);
+        assert_eq!(merged.merged.len(), 1);
+        assert!(merged.slots[10].is_some(), "the anchor's own shards must merge");
+        assert!(merged.slots[0].is_none(), "an older known generation must not merge");
+        assert!(merged.slots[7].is_none(), "an unstamped holder must not merge");
+
+        // Exclusions are REPORTED, never silent — that is what keeps this from
+        // regressing to the silent-clean bug this whole change fixes.
+        assert_eq!(merged.skipped.len(), 2, "got {:?}", merged.skipped);
+        assert!(merged.skipped.iter().all(|s| s.contains("not verified")));
+    }
+
+    /// When no runtime carries an identity there is nothing to fence on, so
+    /// behavior stays exactly as it is today: everything merges.
+    #[test]
+    fn test_merge_ec_runtimes_is_lenient_when_no_identity_is_known() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        assert!(runtimes.iter().all(|r| r.encode_ts_ns == 0));
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert_eq!(merged.merged.len(), 2);
+        assert!(merged.skipped.is_empty());
+        assert!(merged.slots[3].is_some());
+    }
+
+    /// The anchor supplies metadata, and LOCAL's `shard_size` fallback computes
+    /// `shard_file_size() - 1` — anchoring on a shardless runtime would make
+    /// that -1. Prefer a shard-bearing runtime at the anchor generation.
+    #[test]
+    fn test_merge_ec_runtimes_anchor_prefers_a_shard_bearing_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[], &[0, 1, 2]]);
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert!(std::ptr::eq(merged.anchor, refs[1]), "anchor must hold shards");
+        assert!(merged.skipped.is_empty(), "same generation: nothing is excluded");
+    }
+
+    /// Empty input is the vanished-volume case and the ONLY None.
+    #[test]
+    fn test_merge_ec_runtimes_none_only_when_empty() {
+        assert!(merge_ec_runtimes(&[]).is_none());
+    }
 }
 
 #[cfg(test)]
@@ -2932,6 +3080,93 @@ mod uniform_layout_tests {
         .unwrap();
         assert_eq!((ds, ps, bs), (12, 4, 3 * 1024 * 1024));
     }
+}
+
+/// One volume id's per-disk runtimes resolved into a single scrubbable view.
+///
+/// Reconciliation can mount a vid as N `EcVolume` runtimes holding disjoint
+/// shard subsets, so anything that verifies "the volume" has to see the union.
+/// Every scrub mode builds from this one routine, so there is exactly one
+/// answer to "which disks count" per volume.
+pub(crate) struct MergedEcRuntimes<'a> {
+    /// Supplies all metadata: geometry, `.ecx` handles, bitrot protection.
+    pub anchor: &'a EcVolume,
+    /// The runtimes whose shards are safe to verify together.
+    pub merged: Vec<&'a EcVolume>,
+    /// Indexed BY SHARD ID. `None` is a shard no merged runtime holds.
+    pub slots: Vec<Option<(&'a EcVolume, &'a EcVolumeShard)>>,
+    /// One line per runtime excluded by the identity fence. Reported, never
+    /// dropped — a silently unscanned disk is the bug this all exists to fix.
+    pub skipped: Vec<String>,
+}
+
+/// Resolve `runtimes` (one vid's mounts, in location order) into a merged view.
+/// `None` for an empty slice, and only for an empty slice — that is the
+/// vanished-volume case.
+///
+/// The identity fence is a single equality filter against the anchor's
+/// `encode_ts_ns`, and that is deliberate. The anchor is the MAXIMUM identity,
+/// so `anchor_gen == 0` implies every runtime is 0 and nothing is excluded
+/// (legacy leniency). When the anchor's identity is known, an older stamped
+/// runtime AND an unstamped `0` runtime are both excluded, because a `0` on the
+/// HOLDER side is not evidence of compatibility — see `store_ec.rs:667-673`
+/// ("Only treat a match as verified when the identity is non-zero") and
+/// `grpc_server.rs:3743-3748` ("a known caller must not accept an unstamped
+/// holder"). Merging leftover legacy shards beside a current encode would
+/// verify them against the wrong checksums and report false corruption.
+pub(crate) fn merge_ec_runtimes<'a>(
+    runtimes: &[&'a EcVolume],
+) -> Option<MergedEcRuntimes<'a>> {
+    let anchor_gen = runtimes.iter().map(|v| v.encode_ts_ns).max()?;
+
+    let merged: Vec<&'a EcVolume> = runtimes
+        .iter()
+        .copied()
+        .filter(|v| v.encode_ts_ns == anchor_gen)
+        .collect();
+
+    // Metadata source. A shardless anchor would drive LOCAL's `shard_size`
+    // fallback (`shard_file_size() - 1`) to -1, so prefer a runtime that holds
+    // something; fall back to the first at this generation when none does, which
+    // preserves today's behavior for a shardless volume.
+    let anchor = merged
+        .iter()
+        .copied()
+        .find(|v| v.shards.iter().any(|s| s.is_some()))
+        .unwrap_or(merged[0]);
+
+    let width = merged.iter().map(|v| v.shards.len()).max().unwrap_or(0);
+    let mut slots: Vec<Option<(&'a EcVolume, &'a EcVolumeShard)>> = vec![None; width];
+    for v in &merged {
+        for (id, slot) in v.shards.iter().enumerate() {
+            if let Some(shard) = slot.as_ref() {
+                // First disk wins, matching `collect_ec_shard_dirs` and Go's
+                // `CollectEcShards`.
+                if slots[id].is_none() {
+                    slots[id] = Some((*v, shard));
+                }
+            }
+        }
+    }
+
+    let skipped: Vec<String> = runtimes
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.encode_ts_ns != anchor_gen)
+        .map(|(pos, v)| {
+            format!(
+                "EC volume {} shards at {} (position {}) belong to encode run {} but the scrub anchors on {}; they were not verified",
+                v.volume_id.0, v.dir, pos, v.encode_ts_ns, anchor_gen
+            )
+        })
+        .collect();
+
+    Some(MergedEcRuntimes {
+        anchor,
+        merged,
+        slots,
+        skipped,
+    })
 }
 
 /// Self-contained input for an EC checksum scrub: the sidecar plus a duplicate
