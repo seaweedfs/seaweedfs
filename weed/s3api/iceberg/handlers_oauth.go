@@ -268,10 +268,12 @@ func (s *Server) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "subject_token expired beyond the exchange grace window")
 			return
 		}
-	} else if remaining := int(time.Until(claims.ExpiresAt.Time).Seconds()); remaining < ttlSeconds {
+	} else if remaining := int(time.Until(claims.ExpiresAt.Time).Seconds()); !clientAuthenticated && remaining < ttlSeconds {
 		// Unauthenticated exchange (proactive refresh carrying only the
 		// Bearer) must not extend the lifetime past the subject's expiry;
-		// otherwise a leaked token could chain-refresh forever.
+		// otherwise a leaked token could chain-refresh forever. An
+		// authenticated client gets a fresh full TTL — it could mint one
+		// via client_credentials anyway.
 		ttlSeconds = remaining
 	}
 

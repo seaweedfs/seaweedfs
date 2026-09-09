@@ -279,6 +279,26 @@ func TestTokenExchangeExpiredWithinGrace(t *testing.T) {
 	}
 }
 
+// TestTokenExchangeAuthenticatedLiveSubjectFullTTL: an authenticated client
+// exchanging a live token renews the session — the TTL cap only applies to
+// unauthenticated (Bearer-only) exchanges.
+func TestTokenExchangeAuthenticatedLiveSubjectFullTTL(t *testing.T) {
+	now := time.Now()
+	live := mintTestToken(t, "AKID123", "secret456", now, now.Add(30*time.Minute))
+
+	w := exchangeRequestWithBasic(t, live, "AKID123", "secret456")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp OAuthTokenResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ExpiresIn != oauthExpirySeconds() {
+		t.Fatalf("authenticated live exchange expires_in = %d, want full TTL %d", resp.ExpiresIn, oauthExpirySeconds())
+	}
+}
+
 // TestTokenExchangeExpiredWithoutClientAuth: a leaked expired token must
 // not be exchangeable without client credentials.
 func TestTokenExchangeExpiredWithoutClientAuth(t *testing.T) {
