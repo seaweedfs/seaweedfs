@@ -227,6 +227,9 @@ jobs:
           out = render({
               "global.seaweedfs.securityConfig.jwtSigning.filerWrite": "true",
               "admin.enabled": "true",
+              # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
+              # refuses to bind without authentication.
+              "admin.secret.adminPassword": "ci-admin-password",
           })
           cm = configmap(out, "test-seaweedfs-security-config")
           if cm is None:
@@ -1141,6 +1144,9 @@ jobs:
               "s3.enabled": "true",
               "sftp.enabled": "true",
               "admin.enabled": "true",
+              # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
+              # refuses to bind without authentication.
+              "admin.secret.adminPassword": "ci-admin-password",
               "worker.enabled": "true",
               "cosi.enabled": "true",
               "s3.createBuckets[0].name": "b",
@@ -1337,7 +1343,7 @@ jobs:
           # Which means egress on its own must render for a release that runs
           # neither COSI nor a resize: no component of it reaches the API server,
           # so nothing may demand a CIDR for one.
-          for label, values in {"defaults": {}, "admin": {"admin.enabled": "true"}}.items():
+          for label, values in {"defaults": {}, "admin": {"admin.enabled": "true", "admin.secret.adminPassword": "ci-admin-password"}}.items():
               try:
                   render(dict(values, **{"networkPolicy.enabled": "true",
                                          "networkPolicy.egress.enabled": "true"}))
@@ -1398,6 +1404,9 @@ jobs:
 
           ALL_ON = {
               "admin.enabled": "true",
+              # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
+              # refuses to bind without authentication.
+              "admin.secret.adminPassword": "ci-admin-password",
               "s3.enabled": "true",
               "sftp.enabled": "true",
               "worker.enabled": "true",
