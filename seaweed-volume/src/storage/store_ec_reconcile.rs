@@ -1184,6 +1184,30 @@ mod tests {
         assert!(!std::ptr::eq(ev0, ev1));
     }
 
+    /// `find_ec_volume` returns only disk 0's runtime, which is what hides
+    /// sibling-disk shards from every scrub mode. The plural lookup must
+    /// return one runtime per disk holding the vid, in location order.
+    #[test]
+    fn test_find_all_ec_volumes_returns_every_disk() {
+        let (store, _tmp) = build_split_disk_store(7010);
+        let vid = VolumeId(7010);
+
+        let all = store.find_all_ec_volumes(vid);
+        assert_eq!(all.len(), 2, "expected one EcVolume per disk holding the vid");
+
+        // Disk 0 carries shards 0 and 12; disk 1 carries shard 1.
+        assert!(all[0].has_shard(0));
+        assert!(all[0].has_shard(12));
+        assert!(all[1].has_shard(1));
+
+        // The singular lookup sees only the first — the bug being fixed.
+        let first = store.find_ec_volume(vid).unwrap();
+        assert!(std::ptr::eq(first, all[0]));
+
+        // A vid nobody mounts yields an empty vec, not a panic.
+        assert!(store.find_all_ec_volumes(VolumeId(9999)).is_empty());
+    }
+
     /// `Store::unmount_ec_shards` used to return after the first
     /// location with the vid, so a request to unmount a shard that
     /// lives on a sibling disk became a silent no-op. After the fix,
