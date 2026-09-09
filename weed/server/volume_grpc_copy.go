@@ -251,7 +251,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	// Load and validate the volume before announcing it to the master. A failed
 	// validation is unloaded by the store without ever making the replica
 	// routable.
-	err = vs.store.MountVolumeWithValidator(needle.VolumeId(req.VolumeId), func(targetVolume *storage.Volume) error {
+	err = vs.store.MountVolumeWithValidator(needle.VolumeId(req.VolumeId), &req.Collection, func(targetVolume *storage.Volume) error {
 		if !shouldValidateCopyCounts {
 			return nil
 		}

@@ -966,20 +966,20 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	return persistErr
 }
 
-func (s *Store) MountVolume(i needle.VolumeId) error {
-	return s.mountVolume(i, nil)
+func (s *Store) MountVolume(i needle.VolumeId, collection *string) error {
+	return s.mountVolume(i, collection, nil)
 }
 
 // MountVolumeWithValidator loads a volume, validates it before announcing it
 // to the master, and unloads it when validation fails. This keeps an invalid
 // newly copied replica out of the master's routable volume set.
-func (s *Store) MountVolumeWithValidator(i needle.VolumeId, validator func(*Volume) error) error {
-	return s.mountVolume(i, validator)
+func (s *Store) MountVolumeWithValidator(i needle.VolumeId, collection *string, validator func(*Volume) error) error {
+	return s.mountVolume(i, collection, validator)
 }
 
-func (s *Store) mountVolume(i needle.VolumeId, validator func(*Volume) error) error {
+func (s *Store) mountVolume(i needle.VolumeId, collection *string, validator func(*Volume) error) error {
 	for diskId, location := range s.Locations {
-		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind); found == true {
+		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind, collection); found == true {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting
