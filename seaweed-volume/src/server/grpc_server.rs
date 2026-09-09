@@ -606,7 +606,7 @@ impl VolumeGrpcService {
                     // takes a directory per shard id, so a reconciled volume split
                     // across this node's disks still qualifies.
                     // Snapshot under a brief lock; release before await.
-                    let Some((dirs, collection, data_shards, parity_shards, all_local)) = ({
+                    let Some((dirs, collection, data_shards, parity_shards, all_local, skipped)) = ({
                         let store = self.state.store.read().unwrap();
                         let runtimes = store.find_all_ec_volumes(vid);
                         // Same merge, same fence, as CHECKSUM and LOCAL: one
@@ -634,6 +634,7 @@ impl VolumeGrpcService {
                                     m.anchor.data_shards as usize,
                                     m.anchor.parity_shards as usize,
                                     all_local,
+                                    m.skipped,
                                 )
                             })
                     }) else {
@@ -654,6 +655,16 @@ impl VolumeGrpcService {
                         )
                         .await;
                     total_files += files as u64; // count comes from the needle walk only
+
+                    // A runtime the identity fence excluded is a disk this scrub did
+                    // NOT read. Report it through `errs` -- the same channel
+                    // `for_volumes` uses for CHECKSUM and LOCAL -- so an exclusion has
+                    // the same three consequences in every mode: the volume is flagged
+                    // broken, the line is reported, and the `ecvol {vid}: ` prefix
+                    // matches. Reporting via `details` instead would print the line
+                    // without flagging the volume -- a third behavior, and the wrong
+                    // one: a silently unscanned disk is the bug this all exists to fix.
+                    errs.extend(skipped);
 
                     // (2) Local parity check, gated on all-shards-local. Blocking RS
                     // verify -> spawn_blocking; inputs are owned, no lock held.
