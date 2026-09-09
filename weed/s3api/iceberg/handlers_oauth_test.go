@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 type mockCredentialValidator struct {
@@ -191,5 +193,77 @@ func TestOauthExpirySecondsEnvOverride(t *testing.T) {
 	}
 	if resp.ExpiresIn != 7200 {
 		t.Fatalf("minted token expires_in = %d, want 7200", resp.ExpiresIn)
+	}
+}
+
+func exchangeRequest(t *testing.T, subjectToken string) *httptest.ResponseRecorder {
+	t.Helper()
+	s := newTestServerWithOAuth()
+	body := "grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token=" + url.QueryEscape(subjectToken)
+	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.handleOAuthTokens(w, req)
+	return w
+}
+
+// TestTokenExchangeLiveSubject: the refresh path Iceberg Java 1.10.x uses
+// (exchangeEnabled defaults true) must mint a fresh working token.
+func TestTokenExchangeLiveSubject(t *testing.T) {
+	s := newTestServerWithOAuth()
+	now := time.Now()
+	live := mintTestToken(t, "AKID123", "secret456", now, now.Add(30*time.Minute))
+
+	w := exchangeRequest(t, live)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp OAuthTokenResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.TokenType != "bearer" || resp.AccessToken == "" {
+		t.Fatalf("bad token response: %+v", resp)
+	}
+	// the exchanged token must authenticate like a normal Bearer
+	req := httptest.NewRequest(http.MethodGet, "/v1/namespaces", nil)
+	req.Header.Set("Authorization", "Bearer "+resp.AccessToken)
+	if _, _, ok := s.authenticateBearer(req); !ok {
+		t.Fatalf("exchanged token must pass authenticateBearer")
+	}
+}
+
+// TestTokenExchangeExpiredWithinGrace: a client whose token expired while
+// exchange was unsupported must recover without a restart.
+func TestTokenExchangeExpiredWithinGrace(t *testing.T) {
+	now := time.Now()
+	expiredRecently := mintTestToken(t, "AKID123", "secret456", now.Add(-20*time.Minute), now.Add(-10*time.Minute))
+
+	w := exchangeRequest(t, expiredRecently)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 within grace, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestTokenExchangeExpiredBeyondGrace: stale tokens far past expiry must not
+// act as eternal credentials.
+func TestTokenExchangeExpiredBeyondGrace(t *testing.T) {
+	now := time.Now()
+	longDead := mintTestToken(t, "AKID123", "secret456", now.Add(-48*time.Hour), now.Add(-47*time.Hour))
+
+	w := exchangeRequest(t, longDead)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 beyond grace, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid_grant") {
+		t.Fatalf("expected invalid_grant, got: %s", w.Body.String())
+	}
+}
+
+// TestTokenExchangeGarbageSubject: malformed subject tokens are rejected.
+func TestTokenExchangeGarbageSubject(t *testing.T) {
+	w := exchangeRequest(t, "not-a-jwt")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }

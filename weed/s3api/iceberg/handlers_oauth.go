@@ -35,9 +35,16 @@ type IcebergClaims struct {
 	jwt.RegisteredClaims
 }
 
-// defaultOauthTokenExpiry is the token TTL in seconds when
-// ICEBERG_OAUTH_TOKEN_EXPIRY is unset or invalid.
 const defaultOauthTokenExpiry = 3600
+
+// grant types accepted by POST /v1/oauth/tokens. Iceberg Java 1.10.x
+// refreshes tokens via token-exchange (exchangeEnabled defaults true), so a
+// server that only accepts client_credentials leaves those clients unable to
+// refresh — see BUG-0001.
+const (
+	grantTypeClientCredentials = "client_credentials"
+	grantTypeTokenExchange     = "urn:ietf:params:oauth:grant-type:token-exchange"
+)
 
 // oauthExpirySeconds returns the OAuth token TTL. Deployments whose clients
 // cannot refresh tokens on 401 (Iceberg Java 1.10.x client_credentials does
@@ -50,6 +57,22 @@ func oauthExpirySeconds() int {
 		}
 	}
 	return defaultOauthTokenExpiry
+}
+
+// tokenExchangeGrace is how long an expired subject token may still be
+// exchanged for a fresh access token. Signature verification is the real
+// gate; the grace exists so a client holding a token that expired while the
+// exchange grant was unsupported (or during a server outage) recovers
+// without a process restart.
+func tokenExchangeGrace() time.Duration {
+	grace := 2 * oauthExpirySeconds()
+	if grace < 3600 {
+		grace = 3600
+	}
+	if grace > 86400 {
+		grace = 86400
+	}
+	return time.Duration(grace) * time.Second
 }
 
 // handleOAuthTokens implements the OAuth2 client_credentials flow.
@@ -67,7 +90,13 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	grantType := r.PostFormValue("grant_type")
-	if grantType != "client_credentials" {
+	switch grantType {
+	case grantTypeClientCredentials:
+		// handled below
+	case grantTypeTokenExchange, "token_exchange":
+		s.handleTokenExchange(w, r)
+		return
+	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type",
 			fmt.Sprintf("Unsupported grant_type: %s", grantType))
 		return
@@ -105,20 +134,7 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 
 	// Generate a JWT signed with a key derived from the client secret.
 	// Include the access key in claims so we can look up the exact credential for verification.
-	signingKey := deriveSigningKey(clientID, clientSecret)
-	now := time.Now()
-	claims := IcebergClaims{
-		IdentityName: identityName,
-		AccessKey:    clientID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(oauthExpirySeconds()) * time.Second)),
-			Issuer:    "seaweedfs-iceberg",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(signingKey)
+	tokenString, err := mintIcebergToken(identityName, clientID, clientSecret)
 	if err != nil {
 		glog.Errorf("Iceberg OAuth: failed to sign token: %v", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
@@ -134,6 +150,95 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleTokenExchange implements RFC 8693 token exchange for Iceberg REST
+// clients: a previously issued access token (subject_token) is exchanged for
+// a fresh one. Iceberg Java's OAuth2Manager refreshes via this grant
+// (exchangeEnabled defaults true), so supporting it lets those clients
+// self-heal before their token expires — no client restart needed.
+func (s *Server) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
+	if s.credentialValidator == nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Credential validation not configured")
+		return
+	}
+
+	subjectToken := r.PostFormValue("subject_token")
+	if subjectToken == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "Missing subject_token")
+		return
+	}
+
+	// Verify the subject token by signature (exp checked separately against
+	// the recovery grace).
+	unverified := &IcebergClaims{}
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	if _, _, err := parser.ParseUnverified(subjectToken, unverified); err != nil {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "Invalid subject_token")
+		return
+	}
+	if unverified.AccessKey == "" || unverified.Issuer != "seaweedfs-iceberg" {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "Invalid subject_token")
+		return
+	}
+	identityName, _, secretKey, err := s.credentialValidator.GetCredentialByAccessKey(unverified.AccessKey)
+	if err != nil {
+		glog.V(2).Infof("Iceberg OAuth: token exchange failed to get credential for access key: %v", err)
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "Invalid subject_token")
+		return
+	}
+
+	signingKey := deriveSigningKey(unverified.AccessKey, secretKey)
+	claims := &IcebergClaims{}
+	parsed, err := jwt.ParseWithClaims(subjectToken, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return signingKey, nil
+	}, jwt.WithoutClaimsValidation())
+	if err != nil || !parsed.Valid {
+		glog.V(2).Infof("Iceberg OAuth: token exchange signature verification failed: %v", err)
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "Invalid subject_token")
+		return
+	}
+	if claims.ExpiresAt != nil && time.Since(claims.ExpiresAt.Time) > tokenExchangeGrace() {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_grant", "subject_token expired beyond the exchange grace window")
+		return
+	}
+
+	tokenString, err := mintIcebergToken(identityName, unverified.AccessKey, secretKey)
+	if err != nil {
+		glog.Errorf("Iceberg OAuth: failed to sign exchanged token: %v", err)
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to generate token")
+		return
+	}
+
+	resp := OAuthTokenResponse{
+		AccessToken: tokenString,
+		TokenType:   "bearer",
+		ExpiresIn:   oauthExpirySeconds(),
+		Scope:       r.PostFormValue("scope"),
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// mintIcebergToken issues a signed access token for the given identity and
+// credential, with the configured TTL.
+func mintIcebergToken(identityName, accessKey, secret string) (string, error) {
+	signingKey := deriveSigningKey(accessKey, secret)
+	now := time.Now()
+	claims := IcebergClaims{
+		IdentityName: identityName,
+		AccessKey:    accessKey,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(oauthExpirySeconds()) * time.Second)),
+			Issuer:    "seaweedfs-iceberg",
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(signingKey)
 }
 
 // authenticateBearer validates a Bearer token from the Authorization header.
