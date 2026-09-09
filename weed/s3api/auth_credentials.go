@@ -1813,8 +1813,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			} else if evaluated {
 				// A bucket policy exists and was evaluated with a matching statement
 				if allowed {
-					// Policy explicitly allows this action - grant access immediately
-					// This bypasses IAM checks to support cross-account access and policy-only principals
+					// A resource policy may supply the Allow an identity policy omits
+					// (for cross-account access and policy-only principals), but it
+					// must not override an applicable explicit Deny from an identity,
+					// group, or session policy.
+					if iam.isActionExplicitlyDeniedByApplicablePolicies(r, identity, action, bucket, object) {
+						glog.V(3).Infof("identity policy explicitly denies %s to %s on %s/%s despite bucket policy allow", identity.Name, action, bucket, object)
+						return identity, s3err.ErrAccessDenied, reqAuthType
+					}
 					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s (bypassing IAM)", identity.Name, action, bucket, object)
 					policyAllows = true
 				} else {
