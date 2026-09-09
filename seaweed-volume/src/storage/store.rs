@@ -506,6 +506,10 @@ impl Store {
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
         }
+        // Remember the last non-NotFound error so a caller gets a useful
+        // message when every candidate fails to open, instead of a generic
+        // NotFound. A successful mount returns immediately.
+        let mut last_err: Option<VolumeError> = None;
         if let Some(collection) = collection {
             // The hint is only an optimization: a collection carrying a path
             // separator could route file creation outside the storage
@@ -563,7 +567,10 @@ impl Store {
                         if std::path::Path::new(&note_path).exists() {
                             continue;
                         }
-                        return loc.create_volume(
+                        // An open failure on one candidate must not block a
+                        // valid volume on a later disk — remember the error and
+                        // keep scanning (matches open_volumes / Go mountVolume).
+                        match loc.create_volume(
                             vid,
                             collection,
                             self.needle_map_kind,
@@ -571,7 +578,13 @@ impl Store {
                             None,
                             0,
                             Version::current(),
-                        );
+                        ) {
+                            Ok(()) => return Ok(()),
+                            Err(e) => {
+                                last_err = Some(e);
+                                continue;
+                            }
+                        }
                     }
                     // Lone sidecar: leave it for the directory scan below.
                 }
@@ -609,8 +622,11 @@ impl Store {
                 if std::path::Path::new(&note_path).exists() {
                     continue;
                 }
+                // An open failure on one candidate must not block a valid
+                // volume on a later disk — remember the error and keep
+                // scanning (matches open_volumes / Go mountVolume).
                 let loc = &mut self.locations[loc_idx];
-                return loc.create_volume(
+                match loc.create_volume(
                     vid,
                     &collection,
                     self.needle_map_kind,
@@ -618,13 +634,19 @@ impl Store {
                     None,
                     0,
                     Version::current(),
-                );
+                ) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        last_err = Some(e);
+                        continue;
+                    }
+                }
             }
         }
-        Err(VolumeError::Io(io::Error::new(
+        Err(last_err.unwrap_or_else(|| VolumeError::Io(io::Error::new(
             io::ErrorKind::NotFound,
             format!("volume {} not found on disk", vid),
-        )))
+        ))))
     }
 
     fn find_volume_file_base(&self, vid: VolumeId) -> Option<(usize, String, String)> {
@@ -1855,6 +1877,77 @@ mod tests {
         let count = store.read_volume_needle(VolumeId(13), &mut got).unwrap();
         assert_eq!(count, 4);
         assert_eq!(got.data, b"real");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_mount_volume_by_id_continues_past_open_failure() {
+        // A create_volume failure on an earlier candidate must not block a
+        // valid volume on a later disk. The scan remembers the error and
+        // keeps going (matches open_volumes / Go mountVolume).
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::Ordering;
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let dir0 = tmp1.path().to_str().unwrap();
+        let dir1 = tmp2.path().to_str().unwrap();
+
+        let mut store = make_test_store(&[dir0, dir1]);
+
+        // Force add_volume onto disk 1 by marking disk 0 as low on space.
+        store.locations[0].is_disk_space_low.store(true, Ordering::Relaxed);
+        store
+            .add_volume(
+                VolumeId(15),
+                "coll",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"later".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        store.write_volume_needle(VolumeId(15), &mut n, false).unwrap();
+        assert!(store.unmount_volume(VolumeId(15)));
+        // Clear the low-space flag so mount_volume_by_id considers disk 0.
+        store.locations[0].is_disk_space_low.store(false, Ordering::Relaxed);
+
+        // disk 0: a .dat that exists but is unreadable (chmod 000). The guard
+        // sees dat_exists=true (metadata succeeds, not a dir), but
+        // create_volume -> Volume::new -> load fails opening it.
+        let base0 = volume_file_name(dir0, "coll", VolumeId(15));
+        std::fs::write(format!("{}.dat", base0), b"").unwrap();
+        std::fs::set_permissions(
+            format!("{}.dat", base0),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+
+        // The fallback scan hits disk 0 first (create_volume fails on the
+        // unreadable .dat), then disk 1 (succeeds). Mount succeeds from disk 1.
+        store.mount_volume_by_id(VolumeId(15), None).unwrap();
+        assert!(store.find_volume(VolumeId(15)).is_some());
+
+        let mut got = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let count = store.read_volume_needle(VolumeId(15), &mut got).unwrap();
+        assert_eq!(count, 5);
+        assert_eq!(got.data, b"later");
+
+        // Restore permissions so TempDir cleanup can remove the file.
+        let _ = std::fs::set_permissions(
+            format!("{}.dat", base0),
+            std::fs::Permissions::from_mode(0o644),
+        );
     }
 
     #[test]
