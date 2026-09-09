@@ -334,8 +334,13 @@ pub fn verify_ec_shards(
     }
 
     if shard_size == 0 || broken_shards.len() >= parity_shards {
-        // Can't do much if we don't know the size or have too many missing
-        return Ok((broken_shards.into_iter().collect(), details));
+        // Can't do much if we don't know the size or have too many missing.
+        // Sort like the normal path below: a `HashSet` iteration order would
+        // make this return shard ids in an arbitrary order, and enough `None`
+        // entries in `dirs` now reach this branch for a caller to notice.
+        let mut broken_vec: Vec<u32> = broken_shards.into_iter().collect();
+        broken_vec.sort_unstable();
+        return Ok((broken_vec, details));
     }
 
     let block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
@@ -349,6 +354,12 @@ pub fn verify_ec_shards(
         let mut read_failed = false;
         for i in 0..total_shards {
             if !broken_shards.contains(&(i as u32)) {
+                // The `None` arm is defensive and unreachable: the open loop
+                // put every unmounted slot in `broken_shards`, which this
+                // branch already skipped. Kept because the `Option` forces
+                // some handling here, and an error is the only shape that
+                // cannot quietly feed an unread buffer into the parity
+                // comparison below. Nothing needs to cover it.
                 let read = match shards[i].as_mut() {
                     Some(shard) => shard.read_at(&mut buffers[i], offset),
                     None => Err(io::Error::new(io::ErrorKind::NotFound, "shard not mounted")),
@@ -1559,11 +1570,20 @@ mod tests {
         let mut dirs: Vec<Option<String>> = (0..14).map(|_| Some(dir.to_string())).collect();
         dirs[5] = None;
 
-        let (broken, _) = verify_ec_shards(&dirs, "", VolumeId(1), 10, 4).unwrap();
+        let (broken, details) = verify_ec_shards(&dirs, "", VolumeId(1), 10, 4).unwrap();
         assert_eq!(
             broken,
             vec![5],
-            "an unmounted shard must be reported, and only it"
+            "an unmounted shard must be reported, and only it: {:?}",
+            details
+        );
+        // "no disk holds this shard" and "the disk holds it but it won't open"
+        // are different operator problems, which is why they carry different
+        // messages. Asserting only the id would let one masquerade as the other.
+        assert!(
+            details.iter().any(|d| d.contains("not mounted")),
+            "an unmounted shard must be distinguished from an unopenable one, got {:?}",
+            details
         );
     }
 }
