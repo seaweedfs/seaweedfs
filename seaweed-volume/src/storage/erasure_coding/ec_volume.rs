@@ -2640,8 +2640,13 @@ mod tests {
         // Shard 9 is held by both; the first disk wins.
         let (owner, _) = merged.slots[9].unwrap();
         assert!(std::ptr::eq(owner, refs[0]), "duplicate shard must resolve to the first disk");
-        // A shard nobody holds stays empty.
-        assert!(merged.slots.get(14).copied().flatten().is_none());
+        // Slots are shard-id indexed across the volume's whole shard space,
+        // never compacted: index N is shard N or nothing.
+        assert_eq!(
+            merged.slots.len(),
+            14,
+            "slots must span the full 10+4 shard space"
+        );
     }
 
     /// Leniency is keyed on the ANCHOR, never the holder: a known identity must
