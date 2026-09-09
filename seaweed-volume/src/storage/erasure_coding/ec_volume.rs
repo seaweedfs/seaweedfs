@@ -1112,6 +1112,18 @@ impl EcVolume {
                     return Err(e);
                 }
             }
+            #[cfg(not(unix))]
+            {
+                use std::io::{Read, Seek, SeekFrom};
+                if let Err(e) = ecx_file.seek(SeekFrom::Start(file_offset)) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
+                if let Err(e) = ecx_file.read_exact(&mut entry_buf) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
+            }
 
             let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
             if key == needle_id {

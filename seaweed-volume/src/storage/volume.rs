@@ -95,20 +95,21 @@ fn is_skippable_needle_read_error(e: &VolumeError) -> bool {
 }
 
 /// Returns true for I/O errors that indicate faulty storage media, not
-/// transient/network failures. On Unix this is EIO (errno 5); on Windows
-/// it also covers ERROR_CRC (23) and ERROR_IO_DEVICE (1117), which the
-/// kernel returns for failing disks.
+/// transient/network failures. On Unix this is EIO; on Windows it covers
+/// ERROR_CRC and ERROR_IO_DEVICE, which the kernel returns for failing disks.
 pub fn is_storage_io_error(e: &io::Error) -> bool {
-    if e.raw_os_error() == Some(5) {
-        return true;
+    #[cfg(unix)]
+    {
+        return e.raw_os_error() == Some(libc::EIO);
     }
     #[cfg(windows)]
     {
         const ERROR_CRC: i32 = 23;
         const ERROR_IO_DEVICE: i32 = 1117;
-        return e.raw_os_error() == Some(ERROR_CRC) || e.raw_os_error() == Some(ERROR_IO_DEVICE);
+        return e.raw_os_error() == Some(ERROR_CRC)
+            || e.raw_os_error() == Some(ERROR_IO_DEVICE);
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(unix, windows)))]
     {
         false
     }
@@ -1903,12 +1904,14 @@ impl Volume {
             self.last_modified_ts_seconds = n.last_modified;
         }
 
-        self.maybe_checkpoint_index(fsync);
+        let checkpoint_ok = self.maybe_checkpoint_index(fsync);
 
         // Clear the EIO streak only after the full write (data + flush +
-        // index) succeeds, so a successful write_all followed by a failed
-        // fsync does not reset the counter before the EIO is recorded.
-        self.check_read_write_error(None);
+        // index + checkpoint) succeeds, so a failed fsync or checkpoint
+        // does not get its EIO erased by the success reset.
+        if checkpoint_ok {
+            self.check_read_write_error(None);
+        }
 
         // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
         Ok((offset, Size(n.data_size as i32), false))
@@ -1923,10 +1926,10 @@ impl Volume {
     /// When `idx_already_synced` is true the .idx has already been fsynced by
     /// `flush_idx` on the fsync=true write path, so the checkpoint skips its
     /// own .idx fsync to avoid a redundant one.
-    fn maybe_checkpoint_index(&mut self, idx_already_synced: bool) {
+    fn maybe_checkpoint_index(&mut self, idx_already_synced: bool) -> bool {
         let due = self.nm.as_ref().is_some_and(|nm| nm.checkpoint_due());
         if !due {
-            return;
+            return true;
         }
         if let Err(e) = self.flush_dat() {
             self.check_read_write_error(Some(&e));
@@ -1935,7 +1938,7 @@ impl Volume {
                 self.id.0,
                 e
             );
-            return;
+            return false;
         }
         let checkpointed = match self.nm.as_mut() {
             Some(nm) => nm.checkpoint(!idx_already_synced),
@@ -1944,7 +1947,9 @@ impl Volume {
         if let Err(e) = checkpointed {
             self.check_read_write_error(Some(&e));
             tracing::warn!("volume {}: index checkpoint failed: {}", self.id.0, e);
+            return false;
         }
+        true
     }
 
     fn read_needle_header_unlocked(&self, n: &mut Needle, offset: i64) -> Result<(), VolumeError> {
@@ -2082,7 +2087,13 @@ impl Volume {
         if let Some(nm) = &mut self.nm {
             nm.delete(n.id, Offset::from_actual_offset(offset as i64))?;
         }
-        self.maybe_checkpoint_index(false);
+        let checkpoint_ok = self.maybe_checkpoint_index(false);
+
+        // Clear the EIO streak after a successful delete (tombstone append +
+        // index update + checkpoint), mirroring do_write_request.
+        if checkpoint_ok {
+            self.check_read_write_error(None);
+        }
 
         Ok(size)
     }
