@@ -1292,37 +1292,8 @@ impl EcVolume {
     /// distinction to decide whether a needle can be reassembled locally at
     /// all, so compacting it would silently change which needles get verified.
     pub fn scrub_local_plan(&self) -> EcLocalScrubPlan {
-        EcLocalScrubPlan {
-            volume_id: self.volume_id,
-            version: self.version,
-            data_shards: self.data_shards,
-            // locate_data wants shardSize = datFileSize / DataShards when known,
-            // else ecdFileSize - 1 (shards are padded to the small block size;
-            // the -1 avoids an off-by-one in the large-block row count).
-            shard_size: if self.dat_file_size > 0 {
-                self.dat_file_size / self.data_shards as i64
-            } else {
-                self.shard_file_size() - 1
-            },
-            large_block_size: self.large_block_size(),
-            small_block_size: self.small_block_size(),
-            index: self.scrub_index_plan(),
-            ecx_path: self.ecx_file_name(),
-            // A second descriptor: the index plan's is consumed by its own walk,
-            // and both seek.
-            ecx_walk: File::open(self.ecx_file_name()),
-            shards: self
-                .shards
-                .iter()
-                .map(|slot| {
-                    slot.as_ref().map(|s| EcLocalShard {
-                        file: s.try_clone_file(),
-                        file_size: s.file_size(),
-                        info: s.to_ec_shard_info(),
-                    })
-                })
-                .collect(),
-        }
+        EcLocalScrubPlan::for_volumes(&[self])
+            .expect("a single runtime is never an empty slice")
     }
 
     /// ScrubLocal verifies each needle against the LOCAL shards only; it cannot
@@ -2787,6 +2758,91 @@ mod tests {
             EcChecksumScrubPlan::for_volumes(&[&runtimes[0]]).unwrap().run()
         );
     }
+
+    /// A needle whose intervals span shards held by different runtimes is
+    /// locally verifiable once the slots are merged. Summing per-disk results
+    /// would instead report it unrecoverable on both.
+    #[test]
+    fn test_scrub_local_for_volumes_merges_slots_across_runtimes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9, 10, 11, 12, 13]],
+        );
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (count, broken, errs) = EcLocalScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(count > 0, "the merged plan walked no needles");
+        assert!(broken.is_empty(), "clean volume reported broken shards: {:?}", broken);
+        assert!(errs.is_empty(), "clean volume reported errors: {:?}", errs);
+
+        // This fixture's few hundred bytes of needle data all land inside
+        // shard 0's legacy 1GiB large block (the tiny volume never fills even
+        // one), so shard 0 alone — held only by the first runtime — carries
+        // every needle. Corrupting a needle body byte there is the LOCAL
+        // analogue of Task 3's sibling-disk corruption: the whole point is
+        // that a partial-shard `scrub_local` cannot see it at all (it just
+        // silently skips a needle it can't reassemble locally — that is not
+        // an error), while the merged plan reaches it through refs[0].
+        let shard0 = format!("{}/1.ec00", dir);
+        let mut bytes = std::fs::read(&shard0).unwrap();
+        assert!(
+            bytes.len() > 268,
+            "fixture shrank below the corruption offset; split_runtimes's \
+             needle payloads changed, so this offset needs picking again"
+        );
+        bytes[268] ^= 0xFF; // inside needle 4's data payload
+        std::fs::write(&shard0, &bytes).unwrap();
+
+        let (_, _, merged_errs) = EcLocalScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            !merged_errs.is_empty(),
+            "merged plan must detect corruption on shard 0, reachable through refs[0]"
+        );
+
+        // refs[1] never mounted shard 0, so it cannot see this corruption at
+        // all — that silent blind spot is exactly the bug aggregation fixes.
+        let (_, _, refs1_errs) = refs[1].scrub_local();
+        assert!(
+            refs1_errs.is_empty(),
+            "runtime without shard 0 has no way to detect this corruption: {:?}",
+            refs1_errs
+        );
+    }
+
+    /// LOCAL has no bitrot status gate, so an excluded runtime is always
+    /// reported.
+    #[test]
+    fn test_scrub_local_reports_skipped_runtimes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        runtimes[0].encode_ts_ns = 100;
+        runtimes[1].encode_ts_ns = 200;
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (_, _, errs) = EcLocalScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            errs.iter().any(|e| e.contains("not verified")),
+            "excluded runtime must be reported, got {:?}",
+            errs
+        );
+    }
+
+    /// The single-runtime wrapper must be indistinguishable from the old code.
+    #[test]
+    fn test_scrub_local_plan_single_runtime_is_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]]);
+
+        let a = runtimes[0].scrub_local_plan().run();
+        let b = EcLocalScrubPlan::for_volumes(&[&runtimes[0]]).unwrap().run();
+        assert_eq!(a.0, b.0);
+        assert_eq!(a.2, b.2);
+    }
 }
 
 #[cfg(test)]
@@ -3529,9 +3585,57 @@ pub struct EcLocalScrubPlan {
     ecx_walk: std::io::Result<File>,
     /// Indexed BY SHARD ID; `None` is a shard this node does not hold.
     shards: Vec<Option<EcLocalShard>>,
+    /// Runtimes the identity fence excluded, one line each. LOCAL has no status
+    /// gate, so `run()` always reports these.
+    skipped: Vec<String>,
 }
 
 impl EcLocalScrubPlan {
+    /// Build one plan over every per-disk runtime of a volume id. `None` only
+    /// when `runtimes` is empty.
+    ///
+    /// The shard vector keeps its SLOT structure — index is the shard id, gaps
+    /// are shards no merged runtime holds. `run()` reads that distinction to
+    /// decide whether a needle can be reassembled locally at all, so compacting
+    /// it would silently change which needles get verified.
+    pub fn for_volumes(runtimes: &[&EcVolume]) -> Option<Self> {
+        let merged = merge_ec_runtimes(runtimes)?;
+        let anchor = merged.anchor;
+
+        Some(EcLocalScrubPlan {
+            volume_id: anchor.volume_id,
+            version: anchor.version,
+            data_shards: anchor.data_shards,
+            // locate_data wants shardSize = datFileSize / DataShards when known,
+            // else ecdFileSize - 1 (shards are padded to the small block size;
+            // the -1 avoids an off-by-one in the large-block row count).
+            shard_size: if anchor.dat_file_size > 0 {
+                anchor.dat_file_size / anchor.data_shards as i64
+            } else {
+                anchor.shard_file_size() - 1
+            },
+            large_block_size: anchor.large_block_size(),
+            small_block_size: anchor.small_block_size(),
+            index: anchor.scrub_index_plan(),
+            ecx_path: anchor.ecx_file_name(),
+            // A second descriptor: the index plan's is consumed by its own walk,
+            // and both seek.
+            ecx_walk: File::open(anchor.ecx_file_name()),
+            shards: merged
+                .slots
+                .iter()
+                .map(|slot| {
+                    slot.map(|(_, s)| EcLocalShard {
+                        file: s.try_clone_file(),
+                        file_size: s.file_size(),
+                        info: s.to_ec_shard_info(),
+                    })
+                })
+                .collect(),
+            skipped: merged.skipped,
+        })
+    }
+
     /// The needle walk. Filesystem only — no store, no lock.
     pub fn run(self) -> (u64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
         let EcLocalScrubPlan {
@@ -3545,10 +3649,15 @@ impl EcLocalScrubPlan {
             ecx_path,
             ecx_walk,
             shards,
+            skipped,
         } = self;
 
         // Local scan also verifies the index.
         let (_, mut errs) = index.run();
+
+        // LOCAL has no protection status to gate on, so an excluded runtime is
+        // always reported rather than silently unscanned.
+        errs.extend(skipped);
 
         let mut broken_shards: HashSet<ShardId> = HashSet::new();
         let mut count: u64 = 0;
