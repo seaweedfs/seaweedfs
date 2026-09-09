@@ -656,8 +656,9 @@ impl EcVolume {
     /// raising false shard-corruption alarms.
     ///
     /// A third outcome sits ahead of both of the above: if the identity fence
-    /// excluded a runtime AND the anchor's sidecar was resolved from that
-    /// excluded runtime's directory, the checksums cannot be trusted against
+    /// excluded a runtime AND the sidecar that supplied the protection was
+    /// resolved from that excluded runtime's directory, the checksums cannot be
+    /// trusted against
     /// the merged shards at all. That case returns `(0, [], [errors])` with an
     /// "unverifiable" note and never touches a shard handle — no scan, no
     /// wholesale-mismatch classification, no blamed shard.
@@ -3379,7 +3380,10 @@ mod uniform_layout_tests {
 /// Every scrub mode builds from this one routine, so there is exactly one
 /// answer to "which disks count" per volume.
 pub(crate) struct MergedEcRuntimes<'a> {
-    /// Supplies all metadata: geometry, `.ecx` handles, bitrot protection.
+    /// Supplies the volume-level metadata: geometry, `.ecx` handles, version.
+    /// NOT bitrot protection -- the `.ecsum` sidecar is per-DISK state that is
+    /// deliberately not mirrored, so `EcChecksumScrubPlan::for_volumes` sources
+    /// it from the first `merged` runtime that has any.
     pub anchor: &'a EcVolume,
     /// The runtimes whose shards are safe to verify together.
     pub merged: Vec<&'a EcVolume>,
@@ -3491,8 +3495,8 @@ pub struct EcChecksumScrubPlan {
     /// Runtimes the identity fence excluded, one line each. Surfaced through
     /// `run()`'s errors on the `On` path only.
     skipped: Vec<String>,
-    /// `Some(source_dir)` when the anchor's sidecar was resolved from a
-    /// directory belonging to a runtime the fence excluded. Its checksums cannot
+    /// `Some(source_dir)` when the sidecar that supplied `prot`/`status` was
+    /// resolved from a directory belonging to a runtime the fence excluded. Its checksums cannot
     /// be trusted against the merged shards, so `run()` reports unverifiable
     /// protection instead of blaming shards for a mismatch it caused itself.
     unverifiable_sidecar: Option<String>,
@@ -3506,9 +3510,51 @@ impl EcChecksumScrubPlan {
     /// Duplicates the mounted shard handles so `run()` can scan with the store
     /// guard released; see the struct docs for why that matters.
     pub fn for_volumes(runtimes: &[&EcVolume]) -> Option<Self> {
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+
         let merged = merge_ec_runtimes(runtimes)?;
         let anchor = merged.anchor;
-        let (prot, status) = anchor.bitrot_protection();
+
+        // Protection is per-DISK state, not per-volume, so it must NOT come
+        // from the anchor alone. The `.ecsum` sidecar is deliberately not
+        // mirrored across disks (`Store::ec_metadata_dirs` exists precisely so
+        // one authoritative copy stays reachable instead of being duplicated),
+        // and at mount `EcVolume::new` resolves it with NO sibling directories
+        // (`load_active_bitrot_sidecar(&[])`) -- only the `VolumeEcShardsMount`
+        // RPC ever hands the resolution `ec_metadata_dirs()`. So after every
+        // volume-server restart, the split-disk runtime that does not
+        // physically hold the sidecar mounts `BitrotStatus::Off`.
+        //
+        // The anchor is the first shard-bearing runtime at the maximum
+        // `encode_ts_ns`, chosen with no regard for which disk holds the
+        // sidecar. Sourcing `(prot, status)` from it therefore made `run()`
+        // return `(0, [], [])` -- the entire volume clean, silently -- whenever
+        // the sidecar happened to land on a non-anchor disk, which is the
+        // steady state for roughly half of all mirrored split-disk layouts.
+        //
+        // Take the first MERGED runtime that actually has protection instead:
+        // `On` if any has it, else `Invalid`, else the anchor's `Off`. That is
+        // safe because:
+        //   - every runtime that mounted `On` already passed the
+        //     `geometry_matches` gate in `load_bitrot_for_generation`, so its
+        //     manifest agrees with the volume's layout; and
+        //   - all merged runtimes share one `encode_ts_ns` by construction of
+        //     the identity fence, so a sidecar from any of them describes the
+        //     same encode run.
+        let protection_source = merged
+            .merged
+            .iter()
+            .copied()
+            .find(|v| matches!(v.bitrot_protection().1, BitrotStatus::On))
+            .or_else(|| {
+                merged
+                    .merged
+                    .iter()
+                    .copied()
+                    .find(|v| matches!(v.bitrot_protection().1, BitrotStatus::Invalid))
+            })
+            .unwrap_or(anchor);
+        let (prot, status) = protection_source.bitrot_protection();
 
         // Only BitrotOn reaches the shard loop in `run()`; the other statuses
         // return before touching a handle, so cloning for them buys nothing.
@@ -3529,6 +3575,12 @@ impl EcChecksumScrubPlan {
         // only available signal is where it came from. If nothing was excluded,
         // provenance cannot indicate a mismatch and this never fires.
         //
+        // Provenance is read off `protection_source`, the SAME runtime `prot`
+        // came from. Reading the anchor's `bitrot_source_dir` while `prot` came
+        // from a sibling would have the two describe different sidecars, and
+        // the rule would then vouch for (or condemn) a manifest nobody is
+        // scanning against.
+        //
         // This is a heuristic, not a proof: in the cross-disk reconcile shape a
         // merged runtime's `dir_idx` can be the very disk that also hosts an
         // EXCLUDED runtime's data directory, and a sidecar borrowed from there
@@ -3548,11 +3600,11 @@ impl EcChecksumScrubPlan {
                 .flat_map(|v| [v.dir.as_str(), v.dir_idx.as_str()])
                 .map(|d| d.trim_end_matches('/').to_string())
                 .collect();
-            let src = anchor.bitrot_source_dir.trim_end_matches('/');
+            let src = protection_source.bitrot_source_dir.trim_end_matches('/');
             if src.is_empty() || own_dirs.iter().any(|d| d == src) {
                 None
             } else {
-                Some(anchor.bitrot_source_dir.clone())
+                Some(protection_source.bitrot_source_dir.clone())
             }
         };
 

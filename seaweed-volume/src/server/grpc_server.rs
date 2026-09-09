@@ -7434,11 +7434,25 @@ mod tests {
         /// walk skips -- so a FULL/READS scrub of this volume is CLEAN and a
         /// test can pin a clean-to-broken transition rather than a message.
         clean_index: bool,
-        /// Write a generation-0 `.ecsum` on both disks whose per-shard checksums
+        /// Where the generation-0 `.ecsum` is written. Its per-shard checksums
         /// do not describe the placeholder bytes, so a CHECKSUM scrub reports
-        /// every shard it actually reads. Without it `bitrot_status` is `Off` and
-        /// `EcChecksumScrubPlan::run` returns clean before touching a handle.
-        bitrot_sidecar: bool,
+        /// every shard it actually reads. With `Nowhere`, `bitrot_status` is
+        /// `Off` on both disks and `EcChecksumScrubPlan::run` returns clean
+        /// before touching a handle.
+        bitrot_sidecar: SidecarPlacement,
+    }
+
+    /// Which disks get the `.ecsum`. The sidecar is deliberately NOT mirrored
+    /// in production (`Store::ec_metadata_dirs` exists so one copy stays
+    /// reachable rather than being duplicated), and at mount `EcVolume::new`
+    /// resolves it with no sibling directories -- so `Dir1Only` is not an
+    /// artificial shape, it is what a volume server looks like after any
+    /// restart when the one copy happens to live on the non-anchor disk.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum SidecarPlacement {
+        Nowhere,
+        BothDisks,
+        Dir1Only,
     }
 
     impl SplitDiskEcFixture {
@@ -7450,7 +7464,7 @@ mod tests {
                 dir0_encode_ts_ns: None,
                 dir1_encode_ts_ns: 0,
                 clean_index: false,
-                bitrot_sidecar: false,
+                bitrot_sidecar: SidecarPlacement::Nowhere,
             }
         }
 
@@ -7529,7 +7543,7 @@ mod tests {
         )
         .unwrap();
 
-        if bitrot_sidecar {
+        if bitrot_sidecar != SidecarPlacement::Nowhere {
             use crate::pb::volume_server_pb::{
                 ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
             };
@@ -7548,11 +7562,15 @@ mod tests {
                     .collect(),
                 encode_uuid: vec![0u8; 16],
             };
-            // Both disks: each runtime resolves its sidecar from its own
-            // directory at mount (`load_bitrot_for_generation` gets no sibling
-            // dirs there), and the CHECKSUM plan reads the ANCHOR's -- which
-            // disk that is depends on the shard layout under test.
-            for d in [&dir0, &dir1] {
+            // Each runtime resolves its sidecar from its own directory at mount
+            // (`load_bitrot_for_generation` gets no sibling dirs there), so a
+            // disk that gets no copy here mounts `BitrotStatus::Off`.
+            let sidecar_dirs: Vec<&std::path::Path> = match bitrot_sidecar {
+                SidecarPlacement::Nowhere => Vec::new(),
+                SidecarPlacement::BothDisks => vec![dir0.as_path(), dir1.as_path()],
+                SidecarPlacement::Dir1Only => vec![dir1.as_path()],
+            };
+            for d in sidecar_dirs {
                 let base = crate::storage::volume::volume_file_name(
                     d.to_str().unwrap(),
                     "",
@@ -7819,8 +7837,8 @@ mod tests {
         // LOCAL reads only the shards the volume's one needle spans, so shard 5
         // is never touched; CHECKSUM reads every shard it holds, so both appear.
         for (vid_raw, mode, bitrot_sidecar, want_broken) in [
-            (7052u32, 3i32, false, &[0u32][..]),
-            (7053, 4, true, &[0, 5][..]),
+            (7052u32, 3i32, SidecarPlacement::Nowhere, &[0u32][..]),
+            (7053, 4, SidecarPlacement::BothDisks, &[0, 5][..]),
         ] {
             let (service, _tmp) = SplitDiskEcFixture {
                 dir0_shard_id: 5,
@@ -7866,6 +7884,79 @@ mod tests {
             );
             assert_eq!(resp.broken_volume_ids, vec![vid_raw]);
         }
+    }
+
+    /// CHECKSUM must not source bitrot protection from the ANCHOR alone.
+    ///
+    /// The `.ecsum` sidecar is deliberately not mirrored across disks, and at
+    /// mount `EcVolume::new` resolves it with no sibling directories -- only
+    /// `VolumeEcShardsMount` ever passes `ec_metadata_dirs()`. So after any
+    /// volume-server restart the split-disk runtime that does not hold the
+    /// sidecar mounts `BitrotStatus::Off`. The anchor is the first
+    /// shard-bearing runtime at the maximum `encode_ts_ns`, picked with no
+    /// regard for which disk holds the sidecar -- so whenever the one copy
+    /// lands on the non-anchor disk (about half of all mirrored split-disk
+    /// layouts), taking `(prot, status)` from the anchor made `run()` return
+    /// `(0, [], [])` and the WHOLE volume scrubbed clean, silently. That is the
+    /// exact failure this branch exists to remove.
+    ///
+    /// The fixture is the same one the sibling-disk test uses, with the sidecar
+    /// written to dir1 ONLY. Both disks agree on encode identity, so nothing is
+    /// fenced and the plan's `unverifiable_sidecar` early return cannot fire --
+    /// the volume must actually be SCANNED, and the placeholder shard bytes do
+    /// not match the sidecar, so every shard the merge reaches is reported.
+    #[tokio::test]
+    async fn test_checksum_scrub_takes_protection_from_the_disk_that_has_the_sidecar() {
+        let (service, _tmp) = SplitDiskEcFixture {
+            dir0_shard_id: 5,
+            dir1_shard_id: 0,
+            bitrot_sidecar: SidecarPlacement::Dir1Only,
+            ..SplitDiskEcFixture::new(7054)
+        }
+        .build();
+
+        // Without this the test could pass for the wrong reason: if the anchor
+        // ever resolved the sibling's sidecar itself, sourcing from the anchor
+        // would be fine and this would prove nothing.
+        {
+            use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+            let store = service.state.store.read().unwrap();
+            let runtimes = store.find_all_ec_volumes(VolumeId(7054));
+            assert_eq!(runtimes.len(), 2, "fixture must mount the vid on both disks");
+            assert_eq!(
+                runtimes[0].bitrot_status,
+                BitrotStatus::Off,
+                "the ANCHOR disk must have NO sidecar, or this proves nothing"
+            );
+            assert_eq!(
+                runtimes[1].bitrot_status,
+                BitrotStatus::On,
+                "the sibling disk must be the one carrying protection"
+            );
+            assert_eq!(
+                runtimes[0].encode_ts_ns, runtimes[1].encode_ts_ns,
+                "the disks must AGREE on encode identity, so nothing is fenced \
+                 and the unverifiable-sidecar early return cannot mask the scan"
+            );
+        }
+
+        let resp = scrub_split_disk(&service, 7054, 4).await;
+        let mut broken: Vec<u32> = resp.broken_shard_infos.iter().map(|s| s.shard_id).collect();
+        broken.sort_unstable();
+        assert_eq!(
+            broken,
+            vec![0, 5],
+            "the volume must be SCANNED against the sibling's sidecar, not \
+             returned clean-empty because the anchor mounted BitrotStatus::Off: \
+             details={:?}",
+            resp.details
+        );
+        assert_eq!(
+            resp.broken_volume_ids,
+            vec![7054],
+            "details={:?}",
+            resp.details
+        );
     }
 
     #[tokio::test]
