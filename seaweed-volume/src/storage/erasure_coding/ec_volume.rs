@@ -2792,6 +2792,42 @@ mod tests {
         );
     }
 
+    /// The Invalid arm returns a non-empty error vector of its own, so the
+    /// Go-parity contract that silences the Off arm does not reach it. A volume
+    /// with BOTH a malformed sidecar and a fenced-out disk must report BOTH:
+    /// reporting only the sidecar hides an unscanned disk behind an unrelated
+    /// integrity error, which is the failure mode this whole change exists to
+    /// close.
+    #[test]
+    fn test_checksum_scrub_reports_skips_on_a_malformed_sidecar() {
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        runtimes[0].encode_ts_ns = 100; // excluded: older known identity
+        runtimes[1].encode_ts_ns = 200; // anchor
+        for r in runtimes.iter_mut() {
+            r.bitrot_status = BitrotStatus::Invalid;
+        }
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (scanned, broken, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert_eq!(scanned, 0, "a malformed sidecar must not be scanned against");
+        assert!(broken.is_empty(), "must never blame shards: {:?}", broken);
+        assert_eq!(errs.len(), 2, "expected the sidecar error AND the skip: {:?}", errs);
+        assert!(
+            errs[0].contains("malformed/unverifiable"),
+            "the sidecar error stays first: {:?}",
+            errs
+        );
+        assert!(
+            errs[1].contains("belong to encode run 100") && errs[1].contains("not verified"),
+            "the excluded disk must still be named: {:?}",
+            errs
+        );
+    }
+
     /// When the anchor's sidecar came from a directory belonging to a runtime
     /// the fence excluded, the checksums cannot be trusted against the anchor's
     /// shards. Report that, never "shard N is corrupt".
@@ -3556,14 +3592,20 @@ impl EcChecksumScrubPlan {
                 return (0, Vec::new(), Vec::new());
             }
             (_, BitrotStatus::Invalid) => {
-                return (
-                    0,
-                    Vec::new(),
-                    vec![format!(
-                        "EC volume {} bitrot sidecar is malformed/unverifiable (sidecar integrity)",
-                        self.volume_id.0
-                    )],
-                );
+                // Unlike the Off arm above, this one ALREADY returns a
+                // non-empty error vector, so carrying the fence lines with it
+                // costs no parity: the constraint is Go's
+                // `case BitrotOff: return 0, nil, nil`, which says nothing
+                // about Invalid. Dropping them here made a volume that has
+                // BOTH a malformed sidecar and a disk the fence excluded
+                // report only the sidecar -- and the unscanned disk is the
+                // more actionable of the two.
+                let mut errs = vec![format!(
+                    "EC volume {} bitrot sidecar is malformed/unverifiable (sidecar integrity)",
+                    self.volume_id.0
+                )];
+                errs.extend(self.skipped);
+                return (0, Vec::new(), errs);
             }
             (Some(p), BitrotStatus::On) => p,
             (None, BitrotStatus::On) => {
@@ -3573,9 +3615,14 @@ impl EcChecksumScrubPlan {
             }
         };
 
-        // Reported only here, AFTER the status match: the Off arm's
-        // `(0, [], [])` is Go parity (`case BitrotOff: return 0, nil, nil`) and
-        // a volume that verifies nothing gains nothing from a skip note.
+        // The On path's copy; the Invalid arm above appends the same lines to
+        // its own error vector. `Off` is the ONLY status that drops them, and
+        // it drops them under protest: its `(0, [], [])` is a hard Go-parity
+        // contract (`case BitrotOff: return 0, nil, nil`), so on an unprotected
+        // generation a CHECKSUM scrub cannot mention an excluded disk at all.
+        // That is the one place this constraint costs us coverage. `(None, On)`
+        // is treated as Off for the same reason it is everywhere else --
+        // defensively, as protection off.
         errors.extend(self.skipped);
 
         // Reported as an integrity note, never as shard corruption: the

@@ -7693,22 +7693,40 @@ mod tests {
         *ecv.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
     }
 
-    /// A disk the identity fence excluded is a disk this scrub did NOT read, and
-    /// FULL/READS must say so. `merge_ec_runtimes` hands the exclusions back as
-    /// `skipped`; the mode 2|5 arm folds them into `errs`, which is what both
-    /// flags the volume broken AND prints the line. Before that, a volume whose
-    /// disks disagreed on encode identity scrubbed the anchor and reported CLEAN
-    /// -- the sibling disk went unmentioned.
+    /// A disk the identity fence excluded is a disk the MERGE-DRIVEN half of a
+    /// FULL/READS scrub did not read, and that half must say so.
+    /// `merge_ec_runtimes` hands the exclusions back as `skipped`; the mode 2|5
+    /// arm folds them into `errs`, which is what both flags the volume broken
+    /// AND prints the line. Before that, a volume whose disks disagreed on
+    /// encode identity scrubbed the anchor and reported CLEAN -- the sibling
+    /// disk went unmentioned.
     ///
-    /// Both halves are asserted here: the same layout with the disks AGREEING is
-    /// clean, so the transition is pinned, not just the message text.
+    /// Read that scope literally: mode 2|5 has TWO halves and only the parity
+    /// half is merge-driven. The per-needle walk
+    /// (`scrub_ec_volume_distributed`) still resolves `store.find_ec_volume`
+    /// (store_ec.rs:281) and binds `expected_encode_ts_ns` to THAT runtime
+    /// (:311) -- position 0, which on this very fixture is the EXCLUDED one.
+    /// `read_local_intervals` then filters local shards to that generation
+    /// (store_ec.rs:1204), so on a fenced volume with live needles the walk
+    /// reads the excluded disk and treats the ANCHOR's shards as non-local:
+    /// the inverse of what `skipped` reports. This fixture cannot tell the two
+    /// apart -- its `.ecx` holds one tombstone, so nothing is walked and
+    /// nothing verifies dir0 -- so do not read a passing assertion here as
+    /// saying the needle walk honors the fence. It does not; that binding is a
+    /// tracked follow-up alongside `read_local_intervals`.
     ///
-    /// Modes 2|5 and 3 report an exclusion; mode 4 is the EXCEPTION and is not
-    /// covered here because it has nothing to cover. `EcChecksumScrubPlan::run`
-    /// returns `(0, [], [])` on `BitrotStatus::Off` BEFORE reporting `skipped`,
-    /// so on an unprotected generation a CHECKSUM scrub of a fenced volume is
-    /// clean and the excluded disk goes unmentioned. Do not read these tests as
-    /// saying the fence is reported uniformly across every scrub mode.
+    /// Both halves of the TRANSITION are asserted here: the same layout with
+    /// the disks AGREEING is clean, so the clean-to-broken change is pinned,
+    /// not just the message text.
+    ///
+    /// Across modes, `BitrotStatus::Off` is now the ONLY place an exclusion
+    /// goes unreported: modes 2|5 and 3 always report it, and mode 4 reports it
+    /// on `On` and (since `ec: report fenced-out disks on a malformed sidecar
+    /// too`) on `Invalid`. `Off` returns `(0, [], [])` before reporting
+    /// `skipped` because that is a hard Go-parity contract
+    /// (`case BitrotOff: return 0, nil, nil`), so on an unprotected generation
+    /// a CHECKSUM scrub of a fenced volume is clean and the excluded disk goes
+    /// unmentioned. That single exception is deliberate, not an oversight.
     #[tokio::test]
     async fn test_scrub_ec_volume_full_reports_a_fenced_out_disk() {
         // Control: identical layout, both disks on encode run 200.
