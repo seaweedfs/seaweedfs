@@ -508,13 +508,16 @@ impl Store {
         }
         if let Some(collection) = collection {
             // The hint is only an optimization: a collection carrying a path
-            // separator or parent reference could route file creation outside
-            // the storage directory, so skip the shortcut and let the safe
-            // directory scan resolve the volume instead.
+            // separator could route file creation outside the storage
+            // directory, so skip the shortcut and let the safe directory scan
+            // resolve the volume instead. Rejecting the exact ".." name is
+            // sufficient — a collection like "foo..bar" is a valid name and
+            // stays inside the directory (the ".." is part of the filename, not
+            // a parent reference, because volume_file_name joins with "_").
             let hint_safe = !collection.is_empty()
                 && !collection.contains('/')
                 && !collection.contains('\\')
-                && !collection.contains("..");
+                && collection != "..";
             if hint_safe {
                 for loc in &mut self.locations {
                     let base = crate::storage::volume::volume_file_name(
@@ -552,6 +555,14 @@ impl Store {
                         &format!("{}.vif", idx_base),
                     );
                     if dat_exists || has_remote {
+                        // A persisting .note means the copy that produced these
+                        // files never completed; mounting it would expose a
+                        // truncated volume. Skip this candidate and keep
+                        // searching (matches load_existing_volumes).
+                        let note_path = format!("{}.note", base);
+                        if std::path::Path::new(&note_path).exists() {
+                            continue;
+                        }
                         return loc.create_volume(
                             vid,
                             collection,
@@ -566,7 +577,10 @@ impl Store {
                 }
             }
         }
-        if let Some((loc_idx, base_path, collection)) = self.find_volume_file_base(vid) {
+        // Iterate every matching candidate, not just the first. A lone
+        // sidecar on an earlier disk must not hide a real .dat on a later
+        // disk (the split-disk EC layout the guard above protects against).
+        for (loc_idx, base_path, collection) in self.find_volume_file_bases(vid) {
             // The scan matches any volume file (.dat/.vif/.idx). A lone .vif/.idx
             // sidecar (e.g. an EC sidecar whose .ecx is on a sibling disk) must
             // NOT mount here: create_volume would write an empty .dat and
@@ -587,6 +601,14 @@ impl Store {
                 &format!("{}.vif", idx_base),
             );
             if dat_exists || has_remote {
+                // A persisting .note means the copy that produced these files
+                // never completed; mounting it would expose a truncated volume.
+                // Skip this candidate and keep searching (matches
+                // load_existing_volumes).
+                let note_path = format!("{}.note", base_path);
+                if std::path::Path::new(&note_path).exists() {
+                    continue;
+                }
                 let loc = &mut self.locations[loc_idx];
                 return loc.create_volume(
                     vid,
@@ -606,6 +628,15 @@ impl Store {
     }
 
     fn find_volume_file_base(&self, vid: VolumeId) -> Option<(usize, String, String)> {
+        self.find_volume_file_bases(vid).into_iter().next()
+    }
+
+    /// Collect every location/collection whose directory holds a volume file
+    /// (.dat/.vif/.idx) for `vid`, in scan order. Callers that need to skip
+    /// lone sidecars (mount_volume_by_id) must see all candidates so a sidecar
+    /// on an earlier disk does not hide a real .dat on a later one.
+    fn find_volume_file_bases(&self, vid: VolumeId) -> Vec<(usize, String, String)> {
+        let mut results = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             if let Ok(entries) = std::fs::read_dir(&loc.directory) {
                 for entry in entries.flatten() {
@@ -613,15 +644,16 @@ impl Store {
                     let name = name.to_string_lossy();
                     if let Some((collection, file_vid)) = parse_volume_filename(&name) {
                         if file_vid == vid {
-                            let base = strip_volume_suffix(&name)?;
-                            let base_path = format!("{}/{}", loc.directory, base);
-                            return Some((loc_idx, base_path, collection));
+                            if let Some(base) = strip_volume_suffix(&name) {
+                                let base_path = format!("{}/{}", loc.directory, base);
+                                results.push((loc_idx, base_path, collection));
+                            }
                         }
                     }
                 }
             }
         }
-        None
+        results
     }
 
     /// Configure a volume's replica placement on disk.
@@ -1680,6 +1712,149 @@ mod tests {
         let count = store.read_volume_needle(VolumeId(7), &mut got).unwrap();
         assert_eq!(count, 7);
         assert_eq!(got.data, b"hint me");
+    }
+
+    #[test]
+    fn test_mount_volume_by_id_hint_accepts_double_dot_collection() {
+        // A valid collection like "foo..bar" contains ".." but is not a parent
+        // reference — volume_file_name joins with "_" so it stays in the dir.
+        // The hint must NOT be rejected for it.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+        store
+            .add_volume(
+                VolumeId(9),
+                "foo..bar",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"dots".to_vec(),
+            data_size: 4,
+            ..Needle::default()
+        };
+        store.write_volume_needle(VolumeId(9), &mut n, false).unwrap();
+        assert!(store.unmount_volume(VolumeId(9)));
+
+        // The hint is accepted and mounts the volume.
+        store
+            .mount_volume_by_id(VolumeId(9), Some("foo..bar"))
+            .unwrap();
+        assert!(store.find_volume(VolumeId(9)).is_some());
+
+        let mut got = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let count = store.read_volume_needle(VolumeId(9), &mut got).unwrap();
+        assert_eq!(count, 4);
+        assert_eq!(got.data, b"dots");
+    }
+
+    #[test]
+    fn test_mount_volume_by_id_skips_incomplete_note() {
+        // A persisting .note means a VolumeCopy was interrupted; the volume
+        // must not mount as live (would expose truncated data). The candidate
+        // is skipped and mount returns NotFound.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+        store
+            .add_volume(
+                VolumeId(11),
+                "coll",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"partial".to_vec(),
+            data_size: 7,
+            ..Needle::default()
+        };
+        store.write_volume_needle(VolumeId(11), &mut n, false).unwrap();
+        assert!(store.unmount_volume(VolumeId(11)));
+
+        // Simulate an interrupted copy: drop a .note marker.
+        let base = volume_file_name(dir, "coll", VolumeId(11));
+        std::fs::write(format!("{}.note", base), "interrupted").unwrap();
+
+        // Hint path: skipped because of .note.
+        let err = store
+            .mount_volume_by_id(VolumeId(11), Some("coll"))
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Io(ref e)
+            if e.kind() == std::io::ErrorKind::NotFound));
+        assert!(store.find_volume(VolumeId(11)).is_none());
+
+        // Fallback path (no hint): also skipped because of .note.
+        let err = store.mount_volume_by_id(VolumeId(11), None).unwrap_err();
+        assert!(matches!(err, VolumeError::Io(ref e)
+            if e.kind() == std::io::ErrorKind::NotFound));
+        assert!(store.find_volume(VolumeId(11)).is_none());
+    }
+
+    #[test]
+    fn test_mount_volume_by_id_fallback_skips_sidecar_finds_real_dat() {
+        // A lone sidecar on disk 0 must not hide a real .dat on disk 1.
+        // The fallback now iterates all candidates instead of stopping at
+        // the first (sidecar-only) match.
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let dir0 = tmp1.path().to_str().unwrap();
+        let dir1 = tmp2.path().to_str().unwrap();
+
+        // disk 0: lone .vif sidecar, no .dat, no remote.
+        let base0 = volume_file_name(dir0, "coll", VolumeId(13));
+        std::fs::write(format!("{}.vif", base0), "{}").unwrap();
+
+        // disk 1: real volume with data.
+        let mut store = make_test_store(&[dir0, dir1]);
+        store
+            .add_volume(
+                VolumeId(13),
+                "coll",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"real".to_vec(),
+            data_size: 4,
+            ..Needle::default()
+        };
+        store.write_volume_needle(VolumeId(13), &mut n, false).unwrap();
+        assert!(store.unmount_volume(VolumeId(13)));
+
+        // No hint: the fallback scan finds the sidecar on disk 0 first (skip,
+        // no .dat), then the real .dat on disk 1 (mount).
+        store.mount_volume_by_id(VolumeId(13), None).unwrap();
+        assert!(store.find_volume(VolumeId(13)).is_some());
+
+        let mut got = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let count = store.read_volume_needle(VolumeId(13), &mut got).unwrap();
+        assert_eq!(count, 4);
+        assert_eq!(got.data, b"real");
     }
 
     #[test]
