@@ -599,23 +599,43 @@ impl VolumeGrpcService {
                     // deliberate divergence from Go FULL to preserve coverage. Drop
                     // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
                     //
-                    // The RS recompute needs every shard co-located, so only run it
-                    // when this node holds all data+parity shards (single-node EC);
-                    // on a distributed layout it would report every non-local shard
-                    // as missing. Snapshot under a brief lock; release before await.
-                    let Some((dir, collection, data_shards, parity_shards, all_local)) = ({
+                    // The RS recompute needs every shard, so only run it when this
+                    // node holds all data+parity shards (single-node EC); on a
+                    // distributed layout it would report every non-local shard as
+                    // missing. The shards need not share one disk: `verify_ec_shards`
+                    // takes a directory per shard id, so a reconciled volume split
+                    // across this node's disks still qualifies.
+                    // Snapshot under a brief lock; release before await.
+                    let Some((dirs, collection, data_shards, parity_shards, all_local)) = ({
                         let store = self.state.store.read().unwrap();
-                        store.find_ec_volume(vid).map(|ecv| {
-                            let total = (ecv.data_shards + ecv.parity_shards) as usize;
-                            let local = ecv.shards.iter().filter(|s| s.is_some()).count();
-                            (
-                                ecv.dir.clone(),
-                                ecv.collection.clone(),
-                                ecv.data_shards as usize,
-                                ecv.parity_shards as usize,
-                                local == total,
-                            )
-                        })
+                        let runtimes = store.find_all_ec_volumes(vid);
+                        // Same merge, same fence, as CHECKSUM and LOCAL: one
+                        // notion of which disks count. Computing `all_local`
+                        // from the first runtime alone made a volume split
+                        // across disks look partial and silently skipped the
+                        // parity check entirely.
+                        crate::storage::erasure_coding::ec_volume::merge_ec_runtimes(&runtimes)
+                            .map(|m| {
+                                let total =
+                                    (m.anchor.data_shards + m.anchor.parity_shards) as usize;
+                                let dirs: Vec<Option<String>> = (0..total)
+                                    .map(|id| {
+                                        m.slots
+                                            .get(id)
+                                            .copied()
+                                            .flatten()
+                                            .map(|(owner, _)| owner.dir.clone())
+                                    })
+                                    .collect();
+                                let all_local = dirs.iter().all(|d| d.is_some());
+                                (
+                                    dirs,
+                                    m.anchor.collection.clone(),
+                                    m.anchor.data_shards as usize,
+                                    m.anchor.parity_shards as usize,
+                                    all_local,
+                                )
+                            })
                     }) else {
                         if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
                             return Err(status);
@@ -637,11 +657,12 @@ impl VolumeGrpcService {
 
                     // (2) Local parity check, gated on all-shards-local. Blocking RS
                     // verify -> spawn_blocking; inputs are owned, no lock held.
-                    if all_local && !dir.is_empty() {
+                    if all_local {
                         let collection_pc = collection.clone();
+                        let dirs_pc = dirs;
                         let join = tokio::task::spawn_blocking(move || {
                             crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
-                                &dir,
+                                &dirs_pc,
                                 &collection_pc,
                                 vid,
                                 data_shards,

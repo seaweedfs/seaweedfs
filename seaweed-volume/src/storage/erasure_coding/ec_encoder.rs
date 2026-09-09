@@ -284,8 +284,12 @@ pub fn rebuild_ec_files(
 /// FULL walk only reads live data-shard intervals, so on its own it can't catch
 /// bitrot in a parity shard or an unwalked region. Move to mode 4 (CHECKSUM) and
 /// drop it from mode 2 once the `.ecsum` subsystem lands.
+///
+/// `dirs` is indexed BY SHARD ID: each entry is the directory holding that
+/// shard, or `None` when no disk mounts it. A reconciled volume's shards can be
+/// split across disks, so a single directory cannot address them all.
 pub fn verify_ec_shards(
-    dir: &str,
+    dirs: &[Option<String>],
     collection: &str,
     volume_id: VolumeId,
     data_shards: usize,
@@ -295,23 +299,37 @@ pub fn verify_ec_shards(
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e)))?;
 
     let total_shards = data_shards + parity_shards;
-    let mut shards: Vec<EcVolumeShard> = (0..total_shards as u8)
-        .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
+    let mut shards: Vec<Option<EcVolumeShard>> = (0..total_shards)
+        .map(|i| {
+            dirs.get(i)
+                .and_then(|d| d.as_ref())
+                .map(|d| EcVolumeShard::new(d, collection, volume_id, i as u8))
+        })
         .collect();
 
     let mut shard_size = 0;
     let mut broken_shards = std::collections::HashSet::new();
     let mut details = Vec::new();
 
-    for (i, shard) in shards.iter_mut().enumerate() {
-        if let Ok(_) = shard.open() {
-            let size = shard.file_size();
-            if size > shard_size {
-                shard_size = size;
+    for (i, slot) in shards.iter_mut().enumerate() {
+        match slot.as_mut() {
+            // Not a match guard: a binding is immutable until the guard ends,
+            // and `open()` needs `&mut self`.
+            Some(shard) => {
+                if shard.open().is_ok() {
+                    let size = shard.file_size();
+                    if size > shard_size {
+                        shard_size = size;
+                    }
+                } else {
+                    broken_shards.insert(i as u32);
+                    details.push(format!("failed to open or missing shard {}", i));
+                }
             }
-        } else {
-            broken_shards.insert(i as u32);
-            details.push(format!("failed to open or missing shard {}", i));
+            None => {
+                broken_shards.insert(i as u32);
+                details.push(format!("shard {} is not mounted on any disk", i));
+            }
         }
     }
 
@@ -331,7 +349,11 @@ pub fn verify_ec_shards(
         let mut read_failed = false;
         for i in 0..total_shards {
             if !broken_shards.contains(&(i as u32)) {
-                if let Err(e) = shards[i].read_at(&mut buffers[i], offset) {
+                let read = match shards[i].as_mut() {
+                    Some(shard) => shard.read_at(&mut buffers[i], offset),
+                    None => Err(io::Error::new(io::ErrorKind::NotFound, "shard not mounted")),
+                };
+                if let Err(e) = read {
                     broken_shards.insert(i as u32);
                     details.push(format!("read error shard {}: {}", i, e));
                     read_failed = true;
@@ -377,7 +399,7 @@ pub fn verify_ec_shards(
     }
 
     // Close all shards
-    for shard in &mut shards {
+    for shard in shards.iter_mut().flatten() {
         shard.close();
     }
 
@@ -1455,6 +1477,93 @@ mod tests {
         assert!(
             result.is_err(),
             "should fail when idx_dir doesn't contain .idx"
+        );
+    }
+
+    /// Write a real 10+4 encoded volume into `dir`.
+    ///
+    /// Unlike `make_volume_with_needles` and `encode_sample_volume` this seeds
+    /// a caller-chosen directory, which is what a split-disk test needs: the
+    /// shards have to be scattered out of the directory they were encoded into.
+    fn seed_encoded_volume(dir: &str, vid: VolumeId) {
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            vid,
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=8 {
+            let data = format!("test data for needle {} with a bit more length", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        write_ec_files(dir, dir, "", vid, 10, 4).unwrap();
+    }
+
+    /// Shards split across two directories must all be found. Passing one dir
+    /// per shard is what lets a reconciled volume's parity be checked at all.
+    #[test]
+    fn test_verify_ec_shards_reads_shards_from_multiple_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        let d0 = tmp.path().join("d0");
+        let d1 = tmp.path().join("d1");
+        for d in [&src, &d0, &d1] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let src_s = src.to_str().unwrap();
+        seed_encoded_volume(src_s, VolumeId(1));
+
+        // Move shards 0..=6 to d0 and 7..=13 to d1.
+        let mut dirs: Vec<Option<String>> = Vec::new();
+        for id in 0..14u8 {
+            let target = if id < 7 { &d0 } else { &d1 };
+            std::fs::rename(
+                format!("{}/1.ec{:02}", src_s, id),
+                format!("{}/1.ec{:02}", target.to_str().unwrap(), id),
+            )
+            .unwrap();
+            dirs.push(Some(target.to_str().unwrap().to_string()));
+        }
+
+        let (broken, details) = verify_ec_shards(&dirs, "", VolumeId(1), 10, 4).unwrap();
+        assert!(
+            broken.is_empty(),
+            "split-dir shards reported broken: {:?}",
+            details
+        );
+    }
+
+    /// A shard no disk holds is a missing shard, not a panic and not a silent
+    /// pass -- and it must not drag the shards that ARE mounted down with it.
+    #[test]
+    fn test_verify_ec_shards_treats_a_none_dir_as_missing() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        seed_encoded_volume(dir, VolumeId(1));
+
+        let mut dirs: Vec<Option<String>> = (0..14).map(|_| Some(dir.to_string())).collect();
+        dirs[5] = None;
+
+        let (broken, _) = verify_ec_shards(&dirs, "", VolumeId(1), 10, 4).unwrap();
+        assert_eq!(
+            broken,
+            vec![5],
+            "an unmounted shard must be reported, and only it"
         );
     }
 }
