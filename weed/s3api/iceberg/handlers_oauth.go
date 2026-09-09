@@ -62,11 +62,14 @@ const (
 // restart cycles instead of dying every hour.
 func oauthExpirySeconds() int {
 	if v := os.Getenv("ICEBERG_OAUTH_TOKEN_EXPIRY"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		// Parse in 64-bit space: on 32-bit platforms Atoi overflows and
+		// errors on oversized values, which would silently fall back to
+		// the default instead of clamping.
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			if n > maxOauthTokenExpiry {
 				n = maxOauthTokenExpiry
 			}
-			return n
+			return int(n)
 		}
 	}
 	return defaultOauthTokenExpiry
