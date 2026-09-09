@@ -85,7 +85,10 @@ pub struct EcVolume {
     /// `load_bitrot_for_generation` spans sibling disks, and a `.ecsum` records
     /// no encode identity, so provenance is the only signal that a loaded
     /// manifest may describe a different encode run. Same purpose as
-    /// `ecx_actual_dir`. Empty when no sidecar was found.
+    /// `ecx_actual_dir`. Empty when no sidecar was found. Always committed in
+    /// the same step as `bitrot`/`bitrot_status`, so a reload whose `Err` gets
+    /// swallowed by `reload_bitrot_sidecar` cannot leave this describing a
+    /// sidecar other than the one those two fields actually hold.
     pub(crate) bitrot_source_dir: String,
 
     io_error_count: std::sync::atomic::AtomicI32,
@@ -553,20 +556,6 @@ impl EcVolume {
             .find(|p| std::path::Path::new(p).exists())
             .unwrap_or(data_path);
         let loaded = ec_bitrot::load_bitrot_sidecar(&path);
-        // Record where the sidecar actually came from before any early return:
-        // the scrub needs it to tell "my own protection" from "a manifest I
-        // borrowed off a disk that is no longer part of this encode run".
-        // Only a path that actually exists is a real source: `path` falls back
-        // to the data path when nothing was found, and recording that would
-        // claim a provenance the volume does not have.
-        self.bitrot_source_dir = if std::path::Path::new(&path).exists() {
-            std::path::Path::new(&path)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
         // A sidecar written for THIS generation that contradicts the volume's
         // geometry is not "no protection" — it says the layout the volume is
         // about to serve reads with is wrong. Fail the mount.
@@ -603,6 +592,22 @@ impl EcVolume {
             self.data_shards as usize,
             self.parity_shards as usize,
         );
+        // Provenance is committed together with the sidecar it describes, so a
+        // swallowed reload (`reload_bitrot_sidecar` logs and discards the `Err`
+        // above) cannot leave them disagreeing: the geometry-mismatch return
+        // happens before this point, so `bitrot`/`bitrot_status` below and
+        // `bitrot_source_dir` here always describe the same load attempt.
+        // Only a path that actually exists is a real source: `path` falls back
+        // to the data path when nothing was found, and recording that would
+        // claim a provenance the volume does not have.
+        self.bitrot_source_dir = if std::path::Path::new(&path).exists() {
+            std::path::Path::new(&path)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         self.bitrot = None;
         self.bitrot_status = status;
         match status {
@@ -649,6 +654,13 @@ impl EcVolume {
     /// instead. A genuine multi-shard disk failure of that magnitude is
     /// already unrecoverable, so treating it as a sidecar-integrity issue avoids
     /// raising false shard-corruption alarms.
+    ///
+    /// A third outcome sits ahead of both of the above: if the identity fence
+    /// excluded a runtime AND the anchor's sidecar was resolved from that
+    /// excluded runtime's directory, the checksums cannot be trusted against
+    /// the merged shards at all. That case returns `(0, [], [errors])` with an
+    /// "unverifiable" note and never touches a shard handle — no scan, no
+    /// wholesale-mismatch classification, no blamed shard.
     ///
     /// This method NEVER deletes or mutates anything — it is purely diagnostic.
     /// Duplicates the mounted shard handles so `run()` can scan with the store
@@ -2818,6 +2830,11 @@ mod tests {
             "expected an unverifiable-protection note, got {:?}",
             errs
         );
+        assert!(
+            errs.iter().any(|e| e.contains("were not verified")),
+            "the fenced-out runtime must still be reported alongside the unverifiable note: {:?}",
+            errs
+        );
     }
 
     /// The provenance rule fires only when a runtime was actually excluded. A
@@ -3475,16 +3492,28 @@ impl EcChecksumScrubPlan {
         // encode_ts_ns: 0, `resolve_status` matches only the generation), so the
         // only available signal is where it came from. If nothing was excluded,
         // provenance cannot indicate a mismatch and this never fires.
+        //
+        // This is a heuristic, not a proof: in the cross-disk reconcile shape a
+        // merged runtime's `dir_idx` can be the very disk that also hosts an
+        // EXCLUDED runtime's data directory, and a sidecar borrowed from there
+        // reads as "own" — the rule stays silent. `.ecsum` carries no encode
+        // identity to check against, which is the whole reason provenance is
+        // the only signal available here.
         let unverifiable_sidecar = if merged.skipped.is_empty() {
             None
         } else {
-            let own_dirs: Vec<&str> = merged
+            // `dir`/`dir_idx` come from config verbatim (no trailing-slash
+            // normalization), while `bitrot_source_dir` is a `Path::parent()`
+            // output that never carries one; trim both sides so a configured
+            // `-dir=/data/disk1/` still matches its own resolved source.
+            let own_dirs: Vec<String> = merged
                 .merged
                 .iter()
                 .flat_map(|v| [v.dir.as_str(), v.dir_idx.as_str()])
+                .map(|d| d.trim_end_matches('/').to_string())
                 .collect();
-            let src = anchor.bitrot_source_dir.as_str();
-            if src.is_empty() || own_dirs.contains(&src) {
+            let src = anchor.bitrot_source_dir.trim_end_matches('/');
+            if src.is_empty() || own_dirs.iter().any(|d| d == src) {
                 None
             } else {
                 Some(anchor.bitrot_source_dir.clone())
