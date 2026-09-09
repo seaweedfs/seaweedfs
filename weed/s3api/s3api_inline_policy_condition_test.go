@@ -123,6 +123,35 @@ func TestUserInlinePolicySourceIpCondition_Allows(t *testing.T) {
 		"PutObject from 127.0.0.1 must be allowed: the user inline policy's aws:SourceIp condition (127.0.0.0/8) matches")
 }
 
+// TestUserInlinePolicySourceIpCondition_IgnoresForwardedHeaders proves that a
+// spoofed X-Forwarded-For cannot satisfy an aws:SourceIp condition: the policy
+// requires 198.51.100.0/24, the peer is 127.0.0.1, and the header claims
+// 198.51.100.5. The condition must be evaluated against the peer, not the
+// header, so the request is denied.
+func TestUserInlinePolicySourceIpCondition_IgnoresForwardedHeaders(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
+	seedInlineCondUser(t, api)
+
+	_, iamErr := api.PutUserPolicy(api.mockConfig, url.Values{
+		"UserName":       {"alice"},
+		"PolicyName":     {"OnlyFromTestNet"},
+		"PolicyDocument": {inlineCondPolicyDoc("198.51.100.0/24")},
+	})
+	require.Nil(t, iamErr, "PutUserPolicy must succeed")
+	require.NoError(t, api.PutS3ApiConfiguration(api.mockConfig))
+	require.NoError(t, api.iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	ident := api.iam.lookupByIdentityName("alice")
+	require.NotNil(t, ident)
+
+	req := inlineCondRequest(t, http.MethodPut)
+	req.Header.Set("X-Forwarded-For", "198.51.100.5")
+	got := api.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_WRITE, inlineCondTestBucket, "obj")
+	assert.Equal(t, s3err.ErrAccessDenied, got,
+		"PutObject from 127.0.0.1 must be denied despite X-Forwarded-For claiming 198.51.100.5: aws:SourceIp is the peer, not the header")
+}
+
 // TestGroupInlinePolicy_PutAndEnforce verifies that PutGroupPolicy is supported
 // (no longer returns NotImplemented) and that an aws:SourceIp condition on the
 // resulting inline policy is honored for group members.

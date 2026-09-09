@@ -171,11 +171,10 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Forwarded-For", "192.168.1.100")
 				req.Header.Set("User-Agent", "aws-sdk-go/1.0")
-				// Set RemoteAddr to private IP to simulate trusted proxy
 				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
-			expectedIP: "192.168.1.100",
+			expectedIP: "127.0.0.1",
 			expectedUA: "aws-sdk-go/1.0",
 		},
 		{
@@ -184,11 +183,10 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Real-IP", "10.0.0.1")
 				req.Header.Set("User-Agent", "boto3/1.0")
-				// Set RemoteAddr to private IP to simulate trusted proxy
 				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
-			expectedIP: "10.0.0.1",
+			expectedIP: "127.0.0.1",
 			expectedUA: "boto3/1.0",
 		},
 	}
@@ -258,9 +256,7 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 			// Create request with specific IP
 			req := httptest.NewRequest("GET", "/restricted-bucket/file.txt", http.NoBody)
 			req.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
-			req.Header.Set("X-Forwarded-For", tt.sourceIP)
-			// Set RemoteAddr to private IP to simulate trusted proxy
-			req.RemoteAddr = "127.0.0.1:12345"
+			req.RemoteAddr = tt.sourceIP + ":12345"
 
 			// Create IAM identity for testing
 			identity := &IAMIdentity{

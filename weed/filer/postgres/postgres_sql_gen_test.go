@@ -76,3 +76,19 @@ func TestIsByteOrderedCollation(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveCreateTableQuery(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"true", DefaultCreateTableQuery},
+		{"false", ""},
+		{"CREATE TABLE custom", "CREATE TABLE custom"},
+	}
+	for _, c := range cases {
+		if got := ResolveCreateTableQuery(c.in); got != c.want {
+			t.Fatalf("ResolveCreateTableQuery(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
