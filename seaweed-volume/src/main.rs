@@ -39,6 +39,11 @@ const GRPC_MAX_HEADER_LIST_SIZE: u32 = 8 * 1024 * 1024;
 const GRPC_MAX_CONCURRENT_STREAMS: u32 = 1000;
 
 fn main() {
+    // Before anything allocates: stop glibc from training its mmap threshold
+    // upward on our large EC buffers and turning them into heap it never
+    // returns. See seaweed_volume::malloc_tuning for the measurements.
+    let malloc_tuning = seaweed_volume::malloc_tuning::pin_mmap_threshold();
+
     install_default_crypto_provider();
 
     // Initialize tracing
@@ -65,6 +70,19 @@ fn main() {
         "SeaweedFS Volume Server (Rust) v{}",
         seaweed_volume::version::full_version()
     );
+    match malloc_tuning {
+        seaweed_volume::malloc_tuning::MallocTuning::Pinned(bytes) => {
+            info!("pinned glibc M_MMAP_THRESHOLD to {} bytes", bytes)
+        }
+        seaweed_volume::malloc_tuning::MallocTuning::DeferredToEnv => info!(
+            "{} is set; leaving glibc's mmap threshold to the environment",
+            seaweed_volume::malloc_tuning::MMAP_THRESHOLD_ENV
+        ),
+        seaweed_volume::malloc_tuning::MallocTuning::Failed => {
+            warn!("mallopt(M_MMAP_THRESHOLD) failed; large freed buffers may stay resident")
+        }
+        seaweed_volume::malloc_tuning::MallocTuning::NotApplicable => {}
+    }
 
     // Register Prometheus metrics
     metrics::register_metrics();
