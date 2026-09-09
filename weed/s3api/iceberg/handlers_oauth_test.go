@@ -303,8 +303,11 @@ func TestTokenExchangeAuthenticatedLiveSubjectFullTTL(t *testing.T) {
 // subject token has under a second left must be rejected, not minted into
 // an already-expired token (expires_in: 0).
 func TestTokenExchangeSubjectNearlyExpired(t *testing.T) {
-	now := time.Now()
-	nearlyDead := mintTestToken(t, "AKID123", "secret456", now.Add(-time.Hour), now.Add(300*time.Millisecond))
+	// jwt/v5 serializes exp at one-second precision, so pin the expiry to
+	// the next whole-second boundary: the token is always live when minted
+	// and exchanged, yet has under a second of remaining lifetime.
+	exp := time.Now().Truncate(time.Second).Add(time.Second)
+	nearlyDead := mintTestToken(t, "AKID123", "secret456", exp.Add(-time.Hour), exp)
 
 	w := exchangeRequest(t, nearlyDead)
 	if w.Code != http.StatusBadRequest {
