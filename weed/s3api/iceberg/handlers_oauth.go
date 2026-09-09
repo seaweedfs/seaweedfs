@@ -67,7 +67,7 @@ func oauthExpirySeconds() int {
 		// the default instead of clamping.
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			if n > maxOauthTokenExpiry {
-				n = maxOauthTokenExpiry
+				return maxOauthTokenExpiry
 			}
 			return int(n)
 		}
