@@ -966,24 +966,23 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	return persistErr
 }
 
-func (s *Store) MountVolume(i needle.VolumeId) error {
-	return s.mountVolume(i, nil)
+// MountVolume loads a volume and announces it after all optional validators
+// succeed. A validator failure unloads the volume before returning the error,
+// so an invalid newly copied replica is never announced to the master.
+func (s *Store) MountVolume(i needle.VolumeId, validators ...func(*Volume) error) error {
+	return s.mountVolume(i, validators...)
 }
 
-// MountVolumeWithValidator loads a volume, validates it before announcing it
-// to the master, and unloads it when validation fails. This keeps an invalid
-// newly copied replica out of the master's routable volume set.
-func (s *Store) MountVolumeWithValidator(i needle.VolumeId, validator func(*Volume) error) error {
-	return s.mountVolume(i, validator)
-}
-
-func (s *Store) mountVolume(i needle.VolumeId, validator func(*Volume) error) error {
+func (s *Store) mountVolume(i needle.VolumeId, validators ...func(*Volume) error) error {
 	for diskId, location := range s.Locations {
 		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind); found == true {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting
-			if validator != nil {
+			for _, validator := range validators {
+				if validator == nil {
+					continue
+				}
 				if err := validator(v); err != nil {
 					if unloadErr := location.UnloadVolume(i); unloadErr != nil {
 						return fmt.Errorf("%w; failed to unload volume %d after validation error: %v", err, i, unloadErr)

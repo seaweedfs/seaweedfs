@@ -60,10 +60,11 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			VolumeId: req.VolumeId,
 		})
 		if err != nil {
-			return fmt.Errorf("read volume status failed, %w", err)
+			glog.Warningf("failed to read source volume %d status before copy; skip record count validation: %v", req.VolumeId, err)
+			sourceVolumeStatus = nil
 		}
 
-		volFileInfoResp, err = client.ReadVolumeFileStatus(stream.Context(),
+		volFileInfoResp, err = client.ReadVolumeFileStatus(context.Background(),
 			&volume_server_pb.ReadVolumeFileStatusRequest{
 				VolumeId: req.VolumeId,
 			})
@@ -203,8 +204,8 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			VolumeId: req.VolumeId,
 		})
 		if statusErr != nil {
-			glog.Warningf("failed to read source volume %d status after copy; skip record count validation: %v", req.VolumeId, statusErr)
-			sourceVolumeStatusAfterCopy = nil
+			err = fmt.Errorf("read source volume %d status after copy failed: %w", req.VolumeId, statusErr)
+			return err
 		}
 
 		return nil
@@ -242,16 +243,14 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	}
 
 	shouldValidateCopyCounts := copyCountsStable(sourceVolumeStatus, sourceVolumeStatusAfterCopy)
-	if sourceVolumeStatusAfterCopy == nil {
-		glog.V(1).Infof("source volume %d status was unavailable after copy; skip record count validation", req.VolumeId)
-	} else if !shouldValidateCopyCounts {
+	if !shouldValidateCopyCounts {
 		glog.V(1).Infof("source volume %d changed during copy; skip record count validation", req.VolumeId)
 	}
 
 	// Load and validate the volume before announcing it to the master. A failed
 	// validation is unloaded by the store without ever making the replica
 	// routable.
-	err = vs.store.MountVolumeWithValidator(needle.VolumeId(req.VolumeId), func(targetVolume *storage.Volume) error {
+	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId), func(targetVolume *storage.Volume) error {
 		if !shouldValidateCopyCounts {
 			return nil
 		}
@@ -340,6 +339,9 @@ func checkCopyCounts(origin *volume_server_pb.VolumeStatusResponse, targetFileCo
 }
 
 func copyCountsStable(before, after *volume_server_pb.VolumeStatusResponse) bool {
+	// A writable source may receive writes or deletions while its files are
+	// copied. In that case the before/after counts do not describe one stable
+	// snapshot, so strict target-count validation would report a false error.
 	return before != nil && after != nil &&
 		before.FileCount == after.FileCount &&
 		before.FileDeletedCount == after.FileDeletedCount
