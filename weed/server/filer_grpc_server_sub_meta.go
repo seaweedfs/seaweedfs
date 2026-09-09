@@ -1299,7 +1299,7 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	if len(refs) == 0 {
 		return startPos.Time.UnixNano(), false, nil
 	}
-	if err := fs.sendRefsBatched(sender, refs); err != nil {
+	if err := fs.sendRefsBatched(sender, refs, upgradeOnRemotePeer); err != nil {
 		return 0, false, err
 	}
 	if upgradeOnRemotePeer != nil {
@@ -1359,9 +1359,16 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 // sendRefsBatched sends refs through the pipelined sender, which keeps them
 // out of Events batches; gRPC allows one sending goroutine per stream and the
 // sender's goroutine is it.
-func (fs *FilerServer) sendRefsBatched(sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef) error {
+func (fs *FilerServer) sendRefsBatched(sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef, upgradeOnRemotePeer <-chan struct{}) error {
 	const maxRefsPerMessage = 64
 	for i := 0; i < len(refs); i += maxRefsPerMessage {
+		if upgradeOnRemotePeer != nil {
+			select {
+			case <-upgradeOnRemotePeer:
+				return errAggregationUpgrade
+			default:
+			}
+		}
 		end := i + maxRefsPerMessage
 		if end > len(refs) {
 			end = len(refs)
