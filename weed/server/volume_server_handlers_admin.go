@@ -31,6 +31,13 @@ func (vs *VolumeServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A server with quarantined local replicas has faulty storage media;
+	// report degraded so a load balancer can drain it.
+	if vs.store.HasIoQuarantine() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

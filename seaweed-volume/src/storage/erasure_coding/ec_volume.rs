@@ -17,6 +17,8 @@ use crate::storage::types::*;
 use crate::storage::volume_open::open_volume_file;
 
 /// An erasure-coded volume managing its local shards and index.
+pub const IO_ERROR_TOLERANCE: i32 = 3;
+
 pub struct EcVolume {
     pub volume_id: VolumeId,
     pub collection: String,
@@ -79,6 +81,10 @@ pub struct EcVolume {
     /// so `bitrot_protection()` can return the `Off`/`Invalid` distinction without
     /// re-reading, mirroring Go's `EcVolume.bitrotStatus`.
     pub(crate) bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+
+    io_error_count: std::sync::atomic::AtomicI32,
+    io_error_quarantined: std::sync::atomic::AtomicBool,
+    last_io_error: std::sync::Mutex<Option<String>>,
 }
 
 /// Locate the `.vif` for a (collection, vid) by preferring the data dir
@@ -430,6 +436,9 @@ impl EcVolume {
             encode_ts_ns,
             bitrot: None,
             bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
+            io_error_count: std::sync::atomic::AtomicI32::new(0),
+            io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
+            last_io_error: std::sync::Mutex::new(None),
         };
 
         // Open .ecx file (sorted index) in read/write mode for in-place deletion marking.
@@ -953,6 +962,50 @@ impl EcVolume {
             .unwrap_or_default()
     }
 
+    // ---- I/O error tracking (mirrors Go's EcVolume IoErrorTracker) ----
+
+    pub fn check_read_write_error(&self, err: Option<&io::Error>) {
+        use std::sync::atomic::Ordering;
+        if let Some(e) = err {
+            if crate::storage::volume::is_storage_io_error(e) {
+                self.io_error_count.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut guard) = self.last_io_error.lock() {
+                    *guard = Some(e.to_string());
+                }
+                crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
+                return;
+            }
+        }
+        self.io_error_count.store(0, Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            if guard.is_some() {
+                *guard = None;
+            }
+        }
+    }
+
+    pub fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
+        use std::sync::atomic::Ordering;
+        let err = self.last_io_error.lock().ok().and_then(|g| g.clone());
+        let count = self.io_error_count.load(Ordering::Relaxed);
+        let quarantined = self.io_error_quarantined.load(Ordering::Relaxed);
+        (err, count, quarantined)
+    }
+
+    pub fn mark_io_quarantined(&self) {
+        self.io_error_quarantined
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn reset_io_error_state(&self) {
+        use std::sync::atomic::Ordering;
+        self.io_error_count.store(0, Ordering::Relaxed);
+        self.io_error_quarantined.store(false, Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            *guard = None;
+        }
+    }
+
     // ---- Index operations ----
 
     /// Find a needle's offset and size in the sorted .ecx index via binary search.
@@ -979,7 +1032,22 @@ impl EcVolume {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::FileExt;
-                ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
+                if let Err(e) = ecx_file.read_exact_at(&mut entry_buf, file_offset) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                use std::io::{Read, Seek, SeekFrom};
+                if let Err(e) = ecx_file.seek(SeekFrom::Start(file_offset)) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
+                if let Err(e) = ecx_file.read_exact(&mut entry_buf) {
+                    self.check_read_write_error(Some(&e));
+                    return Err(e);
+                }
             }
 
             let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
@@ -989,8 +1057,10 @@ impl EcVolume {
                 // reported with TOMBSTONE_FILE_SIZE even though the .ecx
                 // record itself is untouched.
                 if self.is_needle_deleted(needle_id) {
+                    self.check_read_write_error(None);
                     return Ok(Some((offset, TOMBSTONE_FILE_SIZE)));
                 }
+                self.check_read_write_error(None);
                 return Ok(Some((offset, size)));
             } else if key < needle_id {
                 lo = mid + 1;
@@ -999,6 +1069,7 @@ impl EcVolume {
             }
         }
 
+        self.check_read_write_error(None);
         Ok(None)
     }
 
