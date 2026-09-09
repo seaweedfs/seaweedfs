@@ -51,18 +51,19 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	//   confirm size and timestamp
 	var volFileInfoResp *volume_server_pb.ReadVolumeFileStatusResponse
 	var sourceVolumeStatus *volume_server_pb.VolumeStatusResponse
+	var sourceVolumeStatusAfterCopy *volume_server_pb.VolumeStatusResponse
 	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
 	var hasRemoteDatFile bool
 	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		var err error
-		sourceVolumeStatus, err = client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
+		sourceVolumeStatus, err = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
 			VolumeId: req.VolumeId,
 		})
 		if err != nil {
 			return fmt.Errorf("read volume status failed, %w", err)
 		}
 
-		volFileInfoResp, err = client.ReadVolumeFileStatus(context.Background(),
+		volFileInfoResp, err = client.ReadVolumeFileStatus(stream.Context(),
 			&volume_server_pb.ReadVolumeFileStatusRequest{
 				VolumeId: req.VolumeId,
 			})
@@ -197,6 +198,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return fmt.Errorf("remove .note for volume %d: %w", req.VolumeId, noteErr)
 		}
 
+		var statusErr error
+		sourceVolumeStatusAfterCopy, statusErr = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
+			VolumeId: req.VolumeId,
+		})
+		if statusErr != nil {
+			glog.Warningf("failed to read source volume %d status after copy; skip record count validation: %v", req.VolumeId, statusErr)
+			sourceVolumeStatusAfterCopy = nil
+		}
+
 		return nil
 	})
 
@@ -231,28 +241,24 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}
 	}
 
-	// mount the volume
-	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId))
-	if err != nil {
-		return fmt.Errorf("failed to mount volume %d: %v", req.VolumeId, err)
+	shouldValidateCopyCounts := copyCountsStable(sourceVolumeStatus, sourceVolumeStatusAfterCopy)
+	if sourceVolumeStatusAfterCopy == nil {
+		glog.V(1).Infof("source volume %d status was unavailable after copy; skip record count validation", req.VolumeId)
+	} else if !shouldValidateCopyCounts {
+		glog.V(1).Infof("source volume %d changed during copy; skip record count validation", req.VolumeId)
 	}
 
-	// A writable source may change while its files are being copied. In that
-	// case the status snapshot is not a stable reference, so only validate the
-	// record counts for a source that reported itself read-only.
-	if sourceVolumeStatus != nil && sourceVolumeStatus.IsReadOnly {
-		targetVolume := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
-		if targetVolume == nil {
-			err = fmt.Errorf("volume %d not found after mount", req.VolumeId)
-		} else {
-			err = checkCopyCounts(sourceVolumeStatus, targetVolume.FileCount(), targetVolume.DeletedCount())
+	// Load and validate the volume before announcing it to the master. A failed
+	// validation is unloaded by the store without ever making the replica
+	// routable.
+	err = vs.store.MountVolumeWithValidator(needle.VolumeId(req.VolumeId), func(targetVolume *storage.Volume) error {
+		if !shouldValidateCopyCounts {
+			return nil
 		}
-		if err != nil {
-			if unmountErr := vs.store.UnmountVolume(needle.VolumeId(req.VolumeId)); unmountErr != nil {
-				return fmt.Errorf("%w; failed to unmount volume %d: %v", err, req.VolumeId, unmountErr)
-			}
-			return err
-		}
+		return checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount())
+	})
+	if err != nil {
+		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
 	}
 
 	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
@@ -331,6 +337,12 @@ func checkCopyCounts(origin *volume_server_pb.VolumeStatusResponse, targetFileCo
 		return fmt.Errorf("target deleted count [%d] is not same as origin deleted count [%d]", targetDeletedCount, origin.FileDeletedCount)
 	}
 	return nil
+}
+
+func copyCountsStable(before, after *volume_server_pb.VolumeStatusResponse) bool {
+	return before != nil && after != nil &&
+		before.FileCount == after.FileCount &&
+		before.FileDeletedCount == after.FileDeletedCount
 }
 
 func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version needle.Version) (uint64, error) {

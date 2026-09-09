@@ -66,3 +66,83 @@ func TestCheckCopyCounts(t *testing.T) {
 		})
 	}
 }
+
+func TestCopyCountsStable(t *testing.T) {
+	tests := []struct {
+		name   string
+		before *volume_server_pb.VolumeStatusResponse
+		after  *volume_server_pb.VolumeStatusResponse
+		want   bool
+	}{
+		{
+			name:   "empty volume is stable",
+			before: &volume_server_pb.VolumeStatusResponse{},
+			after:  &volume_server_pb.VolumeStatusResponse{},
+			want:   true,
+		},
+		{
+			name: "matching file and deleted counts are stable",
+			before: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        10,
+				FileDeletedCount: 3,
+			},
+			after: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        10,
+				FileDeletedCount: 3,
+			},
+			want: true,
+		},
+		{
+			name: "read-only state changes without count changes are stable",
+			before: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        10,
+				FileDeletedCount: 3,
+				IsReadOnly:       true,
+			},
+			after: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        10,
+				FileDeletedCount: 3,
+				IsReadOnly:       false,
+			},
+			want: true,
+		},
+		{
+			name: "changed file count is not stable",
+			before: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        10,
+				FileDeletedCount: 3,
+			},
+			after: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        9,
+				FileDeletedCount: 3,
+			},
+		},
+		{
+			name: "changed deleted count is not stable",
+			before: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        10,
+				FileDeletedCount: 3,
+			},
+			after: &volume_server_pb.VolumeStatusResponse{
+				FileCount:        10,
+				FileDeletedCount: 2,
+			},
+		},
+		{
+			name:  "missing before status is not stable",
+			after: &volume_server_pb.VolumeStatusResponse{},
+		},
+		{
+			name:   "missing after status is not stable",
+			before: &volume_server_pb.VolumeStatusResponse{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := copyCountsStable(tt.before, tt.after); got != tt.want {
+				t.Fatalf("copyCountsStable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
