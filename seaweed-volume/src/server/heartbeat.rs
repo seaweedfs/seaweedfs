@@ -19,11 +19,12 @@ use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
 use crate::storage::store::Store;
-use crate::storage::types::NeedleId;
+use crate::storage::types::{NeedleId, VolumeId};
 use crate::storage::volume_report::VolumeReportKey;
 use crate::storage::volume_report_hash::report_hash;
 
 const DUPLICATE_UUID_RETRY_MESSAGE: &str = "duplicate UUIDs detected, retrying connection";
+const VOLUME_IO_ERROR_TOLERANCE: i32 = 3;
 const MAX_DUPLICATE_UUID_RETRIES: u32 = 3;
 
 /// Configuration for the heartbeat client.
@@ -315,6 +316,10 @@ fn collect_ec_shard_delta_messages(
 
     for (disk_id, loc) in store.locations.iter().enumerate() {
         for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
             for shard in ec_vol.shards.iter().flatten() {
                 messages.insert(
                     (
@@ -895,6 +900,7 @@ fn build_heartbeat_with_ec_status(
     // master can tell whether applying what it was sent leaves it current.
     // Volumes skipped below -- quarantined, phantom, expired -- are in neither.
     let mut volume_digest: u64 = 0;
+    let mut quarantined_volumes: u32 = 0;
     let (send_full_list, report_generation, report_pass) = store.volume_report.begin();
     let mut changed_volumes = Vec::new();
     let mut max_file_key = NeedleId(0);
@@ -937,6 +943,7 @@ fn build_heartbeat_with_ec_status(
             loc.disk_free_bytes.load(Ordering::Relaxed);
 
         let mut delete_vids = Vec::new();
+        let mut quarantine_vids: Vec<VolumeId> = Vec::new();
         for (_, vol) in loc.iter_volumes() {
             let cur_max = vol.max_file_key();
             if cur_max > max_file_key {
@@ -946,9 +953,18 @@ fn build_heartbeat_with_ec_status(
             let volume_size = vol.dat_file_size().unwrap_or(0);
             let mut should_delete_volume = false;
 
-            if vol.last_io_error().is_some() {
-                delete_vids.push(vol.id);
-                should_delete_volume = true;
+            let (_, io_count, io_quarantined) = vol.get_io_error_state();
+            if io_quarantined || io_count >= VOLUME_IO_ERROR_TOLERANCE {
+                if !io_quarantined {
+                    vol.mark_io_quarantined();
+                    warn!(
+                        "Volume {} quarantined after {} consecutive IO errors",
+                        vol.id.0, io_count
+                    );
+                }
+                quarantined_volumes += 1;
+                quarantine_vids.push(vol.id);
+                continue;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
                 // Detect phantom volumes: the .dat was unlinked from disk but is still
                 // held open as a deleted FD, so the volume keeps serving and heartbeating
@@ -1046,6 +1062,12 @@ fn build_heartbeat_with_ec_status(
         for vid in delete_vids {
             let _ = loc.delete_volume(vid, false, false);
         }
+
+        for vid in quarantine_vids {
+            if let Some(vol) = loc.find_volume_mut(vid) {
+                vol.set_no_write_or_delete(true);
+            }
+        }
     }
 
     // Update disk size and read-only gauges
@@ -1102,6 +1124,23 @@ fn build_heartbeat_with_ec_status(
     };
     let (location_uuids, disk_tags) = collect_location_metadata(store, &disk_max_by_id);
 
+    let mut quarantined_ec_shards: u32 = 0;
+    for loc in &store.locations {
+        for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                quarantined_ec_shards += ec_vol.shard_count() as u32;
+            }
+        }
+    }
+
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["volume"])
+        .set(quarantined_volumes as i64);
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["ec_shard"])
+        .set(quarantined_ec_shards as i64);
+
     let heartbeat = master_pb::Heartbeat {
         id: store.id.clone(),
         ip: config.ip.clone(),
@@ -1137,6 +1176,10 @@ fn collect_live_ec_shards(
 
     for (disk_id, loc) in store.locations.iter().enumerate() {
         for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
             for message in ec_vol.to_volume_ec_shard_information_messages(disk_id as u32) {
                 if update_metrics {
                     let total_size: u64 = message
@@ -1976,8 +2019,13 @@ mod tests {
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
 
+        // A sustained IO error quarantines the volume: it stays mounted
+        // (so healthz can observe the quarantine state) but is not
+        // advertised to the master.
         assert!(heartbeat.volumes.is_empty());
-        assert!(!store.has_volume(VolumeId(51)));
+        assert!(store.has_volume(VolumeId(51)));
+        let (_, volume) = store.find_volume_mut(VolumeId(51)).unwrap();
+        assert!(volume.is_no_write_or_delete());
     }
 
     #[test]

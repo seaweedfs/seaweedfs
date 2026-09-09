@@ -3127,6 +3127,11 @@ pub async fn healthz_handler(State(state): State<Arc<VolumeServerState>>) -> Res
     if !state.is_heartbeating.load(Ordering::Relaxed) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
+    // A server with quarantined local replicas has faulty storage media;
+    // report degraded so a load balancer can drain it.
+    if state.store.read().unwrap().has_io_quarantine() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     StatusCode::OK.into_response()
 }
 
