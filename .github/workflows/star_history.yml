@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -43,4 +45,5 @@ jobs:
           fi
           git add note/star_history.svg
           git commit -m "docs: regenerate star history chart"
+          git pull --rebase origin "$GITHUB_REF_NAME"
           git push
