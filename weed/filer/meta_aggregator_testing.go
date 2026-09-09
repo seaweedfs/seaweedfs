@@ -10,6 +10,9 @@ import (
 func (ma *MetaAggregator) TrackPeerForTesting(peer pb.ServerAddress) {
 	ma.peerChansLock.Lock()
 	ma.peerChans[peer] = make(chan struct{})
+	if peer != ma.self {
+		ma.noteRemotePeerArrivalLocked()
+	}
 	ma.peerChansLock.Unlock()
 	ma.initPeerWatermark(peer)
 }

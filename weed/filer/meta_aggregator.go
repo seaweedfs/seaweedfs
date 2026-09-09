@@ -61,7 +61,13 @@ type MetaAggregator struct {
 	lowFlushWatermarkTsNs int64
 	deliveryAdvanced      chan struct{}
 	flushAdvanced         chan struct{}
-	peerWatermarksLock    sync.Mutex
+	// remotePeerArrived is closed and replaced when the peer set transitions
+	// from "no remote peers" to "has remote peers". A SubscribeMetadata stream
+	// that started before that transition is serving a filer-local view and
+	// parks on it to end and let the client reconnect into the aggregated
+	// stream (#11247).
+	remotePeerArrived  chan struct{}
+	peerWatermarksLock sync.Mutex
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
@@ -95,6 +101,9 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		}
 		stopChan := make(chan struct{})
 		ma.peerChans[address] = stopChan
+		if address != ma.self {
+			ma.noteRemotePeerArrivalLocked()
+		}
 		// Account for the peer before its stream signals; keep prior values
 		// on reconnect.
 		ma.initPeerWatermark(address)
@@ -272,13 +281,47 @@ func lowWatermarkOf(watermarks map[pb.ServerAddress]int64) int64 {
 func (ma *MetaAggregator) HasRemotePeers() bool {
 	ma.peerChansLock.Lock()
 	defer ma.peerChansLock.Unlock()
+	return ma.hasRemotePeersLocked()
+}
 
+func (ma *MetaAggregator) hasRemotePeersLocked() bool {
 	for address := range ma.peerChans {
 		if address != ma.self {
 			return true
 		}
 	}
 	return false
+}
+
+// RemotePeerArrivedChan returns a channel closed when the aggregator learns
+// its first remote peer. Streams that started while no remote peer was known
+// park on it to end instead of serving a filer-local view forever. The
+// channel is one-shot: the reconnected stream takes the aggregated path,
+// which no longer depends on the transition. Returns nil when a remote peer
+// is already known: the caller must not park at all.
+func (ma *MetaAggregator) RemotePeerArrivedChan() <-chan struct{} {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	if ma.hasRemotePeersLocked() {
+		return nil
+	}
+	return ma.remotePeerArrivedChanLocked()
+}
+
+// remotePeerArrivedChanLocked returns the arrival channel, arming it first
+// if no transition happened yet. Caller must hold peerChansLock.
+func (ma *MetaAggregator) remotePeerArrivedChanLocked() <-chan struct{} {
+	if ma.remotePeerArrived == nil {
+		ma.remotePeerArrived = make(chan struct{})
+	}
+	return ma.remotePeerArrived
+}
+
+// noteRemotePeerArrivalLocked closes and clears the arrival channel when a
+// remote peer is added, waking every local-pinned stream parked on it.
+// Caller must hold peerChansLock.
+func (ma *MetaAggregator) noteRemotePeerArrivalLocked() {
+	ma.remotePeerArrived = closeWatermarkChan(ma.remotePeerArrived)
 }
 
 // HasPeer reports whether address is currently a tracked filer peer (or this
