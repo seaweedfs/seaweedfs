@@ -81,6 +81,12 @@ pub struct EcVolume {
     /// so `bitrot_protection()` can return the `Off`/`Invalid` distinction without
     /// re-reading, mirroring Go's `EcVolume.bitrotStatus`.
     pub(crate) bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+    /// Directory the active sidecar was actually resolved from. The search in
+    /// `load_bitrot_for_generation` spans sibling disks, and a `.ecsum` records
+    /// no encode identity, so provenance is the only signal that a loaded
+    /// manifest may describe a different encode run. Same purpose as
+    /// `ecx_actual_dir`. Empty when no sidecar was found.
+    pub(crate) bitrot_source_dir: String,
 
     io_error_count: std::sync::atomic::AtomicI32,
     io_error_quarantined: std::sync::atomic::AtomicBool,
@@ -436,6 +442,7 @@ impl EcVolume {
             encode_ts_ns,
             bitrot: None,
             bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
+            bitrot_source_dir: String::new(),
             io_error_count: std::sync::atomic::AtomicI32::new(0),
             io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
             last_io_error: std::sync::Mutex::new(None),
@@ -546,6 +553,20 @@ impl EcVolume {
             .find(|p| std::path::Path::new(p).exists())
             .unwrap_or(data_path);
         let loaded = ec_bitrot::load_bitrot_sidecar(&path);
+        // Record where the sidecar actually came from before any early return:
+        // the scrub needs it to tell "my own protection" from "a manifest I
+        // borrowed off a disk that is no longer part of this encode run".
+        // Only a path that actually exists is a real source: `path` falls back
+        // to the data path when nothing was found, and recording that would
+        // claim a provenance the volume does not have.
+        self.bitrot_source_dir = if std::path::Path::new(&path).exists() {
+            std::path::Path::new(&path)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         // A sidecar written for THIS generation that contradicts the volume's
         // geometry is not "no protection" — it says the layout the volume is
         // about to serve reads with is wrong. Fail the mount.
@@ -2759,6 +2780,72 @@ mod tests {
         );
     }
 
+    /// When the anchor's sidecar came from a directory belonging to a runtime
+    /// the fence excluded, the checksums cannot be trusted against the anchor's
+    /// shards. Report that, never "shard N is corrupt".
+    #[test]
+    fn test_checksum_scrub_reports_unverifiable_sidecar_from_excluded_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+
+        // Mount actually resolved the real sidecar from `dir` (both subsets
+        // share one physical directory in this fixture), confirming
+        // `load_bitrot_for_generation` populates the field before the test
+        // overwrites it below to simulate a cross-disk borrow.
+        assert_eq!(
+            runtimes[1].bitrot_source_dir, dir,
+            "mount must record the dir the sidecar was actually resolved from"
+        );
+
+        // Runtime 0 is an older encode run, and the anchor resolved its sidecar
+        // from runtime 0's directory.
+        runtimes[0].encode_ts_ns = 100;
+        runtimes[0].dir = "/disk-old".to_string();
+        runtimes[0].dir_idx = "/disk-old".to_string();
+        runtimes[1].encode_ts_ns = 200;
+        runtimes[1].dir = "/disk-new".to_string();
+        runtimes[1].dir_idx = "/disk-new".to_string();
+        runtimes[1].bitrot_source_dir = "/disk-old".to_string();
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (scanned, broken, errs) =
+            EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert_eq!(scanned, 0, "an unverifiable sidecar must not be scanned against");
+        assert!(broken.is_empty(), "must never blame shards: {:?}", broken);
+        assert!(
+            errs.iter().any(|e| e.contains("unverifiable")),
+            "expected an unverifiable-protection note, got {:?}",
+            errs
+        );
+    }
+
+    /// The provenance rule fires only when a runtime was actually excluded. A
+    /// healthy single-encode volume whose sidecar lives on a sibling disk is the
+    /// normal mirrored case and must scrub normally.
+    #[test]
+    fn test_checksum_scrub_provenance_rule_does_not_fire_without_exclusions() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9, 10, 11, 12, 13]],
+        );
+        // Same generation: nothing is excluded, so provenance is irrelevant even
+        // though the anchor's sidecar appears to have come from somewhere
+        // neither runtime owns. (The anchor is runtimes[0]: `merge_ec_runtimes`
+        // picks the first shard-bearing runtime at the anchor generation.)
+        runtimes[0].bitrot_source_dir = "/somewhere-else".to_string();
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (scanned, broken, errs) =
+            EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(scanned > 0, "a normal volume must still be scanned");
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(!errs.iter().any(|e| e.contains("unverifiable")), "{:?}", errs);
+    }
+
     /// `for_volumes` must reach every runtime's shards, not just the first's.
     /// A needle walk alone can't prove that with this fixture: ~500 bytes of
     /// data under a legacy 1GiB large block puts every needle interval on
@@ -3351,6 +3438,11 @@ pub struct EcChecksumScrubPlan {
     /// Runtimes the identity fence excluded, one line each. Surfaced through
     /// `run()`'s errors on the `On` path only.
     skipped: Vec<String>,
+    /// `Some(source_dir)` when the anchor's sidecar was resolved from a
+    /// directory belonging to a runtime the fence excluded. Its checksums cannot
+    /// be trusted against the merged shards, so `run()` reports unverifiable
+    /// protection instead of blaming shards for a mismatch it caused itself.
+    unverifiable_sidecar: Option<String>,
 }
 
 impl EcChecksumScrubPlan {
@@ -3379,6 +3471,26 @@ impl EcChecksumScrubPlan {
             _ => Vec::new(),
         };
 
+        // A sidecar carries no encode identity (`ec_shard_config()` hardcodes
+        // encode_ts_ns: 0, `resolve_status` matches only the generation), so the
+        // only available signal is where it came from. If nothing was excluded,
+        // provenance cannot indicate a mismatch and this never fires.
+        let unverifiable_sidecar = if merged.skipped.is_empty() {
+            None
+        } else {
+            let own_dirs: Vec<&str> = merged
+                .merged
+                .iter()
+                .flat_map(|v| [v.dir.as_str(), v.dir_idx.as_str()])
+                .collect();
+            let src = anchor.bitrot_source_dir.as_str();
+            if src.is_empty() || own_dirs.contains(&src) {
+                None
+            } else {
+                Some(anchor.bitrot_source_dir.clone())
+            }
+        };
+
         Some(EcChecksumScrubPlan {
             volume_id: anchor.volume_id,
             prot,
@@ -3386,6 +3498,7 @@ impl EcChecksumScrubPlan {
             parity_shards: anchor.parity_shards,
             shards,
             skipped: merged.skipped,
+            unverifiable_sidecar,
         })
     }
 
@@ -3435,6 +3548,16 @@ impl EcChecksumScrubPlan {
         // `(0, [], [])` is Go parity (`case BitrotOff: return 0, nil, nil`) and
         // a volume that verifies nothing gains nothing from a skip note.
         errors.extend(self.skipped);
+
+        // Reported as an integrity note, never as shard corruption: the
+        // mismatch would be ours, not the disk's.
+        if let Some(src) = self.unverifiable_sidecar {
+            errors.push(format!(
+                "EC volume {} bitrot sidecar was resolved from {}, which belongs to an excluded encode run; protection unverifiable",
+                self.volume_id.0, src
+            ));
+            return (0, Vec::new(), errors);
+        }
 
         let block_size = prot.block_size as i64;
 
