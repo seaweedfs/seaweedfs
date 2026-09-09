@@ -476,9 +476,36 @@ impl Store {
 
     /// Mount a volume by id only (Go's MountVolume behavior).
     /// Scans all locations for a matching .dat file and loads with its collection prefix.
-    pub fn mount_volume_by_id(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
+    /// When a collection hint is given, the expected <collection>_<vid>.vif/.idx
+    /// path is probed directly before falling back to the directory scan.
+    pub fn mount_volume_by_id(
+        &mut self,
+        vid: VolumeId,
+        collection: Option<&str>,
+    ) -> Result<(), VolumeError> {
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
+        }
+        if let Some(collection) = collection {
+            for loc in &mut self.locations {
+                let base =
+                    crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+                for ext in [".vif", ".idx"] {
+                    if let Ok(meta) = std::fs::metadata(format!("{}{}", base, ext)) {
+                        if !meta.is_dir() {
+                            return loc.create_volume(
+                                vid,
+                                collection,
+                                self.needle_map_kind,
+                                None,
+                                None,
+                                0,
+                                Version::current(),
+                            );
+                        }
+                    }
+                }
+            }
         }
         if let Some((loc_idx, _base_path, collection)) = self.find_volume_file_base(vid) {
             let loc = &mut self.locations[loc_idx];
