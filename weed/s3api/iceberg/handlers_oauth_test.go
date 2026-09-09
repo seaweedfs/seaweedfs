@@ -299,6 +299,22 @@ func TestTokenExchangeAuthenticatedLiveSubjectFullTTL(t *testing.T) {
 	}
 }
 
+// TestTokenExchangeSubjectNearlyExpired: a Bearer-only exchange when the
+// subject token has under a second left must be rejected, not minted into
+// an already-expired token (expires_in: 0).
+func TestTokenExchangeSubjectNearlyExpired(t *testing.T) {
+	now := time.Now()
+	nearlyDead := mintTestToken(t, "AKID123", "secret456", now.Add(-time.Hour), now.Add(300*time.Millisecond))
+
+	w := exchangeRequest(t, nearlyDead)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "invalid_grant") {
+		t.Fatalf("expected invalid_grant, got: %s", w.Body.String())
+	}
+}
+
 // TestTokenExchangeExpiredWithoutClientAuth: a leaked expired token must
 // not be exchangeable without client credentials.
 func TestTokenExchangeExpiredWithoutClientAuth(t *testing.T) {

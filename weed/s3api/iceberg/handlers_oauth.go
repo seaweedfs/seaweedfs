@@ -276,6 +276,12 @@ func (s *Server) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 		// via client_credentials anyway.
 		ttlSeconds = remaining
 	}
+	if ttlSeconds <= 0 {
+		// A subject token with under a second left would otherwise be
+		// exchanged for a token that is born expired.
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "subject_token has no remaining lifetime")
+		return
+	}
 
 	tokenString, err := mintIcebergToken(identityName, unverified.AccessKey, secretKey, ttlSeconds)
 	if err != nil {
