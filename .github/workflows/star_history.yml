@@ -10,9 +10,11 @@ permissions:
   contents: write
 
 concurrency:
-  # Only one chart regeneration at a time; a newer run cancels an in-flight one
-  # so overlapping runs never conflict on note/star_history.svg during rebase.
-  group: star-history
+  # Only one chart regeneration per branch at a time; a newer run on the same
+  # branch cancels an in-flight one so overlapping runs never conflict on
+  # note/star_history.svg during rebase. Scoped by ref so a manual run on
+  # another branch can't cancel the daily master update.
+  group: star-history-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -55,7 +57,13 @@ jobs:
           # Rebase and retry so a concurrent push to master doesn't lose the chart.
           for attempt in 1 2 3 4 5; do
             if [ "$attempt" -gt 1 ]; then
-              git pull --rebase origin "$GITHUB_REF_NAME"
+              # Guard the rebase: a transient fetch error or conflict must not
+              # abort the fail-fast shell before the remaining attempts run.
+              if ! git pull --rebase origin "$GITHUB_REF_NAME"; then
+                echo "rebase failed (attempt ${attempt}); aborting and retrying"
+                git rebase --abort || true
+                continue
+              fi
             fi
             if git push origin HEAD:"$GITHUB_REF_NAME"; then
               exit 0
