@@ -2607,6 +2607,24 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 	return denied
 }
 
+// isActionExplicitlyDeniedByApplicablePolicies reports whether any applicable
+// identity-side policy (attached IAM policies, enabled-group policies, or the
+// IAM-integration session policy) explicitly denies the action. A bucket
+// policy may supply the Allow an identity policy omits, but it must not
+// override a matching explicit Deny. A nil identity has no identity-side
+// policy plane, so the bucket policy remains authoritative for public access.
+func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByApplicablePolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	if identity == nil {
+		return false
+	}
+	if iam.evaluateAttachedIAMPolicies(r, identity, action, bucket, object) == attachedIAMPolicyDeny {
+		return true
+	}
+	s3Action, resourceArn := resolveS3AuthTarget(action, bucket, object, r)
+	principal := buildPrincipalARN(identity, r)
+	return iam.isActionExplicitlyDeniedByIAM(r, identity, principal, s3Action, resourceArn)
+}
+
 // authorizationRoute is the mechanism that decides a request/identity pair's
 // permissions: the IAM integration, locally attached IAM policies, the
 // identity's legacy Actions, or nothing at all.
