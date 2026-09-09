@@ -2759,9 +2759,13 @@ mod tests {
         );
     }
 
-    /// A needle whose intervals span shards held by different runtimes is
-    /// locally verifiable once the slots are merged. Summing per-disk results
-    /// would instead report it unrecoverable on both.
+    /// `for_volumes` must reach every runtime's shards, not just the first's.
+    /// A needle walk alone can't prove that with this fixture: ~500 bytes of
+    /// data under a legacy 1GiB large block puts every needle interval on
+    /// shard 0, so the slot vector is asserted directly. The walk-level checks
+    /// below additionally show the merged plan verifies cleanly and then
+    /// detects corruption reachable through the first runtime, while a
+    /// single-runtime plan stays blind to it.
     #[test]
     fn test_scrub_local_for_volumes_merges_slots_across_runtimes() {
         let tmp = TempDir::new().unwrap();
@@ -2777,6 +2781,33 @@ mod tests {
         assert!(count > 0, "the merged plan walked no needles");
         assert!(broken.is_empty(), "clean volume reported broken shards: {:?}", broken);
         assert!(errs.is_empty(), "clean volume reported errors: {:?}", errs);
+
+        // The property this task exists to deliver, asserted directly on the
+        // plan rather than through a needle walk. With ~500 bytes of fixture
+        // data and a legacy 1GiB large block every needle interval lands in
+        // shard 0, so no needle walk can ever reach a sibling runtime's
+        // shards -- but the slot vector can.
+        let merged_plan = EcLocalScrubPlan::for_volumes(&refs).unwrap();
+        assert_eq!(
+            merged_plan.shards.len(),
+            14,
+            "slots must span the full 10+4 shard space"
+        );
+        assert!(merged_plan.shards[0].is_some(), "disk 0's shard 0 must be reachable");
+        assert!(
+            merged_plan.shards[7].is_some(),
+            "disk 1's shard 7 must be reachable -- the bug being fixed"
+        );
+        assert!(merged_plan.shards[13].is_some(), "disk 1's shard 13 must be reachable");
+
+        // A single-runtime plan still sees only its own disk, which is exactly
+        // what made aggregation necessary.
+        let solo = EcLocalScrubPlan::for_volumes(&[refs[0]]).unwrap();
+        assert!(solo.shards[0].is_some());
+        assert!(
+            solo.shards[7].is_none(),
+            "refs[0] alone must not see the sibling's shard 7"
+        );
 
         // This fixture's few hundred bytes of needle data all land inside
         // shard 0's legacy 1GiB large block (the tiny volume never fills even
