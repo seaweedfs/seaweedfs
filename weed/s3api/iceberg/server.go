@@ -224,7 +224,9 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 		// retry. Falling through to the S3 authenticator instead would parse
 		// the Authorization header as SigV4, fail with NotImplemented (501),
 		// and clients would retry the dead token forever.
-		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		// The auth scheme is case-insensitive (RFC 7235), matching
+		// authenticateBearer below.
+		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
 			if identityName, identity, ok := s.authenticateBearer(r); ok {
 				ctx := r.Context()
 				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)

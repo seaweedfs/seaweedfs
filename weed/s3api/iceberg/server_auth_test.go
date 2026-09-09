@@ -91,6 +91,41 @@ func TestAuthExpiredBearerReturns401(t *testing.T) {
 	}
 }
 
+// TestAuthCaseInsensitiveBearerScheme: RFC 7235 auth schemes are
+// case-insensitive; a lowercase or mixed-case "bearer" must take the same
+// Bearer path (401 refresh signal) instead of falling through to S3 auth.
+func TestAuthCaseInsensitiveBearerScheme(t *testing.T) {
+	s, auth := newAuthTestServer()
+	now := time.Now()
+	expired := mintTestToken(t, "AKID123", "secret456", now.Add(-2*time.Hour), now.Add(-1*time.Hour))
+
+	for _, scheme := range []string{"bearer", "BEARER", "BeArEr"} {
+		var handlerCalled bool
+		handler := s.Auth(func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/namespaces", nil)
+		req.Header.Set("Authorization", scheme+" "+expired)
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("scheme %q: status = %d, want 401", scheme, rec.Code)
+		}
+		if auth.called {
+			t.Fatalf("scheme %q: must not fall through to the S3 authenticator", scheme)
+		}
+		if handlerCalled {
+			t.Fatalf("scheme %q: handler must not run for an expired token", scheme)
+		}
+		if wa := rec.Header().Get("WWW-Authenticate"); wa != "Bearer" {
+			t.Fatalf("scheme %q: WWW-Authenticate = %q, want Bearer", scheme, wa)
+		}
+	}
+}
+
 // TestAuthGarbageBearerReturns401 pins the same contract for malformed tokens.
 func TestAuthGarbageBearerReturns401(t *testing.T) {
 	s, auth := newAuthTestServer()
