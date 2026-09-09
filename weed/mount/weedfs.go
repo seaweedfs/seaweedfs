@@ -49,6 +49,7 @@ type Option struct {
 	ChunkSizeLimit              int64
 	ConcurrentWriters           int
 	ConcurrentReaders           int
+	ReaderCacheSizeMB           int64
 	CacheDirForRead             string
 	CacheSizeMBForRead          int64
 	CacheDirForWrite            string
@@ -139,6 +140,7 @@ type WFS struct {
 	metaCache             *meta_cache.MetaCache
 	stats                 statsCache
 	chunkCache            *chunk_cache.TieredChunkCache
+	readerCacheBudget     *filer.ReaderCacheBudget
 	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature             int32
 	concurrentWriters     *util.LimitedConcurrentExecutor
@@ -249,6 +251,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
 		RawFileSystem:     fuse.NewDefaultRawFileSystem(),
 		option:            option,
+		readerCacheBudget: filer.NewReaderCacheBudget(option.ReaderCacheSizeMB << 20),
 		signature:         util.RandomInt32(),
 		inodeToPath:       NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
 		fhMap:             NewFileHandleToInode(),

@@ -112,6 +112,21 @@ impl EcVolumeShard {
         self.ecd_file_size
     }
 
+    /// A duplicate of the mounted shard handle, for a reader that has to
+    /// outlive the store guard.
+    ///
+    /// This is the same descriptor `read_at` serves from, so it carries the
+    /// `O_NOATIME` from `open_volume_file` and keeps pointing at the shard
+    /// that was mounted, whatever later happens to the path. `dup` shares the
+    /// kernel file offset, which is why every read through it must be
+    /// positional (`read_at`), never seek-based.
+    pub fn try_clone_file(&self) -> io::Result<File> {
+        self.ecd_file
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "shard file not open"))?
+            .try_clone()
+    }
+
     /// Protobuf descriptor for this shard. Mirrors Go's ToEcShardInfo.
     pub fn to_ec_shard_info(&self) -> crate::pb::volume_server_pb::EcShardInfo {
         crate::pb::volume_server_pb::EcShardInfo {

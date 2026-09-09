@@ -2,6 +2,7 @@ package policy_engine
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
@@ -425,21 +426,21 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 		expectedIP string
 	}{
 		{
-			name: "uses right-most public X-Forwarded-For entry",
+			name: "ignores X-Forwarded-For and uses RemoteAddr",
 			header: map[string][]string{
 				"X-Forwarded-For": {"bad-ip, 203.0.113.10, 198.51.100.5"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "198.51.100.5",
+			expectedIP: "192.168.1.100",
 		},
 		{
-			name: "falls back to X-Real-Ip when X-Forwarded-For has no valid ip",
+			name: "ignores X-Real-Ip and uses RemoteAddr",
 			header: map[string][]string{
 				"X-Forwarded-For": {"bad-ip"},
 				"X-Real-Ip":       {"198.51.100.7"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "198.51.100.7",
+			expectedIP: "192.168.1.100",
 		},
 		{
 			name:       "uses RemoteAddr ip when no forwarding headers",
@@ -454,20 +455,20 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 			expectedIP: "@",
 		},
 		{
-			name: "uses IPv6 X-Forwarded-For entry",
+			name: "ignores IPv6 X-Forwarded-For entry and uses RemoteAddr",
 			header: map[string][]string{
 				"X-Forwarded-For": {"2001:db8::8, 198.51.100.7"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "198.51.100.7",
+			expectedIP: "192.168.1.100",
 		},
 		{
-			name: "ignores spoofed IP when real client is public",
+			name: "ignores spoofed X-Forwarded-For behind private peer",
 			header: map[string][]string{
 				"X-Forwarded-For": {"8.8.8.8, 203.0.113.10, 10.0.0.1"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "203.0.113.10",
+			expectedIP: "192.168.1.100",
 		},
 		{
 			name:       "handles bracketed IPv6 remote address",
@@ -497,6 +498,54 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 				t.Errorf("Expected SourceIp %q, got %v", tt.expectedIP, values["aws:SourceIp"])
 			}
 		})
+	}
+}
+
+func TestExtractSourceIP_IgnoresForwardedHeaders(t *testing.T) {
+	req := &http.Request{
+		Method: "GET",
+		URL:    &url.URL{Path: "/"},
+		Header: map[string][]string{
+			"X-Forwarded-For": {"203.0.113.99"},
+			"X-Real-Ip":       {"198.51.100.1"},
+		},
+		RemoteAddr: "10.0.0.5:54321",
+	}
+
+	values := ExtractConditionValuesFromRequest(req)
+	if got := values["aws:SourceIp"]; len(got) != 1 || got[0] != "10.0.0.5" {
+		t.Errorf("Expected SourceIp to be the direct peer 10.0.0.5, got %v", got)
+	}
+}
+
+func TestExtractSourceIP_EnforcesIPRestrictionPolicy(t *testing.T) {
+	engine := NewPolicyEngine()
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{"Effect": "Allow", "Principal": "*", "Action": ["s3:GetObject"],
+			 "Resource": "arn:aws:s3:::secret-bucket/*"},
+			{"Effect": "Deny", "Principal": "*", "Action": ["s3:GetObject"],
+			 "Resource": "arn:aws:s3:::secret-bucket/*",
+			 "Condition": {"NotIpAddress": {"aws:SourceIp": ["10.0.0.0/24"]}}}
+		]
+	}`
+	if err := engine.SetBucketPolicy("secret-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/secret-bucket/secret-key", nil)
+	r.RemoteAddr = "10.0.50.5:54321"
+	r.Header.Set("X-Forwarded-For", "10.0.0.5")
+
+	result := engine.EvaluatePolicy("secret-bucket", &PolicyEvaluationArgs{
+		Action:     "s3:GetObject",
+		Resource:   "arn:aws:s3:::secret-bucket/secret-key",
+		Principal:  "*",
+		Conditions: ExtractConditionValuesFromRequest(r),
+	})
+	if result != PolicyResultDeny {
+		t.Errorf("Expected Deny for peer outside 10.0.0.0/24 despite spoofed X-Forwarded-For, got %v", result)
 	}
 }
 
