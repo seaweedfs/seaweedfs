@@ -633,27 +633,8 @@ impl EcVolume {
     /// Duplicates the mounted shard handles so `run()` can scan with the store
     /// guard released; see `EcChecksumScrubPlan` for why that matters.
     pub fn checksum_scrub_plan(&self) -> EcChecksumScrubPlan {
-        let (prot, status) = self.bitrot_protection();
-
-        // Only BitrotOn reaches the shard loop in `run()`; the other statuses
-        // return before touching a handle, so cloning for them buys nothing.
-        let shards = match status {
-            crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On => self
-                .shards
-                .iter()
-                .enumerate()
-                .filter_map(|(i, slot)| slot.as_ref().map(|s| (i as u32, s.try_clone_file())))
-                .collect(),
-            _ => Vec::new(),
-        };
-
-        EcChecksumScrubPlan {
-            volume_id: self.volume_id,
-            prot,
-            status,
-            parity_shards: self.parity_shards,
-            shards,
-        }
+        EcChecksumScrubPlan::for_volumes(&[self])
+            .expect("a single runtime is never an empty slice")
     }
 
     /// Convenience wrapper preserving the original call shape. Callers that
@@ -2718,6 +2699,94 @@ mod tests {
     fn test_merge_ec_runtimes_none_only_when_empty() {
         assert!(merge_ec_runtimes(&[]).is_none());
     }
+
+    /// The whole point: corruption on a shard that only a sibling runtime holds
+    /// must be reported. Before this change the scrub saw disk 0 alone and
+    /// returned clean.
+    #[test]
+    fn test_checksum_scrub_for_volumes_catches_sibling_disk_corruption() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // Shard 11 is held ONLY by the second runtime.
+        let runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9, 10, 11, 12, 13]],
+        );
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        // Clean to start.
+        let (scanned, broken, errs) =
+            EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+        assert!(broken.is_empty(), "unexpected mismatches: {:?}", broken);
+        assert!(scanned > 0, "merged plan scanned nothing");
+
+        // Corrupt shard 11 — reachable only through the second runtime.
+        let shard11 = format!("{}/1.ec11", dir);
+        let mut bytes = std::fs::read(&shard11).unwrap();
+        bytes[0] ^= 0xFF;
+        std::fs::write(&shard11, &bytes).unwrap();
+
+        let (_, broken2, _) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            broken2.contains(&11),
+            "sibling-disk corruption must be flagged, got {:?}",
+            broken2
+        );
+
+        // The single-runtime path is exactly the old blind spot: disk 0 alone
+        // still reports clean, which is why aggregation was needed.
+        let (_, broken_disk0, _) = refs[0].checksum_scrub();
+        assert!(!broken_disk0.contains(&11));
+    }
+
+    /// An excluded runtime is reported through the plan's errors, but ONLY on
+    /// the On path — the Off arm's clean-empty contract is Go parity
+    /// (`case BitrotOff: return 0, nil, nil`) and must not grow errors.
+    #[test]
+    fn test_checksum_scrub_skips_are_reported_but_never_break_the_off_arm() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        runtimes[0].encode_ts_ns = 100; // excluded: older known identity
+        runtimes[1].encode_ts_ns = 200; // anchor
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        // With protection ON, the skip surfaces as an error line.
+        let (_, _, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            errs.iter().any(|e| e.contains("not verified")),
+            "excluded runtime must be reported, got {:?}",
+            errs
+        );
+
+        // With protection OFF, the arm stays byte-for-byte clean.
+        let mut off = runtimes;
+        for r in off.iter_mut() {
+            r.bitrot_status = crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off;
+            r.bitrot = None;
+        }
+        let off_refs: Vec<&EcVolume> = off.iter().collect();
+        assert_eq!(
+            EcChecksumScrubPlan::for_volumes(&off_refs).unwrap().run(),
+            (0, Vec::new(), Vec::new()),
+            "BitrotOff must stay clean-empty for Go parity"
+        );
+    }
+
+    /// The single-runtime wrapper must be indistinguishable from the old code.
+    #[test]
+    fn test_checksum_scrub_plan_single_runtime_is_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]]);
+
+        assert_eq!(
+            runtimes[0].checksum_scrub_plan().run(),
+            EcChecksumScrubPlan::for_volumes(&[&runtimes[0]]).unwrap().run()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3201,9 +3270,47 @@ pub struct EcChecksumScrubPlan {
     ///
     /// `dup` shares the kernel file offset, so every read here is positional.
     shards: Vec<(u32, std::io::Result<File>)>,
+    /// Runtimes the identity fence excluded, one line each. Surfaced through
+    /// `run()`'s errors on the `On` path only.
+    skipped: Vec<String>,
 }
 
 impl EcChecksumScrubPlan {
+    /// Build one plan over every per-disk runtime of a volume id. `None` only
+    /// when `runtimes` is empty (the vanished-volume case), so the caller's
+    /// existing `let ... else` guard keeps working unchanged.
+    ///
+    /// Duplicates the mounted shard handles so `run()` can scan with the store
+    /// guard released; see the struct docs for why that matters.
+    pub fn for_volumes(runtimes: &[&EcVolume]) -> Option<Self> {
+        let merged = merge_ec_runtimes(runtimes)?;
+        let anchor = merged.anchor;
+        let (prot, status) = anchor.bitrot_protection();
+
+        // Only BitrotOn reaches the shard loop in `run()`; the other statuses
+        // return before touching a handle, so cloning for them buys nothing.
+        let shards = match status {
+            crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On => merged
+                .slots
+                .iter()
+                .enumerate()
+                .filter_map(|(id, slot)| {
+                    slot.map(|(_, shard)| (id as u32, shard.try_clone_file()))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        Some(EcChecksumScrubPlan {
+            volume_id: anchor.volume_id,
+            prot,
+            status,
+            parity_shards: anchor.parity_shards,
+            shards,
+            skipped: merged.skipped,
+        })
+    }
+
     /// The byte-verification pass. Touches only the filesystem — no store, no
     /// lock — so it is safe to hand to `spawn_blocking`.
     pub fn run(self) -> (u64, Vec<u32>, Vec<String>) {
@@ -3245,6 +3352,11 @@ impl EcChecksumScrubPlan {
                 return (0, Vec::new(), Vec::new());
             }
         };
+
+        // Reported only here, AFTER the status match: the Off arm's
+        // `(0, [], [])` is Go parity (`case BitrotOff: return 0, nil, nil`) and
+        // a volume that verifies nothing gains nothing from a skip note.
+        errors.extend(self.skipped);
 
         let block_size = prot.block_size as i64;
 
