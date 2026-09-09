@@ -2684,9 +2684,8 @@ mod tests {
         assert!(merged.slots[3].is_some());
     }
 
-    /// The anchor supplies metadata, and LOCAL's `shard_size` fallback computes
-    /// `shard_file_size() - 1` — anchoring on a shardless runtime would make
-    /// that -1. Prefer a shard-bearing runtime at the anchor generation.
+    /// The anchor supplies the volume-level metadata, so prefer a shard-bearing
+    /// runtime at the anchor generation over an empty one.
     #[test]
     fn test_merge_ec_runtimes_anchor_prefers_a_shard_bearing_runtime() {
         let tmp = TempDir::new().unwrap();
@@ -2900,6 +2899,148 @@ mod tests {
         assert!(!errs.iter().any(|e| e.contains("unverifiable")), "{:?}", errs);
     }
 
+    /// The identity fence keys on `encode_ts_ns` ALONE, never on geometry, so
+    /// two same-generation runtimes whose `.vif`s disagree about the layout do
+    /// merge -- and `slots` is then sized to the WIDER of them while the
+    /// volume's actual shard-id range is the ANCHOR's `data + parity`.
+    ///
+    /// The two consumers disagreed about exactly that range: the mode 2|5 arm
+    /// builds `dirs` over `0..anchor.data_shards + anchor.parity_shards` and
+    /// silently drops the surplus slots, while `EcChecksumScrubPlan` iterated
+    /// the full width and reported each one "present but missing from sidecar
+    /// manifest". Nothing in this volume describes those ids -- the sidecar
+    /// manifest and the Reed-Solomon matrix are both the anchor's -- so that
+    /// message is the width disagreement talking, not a finding.
+    #[test]
+    fn test_checksum_scrub_truncates_slots_to_the_anchors_geometry() {
+        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::storage::erasure_coding::ec_bitrot;
+        use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo};
+
+        let tmp = TempDir::new().unwrap();
+        let vid = VolumeId(1);
+
+        // One dir per geometry: `EcVolume::new` reads `data_shards`/
+        // `parity_shards` from the `.vif` beside the volume, so two runtimes can
+        // only disagree if they mount from different directories.
+        let seed = |name: &str, ds: u32, ps: u32, shard_id: u8| -> String {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let d = dir.to_str().unwrap().to_string();
+            let base = crate::storage::volume::volume_file_name(&d, "", vid);
+            std::fs::write(format!("{}.ecx", base), b"").unwrap();
+            std::fs::write(format!("{}.ecj", base), b"").unwrap();
+            std::fs::write(
+                format!("{}.vif", base),
+                serde_json::to_string(&VifVolumeInfo {
+                    version: 3,
+                    ec_shard_config: Some(VifEcShardConfig {
+                        data_shards: ds,
+                        parity_shards: ps,
+                        // The SAME encode run on both: this is what makes the
+                        // fence merge them despite the geometry disagreement.
+                        encode_ts_ns: 500,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            std::fs::write(format!("{}.ec{:02}", base, shard_id), b"shard data nonempty").unwrap();
+            d
+        };
+
+        // 10+4, and the only disk with a sidecar -- so it supplies `prot`, and
+        // its manifest covers shard ids 0..=13 and nothing else.
+        let narrow = seed("narrow", 10, 4, 0);
+        let prot = EcBitrotProtection {
+            algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+            block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+            generation: 0,
+            ec_shard_config: Some(ec_bitrot::ec_shard_config(10, 4, 0)),
+            shards: (0..14u32)
+                .map(|shard_id| EcShardChecksums {
+                    shard_id,
+                    covered_size: 4,
+                    block_crc32c: vec![0u8; 4],
+                })
+                .collect(),
+            encode_uuid: vec![0u8; 16],
+        };
+        ec_bitrot::save_bitrot_sidecar(
+            &ec_bitrot::bitrot_sidecar_path(
+                &crate::storage::volume::volume_file_name(&narrow, "", vid),
+                0,
+            ),
+            &prot,
+        )
+        .unwrap();
+
+        // 12+4: 16 slots, and it holds shard 14 -- an id the anchor's layout
+        // does not contain at all.
+        let wide = seed("wide", 12, 4, 14);
+
+        let mut narrow_v = EcVolume::new(&narrow, &narrow, "", vid).unwrap();
+        narrow_v
+            .add_shard(EcVolumeShard::new(&narrow, "", vid, 0))
+            .unwrap();
+        let mut wide_v = EcVolume::new(&wide, &wide, "", vid).unwrap();
+        wide_v
+            .add_shard(EcVolumeShard::new(&wide, "", vid, 14))
+            .unwrap();
+
+        assert_eq!(narrow_v.shards.len(), 14);
+        assert_eq!(wide_v.shards.len(), 16);
+        assert_eq!(
+            narrow_v.encode_ts_ns, wide_v.encode_ts_ns,
+            "the two runtimes must share a generation, or the fence excludes one \
+             and they never merge"
+        );
+        assert_eq!(
+            narrow_v.bitrot_status,
+            crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On,
+            "the narrow disk must carry usable protection, or run() returns \
+             before reaching the shard loop and nothing is tested"
+        );
+
+        let refs: Vec<&EcVolume> = vec![&narrow_v, &wide_v];
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert!(
+            std::ptr::eq(merged.anchor, refs[0]),
+            "the NARROW runtime must anchor, or the anchor's geometry already \
+             covers shard 14 and truncation is a no-op"
+        );
+        assert!(merged.skipped.is_empty(), "same generation: {:?}", merged.skipped);
+        assert_eq!(
+            merged.slots.len(),
+            16,
+            "the slot vector is sized to the WIDEST runtime -- that width \
+             disagreement is the whole subject of this test"
+        );
+        assert!(
+            merged.slots[14].is_some(),
+            "slot 14 must actually be populated, or there is nothing to truncate"
+        );
+
+        let (scanned, broken, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            !errs.iter().any(|e| e.contains("shard 14")),
+            "shard 14 is outside the anchor's 10+4 layout, so nothing describes \
+             it; mode 2|5 drops that slot and CHECKSUM must answer the same: {:?}",
+            errs
+        );
+        // ...and the truncation must not have swallowed the volume's real
+        // range: shard 0 IS in the anchor's geometry and still gets scanned.
+        assert!(scanned > 0, "truncation must not stop the scan: {:?}", errs);
+        assert_eq!(
+            broken, vec![0],
+            "shard 0 is inside the anchor's geometry and its bytes do not match \
+             the manifest, so it must still be reported: errs={:?}",
+            errs
+        );
+    }
+
     /// `for_volumes` must reach every runtime's shards, not just the first's.
     /// A needle walk alone can't prove that with this fixture: ~500 bytes of
     /// data under a legacy 1GiB large block puts every needle interval on
@@ -2983,6 +3124,78 @@ mod tests {
             refs1_errs.is_empty(),
             "runtime without shard 0 has no way to detect this corruption: {:?}",
             refs1_errs
+        );
+    }
+
+    /// LOCAL's legacy `shard_size` fallback (`dat_file_size == 0`) is now a
+    /// NODE-WIDE input: it feeds `locate_data`'s offset math for every merged
+    /// sibling's shards, not just the anchor's. `anchor.shard_file_size()`
+    /// returns the anchor's FIRST held shard rather than a maximum, so one
+    /// truncated shard on the anchor disk would mis-offset every needle read
+    /// across every disk and manufacture corruption reports wholesale. Take the
+    /// max over the merged slots, the way `verify_ec_shards` already answers the
+    /// same question (`if size > shard_size { shard_size = size }`).
+    #[test]
+    fn test_scrub_local_shard_size_fallback_takes_the_max_across_disks() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        // Mount two shardless runtimes first so the shard files can be doctored
+        // before `add_shard` caches their sizes.
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[], &[]]);
+
+        // Disk 0's shard 0 is truncated -- a partially-copied shard, which is
+        // exactly the containment this fallback used to have and now must not
+        // lose.
+        let shard0_path = format!("{}/1.ec00", dir);
+        let full = std::fs::metadata(&shard0_path).unwrap().len();
+        assert!(full > 1, "fixture shard is too small to truncate");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&shard0_path)
+            .unwrap()
+            .set_len(full / 2)
+            .unwrap();
+
+        runtimes[0]
+            .add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 0))
+            .unwrap();
+        runtimes[1]
+            .add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 1))
+            .unwrap();
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let intact = std::fs::metadata(format!("{}/1.ec01", dir)).unwrap().len() as i64;
+        let truncated = (full / 2) as i64;
+        assert!(
+            truncated < intact,
+            "fixture must leave disk 0's shard SHORTER than disk 1's"
+        );
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert!(
+            std::ptr::eq(merged.anchor, refs[0]),
+            "the truncated disk must anchor, or the old sizing was already right"
+        );
+        assert_eq!(
+            refs[0].dat_file_size, 0,
+            "this fixture writes no .vif, so the legacy fallback is the path \
+             under test; with a dat_file_size the branch is never reached"
+        );
+        assert_eq!(
+            refs[0].shard_file_size(),
+            truncated,
+            "the old source -- the anchor's first held shard -- is the \
+             truncated one, which is what makes this observable"
+        );
+
+        let plan = EcLocalScrubPlan::for_volumes(&refs).unwrap();
+        assert_eq!(
+            plan.shard_size,
+            intact - 1,
+            "one disk's truncated shard must not size every merged sibling's \
+             shards; locate_data would then mis-offset every needle on every \
+             disk and report corruption that is not there"
         );
     }
 
@@ -3388,6 +3601,16 @@ pub(crate) struct MergedEcRuntimes<'a> {
     /// The runtimes whose shards are safe to verify together.
     pub merged: Vec<&'a EcVolume>,
     /// Indexed BY SHARD ID. `None` is a shard no merged runtime holds.
+    ///
+    /// The VOLUME's shard-id range is the ANCHOR's geometry,
+    /// `0..anchor.data_shards + anchor.parity_shards`, and every consumer must
+    /// truncate to it. The vector itself can be wider: the identity fence keys
+    /// on `encode_ts_ns` alone and never on geometry, so two same-generation
+    /// runtimes whose `.vif`s disagree do merge, and the vector is sized to the
+    /// widest of them. Ids at or above the anchor's total are not part of this
+    /// volume's layout — nothing describes them (the sidecar manifest and the
+    /// Reed-Solomon matrix are both the anchor's), so no consumer may treat
+    /// them as either verifiable or corrupt.
     pub slots: Vec<Option<(&'a EcVolume, &'a EcVolumeShard)>>,
     /// One line per runtime excluded by the identity fence. Reported, never
     /// dropped — a silently unscanned disk is the bug this all exists to fix.
@@ -3419,10 +3642,12 @@ pub(crate) fn merge_ec_runtimes<'a>(
         .filter(|v| v.encode_ts_ns == anchor_gen)
         .collect();
 
-    // Metadata source. A shardless anchor would drive LOCAL's `shard_size`
-    // fallback (`shard_file_size() - 1`) to -1, so prefer a runtime that holds
-    // something; fall back to the first at this generation when none does, which
-    // preserves today's behavior for a shardless volume.
+    // Metadata source. Prefer a runtime that holds something; fall back to the
+    // first at this generation when none does, which preserves today's behavior
+    // for a shardless volume. (LOCAL's `shard_size` fallback no longer depends
+    // on this choice -- it maxes over the merged SLOTS rather than the anchor's
+    // own shards -- but the anchor still supplies every other piece of metadata,
+    // and a runtime that holds shards is the more representative one.)
     let anchor = merged
         .iter()
         .copied()
@@ -3556,12 +3781,24 @@ impl EcChecksumScrubPlan {
             .unwrap_or(anchor);
         let (prot, status) = protection_source.bitrot_protection();
 
+        // The volume's shard-id range is the ANCHOR's geometry. `slots` can be
+        // wider — the fence keys on `encode_ts_ns` and never on geometry, so two
+        // same-generation runtimes with disagreeing `.vif`s merge and the vector
+        // is sized to the widest. The mode 2|5 arm already truncates
+        // (`0..data_shards + parity_shards`); iterating the full width here made
+        // CHECKSUM report "present but missing from sidecar manifest" for
+        // exactly the slot ids mode 2|5 silently drops. Nothing describes those
+        // ids — the manifest is the anchor's — so reporting them is not a
+        // finding, it is the width disagreement talking.
+        let total = (anchor.data_shards + anchor.parity_shards) as usize;
+
         // Only BitrotOn reaches the shard loop in `run()`; the other statuses
         // return before touching a handle, so cloning for them buys nothing.
         let shards = match status {
             crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On => merged
                 .slots
                 .iter()
+                .take(total)
                 .enumerate()
                 .filter_map(|(id, slot)| {
                     slot.map(|(_, shard)| (id as u32, shard.try_clone_file()))
@@ -3882,10 +4119,29 @@ impl EcLocalScrubPlan {
             // locate_data wants shardSize = datFileSize / DataShards when known,
             // else ecdFileSize - 1 (shards are padded to the small block size;
             // the -1 avoids an off-by-one in the large-block row count).
+            //
+            // The fallback takes the MAX over every merged slot, not
+            // `anchor.shard_file_size()` -- which returns the anchor's FIRST
+            // held shard, not a maximum. Before aggregation the plan only read
+            // the anchor's own shards, so a truncated shard there mis-sized only
+            // its own runtime; now one disk's truncated shard would set
+            // `shard_size` for every merged sibling's shards, mis-offset
+            // `locate_data` and manufacture needle corruption across the whole
+            // node. `verify_ec_shards` already answers this same question the
+            // same way (`if size > shard_size { shard_size = size }`), so this
+            // is the in-tree convention rather than a preference. Reached only
+            // on the legacy `dat_file_size == 0` path.
             shard_size: if anchor.dat_file_size > 0 {
                 anchor.dat_file_size / anchor.data_shards as i64
             } else {
-                anchor.shard_file_size() - 1
+                merged
+                    .slots
+                    .iter()
+                    .flatten()
+                    .map(|(_, s)| s.file_size())
+                    .max()
+                    .unwrap_or(0)
+                    - 1
             },
             large_block_size: anchor.large_block_size(),
             small_block_size: anchor.small_block_size(),

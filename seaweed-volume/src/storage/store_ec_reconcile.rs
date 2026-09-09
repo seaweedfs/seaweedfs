@@ -1208,32 +1208,6 @@ mod tests {
         assert!(store.find_all_ec_volumes(VolumeId(9999)).is_empty());
     }
 
-    /// Node-wide EC enumeration flat-maps every location, so a vid mounted on
-    /// two disks appears twice — the handler then scans the same runtime twice
-    /// and counts the volume twice. The list must carry each vid once, in first
-    /// -seen order.
-    #[test]
-    fn test_ec_volume_enumeration_is_deduped() {
-        let (store, _tmp) = build_split_disk_store(7020);
-        let vid = VolumeId(7020);
-
-        let raw: Vec<VolumeId> = store
-            .locations
-            .iter()
-            .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
-            .collect();
-        assert_eq!(
-            raw.iter().filter(|v| **v == vid).count(),
-            2,
-            "fixture must mount the vid on both disks for this to be meaningful"
-        );
-
-        let mut seen = std::collections::HashSet::new();
-        let deduped: Vec<VolumeId> = raw.into_iter().filter(|v| seen.insert(*v)).collect();
-        assert_eq!(deduped.iter().filter(|v| **v == vid).count(), 1);
-        assert_eq!(deduped[0], vid, "first-seen order must be preserved");
-    }
-
     /// End-to-end: with the vid mounted on two disks, a scrub driven through
     /// the Store must reach BOTH disks' shards. Before the aggregation fix
     /// `find_ec_volume` returned disk 0 and disk 1's shard 1 was never read.

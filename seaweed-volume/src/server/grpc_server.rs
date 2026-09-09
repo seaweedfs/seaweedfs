@@ -7595,6 +7595,14 @@ mod tests {
                 .unwrap();
         }
 
+        (split_disk_grpc_service(store), tmp)
+    }
+
+    /// Wrap a hand-built two-location `Store` in the full
+    /// `VolumeServerState` the gRPC handlers need. Shared by the split-disk
+    /// fixtures so a second one costs a store, not another copy of this
+    /// 50-line literal.
+    fn split_disk_grpc_service(store: Store) -> VolumeGrpcService {
         let state = Arc::new(VolumeServerState {
             store: RwLock::new(store),
             guard: RwLock::new(Guard::new(
@@ -7649,7 +7657,7 @@ mod tests {
             state_file_path: String::new(),
         });
 
-        (VolumeGrpcService { state }, tmp)
+        VolumeGrpcService { state }
     }
 
     /// The dedupe lives on the implicit (empty `volume_ids`) path of
@@ -7955,6 +7963,211 @@ mod tests {
             resp.broken_volume_ids,
             vec![7054],
             "details={:?}",
+            resp.details
+        );
+    }
+
+    /// A two-location store holding a REAL 10+4 encoded volume with EVERY data
+    /// and parity shard present, scattered across both disks: shards 0..=6 on
+    /// disk 0, shards 7..=13 plus the `.ecx`/`.ecj`/`.vif` on disk 1. Disk 0
+    /// gets no index files, so its shards mount only through the cross-disk
+    /// reconcile -- the real split-disk shape.
+    ///
+    /// This is the only layout that reaches mode 2's local Reed-Solomon parity
+    /// check over a genuinely MULTI-DIRECTORY `dirs`. The check is gated on
+    /// `all_local`, so every shard has to be present; the existing all-local
+    /// fixture keeps them in one directory, where every entry of `dirs` is the
+    /// same string and a permutation or off-by-one in the `slots` -> `dirs`
+    /// mapping is invisible.
+    ///
+    /// The `.dat`/`.idx` are left in a third directory that is NOT a store
+    /// location, so `prune_incomplete_ec_with_sibling_dat` finds no sibling
+    /// `.dat` and cannot delete the EC artefacts out from under the fixture.
+    fn make_service_with_two_disk_complete_ec_volume(vid_raw: u32) -> (VolumeGrpcService, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        for d in [&src, &dir0, &dir1] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let src_s = src.to_str().unwrap();
+        let vid = VolumeId(vid_raw);
+
+        // A real volume, really encoded: a parity check needs genuine
+        // Reed-Solomon parity to agree with, or "no corruption" means nothing.
+        {
+            let mut v = crate::storage::volume::Volume::new(
+                src_s,
+                src_s,
+                "",
+                vid,
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                crate::storage::types::Version::current(),
+            )
+            .unwrap();
+            for i in 1..=8u64 {
+                let data = format!("test data for needle {} with a bit more length", i);
+                let mut n = crate::storage::needle::Needle {
+                    id: crate::storage::types::NeedleId(i),
+                    cookie: crate::storage::types::Cookie(i as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Default::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            v.sync_to_disk().unwrap();
+            v.close();
+        }
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(src_s, src_s, "", vid, 10, 4)
+            .unwrap();
+
+        for id in 0..14u8 {
+            let target = if id < 7 { &dir0 } else { &dir1 };
+            std::fs::rename(
+                format!("{}/{}.ec{:02}", src_s, vid_raw, id),
+                format!("{}/{}.ec{:02}", target.to_str().unwrap(), vid_raw, id),
+            )
+            .unwrap();
+        }
+        let idx_dir = dir1.to_str().unwrap();
+        std::fs::rename(
+            format!("{}/{}.ecx", src_s, vid_raw),
+            format!("{}/{}.ecx", idx_dir, vid_raw),
+        )
+        .unwrap();
+        std::fs::write(format!("{}/{}.ecj", idx_dir, vid_raw), b"").unwrap();
+        std::fs::write(
+            format!("{}/{}.vif", idx_dir, vid_raw),
+            serde_json::to_string(&crate::storage::volume::VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        (split_disk_grpc_service(store), tmp)
+    }
+
+    /// The branch's newest production behavior, end to end: a mode 2 scrub of a
+    /// SPLIT-DISK volume whose shards are all local but spread over two
+    /// directories.
+    ///
+    /// `all_local` is now computed from the merged view, so this layout reaches
+    /// the local Reed-Solomon parity check for the first time -- and
+    /// `verify_ec_shards` is handed a `dirs` vector whose entries differ.
+    /// `test_scrub_ec_volume_reads_mode_reconstructs_missing_shard` also reaches
+    /// `all_local == true`, but every entry of its `dirs` is the same string, so
+    /// a permutation or off-by-one in the `slots` -> `dirs` mapping (the mode
+    /// 2|5 arm) cannot be observed there; and
+    /// `test_verify_ec_shards_reads_shards_from_multiple_dirs` builds its `dirs`
+    /// by hand and never goes through `merge_ec_runtimes` at all.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_full_parity_checks_a_two_disk_all_local_volume() {
+        let (service, tmp) = make_service_with_two_disk_complete_ec_volume(7060);
+        seed_all_shard_locations(&service, 7060);
+        let dir0 = tmp.path().join("data0").to_str().unwrap().to_string();
+        let dir1 = tmp.path().join("data1").to_str().unwrap().to_string();
+
+        // The fixture must actually produce the shape under test: every shard
+        // mounted, and the mapping the mode 2|5 arm builds `dirs` from spanning
+        // BOTH directories. Without this the test could pass over a one-disk
+        // layout and prove nothing about the mapping.
+        {
+            let store = service.state.store.read().unwrap();
+            let runtimes = store.find_all_ec_volumes(VolumeId(7060));
+            assert_eq!(runtimes.len(), 2, "the vid must mount on both disks");
+            let merged = crate::storage::erasure_coding::ec_volume::merge_ec_runtimes(&runtimes)
+                .expect("two runtimes merge");
+            assert!(merged.skipped.is_empty(), "{:?}", merged.skipped);
+            let dirs: Vec<String> = (0..14)
+                .map(|id| {
+                    merged.slots[id]
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "shard {id} is not mounted; all_local would be false \
+                                 and the parity check would never run"
+                            )
+                        })
+                        .0
+                        .dir
+                        .clone()
+                })
+                .collect();
+            assert_eq!(dirs[0], dir0);
+            assert_eq!(dirs[6], dir0);
+            assert_eq!(dirs[7], dir1);
+            assert_eq!(dirs[13], dir1);
+        }
+
+        // Real parity over a real encode, read through two directories: nothing
+        // may be fabricated as corrupt.
+        let resp = scrub_split_disk(&service, 7060, 2).await;
+        assert!(
+            resp.broken_volume_ids.is_empty() && resp.broken_shard_infos.is_empty(),
+            "an intact two-disk volume must not be reported broken: {:?}",
+            resp.details
+        );
+        assert!(resp.details.is_empty(), "{:?}", resp.details);
+        assert_eq!(resp.total_files, 8, "the needle walk must have run");
+
+        // ...and the parity check really RAN, over the SECOND disk's shards.
+        // Shard 13 is a PARITY shard: the per-needle walk reads only live
+        // data-shard intervals, so nothing but `verify_ec_shards` can see this,
+        // and nothing but a correct `slots` -> `dirs` mapping can find the file.
+        //
+        // `assert_eq!` rather than `contains`, and the reason is specific:
+        // `dirs` is indexed BY SHARD ID and carries only directories, so an
+        // off-by-one or a permutation that lands the wrong DIRECTORY at some
+        // index makes `verify_ec_shards` look for a shard file that is not
+        // there -- the reported set is then not exactly `[13]`, which
+        // `contains(&13)` would still accept. A permutation that stays WITHIN
+        // one disk is not caught here: both entries name the same directory, so
+        // it is unobservable through `dirs` at all. That is a limit of this
+        // fixture, stated rather than papered over.
+        let shard13 = format!("{}/7060.ec13", dir1);
+        let mut bytes = std::fs::read(&shard13).unwrap();
+        bytes[0] ^= 0xFF;
+        std::fs::write(&shard13, &bytes).unwrap();
+
+        let resp = scrub_split_disk(&service, 7060, 2).await;
+        let broken: Vec<u32> = resp.broken_shard_infos.iter().map(|s| s.shard_id).collect();
+        assert_eq!(
+            broken,
+            vec![13],
+            "the parity check must reach disk 1 and blame exactly shard 13: {:?}",
+            resp.details
+        );
+        assert_eq!(resp.broken_volume_ids, vec![7060]);
+        assert!(
+            resp.details
+                .iter()
+                .any(|d| d.contains("parity mismatch on shard 13")),
+            "the finding must come from the parity check, not the needle walk: {:?}",
             resp.details
         );
     }

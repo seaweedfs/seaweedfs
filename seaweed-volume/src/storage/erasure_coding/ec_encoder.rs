@@ -1560,7 +1560,18 @@ mod tests {
     }
 
     /// A shard no disk holds is a missing shard, not a panic and not a silent
-    /// pass -- and it must not drag the shards that ARE mounted down with it.
+    /// pass: it is REPORTED, by id, with a message that distinguishes "no disk
+    /// holds this shard" from "the disk holds it but it won't open".
+    ///
+    /// Read the scope literally. This does NOT show that the mounted shards
+    /// verify clean. `dirs[5] = None` puts shard 5 in `broken_shards` before
+    /// the block loop starts, so every iteration takes the
+    /// `else { read_failed = true; }` arm and the Reed-Solomon comparison never
+    /// runs at all. `broken == vec![5]` therefore holds because the other 13
+    /// were never verified, not because they verified clean -- a parity check
+    /// over intact shards is what
+    /// `test_verify_ec_shards_reads_shards_from_multiple_dirs` and the
+    /// end-to-end split-disk FULL scrub establish.
     #[test]
     fn test_verify_ec_shards_treats_a_none_dir_as_missing() {
         let tmp = TempDir::new().unwrap();
