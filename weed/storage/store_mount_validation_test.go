@@ -29,7 +29,7 @@ func TestMountVolumeValidatorAnnouncesOnlyAfterValidation(t *testing.T) {
 	t.Cleanup(store.Close)
 
 	validationErr := errors.New("copy counts differ")
-	err = store.MountVolume(vid, func(*Volume) error {
+	err = store.MountVolume(vid, nil, func(*Volume) error {
 		select {
 		case <-store.NewVolumesChan:
 			t.Fatal("volume was announced before validation completed")
