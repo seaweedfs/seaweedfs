@@ -285,8 +285,12 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 	}
 	return nil
 }
-func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (ret *DiskLocation) {
+func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, replaceVid ...needle.VolumeId) (ret *DiskLocation) {
 	max := int32(0)
+	var replace needle.VolumeId
+	if len(replaceVid) > 0 {
+		replace = replaceVid[0]
+	}
 	for _, location := range s.Locations {
 		if filterFn != nil && !filterFn(location) {
 			continue
@@ -295,6 +299,11 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (re
 			continue
 		}
 		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
+		if replace != 0 {
+			if _, found := location.FindVolume(replace); found {
+				currentFreeCount++
+			}
+		}
 		currentFreeCount *= erasure_coding.DataShardsCount
 		currentFreeCount -= int32(location.EcShardCount())
 		currentFreeCount /= erasure_coding.DataShardsCount
@@ -966,24 +975,23 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	return persistErr
 }
 
-func (s *Store) MountVolume(i needle.VolumeId, collection *string) error {
-	return s.mountVolume(i, collection, nil)
+// MountVolume loads a volume and announces it after all optional validators
+// succeed. A validator failure unloads the volume before returning the error,
+// so an invalid newly copied replica is never announced to the master.
+func (s *Store) MountVolume(i needle.VolumeId, collection *string, validators ...func(*Volume) error) error {
+	return s.mountVolume(i, collection, validators...)
 }
 
-// MountVolumeWithValidator loads a volume, validates it before announcing it
-// to the master, and unloads it when validation fails. This keeps an invalid
-// newly copied replica out of the master's routable volume set.
-func (s *Store) MountVolumeWithValidator(i needle.VolumeId, collection *string, validator func(*Volume) error) error {
-	return s.mountVolume(i, collection, validator)
-}
-
-func (s *Store) mountVolume(i needle.VolumeId, collection *string, validator func(*Volume) error) error {
+func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ...func(*Volume) error) error {
 	for diskId, location := range s.Locations {
 		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind, collection); found == true {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting
-			if validator != nil {
+			for _, validator := range validators {
+				if validator == nil {
+					continue
+				}
 				if err := validator(v); err != nil {
 					if unloadErr := location.UnloadVolume(i); unloadErr != nil {
 						return fmt.Errorf("%w; failed to unload volume %d after validation error: %v", err, i, unloadErr)
