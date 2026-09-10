@@ -360,6 +360,14 @@ tls_client_crt_file=""
 # Set the client private key path
 tls_client_key_file=""
 
+# ClickHouse Keeper (ZooKeeper-compatible). Directory list uses getChildren and
+# client-side pagination; prefer a dedicated Keeper cluster (not shared with CH RMT).
+[keeper]
+enabled = false
+servers = "localhost:9181"
+session_timeout = "10s"
+key_prefix = "/seaweedfs/filer"
+
 [mongodb]
 enabled = false
 uri = "mongodb://localhost:27017"
