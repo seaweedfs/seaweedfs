@@ -110,42 +110,95 @@ fn operator_mmap_threshold_override_active() -> bool {
         || usable_glibc_tunable_threshold(std::env::var_os(GLIBC_TUNABLES_ENV))
 }
 
-/// glibc silently ignores empty or non-numeric threshold values, so treat
-/// those as "not set" and fall through to pinning. Otherwise the operator's
-/// value wins. Without this, an empty or malformed `MALLOC_MMAP_THRESHOLD_`
-/// would make us skip `mallopt` while glibc also ignores the override, leaving
-/// the adaptive behaviour this module exists to prevent.
+/// glibc silently ignores empty or non-numeric threshold values, and the
+/// threshold is semantically unsigned, so treat negative, empty, or
+/// non-numeric values as "not set" and fall through to pinning. Otherwise the
+/// operator's value wins. Without this, an empty or malformed
+/// `MALLOC_MMAP_THRESHOLD_` would make us skip `mallopt` while glibc also
+/// ignores the override, leaving the adaptive behaviour this module exists to
+/// prevent.
+///
+/// `MALLOC_MMAP_THRESHOLD_` is parsed by glibc with `atoi`, which is
+/// decimal-only and returns a signed `int`; the threshold itself is
+/// `size_t`-typed, so a negative or zero value is not a meaningful override.
+/// We mirror that by accepting only non-empty, non-negative decimal integers.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn usable_threshold(value: Option<std::ffi::OsString>) -> bool {
     match value.and_then(|v| v.into_string().ok()) {
-        Some(s) => {
-            let s = s.trim();
-            !s.is_empty() && s.parse::<i64>().is_ok()
-        }
+        Some(s) => parse_decimal_threshold(s.trim()).is_some(),
         None => false,
     }
+}
+
+/// Parse a decimal threshold the way glibc's `atoi` does, but reject negative
+/// and zero values since the threshold is semantically unsigned and `mallopt`
+/// requires it to be positive. Returns `Some` for any positive decimal value
+/// that fits in `u64` (glibc's `strtoul` accepts the full `unsigned long`
+/// range, so values above `i64::MAX` are valid overrides we must not discard).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn parse_decimal_threshold(s: &str) -> Option<u64> {
+    if s.is_empty() || s.starts_with('-') {
+        return None;
+    }
+    let n = s.parse::<u64>().ok()?;
+    (n > 0).then_some(n)
 }
 
 /// Look for `glibc.malloc.mmap_threshold=<value>` among the colon-separated
 /// tunables in `GLIBC_TUNABLES`, and apply the same non-empty/numeric check as
 /// `usable_threshold` so a malformed tunable defers to pinning instead of
 /// silently keeping the adaptive threshold.
+///
+/// glibc's tunable parser rejects the **entire** `GLIBC_TUNABLES` string if any
+/// entry is malformed (e.g. contains a duplicate `=`), so we validate every
+/// entry before accepting any one of them. glibc parses tunable values with
+/// `strtoul`, which accepts `0x`-prefixed hexadecimal; we do the same.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn usable_glibc_tunable_threshold(tunables: Option<std::ffi::OsString>) -> bool {
     let s = match tunables.and_then(|v| v.into_string().ok()) {
         Some(s) => s,
         None => return false,
     };
-    let prefix = format!("{}=", MMAP_THRESHOLD_TUNABLE);
+    let mut found_threshold = false;
     for entry in s.split(':') {
-        if let Some(rest) = entry.strip_prefix(&prefix) {
-            let rest = rest.trim();
-            if !rest.is_empty() && rest.parse::<i64>().is_ok() {
-                return true;
-            }
+        if entry.is_empty() {
+            continue;
+        }
+        // Each entry must be `key=value` with exactly one '='. glibc rejects
+        // the whole string if any entry has a duplicate '='.
+        let (key, val) = match entry.split_once('=') {
+            Some(kv) => kv,
+            None => return false,
+        };
+        if val.contains('=') {
+            return false;
+        }
+        if key == MMAP_THRESHOLD_TUNABLE && parse_strtoul_threshold(val.trim()).is_some() {
+            found_threshold = true;
         }
     }
-    false
+    found_threshold
+}
+
+/// Parse a tunable value the way glibc's `strtoul` does: decimal by default,
+/// `0x`-prefixed hexadecimal otherwise. Rejects empty, negative, and
+/// non-numeric values. Accepts the full `u64` range, matching glibc's
+/// `unsigned long`.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn parse_strtoul_threshold(s: &str) -> Option<u64> {
+    if s.is_empty() || s.starts_with('-') {
+        return None;
+    }
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        let hex = hex.trim_start_matches('0');
+        if hex.is_empty() {
+            // "0x0" or "0x" → value 0, which is not a positive threshold.
+            return None;
+        }
+        u64::from_str_radix(hex, 16).ok().filter(|n| *n > 0)
+    } else {
+        s.parse::<u64>().ok().filter(|n| *n > 0)
+    }
 }
 
 #[cfg(test)]
@@ -198,10 +251,20 @@ mod tests {
     fn usable_threshold_accepts_numbers_and_rejects_garbage() {
         assert!(usable_threshold(Some("131072".into())));
         assert!(usable_threshold(Some(" 131072 ".into())));
+        // Values above i64::MAX are valid for glibc's unsigned parser.
+        assert!(usable_threshold(Some("9223372036854775808".into())));
         assert!(!usable_threshold(Some("".into())));
         assert!(!usable_threshold(Some("   ".into())));
+        assert!(!usable_threshold(Some("0".into())));
+        // Negative values are not a usable override: glibc's threshold is
+        // unsigned, so it ignores or rejects them.
+        assert!(!usable_threshold(Some("-1".into())));
+        assert!(!usable_threshold(Some("-131072".into())));
         assert!(!usable_threshold(Some("128K".into())));
         assert!(!usable_threshold(Some("abc".into())));
+        // MALLOC_MMAP_THRESHOLD_ is parsed by glibc with atoi (decimal-only),
+        // so hex is not a valid override for the legacy variable.
+        assert!(!usable_threshold(Some("0x20000".into())));
         assert!(!usable_threshold(None));
     }
 
@@ -215,12 +278,36 @@ mod tests {
         assert!(usable_glibc_tunable_threshold(Some(
             "glibc.cpu.x=1:glibc.malloc.mmap_threshold=131072".into()
         )));
-        // Empty or non-numeric values are not a usable override.
+        // Hex values are accepted by glibc's strtoul.
+        assert!(usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=0x20000".into()
+        )));
+        // Values above i64::MAX are valid for glibc's unsigned parser.
+        assert!(usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=9223372036854775808".into()
+        )));
+        // Empty, zero, or non-numeric values are not a usable override.
         assert!(!usable_glibc_tunable_threshold(Some(
             "glibc.malloc.mmap_threshold=".into()
         )));
         assert!(!usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=0".into()
+        )));
+        assert!(!usable_glibc_tunable_threshold(Some(
             "glibc.malloc.mmap_threshold=abc".into()
+        )));
+        // Negative values are not a usable override.
+        assert!(!usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=-1".into()
+        )));
+        // A malformed sibling entry makes glibc reject the entire string, so
+        // we must not accept the threshold entry either.
+        assert!(!usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.check=2=2:glibc.malloc.mmap_threshold=131072".into()
+        )));
+        // An entry with no '=' also invalidates the whole string.
+        assert!(!usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold:glibc.cpu.x=1".into()
         )));
         // Unrelated tunables do not count.
         assert!(!usable_glibc_tunable_threshold(Some(
