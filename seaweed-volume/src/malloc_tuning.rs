@@ -160,7 +160,8 @@ fn usable_glibc_tunable_threshold(tunables: Option<std::ffi::OsString>) -> bool 
 /// negative result wraps to `unsigned long` (`-1` → `SIZE_MAX`). If no digit is
 /// found after the sign, the end pointer stays at the current position — which
 /// still counts as "consumed" when the string is empty or whitespace-only
-/// (value 0).
+/// (value 0). On overflow, `_dl_strtoul` stops at the overflowing digit (endptr
+/// does not reach the end), so `tunable_parse_num` rejects the value.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn dl_strtoul_consumes_all(s: &str) -> bool {
     let bytes = s.as_bytes();
@@ -185,32 +186,73 @@ fn dl_strtoul_consumes_all(s: &str) -> bool {
         return false;
     }
 
-    // Determine base: 0x → hex, 0 → octal, else decimal.
-    let (base, max_digit) = if bytes[pos] == b'0'
+    // Determine base: 0x → hex, 0 → octal, else decimal. _dl_strtoul treats
+    // "0x" with no hex digits as octal "0" followed by non-digit "x" (endptr
+    // stops at "x"), so we must NOT skip the "0x" prefix unless a hex digit
+    // follows.
+    let base: u32 = if bytes[pos] == b'0'
         && pos + 1 < bytes.len()
         && (bytes[pos + 1] == b'x' || bytes[pos + 1] == b'X')
+        && pos + 2 < bytes.len()
+        && is_digit_in_base(bytes[pos + 2], 16)
     {
         pos += 2; // skip "0x"
-        (16u8, 15u8)
+        16
     } else if bytes[pos] == b'0' {
-        (8, 7)
+        8
     } else {
-        (10, 9)
+        10
     };
 
-    // Parse digits in the determined base.
+    // Parse digits with overflow detection, matching _dl_strtoul's cutoff/cutlim
+    // logic. On overflow, _dl_strtoul sets endptr to the overflowing digit and
+    // returns UINT64_MAX — so the value is NOT fully consumed and
+    // tunable_parse_num rejects it.
+    let mut result: u64 = 0;
+    let cutoff = u64::MAX / base as u64;
+    let cutlim = u64::MAX % base as u64;
+
     while pos < bytes.len() {
         let b = bytes[pos];
-        let is_digit = b >= b'0' && b <= b'0' + max_digit
-            || (base == 16 && ((b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b)));
-        if !is_digit {
-            break;
+        let digval: u32 = match digit_value(b, base) {
+            Some(v) => v,
+            None => break,
+        };
+        if result > cutoff || (result == cutoff && digval as u64 > cutlim) {
+            // Overflow: _dl_strtoul stops here, endptr points at this digit.
+            return false;
         }
+        result *= base as u64;
+        result += digval as u64;
         pos += 1;
     }
 
     // The entire string must be consumed (matching tunable_parse_num's check).
     pos == bytes.len()
+}
+
+/// Returns the numeric value of a digit byte in the given base, or `None` if
+/// the byte is not a valid digit in that base.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn digit_value(b: u8, base: u32) -> Option<u32> {
+    if (b'0'..=b'0' + (base - 1).min(9) as u8).contains(&b) {
+        return Some((b - b'0') as u32);
+    }
+    if base == 16 {
+        if (b'a'..=b'f').contains(&b) {
+            return Some((b - b'a' + 10) as u32);
+        }
+        if (b'A'..=b'F').contains(&b) {
+            return Some((b - b'A' + 10) as u32);
+        }
+    }
+    None
+}
+
+/// Returns true if the byte is a valid digit in the given base.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn is_digit_in_base(b: u8, base: u32) -> bool {
+    digit_value(b, base).is_some()
 }
 
 #[cfg(test)]
@@ -273,7 +315,6 @@ mod tests {
         assert!(dl_strtoul_consumes_all("0x20000"));
         assert!(dl_strtoul_consumes_all("0X20000"));
         assert!(dl_strtoul_consumes_all("0x0"));
-        assert!(dl_strtoul_consumes_all("0x"));
         // Octal with leading 0.
         assert!(dl_strtoul_consumes_all("010"));
         // Leading whitespace (spaces and tabs) is skipped.
@@ -283,6 +324,11 @@ mod tests {
         assert!(dl_strtoul_consumes_all(""));
         assert!(dl_strtoul_consumes_all("  "));
         assert!(dl_strtoul_consumes_all("\t"));
+        // Sign-only strings are accepted: _dl_strtoul skips the sign, finds no
+        // digit, sets endptr to the position after the sign (== end of string),
+        // and returns 0. tunable_parse_num sees endptr == strval + len → true.
+        assert!(dl_strtoul_consumes_all("-"));
+        assert!(dl_strtoul_consumes_all("+"));
 
         // Trailing garbage is rejected — _dl_strtoul stops at the first
         // non-digit and tunable_parse_num requires the entire string consumed.
@@ -291,9 +337,16 @@ mod tests {
         assert!(!dl_strtoul_consumes_all("128K"));
         // Non-numeric strings are rejected.
         assert!(!dl_strtoul_consumes_all("abc"));
-        // Sign-only strings are rejected (no digit after sign).
-        assert!(!dl_strtoul_consumes_all("-"));
-        assert!(!dl_strtoul_consumes_all("+"));
+        // "0x" with no hex digits: _dl_strtoul parses "0" as octal, then stops
+        // at "x" (not an octal digit), so endptr != end of string → rejected.
+        assert!(!dl_strtoul_consumes_all("0x"));
+        assert!(!dl_strtoul_consumes_all("0X"));
+
+        // Overflow: _dl_strtoul stops at the overflowing digit (endptr points
+        // there, not at the end), so tunable_parse_num rejects the value.
+        assert!(!dl_strtoul_consumes_all("18446744073709551616")); // u64::MAX + 1
+        assert!(!dl_strtoul_consumes_all("99999999999999999999")); // 20 nines
+        assert!(!dl_strtoul_consumes_all("0x10000000000000000")); // 2^64
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
