@@ -417,17 +417,17 @@ func (r *gapStallReporter) close() {
 // corresponds to the event being waited for. The park is where a stalled
 // subscriber spends all its time, so every exit the read loop relies on has to
 // be checked here too.
-func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, gapStall *gapStallReporter, evictedTsNs func() int64, cursor log_buffer.MessagePosition, notifyChan <-chan struct{}, reason string) (skipToTsNs int64, skip bool, done bool) {
+func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, gapStall *gapStallReporter, evictedTsNs func() int64, cursor log_buffer.MessagePosition, notifyChan <-chan struct{}, reason string, upgradeOnRemotePeer <-chan struct{}) (skipToTsNs int64, skip bool, done bool, upgrade bool) {
 	// Done exits run before park(): a finished stream was never parked, and
 	// marking it so leaves a false "still behind" trace. A cursor at UntilNs is
 	// finished - the bound is inclusive, cursors are exclusive, and
 	// LoopProcessLogData (the only place UntilNs ends a stream) is unreachable
 	// from a park.
 	if req.UntilNs != 0 && cursor.Time.UnixNano() >= req.UntilNs {
-		return 0, false, true
+		return 0, false, true, false
 	}
 	if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-		return 0, false, true
+		return 0, false, true, false
 	}
 	gapStall.park(cursor.Time, reason)
 	if gapStall.stalledFor() >= maxGapStall {
@@ -435,7 +435,7 @@ func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMet
 		// strictly after it, so the recorded loss is exactly (cursor, skipTo].
 		if evicted := evictedTsNs(); evicted > cursor.Time.UnixNano() {
 			gapStall.gaveUp(cursor.Time, evicted, reason)
-			return evicted, true, false
+			return evicted, true, false, false
 		}
 		// Nothing was withheld past the cursor - nothing to skip, nothing being
 		// lost; keep waiting on a fresh stall cycle.
@@ -459,13 +459,15 @@ func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMet
 				continue
 			}
 		case <-ctx.Done():
-			return 0, false, true
+			return 0, false, true, false
+		case <-upgradeOnRemotePeer:
+			return 0, false, false, true
 		case <-retry:
 		}
 		if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-			return 0, false, true
+			return 0, false, true, false
 		}
-		return 0, false, false
+		return 0, false, false, false
 	}
 }
 
@@ -511,15 +513,16 @@ func resolveGapResume(currentTsNs, currentOffset, earliestMemTsNs, flushedTsNs, 
 // the two subscribe loops; everything else about them must stay identical, and
 // this PR's history shows they drift when edited separately.
 type gapPass struct {
-	fs        *FilerServer
-	req       *filer_pb.SubscribeMetadataRequest
-	gapStall  *gapStallReporter
-	earliest  func() time.Time
-	evicted   func() int64 // gap-proof watermark; aggregated uses the received-ts space
-	flushed   func() int64 // what the last disk read proved covered: flushed AND inside its listing
-	gapChan   <-chan struct{}
-	dataChan  <-chan struct{}
-	gapReason func(earliest time.Time, evictedTsNs int64) string
+	fs                  *FilerServer
+	req                 *filer_pb.SubscribeMetadataRequest
+	gapStall            *gapStallReporter
+	earliest            func() time.Time
+	evicted             func() int64 // gap-proof watermark; aggregated uses the received-ts space
+	flushed             func() int64 // what the last disk read proved covered: flushed AND inside its listing
+	gapChan             <-chan struct{}
+	dataChan            <-chan struct{}
+	gapReason           func(earliest time.Time, evictedTsNs int64) string
+	upgradeOnRemotePeer <-chan struct{}
 }
 
 type gapOutcome int
@@ -528,6 +531,7 @@ const (
 	gapProceed  gapOutcome = iota // read memory
 	gapContinue                   // restart the pass
 	gapDone                       // the stream is over
+	gapUpgrade                    // remote peer arrived; end for reconnect
 )
 
 // resolve is the gap decision both loops run between the disk pass and the
@@ -579,9 +583,12 @@ func (p *gapPass) resolve(ctx context.Context, cursor *log_buffer.MessagePositio
 }
 
 func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, latch *error, notifyChan <-chan struct{}, reason string) gapOutcome {
-	skipTo, skip, done := p.fs.parkOnGap(ctx, p.req, p.gapStall, p.evicted, *cursor, notifyChan, reason)
+	skipTo, skip, done, upgrade := p.fs.parkOnGap(ctx, p.req, p.gapStall, p.evicted, *cursor, notifyChan, reason, p.upgradeOnRemotePeer)
 	if done {
 		return gapDone
+	}
+	if upgrade {
+		return gapUpgrade
 	}
 	if skip {
 		*cursor = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
@@ -1016,14 +1023,15 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	localBuffer := fs.filer.LocalMetaLogBuffer
 	gaps := &gapPass{
-		fs:       fs,
-		req:      req,
-		gapStall: gapStall,
-		earliest: localBuffer.GetEarliestTime,
-		evicted:  localBuffer.GetLastEvictedTsNs, // local disk carries the ring's own timestamps
-		flushed:  func() int64 { return lastCheckedFlushTsNs },
-		gapChan:  localFlushChan,
-		dataChan: localFlushChan,
+		fs:                  fs,
+		req:                 req,
+		gapStall:            gapStall,
+		earliest:            localBuffer.GetEarliestTime,
+		evicted:             localBuffer.GetLastEvictedTsNs, // local disk carries the ring's own timestamps
+		flushed:             func() int64 { return lastCheckedFlushTsNs },
+		gapChan:             localFlushChan,
+		dataChan:            localFlushChan,
+		upgradeOnRemotePeer: upgradeOnRemotePeer,
 		gapReason: func(earliest time.Time, evictedTsNs int64) string {
 			return fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
 				earliest, time.Unix(0, lastCheckedFlushTsNs))
@@ -1095,6 +1103,8 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		switch gaps.resolve(ctx, &lastReadTime, &readInMemoryLogErr, diskAdvanced) {
 		case gapDone:
 			return nil
+		case gapUpgrade:
+			return errAggregationUpgrade
 		case gapContinue:
 			continue
 		}
