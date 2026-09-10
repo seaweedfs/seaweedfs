@@ -371,7 +371,9 @@ mod tests {
         // Trailing garbage is rejected — _dl_strtoul stops at the first
         // non-digit and tunable_parse_num requires the entire string consumed.
         assert!(!dl_strtoul_consumes_all("131072abc"));
-        assert!(!dl_strtoul_consumes_all("0x20000abc"));
+        // In hex mode, a-f are digits, so "0x20000abc" is a valid hex number.
+        // Use a non-hex character like 'g' to test trailing garbage in hex.
+        assert!(!dl_strtoul_consumes_all("0x20000g"));
         assert!(!dl_strtoul_consumes_all("128K"));
         // Non-numeric strings are rejected.
         assert!(!dl_strtoul_consumes_all("abc"));
