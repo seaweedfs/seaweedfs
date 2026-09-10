@@ -408,6 +408,31 @@ func TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck(t *testing.T) {
 	}
 }
 
+// TestExceedsExpectedCompactedSize guards the copy-phase integrity check
+// against regressing into double-subtracting skipped bytes: expectedLiveBytes
+// already excludes needles dropped as unreadable (they return before being
+// added to the tally), so the check must compare it directly against the
+// compacted .dat size, with no further adjustment for skipped bytes.
+func TestExceedsExpectedCompactedSize(t *testing.T) {
+	cases := []struct {
+		name              string
+		expectedLiveBytes uint64
+		dstDatSize        int64
+		wantExceeds       bool
+	}{
+		{"destination matches expected size exactly", 100, 100, false},
+		{"destination larger than expected is fine", 100, 150, false},
+		{"destination short of expected signals data loss", 100, 90, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := exceedsExpectedCompactedSize(c.expectedLiveBytes, c.dstDatSize); got != c.wantExceeds {
+				t.Fatalf("exceedsExpectedCompactedSize(%d, %d) = %v, want %v", c.expectedLiveBytes, c.dstDatSize, got, c.wantExceeds)
+			}
+		})
+	}
+}
+
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
 	_, size, _, err := v.writeNeedle2(n, true, false, false)
