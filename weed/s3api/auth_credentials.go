@@ -1813,8 +1813,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			} else if evaluated {
 				// A bucket policy exists and was evaluated with a matching statement
 				if allowed {
-					// Policy explicitly allows this action - grant access immediately
-					// This bypasses IAM checks to support cross-account access and policy-only principals
+					// A resource policy may supply the Allow an identity policy omits
+					// (for cross-account access and policy-only principals), but it
+					// must not override an applicable explicit Deny from an identity,
+					// group, or session policy.
+					if iam.isActionExplicitlyDeniedByApplicablePolicies(r, identity, action, bucket, object) {
+						glog.V(3).Infof("identity policy explicitly denies %s to %s on %s/%s despite bucket policy allow", identity.Name, action, bucket, object)
+						return identity, s3err.ErrAccessDenied, reqAuthType
+					}
 					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s (bypassing IAM)", identity.Name, action, bucket, object)
 					policyAllows = true
 				} else {
@@ -2607,6 +2613,24 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 	return denied
 }
 
+// isActionExplicitlyDeniedByApplicablePolicies reports whether any applicable
+// identity-side policy (attached IAM policies, enabled-group policies, or the
+// IAM-integration session policy) explicitly denies the action. A bucket
+// policy may supply the Allow an identity policy omits, but it must not
+// override a matching explicit Deny. A nil identity has no identity-side
+// policy plane, so the bucket policy remains authoritative for public access.
+func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByApplicablePolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	if identity == nil {
+		return false
+	}
+	if iam.evaluateAttachedIAMPolicies(r, identity, action, bucket, object) == attachedIAMPolicyDeny {
+		return true
+	}
+	s3Action, resourceArn := resolveS3AuthTarget(action, bucket, object, r)
+	principal := buildPrincipalARN(identity, r)
+	return iam.isActionExplicitlyDeniedByIAM(r, identity, principal, s3Action, resourceArn)
+}
+
 // authorizationRoute is the mechanism that decides a request/identity pair's
 // permissions: the IAM integration, locally attached IAM policies, the
 // identity's legacy Actions, or nothing at all.
@@ -2844,6 +2868,9 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 		}
 		if evaluated {
 			if allowed {
+				if iam.isActionExplicitlyDeniedByApplicablePolicies(keyReq, identity, action, bucket, objectKey) {
+					return s3err.ErrAccessDenied
+				}
 				return s3err.ErrNone
 			}
 			return s3err.ErrAccessDenied
