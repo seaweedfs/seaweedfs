@@ -114,12 +114,18 @@ fn operator_mmap_threshold_override_active() -> bool {
 }
 
 /// Look for `glibc.malloc.mmap_threshold=<value>` among the colon-separated
-/// tunables in `GLIBC_TUNABLES`. glibc's tunable parser rejects the **entire**
-/// `GLIBC_TUNABLES` string if any entry's value contains a duplicate `=`, so we
-/// validate every entry before accepting any one of them. glibc parses tunable
-/// values with `_dl_strtoul`, which accepts decimal, `0x` hex, `0` octal, an
-/// optional sign (negatives wrap to `unsigned long`), and requires the entire
-/// value to be consumed; we match that with `dl_strtoul_consumes_all`.
+/// tunables in `GLIBC_TUNABLES`. glibc's `parse_tunables_string` (elf/dl-tunables.c)
+/// rejects the **entire** string (returns -1) if it reaches `\0` before finding
+/// `=` in a name (last entry has no `=`), or if any entry's value contains a
+/// duplicate `=`. When `parse_tunables_string` returns -1, `parse_tunables`
+/// prints a warning and returns immediately without applying ANY tunable —
+/// including ones already parsed into the tunables array. We match that by
+/// returning `false` for the entire string on any of those conditions.
+///
+/// glibc parses tunable values with `_dl_strtoul`, which accepts decimal,
+/// `0x` hex, `0` octal, an optional sign (negatives wrap to `unsigned long`),
+/// and requires the entire value to be consumed; we match that with
+/// `dl_strtoul_consumes_all`.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn usable_glibc_tunable_threshold(tunables: Option<std::ffi::OsString>) -> bool {
     let s = match tunables.and_then(|v| v.into_string().ok()) {
@@ -129,24 +135,64 @@ fn usable_glibc_tunable_threshold(tunables: Option<std::ffi::OsString>) -> bool 
     if s.is_empty() {
         return false;
     }
+
+    // Parse the string character-by-character, matching glibc's
+    // parse_tunables_string logic exactly. Using split(':') would lose the
+    // distinction between an entry terminated by ':' (skip) and one terminated
+    // by '\0' with no '=' (reject entire string).
+    let bytes = s.as_bytes();
+    let mut pos = 0;
     let mut found_threshold = false;
-    for entry in s.split(':') {
-        if entry.is_empty() {
-            continue;
+
+    loop {
+        // Find where the name ends ('=', ':', or end of string).
+        let name_start = pos;
+        while pos < bytes.len() && bytes[pos] != b'=' && bytes[pos] != b':' {
+            pos += 1;
         }
-        // Each entry must be `key=value` with exactly one '='. glibc rejects
-        // the whole string if any entry's value contains a duplicate '='.
-        let (key, val) = match entry.split_once('=') {
-            Some(kv) => kv,
-            None => continue,
-        };
-        if val.contains('=') {
+
+        // End of string before '=' → glibc returns -1 (reject entire string).
+        if pos >= bytes.len() {
             return false;
         }
+
+        // ':' before '=' → glibc skips this entry and continues.
+        if bytes[pos] == b':' {
+            pos += 1;
+            continue;
+        }
+
+        // Skip the '='.
+        let name_end = pos;
+        pos += 1;
+
+        // Find where the value ends ('=', ':', or end of string).
+        let val_start = pos;
+        while pos < bytes.len() && bytes[pos] != b'=' && bytes[pos] != b':' {
+            pos += 1;
+        }
+
+        // '=' in value → glibc returns -1 (reject entire string).
+        if pos < bytes.len() && bytes[pos] == b'=' {
+            return false;
+        }
+
+        let key = &s[name_start..name_end];
+        let val = &s[val_start..pos];
+
         if key == MMAP_THRESHOLD_TUNABLE && dl_strtoul_consumes_all(val) {
             found_threshold = true;
         }
+
+        // End of string → done.
+        if pos >= bytes.len() {
+            break;
+        }
+
+        // Skip the ':'.
+        pos += 1;
     }
+
     found_threshold
 }
 
@@ -340,6 +386,9 @@ mod tests {
         assert!(!dl_strtoul_consumes_all("18446744073709551616")); // u64::MAX + 1
         assert!(!dl_strtoul_consumes_all("99999999999999999999")); // 20 nines
         assert!(!dl_strtoul_consumes_all("0x10000000000000000")); // 2^64
+        // u64::MAX itself is accepted: the last digit (5) equals cutlim (=5),
+        // so the overflow check (digval > cutlim) is false.
+        assert!(dl_strtoul_consumes_all("18446744073709551615")); // u64::MAX
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -362,9 +411,17 @@ mod tests {
         assert!(usable_glibc_tunable_threshold(Some(
             "glibc.malloc.mmap_threshold=9223372036854775808".into()
         )));
+        // u64::MAX is accepted by _dl_strtoul (last digit == cutlim, no overflow).
+        assert!(usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=18446744073709551615".into()
+        )));
         // Appears alongside other tunables.
         assert!(usable_glibc_tunable_threshold(Some(
             "glibc.cpu.x=1:glibc.malloc.mmap_threshold=131072".into()
+        )));
+        // Leading ':' is accepted — glibc skips the empty entry and continues.
+        assert!(usable_glibc_tunable_threshold(Some(
+            ":glibc.malloc.mmap_threshold=131072".into()
         )));
         // Empty value is accepted by _dl_strtoul (value 0).
         assert!(usable_glibc_tunable_threshold(Some(
@@ -380,8 +437,24 @@ mod tests {
         )));
         // A malformed sibling entry (duplicate '=') makes glibc reject the
         // entire string, so we must not accept the threshold entry either.
+        // This applies regardless of whether the threshold is before or after
+        // the malformed entry — parse_tunables_string returns -1, and
+        // parse_tunables discards all tunables without applying any.
         assert!(!usable_glibc_tunable_threshold(Some(
             "glibc.malloc.check=2=2:glibc.malloc.mmap_threshold=131072".into()
+        )));
+        assert!(!usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=262144:glibc.malloc.check=2=2".into()
+        )));
+        // A trailing entry with no '=' makes glibc reject the entire string
+        // (parse_tunables_string hits '\0' before '=' and returns -1).
+        assert!(!usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=262144:glibc.cpu.x".into()
+        )));
+        // A trailing ':' makes glibc reject the entire string (the empty entry
+        // after ':' hits '\0' before '=' and returns -1).
+        assert!(!usable_glibc_tunable_threshold(Some(
+            "glibc.malloc.mmap_threshold=262144:".into()
         )));
         // Unrelated tunables do not count.
         assert!(!usable_glibc_tunable_threshold(Some(
