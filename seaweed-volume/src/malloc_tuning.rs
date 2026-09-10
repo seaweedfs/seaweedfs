@@ -186,15 +186,13 @@ fn dl_strtoul_consumes_all(s: &str) -> bool {
         return false;
     }
 
-    // Determine base: 0x → hex, 0 → octal, else decimal. _dl_strtoul treats
-    // "0x" with no hex digits as octal "0" followed by non-digit "x" (endptr
-    // stops at "x"), so we must NOT skip the "0x" prefix unless a hex digit
-    // follows.
+    // Determine base: 0x → hex, 0 → octal, else decimal. _dl_strtoul unconditionally
+    // advances past "0x"/"0X" when the first char is '0' and the next is 'x'/'X',
+    // even if no hex digit follows — in that case the digit loop breaks immediately,
+    // endptr reaches the end, and the value is 0.
     let base: u32 = if bytes[pos] == b'0'
         && pos + 1 < bytes.len()
         && (bytes[pos + 1] == b'x' || bytes[pos + 1] == b'X')
-        && pos + 2 < bytes.len()
-        && is_digit_in_base(bytes[pos + 2], 16)
     {
         pos += 2; // skip "0x"
         16
@@ -247,12 +245,6 @@ fn digit_value(b: u8, base: u32) -> Option<u32> {
         }
     }
     None
-}
-
-/// Returns true if the byte is a valid digit in the given base.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn is_digit_in_base(b: u8, base: u32) -> bool {
-    digit_value(b, base).is_some()
 }
 
 #[cfg(test)]
@@ -337,10 +329,11 @@ mod tests {
         assert!(!dl_strtoul_consumes_all("128K"));
         // Non-numeric strings are rejected.
         assert!(!dl_strtoul_consumes_all("abc"));
-        // "0x" with no hex digits: _dl_strtoul parses "0" as octal, then stops
-        // at "x" (not an octal digit), so endptr != end of string → rejected.
-        assert!(!dl_strtoul_consumes_all("0x"));
-        assert!(!dl_strtoul_consumes_all("0X"));
+        // "0x" with no hex digits: _dl_strtoul advances past "0x", the digit loop
+        // breaks immediately (no hex digit), endptr reaches the end, value is 0.
+        // tunable_parse_num accepts it.
+        assert!(dl_strtoul_consumes_all("0x"));
+        assert!(dl_strtoul_consumes_all("0X"));
 
         // Overflow: _dl_strtoul stops at the overflowing digit (endptr points
         // there, not at the end), so tunable_parse_num rejects the value.
