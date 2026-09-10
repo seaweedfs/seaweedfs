@@ -674,8 +674,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
 	var (
-		skippedNeedles   int
-		skippedDataBytes uint64
+		skippedNeedles    int
+		skippedDataBytes  uint64
+		expectedLiveBytes uint64
 	)
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
@@ -715,6 +716,8 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			return nil
 		}
 
+		expectedLiveBytes += uint64(size)
+
 		if err = newNm.Set(n.Id, ToOffset(newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
 		}
@@ -735,28 +738,29 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		glog.Warningf("vacuum volume %d: dropped %d unreadable index entries (%d data bytes) during compaction",
 			v.Id, skippedNeedles, skippedDataBytes)
 	}
-	if v.Ttl.String() == "" && v.nm != nil {
+	if v.Ttl.String() == "" {
 		dstDatSize, _, err := dstDatBackend.GetStat()
 		if err != nil {
 			return err
 		}
-		if v.nm.ContentSize() > v.nm.DeletedSize() {
-			expectedContentSize := v.nm.ContentSize() - v.nm.DeletedSize()
-			// Skipped needles still contribute to the source-side ContentSize but
-			// were not written to the destination, so subtract them before the
-			// safety check to avoid a false positive.
-			if skippedDataBytes >= expectedContentSize {
-				expectedContentSize = 0
-			} else {
-				expectedContentSize -= skippedDataBytes
-			}
-			if expectedContentSize > uint64(dstDatSize) {
-				return fmt.Errorf("volume %s unexpected new data size: %d does not match size of content minus deleted: %d",
-					v.Id.String(), dstDatSize, expectedContentSize)
-			}
-		} else if v.nm.DeletedSize() > v.nm.ContentSize() {
-			glog.Warningf("volume %s content size: %d less deleted size: %d, new size: %d",
-				v.Id.String(), v.nm.ContentSize(), v.nm.DeletedSize(), dstDatSize)
+		// expectedLiveBytes is tallied from oldNm, the point-in-time index
+		// snapshot this loop actually copied from, not from the live v.nm —
+		// which keeps mutating for as long as the volume stays writable during
+		// the copy. Comparing against the live map here would flag any write
+		// that lands mid-copy as a size mismatch, even though CommitCompact's
+		// makeupDiff exists precisely to reconcile those writes afterward.
+		expectedContentSize := expectedLiveBytes
+		// Skipped needles were counted above but not written to the
+		// destination, so subtract them before the safety check to avoid a
+		// false positive.
+		if skippedDataBytes >= expectedContentSize {
+			expectedContentSize = 0
+		} else {
+			expectedContentSize -= skippedDataBytes
+		}
+		if expectedContentSize > uint64(dstDatSize) {
+			return fmt.Errorf("volume %s unexpected new data size: %d does not match expected live content size %d from the pre-compaction snapshot",
+				v.Id.String(), dstDatSize, expectedContentSize)
 		}
 	}
 	err = newNm.SaveToIdx(opts.destIdxPath)
