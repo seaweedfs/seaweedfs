@@ -72,18 +72,6 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return fmt.Errorf("read volume file status failed, %w", err)
 		}
 
-		// Source is reachable and holds the volume: only now is it safe to drop
-		// an existing local replica before overwriting its files.
-		if hasExistingVolume {
-			glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
-			// keep remote data: the inbound copy carries a .vif that may point at
-			// the same cloud-tier object the existing volume references.
-			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, true); delErr != nil {
-				return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
-			}
-			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
-		}
-
 		diskType := volFileInfoResp.DiskType
 		if req.DiskType != "" {
 			diskType = req.DiskType
@@ -100,6 +88,18 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		})
 		if location == nil {
 			return fmt.Errorf("%s %s", util.ErrVolumeNoSpaceLeft, types.ToDiskType(diskType).ReadableString())
+		}
+
+		// Source is reachable and a destination is reserved: only now is it
+		// safe to drop an existing local replica before overwriting its files.
+		if hasExistingVolume {
+			glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
+			// keep remote data: the inbound copy carries a .vif that may point at
+			// the same cloud-tier object the existing volume references.
+			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, true); delErr != nil {
+				return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
+			}
+			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 		}
 
 		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
