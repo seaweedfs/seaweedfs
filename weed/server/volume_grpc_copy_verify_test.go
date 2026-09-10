@@ -166,6 +166,46 @@ func TestVolumeCopyKeepsExistingReplicaWhenDestinationFull(t *testing.T) {
 	}
 }
 
+func TestVolumeCopyReplacesReplicaAtSlotLimit(t *testing.T) {
+	const vid = needle.VolumeId(45)
+
+	sourceStore := newVolumeCopyTestStore(t, t.TempDir())
+	if err := sourceStore.AddVolume(vid, "", storage.NeedleMapInMemory, "000", "", 0,
+		needle.GetCurrentVersion(), 0, types.HardDriveType, 0); err != nil {
+		t.Fatalf("add source volume: %v", err)
+	}
+	source := &volumeCopyStatusServer{
+		delegate:       &VolumeServer{store: sourceStore},
+		failStatusCall: 1,
+		statusErr:      errors.New("source volume status unavailable"),
+	}
+	port := serveGrpc(t, func(server *grpc.Server) {
+		volume_server_pb.RegisterVolumeServerServer(server, source)
+	})
+
+	targetStore := newVolumeCopyTestStore(t, t.TempDir())
+	if err := targetStore.AddVolume(vid, "", storage.NeedleMapInMemory, "000", "", 0,
+		needle.GetCurrentVersion(), 0, types.HardDriveType, 0); err != nil {
+		t.Fatalf("add target volume: %v", err)
+	}
+	targetStore.Locations[0].MaxVolumeCount = 1
+
+	target := &VolumeServer{
+		store:          targetStore,
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	err := target.VolumeCopy(&volume_server_pb.VolumeCopyRequest{
+		VolumeId:       uint32(vid),
+		SourceDataNode: fmt.Sprintf("127.0.0.1:%d.%d", port-10000, port),
+	}, &fakeVolumeCopyStream{})
+	if err != nil {
+		t.Fatalf("VolumeCopy should replace the replica at the slot limit: %v", err)
+	}
+	if targetStore.GetVolume(vid) == nil {
+		t.Fatal("replaced volume was not mounted")
+	}
+}
+
 // fakeVolumeCopyStream is a no-op VolumeServer_VolumeCopyServer; VolumeCopy
 // errors out before sending anything in this test.
 type fakeVolumeCopyStream struct {

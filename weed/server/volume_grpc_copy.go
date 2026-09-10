@@ -85,7 +85,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
 			return location.DiskType == types.ToDiskType(diskType) &&
 				location.AvailableSpace.Load() > neededSpace
-		})
+		}, needle.VolumeId(req.VolumeId))
 		if location == nil {
 			return fmt.Errorf("%s %s", util.ErrVolumeNoSpaceLeft, types.ToDiskType(diskType).ReadableString())
 		}

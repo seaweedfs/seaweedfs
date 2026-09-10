@@ -285,8 +285,12 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 	}
 	return nil
 }
-func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (ret *DiskLocation) {
+func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, replaceVid ...needle.VolumeId) (ret *DiskLocation) {
 	max := int32(0)
+	var replace needle.VolumeId
+	if len(replaceVid) > 0 {
+		replace = replaceVid[0]
+	}
 	for _, location := range s.Locations {
 		if filterFn != nil && !filterFn(location) {
 			continue
@@ -295,6 +299,11 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (re
 			continue
 		}
 		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
+		if replace != 0 {
+			if _, found := location.FindVolume(replace); found {
+				currentFreeCount++
+			}
+		}
 		currentFreeCount *= erasure_coding.DataShardsCount
 		currentFreeCount -= int32(location.EcShardCount())
 		currentFreeCount /= erasure_coding.DataShardsCount
