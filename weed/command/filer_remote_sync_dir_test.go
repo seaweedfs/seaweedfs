@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestVersionedFilePathRewrittenForRemote verifies that the fix for
@@ -425,6 +426,10 @@ func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.Lookup
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
 }
 
+func (c *stubFilerClient) UpdateEntry(context.Context, *filer_pb.UpdateEntryRequest, ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
 func (c *stubFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	return fn(c)
 }
@@ -628,4 +633,66 @@ func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
 			t.Errorf("wrote %d times, want 1", remote.writes)
 		}
 	})
+}
+
+type recordingRemote struct {
+	remote_storage.RemoteStorageClient
+	deletes []*remote_pb.RemoteStorageLocation
+	writes  []*remote_pb.RemoteStorageLocation
+}
+
+func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, _ io.Reader) (*filer_pb.RemoteEntry, error) {
+	r.writes = append(r.writes, loc)
+	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteETag: "etag", RemoteSize: int64(len(entry.Content)), RemoteMtime: entry.Attributes.GetMtime()}, nil
+}
+
+func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
+	r.deletes = append(r.deletes, loc)
+	return nil
+}
+
+// TestRenameWithInheritedRemoteEntryWritesNewKey reproduces #11261: a rename
+// arrives as an update whose NewEntry carries the RemoteEntry inherited from
+// the source. shouldSendToRemote returns false for it (RemoteMtime >= Mtime),
+// so the old code skipped the event and never wrote the new key, while the
+// filer had already deleted the old object. A path change must always write.
+func TestRenameWithInheritedRemoteEntryWritesNewKey(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+
+	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669}
+	oldEntry := &filer_pb.Entry{Name: "probe.bin", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: replicated}
+	newEntry := &filer_pb.Entry{
+		Name:        "probe.bin",
+		Content:     []byte("payload"),
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669},
+		RemoteEntry: replicated,
+	}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/src",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/dst",
+			NewEntry:      newEntry,
+		},
+	}
+
+	if shouldSendToRemote(newEntry) {
+		t.Fatal("precondition: inherited RemoteEntry should make shouldSendToRemote false, the bug's trigger")
+	}
+
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{}
+	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+
+	wantDelete := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/src/probe.bin"}
+	if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
+		t.Errorf("deletes = %+v, want the old key %s deleted", remote.deletes, remote_storage.FormatLocation(wantDelete))
+	}
+	wantWrite := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/dst/probe.bin"}
+	if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+		t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+	}
 }
