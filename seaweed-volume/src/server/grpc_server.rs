@@ -4,6 +4,7 @@
 //! 48 RPCs: core volume operations are fully implemented, streaming and
 //! EC operations are stubbed with appropriate error messages.
 
+use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -2705,7 +2706,6 @@ impl VolumeServer for VolumeGrpcService {
 
         let state = self.state.clone();
         let (tx, rx) = tokio::sync::mpsc::channel(32);
-        const BUFFER_SIZE_LIMIT: usize = 2 * 1024 * 1024;
 
         tokio::spawn(async move {
             let since_ns = req.since_ns;
@@ -2714,132 +2714,50 @@ impl VolumeServer for VolumeGrpcService {
             let mut draining_seconds = idle_timeout as i64;
 
             loop {
-                // Use binary search to find starting offset, then scan from there.
-                //
-                // `is_last` means the client is already caught up: nothing in the
-                // volume is newer than last_timestamp_ns. Go answers that with a
-                // heartbeat and does NOT scan (volume_grpc_tail.go, `if isLastOne`).
-                // Dropping that flag here is expensive, not just untidy: the scan
-                // below materialises every needle from its start offset to EOF, and
-                // when the search yields offset 0 the start offset falls back to
-                // sb_size -- the whole volume. A volume being moved is marked
-                // read-only first, so it is ALWAYS caught up, and the tail loop
-                // would re-read and discard the entire volume every 2s until the
-                // idle timeout expired. Measured at ~2.17 GB re-read six times in
-                // 35s for a 2.15 GB volume, which OOM-kills the source under a
-                // per-process memory cap.
-                // Resolve the start offset and the caught-up flag FIRST, and only
-                // scan if there is actually something new. The binary search is
-                // over the .idx and is cheap; the scan is the expensive part and
-                // must not be run speculatively. Both run under ONE store read
-                // guard: a vacuum commit takes the store write lock and rewrites
-                // .dat/.idx, so an offset resolved under one guard would point
-                // into a different file under the next.
-                let resolved = {
-                    let store = state.store.read().unwrap();
-                    match store.find_volume(vid) {
-                        Some((_, vol)) => {
-                            let start = if last_timestamp_ns > 0 {
-                                match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
-                                    Ok((offset, is_last)) => {
-                                        let off = if offset.is_zero() {
-                                            sb_size
-                                        } else {
-                                            offset.to_actual_offset() as u64
-                                        };
-                                        Ok((off, is_last))
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "fail to locate by appendAtNs {}: {}",
-                                            last_timestamp_ns,
-                                            e
-                                        );
-                                        Err(format!(
-                                            "fail to locate by appendAtNs {}: {}",
-                                            last_timestamp_ns, e
-                                        ))
-                                    }
-                                }
-                            } else {
-                                // No timestamp yet: the caller wants everything.
-                                Ok((sb_size, false))
-                            };
-                            Some(start.map(|(off, is_last)| {
-                                if is_last {
-                                    None
-                                } else {
-                                    Some(vol.scan_raw_needles_from(off))
-                                }
-                            }))
-                        }
-                        None => None,
-                    }
-                };
+                // The search and the scan are blocking file (or S3) I/O, so
+                // each pass runs on a blocking thread and takes and drops the
+                // store guard itself (see tail_pass). The heartbeat, the sleep
+                // and the draining countdown stay here, so no thread is parked
+                // while the stream is idle.
+                let pass_state = state.clone();
+                let pass_tx = tx.clone();
+                let pass = tokio::task::spawn_blocking(move || {
+                    tail_pass(
+                        &pass_state,
+                        vid,
+                        sb_size,
+                        version,
+                        last_timestamp_ns,
+                        &pass_tx,
+                    )
+                })
+                .await;
 
-                let scan_result = match resolved {
-                    None => break,
-                    Some(Err(msg)) => {
+                let (last_processed_ns, sent_any) = match pass {
+                    Ok(TailPass::Scanned {
+                        last_processed_ns,
+                        sent_any,
+                    }) => (last_processed_ns, sent_any),
+                    // Caught up: heartbeat WITHOUT scanning, as Go does.
+                    Ok(TailPass::CaughtUp) => (last_timestamp_ns, false),
+                    Ok(TailPass::VolumeGone) => break,
+                    Ok(TailPass::ClientGone) => return,
+                    Ok(TailPass::Failed(msg)) => {
                         let _ = tx.send(Err(Status::internal(msg))).await;
                         return;
                     }
-                    Some(Ok(scan_result)) => scan_result,
-                };
-
-                // Caught up: heartbeat WITHOUT scanning, as Go does.
-                let Some(scan_result) = scan_result else {
-                    let msg = volume_server_pb::VolumeTailSenderResponse {
-                        is_last_chunk: true,
-                        version,
-                        ..Default::default()
-                    };
-                    if tx.send(Ok(msg)).await.is_err() {
+                    // A panic on the blocking thread must not look like a
+                    // clean end of stream to the receiver.
+                    Err(e) => {
+                        let _ = tx
+                            .send(Err(Status::internal(format!(
+                                "streamFollow: tail pass for volume {} failed: {}",
+                                vid, e
+                            ))))
+                            .await;
                         return;
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    if idle_timeout == 0 {
-                        continue;
-                    }
-                    draining_seconds -= 1;
-                    if draining_seconds <= 0 {
-                        return; // EOF
-                    }
-                    continue;
                 };
-
-                let entries = match scan_result {
-                    Ok(e) => e,
-                    Err(_) => break,
-                };
-                // Filter entries since last_timestamp_ns
-                let mut last_processed_ns = last_timestamp_ns;
-                let mut sent_any = false;
-                for (header, body, append_at_ns) in &entries {
-                    if *append_at_ns <= last_timestamp_ns && last_timestamp_ns > 0 {
-                        continue;
-                    }
-                    sent_any = true;
-                    // Send body in chunks of BUFFER_SIZE_LIMIT
-                    // Go sends needle_header on every chunk
-                    let mut i = 0;
-                    while i < body.len() {
-                        let end = std::cmp::min(i + BUFFER_SIZE_LIMIT, body.len());
-                        let is_last_chunk = end >= body.len();
-                        let msg = volume_server_pb::VolumeTailSenderResponse {
-                            needle_header: header.clone(),
-                            needle_body: body[i..end].to_vec(),
-                            is_last_chunk,
-                            version,
-                        };
-                        if tx.send(Ok(msg)).await.is_err() {
-                            return;
-                        }
-                        i = end;
-                    }
-                    if *append_at_ns > last_processed_ns {
-                        last_processed_ns = *append_at_ns;
-                    }
-                }
 
                 if !sent_any {
                     // Send heartbeat
@@ -5695,6 +5613,152 @@ fn find_last_append_at_ns(idx_path: &str, dat_path: &str, version: u32) -> Optio
     }
 }
 
+/// What one `volume_tail_sender` pass did.
+enum TailPass {
+    /// The volume is no longer mounted: the stream ends.
+    VolumeGone,
+    /// The receiver hung up: the stream ends without a status.
+    ClientGone,
+    /// The pass failed: the stream ends with this internal error.
+    Failed(String),
+    /// Nothing is newer than the caller's timestamp, and nothing was scanned.
+    CaughtUp,
+    /// A scan ran. `last_processed_ns` is the newest timestamp shipped, or the
+    /// caller's own when nothing was.
+    Scanned {
+        last_processed_ns: u64,
+        sent_any: bool,
+    },
+}
+
+/// One pass of `volume_tail_sender`, on a blocking thread: resolve where to
+/// start under one store guard, then stream every needle newer than
+/// `last_timestamp_ns` with the guard released.
+fn tail_pass(
+    state: &VolumeServerState,
+    vid: VolumeId,
+    sb_size: u64,
+    version: u32,
+    last_timestamp_ns: u64,
+    tx: &tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeTailSenderResponse, Status>>,
+) -> TailPass {
+    const BUFFER_SIZE_LIMIT: usize = 2 * 1024 * 1024;
+
+    // `is_last` means the client is already caught up: nothing in the
+    // volume is newer than last_timestamp_ns. Go answers that with a
+    // heartbeat and does NOT scan (volume_grpc_tail.go, `if isLastOne`).
+    // Dropping that flag here is expensive, not just untidy: the scan
+    // below reads every needle from its start offset to the end bound, and
+    // when the search yields offset 0 the start offset falls back to
+    // sb_size -- the whole volume. A volume being moved is marked
+    // read-only first, so it is ALWAYS caught up, and the tail loop
+    // would re-read and discard the entire volume every 2s until the
+    // idle timeout expired. Measured at ~2.17 GB re-read six times in
+    // 35s for a 2.15 GB volume, which OOM-kills the source under a
+    // per-process memory cap.
+    //
+    // The start offset, the .dat handle and the end bound are captured under
+    // ONE store read guard, and the guard is dropped before any needle is
+    // read. The handle pins the inode the offset was resolved against: a
+    // vacuum commit replaces .dat by rename, and unmount or destroy unlink it,
+    // so the offset stays meaningful after either (see DatScanPlan). Reading
+    // needles under the guard stalled the node: needle writes and the
+    // heartbeat take store.write(), and the lock prefers writers, so every
+    // reader queued behind them until the scan finished.
+    let (plan, from) = {
+        let store = state.store.read().unwrap();
+        let Some((_, vol)) = store.find_volume(vid) else {
+            return TailPass::VolumeGone;
+        };
+        let from = if last_timestamp_ns > 0 {
+            match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
+                Ok((_, true)) => return TailPass::CaughtUp,
+                Ok((offset, false)) => {
+                    if offset.is_zero() {
+                        sb_size
+                    } else {
+                        offset.to_actual_offset() as u64
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("fail to locate by appendAtNs {}: {}", last_timestamp_ns, e);
+                    return TailPass::Failed(format!(
+                        "fail to locate by appendAtNs {}: {}",
+                        last_timestamp_ns, e
+                    ));
+                }
+            }
+        } else {
+            // No timestamp yet: the caller wants everything.
+            sb_size
+        };
+        match vol.dat_scan_plan(from) {
+            Ok(plan) => (plan, from),
+            Err(e) => {
+                return TailPass::Failed(format!(
+                    "streamFollow: scan volume {} from offset {}: {}",
+                    vid, from, e
+                ));
+            }
+        }
+    };
+
+    let mut last_processed_ns = last_timestamp_ns;
+    let mut sent_any = false;
+    let mut client_gone = false;
+    let scanned = plan.scan(|needle| {
+        // Notice a receiver that hung up between sends too, so a pass over
+        // needles it already has does not read on for nobody.
+        if tx.is_closed() {
+            client_gone = true;
+            return ControlFlow::Break(());
+        }
+        if needle.append_at_ns <= last_timestamp_ns && last_timestamp_ns > 0 {
+            return ControlFlow::Continue(());
+        }
+        sent_any = true;
+        // Send body in chunks of BUFFER_SIZE_LIMIT
+        // Go sends needle_header on every chunk
+        let mut i = 0;
+        while i < needle.body.len() {
+            let end = std::cmp::min(i + BUFFER_SIZE_LIMIT, needle.body.len());
+            let msg = volume_server_pb::VolumeTailSenderResponse {
+                needle_header: needle.header.to_vec(),
+                needle_body: needle.body[i..end].to_vec(),
+                is_last_chunk: end >= needle.body.len(),
+                version,
+            };
+            if tx.blocking_send(Ok(msg)).is_err() {
+                client_gone = true;
+                return ControlFlow::Break(());
+            }
+            i = end;
+        }
+        if needle.append_at_ns > last_processed_ns {
+            last_processed_ns = needle.append_at_ns;
+        }
+        ControlFlow::Continue(())
+    });
+
+    if client_gone {
+        return TailPass::ClientGone;
+    }
+    match scanned {
+        Ok(()) => TailPass::Scanned {
+            last_processed_ns,
+            sent_any,
+        },
+        // Streaming makes a failed pass partial: some needles may already be
+        // on the wire. Ending the stream cleanly would let the receiver
+        // (volume.move) treat a truncated tail as complete, so report it, as
+        // Go does (`streamFollow: %w`).
+        Err(e) => TailPass::Failed(format!(
+            "streamFollow: scan volume {} from offset {}: {}",
+            vid, from, e
+        )),
+    }
+}
+
 /// Get disk usage (total, free) in bytes for the given path.
 fn get_disk_usage(path: &str) -> (u64, u64) {
     use sysinfo::Disks;
@@ -6795,6 +6859,76 @@ mod tests {
 
         let copied: Vec<u8> = messages.iter().flat_map(|m| m.file_content.clone()).collect();
         assert_eq!(copied, dat_bytes);
+    }
+
+    // volume_tail_sender streams each needle in 2MB chunks with the header on
+    // every chunk, heartbeats once the caller is caught up, and ends when the
+    // idle timeout runs out. Reassembling the stream must reproduce the .dat
+    // after the superblock byte for byte, so a scan that skipped, reordered or
+    // re-sent a record fails here. The fixture holds a small needle and a 5MB
+    // one, covering the single- and multi-chunk paths.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_tail_sender_streams_chunks_then_heartbeats() {
+        let (service, _tmp, dat_bytes) = make_local_service_with_large_volume();
+        let sb_size = {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            v.super_block.block_size() as usize
+        };
+
+        let response = service
+            .volume_tail_sender(Request::new(volume_server_pb::VolumeTailSenderRequest {
+                volume_id: 1,
+                since_ns: 0,
+                idle_timeout_seconds: 1,
+            }))
+            .await
+            .unwrap();
+        let mut stream = response.into_inner();
+        let messages = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let mut messages = Vec::new();
+            while let Some(m) = stream.next().await {
+                messages.push(m.unwrap());
+            }
+            messages
+        })
+        .await
+        .expect("the tail must end once its idle timeout runs out");
+
+        let (heartbeats, chunks): (Vec<_>, Vec<_>) =
+            messages.iter().partition(|m| m.needle_header.is_empty());
+        assert_eq!(heartbeats.len(), 1, "one caught-up pass before the timeout");
+        assert!(heartbeats[0].is_last_chunk && heartbeats[0].needle_body.is_empty());
+        assert!(
+            messages.last().unwrap().needle_header.is_empty(),
+            "the heartbeat follows the data"
+        );
+
+        let mut shipped = Vec::new();
+        let mut ids = Vec::new();
+        let mut chunks_per_needle = Vec::new();
+        let mut current_header: Vec<u8> = Vec::new();
+        let mut starting = true;
+        for m in &chunks {
+            if starting {
+                current_header = m.needle_header.clone();
+                shipped.extend_from_slice(&current_header);
+                ids.push(Needle::parse_header(&current_header).1);
+                chunks_per_needle.push(0);
+            } else {
+                assert_eq!(m.needle_header, current_header, "header on every chunk");
+            }
+            shipped.extend_from_slice(&m.needle_body);
+            *chunks_per_needle.last_mut().unwrap() += 1;
+            starting = m.is_last_chunk;
+        }
+        assert!(starting, "the last needle must end on is_last_chunk");
+        assert_eq!(ids, vec![NeedleId(11), NeedleId(99)]);
+        assert_eq!(chunks_per_needle, vec![1, 3], "a 5MB body in 2MB chunks");
+        assert!(
+            shipped == dat_bytes[sb_size..],
+            "the stream must reproduce the .dat after the superblock"
+        );
     }
 
     // copy_file must stop exactly at stop_offset, never streaming past it.
