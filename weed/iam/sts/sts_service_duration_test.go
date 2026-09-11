@@ -48,3 +48,10 @@ func TestValidateSessionDurationSeconds_NilReturnsNil(t *testing.T) {
 	s := newSTSServiceWithMaxSession(t, 168*time.Hour)
 	assert.NoError(t, s.validateSessionDurationSeconds(nil))
 }
+
+func TestValidateSessionDurationSeconds_SubMinimumMaxSessionLengthKeepsCapping(t *testing.T) {
+	s := newSTSServiceWithMaxSession(t, 5*time.Minute)
+	assert.NoError(t, s.validateSessionDurationSeconds(secondsPtr(900)))
+	assert.NoError(t, s.validateSessionDurationSeconds(secondsPtr(43200)))
+	assert.Error(t, s.validateSessionDurationSeconds(secondsPtr(43201)))
+}

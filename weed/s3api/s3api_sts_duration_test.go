@@ -88,3 +88,18 @@ func TestParseDurationSeconds_EmptyReturnsNil(t *testing.T) {
 	assert.Equal(t, STSErrorCode(""), errCode)
 	assert.Nil(t, ds)
 }
+
+func TestParseDurationSeconds_SubMinimumMaxSessionLengthKeepsCapping(t *testing.T) {
+	h := newSTSHandlersWithMaxSession(t, 5*time.Minute)
+
+	ds, errCode, err := h.parseDurationSeconds(newDurationSecondsRequest(t, "900"))
+	require.NoError(t, err)
+	assert.Equal(t, STSErrorCode(""), errCode)
+	if assert.NotNil(t, ds) {
+		assert.Equal(t, int64(900), *ds)
+	}
+
+	_, errCode, err = h.parseDurationSeconds(newDurationSecondsRequest(t, "43201"))
+	assert.Error(t, err)
+	assert.Equal(t, STSErrInvalidParameterValue, errCode)
+}
