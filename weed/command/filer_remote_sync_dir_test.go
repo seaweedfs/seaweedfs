@@ -696,3 +696,44 @@ func TestRenameWithInheritedRemoteEntryWritesNewKey(t *testing.T) {
 		t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
 	}
 }
+
+// TestRenameRemoteOnlyEntrySkipsEmptyUpload guards the edge case from the
+// review of #11261: a remote-only entry (no local chunks, content lives only
+// on the remote object the filer already deleted) must not be re-uploaded,
+// since NewFileReader would supply EOF and create a zero-byte object.
+func TestRenameRemoteOnlyEntrySkipsEmptyUpload(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+
+	remoteOnly := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 20971520, RemoteMtime: 1786096669}
+	oldEntry := &filer_pb.Entry{Name: "video.mp4", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: remoteOnly}
+	newEntry := &filer_pb.Entry{
+		Name:        "video.mp4",
+		Attributes:  &filer_pb.FuseAttributes{Mtime: 1786096669},
+		RemoteEntry: remoteOnly,
+	}
+	if !newEntry.IsInRemoteOnly() {
+		t.Fatal("precondition: entry should be remote-only")
+	}
+	if filer.HasData(newEntry) {
+		t.Fatal("precondition: remote-only entry should have no local data")
+	}
+
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/src",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/dst",
+			NewEntry:      newEntry,
+		},
+	}
+
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{}
+	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want none: a remote-only rename must not upload an empty object", remote.writes)
+	}
+}

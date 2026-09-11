@@ -261,6 +261,10 @@ func processUpdateEvent(
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
+	if !proto.Equal(oldDest, dest) && !filer.HasData(message.NewEntry) && message.NewEntry.IsInRemoteOnly() {
+		glog.V(0).Infof("skip uploading renamed remote-only entry %s: content is only on the deleted remote object", remote_storage.FormatLocation(dest))
+		return nil
+	}
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
