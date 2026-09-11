@@ -4683,11 +4683,8 @@ mod tests {
 
     #[test]
     fn binary_search_reports_is_last_when_caller_is_caught_up() {
-        // The tail sender relies on this flag to answer "nothing new" with a
-        // heartbeat instead of re-scanning the volume. Go does the same
-        // (volume_grpc_tail.go, `if isLastOne`). If this ever stops reporting
-        // true for an up-to-date caller, volume_tail_sender silently degrades
-        // into re-reading the whole volume every 2s.
+        // is_last drives the caught-up heartbeat; if it stops reporting true
+        // for an up-to-date caller, the tail sender re-reads the whole volume.
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = make_test_volume(dir);
@@ -4726,10 +4723,7 @@ mod tests {
 
     #[test]
     fn binary_search_does_not_report_is_last_when_data_is_newer() {
-        // The complement: if the caller is behind, is_last must be false so the
-        // sender still scans and ships the new needles. A fix that always
-        // reported "caught up" would make tailing silently lose data, which is
-        // worse than the memory bug it would be fixing.
+        // Complement: a behind caller must NOT be caught up, or tailing loses data.
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = make_test_volume(dir);
@@ -4759,10 +4753,8 @@ mod tests {
 
     #[test]
     fn binary_search_does_not_report_is_last_when_only_a_delete_is_newer() {
-        // A delete is data the tail must ship too. Its .idx row carries the
-        // tombstone's real .dat offset, so a caller caught up before the
-        // delete must be sent to scan from the tombstone, not handed a
-        // heartbeat that would silently drop the deletion on the destination.
+        // A delete is data the tail must ship. A caught-up caller before the
+        // delete must be sent to scan from the tombstone, not handed a heartbeat.
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = make_test_volume(dir);
@@ -4796,8 +4788,7 @@ mod tests {
             "a caller older than a trailing delete must NOT be reported as caught up"
         );
 
-        // Scan and filter exactly as volume_tail_sender does: the tombstone,
-        // and only the tombstone, is newer than the caller.
+        // Scan and filter as volume_tail_sender does: only the tombstone is newer.
         let shipped: Vec<u64> = v
             .scan_raw_needles_from(offset.to_actual_offset() as u64)
             .unwrap()
@@ -4810,22 +4801,20 @@ mod tests {
 
     #[test]
     fn binary_search_on_compacted_volume_still_reports_a_later_write() {
-        // Compaction rewrites .idx in needle-id order (Go does the same), so
-        // append_at_ns is no longer monotonic by row and the search can call
-        // a caller caught up while an earlier row is newer. That caller's
-        // since_ns is the last row's timestamp (find_last_append_at_ns), so
-        // such rows were already in the files it copied. What must hold is
-        // that a write made after that point still reaches the scan: it is
-        // appended as the final row, and the search cannot step past it.
+        // Compaction rewrites .idx in needle-id order, so append_at_ns is no
+        // longer monotonic by row: an overwritten key can sit before an older
+        // one. The caller's since_ns is the last row's timestamp, so such rows
+        // were already in the files it copied. A write made afterwards is
+        // appended as the final row, which the search cannot step past.
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = make_test_volume(dir);
 
-        let write = |v: &mut Volume, id: u64| {
+        let write = |v: &mut Volume, id: u64, byte: u8| {
             let mut n = Needle {
                 id: NeedleId(id),
                 cookie: Cookie(0x12345678),
-                data: vec![b'c'; 64],
+                data: vec![byte; 64],
                 data_size: 64,
                 flags: 0,
                 ..Needle::default()
@@ -4833,9 +4822,13 @@ mod tests {
             v.write_needle(&mut n, true, false).unwrap();
             n.append_at_ns
         };
-        write(&mut v, 1);
-        let key2_ns = write(&mut v, 2);
-        write(&mut v, 1); // overwrite: key 1 is now newer than key 2
+        write(&mut v, 1, b'c');
+        let key2_ns = write(&mut v, 2, b'c');
+        let key1_ns = write(&mut v, 1, b'd'); // genuine overwrite: different data
+        assert!(
+            key1_ns > key2_ns,
+            "precondition: the overwrite must append a newer record, not dedup"
+        );
         v.compact_by_index(0, 0, |_| true).unwrap();
         v.commit_compact().unwrap();
 
@@ -4845,7 +4838,7 @@ mod tests {
             "precondition: compaction ordered .idx by key, so key 2 is the final row"
         );
 
-        let key3_ns = write(&mut v, 3);
+        let key3_ns = write(&mut v, 3, b'c');
         let (offset, is_last) = v.binary_search_by_append_at_ns(key2_ns).unwrap();
         assert!(
             !is_last,

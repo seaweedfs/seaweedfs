@@ -2714,27 +2714,15 @@ impl VolumeServer for VolumeGrpcService {
             let mut draining_seconds = idle_timeout as i64;
 
             loop {
-                // Use binary search to find starting offset, then scan from there.
-                //
-                // `is_last` means the client is already caught up: nothing in the
-                // volume is newer than last_timestamp_ns. Go answers that with a
-                // heartbeat and does NOT scan (volume_grpc_tail.go, `if isLastOne`).
-                // Dropping that flag here is expensive, not just untidy: the scan
-                // below materialises every needle from its start offset to EOF, and
-                // when the search yields offset 0 the start offset falls back to
-                // sb_size -- the whole volume. A volume being moved is marked
-                // read-only first, so it is ALWAYS caught up, and the tail loop
-                // would re-read and discard the entire volume every 2s until the
-                // idle timeout expired. Measured at ~2.17 GB re-read six times in
-                // 35s for a 2.15 GB volume, which OOM-kills the source under a
-                // per-process memory cap.
-                // Resolve the start offset and the caught-up flag FIRST, and only
-                // scan if there is actually something new. The binary search is
-                // over the .idx and is cheap; the scan is the expensive part and
-                // must not be run speculatively. Both run under ONE store read
-                // guard: a vacuum commit takes the store write lock and rewrites
-                // .dat/.idx, so an offset resolved under one guard would point
-                // into a different file under the next.
+                // Resolve the start offset and the caught-up flag under one
+                // store read guard. is_last means the caller is caught up: send
+                // a heartbeat without scanning, as Go does. Dropping that flag
+                // re-reads the whole volume every iteration (a moved volume is
+                // read-only, so it is always caught up). The single guard
+                // spans both the search and the scan: a vacuum commit takes
+                // the store write lock and rewrites .dat/.idx, so an offset
+                // resolved under one guard would point into a different file
+                // under the next.
                 let resolved = {
                     let store = state.store.read().unwrap();
                     match store.find_volume(vid) {
