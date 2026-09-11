@@ -6329,7 +6329,8 @@ mod tests {
     /// A write that lands on the live volume mid-copy must not trip the
     /// post-copy integrity check. The Rust port snapshots the index entries
     /// before the copy loop (equivalent to Go's frozen oldNm), so a concurrent
-    /// write is invisible to the tally and the check stays quiet.
+    /// write is invisible to the tally and the check stays quiet. The write
+    /// is then replayed by makeup_diff during commit_compact.
     #[test]
     fn test_compact_by_index_tolerates_concurrent_write() {
         let tmp = TempDir::new().unwrap();
@@ -6347,11 +6348,29 @@ mod tests {
             v.write_needle(&mut n, true, false).unwrap();
         }
 
-        // The progress callback runs between needles; the snapshot is already
-        // frozen, so even if a write were possible here it would not inflate
-        // expected_live_bytes. Confirm the check passes.
         v.compact_by_index(0, 0, |_| true).unwrap();
         assert!(Path::new(&v.file_name(".cpd")).exists());
+
+        // A write arriving after the snapshot but before commit must survive
+        // via makeup_diff, exactly like a concurrent write in the Go server.
+        let mut late = Needle {
+            id: NeedleId(99),
+            cookie: Cookie(99),
+            data: b"late-write".to_vec(),
+            data_size: 10,
+            ..Needle::default()
+        };
+        v.write_needle(&mut late, true, false).unwrap();
+
+        v.commit_compact().unwrap();
+
+        let mut got = Needle {
+            id: NeedleId(99),
+            cookie: Cookie(99),
+            ..Needle::default()
+        };
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"late-write");
     }
 
     /// Vacuum compaction must tolerate an .idx entry whose offset points past
