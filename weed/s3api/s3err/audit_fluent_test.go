@@ -138,7 +138,7 @@ func TestGetAccessLogRequesterIdentityFromFallback(t *testing.T) {
 	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "/bucket/object", nil))
 
 	ctx := s3_constants.SetIdentityNameInContext(outer.Context(), "2a19e647c5d43a62a91ecf664d07dbe1")
-	ctx = s3_constants.SetIdentityClaimInContext(ctx, "grant.west")
+	s3_constants.SetIdentityClaimInContext(ctx, "grant.west")
 
 	log := GetAccessLog(outer, http.StatusOK, ErrNone)
 

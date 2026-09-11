@@ -176,7 +176,8 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 				EmailAddress: emailAddress,
 				Id:           identity.UserID,
 			},
-			Claims: claims,
+			Claims:        claims,
+			IdentityClaim: sts.ResolveIdentityClaim(claims),
 		}, s3err.ErrNone
 	}
 
