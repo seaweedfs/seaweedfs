@@ -39,8 +39,7 @@ func isSkippableNeedleReadError(err error) bool {
 }
 
 // exceedsExpectedCompactedSize reports whether the compacted .dat is short of
-// the live bytes the pre-compaction index snapshot expected — the backstop
-// against compaction quietly discarding live data.
+// the live bytes the pre-compaction index snapshot expected.
 func exceedsExpectedCompactedSize(expectedLiveBytes uint64, dstDatSize int64) bool {
 	return expectedLiveBytes > uint64(dstDatSize)
 }
@@ -750,16 +749,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		if err != nil {
 			return err
 		}
-		// expectedLiveBytes is tallied from oldNm, the point-in-time index
-		// snapshot this loop actually copied from, not from the live v.nm —
-		// which keeps mutating for as long as the volume stays writable during
-		// the copy. Comparing against the live map here would flag any write
-		// that lands mid-copy as a size mismatch, even though CommitCompact's
-		// makeupDiff exists precisely to reconcile those writes afterward.
-		// Unreadable needles are dropped before reaching this tally (see the
-		// skippedNeedles branch above), so expectedLiveBytes already excludes
-		// them — subtracting skippedDataBytes here as well would double-count
-		// the gap and let a genuinely short .cpd slip past undetected.
+		// expectedLiveBytes is tallied from oldNm (the frozen snapshot this
+		// loop copied from), not the live v.nm; unreadable needles already
+		// return before the tally, so no further skipped-byte adjustment.
 		if exceedsExpectedCompactedSize(expectedLiveBytes, dstDatSize) {
 			return fmt.Errorf("volume %s unexpected new data size: %d does not match expected live content size %d from the pre-compaction snapshot",
 				v.Id.String(), dstDatSize, expectedLiveBytes)
