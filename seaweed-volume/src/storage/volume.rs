@@ -547,6 +547,8 @@ impl DatScanPlan {
                 break;
             }
 
+            // Match Go's ScanVolumeFileFrom: visit ALL needles including deleted ones.
+            // This is critical for incremental copy where tombstones must be propagated.
             let mut record = vec![0u8; total_size as usize];
             record[..NEEDLE_HEADER_SIZE].copy_from_slice(&header);
             match self.source.read_exact_at(
@@ -642,10 +644,6 @@ impl RemoteDatFile {
 // ============================================================================
 // Volume
 // ============================================================================
-
-/// One raw needle as `scan_raw_needles_from` yields it: the header bytes,
-/// the body bytes, and the needle's `append_at_ns`.
-pub type RawNeedleEntry = (Vec<u8>, Vec<u8>, u64);
 
 pub struct Volume {
     pub id: VolumeId,
@@ -2906,10 +2904,7 @@ impl Volume {
         } else if let Some(remote) = self.remote_dat_file() {
             NeedleStreamSource::Remote(remote)
         } else {
-            return Err(VolumeError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "dat file not open",
-            )));
+            return Err(VolumeError::Io(io::Error::other("dat file not open")));
         };
         Ok(DatScanPlan {
             source,
@@ -2917,60 +2912,6 @@ impl Volume {
             from: from_offset,
             end: self.current_dat_file_size()?,
         })
-    }
-
-    /// Scan raw needle entries from the .dat file starting at `from_offset`.
-    /// Returns a [`RawNeedleEntry`] for each needle.
-    /// Used by VolumeTailSender to stream raw bytes.
-    pub fn scan_raw_needles_from(
-        &self,
-        from_offset: u64,
-    ) -> Result<Vec<RawNeedleEntry>, VolumeError> {
-        let version = self.version();
-        let dat_size = self.current_dat_file_size()?;
-        let mut entries = Vec::new();
-        let mut offset = from_offset;
-
-        while offset < dat_size {
-            // Read needle header (16 bytes)
-            let mut header = [0u8; NEEDLE_HEADER_SIZE];
-            match self.read_exact_at_backend(&mut header, offset) {
-                Ok(()) => {}
-                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e),
-            }
-
-            let (_cookie, _id, size) = Needle::parse_header(&header);
-            if size.0 == 0 && _id.is_empty() {
-                break;
-            }
-
-            let body_length = needle::needle_body_length(size, version);
-            let total_size = NEEDLE_HEADER_SIZE as u64 + body_length as u64;
-
-            // Match Go's ScanVolumeFileFrom: visit ALL needles including deleted ones.
-            // This is critical for incremental copy where tombstones must be propagated.
-
-            // Read body bytes
-            let mut body = vec![0u8; body_length as usize];
-            match self.read_exact_at_backend(&mut body, offset + NEEDLE_HEADER_SIZE as u64) {
-                Ok(()) => {}
-                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e),
-            }
-
-            // Parse the needle to get append_at_ns
-            let mut full = vec![0u8; total_size as usize];
-            full[..NEEDLE_HEADER_SIZE].copy_from_slice(&header);
-            full[NEEDLE_HEADER_SIZE..].copy_from_slice(&body);
-            let mut n = Needle::default();
-            let _ = n.read_bytes(&full, offset as i64, size, version);
-
-            entries.push((header.to_vec(), body, n.append_at_ns));
-            offset += total_size;
-        }
-
-        Ok(entries)
     }
 
     /// Insert or update a needle index entry (for low-level blob writes).
@@ -4983,14 +4924,14 @@ mod tests {
             "a caller older than a trailing delete must NOT be reported as caught up"
         );
 
-        // Scan and filter as volume_tail_sender does: only the tombstone is newer.
-        let shipped: Vec<u64> = v
-            .scan_raw_needles_from(offset.to_actual_offset() as u64)
-            .unwrap()
-            .into_iter()
-            .map(|(_, _, append_at_ns)| append_at_ns)
-            .filter(|&append_at_ns| append_at_ns > newest_ns)
-            .collect();
+        // Scan and filter exactly as volume_tail_sender does: the tombstone,
+        // and only the tombstone, is newer than the caller.
+        let shipped: Vec<u64> =
+            scan_all(&v.dat_scan_plan(offset.to_actual_offset() as u64).unwrap())
+                .into_iter()
+                .map(|(_, _, append_at_ns)| append_at_ns)
+                .filter(|&append_at_ns| append_at_ns > newest_ns)
+                .collect();
         assert_eq!(shipped.len(), 1, "the tail must ship the tombstone");
     }
 
@@ -5039,13 +4980,12 @@ mod tests {
             !is_last,
             "a write after compaction is the final row and must not be hidden"
         );
-        let shipped: Vec<u64> = v
-            .scan_raw_needles_from(offset.to_actual_offset() as u64)
-            .unwrap()
-            .into_iter()
-            .map(|(_, _, append_at_ns)| append_at_ns)
-            .filter(|&append_at_ns| append_at_ns > key2_ns)
-            .collect();
+        let shipped: Vec<u64> =
+            scan_all(&v.dat_scan_plan(offset.to_actual_offset() as u64).unwrap())
+                .into_iter()
+                .map(|(_, _, append_at_ns)| append_at_ns)
+                .filter(|&append_at_ns| append_at_ns > key2_ns)
+                .collect();
         assert!(
             shipped.contains(&key3_ns),
             "the tail must ship the write made after compaction"
