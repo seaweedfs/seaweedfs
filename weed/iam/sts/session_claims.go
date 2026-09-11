@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -35,16 +36,19 @@ var identityClaimPriority = []string{"preferred_username", "email", "name", "sub
 
 // ResolveIdentityClaim returns the most human-readable authoritative identity
 // claim available in ctx, or "" when none is present. ctx is the STS request
-// context (sessionInfo.RequestContext / identity.Claims) populated from the
-// validated OIDC token at federation time. Non-string values are skipped so a
-// structured claim never leaks into an audit-facing field.
+// context (sessionInfo.RequestContext) populated from the validated OIDC token
+// at federation time. Non-string values are skipped so a structured claim
+// never leaks into an audit-facing field. Whitespace-only values are treated
+// as absent so a blank preferred claim does not mask a usable email or sub.
 func ResolveIdentityClaim(ctx map[string]interface{}) string {
 	if len(ctx) == 0 {
 		return ""
 	}
 	for _, key := range identityClaimPriority {
-		if v, ok := ctx[key].(string); ok && v != "" {
-			return v
+		if v, ok := ctx[key].(string); ok {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	return ""

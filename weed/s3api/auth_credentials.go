@@ -19,7 +19,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -111,15 +110,16 @@ type IdentityAccessManagement struct {
 }
 
 type Identity struct {
-	Name         string
-	Account      *Account
-	Credentials  []*Credential
-	Actions      []Action
-	PolicyNames  []string               // Attached IAM policy names
-	PrincipalArn string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
-	Disabled     bool                   // User status: false = enabled (default), true = disabled
-	Claims       map[string]interface{} // JWT claims for policy substitution
-	IsStatic     bool                   // Whether identity was loaded from static config (immutable)
+	Name          string
+	Account       *Account
+	Credentials   []*Credential
+	Actions       []Action
+	PolicyNames   []string               // Attached IAM policy names
+	PrincipalArn  string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled      bool                   // User status: false = enabled (default), true = disabled
+	Claims        map[string]interface{} // JWT claims for policy substitution
+	IsStatic      bool                   // Whether identity was loaded from static config (immutable)
+	IdentityClaim string                 // Authoritative OIDC identity claim for audit logging (preferred_username/email/sub); empty for non-federated sessions
 }
 
 // Account represents a system user, a system user can
@@ -1619,7 +1619,7 @@ func recordIdentityInContext(r *http.Request, identity *Identity) context.Contex
 	}
 	ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
 	ctx = s3_constants.SetPrincipalArnInContext(ctx, buildPrincipalARN(identity, r))
-	ctx = s3_constants.SetIdentityClaimInContext(ctx, sts.ResolveIdentityClaim(identity.Claims))
+	ctx = s3_constants.SetIdentityClaimInContext(ctx, identity.IdentityClaim)
 	// Also store the full identity object for handlers that need it (e.g., ListBuckets)
 	// This is especially important for JWT users whose identity is not in the identities list
 	return s3_constants.SetIdentityInContext(ctx, identity)
@@ -2423,11 +2423,12 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 
 	// Convert IAMIdentity to existing Identity structure
 	identity := &Identity{
-		Name:        iamIdentity.Name,
-		Account:     iamIdentity.Account,
-		Actions:     []Action{}, // Empty - authorization handled by policy engine
-		PolicyNames: iamIdentity.PolicyNames,
-		Claims:      iamIdentity.Claims,
+		Name:          iamIdentity.Name,
+		Account:       iamIdentity.Account,
+		Actions:       []Action{}, // Empty - authorization handled by policy engine
+		PolicyNames:   iamIdentity.PolicyNames,
+		Claims:        iamIdentity.Claims,
+		IdentityClaim: iamIdentity.IdentityClaim,
 	}
 
 	// Store session info in request headers for later authorization

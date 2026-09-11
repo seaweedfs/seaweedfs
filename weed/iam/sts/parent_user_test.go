@@ -110,3 +110,23 @@ func TestResolveIdentityClaimSkipsNonString(t *testing.T) {
 		t.Fatalf("expected sub after skipping non-string claim, got %q", got)
 	}
 }
+
+func TestResolveIdentityClaimTrimsWhitespace(t *testing.T) {
+	ctx := map[string]interface{}{
+		"preferred_username": "  grant.west  ",
+		"email":              "grant.west@example.com",
+	}
+	if got := ResolveIdentityClaim(ctx); got != "grant.west" {
+		t.Fatalf("expected trimmed preferred_username, got %q", got)
+	}
+}
+
+func TestResolveIdentityClaimSkipsWhitespaceOnly(t *testing.T) {
+	ctx := map[string]interface{}{
+		"preferred_username": "   ",
+		"email":              "grant.west@example.com",
+	}
+	if got := ResolveIdentityClaim(ctx); got != "grant.west@example.com" {
+		t.Fatalf("expected email after skipping whitespace-only preferred_username, got %q", got)
+	}
+}

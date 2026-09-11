@@ -215,6 +215,13 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		},
 		Claims: claims,
 	}
+	// ParentUser is set only for OIDC-federated sessions. Resolve the audit
+	// identity claim from the original request context (not the local claims
+	// map, whose sub was overwritten with the opaque session subject above) so
+	// the bearer path surfaces the same authoritative OIDC identity as SigV4.
+	if sessionInfo.ParentUser != "" {
+		identity.IdentityClaim = sts.ResolveIdentityClaim(sessionInfo.RequestContext)
+	}
 
 	glog.V(3).Infof("JWT authentication successful for principal: %s", identity.Principal)
 	return identity, s3err.ErrNone
@@ -328,12 +335,13 @@ func (s3iam *S3IAMIntegration) DefaultAllow() bool {
 
 // IAMIdentity represents an authenticated identity with session information
 type IAMIdentity struct {
-	Name         string
-	Principal    string
-	SessionToken string
-	Account      *Account
-	PolicyNames  []string
-	Claims       map[string]interface{}
+	Name          string
+	Principal     string
+	SessionToken  string
+	Account       *Account
+	PolicyNames   []string
+	Claims        map[string]interface{}
+	IdentityClaim string // Authoritative OIDC identity claim for audit logging; empty for non-federated sessions
 }
 
 // IsAdmin checks if the identity has admin privileges

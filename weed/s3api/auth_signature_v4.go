@@ -38,6 +38,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	weed_iam "github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -469,6 +470,14 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		PrincipalArn: sessionInfo.Principal,
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 		Claims:       claims,               // Populate Claims for policy variable substitution
+	}
+	// ParentUser is set only for OIDC-federated sessions (see
+	// AssumeRoleWithWebIdentity), so it gates the audit identity claim: without
+	// it the request context's sub is the opaque session subject injected by
+	// ValidateJWTWithClaims, not the OIDC subject, and must not be surfaced as
+	// an authoritative identity.
+	if sessionInfo.ParentUser != "" {
+		identity.IdentityClaim = sts.ResolveIdentityClaim(sessionInfo.RequestContext)
 	}
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",

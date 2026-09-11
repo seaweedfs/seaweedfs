@@ -60,7 +60,7 @@ func TestAuditRequesterArnForSTSSession(t *testing.T) {
 // An OIDC-federated STS session authenticates as an opaque session subject, so
 // the requester field alone is useless for compliance auditing. The audit entry
 // must surface the authoritative OIDC identity claim (preferred_username, email
-// or sub) carried in the session's request context, independent of the
+// or sub) carried in the session request context, independent of the
 // client-supplied role session name. See issue #11264.
 func TestAuditRequesterIdentityForOIDCFederatedSession(t *testing.T) {
 	iam := &IdentityAccessManagement{
@@ -75,8 +75,9 @@ func TestAuditRequesterIdentityForOIDCFederatedSession(t *testing.T) {
 						AccessKeyId:     "ASIA0189777d42cba8e2",
 						SecretAccessKey: "secret",
 					},
-					ExpiresAt: time.Now().Add(time.Hour),
-					Policies:  []string{"S3ReadOnly"},
+					ExpiresAt:  time.Now().Add(time.Hour),
+					Policies:   []string{"S3ReadOnly"},
+					ParentUser: sts.ComputeParentUser("oidc-sub-123", "https://idp.example/"),
 					RequestContext: map[string]interface{}{
 						"preferred_username": "grant.west",
 						"email":              "grant.west@digital.mod.uk",
@@ -101,9 +102,11 @@ func TestAuditRequesterIdentityForOIDCFederatedSession(t *testing.T) {
 		"audit entry must surface the authoritative OIDC identity claim, not the client-supplied role session name")
 }
 
-// A non-federated STS session (no OIDC claims in its request context) must not
-// fabricate a requester_identity — the field stays empty so audit consumers can
-// distinguish federated from non-federated sessions.
+// A non-federated STS session has no OIDC identity. ValidateJWTWithClaims merges
+// the JWT registered sub claim (the opaque session id) into RequestContext, so
+// the context carries a sub even though it is not an OIDC subject. The audit
+// entry must not surface that session id as a requester_identity — ParentUser
+// gates the resolution so only federated sessions report an identity claim.
 func TestAuditRequesterIdentityEmptyForNonFederatedSession(t *testing.T) {
 	iam := &IdentityAccessManagement{
 		iamIntegration: &MockIAMIntegration{
@@ -119,6 +122,12 @@ func TestAuditRequesterIdentityEmptyForNonFederatedSession(t *testing.T) {
 					},
 					ExpiresAt: time.Now().Add(time.Hour),
 					Policies:  []string{"ClientPolicy"},
+					// Simulate ValidateJWTWithClaims merging the registered sub
+					// (the session id) into RequestContext for a session that has
+					// no OIDC identity and therefore no ParentUser.
+					RequestContext: map[string]interface{}{
+						"sub": "47ad4828c45b3f337bc3146081ba8f0f",
+					},
 				}, nil
 			},
 		},
@@ -132,7 +141,7 @@ func TestAuditRequesterIdentityEmptyForNonFederatedSession(t *testing.T) {
 	iam.handleAuthResult(httptest.NewRecorder(), outer, identity, s3err.ErrNone, func(http.ResponseWriter, *http.Request) {})
 
 	log := s3err.GetAccessLog(outer, http.StatusOK, s3err.ErrNone)
-	assert.Empty(t, log.RequesterIdentity, "non-federated session must not report a requester_identity")
+	assert.Empty(t, log.RequesterIdentity, "non-federated session must not surface the session id as a requester_identity")
 }
 
 // A JWT-authenticated identity carries no PrincipalArn of its own — the auth
