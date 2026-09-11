@@ -92,6 +92,9 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 			hasIdentities = true
 
 			var content []byte

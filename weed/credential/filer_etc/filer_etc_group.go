@@ -30,6 +30,9 @@ func (store *FilerEtcStore) loadGroupsFromMultiFile(ctx context.Context, s3cfg *
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 
 			var content []byte
 			if len(entry.Content) > 0 {

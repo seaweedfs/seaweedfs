@@ -65,6 +65,27 @@ func TestLoadManagedPoliciesFailsOnEmptyPolicyFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "bad.json")
 }
 
+// A non-JSON auxiliary file (README, .DS_Store, a migration backup) in an IAM
+// directory must not fail the snapshot: only *.json files are IAM objects.
+func TestLoadConfigurationIgnoresNonJsonAuxiliaryFiles(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	identDir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
+	putEntry(t, server, identDir, "alice.json", []byte(`{"name":"alice","credentials":[{"accessKey":"AK","secretKey":"SK"}]}`))
+	putEntry(t, server, identDir, "README.txt", []byte(`not an identity`))
+	putEntry(t, server, identDir, "alice.json.old", []byte(`{"name":"alice"}`))
+
+	polDir := filer.IamConfigDirectory + "/" + IamPoliciesDirectory
+	putEntry(t, server, polDir, "p.json", []byte(`{"Version":"2012-10-17","Statement":[]}`))
+	putEntry(t, server, polDir, "notes.md", []byte(`# policies`))
+
+	cfg, err := store.LoadConfiguration(ctx)
+	require.NoError(t, err)
+	require.Len(t, cfg.Identities, 1)
+	assert.Equal(t, "alice", cfg.Identities[0].Name)
+}
+
 // A valid full snapshot loads without error (regression guard).
 func TestLoadConfigurationSucceedsOnValidFiles(t *testing.T) {
 	ctx := context.Background()

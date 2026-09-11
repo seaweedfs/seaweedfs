@@ -33,6 +33,9 @@ func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 
 			var content []byte
 			if len(entry.Content) > 0 {

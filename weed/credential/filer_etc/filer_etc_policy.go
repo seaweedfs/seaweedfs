@@ -181,6 +181,9 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 
 			var content []byte
 			if len(entry.Content) > 0 {
@@ -201,12 +204,8 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 				return fmt.Errorf("failed to unmarshal policy %s: %w", entry.Name, err)
 			}
 
-			// The file name is "policyName.json"
-			policyName := entry.Name
-			if strings.HasSuffix(policyName, ".json") {
-				policyName = policyName[:len(policyName)-5]
-				policies[policyName] = policy
-			}
+			policyName := strings.TrimSuffix(entry.Name, ".json")
+			policies[policyName] = policy
 		}
 		return nil
 	})
