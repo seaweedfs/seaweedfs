@@ -637,8 +637,9 @@ func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
 
 type recordingRemote struct {
 	remote_storage.RemoteStorageClient
-	deletes []*remote_pb.RemoteStorageLocation
-	writes  []*remote_pb.RemoteStorageLocation
+	deletes   []*remote_pb.RemoteStorageLocation
+	writes    []*remote_pb.RemoteStorageLocation
+	deleteErr error
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, _ io.Reader) (*filer_pb.RemoteEntry, error) {
@@ -648,7 +649,7 @@ func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry 
 
 func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
 	r.deletes = append(r.deletes, loc)
-	return nil
+	return r.deleteErr
 }
 
 // TestRenameWithInheritedRemoteEntryWritesNewKey reproduces #11261: a rename
@@ -735,5 +736,75 @@ func TestRenameRemoteOnlyEntrySkipsEmptyUpload(t *testing.T) {
 	}
 	if len(remote.writes) != 0 {
 		t.Errorf("writes = %+v, want none: a remote-only rename must not upload an empty object", remote.writes)
+	}
+}
+
+// TestRenameDeleteOldKeyFailureReturnsError checks that a failed delete of the
+// old key on a rename is returned so MetadataProcessor retries the event,
+// instead of silently continuing and leaving both keys on the remote.
+func TestRenameDeleteOldKeyFailureReturnsError(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+
+	newEntry := &filer_pb.Entry{
+		Name:       "probe.bin",
+		Content:    []byte("payload"),
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669},
+	}
+	oldEntry := &filer_pb.Entry{Name: "probe.bin", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/src",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/dst",
+			NewEntry:      newEntry,
+		},
+	}
+
+	deleteErr := errors.New("AccessDenied: Access Denied")
+	remote := &recordingRemote{deleteErr: deleteErr}
+	filerClient := &stubFilerClient{}
+	err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp)
+	if !errors.Is(err, deleteErr) {
+		t.Errorf("err = %v, want the delete failure returned so the event is retried", err)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want none: must not write the new key when the old key delete failed", remote.writes)
+	}
+}
+
+// TestRenameDeleteOldKeyNotFoundStillWrites checks that an already-deleted old
+// key (the filer deletes the source object synchronously during rename) does
+// not block the destination write. GCS reports a missing object as
+// ErrRemoteObjectNotFound, unlike S3/Azure whose deletes are idempotent, so
+// treating it as a real error would pin the sync offset and never write the
+// new key.
+func TestRenameDeleteOldKeyNotFoundStillWrites(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
+
+	newEntry := &filer_pb.Entry{
+		Name:       "probe.bin",
+		Content:    []byte("payload"),
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669},
+	}
+	oldEntry := &filer_pb.Entry{Name: "probe.bin", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/src",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/dst",
+			NewEntry:      newEntry,
+		},
+	}
+
+	remote := &recordingRemote{deleteErr: remote_storage.ErrRemoteObjectNotFound}
+	filerClient := &stubFilerClient{}
+	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatalf("err = %v, want nil: an already-deleted old key must not block the write", err)
+	}
+	wantWrite := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dst/probe.bin"}
+	if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+		t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
 	}
 }

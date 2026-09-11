@@ -268,8 +268,13 @@ func processUpdateEvent(
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
-		if err := client.DeleteFile(oldDest); err != nil && isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
-			return nil
+		if err := client.DeleteFile(oldDest); err != nil {
+			if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
+				return nil
+			}
+			if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+				return err
+			}
 		}
 	}
 	remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
