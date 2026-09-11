@@ -598,6 +598,12 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	// Rebuild the expired directory once here so the cache hit below serves
 	// metadata lookups instead of issuing one LookupEntry RPC per entry.
 	if !wfs.metaCache.IsDirectoryCached(dirPath) && wfs.inodeToPath.ShouldRebuildExpiredDir(dirPath, expiredDirRebuildCooldown) {
+		// The rebuild lists the parent from the filer; let any pending async
+		// flush of the target entry land first so the rebuilt cache does not
+		// capture pre-flush metadata and bypass the wait below.
+		if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+			wfs.waitForPendingAsyncFlush(inode)
+		}
 		if err := wfs.ensureDirectoryVisited(dirPath); err != nil {
 			// Record the attempt so the cooldown suppresses repeated rebuilds
 			// while the listing keeps failing; once it elapses a later lookup
