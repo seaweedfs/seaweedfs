@@ -239,7 +239,7 @@ func processUpdateEvent(
 	}
 	oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
-	if !shouldSendToRemote(message.NewEntry) {
+	if proto.Equal(oldDest, dest) && !shouldSendToRemote(message.NewEntry) {
 		glog.V(2).Infof("skipping updating: %+v", resp)
 		return nil
 	}
