@@ -2714,56 +2714,91 @@ impl VolumeServer for VolumeGrpcService {
             let mut draining_seconds = idle_timeout as i64;
 
             loop {
-                // Use binary search to find starting offset, then scan from there
-                let scan_result = {
+                // Resolve the start offset and the caught-up flag under one
+                // store read guard. is_last means the caller is caught up: send
+                // a heartbeat without scanning, as Go does. Dropping that flag
+                // re-reads the whole volume every iteration (a moved volume is
+                // read-only, so it is always caught up). The single guard
+                // spans both the search and the scan: a vacuum commit takes
+                // the store write lock and rewrites .dat/.idx, so an offset
+                // resolved under one guard would point into a different file
+                // under the next.
+                let resolved = {
                     let store = state.store.read().unwrap();
-                    if let Some((_, vol)) = store.find_volume(vid) {
-                        let start_offset = if last_timestamp_ns > 0 {
-                            match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
-                                Ok((offset, _is_last)) => {
-                                    if offset.is_zero() {
-                                        Ok(sb_size)
-                                    } else {
-                                        Ok(offset.to_actual_offset() as u64)
+                    match store.find_volume(vid) {
+                        Some((_, vol)) => {
+                            let start = if last_timestamp_ns > 0 {
+                                match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
+                                    Ok((offset, is_last)) => {
+                                        let off = if offset.is_zero() {
+                                            sb_size
+                                        } else {
+                                            offset.to_actual_offset() as u64
+                                        };
+                                        Ok((off, is_last))
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "fail to locate by appendAtNs {}: {}",
+                                            last_timestamp_ns,
+                                            e
+                                        );
+                                        Err(format!(
+                                            "fail to locate by appendAtNs {}: {}",
+                                            last_timestamp_ns, e
+                                        ))
                                     }
                                 }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "fail to locate by appendAtNs {}: {}",
-                                        last_timestamp_ns,
-                                        e
-                                    );
-                                    Err(format!(
-                                        "fail to locate by appendAtNs {}: {}",
-                                        last_timestamp_ns, e
-                                    ))
+                            } else {
+                                // No timestamp yet: the caller wants everything.
+                                Ok((sb_size, false))
+                            };
+                            Some(start.map(|(off, is_last)| {
+                                if is_last {
+                                    None
+                                } else {
+                                    Some(vol.scan_raw_needles_from(off))
                                 }
-                            }
-                        } else {
-                            Ok(sb_size)
-                        };
-                        match start_offset {
-                            Ok(off) => Ok(vol.scan_raw_needles_from(off)),
-                            Err(msg) => Err(msg),
+                            }))
                         }
-                    } else {
-                        break;
+                        None => None,
                     }
                 };
 
-                let scan_inner = match scan_result {
-                    Ok(r) => r,
-                    Err(msg) => {
+                let scan_result = match resolved {
+                    None => break,
+                    Some(Err(msg)) => {
                         let _ = tx.send(Err(Status::internal(msg))).await;
                         return;
                     }
+                    Some(Ok(scan_result)) => scan_result,
                 };
 
-                let entries = match scan_inner {
+                // Caught up: heartbeat WITHOUT scanning, as Go does.
+                let Some(scan_result) = scan_result else {
+                    let msg = volume_server_pb::VolumeTailSenderResponse {
+                        is_last_chunk: true,
+                        version,
+                        ..Default::default()
+                    };
+                    if tx.send(Ok(msg)).await.is_err() {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if idle_timeout == 0 {
+                        continue;
+                    }
+                    draining_seconds -= 1;
+                    if draining_seconds <= 0 {
+                        return; // EOF
+                    }
+                    continue;
+                };
+
+                let entries = match scan_result {
                     Ok(e) => e,
                     Err(_) => break,
                 };
-
                 // Filter entries since last_timestamp_ns
                 let mut last_processed_ns = last_timestamp_ns;
                 let mut sent_any = false;
