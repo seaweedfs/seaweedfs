@@ -132,7 +132,7 @@ func parseDurationSecondsWithBounds(r *http.Request, minSec, maxSec int64) (*int
 }
 
 // parseDurationSeconds parses DurationSeconds for AssumeRole (15 min to 12 hours)
-func parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
+func (h *STSHandlers) parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
 	return parseDurationSecondsWithBounds(r, minDurationSeconds, maxDurationSeconds)
 }
 
@@ -253,7 +253,7 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 	}
 
 	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
+	durationSeconds, errCode, err := h.parseDurationSeconds(r)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
 		return
@@ -350,7 +350,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
+	durationSeconds, errCode, err := h.parseDurationSeconds(r)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
 		return
@@ -506,7 +506,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	}
 
 	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
+	durationSeconds, errCode, err := h.parseDurationSeconds(r)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
 		return
