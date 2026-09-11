@@ -9,10 +9,17 @@ import (
 type contextKey string
 
 const (
-	contextUsernameKey  contextKey = "admin.username"
-	contextRoleKey      contextKey = "admin.role"
-	contextCSRFKey      contextKey = "admin.csrf"
-	contextURLPrefixKey contextKey = "admin.urlprefix"
+	contextUsernameKey   contextKey = "admin.username"
+	contextRoleKey       contextKey = "admin.role"
+	contextCSRFKey       contextKey = "admin.csrf"
+	contextURLPrefixKey  contextKey = "admin.urlprefix"
+	contextAuthMethodKey contextKey = "admin.auth_method"
+)
+
+// Auth method values stored in context to distinguish session vs bearer auth.
+const (
+	AuthMethodSession = "session"
+	AuthMethodBearer  = "bearer"
 )
 
 // WithAuthContext stores auth metadata on the request context.
@@ -27,6 +34,24 @@ func WithAuthContext(ctx context.Context, username, role, csrfToken string) cont
 		ctx = context.WithValue(ctx, contextCSRFKey, csrfToken)
 	}
 	return ctx
+}
+
+// WithAuthMethod records how the request was authenticated (session or bearer).
+// Bearer-authenticated requests bypass CSRF validation since they carry no
+// browser session and are not vulnerable to CSRF attacks.
+func WithAuthMethod(ctx context.Context, method string) context.Context {
+	return context.WithValue(ctx, contextAuthMethodKey, method)
+}
+
+// AuthMethodFromContext retrieves the authentication method from context.
+func AuthMethodFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if value, ok := ctx.Value(contextAuthMethodKey).(string); ok {
+		return value
+	}
+	return ""
 }
 
 // UsernameFromContext retrieves the username from context.

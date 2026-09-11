@@ -304,13 +304,14 @@ func runAdmin(cmd *Command, args []string) bool {
 	// keep the pre-existing unauthenticated setup.
 	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
 	insecureAllowed := a.allowInsecureBind != nil && *a.allowInsecureBind
-	if !isLoopbackIp(*a.ip) && *a.adminPassword == "" && !hasMTLS {
+	if !isLoopbackIp(*a.ip) && *a.adminPassword == "" && *a.adminApiKey == "" && !hasMTLS {
 		if !insecureAllowed {
 			fmt.Printf("Error: the admin server is configured to bind to %s (non-loopback) with\n", *a.ip)
 			fmt.Printf("       authentication disabled. This would expose the admin API unauthenticated\n")
 			fmt.Printf("       on the network.\n")
 			fmt.Printf("       To fix this, either:\n")
-			fmt.Printf("         - set -adminPassword to enable authentication, or\n")
+			fmt.Printf("         - set -adminPassword to enable session authentication, or\n")
+			fmt.Printf("         - set -adminApiKey to enable bearer-token API authentication, or\n")
 			fmt.Printf("         - configure [https.admin] key and ca in security.toml for mTLS, or\n")
 			fmt.Printf("         - set -ip=127.0.0.1 to bind to loopback only, or\n")
 			fmt.Printf("         - set -allowInsecureBind to start anyway (INSECURE).\n")
@@ -318,7 +319,7 @@ func runAdmin(cmd *Command, args []string) bool {
 		}
 		fmt.Printf("WARNING: -allowInsecureBind is set: the admin API is exposed on %s without\n", *a.ip)
 		fmt.Printf("         authentication. Anyone who can reach this address has full control\n")
-		fmt.Printf("         of the cluster. Set -adminPassword or configure mTLS instead.\n")
+		fmt.Printf("         of the cluster. Set -adminPassword or -adminApiKey or configure mTLS instead.\n")
 	}
 
 	// Security warnings
@@ -481,7 +482,12 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}()
 
 	// Create handlers and setup routes
-	authRequired := *options.adminPassword != ""
+	// Authentication is required when either adminPassword (session auth) or
+	// adminApiKey (bearer token auth) is configured. When authRequired is true,
+	// the /api subrouter gets RequireAuthAPI middleware that validates both
+	// bearer tokens and browser sessions. The UI session protection is gated
+	// separately on adminPassword inside SetupRoutes.
+	authRequired := *options.adminPassword != "" || *options.adminApiKey != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer, store)
 	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI, *options.adminApiKey)
 

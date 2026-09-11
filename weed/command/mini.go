@@ -561,6 +561,7 @@ func initMiniAdminFlags() {
 	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
+	miniAdminOptions.adminApiKey = cmdMini.Flag.String("admin.apiKey", "", "API key for bearer-token auth on /api endpoints (enables server-to-server access without session login)")
 	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
 	miniAdminOptions.urlPrefix = cmdMini.Flag.String("admin.urlPrefix", "", "URL path prefix when running the admin UI behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
@@ -1575,6 +1576,7 @@ func startS3Service() {
 func applyMiniAdminCredentialFallback(options *AdminOptions) {
 	applyViperFallback(cmdMini, options.adminUser, "admin.user", "admin.user")
 	applyViperFallback(cmdMini, options.adminPassword, "admin.password", "admin.password")
+	applyViperFallback(cmdMini, options.adminApiKey, "admin.apiKey", "admin.api_key")
 	applyViperFallback(cmdMini, options.readOnlyUser, "admin.readOnlyUser", "admin.readonly.user")
 	applyViperFallback(cmdMini, options.readOnlyPassword, "admin.readOnlyPassword", "admin.readonly.password")
 }

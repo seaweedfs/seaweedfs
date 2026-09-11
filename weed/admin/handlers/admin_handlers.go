@@ -77,14 +77,24 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 	}
 
 	if authRequired {
-		// Authentication routes (no auth required)
-		r.HandleFunc("/login", h.authHandlers.ShowLogin).Methods(http.MethodGet)
-		r.Handle("/login", h.authHandlers.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)).Methods(http.MethodPost)
-		r.HandleFunc("/logout", h.authHandlers.HandleLogout).Methods(http.MethodGet)
+		// UI session auth is only meaningful when adminPassword is set.
+		// In API-key-only mode, the UI stays public (or disabled) and only
+		// /api endpoints are protected by RequireAuthAPI.
+		uiSessionAuth := adminPassword != ""
+		if uiSessionAuth {
+			// Authentication routes (no auth required)
+			r.HandleFunc("/login", h.authHandlers.ShowLogin).Methods(http.MethodGet)
+			r.Handle("/login", h.authHandlers.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)).Methods(http.MethodPost)
+			r.HandleFunc("/logout", h.authHandlers.HandleLogout).Methods(http.MethodGet)
 
-		protected := r.NewRoute().Subrouter()
-		protected.Use(dash.RequireAuth(h.sessionStore))
-		h.registerUIRoutes(protected)
+			protected := r.NewRoute().Subrouter()
+			protected.Use(dash.RequireAuth(h.sessionStore))
+			h.registerUIRoutes(protected)
+		} else {
+			// API-key-only mode: UI is public (or disabled via enableUI),
+			// but API requires a bearer token.
+			h.registerUIRoutes(r)
+		}
 
 		api := r.PathPrefix("/api").Subrouter()
 		api.Use(dash.RequireAuthAPI(h.sessionStore, apiKey))

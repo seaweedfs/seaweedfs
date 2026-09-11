@@ -38,6 +38,11 @@ func getOrCreateSessionCSRFToken(session *sessions.Session, r *http.Request, w h
 func requireSessionCSRFToken(w http.ResponseWriter, r *http.Request) bool {
 	expectedToken := CSRFTokenFromContext(r.Context())
 	username := UsernameFromContext(r.Context())
+	// Bearer-token-authenticated requests have no browser session and are not
+	// vulnerable to CSRF. Skip CSRF validation for them.
+	if AuthMethodFromContext(r.Context()) == AuthMethodBearer {
+		return true
+	}
 	if expectedToken == "" {
 		// Admin UI can run without auth; in that mode CSRF token checks are not applicable.
 		if username == "" {

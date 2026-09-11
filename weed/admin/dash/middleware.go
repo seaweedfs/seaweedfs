@@ -17,17 +17,19 @@ func SessionName() string {
 }
 
 // bearerTokenFromRequest extracts a bearer token from the Authorization header.
+// The scheme name is matched case-insensitively per RFC 7235. The token itself
+// is compared exactly (not case-folded).
 // Returns ("", false) when no bearer token is present.
 func bearerTokenFromRequest(r *http.Request) (string, bool) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
 		return "", false
 	}
-	const prefix = "Bearer "
-	if !strings.HasPrefix(auth, prefix) {
+	parts := strings.Fields(auth)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return "", false
 	}
-	token := strings.TrimSpace(auth[len(prefix):])
+	token := parts[1]
 	if token == "" {
 		return "", false
 	}
@@ -124,6 +126,7 @@ func RequireAuthAPI(store sessions.Store, apiKey string) mux.MiddlewareFunc {
 			// Bearer token auth: alternative to session-based auth for API clients.
 			if validateBearerToken(apiKey, r) {
 				ctx := WithAuthContext(r.Context(), "api-token", "admin", "")
+				ctx = WithAuthMethod(ctx, AuthMethodBearer)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -145,6 +148,7 @@ func RequireAuthAPI(store sessions.Store, apiKey string) mux.MiddlewareFunc {
 			}
 
 			ctx := WithAuthContext(r.Context(), username, role, csrfToken)
+			ctx = WithAuthMethod(ctx, AuthMethodSession)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -20,6 +20,8 @@ func TestBearerTokenFromRequest(t *testing.T) {
 		{"empty token", "Bearer ", "", false},
 		{"valid token", "Bearer my-secret-token", "my-secret-token", true},
 		{"valid with spaces", "Bearer  token-with-spaces  ", "token-with-spaces", true},
+		{"lowercase bearer scheme", "bearer my-secret-token", "my-secret-token", true},
+		{"uppercase bearer scheme", "BEARER my-secret-token", "my-secret-token", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,6 +78,10 @@ func TestRequireAuthAPI_BearerTokenBypassesSession(t *testing.T) {
 		if role != "admin" {
 			t.Errorf("expected role 'admin', got %q", role)
 		}
+		method := AuthMethodFromContext(r.Context())
+		if method != AuthMethodBearer {
+			t.Errorf("expected auth method 'bearer', got %q", method)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	mw := RequireAuthAPI(store, apiKey)
@@ -131,5 +137,33 @@ func TestRequireAuthAPI_NoTokenNoSessionReturns401(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRequireSessionCSRFToken_BearerAuthBypassesCSRF(t *testing.T) {
+	// Bearer-authenticated requests should bypass CSRF checks since they
+	// have no browser session and are not vulnerable to CSRF.
+	req := httptest.NewRequest(http.MethodPut, "/api/s3/buckets/test/lifecycle", nil)
+	req = req.WithContext(WithAuthMethod(req.Context(), AuthMethodBearer))
+	rec := httptest.NewRecorder()
+
+	if !requireSessionCSRFToken(rec, req) {
+		t.Error("expected CSRF check to pass for bearer-authenticated request")
+	}
+}
+
+func TestRequireSessionCSRFToken_SessionAuthRequiresCSRF(t *testing.T) {
+	// Session-authenticated requests with a username but no CSRF token
+	// should be rejected.
+	req := httptest.NewRequest(http.MethodPut, "/api/s3/buckets/test/lifecycle", nil)
+	ctx := WithAuthContext(req.Context(), "admin-user", "admin", "")
+	req = req.WithContext(WithAuthMethod(ctx, AuthMethodSession))
+	rec := httptest.NewRecorder()
+
+	if requireSessionCSRFToken(rec, req) {
+		t.Error("expected CSRF check to fail for session-authenticated request without token")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
