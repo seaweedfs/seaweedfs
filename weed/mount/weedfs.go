@@ -3,6 +3,7 @@ package mount
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math/rand/v2"
 	"os"
 	"path"
@@ -576,6 +577,12 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, entryVe
 	return entry.ToProtoEntry(), version, fuse.OK
 }
 
+// expiredDirRebuildCooldown limits how often a lookup re-attempts a failed
+// rebuild of an expired directory, so a transient listing failure does not
+// trigger a full rebuild (with backoff retries) on every later lookup while
+// still allowing recovery once the filer is healthy again.
+const expiredDirRebuildCooldown = 30 * time.Second
+
 // lookupEntry looks up an entry by path, checking the local cache first.
 // Cached metadata is only authoritative when the parent directory itself is cached.
 // For uncached/read-through directories, always consult the filer directly so stale
@@ -585,6 +592,22 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, entryVe
 func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion, fuse.Status) {
 	dir, _ := fullpath.DirAndName()
 	dirPath := util.FullPath(dir)
+
+	// The kernel can serve a directory listing from its page cache past
+	// cacheMetaTtlSec, so ReadDir never runs and EnsureVisited is not called.
+	// Rebuild the expired directory once here so the cache hit below serves
+	// metadata lookups instead of issuing one LookupEntry RPC per entry.
+	if !wfs.metaCache.IsDirectoryCached(dirPath) && wfs.inodeToPath.ShouldRebuildExpiredDir(dirPath, expiredDirRebuildCooldown) {
+		if err := wfs.ensureDirectoryVisited(dirPath); err != nil {
+			// Record the attempt so the cooldown suppresses repeated rebuilds
+			// while the listing keeps failing; once it elapses a later lookup
+			// retries. Oversized dirs are already marked read-through.
+			var tooLarge *meta_cache.DirectoryTooLargeError
+			if !errors.As(err, &tooLarge) {
+				wfs.inodeToPath.MarkRebuildAttempt(dirPath, time.Now())
+			}
+		}
+	}
 
 	if wfs.metaCache.IsDirectoryCached(dirPath) && wfs.metaCache.IsNameFresh(fullpath) {
 		cachedEntry, cachedVersionTsNs, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
