@@ -2728,15 +2728,18 @@ impl VolumeServer for VolumeGrpcService {
                 // idle timeout expired. Measured at ~2.17 GB re-read six times in
                 // 35s for a 2.15 GB volume, which OOM-kills the source under a
                 // per-process memory cap.
-                // Resolve the start offset and the caught-up flag FIRST, under a
-                // brief lock, and only scan if there is actually something new.
-                // The binary search is over the .idx and is cheap; the scan is the
-                // expensive part and must not be run speculatively.
+                // Resolve the start offset and the caught-up flag FIRST, and only
+                // scan if there is actually something new. The binary search is
+                // over the .idx and is cheap; the scan is the expensive part and
+                // must not be run speculatively. Both run under ONE store read
+                // guard: a vacuum commit takes the store write lock and rewrites
+                // .dat/.idx, so an offset resolved under one guard would point
+                // into a different file under the next.
                 let resolved = {
                     let store = state.store.read().unwrap();
                     match store.find_volume(vid) {
                         Some((_, vol)) => {
-                            if last_timestamp_ns > 0 {
+                            let start = if last_timestamp_ns > 0 {
                                 match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
                                     Ok((offset, is_last)) => {
                                         let off = if offset.is_zero() {
@@ -2744,7 +2747,7 @@ impl VolumeServer for VolumeGrpcService {
                                         } else {
                                             offset.to_actual_offset() as u64
                                         };
-                                        Some(Ok((off, is_last)))
+                                        Ok((off, is_last))
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -2752,32 +2755,39 @@ impl VolumeServer for VolumeGrpcService {
                                             last_timestamp_ns,
                                             e
                                         );
-                                        Some(Err(format!(
+                                        Err(format!(
                                             "fail to locate by appendAtNs {}: {}",
                                             last_timestamp_ns, e
-                                        )))
+                                        ))
                                     }
                                 }
                             } else {
                                 // No timestamp yet: the caller wants everything.
-                                Some(Ok((sb_size, false)))
-                            }
+                                Ok((sb_size, false))
+                            };
+                            Some(start.map(|(off, is_last)| {
+                                if is_last {
+                                    None
+                                } else {
+                                    Some(vol.scan_raw_needles_from(off))
+                                }
+                            }))
                         }
                         None => None,
                     }
                 };
 
-                let (start_offset, is_last) = match resolved {
+                let scan_result = match resolved {
                     None => break,
                     Some(Err(msg)) => {
                         let _ = tx.send(Err(Status::internal(msg))).await;
                         return;
                     }
-                    Some(Ok(v)) => v,
+                    Some(Ok(scan_result)) => scan_result,
                 };
 
                 // Caught up: heartbeat WITHOUT scanning, as Go does.
-                if is_last {
+                let Some(scan_result) = scan_result else {
                     let msg = volume_server_pb::VolumeTailSenderResponse {
                         is_last_chunk: true,
                         version,
@@ -2795,15 +2805,6 @@ impl VolumeServer for VolumeGrpcService {
                         return; // EOF
                     }
                     continue;
-                }
-
-                // Not caught up: now do the expensive scan.
-                let scan_result = {
-                    let store = state.store.read().unwrap();
-                    match store.find_volume(vid) {
-                        Some((_, vol)) => vol.scan_raw_needles_from(start_offset),
-                        None => break,
-                    }
                 };
 
                 let entries = match scan_result {

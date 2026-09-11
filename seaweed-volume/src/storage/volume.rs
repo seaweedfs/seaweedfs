@@ -4809,6 +4809,62 @@ mod tests {
     }
 
     #[test]
+    fn binary_search_on_compacted_volume_still_reports_a_later_write() {
+        // Compaction rewrites .idx in needle-id order (Go does the same), so
+        // append_at_ns is no longer monotonic by row and the search can call
+        // a caller caught up while an earlier row is newer. That caller's
+        // since_ns is the last row's timestamp (find_last_append_at_ns), so
+        // such rows were already in the files it copied. What must hold is
+        // that a write made after that point still reaches the scan: it is
+        // appended as the final row, and the search cannot step past it.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let write = |v: &mut Volume, id: u64| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'c'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            n.append_at_ns
+        };
+        write(&mut v, 1);
+        let key2_ns = write(&mut v, 2);
+        write(&mut v, 1); // overwrite: key 1 is now newer than key 2
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(key2_ns).unwrap();
+        assert!(
+            is_last,
+            "precondition: compaction ordered .idx by key, so key 2 is the final row"
+        );
+
+        let key3_ns = write(&mut v, 3);
+        let (offset, is_last) = v.binary_search_by_append_at_ns(key2_ns).unwrap();
+        assert!(
+            !is_last,
+            "a write after compaction is the final row and must not be hidden"
+        );
+        let shipped: Vec<u64> = v
+            .scan_raw_needles_from(offset.to_actual_offset() as u64)
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, append_at_ns)| append_at_ns)
+            .filter(|&append_at_ns| append_at_ns > key2_ns)
+            .collect();
+        assert!(
+            shipped.contains(&key3_ns),
+            "the tail must ship the write made after compaction"
+        );
+    }
+
+    #[test]
     fn test_volume_write_read() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
