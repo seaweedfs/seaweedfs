@@ -2,6 +2,7 @@ package filer
 
 import (
 	"container/list"
+	"context"
 	"fmt"
 	"sync"
 
@@ -95,12 +96,14 @@ func (c *ChunkManifestCache) put(key chunkManifestCacheKey, data []byte) {
 
 // fetchOrLoad returns cached manifest bytes for key, or invokes fetch and
 // caches the result. Concurrent calls for the same key are coalesced via
-// singleflight so only one fetch runs during a cold burst.
-func (c *ChunkManifestCache) fetchOrLoad(key chunkManifestCacheKey, fetch func() ([]byte, error)) ([]byte, error) {
+// singleflight so only one fetch runs during a cold burst. A caller whose
+// context is canceled while waiting for the in-flight fetch returns
+// ctx.Err() immediately rather than blocking for the leader's result.
+func (c *ChunkManifestCache) fetchOrLoad(ctx context.Context, key chunkManifestCacheKey, fetch func() ([]byte, error)) ([]byte, error) {
 	if data, ok := c.get(key); ok {
 		return data, nil
 	}
-	val, err, _ := c.flight.Do(key.flightKey(), func() (interface{}, error) {
+	ch := c.flight.DoChan(key.flightKey(), func() (interface{}, error) {
 		// Re-check under the flight: another flight may have just populated
 		// the cache for this key.
 		if data, ok := c.get(key); ok {
@@ -113,10 +116,15 @@ func (c *ChunkManifestCache) fetchOrLoad(key chunkManifestCacheKey, fetch func()
 		c.put(key, data)
 		return data, nil
 	})
-	if err != nil {
-		return nil, err
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.([]byte), nil
 	}
-	return val.([]byte), nil
 }
 
 func (c *ChunkManifestCache) clear() {

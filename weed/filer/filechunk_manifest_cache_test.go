@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/require"
@@ -111,9 +112,11 @@ func TestChunkGroupManifestResolutionConcurrentWarmOpensReuseFetch(t *testing.T)
 func TestChunkGroupManifestResolutionCoalescesColdMisses(t *testing.T) {
 	cache := newTestManifestCache(t)
 	const manifestID = "cache-cold-miss"
+	// Delay the manifest response so the leader's fetch is still in flight
+	// when the other concurrent opens arrive and join the singleflight.
 	fixture := newManifestReadFixture(t, map[string][]*filer_pb.FileChunk{
 		manifestID: {resolveTestData("cold-data", 0)},
-	}, nil)
+	}, map[string]time.Duration{manifestID: 50 * time.Millisecond})
 	var lookups atomic.Int32
 	lookup := func(ctx context.Context, fileID string) ([]string, error) {
 		lookups.Add(1)
@@ -258,6 +261,40 @@ func TestResolveOneChunkManifestHonorsCanceledContextOnCacheHit(t *testing.T) {
 	_, err := ResolveOneChunkManifest(ctx, lookup, chunk, nil, cache)
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, lookupCalled, "a canceled cache hit must not issue a lookup")
+}
+
+func TestResolveOneChunkManifestCanceledWaiterReturnsDuringCoalescedMiss(t *testing.T) {
+	cache := newTestManifestCache(t)
+	const manifestID = "cache-canceled-waiter"
+	// Delay the manifest response so the leader's fetch is still in flight
+	// when the waiter arrives and cancels.
+	fixture := newManifestReadFixture(t, map[string][]*filer_pb.FileChunk{
+		manifestID: {resolveTestData("canceled-waiter-data", 0)},
+	}, map[string]time.Duration{manifestID: 100 * time.Millisecond})
+	chunk := newManifestCacheTestChunk(manifestID)
+
+	// Leader starts the fetch with a live context.
+	leaderCtx, leaderCancel := context.WithCancel(context.Background())
+	defer leaderCancel()
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := ResolveOneChunkManifest(leaderCtx, fixture.lookup, chunk, nil, cache)
+		leaderDone <- err
+	}()
+
+	// Waiter cancels its own context while the leader's fetch is still in
+	// flight; it must return context.Canceled promptly instead of blocking
+	// for the leader's result.
+	waiterCtx, waiterCancel := context.WithCancel(context.Background())
+	waiterCancel()
+	_, err := ResolveOneChunkManifest(waiterCtx, fixture.lookup, chunk, nil, cache)
+	require.ErrorIs(t, err, context.Canceled)
+
+	// The leader must still complete successfully and populate the cache.
+	require.NoError(t, <-leaderDone)
+	data, found := cache.get(chunkManifestCacheKey{fileID: manifestID})
+	require.True(t, found, "the leader's successful fetch must populate the cache")
+	require.NotEmpty(t, data)
 }
 
 func manifestBytes(t testing.TB, chunks ...*filer_pb.FileChunk) []byte {

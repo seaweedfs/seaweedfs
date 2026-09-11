@@ -321,7 +321,7 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 
 	var manifestBytes []byte
 	if cache != nil {
-		data, err := cache.fetchOrLoad(key, fetch)
+		data, err := cache.fetchOrLoad(ctx, key, fetch)
 		if err != nil {
 			return nil, err
 		}
