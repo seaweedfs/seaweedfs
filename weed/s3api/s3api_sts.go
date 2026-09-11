@@ -135,7 +135,10 @@ func parseDurationSecondsWithBounds(r *http.Request, minSec, maxSec int64) (*int
 func (h *STSHandlers) parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
 	maxSec := maxDurationSeconds
 	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.MaxSessionLength.Duration > 0 {
-		maxSec = int64(h.stsService.Config.MaxSessionLength.Duration / time.Second)
+		configuredMax := int64(h.stsService.Config.MaxSessionLength.Duration / time.Second)
+		if configuredMax >= minDurationSeconds {
+			maxSec = configuredMax
+		}
 	}
 	return parseDurationSecondsWithBounds(r, minDurationSeconds, maxSec)
 }
