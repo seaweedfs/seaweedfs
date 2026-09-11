@@ -325,6 +325,7 @@ const (
 	contextKeyIdentityObject contextKey = "s3-identity-object"
 	contextKeyIdentityHolder contextKey = "s3-identity-holder"
 	contextKeyPrincipalArn   contextKey = "s3-principal-arn"
+	contextKeyIdentityClaim  contextKey = "s3-identity-claim"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -335,8 +336,9 @@ const (
 // holder installed before authentication is shared across all copies, so the
 // name written by the inner handler is readable by the outer middleware.
 type identityHolder struct {
-	name         atomic.Pointer[string]
-	principalArn atomic.Pointer[string]
+	name          atomic.Pointer[string]
+	principalArn  atomic.Pointer[string]
+	identityClaim atomic.Pointer[string]
 }
 
 // EnsureIdentityHolder attaches a mutable identity holder to the request context
@@ -410,6 +412,37 @@ func GetPrincipalArnFromContext(r *http.Request) string {
 	if h, ok := r.Context().Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
 		if arn := h.principalArn.Load(); arn != nil {
 			return *arn
+		}
+	}
+	return ""
+}
+
+// SetIdentityClaimInContext stores the authoritative OIDC identity claim (e.g.
+// preferred_username, email, sub) for the audit log. For an STS-assumed OIDC
+// session the requester name is an opaque session subject, so the claim is the
+// only place a stable, human-readable federated identity survives to the audit
+// log. Empty for non-federated sessions, where the requester name already
+// carries the real username.
+func SetIdentityClaimInContext(ctx context.Context, identityClaim string) context.Context {
+	if identityClaim == "" {
+		return ctx
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.identityClaim.Store(&identityClaim)
+	}
+	return context.WithValue(ctx, contextKeyIdentityClaim, identityClaim)
+}
+
+// GetIdentityClaimFromContext retrieves the authoritative OIDC identity claim
+// from the request context, or "" when the request is unauthenticated or not
+// federated.
+func GetIdentityClaimFromContext(r *http.Request) string {
+	if claim, ok := r.Context().Value(contextKeyIdentityClaim).(string); ok && claim != "" {
+		return claim
+	}
+	if h, ok := r.Context().Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if claim := h.identityClaim.Load(); claim != nil {
+			return *claim
 		}
 	}
 	return ""
