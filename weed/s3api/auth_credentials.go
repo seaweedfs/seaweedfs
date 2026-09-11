@@ -455,10 +455,11 @@ func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiCo
 
 var iamReloadRetryInterval = 5 * time.Second
 
-// scheduleReload queues a full configuration reload that retries until it
-// succeeds. Signals coalesce, and the reload is state-based, so it is safe to
-// call for every failed event.
-func (iam *IdentityAccessManagement) scheduleReload() {
+// scheduleReload queues a coalesced full configuration reload that retries
+// until it succeeds. Safe to call for every IAM config change event: bursts
+// collapse into a single reload via the buffered reloadCh.
+func (iam *IdentityAccessManagement) scheduleReload(reason string) {
+	glog.V(1).Infof("IAM change detected in %s, scheduling reload", reason)
 	select {
 	case iam.reloadCh <- struct{}{}:
 	default:
