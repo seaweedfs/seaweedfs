@@ -188,25 +188,24 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			} else {
 				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					// fail the snapshot: a skipped policy would read as deleted
 					return fmt.Errorf("failed to read policy file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
 
-			if len(content) > 0 {
-				var policy policy_engine.PolicyDocument
-				if err := json.Unmarshal(content, &policy); err != nil {
-					glog.Warningf("Failed to unmarshal policy %s: %v", entry.Name, err)
-					continue
-				}
+			if len(content) == 0 {
+				return fmt.Errorf("policy file %s is empty", entry.Name)
+			}
+			var policy policy_engine.PolicyDocument
+			if err := json.Unmarshal(content, &policy); err != nil {
+				return fmt.Errorf("failed to unmarshal policy %s: %w", entry.Name, err)
+			}
 
-				// The file name is "policyName.json"
-				policyName := entry.Name
-				if strings.HasSuffix(policyName, ".json") {
-					policyName = policyName[:len(policyName)-5]
-					policies[policyName] = policy
-				}
+			// The file name is "policyName.json"
+			policyName := entry.Name
+			if strings.HasSuffix(policyName, ".json") {
+				policyName = policyName[:len(policyName)-5]
+				policies[policyName] = policy
 			}
 		}
 		return nil

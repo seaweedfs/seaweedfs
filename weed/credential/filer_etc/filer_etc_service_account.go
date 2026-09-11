@@ -40,20 +40,19 @@ func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context
 			} else {
 				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					glog.Warningf("Failed to read service account file %s: %v", entry.Name, err)
-					continue
+					return fmt.Errorf("failed to read service account file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
 
-			if len(content) > 0 {
-				sa := &iam_pb.ServiceAccount{}
-				if err := json.Unmarshal(content, sa); err != nil {
-					glog.Warningf("Failed to unmarshal service account %s: %v", entry.Name, err)
-					continue
-				}
-				s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
+			if len(content) == 0 {
+				return fmt.Errorf("service account file %s is empty", entry.Name)
 			}
+			sa := &iam_pb.ServiceAccount{}
+			if err := json.Unmarshal(content, sa); err != nil {
+				return fmt.Errorf("failed to unmarshal service account %s: %w", entry.Name, err)
+			}
+			s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
 		}
 		return nil
 	})

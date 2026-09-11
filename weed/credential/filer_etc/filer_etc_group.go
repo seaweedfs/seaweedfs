@@ -42,23 +42,24 @@ func (store *FilerEtcStore) loadGroupsFromMultiFile(ctx context.Context, s3cfg *
 				content = c
 			}
 
-			if len(content) > 0 {
-				g := &iam_pb.Group{}
-				if err := json.Unmarshal(content, g); err != nil {
-					return fmt.Errorf("failed to unmarshal group %s: %w", entry.Name, err)
+			if len(content) == 0 {
+				return fmt.Errorf("group file %s is empty", entry.Name)
+			}
+			g := &iam_pb.Group{}
+			if err := json.Unmarshal(content, g); err != nil {
+				return fmt.Errorf("failed to unmarshal group %s: %w", entry.Name, err)
+			}
+			// Merge: overwrite existing group with same name or append
+			found := false
+			for i, existing := range s3cfg.Groups {
+				if existing.Name == g.Name {
+					s3cfg.Groups[i] = g
+					found = true
+					break
 				}
-				// Merge: overwrite existing group with same name or append
-				found := false
-				for i, existing := range s3cfg.Groups {
-					if existing.Name == g.Name {
-						s3cfg.Groups[i] = g
-						found = true
-						break
-					}
-				}
-				if !found {
-					s3cfg.Groups = append(s3cfg.Groups, g)
-				}
+			}
+			if !found {
+				s3cfg.Groups = append(s3cfg.Groups, g)
 			}
 		}
 		return nil
