@@ -131,9 +131,13 @@ func parseDurationSecondsWithBounds(r *http.Request, minSec, maxSec int64) (*int
 	return &ds, "", nil
 }
 
-// parseDurationSeconds parses DurationSeconds for AssumeRole (15 min to 12 hours)
+// parseDurationSeconds parses DurationSeconds for AssumeRole (15 min to MaxSessionLength)
 func (h *STSHandlers) parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
-	return parseDurationSecondsWithBounds(r, minDurationSeconds, maxDurationSeconds)
+	maxSec := maxDurationSeconds
+	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.MaxSessionLength.Duration > 0 {
+		maxSec = int64(h.stsService.Config.MaxSessionLength.Duration / time.Second)
+	}
+	return parseDurationSecondsWithBounds(r, minDurationSeconds, maxSec)
 }
 
 // Removed generateSecureCredentials - now using STS service's JWT token generation
