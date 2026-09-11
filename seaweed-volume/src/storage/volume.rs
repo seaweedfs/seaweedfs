@@ -4682,6 +4682,133 @@ mod tests {
     }
 
     #[test]
+    fn binary_search_reports_is_last_when_caller_is_caught_up() {
+        // The tail sender relies on this flag to answer "nothing new" with a
+        // heartbeat instead of re-scanning the volume. Go does the same
+        // (volume_grpc_tail.go, `if isLastOne`). If this ever stops reporting
+        // true for an up-to-date caller, volume_tail_sender silently degrades
+        // into re-reading the whole volume every 2s.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut newest_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'x'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            newest_ns = n.append_at_ns;
+        }
+        assert!(newest_ns > 0, "needles must carry an append timestamp");
+
+        // Caught up: asking from the newest timestamp has nothing newer.
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(
+            is_last,
+            "a caller at the newest append_at_ns must be reported as caught up"
+        );
+
+        // And from beyond the newest, likewise.
+        let (_offset, is_last_future) = v
+            .binary_search_by_append_at_ns(newest_ns + 1_000_000_000)
+            .unwrap();
+        assert!(
+            is_last_future,
+            "a caller ahead of the newest needle must be reported as caught up"
+        );
+    }
+
+    #[test]
+    fn binary_search_does_not_report_is_last_when_data_is_newer() {
+        // The complement: if the caller is behind, is_last must be false so the
+        // sender still scans and ships the new needles. A fix that always
+        // reported "caught up" would make tailing silently lose data, which is
+        // worse than the memory bug it would be fixing.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut first_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'y'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            if id == 1 {
+                first_ns = n.append_at_ns;
+            }
+        }
+
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(first_ns).unwrap();
+        assert!(
+            !is_last,
+            "a caller behind the newest needle must NOT be reported as caught up"
+        );
+    }
+
+    #[test]
+    fn binary_search_does_not_report_is_last_when_only_a_delete_is_newer() {
+        // A delete is data the tail must ship too. Its .idx row carries the
+        // tombstone's real .dat offset, so a caller caught up before the
+        // delete must be sent to scan from the tombstone, not handed a
+        // heartbeat that would silently drop the deletion on the destination.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut newest_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'z'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            newest_ns = n.append_at_ns;
+        }
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(is_last, "precondition: the caller starts caught up");
+
+        v.delete_needle(&mut Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x12345678),
+            ..Needle::default()
+        })
+        .unwrap();
+
+        let (offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(
+            !is_last,
+            "a caller older than a trailing delete must NOT be reported as caught up"
+        );
+
+        // Scan and filter exactly as volume_tail_sender does: the tombstone,
+        // and only the tombstone, is newer than the caller.
+        let shipped: Vec<u64> = v
+            .scan_raw_needles_from(offset.to_actual_offset() as u64)
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, append_at_ns)| append_at_ns)
+            .filter(|&append_at_ns| append_at_ns > newest_ns)
+            .collect();
+        assert_eq!(shipped.len(), 1, "the tail must ship the tombstone");
+    }
+
+    #[test]
     fn test_volume_write_read() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
