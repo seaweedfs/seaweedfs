@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -1608,8 +1609,9 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 
 // recordIdentityInContext stores the authenticated identity, its name and its
 // principal ARN in the request context. An STS session's name is only an opaque
-// subject, so the ARN is what carries the assumed role and session name to the
-// audit log. A JWT-authenticated identity carries no PrincipalArn of its own,
+// session subject, so the ARN is what carries the assumed role and session name
+// to the audit log, and the identity claim carries the authoritative OIDC
+// identity. A JWT-authenticated identity carries no PrincipalArn of its own,
 // hence the resolution through buildPrincipalARN.
 func recordIdentityInContext(r *http.Request, identity *Identity) context.Context {
 	if identity == nil {
@@ -1617,6 +1619,7 @@ func recordIdentityInContext(r *http.Request, identity *Identity) context.Contex
 	}
 	ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
 	ctx = s3_constants.SetPrincipalArnInContext(ctx, buildPrincipalARN(identity, r))
+	ctx = s3_constants.SetIdentityClaimInContext(ctx, sts.ResolveIdentityClaim(identity.Claims))
 	// Also store the full identity object for handlers that need it (e.g., ListBuckets)
 	// This is especially important for JWT users whose identity is not in the identities list
 	return s3_constants.SetIdentityInContext(ctx, identity)
