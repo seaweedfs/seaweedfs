@@ -496,10 +496,10 @@ func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, erro
 			if entry.IsDirectory {
 				continue
 			}
-			name := entry.Name
-			if strings.HasSuffix(name, ".json") {
-				name = name[:len(name)-5]
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
 			}
+			name := entry.Name[:len(entry.Name)-5]
 			if _, found := seenNames[name]; found {
 				continue
 			}

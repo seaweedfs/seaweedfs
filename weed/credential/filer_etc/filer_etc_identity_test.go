@@ -86,6 +86,45 @@ func TestLoadConfigurationIgnoresNonJsonAuxiliaryFiles(t *testing.T) {
 	assert.Equal(t, "alice", cfg.Identities[0].Name)
 }
 
+// A valid JSON file with an empty name (e.g. `{}`) would unmarshal cleanly but
+// install a garbage empty-key record that can displace a real one. Reject it.
+func TestLoadConfigurationFailsOnEmptyIdentityName(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	identDir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
+	putEntry(t, server, identDir, "alice.json", []byte(`{"name":"alice"}`))
+	putEntry(t, server, identDir, "empty.json", []byte(`{}`))
+
+	_, err := store.LoadConfiguration(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty.json")
+}
+
+func TestLoadConfigurationFailsOnEmptyGroupName(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	groupDir := filer.IamConfigDirectory + "/" + IamGroupsDirectory
+	putEntry(t, server, groupDir, "empty.json", []byte(`{}`))
+
+	_, err := store.LoadConfiguration(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty.json")
+}
+
+func TestLoadConfigurationFailsOnEmptyServiceAccountId(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	saDir := filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory
+	putEntry(t, server, saDir, "empty.json", []byte(`{}`))
+
+	_, err := store.LoadConfiguration(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty.json")
+}
+
 // A valid full snapshot loads without error (regression guard).
 func TestLoadConfigurationSucceedsOnValidFiles(t *testing.T) {
 	ctx := context.Background()

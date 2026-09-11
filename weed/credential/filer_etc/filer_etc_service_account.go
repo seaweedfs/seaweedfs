@@ -55,6 +55,9 @@ func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context
 			if err := json.Unmarshal(content, sa); err != nil {
 				return fmt.Errorf("failed to unmarshal service account %s: %w", entry.Name, err)
 			}
+			if err := validateServiceAccountId(sa.Id); err != nil {
+				return fmt.Errorf("service account file %s: %w", entry.Name, err)
+			}
 			s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
 		}
 		return nil

@@ -115,6 +115,9 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 			if err := json.Unmarshal(content, identity); err != nil {
 				return fmt.Errorf("failed to unmarshal identity %s: %w", entry.Name, err)
 			}
+			if identity.Name == "" {
+				return fmt.Errorf("identity file %s has empty name", entry.Name)
+			}
 
 			// Merge logic: Overwrite existing or Append
 			idx := findIdentity(identity.Name)
