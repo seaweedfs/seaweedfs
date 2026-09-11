@@ -220,6 +220,13 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
 	}
 	_, err = uploader.Upload(&uploadInput)
+	if err != nil {
+		// A failed body read reaches the caller as "ContentLength=N with Body
+		// length 0" without the cause, which reads as a sink failure.
+		if sourceErr := filer.ReaderSourceError(reader); sourceErr != nil {
+			return fmt.Errorf("read source %s: %w", key, sourceErr)
+		}
+	}
 
 	return err
 
