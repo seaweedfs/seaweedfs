@@ -213,59 +213,70 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return client.DeleteFile(dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
-			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
-				return nil
-			}
-			// Skip updates to internal version paths
-			if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
-				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
-				return nil
-			}
-			oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
-			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
-			if !shouldSendToRemote(message.NewEntry) {
-				glog.V(2).Infof("skipping updating: %+v", resp)
-				return nil
-			}
-			if message.NewEntry.IsDirectory {
-				return client.WriteDirectory(dest, message.NewEntry)
-			}
-			if isMetadataOnlyUpdate(resp.Directory, message) {
-				remoteEntry, err := liveRemoteEntry(option, message.NewParentPath, message.NewEntry)
-				if errors.Is(err, filer_pb.ErrNotFound) {
-					glog.V(2).Infof("skipping updating deleted entry: %+v", resp)
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				if remoteEntry != nil {
-					glog.V(2).Infof("update meta: %+v", resp)
-					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
-				}
-				glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
-			}
-			glog.V(2).Infof("update: %+v", resp)
-			if !proto.Equal(oldDest, dest) {
-				glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
-				if err := client.DeleteFile(oldDest); err != nil && isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
-					return nil
-				}
-			}
-			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
-			if errors.Is(writeErr, errSuperseded) {
-				glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
-				return nil
-			}
-			if writeErr != nil {
-				return writeErr
-			}
-			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
+			return processUpdateEvent(option, filerSource, client, mountedDir, remoteStorageMountLocation, resp)
 		}
 
 		return nil
 	}
 	return eachEntryFunc, nil
+}
+
+func processUpdateEvent(
+	filerClient filer_pb.FilerClient,
+	filerSource filer_pb.FilerClient,
+	client remote_storage.RemoteStorageClient,
+	mountedDir string,
+	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
+	resp *filer_pb.SubscribeMetadataResponse,
+) error {
+	message := resp.EventNotification
+	if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+		return nil
+	}
+	if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
+		glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
+		return nil
+	}
+	oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
+	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+	if !shouldSendToRemote(message.NewEntry) {
+		glog.V(2).Infof("skipping updating: %+v", resp)
+		return nil
+	}
+	if message.NewEntry.IsDirectory {
+		return client.WriteDirectory(dest, message.NewEntry)
+	}
+	if isMetadataOnlyUpdate(resp.Directory, message) {
+		remoteEntry, err := liveRemoteEntry(filerClient, message.NewParentPath, message.NewEntry)
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			glog.V(2).Infof("skipping updating deleted entry: %+v", resp)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if remoteEntry != nil {
+			glog.V(2).Infof("update meta: %+v", resp)
+			return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
+		}
+		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
+	}
+	glog.V(2).Infof("update: %+v", resp)
+	if !proto.Equal(oldDest, dest) {
+		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
+		if err := client.DeleteFile(oldDest); err != nil && isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
+			return nil
+		}
+	}
+	remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
+	if errors.Is(writeErr, errSuperseded) {
+		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+		return nil
+	}
+	if writeErr != nil {
+		return writeErr
+	}
+	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 }
 
 // isSuperseded reports whether the filer has moved past the entry an event
