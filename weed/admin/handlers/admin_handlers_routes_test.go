@@ -13,7 +13,7 @@ import (
 func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true, "")
 
 	if !hasRoute(router, http.MethodGet, "/api/plugin/scheduler-states") {
 		t.Fatalf("expected GET /api/plugin/scheduler-states to be registered in no-auth mode")
@@ -29,7 +29,7 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true, "")
 
 	if !hasRoute(router, http.MethodGet, "/api/plugin/scheduler-states") {
 		t.Fatalf("expected GET /api/plugin/scheduler-states to be registered in auth mode")
@@ -45,7 +45,7 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 func TestSetupRoutes_RegistersBucketLifecycleAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/s3/buckets/example/lifecycle")
 	assertHasRoute(t, router, http.MethodPut, "/api/s3/buckets/example/lifecycle")
@@ -55,7 +55,7 @@ func TestSetupRoutes_RegistersBucketLifecycleAPI_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersBucketLifecycleAPI_WithAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/s3/buckets/example/lifecycle")
 	assertHasRoute(t, router, http.MethodPut, "/api/s3/buckets/example/lifecycle")
@@ -65,7 +65,7 @@ func TestSetupRoutes_RegistersBucketLifecycleAPI_WithAuth(t *testing.T) {
 func TestSetupRoutes_RegistersBucketPolicyAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/s3/buckets/example/policy")
 	assertHasRoute(t, router, http.MethodPut, "/api/s3/buckets/example/policy")
@@ -75,7 +75,7 @@ func TestSetupRoutes_RegistersBucketPolicyAPI_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersBucketPolicyAPI_WithAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/s3/buckets/example/policy")
 	assertHasRoute(t, router, http.MethodPut, "/api/s3/buckets/example/policy")
@@ -85,7 +85,7 @@ func TestSetupRoutes_RegistersBucketPolicyAPI_WithAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPolicyAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/object-store/policies")
 	assertHasRoute(t, router, http.MethodPost, "/api/object-store/policies")
@@ -98,7 +98,7 @@ func TestSetupRoutes_RegistersPolicyAPI_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPolicyAPI_WithAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/object-store/policies")
 	assertHasRoute(t, router, http.MethodPost, "/api/object-store/policies")
@@ -111,7 +111,7 @@ func TestSetupRoutes_RegistersPolicyAPI_WithAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPrincipalsAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/principals")
 }
@@ -119,7 +119,7 @@ func TestSetupRoutes_RegistersPrincipalsAPI_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersFilesListFoldersAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/api/files/list-folders")
 }
@@ -127,7 +127,7 @@ func TestSetupRoutes_RegistersFilesListFoldersAPI_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/plugin")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/configuration")
@@ -150,7 +150,7 @@ func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPluginPages_WithAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true, "")
 
 	assertHasRoute(t, router, http.MethodGet, "/plugin")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/configuration")

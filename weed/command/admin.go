@@ -48,6 +48,7 @@ type AdminOptions struct {
 	filerGroup       *string
 	adminUser        *string
 	adminPassword    *string
+	adminApiKey      *string
 	readOnlyUser     *string
 	readOnlyPassword *string
 	// nil for callers other than runAdmin (e.g. `weed mini`)
@@ -86,6 +87,7 @@ func init() {
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
+	a.adminApiKey = cmdAdmin.Flag.String("adminApiKey", "", "API key for bearer-token auth on /api endpoints (enables server-to-server access without session login)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.allowInsecureBind = cmdAdmin.Flag.Bool("allowInsecureBind", false, "INSECURE: allow binding a non-loopback ip without adminPassword or mTLS, exposing the admin API unauthenticated on the network")
@@ -138,8 +140,12 @@ var cmdAdmin = &Command{
     - IMPORTANT: When read-only credentials are configured, adminPassword MUST also be set
     - This ensures an admin account exists to manage and authorize read-only access
     - Sessions are secured with auto-generated session keys
+    - API token auth: set adminApiKey to allow Bearer token access to /api endpoints
+      without a session login. Clients send "Authorization: Bearer <token>".
+      Enables server-to-server integration (e.g. CloudStack object-store plugin).
     - Credentials can also be set via security.toml [admin] section or environment variables:
-      WEED_ADMIN_USER, WEED_ADMIN_PASSWORD, WEED_ADMIN_READONLY_USER, WEED_ADMIN_READONLY_PASSWORD
+      WEED_ADMIN_USER, WEED_ADMIN_PASSWORD, WEED_ADMIN_READONLY_USER, WEED_ADMIN_READONLY_PASSWORD,
+      WEED_ADMIN_API_KEY
     - Precedence: CLI flag > env var / security.toml > default value
 
   Network Binding:
@@ -239,6 +245,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	// CLI flags take precedence over security.toml / WEED_* env vars.
 	applyViperFallback(cmd, a.adminUser, "adminUser", "admin.user")
 	applyViperFallback(cmd, a.adminPassword, "adminPassword", "admin.password")
+	applyViperFallback(cmd, a.adminApiKey, "adminApiKey", "admin.api_key")
 	applyViperFallback(cmd, a.readOnlyUser, "readOnlyUser", "admin.readonly.user")
 	applyViperFallback(cmd, a.readOnlyPassword, "readOnlyPassword", "admin.readonly.password")
 
@@ -476,7 +483,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Create handlers and setup routes
 	authRequired := *options.adminPassword != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer, store)
-	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
+	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI, *options.adminApiKey)
 
 	// Server configuration
 	addr := util.JoinHostPort(*options.ip, *options.port)

@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -13,6 +14,39 @@ const sessionName = "admin-session"
 // SessionName returns the cookie session name used by the admin UI.
 func SessionName() string {
 	return sessionName
+}
+
+// bearerTokenFromRequest extracts a bearer token from the Authorization header.
+// Returns ("", false) when no bearer token is present.
+func bearerTokenFromRequest(r *http.Request) (string, bool) {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return "", false
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return "", false
+	}
+	token := strings.TrimSpace(auth[len(prefix):])
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+// validateBearerToken checks the Authorization header for a valid bearer token.
+// When apiKey is empty, token auth is disabled and the function returns false
+// (caller should fall back to session validation). When a token is present and
+// matches apiKey, the request is authenticated as admin with write access.
+func validateBearerToken(apiKey string, r *http.Request) bool {
+	if apiKey == "" {
+		return false
+	}
+	token, ok := bearerTokenFromRequest(r)
+	if !ok {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) == 1
 }
 
 type sessionValidationErrorKind int
@@ -82,9 +116,18 @@ func RequireAuth(store sessions.Store) mux.MiddlewareFunc {
 
 // RequireAuthAPI checks if user is authenticated for API endpoints.
 // Returns JSON error instead of redirecting to login page.
-func RequireAuthAPI(store sessions.Store) mux.MiddlewareFunc {
+// When apiKey is non-empty, a matching Bearer token in the Authorization header
+// authenticates the request as admin with write access, bypassing session auth.
+func RequireAuthAPI(store sessions.Store, apiKey string) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Bearer token auth: alternative to session-based auth for API clients.
+			if validateBearerToken(apiKey, r) {
+				ctx := WithAuthContext(r.Context(), "api-token", "admin", "")
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
 			username, role, csrfToken, err := validateSession(store, w, r)
 			if err != nil {
 				if verr, ok := err.(*sessionValidationError); ok && verr.kind == sessionValidationErrorKindUnauthenticated {

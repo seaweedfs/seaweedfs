@@ -59,7 +59,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 }
 
 // SetupRoutes configures all the routes for the admin interface
-func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, enableUI bool) {
+func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, enableUI bool, apiKey string) {
 	// Health check (no auth required)
 	r.HandleFunc("/health", h.HealthCheck).Methods(http.MethodGet)
 
@@ -87,7 +87,7 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 		h.registerUIRoutes(protected)
 
 		api := r.PathPrefix("/api").Subrouter()
-		api.Use(dash.RequireAuthAPI(h.sessionStore))
+		api.Use(dash.RequireAuthAPI(h.sessionStore, apiKey))
 		h.registerAPIRoutes(api, true)
 		return
 	}
