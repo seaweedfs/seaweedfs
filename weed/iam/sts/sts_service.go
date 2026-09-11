@@ -811,8 +811,12 @@ func (s *STSService) validateSessionDurationSeconds(durationSeconds *int64) erro
 	if durationSeconds == nil {
 		return nil
 	}
-	if *durationSeconds < 900 || *durationSeconds > 43200 { // 15min to 12 hours
-		return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
+	maxSec := int64(DefaultMaxSessionLength)
+	if s.Config != nil && s.Config.MaxSessionLength.Duration > 0 {
+		maxSec = int64(s.Config.MaxSessionLength.Duration / time.Second)
+	}
+	if *durationSeconds < 900 || *durationSeconds > maxSec {
+		return fmt.Errorf("DurationSeconds must be between 900 and %d seconds", maxSec)
 	}
 	return nil
 }
