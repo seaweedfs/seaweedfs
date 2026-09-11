@@ -548,7 +548,7 @@ func resolveChunkManifestSerialForBenchmark(ctx context.Context, lookupFileIdFn 
 			continue
 		}
 
-		resolvedChunks, resolveErr := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk, nil)
+		resolvedChunks, resolveErr := ResolveOneChunkManifest(ctx, lookupFileIdFn, chunk, nil, nil)
 		if resolveErr != nil {
 			return dataChunks, nil, resolveErr
 		}

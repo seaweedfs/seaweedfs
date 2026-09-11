@@ -20,6 +20,9 @@ type ChunkGroup struct {
 	concurrentReaders int
 	// cacheInvalidator lets manifest resolution drop stale volume locations, as ReaderCache does for chunk reads
 	cacheInvalidator CacheInvalidator
+	// manifestCache caches resolved chunk manifest bytes across repeated opens
+	// for the same mount. nil for non-mount callers (no caching).
+	manifestCache *ChunkManifestCache
 }
 
 // NewChunkGroup creates a ChunkGroup with configurable concurrency.
@@ -28,7 +31,7 @@ type ChunkGroup struct {
 // - Read-ahead prefetch parallelism
 // - Number of concurrent section reads for large files
 // If concurrentReaders <= 0, defaults to 16.
-func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int, cacheInvalidator CacheInvalidator, budgets ...*ReaderCacheBudget) (*ChunkGroup, error) {
+func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int, cacheInvalidator CacheInvalidator, manifestCache *ChunkManifestCache, budgets ...*ReaderCacheBudget) (*ChunkGroup, error) {
 	if concurrentReaders <= 0 {
 		concurrentReaders = 16
 	}
@@ -46,6 +49,7 @@ func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_
 		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn, cacheInvalidator, budgets...),
 		concurrentReaders: concurrentReaders,
 		cacheInvalidator:  cacheInvalidator,
+		manifestCache:     manifestCache,
 	}
 
 	err := group.SetChunks(chunks)
@@ -230,7 +234,7 @@ func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
 			continue
 		}
 
-		resolvedChunks, err := resolveOneChunkManifest(context.Background(), group.lookupFn, chunk, group.cacheInvalidator, mountChunkManifestCache)
+		resolvedChunks, err := ResolveOneChunkManifest(context.Background(), group.lookupFn, chunk, group.cacheInvalidator, group.manifestCache)
 		if err != nil {
 			return err
 		}

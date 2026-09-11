@@ -103,7 +103,7 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 }
 
 func (r *chunkManifestResolver) executeJob(job chunkManifestResolveJob) {
-	job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator)
+	job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator, nil)
 	if job.result.err != nil && r.parentCtx.Err() == nil {
 		if job.batchCtx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
 			job.result.internalCancel = true
@@ -287,11 +287,7 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 	return
 }
 
-func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
-	return resolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator, nil)
-}
-
-func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator, cache *chunkManifestCache) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator, cache *ChunkManifestCache) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	if !chunk.IsChunkManifest {
 		return
 	}
@@ -304,22 +300,38 @@ func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 		cipherKey:    string(chunk.CipherKey),
 		isCompressed: chunk.IsCompressed,
 	}
-	var manifestBytes []byte
-	cacheHit := false
-	if cache != nil {
-		manifestBytes, cacheHit = cache.get(key)
-	}
 
-	if !cacheHit {
-		// IsChunkManifest
+	fetch := func() ([]byte, error) {
 		bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
 		bytesBuffer.Reset()
 		defer bytesBufferPool.Put(bytesBuffer)
-		err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, key.fileID, chunk.CipherKey, chunk.IsCompressed, invalidator)
-		if err != nil {
+		if err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, key.fileID, chunk.CipherKey, chunk.IsCompressed, invalidator); err != nil {
 			return nil, fmt.Errorf("fail to read manifest %s: %w", key.fileID, err)
 		}
-		manifestBytes = bytesBuffer.Bytes()
+		// Copy before the buffer returns to the pool so concurrent callers
+		// cannot overwrite the slice before it is cached.
+		data := append([]byte(nil), bytesBuffer.Bytes()...)
+		// Validate before returning so fetchOrLoad only caches well-formed
+		// manifests. A malformed manifest must not poison the cache.
+		if err := proto.Unmarshal(data, &filer_pb.FileChunkManifest{}); err != nil {
+			return nil, fmt.Errorf("fail to unmarshal manifest %s: %w", key.fileID, err)
+		}
+		return data, nil
+	}
+
+	var manifestBytes []byte
+	if cache != nil {
+		data, err := cache.fetchOrLoad(key, fetch)
+		if err != nil {
+			return nil, err
+		}
+		manifestBytes = data
+	} else {
+		data, err := fetch()
+		if err != nil {
+			return nil, err
+		}
+		manifestBytes = data
 	}
 
 	m := &filer_pb.FileChunkManifest{}
@@ -329,14 +341,9 @@ func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 
 	// recursive
 	filer_pb.AfterEntryDeserialization(m.Chunks)
-	if cache != nil && !cacheHit {
-		cache.put(key, manifestBytes)
-	}
 	return m.Chunks, nil
 }
 
-// Manifest caching is handled by resolveOneChunkManifest for Mount opens.
-// Other callers keep the uncached fetch behavior.
 func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, invalidator CacheInvalidator) error {
 	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {

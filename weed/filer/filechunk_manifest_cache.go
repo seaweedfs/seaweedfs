@@ -2,12 +2,15 @@ package filer
 
 import (
 	"container/list"
+	"fmt"
 	"sync"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const (
-	maxMountChunkManifestCacheEntries = 256
-	maxMountChunkManifestCacheBytes   = 64 << 20
+	MaxMountChunkManifestCacheEntries = 256
+	MaxMountChunkManifestCacheBytes   = 64 << 20
 )
 
 type chunkManifestCacheKey struct {
@@ -16,22 +19,32 @@ type chunkManifestCacheKey struct {
 	isCompressed bool
 }
 
+func (k chunkManifestCacheKey) flightKey() string {
+	return fmt.Sprintf("%s\x00%s\x00%t", k.fileID, k.cipherKey, k.isCompressed)
+}
+
 type chunkManifestCacheEntry struct {
 	key  chunkManifestCacheKey
 	data []byte
 }
 
-type chunkManifestCache struct {
+// ChunkManifestCache is a bounded, thread-safe LRU cache for chunk manifest
+// bytes. Each mount (WFS) owns its own instance so manifests fetched through
+// one filer backend are never served to another. Concurrent cold misses for
+// the same key are coalesced via singleflight so only one fetch runs.
+type ChunkManifestCache struct {
 	mu         sync.Mutex
 	maxEntries int
 	maxBytes   int64
 	bytes      int64
 	entries    map[chunkManifestCacheKey]*list.Element
 	lru        *list.List
+	flight     singleflight.Group
 }
 
-func newChunkManifestCache(maxEntries int, maxBytes int64) *chunkManifestCache {
-	return &chunkManifestCache{
+// NewChunkManifestCache creates a bounded LRU cache for chunk manifest bytes.
+func NewChunkManifestCache(maxEntries int, maxBytes int64) *ChunkManifestCache {
+	return &ChunkManifestCache{
 		maxEntries: maxEntries,
 		maxBytes:   maxBytes,
 		entries:    make(map[chunkManifestCacheKey]*list.Element),
@@ -39,20 +52,22 @@ func newChunkManifestCache(maxEntries int, maxBytes int64) *chunkManifestCache {
 	}
 }
 
-func (c *chunkManifestCache) get(key chunkManifestCacheKey) ([]byte, bool) {
+func (c *ChunkManifestCache) get(key chunkManifestCacheKey) ([]byte, bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	element, found := c.entries[key]
 	if !found {
+		c.mu.Unlock()
 		return nil, false
 	}
 	c.lru.MoveToFront(element)
-	entry := element.Value.(*chunkManifestCacheEntry)
-	return append([]byte(nil), entry.data...), true
+	// entry.data is immutable after insertion; copy outside the lock so a
+	// large copy does not block concurrent hits, inserts, and evictions.
+	data := element.Value.(*chunkManifestCacheEntry).data
+	c.mu.Unlock()
+	return append([]byte(nil), data...), true
 }
 
-func (c *chunkManifestCache) put(key chunkManifestCacheKey, data []byte) {
+func (c *ChunkManifestCache) put(key chunkManifestCacheKey, data []byte) {
 	if c.maxEntries <= 0 || int64(len(data)) > c.maxBytes {
 		return
 	}
@@ -78,7 +93,33 @@ func (c *chunkManifestCache) put(key chunkManifestCacheKey, data []byte) {
 	}
 }
 
-func (c *chunkManifestCache) clear() {
+// fetchOrLoad returns cached manifest bytes for key, or invokes fetch and
+// caches the result. Concurrent calls for the same key are coalesced via
+// singleflight so only one fetch runs during a cold burst.
+func (c *ChunkManifestCache) fetchOrLoad(key chunkManifestCacheKey, fetch func() ([]byte, error)) ([]byte, error) {
+	if data, ok := c.get(key); ok {
+		return data, nil
+	}
+	val, err, _ := c.flight.Do(key.flightKey(), func() (interface{}, error) {
+		// Re-check under the flight: another flight may have just populated
+		// the cache for this key.
+		if data, ok := c.get(key); ok {
+			return data, nil
+		}
+		data, err := fetch()
+		if err != nil {
+			return nil, err
+		}
+		c.put(key, data)
+		return data, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return val.([]byte), nil
+}
+
+func (c *ChunkManifestCache) clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = make(map[chunkManifestCacheKey]*list.Element)
@@ -86,7 +127,7 @@ func (c *chunkManifestCache) clear() {
 	c.bytes = 0
 }
 
-func (c *chunkManifestCache) removeElement(element *list.Element) {
+func (c *ChunkManifestCache) removeElement(element *list.Element) {
 	if element == nil {
 		return
 	}
@@ -95,8 +136,3 @@ func (c *chunkManifestCache) removeElement(element *list.Element) {
 	delete(c.entries, entry.key)
 	c.bytes -= int64(len(entry.data))
 }
-
-var mountChunkManifestCache = newChunkManifestCache(
-	maxMountChunkManifestCacheEntries,
-	maxMountChunkManifestCacheBytes,
-)
