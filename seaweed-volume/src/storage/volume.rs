@@ -11,6 +11,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -457,6 +458,109 @@ impl NeedleStreamSource {
             }
             NeedleStreamSource::Remote(remote) => remote.read_exact_at(buf, offset),
         }
+    }
+}
+
+/// A `.dat` scan that runs with the store lock released, built by
+/// `Volume::dat_scan_plan` while the caller holds a store guard.
+///
+/// The start offset, the handle and the end bound are captured together
+/// while the guard excludes every writer. The handle pins the inode the
+/// offset was resolved against: a vacuum commit replaces `.dat` by rename,
+/// and unmount or destroy close and unlink it, none of which rewrites the
+/// pinned bytes. `.dat` is otherwise append-only and a failed append
+/// truncates only its own bytes, so `[from, end)` holds complete records
+/// that nothing rewrites while the scan runs. The fields are private so a
+/// plan can only come from `dat_scan_plan`.
+pub(crate) struct DatScanPlan {
+    source: NeedleStreamSource,
+    version: Version,
+    from: u64,
+    end: u64,
+}
+
+/// One record visited by `DatScanPlan::scan`: the raw on-disk bytes and the
+/// parsed append timestamp.
+pub(crate) struct RawNeedle<'a> {
+    pub header: &'a [u8],
+    pub body: &'a [u8],
+    pub append_at_ns: u64,
+}
+
+impl DatScanPlan {
+    /// Visit the records in `[from, end)` in file order, the way Go's
+    /// `ScanVolumeFileFrom` feeds a `VolumeFileScanner`: only the record being
+    /// visited is in memory. Reads are positional and never touch the
+    /// `Volume`. The pass ends `Ok` at the end of the data, at a record that
+    /// does not fit before `end`, at a corrupt header, or when `visit` breaks.
+    pub(crate) fn scan(
+        &self,
+        mut visit: impl FnMut(RawNeedle<'_>) -> ControlFlow<()>,
+    ) -> Result<(), VolumeError> {
+        let mut offset = self.from;
+        while offset + NEEDLE_HEADER_SIZE as u64 <= self.end {
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            match self.source.read_exact_at(&mut header, offset) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+
+            let (_cookie, id, size) = Needle::parse_header(&header);
+            if size.0 == 0 && id.is_empty() {
+                break;
+            }
+            // A negative size is a corrupt header: body_length would size the
+            // buffer from a negative length or walk the scan from a wrong
+            // offset. Go's scanners stop here by returning io.EOF.
+            if size.0 < 0 {
+                break;
+            }
+
+            // Nothing past `end` was a complete record when the plan was
+            // taken. The size is checked against the bytes left before the
+            // body length is computed, whose padding arithmetic is i32 and
+            // overflows on a corrupt size near i32::MAX, and the whole record
+            // after it. Both run before allocating, so a corrupt size cannot
+            // size the buffer.
+            if size.0 as u64 > self.end - offset - NEEDLE_HEADER_SIZE as u64 {
+                break;
+            }
+            let body_length = needle::needle_body_length(size, self.version) as u64;
+            let total_size = NEEDLE_HEADER_SIZE as u64 + body_length;
+            if offset + total_size > self.end {
+                break;
+            }
+
+            // Match Go's ScanVolumeFileFrom: visit ALL needles including deleted ones.
+            // This is critical for incremental copy where tombstones must be propagated.
+            let mut record = vec![0u8; total_size as usize];
+            record[..NEEDLE_HEADER_SIZE].copy_from_slice(&header);
+            match self.source.read_exact_at(
+                &mut record[NEEDLE_HEADER_SIZE..],
+                offset + NEEDLE_HEADER_SIZE as u64,
+            ) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+
+            let append_at_ns = {
+                let mut n = Needle::default();
+                let _ = n.read_bytes(&record, offset as i64, size, self.version);
+                n.append_at_ns
+            };
+            let needle = RawNeedle {
+                header: &record[..NEEDLE_HEADER_SIZE],
+                body: &record[NEEDLE_HEADER_SIZE..],
+                append_at_ns,
+            };
+            if visit(needle).is_break() {
+                break;
+            }
+            offset += total_size;
+        }
+        Ok(())
     }
 }
 
@@ -2746,58 +2850,34 @@ impl Volume {
         Ok((count, broken))
     }
 
-    /// Scan raw needle entries from the .dat file starting at `from_offset`.
-    /// Returns (needle_header_bytes, needle_body_bytes, append_at_ns) for each needle.
-    /// Used by VolumeTailSender to stream raw bytes.
-    pub fn scan_raw_needles_from(
-        &self,
-        from_offset: u64,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>, u64)>, VolumeError> {
-        let version = self.version();
-        let dat_size = self.current_dat_file_size()?;
-        let mut entries = Vec::new();
-        let mut offset = from_offset;
-
-        while offset < dat_size {
-            // Read needle header (16 bytes)
-            let mut header = [0u8; NEEDLE_HEADER_SIZE];
-            match self.read_exact_at_backend(&mut header, offset) {
-                Ok(()) => {}
-                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e.into()),
-            }
-
-            let (_cookie, _id, size) = Needle::parse_header(&header);
-            if size.0 == 0 && _id.is_empty() {
-                break;
-            }
-
-            let body_length = needle::needle_body_length(size, version);
-            let total_size = NEEDLE_HEADER_SIZE as u64 + body_length as u64;
-
-            // Match Go's ScanVolumeFileFrom: visit ALL needles including deleted ones.
-            // This is critical for incremental copy where tombstones must be propagated.
-
-            // Read body bytes
-            let mut body = vec![0u8; body_length as usize];
-            match self.read_exact_at_backend(&mut body, offset + NEEDLE_HEADER_SIZE as u64) {
-                Ok(()) => {}
-                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e.into()),
-            }
-
-            // Parse the needle to get append_at_ns
-            let mut full = vec![0u8; total_size as usize];
-            full[..NEEDLE_HEADER_SIZE].copy_from_slice(&header);
-            full[NEEDLE_HEADER_SIZE..].copy_from_slice(&body);
-            let mut n = Needle::default();
-            let _ = n.read_bytes(&full, offset as i64, size, version);
-
-            entries.push((header.to_vec(), body, n.append_at_ns));
-            offset += total_size;
-        }
-
-        Ok(entries)
+    /// Capture a `.dat` scan from `from_offset` that the caller can run after
+    /// dropping its store guard. See `DatScanPlan` for why the offset, the
+    /// handle and the end bound must come from the same guard.
+    pub(crate) fn dat_scan_plan(&self, from_offset: u64) -> Result<DatScanPlan, VolumeError> {
+        let source = if self.dat_file.is_some() {
+            // A fresh open, not `try_clone`: a duplicated handle shares the
+            // file position, and on Windows `read_exact_at` goes through
+            // `seek_read`, which moves it under a concurrent append. Opened
+            // while the caller's guard excludes a vacuum swap, the path names
+            // the inode `dat_file` holds.
+            NeedleStreamSource::Local(open_volume_file(
+                OpenOptions::new().read(true),
+                self.file_name(".dat"),
+            )?)
+        } else if let Some(remote) = self.remote_dat_file() {
+            NeedleStreamSource::Remote(remote)
+        } else {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "dat file not open",
+            )));
+        };
+        Ok(DatScanPlan {
+            source,
+            version: self.version(),
+            from: from_offset,
+            end: self.current_dat_file_size()?,
+        })
     }
 
     /// Insert or update a needle index entry (for low-level blob writes).
@@ -4635,6 +4715,34 @@ mod tests {
         .unwrap()
     }
 
+    fn write_test_needle(v: &mut Volume, id: u64, data: &[u8]) -> u64 {
+        let mut n = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(0x12345678),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            flags: 0,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        n.append_at_ns
+    }
+
+    /// Run a plan to completion, keeping owned copies of every record.
+    fn scan_all(plan: &DatScanPlan) -> Vec<(Vec<u8>, Vec<u8>, u64)> {
+        let mut records = Vec::new();
+        plan.scan(|needle| {
+            records.push((
+                needle.header.to_vec(),
+                needle.body.to_vec(),
+                needle.append_at_ns,
+            ));
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+        records
+    }
+
     #[test]
     fn test_data_file_access_control_blocks_writer_until_reader_releases() {
         let control = Arc::new(DataFileAccessControl::default());
@@ -4679,6 +4787,357 @@ mod tests {
         // .dat and .idx files should exist
         assert!(Path::new(&v.file_name(".dat")).exists());
         assert!(Path::new(&v.file_name(".idx")).exists());
+    }
+
+    #[test]
+    fn binary_search_reports_is_last_when_caller_is_caught_up() {
+        // The tail sender relies on this flag to answer "nothing new" with a
+        // heartbeat instead of re-scanning the volume. Go does the same
+        // (volume_grpc_tail.go, `if isLastOne`). If this ever stops reporting
+        // true for an up-to-date caller, volume_tail_sender silently degrades
+        // into re-reading the whole volume every 2s.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut newest_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'x'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            newest_ns = n.append_at_ns;
+        }
+        assert!(newest_ns > 0, "needles must carry an append timestamp");
+
+        // Caught up: asking from the newest timestamp has nothing newer.
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(
+            is_last,
+            "a caller at the newest append_at_ns must be reported as caught up"
+        );
+
+        // And from beyond the newest, likewise.
+        let (_offset, is_last_future) = v
+            .binary_search_by_append_at_ns(newest_ns + 1_000_000_000)
+            .unwrap();
+        assert!(
+            is_last_future,
+            "a caller ahead of the newest needle must be reported as caught up"
+        );
+    }
+
+    #[test]
+    fn binary_search_does_not_report_is_last_when_data_is_newer() {
+        // The complement: if the caller is behind, is_last must be false so the
+        // sender still scans and ships the new needles. A fix that always
+        // reported "caught up" would make tailing silently lose data, which is
+        // worse than the memory bug it would be fixing.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut first_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'y'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            if id == 1 {
+                first_ns = n.append_at_ns;
+            }
+        }
+
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(first_ns).unwrap();
+        assert!(
+            !is_last,
+            "a caller behind the newest needle must NOT be reported as caught up"
+        );
+    }
+
+    #[test]
+    fn binary_search_does_not_report_is_last_when_only_a_delete_is_newer() {
+        // A delete is data the tail must ship too. Its .idx row carries the
+        // tombstone's real .dat offset, so a caller caught up before the
+        // delete must be sent to scan from the tombstone, not handed a
+        // heartbeat that would silently drop the deletion on the destination.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut newest_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'z'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            newest_ns = n.append_at_ns;
+        }
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(is_last, "precondition: the caller starts caught up");
+
+        v.delete_needle(&mut Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x12345678),
+            ..Needle::default()
+        })
+        .unwrap();
+
+        let (offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(
+            !is_last,
+            "a caller older than a trailing delete must NOT be reported as caught up"
+        );
+
+        // Scan and filter exactly as volume_tail_sender does: the tombstone,
+        // and only the tombstone, is newer than the caller.
+        let shipped: Vec<u64> =
+            scan_all(&v.dat_scan_plan(offset.to_actual_offset() as u64).unwrap())
+                .into_iter()
+                .map(|(_, _, append_at_ns)| append_at_ns)
+                .filter(|&append_at_ns| append_at_ns > newest_ns)
+                .collect();
+        assert_eq!(shipped.len(), 1, "the tail must ship the tombstone");
+    }
+
+    #[test]
+    fn binary_search_on_compacted_volume_still_reports_a_later_write() {
+        // Compaction rewrites .idx in needle-id order (Go does the same), so
+        // append_at_ns is no longer monotonic by row and the search can call
+        // a caller caught up while an earlier row is newer. That caller's
+        // since_ns is the last row's timestamp (find_last_append_at_ns), so
+        // such rows were already in the files it copied. What must hold is
+        // that a write made after that point still reaches the scan: it is
+        // appended as the final row, and the search cannot step past it.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let write = |v: &mut Volume, id: u64| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'c'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            n.append_at_ns
+        };
+        write(&mut v, 1);
+        let key2_ns = write(&mut v, 2);
+        write(&mut v, 1); // overwrite: key 1 is now newer than key 2
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(key2_ns).unwrap();
+        assert!(
+            is_last,
+            "precondition: compaction ordered .idx by key, so key 2 is the final row"
+        );
+
+        let key3_ns = write(&mut v, 3);
+        let (offset, is_last) = v.binary_search_by_append_at_ns(key2_ns).unwrap();
+        assert!(
+            !is_last,
+            "a write after compaction is the final row and must not be hidden"
+        );
+        let shipped: Vec<u64> =
+            scan_all(&v.dat_scan_plan(offset.to_actual_offset() as u64).unwrap())
+                .into_iter()
+                .map(|(_, _, append_at_ns)| append_at_ns)
+                .filter(|&append_at_ns| append_at_ns > key2_ns)
+                .collect();
+        assert!(
+            shipped.contains(&key3_ns),
+            "the tail must ship the write made after compaction"
+        );
+    }
+
+    #[test]
+    fn dat_scan_plan_visits_needles_and_tombstones_in_file_order() {
+        // The tail ships exactly what the scan visits, so the scan must cover
+        // the file record by record: the on-disk bytes, in file order,
+        // tombstones included.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        let written: Vec<u64> = (1..=3u64)
+            .map(|id| write_test_needle(&mut v, id, b"scan"))
+            .collect();
+        v.delete_needle(&mut Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x12345678),
+            ..Needle::default()
+        })
+        .unwrap();
+
+        let sb_size = v.super_block.block_size() as u64;
+        let records = scan_all(&v.dat_scan_plan(sb_size).unwrap());
+        let dat = std::fs::read(v.file_name(".dat")).unwrap();
+
+        assert_eq!(records.len(), 4, "three writes and one tombstone");
+        let mut offset = sb_size as usize;
+        for (header, body, _) in &records {
+            assert_eq!(&dat[offset..offset + header.len()], header.as_slice());
+            offset += header.len();
+            assert_eq!(&dat[offset..offset + body.len()], body.as_slice());
+            offset += body.len();
+        }
+        assert_eq!(offset, dat.len(), "the scan must reach the end of the file");
+
+        let ids: Vec<NeedleId> = records
+            .iter()
+            .map(|(header, _, _)| Needle::parse_header(header).1)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![NeedleId(1), NeedleId(2), NeedleId(3), NeedleId(2)]
+        );
+        let stamps: Vec<u64> = records.iter().map(|r| r.2).collect();
+        assert_eq!(&stamps[..3], written.as_slice());
+        assert!(stamps[3] > stamps[2], "the tombstone is the newest record");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dat_scan_plan_outlives_a_vacuum_commit() {
+        // The tail sender drops the store guard before scanning, so a vacuum
+        // commit can land mid-scan. The commit renames .cpd over .dat; a plan
+        // taken before it must keep reading the file its offset was resolved
+        // against, not the compacted one.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        write_test_needle(&mut v, 1, b"first");
+        write_test_needle(&mut v, 2, b"second");
+        write_test_needle(&mut v, 1, b"first, overwritten");
+
+        let sb_size = v.super_block.block_size() as u64;
+        let before = scan_all(&v.dat_scan_plan(sb_size).unwrap());
+        let plan = v.dat_scan_plan(sb_size).unwrap();
+        let old_len = std::fs::metadata(v.file_name(".dat")).unwrap().len();
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+        let new_len = std::fs::metadata(v.file_name(".dat")).unwrap().len();
+        assert!(
+            new_len < old_len,
+            "precondition: the commit swapped in a smaller .dat"
+        );
+
+        assert_eq!(scan_all(&plan), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dat_scan_plan_outlives_volume_destroy() {
+        // Unmount or delete can land mid-scan too. The plan holds a handle,
+        // not a path, so it finishes reading what was there.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        write_test_needle(&mut v, 1, b"going");
+        write_test_needle(&mut v, 2, b"gone");
+
+        let sb_size = v.super_block.block_size() as u64;
+        let before = scan_all(&v.dat_scan_plan(sb_size).unwrap());
+        let plan = v.dat_scan_plan(sb_size).unwrap();
+        let dat_path = v.file_name(".dat");
+
+        v.destroy(false, false).unwrap();
+        assert!(
+            !Path::new(&dat_path).exists(),
+            "precondition: destroy removed .dat"
+        );
+
+        assert_eq!(scan_all(&plan), before);
+    }
+
+    #[test]
+    fn dat_scan_plan_stops_at_the_snapshot_end() {
+        // The end bound is read under the guard, while no append can be in
+        // flight. A record appended after the plan belongs to the next pass.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        let first_ns = write_test_needle(&mut v, 1, b"before");
+
+        let plan = v.dat_scan_plan(v.super_block.block_size() as u64).unwrap();
+        write_test_needle(&mut v, 2, b"after");
+
+        let stamps: Vec<u64> = scan_all(&plan).into_iter().map(|r| r.2).collect();
+        assert_eq!(stamps, vec![first_ns]);
+    }
+
+    #[test]
+    fn dat_scan_plan_stops_when_the_visitor_breaks() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        for id in 1..=3u64 {
+            write_test_needle(&mut v, id, b"brk");
+        }
+
+        let mut visited = 0;
+        v.dat_scan_plan(v.super_block.block_size() as u64)
+            .unwrap()
+            .scan(|_| {
+                visited += 1;
+                ControlFlow::Break(())
+            })
+            .unwrap();
+        assert_eq!(visited, 1);
+    }
+
+    #[test]
+    fn dat_scan_plan_ends_the_pass_at_a_corrupt_header() {
+        // A negative size is a corrupt header: sizing a buffer from it
+        // overflows, and a small one walks the scan from a wrong offset. A
+        // size running past the end bound cannot be a complete record either,
+        // and one near i32::MAX overflows the padding arithmetic. Both end
+        // the pass after the records before them, without reading or
+        // allocating the bogus body.
+        for bad_size in [-1000, i32::MAX] {
+            let tmp = TempDir::new().unwrap();
+            let dir = tmp.path().to_str().unwrap();
+            let mut v = make_test_volume(dir);
+            write_test_needle(&mut v, 1, b"good");
+
+            let sb_size = v.super_block.block_size() as u64;
+            let dat_path = v.file_name(".dat");
+            let start = sb_size as usize;
+            let mut bad =
+                std::fs::read(&dat_path).unwrap()[start..start + NEEDLE_HEADER_SIZE].to_vec();
+            Size(bad_size).to_bytes(&mut bad[COOKIE_SIZE + NEEDLE_ID_SIZE..NEEDLE_HEADER_SIZE]);
+            // Bytes after the header, so the size check stops the walk, not EOF.
+            bad.extend_from_slice(&[0u8; 64]);
+            OpenOptions::new()
+                .append(true)
+                .open(&dat_path)
+                .unwrap()
+                .write_all(&bad)
+                .unwrap();
+
+            let records = scan_all(&v.dat_scan_plan(sb_size).unwrap());
+            assert_eq!(records.len(), 1, "size {}: only the good record", bad_size);
+        }
     }
 
     #[test]
