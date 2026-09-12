@@ -813,7 +813,7 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 		conditionEvaluator, err := GetConditionEvaluator(operator)
 		if err != nil {
 			glog.Warningf("Unsupported condition operator: %s", operator)
-			continue
+			return false
 		}
 
 		for key, value := range conditionMap {
@@ -848,13 +848,13 @@ func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues m
 		conditionEvaluator, err := GetConditionEvaluator(operator)
 		if err != nil {
 			glog.Warningf("Unsupported condition operator: %s", operator)
-			continue
+			return false
 		}
 
 		conditionMapTyped, ok := conditionMap.(map[string]interface{})
 		if !ok {
 			glog.Warningf("Invalid condition format for operator: %s", operator)
-			continue
+			return false
 		}
 
 		for key, value := range conditionMapTyped {
