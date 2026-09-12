@@ -798,7 +798,7 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 		conditionEvaluator, err := GetConditionEvaluator(operator)
 		if err != nil {
 			glog.Warningf("Unsupported condition operator: %s", operator)
-			continue
+			return false
 		}
 
 		for key, value := range conditionMap {
