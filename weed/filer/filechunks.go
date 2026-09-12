@@ -193,6 +193,19 @@ func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFun
 
 }
 
+// viewFromChunksOrErr is ViewFromChunks with the manifest resolve error
+// propagated. Ignoring it yields empty chunk views and the caller zero-fills
+// the whole requested range (https://github.com/seaweedfs/seaweedfs/issues/11286).
+func viewFromChunksOrErr(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (*IntervalList[*ChunkView], error) {
+
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	if err != nil {
+		return nil, err
+	}
+
+	return ViewFromVisibleIntervals(visibles, offset, size), nil
+}
+
 func ViewFromVisibleIntervals(visibles *IntervalList[*VisibleInterval], offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
 
 	stop := offset + size

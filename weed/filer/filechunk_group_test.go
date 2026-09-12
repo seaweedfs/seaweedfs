@@ -196,7 +196,7 @@ func TestChunkGroup_SearchChunks_Cancellation(t *testing.T) {
 		whence := uint32(3) // SEEK_DATA
 
 		// Call SearchChunks with cancelled context
-		found, resultOffset := group.SearchChunks(ctx, offset, fileSize, whence)
+		found, resultOffset, _ := group.SearchChunks(ctx, offset, fileSize, whence)
 
 		// For an empty ChunkGroup, SearchChunks should complete quickly
 		// The main goal is to verify the context parameter is properly threaded through
@@ -225,7 +225,7 @@ func TestChunkGroup_SearchChunks_Cancellation(t *testing.T) {
 		whence := uint32(3) // SEEK_DATA
 
 		// Call SearchChunks - should complete quickly for empty group
-		found, resultOffset := group.SearchChunks(ctx, offset, fileSize, whence)
+		found, resultOffset, _ := group.SearchChunks(ctx, offset, fileSize, whence)
 
 		// Verify reasonable behavior
 		assert.False(t, found, "should not find data in empty chunk group")
@@ -426,9 +426,48 @@ func TestChunkGroup_SearchChunks(t *testing.T) {
 				return
 			}
 
-			gotFound, gotOffset := group.SearchChunks(context.Background(), tt.args.offset, tt.args.fileSize, tt.args.whence)
+			gotFound, gotOffset, err := group.SearchChunks(context.Background(), tt.args.offset, tt.args.fileSize, tt.args.whence)
+			assert.NoError(t, err)
 			assert.Equalf(t, tt.wantFound, gotFound, "SearchChunks(%v, %v, %v) found", tt.args.offset, tt.args.fileSize, tt.args.whence)
 			assert.Equalf(t, tt.wantOffset, gotOffset, "SearchChunks(%v, %v, %v) offset", tt.args.offset, tt.args.fileSize, tt.args.whence)
 		})
 	}
+}
+
+// Regression test for silent zero-fill reads when chunk manifest resolution
+// fails: ReadDataAt must return an error instead of treating the unresolved
+// sections as sparse holes (https://github.com/seaweedfs/seaweedfs/issues/11286).
+func TestChunkGroup_ReadDataAt_ManifestResolveFailure(t *testing.T) {
+	lookupErr := errors.New("lookup failed")
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return nil, lookupErr
+	}
+
+	chunks := []*filer_pb.FileChunk{
+		{FileId: "1,1679011dc64abd40", IsChunkManifest: true, Offset: 0, Size: 1 << 20},
+	}
+
+	group, err := NewChunkGroup(lookupFn, nil, chunks, 1, nil)
+	assert.Error(t, err, "manifest resolution should fail")
+
+	// Reads must fail with the resolve error, not silently return zeros.
+	buff := make([]byte, 16)
+	n, _, readErr := group.ReadDataAt(context.Background(), 1<<20, buff, 0)
+	assert.ErrorIs(t, readErr, lookupErr)
+	assert.Equal(t, 0, n)
+
+	// lseek (SEEK_DATA/SEEK_HOLE) must fail too, not misreport the whole
+	// file as sparse.
+	for _, whence := range []uint32{SEEK_DATA, 4 /* SEEK_HOLE */} {
+		found, _, seekErr := group.SearchChunks(context.Background(), 0, 1<<20, whence)
+		assert.ErrorIs(t, seekErr, lookupErr, "whence %d", whence)
+		assert.False(t, found, "whence %d", whence)
+	}
+
+	// A later successful SetChunks must clear the error.
+	err = group.SetChunks([]*filer_pb.FileChunk{
+		{FileId: "2,data", Offset: 0, Size: 16},
+	})
+	assert.NoError(t, err)
+	assert.NoError(t, group.resolveErr)
 }
