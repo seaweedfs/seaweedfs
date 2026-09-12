@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -127,8 +128,18 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 	vids := []needle.VolumeId{}
 	explicit := len(req.GetVolumeIds()) != 0
 	if !explicit {
+		// A split-disk volume is mounted once per disk, so a node-wide
+		// listing would otherwise scrub it once per location. Dedupe in
+		// location order so the merged view still sees every runtime.
+		seen := map[needle.VolumeId]struct{}{}
 		for _, l := range vs.store.Locations {
-			vids = append(vids, l.EcVolumeIds()...)
+			for _, vid := range l.EcVolumeIds() {
+				if _, ok := seen[vid]; ok {
+					continue
+				}
+				seen[vid] = struct{}{}
+				vids = append(vids, vid)
+			}
 		}
 	} else {
 		for _, vid := range req.GetVolumeIds() {
@@ -147,8 +158,14 @@ func (vs *VolumeServer) scrubEcVolumes(req *volume_server_pb.ScrubEcVolumeReques
 	var brokenVolumeIds []uint32
 	var brokenShardInfos []*volume_server_pb.EcShardInfo
 	for _, vid := range vids {
-		v, found := vs.store.FindEcVolume(vid)
-		if !found {
+		// Resolve every per-disk runtime, not just the first: a reconciled
+		// volume's shards are split across runtimes, and a scrub that only
+		// sees the first disk misses the rest. The merged view fences on
+		// encode generation and geometry so incompatible runtimes are
+		// reported rather than verified together.
+		runtimes := vs.store.FindAllEcVolumes(vid)
+		merged := erasure_coding.MergeEcRuntimes(runtimes)
+		if merged == nil {
 			if explicit {
 				return nil, fmt.Errorf("EC volume id %d not found", vid)
 			}
@@ -161,18 +178,20 @@ func (vs *VolumeServer) scrubEcVolumes(req *volume_server_pb.ScrubEcVolumeReques
 		var serrs []error
 		switch m := req.GetMode(); m {
 		case volume_server_pb.VolumeScrubMode_INDEX:
-			// index scrubs do not verify individual EC shards
-			files, serrs = v.ScrubIndex()
+			files, serrs = merged.Anchor.ScrubIndex()
+			for _, sk := range merged.Skipped {
+				serrs = append(serrs, fmt.Errorf("%s", sk))
+			}
 		case volume_server_pb.VolumeScrubMode_LOCAL:
-			files, shardInfos, serrs = v.ScrubLocal()
+			files, shardInfos, serrs = merged.ScrubLocal()
 		case volume_server_pb.VolumeScrubMode_FULL, volume_server_pb.VolumeScrubMode_READS:
-			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId, m, req.GetForceDeletedNeedlesCheck())
+			files, shardInfos, serrs = vs.store.ScrubEcVolumeMerged(merged, m, req.GetForceDeletedNeedlesCheck())
 		case volume_server_pb.VolumeScrubMode_CHECKSUM:
 			// Verify each local shard's raw bytes against the bitrot sidecar,
-			// exercising cold parity shards. Read-only. ChecksumScrub's first
-			// return is blocks scanned, not files — discard it so TotalFiles
-			// (a needle/file count) isn't inflated by the block count.
-			_, shardInfos, serrs = v.ChecksumScrub()
+			// exercising cold parity shards. Read-only. The first return is
+			// blocks scanned, not files — discard it so TotalFiles (a
+			// needle/file count) isn't inflated by the block count.
+			_, shardInfos, serrs = merged.ChecksumScrub()
 		default:
 			return nil, fmt.Errorf("unsupported EC volume scrub mode %d", m)
 		}
@@ -180,7 +199,7 @@ func (vs *VolumeServer) scrubEcVolumes(req *volume_server_pb.ScrubEcVolumeReques
 		totalVolumes += 1
 		totalFiles += uint64(files)
 		if len(serrs) != 0 || len(shardInfos) != 0 {
-			brokenVolumeIds = append(brokenVolumeIds, uint32(v.VolumeId))
+			brokenVolumeIds = append(brokenVolumeIds, uint32(vid))
 			brokenShardInfos = append(brokenShardInfos, shardInfos...)
 			for _, err := range serrs {
 				details = append(details, err.Error())
