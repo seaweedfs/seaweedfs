@@ -309,6 +309,55 @@ func (c *failoverCluster) FileVolumeIds(path string) ([]uint32, error) {
 	return vids, nil
 }
 
+// FileChunkList returns the filer's chunk list for a file: each chunk's file
+// id, logical offset, size, and the volume id it lives on. Used to pinpoint
+// which chunk covers a corrupted byte range and which volume server holds it.
+func (c *failoverCluster) FileChunkList(path string) ([]struct {
+	FileId   string
+	Offset   int64
+	Size     uint64
+	VolumeId uint32
+}, error) {
+	body, err := c.FilerGet(path + "?metadata=true&resolveManifest=true")
+	if err != nil {
+		return nil, err
+	}
+	var entry struct {
+		Chunks []struct {
+			FileId string `json:"file_id"`
+			Offset int64  `json:"offset"`
+			Size   uint64 `json:"size"`
+			Fid    struct {
+				VolumeId uint32 `json:"volume_id"`
+			} `json:"fid"`
+		} `json:"chunks"`
+	}
+	if err = json.Unmarshal(body, &entry); err != nil {
+		return nil, fmt.Errorf("decode entry %s: %w", path, err)
+	}
+	out := make([]struct {
+		FileId   string
+		Offset   int64
+		Size     uint64
+		VolumeId uint32
+	}, len(entry.Chunks))
+	for i, ch := range entry.Chunks {
+		vid := ch.Fid.VolumeId
+		if vid == 0 && ch.FileId != "" {
+			if parsed, parseErr := strconv.ParseUint(strings.SplitN(ch.FileId, ",", 2)[0], 10, 32); parseErr == nil {
+				vid = uint32(parsed)
+			}
+		}
+		out[i] = struct {
+			FileId   string
+			Offset   int64
+			Size     uint64
+			VolumeId uint32
+		}{ch.FileId, ch.Offset, ch.Size, vid}
+	}
+	return out, nil
+}
+
 // VolumeHolders returns the volume server addresses the master currently lists
 // for a volume id.
 func (c *failoverCluster) VolumeHolders(vid uint32) ([]string, error) {
