@@ -110,15 +110,16 @@ type IdentityAccessManagement struct {
 }
 
 type Identity struct {
-	Name         string
-	Account      *Account
-	Credentials  []*Credential
-	Actions      []Action
-	PolicyNames  []string               // Attached IAM policy names
-	PrincipalArn string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
-	Disabled     bool                   // User status: false = enabled (default), true = disabled
-	Claims       map[string]interface{} // JWT claims for policy substitution
-	IsStatic     bool                   // Whether identity was loaded from static config (immutable)
+	Name          string
+	Account       *Account
+	Credentials   []*Credential
+	Actions       []Action
+	PolicyNames   []string               // Attached IAM policy names
+	PrincipalArn  string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled      bool                   // User status: false = enabled (default), true = disabled
+	Claims        map[string]interface{} // JWT claims for policy substitution
+	IsStatic      bool                   // Whether identity was loaded from static config (immutable)
+	IdentityClaim string                 // Authoritative OIDC identity claim for audit logging (preferred_username/email/sub); empty for non-federated sessions
 }
 
 // Account represents a system user, a system user can
@@ -455,10 +456,11 @@ func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiCo
 
 var iamReloadRetryInterval = 5 * time.Second
 
-// scheduleReload queues a full configuration reload that retries until it
-// succeeds. Signals coalesce, and the reload is state-based, so it is safe to
-// call for every failed event.
-func (iam *IdentityAccessManagement) scheduleReload() {
+// scheduleReload queues a coalesced full configuration reload that retries
+// until it succeeds. Safe to call for every IAM config change event: bursts
+// collapse into a single reload via the buffered reloadCh.
+func (iam *IdentityAccessManagement) scheduleReload(reason string) {
+	glog.V(1).Infof("IAM change detected in %s, scheduling reload", reason)
 	select {
 	case iam.reloadCh <- struct{}{}:
 	default:
@@ -1608,8 +1610,9 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 
 // recordIdentityInContext stores the authenticated identity, its name and its
 // principal ARN in the request context. An STS session's name is only an opaque
-// subject, so the ARN is what carries the assumed role and session name to the
-// audit log. A JWT-authenticated identity carries no PrincipalArn of its own,
+// session subject, so the ARN is what carries the assumed role and session name
+// to the audit log, and the identity claim carries the authoritative OIDC
+// identity. A JWT-authenticated identity carries no PrincipalArn of its own,
 // hence the resolution through buildPrincipalARN.
 func recordIdentityInContext(r *http.Request, identity *Identity) context.Context {
 	if identity == nil {
@@ -1617,6 +1620,7 @@ func recordIdentityInContext(r *http.Request, identity *Identity) context.Contex
 	}
 	ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
 	ctx = s3_constants.SetPrincipalArnInContext(ctx, buildPrincipalARN(identity, r))
+	ctx = s3_constants.SetIdentityClaimInContext(ctx, identity.IdentityClaim)
 	// Also store the full identity object for handlers that need it (e.g., ListBuckets)
 	// This is especially important for JWT users whose identity is not in the identities list
 	return s3_constants.SetIdentityInContext(ctx, identity)
@@ -2420,11 +2424,12 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 
 	// Convert IAMIdentity to existing Identity structure
 	identity := &Identity{
-		Name:        iamIdentity.Name,
-		Account:     iamIdentity.Account,
-		Actions:     []Action{}, // Empty - authorization handled by policy engine
-		PolicyNames: iamIdentity.PolicyNames,
-		Claims:      iamIdentity.Claims,
+		Name:          iamIdentity.Name,
+		Account:       iamIdentity.Account,
+		Actions:       []Action{}, // Empty - authorization handled by policy engine
+		PolicyNames:   iamIdentity.PolicyNames,
+		Claims:        iamIdentity.Claims,
+		IdentityClaim: iamIdentity.IdentityClaim,
 	}
 
 	// Store session info in request headers for later authorization

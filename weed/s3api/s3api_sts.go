@@ -131,9 +131,16 @@ func parseDurationSecondsWithBounds(r *http.Request, minSec, maxSec int64) (*int
 	return &ds, "", nil
 }
 
-// parseDurationSeconds parses DurationSeconds for AssumeRole (15 min to 12 hours)
-func parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
-	return parseDurationSecondsWithBounds(r, minDurationSeconds, maxDurationSeconds)
+// parseDurationSeconds parses DurationSeconds for AssumeRole (15 min to MaxSessionLength)
+func (h *STSHandlers) parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
+	maxSec := maxDurationSeconds
+	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.MaxSessionLength.Duration > 0 {
+		configuredMax := int64(h.stsService.Config.MaxSessionLength.Duration / time.Second)
+		if configuredMax >= minDurationSeconds {
+			maxSec = configuredMax
+		}
+	}
+	return parseDurationSecondsWithBounds(r, minDurationSeconds, maxSec)
 }
 
 // Removed generateSecureCredentials - now using STS service's JWT token generation
@@ -253,7 +260,7 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 	}
 
 	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
+	durationSeconds, errCode, err := h.parseDurationSeconds(r)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
 		return
@@ -350,7 +357,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
+	durationSeconds, errCode, err := h.parseDurationSeconds(r)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
 		return
@@ -506,7 +513,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	}
 
 	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
+	durationSeconds, errCode, err := h.parseDurationSeconds(r)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
 		return

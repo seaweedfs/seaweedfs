@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -396,13 +397,91 @@ func runChaosAppend(t *testing.T, c *failoverCluster, name string, chaos func())
 	// own mount and the filer make of the same file, which says whether the
 	// data was lost on the way in or is only invisible from this side.
 	d := firstDiff(want, got)
-	fromWriter, _ := os.ReadFile(writePath)
+	fromWriter, writerReadErr := os.ReadFile(writePath)
 	viaFiler, filerErr := c.FilerGet("/" + name)
 	require.Failf(t, "final content mismatch",
-		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nmount0 matches=%v filer matches=%v (err %v)\n%s",
+		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nmount0 matches=%v (writer read err %v) filer matches=%v (err %v)\n%s\n%s\n%s",
 		name, d, len(want), len(got), window(want, d), window(got, d),
-		string(fromWriter) == want, string(viaFiler) == want, filerErr,
-		c.tailLog("mount0"))
+		string(fromWriter) == want, writerReadErr, string(viaFiler) == want, filerErr,
+		c.tailLog("mount0"),
+		dumpChunkList(c, "/"+name, d),
+		dumpHexAround(fromWriter, d, "writer mount"),
+	)
+}
+
+// dumpChunkList returns a human-readable summary of the filer's chunk list
+// for path, annotated with the volume id and the master's current holders
+// for each. When diffAt >= 0, the chunk covering that logical offset is
+// flagged so a corruption can be tied to a specific chunk and volume server.
+func dumpChunkList(c *failoverCluster, path string, diffAt int) string {
+	chunks, err := c.FileChunkList(path)
+	if err != nil {
+		return fmt.Sprintf("chunk list for %s: %v", path, err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "chunk list for %s (%d chunks):", path, len(chunks))
+	for i, ch := range chunks {
+		holders, holdersErr := c.VolumeHolders(ch.VolumeId)
+		holdersStr := "unknown"
+		if holdersErr != nil {
+			holdersStr = fmt.Sprintf("lookup failed: %v", holdersErr)
+		} else if len(holders) > 0 {
+			holdersStr = strings.Join(holders, ",")
+		}
+		marker := ""
+		if diffAt >= 0 && int64(diffAt) >= ch.Offset && int64(diffAt) < ch.Offset+int64(ch.Size) {
+			marker = "  <-- covers diff"
+		}
+		fmt.Fprintf(&b, "\n  [%d] fid=%s offset=%d size=%d vid=%d holders=[%s]%s",
+			i, ch.FileId, ch.Offset, ch.Size, ch.VolumeId, holdersStr, marker)
+	}
+	return b.String()
+}
+
+// dumpHexAround returns a hex+ASCII dump of a 32-byte window around off in
+// label's copy of the file, so the exact zero-filled region is visible in
+// the failure message instead of only a quoted string window.
+func dumpHexAround(data []byte, off int, label string) string {
+	if off < 0 {
+		return fmt.Sprintf("%s hex dump: no divergence offset", label)
+	}
+	start := max(0, off-16)
+	end := min(len(data), off+16)
+	if start >= end {
+		return fmt.Sprintf("%s hex dump: offset %d out of range (len %d)", label, off, len(data))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s hex dump around offset %d:", label, off)
+	for i := start; i < end; i += 16 {
+		lineEnd := min(i+16, end)
+		hexPart := hexDump(data[i:lineEnd])
+		asciiPart := asciiDump(data[i:lineEnd])
+		fmt.Fprintf(&b, "\n  %06x  %-48s  %s", i, hexPart, asciiPart)
+	}
+	return b.String()
+}
+
+func hexDump(b []byte) string {
+	var sb strings.Builder
+	for i, x := range b {
+		if i > 0 {
+			sb.WriteByte(' ')
+		}
+		fmt.Fprintf(&sb, "%02x", x)
+	}
+	return sb.String()
+}
+
+func asciiDump(b []byte) string {
+	var sb strings.Builder
+	for _, x := range b {
+		if x >= 0x20 && x < 0x7f {
+			sb.WriteByte(x)
+		} else {
+			sb.WriteByte('.')
+		}
+	}
+	return sb.String()
 }
 
 // firstDiff returns the offset of the first differing byte, or -1 when equal.

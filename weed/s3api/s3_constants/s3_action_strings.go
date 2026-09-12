@@ -100,6 +100,12 @@ const (
 	S3_ACTION_GET_BUCKET_OWNERSHIP_CONTROLS = "s3:GetBucketOwnershipControls"
 	S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS = "s3:PutBucketOwnershipControls"
 
+	// SeaweedFS extension: bucket quota operations
+	// PUT /{bucket}?seaweedfs-quota and GET /{bucket}?seaweedfs-quota
+	// These are SeaweedFS-specific subresources, not part of the AWS S3 API.
+	S3_ACTION_PUT_BUCKET_QUOTA = "s3:PutBucketQuota"
+	S3_ACTION_GET_BUCKET_QUOTA = "s3:GetBucketQuota"
+
 	// Wildcard for all S3 actions
 	S3_ACTION_ALL = "s3:*"
 )

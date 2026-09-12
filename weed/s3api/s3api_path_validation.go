@@ -49,9 +49,9 @@ func hasPathSegmentQuery(rawQuery string) bool {
 var operationSubresources = map[string]bool{
 	"accelerate": true, "acl": true, "analytics": true, "attributes": true,
 	"cors": true, "delete": true, "encryption": true, "intelligent-tiering": true,
-	"inventory": true, "legal-hold": true, "lifecycle": true, "location": true,
-	"logging": true, "metrics": true, "notification": true, "object-lock": true,
-	"ownershipControls": true, "policy": true, "policyStatus": true,
+	"inventory": true, "legal-hold": true, "lifecycle": true, "list-type": true,
+	"location": true, "logging": true, "metrics": true, "notification": true,
+	"object-lock": true, "ownershipControls": true, "policy": true, "policyStatus": true,
 	"publicAccessBlock": true, "renameObject": true, "replication": true,
 	"requestPayment": true, "retention": true, "tagging": true, "uploadId": true,
 	"uploads": true, "versioning": true, "versions": true, "website": true,

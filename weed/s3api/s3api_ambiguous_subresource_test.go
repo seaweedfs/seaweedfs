@@ -45,6 +45,10 @@ func TestAmbiguousSubresource(t *testing.T) {
 		"delete=&policy=",
 		"uploads=&uploadId=xyz",
 		"policy=&tagging=&cors=",
+		"list-type=2&ownershipControls=",
+		"list-type=2&tagging=",
+		"ownershipControls=&list-type=2",
+		"list-type=2&versions=",
 	} {
 		req, _ := http.NewRequest("PUT", "http://localhost/bucket?"+query, nil)
 		assert.True(t, hasAmbiguousSubresource(req.URL.Query()), "%q names two operations", query)
@@ -72,4 +76,28 @@ func TestAmbiguousSubresourceRejectedBeforeHandler(t *testing.T) {
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.True(t, served, "an unambiguous request must still be served")
+}
+
+// The listing disclosure: GET /bucket?list-type=2&ownershipControls= routes to
+// ListObjectsV2 while resolving as s3:GetBucketOwnershipControls, so a principal
+// denied s3:ListBucket but allowed the ownership-controls read would list the
+// bucket. The guard has to reject the combined request before the listing handler.
+func TestListTypeOwnershipControlsRejectedBeforeHandler(t *testing.T) {
+	served := false
+	handler := validateRequestPath(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served = true
+	}))
+
+	req, _ := http.NewRequest("GET", "http://localhost/bucket?list-type=2&ownershipControls=", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.False(t, served, "a list-type+ownershipControls request must not reach a handler")
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	served = false
+	req, _ = http.NewRequest("GET", "http://localhost/bucket?list-type=2&prefix=a", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assert.True(t, served, "a plain list-type request must still be served")
 }

@@ -34,19 +34,21 @@ type InodeEntry struct {
 }
 
 type dirState struct {
-	path              util.FullPath
-	isChildrenCached  bool
-	readDirDirect     bool
-	cachedExpiresTime time.Time
-	lastAccess        time.Time
-	lastRefresh       time.Time
-	subdirCount       int32 // tracked in-memory for POSIX directory nlink
+	path               util.FullPath
+	isChildrenCached   bool
+	readDirDirect      bool
+	cachedExpiresTime  time.Time
+	lastAccess         time.Time
+	lastRefresh        time.Time
+	lastRebuildAttempt time.Time
+	subdirCount        int32 // tracked in-memory for POSIX directory nlink
 }
 
 func (d *dirState) resetCacheState() {
 	d.isChildrenCached = false
 	d.readDirDirect = false
 	d.cachedExpiresTime = time.Time{}
+	d.lastRebuildAttempt = time.Time{}
 }
 
 // appendPaths appends every path the inode is reachable by, primary first.
@@ -315,6 +317,7 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	now := time.Now()
 	d.lastAccess = now
 	d.lastRefresh = now
+	d.lastRebuildAttempt = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
 		d.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
@@ -331,6 +334,34 @@ func (i *InodeToPath) IsChildrenCached(fullpath util.FullPath) bool {
 		return d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime)
 	}
 	return false
+}
+
+// ShouldRebuildExpiredDir reports whether a directory was fully cached, its
+// TTL has elapsed, and enough time has passed since the last failed rebuild
+// attempt to retry. Distinct from IsChildrenCached returning false for a
+// never-cached, invalidated, evicted, or read-through directory: those leave
+// isChildrenCached clear, while a plain TTL expiry keeps it set.
+func (i *InodeToPath) ShouldRebuildExpiredDir(fullpath util.FullPath, cooldown time.Duration) bool {
+	i.RLock()
+	defer i.RUnlock()
+	d := i.dirStateOf(fullpath)
+	if d == nil || !d.isChildrenCached {
+		return false
+	}
+	if d.cachedExpiresTime.IsZero() || time.Now().Before(d.cachedExpiresTime) {
+		return false
+	}
+	return d.lastRebuildAttempt.IsZero() || time.Since(d.lastRebuildAttempt) >= cooldown
+}
+
+// MarkRebuildAttempt records that a rebuild was attempted at now, so
+// ShouldRebuildExpiredDir backs off for the cooldown before retrying.
+func (i *InodeToPath) MarkRebuildAttempt(fullpath util.FullPath, now time.Time) {
+	i.Lock()
+	defer i.Unlock()
+	if d := i.dirStateOf(fullpath); d != nil {
+		d.lastRebuildAttempt = now
+	}
 }
 
 func (i *InodeToPath) HasInode(inode uint64) bool {

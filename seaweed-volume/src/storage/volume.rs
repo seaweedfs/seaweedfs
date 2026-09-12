@@ -94,6 +94,12 @@ fn is_skippable_needle_read_error(e: &VolumeError) -> bool {
     }
 }
 
+/// Reports whether the compacted .dat is short of the live bytes the
+/// pre-compaction index snapshot expected.
+fn exceeds_expected_compacted_size(expected_live_bytes: u64, dst_dat_size: u64) -> bool {
+    expected_live_bytes > dst_dat_size
+}
+
 /// Returns true for I/O errors that indicate faulty storage media, not
 /// transient/network failures. On Unix this is EIO; on Windows it covers
 /// ERROR_CRC and ERROR_IO_DEVICE, which the kernel returns for failing disks.
@@ -3592,6 +3598,7 @@ impl Volume {
 
         let mut skipped_needles: u64 = 0;
         let mut skipped_data_bytes: u64 = 0;
+        let mut expected_live_bytes: u64 = 0;
         for (id, offset, size) in entries {
             // Progress callback
             if !progress_fn(offset.to_actual_offset()) {
@@ -3655,6 +3662,11 @@ impl Volume {
                 }
             }
 
+            // Tally the live bytes from the frozen snapshot this loop copied
+            // from, not the live needle map. Unreadable needles return before
+            // this point, so no further skipped-byte adjustment is needed.
+            expected_live_bytes += size.0 as u64;
+
             // Write needle to destination
             let bytes = n.write_bytes(version);
             dst.write_all(&bytes)?;
@@ -3674,6 +3686,21 @@ impl Volume {
         }
 
         dst.sync_all()?;
+
+        if self.super_block.ttl.is_empty() {
+            let dst_dat_size = dst.metadata()?.len();
+            if exceeds_expected_compacted_size(expected_live_bytes, dst_dat_size) {
+                let _ = fs::remove_file(&cpd_path);
+                let _ = fs::remove_file(&cpx_path);
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "volume {} unexpected new data size: {} does not match expected live content size {} from the pre-compaction snapshot",
+                        self.id.0, dst_dat_size, expected_live_bytes
+                    ),
+                )));
+            }
+        }
 
         // Save new index
         new_nm.save_to_idx(&cpx_path)?;
@@ -4679,6 +4706,182 @@ mod tests {
         // .dat and .idx files should exist
         assert!(Path::new(&v.file_name(".dat")).exists());
         assert!(Path::new(&v.file_name(".idx")).exists());
+    }
+
+    #[test]
+    fn binary_search_reports_is_last_when_caller_is_caught_up() {
+        // is_last drives the caught-up heartbeat; if it stops reporting true
+        // for an up-to-date caller, the tail sender re-reads the whole volume.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut newest_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'x'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            newest_ns = n.append_at_ns;
+        }
+        assert!(newest_ns > 0, "needles must carry an append timestamp");
+
+        // Caught up: asking from the newest timestamp has nothing newer.
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(
+            is_last,
+            "a caller at the newest append_at_ns must be reported as caught up"
+        );
+
+        // And from beyond the newest, likewise.
+        let (_offset, is_last_future) = v
+            .binary_search_by_append_at_ns(newest_ns + 1_000_000_000)
+            .unwrap();
+        assert!(
+            is_last_future,
+            "a caller ahead of the newest needle must be reported as caught up"
+        );
+    }
+
+    #[test]
+    fn binary_search_does_not_report_is_last_when_data_is_newer() {
+        // Complement: a behind caller must NOT be caught up, or tailing loses data.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut first_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'y'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            if id == 1 {
+                first_ns = n.append_at_ns;
+            }
+        }
+
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(first_ns).unwrap();
+        assert!(
+            !is_last,
+            "a caller behind the newest needle must NOT be reported as caught up"
+        );
+    }
+
+    #[test]
+    fn binary_search_does_not_report_is_last_when_only_a_delete_is_newer() {
+        // A delete is data the tail must ship. A caught-up caller before the
+        // delete must be sent to scan from the tombstone, not handed a heartbeat.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut newest_ns = 0u64;
+        for id in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![b'z'; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            newest_ns = n.append_at_ns;
+        }
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(is_last, "precondition: the caller starts caught up");
+
+        v.delete_needle(&mut Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x12345678),
+            ..Needle::default()
+        })
+        .unwrap();
+
+        let (offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
+        assert!(
+            !is_last,
+            "a caller older than a trailing delete must NOT be reported as caught up"
+        );
+
+        // Scan and filter as volume_tail_sender does: only the tombstone is newer.
+        let shipped: Vec<u64> = v
+            .scan_raw_needles_from(offset.to_actual_offset() as u64)
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, append_at_ns)| append_at_ns)
+            .filter(|&append_at_ns| append_at_ns > newest_ns)
+            .collect();
+        assert_eq!(shipped.len(), 1, "the tail must ship the tombstone");
+    }
+
+    #[test]
+    fn binary_search_on_compacted_volume_still_reports_a_later_write() {
+        // Compaction rewrites .idx in needle-id order, so append_at_ns is no
+        // longer monotonic by row: an overwritten key can sit before an older
+        // one. The caller's since_ns is the last row's timestamp, so such rows
+        // were already in the files it copied. A write made afterwards is
+        // appended as the final row, which the search cannot step past.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let write = |v: &mut Volume, id: u64, byte: u8| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x12345678),
+                data: vec![byte; 64],
+                data_size: 64,
+                flags: 0,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+            n.append_at_ns
+        };
+        write(&mut v, 1, b'c');
+        let key2_ns = write(&mut v, 2, b'c');
+        let key1_ns = write(&mut v, 1, b'd'); // genuine overwrite: different data
+        assert!(
+            key1_ns > key2_ns,
+            "precondition: the overwrite must append a newer record, not dedup"
+        );
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        let (_offset, is_last) = v.binary_search_by_append_at_ns(key2_ns).unwrap();
+        assert!(
+            is_last,
+            "precondition: compaction ordered .idx by key, so key 2 is the final row"
+        );
+
+        let key3_ns = write(&mut v, 3, b'c');
+        let (offset, is_last) = v.binary_search_by_append_at_ns(key2_ns).unwrap();
+        assert!(
+            !is_last,
+            "a write after compaction is the final row and must not be hidden"
+        );
+        let shipped: Vec<u64> = v
+            .scan_raw_needles_from(offset.to_actual_offset() as u64)
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, append_at_ns)| append_at_ns)
+            .filter(|&append_at_ns| append_at_ns > key2_ns)
+            .collect();
+        assert!(
+            shipped.contains(&key3_ns),
+            "the tail must ship the write made after compaction"
+        );
     }
 
     #[test]
@@ -6110,6 +6313,64 @@ mod tests {
 
         // Cleanup should be a no-op
         v.cleanup_compact().unwrap();
+    }
+
+    /// Guards the copy-phase integrity check against regressing into
+    /// double-subtracting skipped bytes: expected_live_bytes already excludes
+    /// needles dropped as unreadable (they continue before the tally), so the
+    /// check must compare it directly against the compacted .dat size.
+    #[test]
+    fn test_exceeds_expected_compacted_size() {
+        assert!(!exceeds_expected_compacted_size(100, 100));
+        assert!(!exceeds_expected_compacted_size(100, 150));
+        assert!(exceeds_expected_compacted_size(100, 90));
+    }
+
+    /// A write that lands on the live volume mid-copy must not trip the
+    /// post-copy integrity check. The Rust port snapshots the index entries
+    /// before the copy loop (equivalent to Go's frozen oldNm), so a concurrent
+    /// write is invisible to the tally and the check stays quiet. The write
+    /// is then replayed by makeup_diff during commit_compact.
+    #[test]
+    fn test_compact_by_index_tolerates_concurrent_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=8u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        assert!(Path::new(&v.file_name(".cpd")).exists());
+
+        // A write arriving after the snapshot but before commit must survive
+        // via makeup_diff, exactly like a concurrent write in the Go server.
+        let mut late = Needle {
+            id: NeedleId(99),
+            cookie: Cookie(99),
+            data: b"late-write".to_vec(),
+            data_size: 10,
+            ..Needle::default()
+        };
+        v.write_needle(&mut late, true, false).unwrap();
+
+        v.commit_compact().unwrap();
+
+        let mut got = Needle {
+            id: NeedleId(99),
+            cookie: Cookie(99),
+            ..Needle::default()
+        };
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"late-write");
     }
 
     /// Vacuum compaction must tolerate an .idx entry whose offset points past
