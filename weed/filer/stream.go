@@ -171,7 +171,10 @@ func retryFetchWithFreshLocations(ctx context.Context, invalidator CacheInvalida
 
 func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) (DoStreamContent, error) {
 	glog.V(4).InfofCtx(ctx, "prepare to stream content for chunks: %d", len(chunks))
-	chunkViews := ViewFromChunks(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, size)
+	chunkViews, err := viewFromChunksOrErr(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, size)
+	if err != nil {
+		return nil, err
+	}
 
 	fileId2Url := make(map[string][]string)
 
@@ -285,7 +288,10 @@ func PrepareStreamContentWithPrefetch(ctx context.Context, masterClient wdclient
 	}
 
 	glog.V(4).InfofCtx(ctx, "prepare to stream content with prefetch=%d for chunks: %d", prefetchAhead, len(chunks))
-	chunkViews := ViewFromChunks(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, size)
+	chunkViews, err := viewFromChunksOrErr(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, size)
+	if err != nil {
+		return nil, err
+	}
 
 	fileId2Url := make(map[string][]string)
 
