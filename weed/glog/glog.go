@@ -467,6 +467,12 @@ type buffer struct {
 
 var logging loggingT
 
+// LogInterceptor, if non-nil, is called for every log line that passes through
+// glog's output path. The callback receives the severity (0=INFO..3=FATAL)
+// and a copy of the formatted log bytes. This hook is used by the logbuffer
+// package to capture log entries into an in-memory ring buffer.
+var LogInterceptor func(severity int32, data []byte)
+
 // setVState sets a consistent state for V logging.
 // l.mu is held.
 func (l *loggingT) setVState(verbosity Level, filter []modulePat, setFilter bool) {
@@ -731,6 +737,9 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		}
 	}
 	data := buf.Bytes()
+	if fn := LogInterceptor; fn != nil {
+		fn(int32(s), data)
+	}
 	if l.toStderr {
 		os.Stderr.Write(data)
 	} else {
@@ -1271,4 +1280,26 @@ func Exitln(args ...interface{}) {
 func Exitf(format string, args ...interface{}) {
 	atomic.StoreUint32(&fatalNoStacks, 1)
 	logging.printf(fatalLog, format, args...)
+}
+
+// GetVerbosity returns the current V logging verbosity level.
+func GetVerbosity() int32 {
+	return int32(logging.verbosity.get())
+}
+
+// SetVerbosity sets the V logging verbosity level at runtime.
+func SetVerbosity(v int32) {
+	logging.mu.Lock()
+	defer logging.mu.Unlock()
+	logging.setVState(Level(v), logging.vmodule.filter, false)
+}
+
+// GetVModule returns the current -vmodule setting as a string.
+func GetVModule() string {
+	return logging.vmodule.String()
+}
+
+// SetVModule parses and applies a vmodule spec (e.g. "gopher*=3,filer=2").
+func SetVModule(spec string) error {
+	return logging.vmodule.Set(spec)
 }
