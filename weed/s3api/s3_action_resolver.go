@@ -212,6 +212,12 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
+	if query.Has("list-type") {
+		if method == http.MethodGet && !hasObject {
+			return s3_constants.S3_ACTION_LIST_BUCKET
+		}
+	}
+
 	// Check bucket-level query parameters using data-driven approach
 	// These are strictly bucket-level operations, so only apply when !hasObject
 	if !hasObject {

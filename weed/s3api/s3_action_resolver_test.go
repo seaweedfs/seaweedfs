@@ -158,6 +158,30 @@ func TestResolveS3Action_CreateBucket(t *testing.T) {
 	}
 }
 
+// list-type selects ListObjectsV2, which the router registers ahead of the
+// bucket subresource routes. The resolver must align with routing and resolve
+// it to s3:ListBucket even when an operation subresource like ownershipControls
+// is also present, so authorization checks the listing action the handler runs.
+func TestResolveS3Action_ListType(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"list-type alone", "list-type=2", s3_constants.S3_ACTION_LIST_BUCKET},
+		{"list-type with listing params", "list-type=2&prefix=a&continuation-token=x", s3_constants.S3_ACTION_LIST_BUCKET},
+		{"list-type with ownershipControls", "list-type=2&ownershipControls=", s3_constants.S3_ACTION_LIST_BUCKET},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(http.MethodGet, "http://localhost/bucket?"+tt.query, nil)
+			if got := ResolveS3Action(r, s3_constants.ACTION_LIST, "bucket", ""); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // A base action naming another service carries no S3 request shape, so a query
 // parameter on the request must not redirect it to an S3 action.
 func TestResolveS3ActionKeepsNonS3Service(t *testing.T) {
