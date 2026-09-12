@@ -134,7 +134,13 @@ pub async fn read_ec_shard_needle_distributed(
             Ok(fresh) => {
                 // A complete reply merges into the cache; an incomplete one
                 // (< data_shards) is left unwritten — keep the prior cache.
-                match write_back_shard_locations(state, vid, fresh, snapshot.data_shards as usize) {
+                match write_back_shard_locations(
+                    state,
+                    vid,
+                    fresh,
+                    snapshot.data_shards as usize,
+                    snapshot.encode_ts_ns,
+                ) {
                     Some(merged) => shard_locations = merged,
                     // An incomplete reply leaves the cache unwritten and its refresh
                     // time unadvanced, so the mark this refresh consumed goes back.
@@ -281,15 +287,7 @@ pub async fn scrub_ec_volume_distributed(
         // Resolve the runtime matching the anchor's encode generation, not the
         // first-match find_ec_volume — otherwise the needle walk can scan an
         // older run while the parity half scans the newest.
-        let ecv = if expected_encode_ts_ns != 0 {
-            store
-                .find_all_ec_volumes(vid)
-                .into_iter()
-                .find(|v| v.encode_ts_ns == expected_encode_ts_ns)
-        } else {
-            store.find_ec_volume(vid)
-        };
-        let ecv = match ecv {
+        let ecv = match find_ec_volume_for_scrub(&store, vid, expected_encode_ts_ns) {
             Some(v) => v,
             None => {
                 return (
@@ -385,7 +383,9 @@ pub async fn scrub_ec_volume_distributed(
     ) {
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
-                if write_back_shard_locations(state, vid, fresh, data_shards).is_none() {
+                if write_back_shard_locations(state, vid, fresh, data_shards, expected_encode_ts_ns)
+                    .is_none()
+                {
                     mark_shard_locations_stale(state, vid);
                     return (
                         0,
@@ -412,7 +412,7 @@ pub async fn scrub_ec_volume_distributed(
     // walk, so per-needle snapshots no longer clone it.
     let locations: HashMap<ShardId, Vec<String>> = {
         let store = state.store.read().unwrap();
-        let ecv = match store.find_ec_volume(vid) {
+        let ecv = match find_ec_volume_for_scrub(&store, vid, expected_encode_ts_ns) {
             Some(v) => v,
             None => {
                 return (
@@ -665,7 +665,7 @@ fn scrub_snapshot_under_lock(
     expected_encode_ts: i64,
 ) -> io::Result<ScrubSnapshot> {
     let store = state.store.read().unwrap();
-    let ecv = match store.find_ec_volume(vid) {
+    let ecv = match find_ec_volume_for_scrub(&store, vid, expected_encode_ts) {
         Some(v) => v,
         // Volume unmounted mid-scan: a distinct NotFound so the caller aborts
         // with an error rather than silently skipping (which would false-CLEAN).
@@ -923,13 +923,32 @@ fn write_back_shard_locations(
     vid: VolumeId,
     locations: HashMap<ShardId, Vec<String>>,
     data_shards: usize,
+    expected_encode_ts_ns: i64,
 ) -> Option<HashMap<ShardId, Vec<String>>> {
     if locations.len() < data_shards {
         return None;
     }
     let store = state.store.read().unwrap();
-    let ecv = store.find_ec_volume(vid)?;
+    let ecv = find_ec_volume_for_scrub(&store, vid, expected_encode_ts_ns)?;
     Some(ecv.merge_shard_locations(locations))
+}
+
+/// Resolve the runtime matching the scrub's anchor encode generation, not the
+/// first-match `find_ec_volume`. When `expected_encode_ts_ns` is 0 (legacy or
+/// pre-feature), falls back to first-match so existing behavior is preserved.
+fn find_ec_volume_for_scrub<'a>(
+    store: &'a crate::storage::store::Store,
+    vid: VolumeId,
+    expected_encode_ts_ns: i64,
+) -> Option<&'a crate::storage::erasure_coding::EcVolume> {
+    if expected_encode_ts_ns != 0 {
+        store
+            .find_all_ec_volumes(vid)
+            .into_iter()
+            .find(|v| v.encode_ts_ns == expected_encode_ts_ns)
+    } else {
+        store.find_ec_volume(vid)
+    }
 }
 
 /// Build a SeaweedFS-style `host:httpPort.grpcPort` address from a

@@ -171,7 +171,12 @@ func (m *MergedEcRuntimes) asVolume() *EcVolume {
 				maxShardSize = s.ecdFileSize
 			}
 		}
-		datFileSize = maxShardSize * int64(anchor.ECContext.DataShards)
+		// Subtract 1 to match the legacy fallback in LocateEcShardNeedleInterval
+		// (ecdFileSize - 1): an exact large-block boundary is ambiguous, and
+		// the unadjusted size would select an extra large row.
+		if maxShardSize > 0 {
+			datFileSize = (maxShardSize - 1) * int64(anchor.ECContext.DataShards)
+		}
 	}
 	return &EcVolume{
 		VolumeId:     anchor.VolumeId,
@@ -188,7 +193,6 @@ func (m *MergedEcRuntimes) asVolume() *EcVolume {
 		datFileSize:  datFileSize,
 		ECContext:    anchor.ECContext,
 		EncodeTsNs:   anchor.EncodeTsNs,
-		bitrotLock:   anchor.bitrotLock,
 		bitrot:       anchor.bitrot,
 		bitrotStatus: anchor.bitrotStatus,
 	}
