@@ -400,12 +400,6 @@ func validateStatement(stmt *PolicyStatement) error {
 		return fmt.Errorf("statement cannot specify both Principal and NotPrincipal")
 	}
 
-	for operator := range stmt.Condition {
-		if _, err := GetConditionEvaluator(operator); err != nil {
-			return fmt.Errorf("unsupported condition operator %q: %v", operator, err)
-		}
-	}
-
 	return nil
 }
 
