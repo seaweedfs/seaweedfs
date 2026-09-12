@@ -1,0 +1,174 @@
+openapi: 3.1.0
+info:
+  description: The Seaweedfs Master Server API allows you to store blobs
+  title: Seaweedfs Master Server API
+  version: 3.43.0
+servers:
+- url: https://127.0.0.1:9333/
+paths:
+  /dir/assign:
+    get:
+      description: This operation is very cheap. Just increase a number in master
+        server's memory.
+      operationId: dirAssign
+      parameters:
+      - description: "how many file ids to assign. Use <fid>_1, <fid>_2 for the assigned\
+          \ additional file ids. e.g. 3,01637037d6_1, 3,01637037d6_2"
+        explode: true
+        in: query
+        name: count
+        required: false
+        schema:
+          format: int32
+        style: form
+      - description: required collection name
+        explode: true
+        in: query
+        name: collection
+        required: false
+        schema: {}
+        style: form
+      - description: preferred data center
+        explode: true
+        in: query
+        name: dataCenter
+        required: false
+        schema: {}
+        style: form
+      - description: preferred rack
+        explode: true
+        in: query
+        name: rack
+        required: false
+        schema: {}
+        style: form
+      - description: "preferred volume server, e.g. 127.0.0.1:8080"
+        explode: true
+        in: query
+        name: dataNode
+        required: false
+        schema: {}
+        style: form
+      - description: "If you have disks labelled, this must be supplied to specify\
+          \ the disk type to allocate on."
+        explode: true
+        in: query
+        name: disk
+        required: false
+        schema: {}
+        style: form
+      - description: replica placement strategy
+        explode: true
+        in: query
+        name: replication
+        required: false
+        schema: {}
+        style: form
+      - description: "file expiration time limit, example: 3m for 3 minutes. units:\
+          \ m-minute, h-hour, d-day, w-week, M-month, y-year"
+        explode: true
+        in: query
+        name: ttl
+        required: false
+        schema: {}
+        style: form
+      - description: "If no matching volumes, pre-allocate this number of bytes on\
+          \ disk for new volumes."
+        explode: true
+        in: query
+        name: preallocate
+        required: false
+        schema:
+          format: int64
+        style: form
+      - description: Only implemented for windows. Use memory mapped files with specified
+          size for new volumes.
+        explode: true
+        in: query
+        name: memoryMapMaxSizeMb
+        required: false
+        schema:
+          format: int32
+        style: form
+      - description: "If no matching volumes, create specified number of new volumes."
+        explode: true
+        in: query
+        name: writableVolumeCount
+        required: false
+        schema:
+          format: int32
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileKey'
+          description: successful operation
+      summary: Assign a file key
+  /dir/lookup:
+    get:
+      description: We would need to find out whether the volumes have moved.
+      operationId: dirLookup
+      parameters:
+      - description: volume id
+        explode: true
+        in: query
+        name: volumeId
+        required: false
+        schema:
+          format: int32
+        style: form
+      - description: optionally to speed up the lookup
+        explode: true
+        in: query
+        name: collection
+        required: false
+        schema: {}
+        style: form
+      - description: "If provided, this returns the fileId location and a JWT to update\
+          \ or delete the file."
+        explode: true
+        in: query
+        name: fileId
+        required: false
+        schema: {}
+        style: form
+      - description: "works together with \"fileId\", if read=yes, JWT is generated\
+          \ for reads."
+        explode: true
+        in: query
+        name: read
+        required: false
+        schema: {}
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Location'
+          description: successful operation
+      summary: Lookup volume
+components:
+  schemas:
+    FileKey:
+      example:
+        fid: "3,01637037d6"
+        count: 10
+        url: 127.0.0.1:8080
+      properties:
+        count:
+          example: 10
+          format: int64
+        fid:
+          example: "3,01637037d6"
+        url:
+          example: 127.0.0.1:8080
+    Location:
+      properties:
+        publicUrl:
+          example: localhost:8080
+        url:
+          example: localhost:8080
