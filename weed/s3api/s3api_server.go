@@ -994,6 +994,13 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		//DeleteBucketOwnershipControls
 		bucket.Methods(http.MethodDelete).HandlerFunc(track(s3a.iam.Auth(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN), "DELETE")).Queries("ownershipControls", "")
 
+		// SeaweedFS extension: bucket quota subresource
+		// PUT /{bucket}?seaweedfs-quota — set bucket quota (s3:PutBucketQuota)
+		// GET /{bucket}?seaweedfs-quota — get bucket quota (s3:GetBucketQuota)
+		// Authenticated via SigV4, authorized via dedicated IAM permissions.
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketQuotaHandler, ACTION_PUT_BUCKET_QUOTA)), "PUT")).Queries("seaweedfs-quota", "")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketQuotaHandler, ACTION_GET_BUCKET_QUOTA)), "GET")).Queries("seaweedfs-quota", "")
+
 		// raw buckets
 
 		// PostPolicy
