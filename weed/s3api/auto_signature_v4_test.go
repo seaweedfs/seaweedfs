@@ -1911,3 +1911,125 @@ func BenchmarkStreamingVsNonStreaming(b *testing.B) {
 		}
 	})
 }
+
+func TestBucketFromVirtualHost(t *testing.T) {
+	tests := []struct {
+		host       string
+		domain     string
+		wantBucket string
+		wantOk     bool
+	}{
+		{"alpha-bkt.s3.test", "s3.test", "alpha-bkt", true},
+		{"alpha-bkt.s3.test:8333", "s3.test", "alpha-bkt", true},
+		{"s3.test", "s3.test", "", false},
+		{"example.com", "s3.test", "", false},
+		{"alpha-bkt.s3.test", "", "", false},
+		{"alpha-bkt.s3.test", "s3.test,develop.s3.test", "alpha-bkt", true},
+		{"bucket.develop.s3.test", "s3.test,develop.s3.test", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			bucket, ok := bucketFromVirtualHost(tt.host, tt.domain)
+			if bucket != tt.wantBucket || ok != tt.wantOk {
+				t.Errorf("bucketFromVirtualHost(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.host, tt.domain, bucket, ok, tt.wantBucket, tt.wantOk)
+			}
+		})
+	}
+}
+
+func newVirtualHostTestIAM(domain string) *IdentityAccessManagement {
+	iam := &IdentityAccessManagement{
+		domain:       domain,
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "someone",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "access_key_1", SecretKey: "secret_key_1"},
+				},
+				Actions: []string{"Read", "Write"},
+			},
+		},
+	})
+	return iam
+}
+
+func TestPresignedVirtualHostRetargetRejected(t *testing.T) {
+	iam := newVirtualHostTestIAM("s3.test")
+
+	r, err := newTestRequest("GET", "http://alpha-bkt.s3.test/shared.txt", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+	r.Header.Set("Host", "alpha-bkt.s3.test")
+
+	if err := preSignV4WithPath(iam, r, "access_key_1", "secret_key_1", 3600, r.URL.Path); err != nil {
+		t.Fatalf("Failed to presign request: %v", err)
+	}
+
+	r.Host = "beta-bkt.s3.test"
+	r.Header.Set("X-Forwarded-Host", "alpha-bkt.s3.test")
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "beta-bkt",
+		"object": "shared.txt",
+	})
+
+	_, _, errCode := iam.doesPresignedSignatureMatch(r)
+	if errCode != s3err.ErrAccessDenied {
+		t.Errorf("Expected ErrAccessDenied for retargeted presigned URL, got: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+func TestSignedVirtualHostRetargetRejected(t *testing.T) {
+	iam := newVirtualHostTestIAM("s3.test")
+
+	r, err := newTestRequest("GET", "http://alpha-bkt.s3.test/shared.txt", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+	r.Header.Set("Host", "alpha-bkt.s3.test")
+
+	signV4WithPath(r, "access_key_1", "secret_key_1", r.URL.Path)
+
+	r.Host = "beta-bkt.s3.test"
+	r.Header.Set("X-Forwarded-Host", "alpha-bkt.s3.test")
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "beta-bkt",
+		"object": "shared.txt",
+	})
+
+	_, _, errCode := iam.doesSignatureMatch(r)
+	if errCode != s3err.ErrAccessDenied {
+		t.Errorf("Expected ErrAccessDenied for retargeted signed URL, got: %v (code: %d)", errCode, int(errCode))
+	}
+}
+
+func TestPresignedVirtualHostNoRetarget(t *testing.T) {
+	iam := newVirtualHostTestIAM("s3.test")
+
+	r, err := newTestRequest("GET", "http://alpha-bkt.s3.test/shared.txt", 0, nil)
+	if err != nil {
+		t.Fatalf("Failed to create test request: %v", err)
+	}
+	r.Header.Set("Host", "alpha-bkt.s3.test")
+
+	if err := preSignV4WithPath(iam, r, "access_key_1", "secret_key_1", 3600, r.URL.Path); err != nil {
+		t.Fatalf("Failed to presign request: %v", err)
+	}
+
+	r = mux.SetURLVars(r, map[string]string{
+		"bucket": "alpha-bkt",
+		"object": "shared.txt",
+	})
+
+	_, _, errCode := iam.doesPresignedSignatureMatch(r)
+	if errCode != s3err.ErrNone {
+		t.Errorf("Expected successful presigned signature validation, got: %v (code: %d)", errCode, int(errCode))
+	}
+}
