@@ -621,13 +621,27 @@ func (ms *MasterServer) missingRaftPeerName(peerAddress pb.ServerAddress) (strin
 }
 
 func (ms *MasterServer) Shutdown() {
-	if ms.Topo == nil || ms.Topo.HashicorpRaft == nil {
+	if ms.Topo == nil {
 		return
 	}
-	if ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
-		ms.Topo.HashicorpRaft.LeadershipTransfer()
+	ms.Topo.RaftServerAccessLock.RLock()
+	raftServer := ms.Topo.RaftServer
+	hashRaft := ms.Topo.HashicorpRaft
+	ms.Topo.RaftServerAccessLock.RUnlock()
+
+	if hashRaft != nil {
+		if hashRaft.State() == hashicorpRaft.Leader {
+			hashRaft.LeadershipTransfer()
+		}
+		hashRaft.Shutdown()
 	}
-	ms.Topo.HashicorpRaft.Shutdown()
+	// Stop the goraft server too. Without this, the raft event loop
+	// goroutine (leaderLoop/followerLoop) keeps running after the master
+	// shuts down, leaking goroutines across test runs and occasionally
+	// processing stale events that trigger safety assertions.
+	if raftServer != nil {
+		raftServer.Stop()
+	}
 }
 
 func (ms *MasterServer) Reload() {
