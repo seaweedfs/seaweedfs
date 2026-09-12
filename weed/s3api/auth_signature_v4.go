@@ -324,6 +324,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		pathForSignature = r.URL.Path
 	}
 	forwardedPrefix := r.Header.Get("X-Forwarded-Prefix")
+	var matchedHost string
 	for i, hostCandidate := range extractHostHeaderCandidates(r, iam.externalHost) {
 		if i > 0 && !replaceSignedHostHeader(extractedSignedHeaders, hostCandidate) {
 			break
@@ -334,23 +335,37 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
 			calculatedSignature, errCode = verify(cleanedPath)
 			if errCode == s3err.ErrNone {
-				return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+				matchedHost = hostCandidate
+				break
 			}
 		}
 
 		// 10. Verify with the original path
 		calculatedSignature, errCode = verify(pathForSignature)
 		if errCode == s3err.ErrNone {
-			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+			matchedHost = hostCandidate
+			break
 		}
 
 		// 11. Retry with decoded path if signature used raw path encoding
 		if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
 			calculatedSignature, errCode = verify(decodedPath)
 			if errCode == s3err.ErrNone {
-				return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+				matchedHost = hostCandidate
+				break
 			}
 		}
+	}
+
+	if matchedHost != "" {
+		if signedBucket, ok := bucketFromVirtualHost(matchedHost, iam.domain); ok {
+			if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != signedBucket {
+				glog.V(2).Infof("reject %s %s: signed host %q implies bucket %q but routed to %q",
+					r.Method, r.URL.Path, matchedHost, signedBucket, routedBucket)
+				return nil, nil, "", nil, s3err.ErrAccessDenied
+			}
+		}
+		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
 	return nil, nil, "", nil, errCode
@@ -986,6 +1001,33 @@ func extractHostHeaderCandidates(r *http.Request, externalHost string) []string 
 		}
 	}
 	return candidates
+}
+
+func bucketFromVirtualHost(host, domainConfig string) (string, bool) {
+	if domainConfig == "" {
+		return "", false
+	}
+	h := host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		h = hh
+	}
+	pathStyleDomains, virtualHostDomains := classifyDomainNames(strings.Split(domainConfig, ","))
+	for _, domain := range pathStyleDomains {
+		d := strings.TrimSpace(domain)
+		if h == d || strings.HasSuffix(h, "."+d) {
+			return "", false
+		}
+	}
+	for _, domain := range virtualHostDomains {
+		suffix := "." + strings.TrimSpace(domain)
+		if strings.HasSuffix(h, suffix) {
+			bucket := h[:len(h)-len(suffix)]
+			if bucket != "" {
+				return bucket, true
+			}
+		}
+	}
+	return "", false
 }
 
 // joinSignedHost renders host:port the way AWS SDKs sign it: default ports are stripped
