@@ -18,6 +18,8 @@ const (
 	ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG = "PutBucketObjectLockConfiguration"
 	ACTION_PUT_BUCKET_POLICY             = "PutBucketPolicy"
 	ACTION_DELETE_BUCKET_POLICY          = "DeleteBucketPolicy"
+	ACTION_PUT_BUCKET_QUOTA              = "PutBucketQuota"
+	ACTION_GET_BUCKET_QUOTA              = "GetBucketQuota"
 
 	SeaweedStorageDestinationHeader = "x-seaweedfs-destination"
 	MultipartUploadsFolder          = ".uploads"
