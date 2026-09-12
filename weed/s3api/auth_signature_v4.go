@@ -1011,15 +1011,15 @@ func bucketFromVirtualHost(host, domainConfig string) (string, bool) {
 	if hh, _, err := net.SplitHostPort(host); err == nil {
 		h = hh
 	}
+	h = strings.ToLower(h)
 	pathStyleDomains, virtualHostDomains := classifyDomainNames(strings.Split(domainConfig, ","))
 	for _, domain := range pathStyleDomains {
-		d := strings.TrimSpace(domain)
-		if h == d || strings.HasSuffix(h, "."+d) {
+		if h == strings.ToLower(strings.TrimSpace(domain)) {
 			return "", false
 		}
 	}
 	for _, domain := range virtualHostDomains {
-		suffix := "." + strings.TrimSpace(domain)
+		suffix := "." + strings.ToLower(strings.TrimSpace(domain))
 		if strings.HasSuffix(h, suffix) {
 			bucket := h[:len(h)-len(suffix)]
 			if bucket != "" {
