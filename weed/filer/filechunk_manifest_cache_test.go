@@ -160,7 +160,7 @@ func TestResolveOneChunkManifestDoesNotUseMountCache(t *testing.T) {
 	chunk := newManifestCacheTestChunk(manifestID)
 
 	for i := 0; i < 2; i++ {
-		_, err := ResolveOneChunkManifest(context.Background(), lookup, chunk, nil, nil)
+		_, err := ResolveOneChunkManifest(context.Background(), lookup, chunk, nil)
 		require.NoError(t, err)
 	}
 
@@ -258,7 +258,7 @@ func TestResolveOneChunkManifestHonorsCanceledContextOnCacheHit(t *testing.T) {
 		return nil, errors.New("lookup should not be called")
 	}
 
-	_, err := ResolveOneChunkManifest(ctx, lookup, chunk, nil, cache)
+	_, err := resolveOneChunkManifest(ctx, lookup, chunk, nil, cache)
 	require.ErrorIs(t, err, context.Canceled)
 	require.False(t, lookupCalled, "a canceled cache hit must not issue a lookup")
 }
@@ -278,7 +278,7 @@ func TestResolveOneChunkManifestCanceledWaiterReturnsDuringCoalescedMiss(t *test
 	defer leaderCancel()
 	leaderDone := make(chan error, 1)
 	go func() {
-		_, err := ResolveOneChunkManifest(leaderCtx, fixture.lookup, chunk, nil, cache)
+		_, err := resolveOneChunkManifest(leaderCtx, fixture.lookup, chunk, nil, cache)
 		leaderDone <- err
 	}()
 
@@ -287,7 +287,7 @@ func TestResolveOneChunkManifestCanceledWaiterReturnsDuringCoalescedMiss(t *test
 	// for the leader's result.
 	waiterCtx, waiterCancel := context.WithCancel(context.Background())
 	waiterCancel()
-	_, err := ResolveOneChunkManifest(waiterCtx, fixture.lookup, chunk, nil, cache)
+	_, err := resolveOneChunkManifest(waiterCtx, fixture.lookup, chunk, nil, cache)
 	require.ErrorIs(t, err, context.Canceled)
 
 	// The leader must still complete successfully and populate the cache.

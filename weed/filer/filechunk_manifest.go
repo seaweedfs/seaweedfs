@@ -103,7 +103,7 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 }
 
 func (r *chunkManifestResolver) executeJob(job chunkManifestResolveJob) {
-	job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator, nil)
+	job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator)
 	if job.result.err != nil && r.parentCtx.Err() == nil {
 		if job.batchCtx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
 			job.result.internalCancel = true
@@ -287,7 +287,20 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 	return
 }
 
-func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator, cache *ChunkManifestCache) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+// ResolveOneChunkManifest fetches and decodes a single manifest chunk. It is
+// the uncached, exported path used by every non-Mount caller; the Mount path
+// routes through resolveOneChunkManifest so it can share a per-mount cache.
+// Keeping this signature stable preserves the existing four-argument contract
+// for external callers.
+func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	return resolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator, nil)
+}
+
+// resolveOneChunkManifest is the cache-aware implementation. cache may be nil,
+// in which case the manifest is fetched and validated on every call, matching
+// the historical uncached behavior. A non-nil cache is owned by a single mount
+// (WFS) and coalesces concurrent cold misses via singleflight.
+func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator, cache *ChunkManifestCache) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	if !chunk.IsChunkManifest {
 		return
 	}

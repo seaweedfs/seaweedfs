@@ -23,7 +23,7 @@ func BenchmarkManifestResolutionRepeatedOpen(b *testing.B) {
 			}
 			chunk := newManifestCacheTestChunk("benchmark-cached")
 			cache := NewChunkManifestCache(MaxMountChunkManifestCacheEntries, MaxMountChunkManifestCacheBytes)
-			_, err := ResolveOneChunkManifest(context.Background(), lookup, chunk, nil, cache)
+			_, err := resolveOneChunkManifest(context.Background(), lookup, chunk, nil, cache)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -33,7 +33,7 @@ func BenchmarkManifestResolutionRepeatedOpen(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := ResolveOneChunkManifest(context.Background(), lookup, chunk, nil, cache); err != nil {
+				if _, err := resolveOneChunkManifest(context.Background(), lookup, chunk, nil, cache); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -60,7 +60,7 @@ func BenchmarkManifestResolutionWithoutCache(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := ResolveOneChunkManifest(context.Background(), lookup, chunk, nil, nil); err != nil {
+				if _, err := ResolveOneChunkManifest(context.Background(), lookup, chunk, nil); err != nil {
 					b.Fatal(err)
 				}
 			}

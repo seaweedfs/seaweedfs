@@ -719,7 +719,7 @@ func TestFetchWholeChunkCancelledKeepsLocations(t *testing.T) {
 	// the cancellation must survive the wrapping ResolveOneChunkManifest does,
 	// or callers cannot tell a dead volume server from their own abort
 	manifestChunk := &filer_pb.FileChunk{FileId: "5,abc", IsChunkManifest: true}
-	_, resolveErr := ResolveOneChunkManifest(ctx, lookup.lookup, manifestChunk, inv, nil)
+	_, resolveErr := ResolveOneChunkManifest(ctx, lookup.lookup, manifestChunk, inv)
 	assert.ErrorIs(t, resolveErr, context.Canceled)
 
 	// volume.fsck resolves manifests with no invalidator and still has to tell
