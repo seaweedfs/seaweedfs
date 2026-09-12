@@ -2,7 +2,10 @@ package s3api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -63,6 +66,12 @@ func (s3a *S3ApiServer) PutBucketQuotaHandler(w http.ResponseWriter, r *http.Req
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
+	// Reject trailing data after the JSON object to prevent malformed payloads
+	// from being silently accepted.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeQuotaError(w, r, http.StatusBadRequest, "unexpected trailing data after JSON object")
+		return
+	}
 
 	if req.QuotaEnabled && req.QuotaSize <= 0 {
 		writeQuotaError(w, r, http.StatusBadRequest, "quota_size must be > 0 when quota_enabled is true")
@@ -76,7 +85,11 @@ func (s3a *S3ApiServer) PutBucketQuotaHandler(w http.ResponseWriter, r *http.Req
 	}
 	req.QuotaUnit = normalizedUnit
 
-	quotaBytes := convertQuotaToBytes(req.QuotaSize, normalizedUnit)
+	quotaBytes, err := convertQuotaToBytes(req.QuotaSize, normalizedUnit)
+	if err != nil {
+		writeQuotaError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	var quota int64
 	switch {
@@ -94,7 +107,10 @@ func (s3a *S3ApiServer) PutBucketQuotaHandler(w http.ResponseWriter, r *http.Req
 			Name:      bucket,
 		})
 		if err != nil {
-			return fmt.Errorf("bucket not found: %w", err)
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return filer_pb.ErrNotFound
+			}
+			return fmt.Errorf("failed to look up bucket: %w", err)
 		}
 		bucketEntry := lookupResp.Entry
 		bucketEntry.Quota = quota
@@ -115,6 +131,10 @@ func (s3a *S3ApiServer) PutBucketQuotaHandler(w http.ResponseWriter, r *http.Req
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
 		glog.Errorf("PutBucketQuotaHandler %s: %v", bucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -141,8 +161,16 @@ func (s3a *S3ApiServer) GetBucketQuotaHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Return the absolute quota magnitude as quota_size; the sign only
+	// encodes enabled/disabled state internally. This makes the response
+	// round-trippable: a client can send the same JSON back via PUT without
+	// the negative sentinel being interpreted as zero.
+	quotaSize := entry.Quota
+	if quotaSize < 0 {
+		quotaSize = -quotaSize
+	}
 	resp := bucketQuotaResponse{
-		QuotaSize:    entry.Quota,
+		QuotaSize:    quotaSize,
 		QuotaUnit:    "B",
 		QuotaEnabled: entry.Quota > 0,
 	}
@@ -181,22 +209,28 @@ func normalizeQuotaUnit(unit string) (string, error) {
 }
 
 // convertQuotaToBytes converts a quota size + unit to bytes.
-func convertQuotaToBytes(size int64, unit string) int64 {
+// Returns an error if the result would overflow int64.
+func convertQuotaToBytes(size int64, unit string) (int64, error) {
 	if size <= 0 {
-		return 0
+		return 0, nil
 	}
+	var multiplier int64
 	switch unit {
 	case "TB":
-		return size * 1024 * 1024 * 1024 * 1024
+		multiplier = 1024 * 1024 * 1024 * 1024
 	case "GB":
-		return size * 1024 * 1024 * 1024
+		multiplier = 1024 * 1024 * 1024
 	case "MB":
-		return size * 1024 * 1024
+		multiplier = 1024 * 1024
 	case "KB":
-		return size * 1024
+		multiplier = 1024
 	case "B":
-		return size
+		multiplier = 1
 	default:
-		return 0
+		return 0, fmt.Errorf("unsupported quota_unit %q", unit)
 	}
+	if multiplier > 0 && size > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("quota_size %d %s overflows maximum bytes (%d)", size, unit, math.MaxInt64)
+	}
+	return size * multiplier, nil
 }

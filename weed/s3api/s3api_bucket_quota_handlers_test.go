@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,23 +48,36 @@ func TestNormalizeQuotaUnit(t *testing.T) {
 
 func TestConvertQuotaToBytes(t *testing.T) {
 	tests := []struct {
-		size int64
-		unit string
-		want int64
+		size    int64
+		unit    string
+		want    int64
+		wantErr bool
 	}{
-		{0, "B", 0},
-		{0, "GB", 0},
-		{1024, "B", 1024},
-		{1, "KB", 1024},
-		{1, "MB", 1024 * 1024},
-		{1, "GB", 1024 * 1024 * 1024},
-		{1, "TB", 1024 * 1024 * 1024 * 1024},
-		{2, "GB", 2 * 1024 * 1024 * 1024},
-		{-1, "GB", 0},
+		{0, "B", 0, false},
+		{0, "GB", 0, false},
+		{1024, "B", 1024, false},
+		{1, "KB", 1024, false},
+		{1, "MB", 1024 * 1024, false},
+		{1, "GB", 1024 * 1024 * 1024, false},
+		{1, "TB", 1024 * 1024 * 1024 * 1024, false},
+		{2, "GB", 2 * 1024 * 1024 * 1024, false},
+		{-1, "GB", 0, false},
+		// Overflow: 8388608 TB = 2^23 * 2^40 = 2^63 which overflows int64
+		{8388608, "TB", 0, true},
+		// MaxInt64 KB overflows
+		{math.MaxInt64, "KB", 0, true},
+		// MaxInt64 B does not overflow
+		{math.MaxInt64, "B", math.MaxInt64, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.unit, func(t *testing.T) {
-			got := convertQuotaToBytes(tc.size, tc.unit)
+			got, err := convertQuotaToBytes(tc.size, tc.unit)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error for %d %s, got %d", tc.size, tc.unit, got)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("unexpected error for %d %s: %v", tc.size, tc.unit, err)
+			}
 			if got != tc.want {
 				t.Errorf("convertQuotaToBytes(%d, %q) = %d, want %d", tc.size, tc.unit, got, tc.want)
 			}
@@ -79,6 +93,18 @@ func TestPutBucketQuotaHandler_InvalidBody(t *testing.T) {
 	s3a.PutBucketQuotaHandler(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for malformed body, got %d", rr.Code)
+	}
+}
+
+func TestPutBucketQuotaHandler_TrailingData(t *testing.T) {
+	s3a := &S3ApiServer{}
+	body := `{"quota_size":100,"quota_unit":"GB","quota_enabled":true} garbage`
+	req := httptest.NewRequest(http.MethodPut, "/test-bucket?seaweedfs-quota", strings.NewReader(body))
+	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+	rr := httptest.NewRecorder()
+	s3a.PutBucketQuotaHandler(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for trailing data, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
