@@ -1,6 +1,16 @@
 version: '3.9'
 
 services:
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_DB=seaweedfs
+      - POSTGRES_USER=seaweedfs
+      - POSTGRES_PASSWORD=seaweedfs
+    ports:
+      - "5432:5432"
+    #command: ["postgres", "-c", "log_statement=all"]
+    command: ["postgres"]
   master:
     image: chrislusf/seaweedfs:local
     ports:
