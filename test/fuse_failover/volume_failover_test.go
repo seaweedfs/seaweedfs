@@ -397,12 +397,12 @@ func runChaosAppend(t *testing.T, c *failoverCluster, name string, chaos func())
 	// own mount and the filer make of the same file, which says whether the
 	// data was lost on the way in or is only invisible from this side.
 	d := firstDiff(want, got)
-	fromWriter, _ := os.ReadFile(writePath)
+	fromWriter, writerReadErr := os.ReadFile(writePath)
 	viaFiler, filerErr := c.FilerGet("/" + name)
 	require.Failf(t, "final content mismatch",
-		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nmount0 matches=%v filer matches=%v (err %v)\n%s\n%s\n%s",
+		"%s: first difference at offset %d (want %d bytes, got %d)\nwant %q\ngot  %q\nmount0 matches=%v (writer read err %v) filer matches=%v (err %v)\n%s\n%s\n%s",
 		name, d, len(want), len(got), window(want, d), window(got, d),
-		string(fromWriter) == want, string(viaFiler) == want, filerErr,
+		string(fromWriter) == want, writerReadErr, string(viaFiler) == want, filerErr,
 		c.tailLog("mount0"),
 		dumpChunkList(c, "/"+name, d),
 		dumpHexAround(fromWriter, d, "writer mount"),
@@ -421,9 +421,11 @@ func dumpChunkList(c *failoverCluster, path string, diffAt int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chunk list for %s (%d chunks):", path, len(chunks))
 	for i, ch := range chunks {
-		holders, _ := c.VolumeHolders(ch.VolumeId)
+		holders, holdersErr := c.VolumeHolders(ch.VolumeId)
 		holdersStr := "unknown"
-		if len(holders) > 0 {
+		if holdersErr != nil {
+			holdersStr = fmt.Sprintf("lookup failed: %v", holdersErr)
+		} else if len(holders) > 0 {
 			holdersStr = strings.Join(holders, ",")
 		}
 		marker := ""

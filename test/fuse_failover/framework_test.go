@@ -344,9 +344,11 @@ func (c *failoverCluster) FileChunkList(path string) ([]struct {
 	for i, ch := range entry.Chunks {
 		vid := ch.Fid.VolumeId
 		if vid == 0 && ch.FileId != "" {
-			if parsed, parseErr := strconv.ParseUint(strings.SplitN(ch.FileId, ",", 2)[0], 10, 32); parseErr == nil {
-				vid = uint32(parsed)
+			parsed, parseErr := strconv.ParseUint(strings.SplitN(ch.FileId, ",", 2)[0], 10, 32)
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse file id %s: %w", ch.FileId, parseErr)
 			}
+			vid = uint32(parsed)
 		}
 		out[i] = struct {
 			FileId   string
