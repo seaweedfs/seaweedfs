@@ -212,7 +212,7 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	if query.Has("list-type") {
+	if query.Get("list-type") == "2" {
 		if method == http.MethodGet && !hasObject {
 			return s3_constants.S3_ACTION_LIST_BUCKET
 		}

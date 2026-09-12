@@ -171,6 +171,9 @@ func TestResolveS3Action_ListType(t *testing.T) {
 		{"list-type alone", "list-type=2", s3_constants.S3_ACTION_LIST_BUCKET},
 		{"list-type with listing params", "list-type=2&prefix=a&continuation-token=x", s3_constants.S3_ACTION_LIST_BUCKET},
 		{"list-type with ownershipControls", "list-type=2&ownershipControls=", s3_constants.S3_ACTION_LIST_BUCKET},
+		// The router only selects ListObjectsV2 for list-type=2; another value
+		// falls through to the subresource route, so ownershipControls wins.
+		{"list-type=1 with ownershipControls", "list-type=1&ownershipControls=", s3_constants.S3_ACTION_GET_BUCKET_OWNERSHIP_CONTROLS},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
