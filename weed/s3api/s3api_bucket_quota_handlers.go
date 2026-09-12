@@ -230,7 +230,7 @@ func convertQuotaToBytes(size int64, unit string) (int64, error) {
 		return 0, fmt.Errorf("unsupported quota_unit %q", unit)
 	}
 	if multiplier > 0 && size > math.MaxInt64/multiplier {
-		return 0, fmt.Errorf("quota_size %d %s overflows maximum bytes (%d)", size, unit, math.MaxInt64)
+		return 0, fmt.Errorf("quota_size %d %s overflows maximum bytes (%d)", size, unit, int64(math.MaxInt64))
 	}
 	return size * multiplier, nil
 }
