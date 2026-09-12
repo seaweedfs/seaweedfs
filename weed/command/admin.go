@@ -341,6 +341,8 @@ func runAdmin(cmd *Command, args []string) bool {
 		if *a.readOnlyPassword != "" {
 			fmt.Printf("Read-only access: Enabled (read-only user: %s)\n", *a.readOnlyUser)
 		}
+	} else if *a.adminApiKey != "" {
+		fmt.Printf("Authentication: API key only (UI disabled; /api endpoints require Bearer token)\n")
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}

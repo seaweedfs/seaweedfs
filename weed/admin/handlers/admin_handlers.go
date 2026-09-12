@@ -78,8 +78,12 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 
 	if authRequired {
 		// UI session auth is only meaningful when adminPassword is set.
-		// In API-key-only mode, the UI stays public (or disabled) and only
-		// /api endpoints are protected by RequireAuthAPI.
+		// In API-key-only mode (no adminPassword), the interactive UI is not
+		// registered: the browser cannot send bearer tokens, so UI actions
+		// would fail against the protected /api endpoints, and exposing the
+		// UI pages without auth would leak sensitive cluster data. Operators
+		// who need both the UI and server-to-server API access should set
+		// both -adminPassword and -adminApiKey.
 		uiSessionAuth := adminPassword != ""
 		if uiSessionAuth {
 			// Authentication routes (no auth required)
@@ -90,10 +94,6 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 			protected := r.NewRoute().Subrouter()
 			protected.Use(dash.RequireAuth(h.sessionStore))
 			h.registerUIRoutes(protected)
-		} else {
-			// API-key-only mode: UI is public (or disabled via enableUI),
-			// but API requires a bearer token.
-			h.registerUIRoutes(r)
 		}
 
 		api := r.PathPrefix("/api").Subrouter()
