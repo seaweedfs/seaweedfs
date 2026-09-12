@@ -266,8 +266,10 @@ _accountDetailsDao.persist(accountId, details);
 This is the cleanest mapping of the three providers: no proprietary admin client,
 just the AWS IAM SDK that CloudStack already has access to. The IAM endpoint URL
 is provided as `iamUrl` in the store details. If `iamUrl` is omitted, the driver
-defaults it to `<s3Url>/iam` (the SeaweedFS IAM API path mounted under the S3
-endpoint).
+defaults it to `s3Url` — SeaweedFS registers its embedded IAM API at `POST /` on
+the same S3 endpoint (`UnifiedPostHandler` in `s3api_server.go`), so the IAM
+endpoint is the same as the S3 endpoint unless the deployment runs a separate
+`weed iam` server.
 
 #### Bucket quota — S3 `?seaweedfs-quota` extension
 
@@ -356,8 +358,11 @@ gap:
 ## Open questions for proIO / Swen
 
 1. **IAM endpoint path.** ~~Where does `weed iam` listen relative to the S3
-   endpoint in a typical proIO deployment?~~ **Resolved.** The driver accepts an
-   optional `iamUrl` store detail and defaults it to `<s3Url>/iam` when omitted.
+   endpoint in a typical proIO deployment?~~ **Resolved.** SeaweedFS registers
+   its embedded IAM API at `POST /` on the same S3 endpoint
+   (`UnifiedPostHandler`), so the driver defaults `iamUrl` to `s3Url`. A
+   separate `iamUrl` is only needed if the deployment runs a standalone
+   `weed iam` server on a different host/port.
 2. **Quota requirements.** Do proIO's customers need server-enforced per-bucket
    quotas, or is CloudStack-side accounting sufficient for the first release?
    The `?seaweedfs-quota` S3 extension (PR #11279) provides server-enforced
