@@ -15,7 +15,7 @@ func TestChunkGroupReaderCacheMemory(t *testing.T) {
 	budget := NewReaderCacheBudget(8 << 10)
 	groups := make([]*ChunkGroup, 32)
 	for i := range groups {
-		group, err := NewChunkGroup(func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, newMockChunkCacheForReaderCache(), nil, 128, nil, budget)
+		group, err := NewChunkGroup(func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, newMockChunkCacheForReaderCache(), nil, 128, nil, nil, budget)
 		if err != nil {
 			t.Fatal(err)
 		}

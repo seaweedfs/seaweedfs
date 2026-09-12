@@ -142,6 +142,7 @@ type WFS struct {
 	stats                 statsCache
 	chunkCache            *chunk_cache.TieredChunkCache
 	readerCacheBudget     *filer.ReaderCacheBudget
+	manifestCache         *filer.ChunkManifestCache
 	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature             int32
 	concurrentWriters     *util.LimitedConcurrentExecutor
@@ -253,6 +254,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		RawFileSystem:     fuse.NewDefaultRawFileSystem(),
 		option:            option,
 		readerCacheBudget: filer.NewReaderCacheBudget(option.ReaderCacheSizeMB << 20),
+		manifestCache:     filer.NewChunkManifestCache(filer.MaxMountChunkManifestCacheEntries, filer.MaxMountChunkManifestCacheBytes),
 		signature:         util.RandomInt32(),
 		inodeToPath:       NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
 		fhMap:             NewFileHandleToInode(),

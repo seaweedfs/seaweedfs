@@ -287,22 +287,69 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 	return
 }
 
+// ResolveOneChunkManifest fetches and decodes a single manifest chunk. It is
+// the uncached, exported path used by every non-Mount caller; the Mount path
+// routes through resolveOneChunkManifest so it can share a per-mount cache.
+// Keeping this signature stable preserves the existing four-argument contract
+// for external callers.
 func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	return resolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator, nil)
+}
+
+// resolveOneChunkManifest is the cache-aware implementation. cache may be nil,
+// in which case the manifest is fetched and validated on every call, matching
+// the historical uncached behavior. A non-nil cache is owned by a single mount
+// (WFS) and coalesces concurrent cold misses via singleflight.
+func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator, cache *ChunkManifestCache) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	if !chunk.IsChunkManifest {
 		return
 	}
-
-	// IsChunkManifest
-	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
-	bytesBuffer.Reset()
-	defer bytesBufferPool.Put(bytesBuffer)
-	err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed, invalidator)
-	if err != nil {
-		return nil, fmt.Errorf("fail to read manifest %s: %w", chunk.GetFileIdString(), err)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+
+	key := chunkManifestCacheKey{
+		fileID:       chunk.GetFileIdString(),
+		cipherKey:    string(chunk.CipherKey),
+		isCompressed: chunk.IsCompressed,
+	}
+
+	fetch := func() ([]byte, error) {
+		bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
+		bytesBuffer.Reset()
+		defer bytesBufferPool.Put(bytesBuffer)
+		if err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, key.fileID, chunk.CipherKey, chunk.IsCompressed, invalidator); err != nil {
+			return nil, fmt.Errorf("fail to read manifest %s: %w", key.fileID, err)
+		}
+		// Copy before the buffer returns to the pool so concurrent callers
+		// cannot overwrite the slice before it is cached.
+		data := append([]byte(nil), bytesBuffer.Bytes()...)
+		// Validate before returning so fetchOrLoad only caches well-formed
+		// manifests. A malformed manifest must not poison the cache.
+		if err := proto.Unmarshal(data, &filer_pb.FileChunkManifest{}); err != nil {
+			return nil, fmt.Errorf("fail to unmarshal manifest %s: %w", key.fileID, err)
+		}
+		return data, nil
+	}
+
+	var manifestBytes []byte
+	if cache != nil {
+		data, err := cache.fetchOrLoad(ctx, key, fetch)
+		if err != nil {
+			return nil, err
+		}
+		manifestBytes = data
+	} else {
+		data, err := fetch()
+		if err != nil {
+			return nil, err
+		}
+		manifestBytes = data
+	}
+
 	m := &filer_pb.FileChunkManifest{}
-	if err := proto.Unmarshal(bytesBuffer.Bytes(), m); err != nil {
-		return nil, fmt.Errorf("fail to unmarshal manifest %s: %w", chunk.GetFileIdString(), err)
+	if err := proto.Unmarshal(manifestBytes, m); err != nil {
+		return nil, fmt.Errorf("fail to unmarshal manifest %s: %w", key.fileID, err)
 	}
 
 	// recursive
@@ -310,7 +357,6 @@ func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 	return m.Chunks, nil
 }
 
-// TODO fetch from cache for weed mount?
 func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, invalidator CacheInvalidator) error {
 	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {

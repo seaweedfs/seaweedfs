@@ -421,7 +421,7 @@ func TestChunkGroup_SearchChunks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			group, err := NewChunkGroup(nil, nil, tt.chunks, 1, nil)
+			group, err := NewChunkGroup(nil, nil, tt.chunks, 1, nil, nil)
 			if !assert.NoError(t, err) {
 				return
 			}
