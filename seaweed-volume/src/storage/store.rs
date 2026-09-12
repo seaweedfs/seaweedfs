@@ -1035,6 +1035,20 @@ impl Store {
         dirs
     }
 
+    /// Every per-disk `EcVolume` this store maps for `vid`, in location order.
+    /// Immutable twin of [`Self::find_all_ec_volumes_mut`].
+    ///
+    /// Reconciliation can mount one vid as N runtimes holding disjoint shard
+    /// subsets, and the first-match `find_ec_volume` hides the siblings. Anything
+    /// that has to reach the whole volume, rather than any one runtime of it,
+    /// uses this.
+    pub fn find_all_ec_volumes(&self, vid: VolumeId) -> Vec<&EcVolume> {
+        self.locations
+            .iter()
+            .filter_map(|loc| loc.find_ec_volume(vid))
+            .collect()
+    }
+
     pub fn find_all_ec_volumes_mut(&mut self, vid: VolumeId) -> Vec<&mut EcVolume> {
         self.locations
             .iter_mut()

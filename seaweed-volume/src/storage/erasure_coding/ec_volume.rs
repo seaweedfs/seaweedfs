@@ -81,6 +81,15 @@ pub struct EcVolume {
     /// so `bitrot_protection()` can return the `Off`/`Invalid` distinction without
     /// re-reading, mirroring Go's `EcVolume.bitrotStatus`.
     pub(crate) bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
+    /// Directory the active sidecar was actually resolved from. The search in
+    /// `load_bitrot_for_generation` spans sibling disks, and a `.ecsum` records
+    /// no encode identity, so provenance is the only signal that a loaded
+    /// manifest may describe a different encode run. Same purpose as
+    /// `ecx_actual_dir`. Empty when no sidecar was found. Always committed in
+    /// the same step as `bitrot`/`bitrot_status`, so a reload whose `Err` gets
+    /// swallowed by `reload_bitrot_sidecar` cannot leave this describing a
+    /// sidecar other than the one those two fields actually hold.
+    pub(crate) bitrot_source_dir: String,
 
     io_error_count: std::sync::atomic::AtomicI32,
     io_error_quarantined: std::sync::atomic::AtomicBool,
@@ -249,9 +258,8 @@ pub fn ec_shard_config_from(
     let default_ds = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
     let default_ps = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
     // Sum as u64: counts near the u32 ceiling would wrap and pass the bound.
-    let usable = |ds: u32, ps: u32| {
-        ds > 0 && ps > 0 && (ds as u64 + ps as u64) <= MAX_SHARD_COUNT as u64
-    };
+    let usable =
+        |ds: u32, ps: u32| ds > 0 && ps > 0 && (ds as u64 + ps as u64) <= MAX_SHARD_COUNT as u64;
 
     if let Some(ec) = vif.and_then(|v| v.ec_shard_config.as_ref()) {
         // A config that is PRESENT but records an impossible ratio is not a
@@ -308,7 +316,10 @@ pub fn ec_shard_config_from(
     if prot.generation != 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("{} records generation {}, not generation 0", path, prot.generation),
+            format!(
+                "{} records generation {}, not generation 0",
+                path, prot.generation
+            ),
         ));
     }
     let ec = prot.ec_shard_config.as_ref().ok_or_else(|| {
@@ -436,6 +447,7 @@ impl EcVolume {
             encode_ts_ns,
             bitrot: None,
             bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
+            bitrot_source_dir: String::new(),
             io_error_count: std::sync::atomic::AtomicI32::new(0),
             io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
             last_io_error: std::sync::Mutex::new(None),
@@ -522,7 +534,11 @@ impl EcVolume {
     /// => `Off` (protection off, not corruption); self-integrity or manifest
     /// failure => `Invalid` with a warning (protection off pending repair); usable
     /// => `On`. Mirrors Go's `loadBitrotForGeneration`.
-    fn load_bitrot_for_generation(&mut self, generation: u32, additional_dirs: &[String]) -> io::Result<()> {
+    fn load_bitrot_for_generation(
+        &mut self,
+        generation: u32,
+        additional_dirs: &[String],
+    ) -> io::Result<()> {
         use crate::storage::erasure_coding::ec_bitrot;
         // Data base then index base, matching Go's findBitrotSidecar. A split
         // -dir/-dir.idx location keeps the sidecar with the INDEX, and on a
@@ -582,6 +598,22 @@ impl EcVolume {
             self.data_shards as usize,
             self.parity_shards as usize,
         );
+        // Provenance is committed together with the sidecar it describes, so a
+        // swallowed reload (`reload_bitrot_sidecar` logs and discards the `Err`
+        // above) cannot leave them disagreeing: the geometry-mismatch return
+        // happens before this point, so `bitrot`/`bitrot_status` below and
+        // `bitrot_source_dir` here always describe the same load attempt.
+        // Only a path that actually exists is a real source: `path` falls back
+        // to the data path when nothing was found, and recording that would
+        // claim a provenance the volume does not have.
+        self.bitrot_source_dir = if std::path::Path::new(&path).exists() {
+            std::path::Path::new(&path)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         self.bitrot = None;
         self.bitrot_status = status;
         match status {
@@ -629,31 +661,19 @@ impl EcVolume {
     /// already unrecoverable, so treating it as a sidecar-integrity issue avoids
     /// raising false shard-corruption alarms.
     ///
+    /// A third outcome sits ahead of both of the above: if the identity fence
+    /// excluded a runtime AND the sidecar that supplied the protection was
+    /// resolved from that excluded runtime's directory, the checksums cannot be
+    /// trusted against
+    /// the merged shards at all. That case returns `(0, [], [errors])` with an
+    /// "unverifiable" note and never touches a shard handle — no scan, no
+    /// wholesale-mismatch classification, no blamed shard.
+    ///
     /// This method NEVER deletes or mutates anything — it is purely diagnostic.
     /// Duplicates the mounted shard handles so `run()` can scan with the store
     /// guard released; see `EcChecksumScrubPlan` for why that matters.
     pub fn checksum_scrub_plan(&self) -> EcChecksumScrubPlan {
-        let (prot, status) = self.bitrot_protection();
-
-        // Only BitrotOn reaches the shard loop in `run()`; the other statuses
-        // return before touching a handle, so cloning for them buys nothing.
-        let shards = match status {
-            crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On => self
-                .shards
-                .iter()
-                .enumerate()
-                .filter_map(|(i, slot)| slot.as_ref().map(|s| (i as u32, s.try_clone_file())))
-                .collect(),
-            _ => Vec::new(),
-        };
-
-        EcChecksumScrubPlan {
-            volume_id: self.volume_id,
-            prot,
-            status,
-            parity_shards: self.parity_shards,
-            shards,
-        }
+        EcChecksumScrubPlan::for_volumes(&[self]).expect("a single runtime is never an empty slice")
     }
 
     /// Convenience wrapper preserving the original call shape. Callers that
@@ -1311,37 +1331,7 @@ impl EcVolume {
     /// distinction to decide whether a needle can be reassembled locally at
     /// all, so compacting it would silently change which needles get verified.
     pub fn scrub_local_plan(&self) -> EcLocalScrubPlan {
-        EcLocalScrubPlan {
-            volume_id: self.volume_id,
-            version: self.version,
-            data_shards: self.data_shards,
-            // locate_data wants shardSize = datFileSize / DataShards when known,
-            // else ecdFileSize - 1 (shards are padded to the small block size;
-            // the -1 avoids an off-by-one in the large-block row count).
-            shard_size: if self.dat_file_size > 0 {
-                self.dat_file_size / self.data_shards as i64
-            } else {
-                self.shard_file_size() - 1
-            },
-            large_block_size: self.large_block_size(),
-            small_block_size: self.small_block_size(),
-            index: self.scrub_index_plan(),
-            ecx_path: self.ecx_file_name(),
-            // A second descriptor: the index plan's is consumed by its own walk,
-            // and both seek.
-            ecx_walk: File::open(self.ecx_file_name()),
-            shards: self
-                .shards
-                .iter()
-                .map(|slot| {
-                    slot.as_ref().map(|s| EcLocalShard {
-                        file: s.try_clone_file(),
-                        file_size: s.file_size(),
-                        info: s.to_ec_shard_info(),
-                    })
-                })
-                .collect(),
-        }
+        EcLocalScrubPlan::for_volumes(&[self]).expect("a single runtime is never an empty slice")
     }
 
     /// ScrubLocal verifies each needle against the LOCAL shards only; it cannot
@@ -1352,7 +1342,11 @@ impl EcVolume {
     /// hold the store lock MUST use `scrub_local_plan()` + `run()` instead.
     pub fn scrub_local(
         &self,
-    ) -> (u64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
+    ) -> (
+        u64,
+        Vec<crate::pb::volume_server_pb::EcShardInfo>,
+        Vec<String>,
+    ) {
         self.scrub_local_plan().run()
     }
 
@@ -1516,9 +1510,7 @@ impl EcVolume {
                 .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecj file not open"))?;
             let mut buf = [0u8; NEEDLE_ID_SIZE];
             needle_id.to_bytes(&mut buf);
-            ecj_file
-                .write_all(&buf)
-                .and_then(|_| ecj_file.sync_all())
+            ecj_file.write_all(&buf).and_then(|_| ecj_file.sync_all())
         };
 
         match append_result {
@@ -1551,10 +1543,7 @@ impl EcVolume {
     /// Internal: binary search .ecx without masking by `deleted_needles`.
     /// Used by `journal_delete` so a repeat delete can still see the raw
     /// pre-existing .ecx tombstone from a prior rebuild.
-    fn find_needle_from_ecx_raw(
-        &self,
-        needle_id: NeedleId,
-    ) -> io::Result<Option<(Offset, Size)>> {
+    fn find_needle_from_ecx_raw(&self, needle_id: NeedleId) -> io::Result<Option<(Offset, Size)>> {
         let ecx_file = self
             .ecx_file
             .as_ref()
@@ -1711,9 +1700,8 @@ impl EcVolume {
         // volume-id reuse cannot load stale protection, and so
         // collection.delete does not leave orphaned <base>.ecsum files.
         // ecx_actual_dir is always one of these two dirs.
-        let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(
-            &self.base_name(),
-        );
+        let _ =
+            crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&self.base_name());
         if self.dir_idx != self.dir {
             let idx_base = crate::storage::volume::volume_file_name(
                 &self.dir_idx,
@@ -1843,8 +1831,15 @@ mod tests {
         }
         v.sync_to_disk().unwrap();
         v.close();
-        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
-            .unwrap();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            10,
+            4,
+        )
+        .unwrap();
 
         let vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
         assert!(
@@ -1894,8 +1889,15 @@ mod tests {
         }
         v.sync_to_disk().unwrap();
         v.close();
-        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
-            .unwrap();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            10,
+            4,
+        )
+        .unwrap();
 
         let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
         for id in 0..14u8 {
@@ -1980,8 +1982,15 @@ mod tests {
         }
         v.sync_to_disk().unwrap();
         v.close();
-        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
-            .unwrap();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            10,
+            4,
+        )
+        .unwrap();
 
         // Rewrite the first .ecx row's size as -1000: a negative that is NOT
         // the -1 tombstone the walk skips. A scrub is what you point at an
@@ -2065,8 +2074,15 @@ mod tests {
         }
         v.sync_to_disk().unwrap();
         v.close();
-        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
-            .unwrap();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            10,
+            4,
+        )
+        .unwrap();
 
         let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
         for id in 0..14u8 {
@@ -2157,8 +2173,15 @@ mod tests {
         }
         v.sync_to_disk().unwrap();
         v.close();
-        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), 10, 4)
-            .unwrap();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            10,
+            4,
+        )
+        .unwrap();
 
         let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
         for id in 0..14u8 {
@@ -2565,6 +2588,724 @@ mod tests {
             "a non-zero size mismatch is genuine corruption and must be reported"
         );
     }
+
+    /// Build one real encoded EC volume in `dir`, then hand back N runtimes over
+    /// it, each holding the shard ids it was given. Models the reconciled
+    /// split-disk mount without needing N directories.
+    fn split_runtimes(dir: &str, vid: VolumeId, subsets: &[&[u8]]) -> Vec<EcVolume> {
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::Volume;
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            vid,
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        for i in 1..=8 {
+            let data = format!("test data for needle {} with a bit more length", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(dir, dir, "", vid, 10, 4)
+            .unwrap();
+
+        subsets
+            .iter()
+            .map(|ids| {
+                let mut ev = EcVolume::new(dir, dir, "", vid).unwrap();
+                for &id in ids.iter() {
+                    ev.add_shard(EcVolumeShard::new(dir, "", vid, id)).unwrap();
+                }
+                ev
+            })
+            .collect()
+    }
+
+    /// The union must reach every disk's shards, and first-disk-wins must
+    /// resolve a shard mounted on two disks — the same rule
+    /// `collect_ec_shard_dirs` and Go's `CollectEcShards` already use.
+    #[test]
+    fn test_merge_ec_runtimes_unions_slots_first_disk_wins() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // Disk 0: 0..=6 plus 9 (9 is also on disk 1 — a duplicate mount).
+        // Disk 1: 7..=13.
+        let runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6, 9], &[7, 8, 9, 10, 11, 12, 13]],
+        );
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).expect("non-empty input merges");
+        assert_eq!(merged.merged.len(), 2, "both runtimes share generation 0");
+        assert!(
+            merged.skipped.is_empty(),
+            "nothing to skip: {:?}",
+            merged.skipped
+        );
+
+        // Every shard 0..=13 is reachable from the merged slots.
+        for id in 0..14usize {
+            assert!(
+                merged.slots[id].is_some(),
+                "shard {} missing from the union",
+                id
+            );
+        }
+        // Shard 9 is held by both; the first disk wins.
+        let (owner, _) = merged.slots[9].unwrap();
+        assert!(
+            std::ptr::eq(owner, refs[0]),
+            "duplicate shard must resolve to the first disk"
+        );
+        // Slots are shard-id indexed across the volume's whole shard space,
+        // never compacted: index N is shard N or nothing.
+        assert_eq!(
+            merged.slots.len(),
+            14,
+            "slots must span the full 10+4 shard space"
+        );
+    }
+
+    /// Leniency is keyed on the ANCHOR, never the holder: a known identity must
+    /// not accept an unstamped holder (store_ec.rs:667-673,
+    /// grpc_server.rs:3743-3748). Merging leftover legacy shards beside a
+    /// current encode is what produces false corruption reports.
+    #[test]
+    fn test_merge_ec_runtimes_excludes_incompatible_identities() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9], &[10, 11, 12, 13]],
+        );
+        runtimes[0].encode_ts_ns = 500; // stale, but stamped
+        runtimes[1].encode_ts_ns = 0; // legacy, unstamped
+        runtimes[2].encode_ts_ns = 900; // the live encode run
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+
+        // Anchor is the newest known identity; only exact matches merge.
+        assert_eq!(merged.anchor.encode_ts_ns, 900);
+        assert_eq!(merged.merged.len(), 1);
+        assert!(
+            merged.slots[10].is_some(),
+            "the anchor's own shards must merge"
+        );
+        assert!(
+            merged.slots[0].is_none(),
+            "an older known generation must not merge"
+        );
+        assert!(
+            merged.slots[7].is_none(),
+            "an unstamped holder must not merge"
+        );
+
+        // Exclusions are REPORTED, never silent — that is what keeps this from
+        // regressing to the silent-clean bug this whole change fixes.
+        assert_eq!(merged.skipped.len(), 2, "got {:?}", merged.skipped);
+        assert!(merged.skipped.iter().all(|s| s.contains("not verified")));
+    }
+
+    /// When no runtime carries an identity there is nothing to fence on, so
+    /// behavior stays exactly as it is today: everything merges.
+    #[test]
+    fn test_merge_ec_runtimes_is_lenient_when_no_identity_is_known() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        assert!(runtimes.iter().all(|r| r.encode_ts_ns == 0));
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert_eq!(merged.merged.len(), 2);
+        assert!(merged.skipped.is_empty());
+        assert!(merged.slots[3].is_some());
+    }
+
+    /// The anchor supplies the volume-level metadata, so prefer a shard-bearing
+    /// runtime at the anchor generation over an empty one.
+    #[test]
+    fn test_merge_ec_runtimes_anchor_prefers_a_shard_bearing_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[], &[0, 1, 2]]);
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert!(
+            std::ptr::eq(merged.anchor, refs[1]),
+            "anchor must hold shards"
+        );
+        assert!(
+            merged.skipped.is_empty(),
+            "same generation: nothing is excluded"
+        );
+    }
+
+    /// Empty input is the vanished-volume case and the ONLY None.
+    #[test]
+    fn test_merge_ec_runtimes_none_only_when_empty() {
+        assert!(merge_ec_runtimes(&[]).is_none());
+    }
+
+    /// The vanished-volume case: callers' `let ... else` guards depend on this
+    /// being the ONLY None.
+    #[test]
+    fn test_for_volumes_is_none_only_for_an_empty_slice() {
+        assert!(EcChecksumScrubPlan::for_volumes(&[]).is_none());
+        assert!(EcLocalScrubPlan::for_volumes(&[]).is_none());
+    }
+
+    /// The whole point: corruption on a shard that only a sibling runtime holds
+    /// must be reported. Before this change the scrub saw disk 0 alone and
+    /// returned clean.
+    #[test]
+    fn test_checksum_scrub_for_volumes_catches_sibling_disk_corruption() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // Shard 11 is held ONLY by the second runtime.
+        let runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9, 10, 11, 12, 13]],
+        );
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        // Clean to start.
+        let (scanned, broken, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+        assert!(broken.is_empty(), "unexpected mismatches: {:?}", broken);
+        assert!(scanned > 0, "merged plan scanned nothing");
+
+        // Corrupt shard 11 — reachable only through the second runtime.
+        let shard11 = format!("{}/1.ec11", dir);
+        let mut bytes = std::fs::read(&shard11).unwrap();
+        bytes[0] ^= 0xFF;
+        std::fs::write(&shard11, &bytes).unwrap();
+
+        let (_, broken2, _) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            broken2.contains(&11),
+            "sibling-disk corruption must be flagged, got {:?}",
+            broken2
+        );
+
+        // The single-runtime path is exactly the old blind spot: disk 0 alone
+        // still reports clean, which is why aggregation was needed.
+        let (_, broken_disk0, _) = refs[0].checksum_scrub();
+        assert!(!broken_disk0.contains(&11));
+    }
+
+    /// An excluded runtime is reported through the plan's errors, but ONLY on
+    /// the On path — the Off arm's clean-empty contract is Go parity
+    /// (`case BitrotOff: return 0, nil, nil`) and must not grow errors.
+    #[test]
+    fn test_checksum_scrub_skips_are_reported_but_never_break_the_off_arm() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        runtimes[0].encode_ts_ns = 100; // excluded: older known identity
+        runtimes[1].encode_ts_ns = 200; // anchor
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        // With protection ON, the skip surfaces as an error line, and the
+        // surviving (anchor) runtime is still actually scanned.
+        let (scanned, _, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            scanned > 0,
+            "excluding one runtime must not stop the rest from being scanned"
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("not verified")),
+            "excluded runtime must be reported, got {:?}",
+            errs
+        );
+
+        // With protection OFF, the arm stays byte-for-byte clean.
+        let mut off = runtimes;
+        for r in off.iter_mut() {
+            r.bitrot_status = crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off;
+            r.bitrot = None;
+        }
+        let off_refs: Vec<&EcVolume> = off.iter().collect();
+        assert_eq!(
+            EcChecksumScrubPlan::for_volumes(&off_refs).unwrap().run(),
+            (0, Vec::new(), Vec::new()),
+            "BitrotOff must stay clean-empty for Go parity"
+        );
+    }
+
+    /// The Invalid arm returns a non-empty error vector of its own, so the
+    /// Go-parity contract that silences the Off arm does not reach it. A volume
+    /// with BOTH a malformed sidecar and a fenced-out disk must report BOTH:
+    /// reporting only the sidecar hides an unscanned disk behind an unrelated
+    /// integrity error, which is the failure mode this whole change exists to
+    /// close.
+    #[test]
+    fn test_checksum_scrub_reports_skips_on_a_malformed_sidecar() {
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        runtimes[0].encode_ts_ns = 100; // excluded: older known identity
+        runtimes[1].encode_ts_ns = 200; // anchor
+        for r in runtimes.iter_mut() {
+            r.bitrot_status = BitrotStatus::Invalid;
+        }
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (scanned, broken, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert_eq!(
+            scanned, 0,
+            "a malformed sidecar must not be scanned against"
+        );
+        assert!(broken.is_empty(), "must never blame shards: {:?}", broken);
+        assert_eq!(
+            errs.len(),
+            2,
+            "expected the sidecar error AND the skip: {:?}",
+            errs
+        );
+        assert!(
+            errs[0].contains("malformed/unverifiable"),
+            "the sidecar error stays first: {:?}",
+            errs
+        );
+        assert!(
+            errs[1].contains("belong to encode run 100") && errs[1].contains("not verified"),
+            "the excluded disk must still be named: {:?}",
+            errs
+        );
+    }
+
+    /// When the anchor's sidecar came from a directory belonging to a runtime
+    /// the fence excluded, the checksums cannot be trusted against the anchor's
+    /// shards. Report that, never "shard N is corrupt".
+    #[test]
+    fn test_checksum_scrub_reports_unverifiable_sidecar_from_excluded_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+
+        // Mount actually resolved the real sidecar from `dir` (both subsets
+        // share one physical directory in this fixture), confirming
+        // `load_bitrot_for_generation` populates the field before the test
+        // overwrites it below to simulate a cross-disk borrow.
+        assert_eq!(
+            runtimes[1].bitrot_source_dir, dir,
+            "mount must record the dir the sidecar was actually resolved from"
+        );
+
+        // Runtime 0 is an older encode run, and the anchor resolved its sidecar
+        // from runtime 0's directory.
+        runtimes[0].encode_ts_ns = 100;
+        runtimes[0].dir = "/disk-old".to_string();
+        runtimes[0].dir_idx = "/disk-old".to_string();
+        runtimes[1].encode_ts_ns = 200;
+        runtimes[1].dir = "/disk-new".to_string();
+        runtimes[1].dir_idx = "/disk-new".to_string();
+        runtimes[1].bitrot_source_dir = "/disk-old".to_string();
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (scanned, broken, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert_eq!(
+            scanned, 0,
+            "an unverifiable sidecar must not be scanned against"
+        );
+        assert!(broken.is_empty(), "must never blame shards: {:?}", broken);
+        assert!(
+            errs.iter().any(|e| e.contains("unverifiable")),
+            "expected an unverifiable-protection note, got {:?}",
+            errs
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("were not verified")),
+            "the fenced-out runtime must still be reported alongside the unverifiable note: {:?}",
+            errs
+        );
+    }
+
+    /// The provenance rule fires only when a runtime was actually excluded. A
+    /// healthy single-encode volume whose sidecar lives on a sibling disk is the
+    /// normal mirrored case and must scrub normally.
+    #[test]
+    fn test_checksum_scrub_provenance_rule_does_not_fire_without_exclusions() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(
+            dir,
+            VolumeId(1),
+            &[&[0, 1, 2, 3, 4, 5, 6], &[7, 8, 9, 10, 11, 12, 13]],
+        );
+        // Same generation: nothing is excluded, so provenance is irrelevant even
+        // though the anchor's sidecar appears to have come from somewhere
+        // neither runtime owns. (The anchor is runtimes[0]: `merge_ec_runtimes`
+        // picks the first shard-bearing runtime at the anchor generation.)
+        runtimes[0].bitrot_source_dir = "/somewhere-else".to_string();
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (scanned, broken, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(scanned > 0, "a normal volume must still be scanned");
+        assert!(broken.is_empty(), "{:?}", broken);
+        assert!(
+            !errs.iter().any(|e| e.contains("unverifiable")),
+            "{:?}",
+            errs
+        );
+    }
+
+    /// The identity fence keys on `encode_ts_ns` ALONE, never on geometry, so
+    /// two same-generation runtimes whose `.vif`s disagree about the layout do
+    /// merge -- and `slots` is then sized to the WIDER of them while the
+    /// volume's actual shard-id range is the ANCHOR's `data + parity`.
+    ///
+    /// The two consumers disagreed about exactly that range: the mode 2|5 arm
+    /// builds `dirs` over `0..anchor.data_shards + anchor.parity_shards` and
+    /// silently drops the surplus slots, while `EcChecksumScrubPlan` iterated
+    /// the full width and reported each one "present but missing from sidecar
+    /// manifest". Nothing in this volume describes those ids -- the sidecar
+    /// manifest and the Reed-Solomon matrix are both the anchor's -- so that
+    /// message is the width disagreement talking, not a finding.
+    #[test]
+    fn test_checksum_scrub_truncates_slots_to_the_anchors_geometry() {
+        use crate::pb::volume_server_pb::{
+            ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+        };
+        use crate::storage::erasure_coding::ec_bitrot;
+        use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo};
+
+        let tmp = TempDir::new().unwrap();
+        let vid = VolumeId(1);
+
+        // One dir per geometry: `EcVolume::new` reads `data_shards`/
+        // `parity_shards` from the `.vif` beside the volume, so two runtimes can
+        // only disagree if they mount from different directories.
+        let seed = |name: &str, ds: u32, ps: u32, shard_id: u8| -> String {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let d = dir.to_str().unwrap().to_string();
+            let base = crate::storage::volume::volume_file_name(&d, "", vid);
+            std::fs::write(format!("{}.ecx", base), b"").unwrap();
+            std::fs::write(format!("{}.ecj", base), b"").unwrap();
+            std::fs::write(
+                format!("{}.vif", base),
+                serde_json::to_string(&VifVolumeInfo {
+                    version: 3,
+                    ec_shard_config: Some(VifEcShardConfig {
+                        data_shards: ds,
+                        parity_shards: ps,
+                        encode_ts_ns: 500,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                format!("{}.ec{:02}", base, shard_id),
+                b"shard data nonempty",
+            )
+            .unwrap();
+            d
+        };
+
+        // 10+4, and the only disk with a sidecar -- so it supplies `prot`, and
+        // its manifest covers shard ids 0..=13 and nothing else.
+        let narrow = seed("narrow", 10, 4, 0);
+        let prot = EcBitrotProtection {
+            algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+            block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+            generation: 0,
+            ec_shard_config: Some(ec_bitrot::ec_shard_config(10, 4, 0)),
+            shards: (0..14u32)
+                .map(|shard_id| EcShardChecksums {
+                    shard_id,
+                    covered_size: 4,
+                    block_crc32c: vec![0u8; 4],
+                })
+                .collect(),
+            encode_uuid: vec![0u8; 16],
+        };
+        ec_bitrot::save_bitrot_sidecar(
+            &ec_bitrot::bitrot_sidecar_path(
+                &crate::storage::volume::volume_file_name(&narrow, "", vid),
+                0,
+            ),
+            &prot,
+        )
+        .unwrap();
+
+        // 12+4: 16 slots, and it holds shard 14 -- an id the anchor's layout
+        // does not contain at all. Same encode_ts_ns, but the geometry fence
+        // now excludes it rather than merging incompatible shards.
+        let wide = seed("wide", 12, 4, 14);
+
+        let mut narrow_v = EcVolume::new(&narrow, &narrow, "", vid).unwrap();
+        narrow_v
+            .add_shard(EcVolumeShard::new(&narrow, "", vid, 0))
+            .unwrap();
+        let mut wide_v = EcVolume::new(&wide, &wide, "", vid).unwrap();
+        wide_v
+            .add_shard(EcVolumeShard::new(&wide, "", vid, 14))
+            .unwrap();
+
+        assert_eq!(narrow_v.shards.len(), 14);
+        assert_eq!(wide_v.shards.len(), 16);
+        assert_eq!(
+            narrow_v.encode_ts_ns, wide_v.encode_ts_ns,
+            "the two runtimes must share a generation"
+        );
+        assert_eq!(
+            narrow_v.bitrot_status,
+            crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On,
+            "the narrow disk must carry usable protection"
+        );
+
+        let refs: Vec<&EcVolume> = vec![&narrow_v, &wide_v];
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert!(
+            std::ptr::eq(merged.anchor, refs[0]),
+            "the NARROW runtime must anchor"
+        );
+        assert!(
+            !merged.skipped.is_empty(),
+            "the wide runtime must be excluded by the geometry fence: {:?}",
+            merged.skipped
+        );
+        assert_eq!(
+            merged.slots.len(),
+            14,
+            "slots are sized to the anchor's geometry, not the excluded wide runtime"
+        );
+        assert!(
+            merged.slots.get(14).is_none() || merged.slots.get(14).unwrap().is_none(),
+            "shard 14 from the excluded runtime must not appear in slots"
+        );
+
+        let (scanned, broken, errs) = EcChecksumScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            !errs.iter().any(|e| e.contains("shard 14")),
+            "shard 14 belongs to an excluded runtime and must not be scanned: {:?}",
+            errs
+        );
+        assert!(
+            scanned > 0,
+            "the anchor's shard 0 must still be scanned: {:?}",
+            errs
+        );
+        assert_eq!(
+            broken,
+            vec![0],
+            "shard 0 is inside the anchor's geometry and its bytes do not match \
+             the manifest, so it must still be reported: errs={:?}",
+            errs
+        );
+    }
+
+    /// `for_volumes` must reach every runtime's shards, not just the first's.
+    /// A needle walk alone can't prove that with this fixture: ~500 bytes of
+    /// data under a legacy 1GiB large block puts every needle interval on
+    /// shard 0, so the slot vector is asserted directly. The walk-level checks
+    /// below additionally show the merged plan verifies cleanly and then
+    /// detects corruption reachable through the first runtime, while a
+    /// single-runtime plan stays blind to it.
+    #[test]
+    fn test_scrub_local_for_volumes_merges_slots_across_runtimes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[7, 8, 9]]);
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (count, broken, errs) = EcLocalScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(count > 0, "the merged plan walked no needles");
+        assert!(
+            broken.is_empty(),
+            "clean volume reported broken shards: {:?}",
+            broken
+        );
+        assert!(errs.is_empty(), "clean volume reported errors: {:?}", errs);
+
+        // The property this task exists to deliver, asserted directly on the
+        // plan rather than through a needle walk. With ~500 bytes of fixture
+        // data and a legacy 1GiB large block every needle interval lands in
+        // shard 0, so no needle walk can ever reach a sibling runtime's
+        // shards -- but the slot vector can. Neither runtime holds every
+        // shard here, so the gap at shard 3 makes compaction load-bearing:
+        // a compacting implementation could still satisfy a "populated slots
+        // are reachable" check while silently reindexing the vector.
+        let merged_plan = EcLocalScrubPlan::for_volumes(&refs).unwrap();
+        assert_eq!(
+            merged_plan.shards.len(),
+            14,
+            "slots must span the full 10+4 shard space"
+        );
+        assert!(
+            merged_plan.shards[0].is_some(),
+            "disk 0's shard 0 must be reachable"
+        );
+        assert!(
+            merged_plan.shards[3].is_none(),
+            "a shard no runtime holds must stay an empty slot -- compaction would fill it"
+        );
+        assert!(
+            merged_plan.shards[7].is_some(),
+            "disk 1's shard 7 must be reachable -- the bug being fixed"
+        );
+
+        // A single-runtime plan still sees only its own disk, which is exactly
+        // what made aggregation necessary.
+        let solo = EcLocalScrubPlan::for_volumes(&[refs[0]]).unwrap();
+        assert!(solo.shards[0].is_some());
+        assert!(
+            solo.shards[7].is_none(),
+            "refs[0] alone must not see the sibling's shard 7"
+        );
+
+        // This fixture's few hundred bytes of needle data all land inside
+        // shard 0's legacy 1GiB large block (the tiny volume never fills even
+        // one), so shard 0 alone — held only by the first runtime — carries
+        // every needle. Corrupting a needle body byte there is the LOCAL
+        // analogue of Task 3's sibling-disk corruption: the whole point is
+        // that a partial-shard `scrub_local` cannot see it at all (it just
+        // silently skips a needle it can't reassemble locally — that is not
+        // an error), while the merged plan reaches it through refs[0].
+        let shard0 = format!("{}/1.ec00", dir);
+        let mut bytes = std::fs::read(&shard0).unwrap();
+        assert!(
+            bytes.len() > 268,
+            "fixture shrank below the corruption offset; split_runtimes's \
+             needle payloads changed, so this offset needs picking again"
+        );
+        bytes[268] ^= 0xFF; // inside needle 4's data payload
+        std::fs::write(&shard0, &bytes).unwrap();
+
+        let (_, _, merged_errs) = EcLocalScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            !merged_errs.is_empty(),
+            "merged plan must detect corruption on shard 0, reachable through refs[0]"
+        );
+
+        // refs[1] never mounted shard 0, so it cannot see this corruption at
+        // all — that silent blind spot is exactly the bug aggregation fixes.
+        let (_, _, refs1_errs) = refs[1].scrub_local();
+        assert!(
+            refs1_errs.is_empty(),
+            "runtime without shard 0 has no way to detect this corruption: {:?}",
+            refs1_errs
+        );
+    }
+
+    /// LOCAL's legacy `shard_size` fallback (`dat_file_size == 0`) is now a
+    /// NODE-WIDE input: it feeds `locate_data`'s offset math for every merged
+    /// sibling's shards, not just the anchor's. `anchor.shard_file_size()`
+    /// returns the anchor's FIRST held shard rather than a maximum, so one
+    /// truncated shard on the anchor disk would mis-offset every needle read
+    /// across every disk and manufacture corruption reports wholesale. Take the
+    /// max over the merged slots, the way `verify_ec_shards` already answers the
+    /// same question (`if size > shard_size { shard_size = size }`).
+    #[test]
+    fn test_scrub_local_shard_size_fallback_takes_the_max_across_disks() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        // Mount two shardless runtimes first so the shard files can be doctored
+        // before `add_shard` caches their sizes.
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[], &[]]);
+
+        // Disk 0's shard 0 is truncated -- a partially-copied shard, which is
+        // exactly the containment this fallback used to have and now must not
+        // lose.
+        let shard0_path = format!("{}/1.ec00", dir);
+        let full = std::fs::metadata(&shard0_path).unwrap().len();
+        assert!(full > 1, "fixture shard is too small to truncate");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&shard0_path)
+            .unwrap()
+            .set_len(full / 2)
+            .unwrap();
+
+        runtimes[0]
+            .add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 0))
+            .unwrap();
+        runtimes[1]
+            .add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 1))
+            .unwrap();
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let intact = std::fs::metadata(format!("{}/1.ec01", dir)).unwrap().len() as i64;
+        let truncated = (full / 2) as i64;
+        assert!(
+            truncated < intact,
+            "fixture must leave disk 0's shard SHORTER than disk 1's"
+        );
+
+        let merged = merge_ec_runtimes(&refs).unwrap();
+        assert!(
+            std::ptr::eq(merged.anchor, refs[0]),
+            "the truncated disk must anchor, or the old sizing was already right"
+        );
+        assert_eq!(
+            refs[0].dat_file_size, 0,
+            "this fixture writes no .vif, so the legacy fallback is the path \
+             under test; with a dat_file_size the branch is never reached"
+        );
+        assert_eq!(
+            refs[0].shard_file_size(),
+            truncated,
+            "the old source -- the anchor's first held shard -- is the \
+             truncated one, which is what makes this observable"
+        );
+
+        let plan = EcLocalScrubPlan::for_volumes(&refs).unwrap();
+        assert_eq!(
+            plan.shard_size,
+            intact - 1,
+            "one disk's truncated shard must not size every merged sibling's \
+             shards; locate_data would then mis-offset every needle on every \
+             disk and report corruption that is not there"
+        );
+    }
+
+    /// LOCAL has no bitrot status gate, so an excluded runtime is always
+    /// reported.
+    #[test]
+    fn test_scrub_local_reports_skipped_runtimes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut runtimes = split_runtimes(dir, VolumeId(1), &[&[0, 1, 2], &[3, 4, 5]]);
+        runtimes[0].encode_ts_ns = 100;
+        runtimes[1].encode_ts_ns = 200;
+        let refs: Vec<&EcVolume> = runtimes.iter().collect();
+
+        let (_, _, errs) = EcLocalScrubPlan::for_volumes(&refs).unwrap().run();
+        assert!(
+            errs.iter().any(|e| e.contains("not verified")),
+            "excluded runtime must be reported, got {:?}",
+            errs
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2692,7 +3433,10 @@ mod uniform_layout_tests {
             std::fs::remove_file(format!("{}.idx", base)).unwrap();
 
             let mut vol = EcVolume::new(dir, dir, "", vid).unwrap();
-            assert_eq!(vol.block_size, block_size, "block size not loaded from .vif");
+            assert_eq!(
+                vol.block_size, block_size,
+                "block size not loaded from .vif"
+            );
             for i in 0..10u8 {
                 vol.add_shard(EcVolumeShard::new(dir, "", vid, i)).unwrap();
             }
@@ -2741,7 +3485,9 @@ mod uniform_layout_tests {
     /// and the legacy block layout, which reconstructs a custom-ratio or
     /// uniform volume through the wrong matrix.
     fn seed_uniform_sidecar(base: &str, ds: u32, ps: u32, block: i64) {
-        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::pb::volume_server_pb::{
+            ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+        };
         use crate::storage::erasure_coding::ec_bitrot;
         let prot = EcBitrotProtection {
             algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
@@ -2761,11 +3507,7 @@ mod uniform_layout_tests {
     }
 
     fn seed_config_free_vif(base: &str) {
-        std::fs::write(
-            format!("{}.vif", base),
-            r#"{"version":3,"datFileSize":0}"#,
-        )
-        .unwrap();
+        std::fs::write(format!("{}.vif", base), r#"{"version":3,"datFileSize":0}"#).unwrap();
     }
 
     // A .vif that omits ecShardConfig answers nothing about the layout, so it
@@ -2805,7 +3547,11 @@ mod uniform_layout_tests {
         let data = tempfile::TempDir::new().unwrap();
         let sib = tempfile::TempDir::new().unwrap();
         let (dir, sibling) = (data.path().to_str().unwrap(), sib.path().to_str().unwrap());
-        seed_config_free_vif(&crate::storage::volume::volume_file_name(dir, "", VolumeId(13)));
+        seed_config_free_vif(&crate::storage::volume::volume_file_name(
+            dir,
+            "",
+            VolumeId(13),
+        ));
         seed_uniform_sidecar(
             &crate::storage::volume::volume_file_name(sibling, "", VolumeId(13)),
             12,
@@ -2813,14 +3559,9 @@ mod uniform_layout_tests {
             3 * 1024 * 1024,
         );
 
-        let got = read_ec_shard_config_across_dirs(
-            dir,
-            dir,
-            &[sibling.to_string()],
-            "",
-            VolumeId(13),
-        )
-        .unwrap();
+        let got =
+            read_ec_shard_config_across_dirs(dir, dir, &[sibling.to_string()], "", VolumeId(13))
+                .unwrap();
         assert_eq!(got, (12, 4, 3 * 1024 * 1024));
     }
 
@@ -2829,7 +3570,11 @@ mod uniform_layout_tests {
     fn read_ec_shard_config_config_free_vif_without_a_sidecar_is_legacy() {
         let d = tempfile::TempDir::new().unwrap();
         let dir = d.path().to_str().unwrap();
-        seed_config_free_vif(&crate::storage::volume::volume_file_name(dir, "", VolumeId(14)));
+        seed_config_free_vif(&crate::storage::volume::volume_file_name(
+            dir,
+            "",
+            VolumeId(14),
+        ));
         let got = read_ec_shard_config(dir, dir, "", VolumeId(14)).unwrap();
         assert_eq!(got, (10, 4, 0));
     }
@@ -2866,15 +3611,14 @@ mod uniform_layout_tests {
     // uniform volume to 10+4 legacy and reconstructs through the wrong matrix.
     #[test]
     fn read_ec_shard_config_finds_the_sidecar_in_its_own_index_dir() {
-        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::pb::volume_server_pb::{
+            ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+        };
         use crate::storage::erasure_coding::ec_bitrot;
 
         let data = tempfile::TempDir::new().unwrap();
         let idx = tempfile::TempDir::new().unwrap();
-        let (dir, dir_idx) = (
-            data.path().to_str().unwrap(),
-            idx.path().to_str().unwrap(),
-        );
+        let (dir, dir_idx) = (data.path().to_str().unwrap(), idx.path().to_str().unwrap());
         let base = crate::storage::volume::volume_file_name(dir_idx, "", VolumeId(7));
         let prot = EcBitrotProtection {
             algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
@@ -2899,7 +3643,9 @@ mod uniform_layout_tests {
 
     #[test]
     fn read_ec_shard_config_finds_a_sibling_disks_sidecar() {
-        use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
+        use crate::pb::volume_server_pb::{
+            ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+        };
         use crate::storage::erasure_coding::ec_bitrot;
 
         let a = tempfile::TempDir::new().unwrap();
@@ -2934,6 +3680,107 @@ mod uniform_layout_tests {
     }
 }
 
+/// One volume id's per-disk runtimes resolved into a single scrubbable view.
+/// Every scrub mode builds from this, so there is exactly one answer to
+/// "which disks count" per volume.
+pub(crate) struct MergedEcRuntimes<'a> {
+    /// Volume-level metadata source: geometry, `.ecx` handles, version. NOT
+    /// bitrot protection — the `.ecsum` sidecar is per-DISK state, so
+    /// `EcChecksumScrubPlan::for_volumes` sources it from the first `merged`
+    /// runtime that has any.
+    pub anchor: &'a EcVolume,
+    /// Runtimes whose shards are safe to verify together.
+    pub merged: Vec<&'a EcVolume>,
+    /// Indexed BY SHARD ID. `None` is a shard no merged runtime holds. The
+    /// volume's shard-id range is the anchor's geometry
+    /// (`0..data_shards + parity_shards`); consumers truncate to it.
+    pub slots: Vec<Option<(&'a EcVolume, &'a EcVolumeShard)>>,
+    /// One line per runtime excluded by the identity or geometry fence.
+    /// Reported, never dropped.
+    pub skipped: Vec<String>,
+}
+
+/// Resolve `runtimes` (one vid's mounts, in location order) into a merged view.
+/// `None` for an empty slice (the vanished-volume case).
+///
+/// Two fences admit a runtime into `merged`: the anchor's `encode_ts_ns` (the
+/// maximum, so `0` implies every runtime is `0` and nothing is excluded —
+/// legacy leniency), and the anchor's geometry (`data_shards`, `parity_shards`,
+/// `block_size`). Equal timestamps do not guarantee equal layouts, so a
+/// same-generation runtime whose `.vif` disagrees is excluded and reported
+/// rather than merged into a plan that would apply the anchor's offsets and
+/// checksums to incompatible shards.
+pub(crate) fn merge_ec_runtimes<'a>(runtimes: &[&'a EcVolume]) -> Option<MergedEcRuntimes<'a>> {
+    let anchor_gen = runtimes.iter().map(|v| v.encode_ts_ns).max()?;
+
+    let gen_matches: Vec<&'a EcVolume> = runtimes
+        .iter()
+        .copied()
+        .filter(|v| v.encode_ts_ns == anchor_gen)
+        .collect();
+
+    let anchor = gen_matches
+        .iter()
+        .copied()
+        .find(|v| v.shards.iter().any(|s| s.is_some()))
+        .unwrap_or(gen_matches[0]);
+
+    let merged: Vec<&'a EcVolume> = gen_matches
+        .iter()
+        .copied()
+        .filter(|v| {
+            v.data_shards == anchor.data_shards
+                && v.parity_shards == anchor.parity_shards
+                && v.block_size == anchor.block_size
+        })
+        .collect();
+
+    let width = merged.iter().map(|v| v.shards.len()).max().unwrap_or(0);
+    let mut slots: Vec<Option<(&'a EcVolume, &'a EcVolumeShard)>> = vec![None; width];
+    for v in &merged {
+        for (id, slot) in v.shards.iter().enumerate() {
+            if let Some(shard) = slot.as_ref() {
+                if slots[id].is_none() {
+                    slots[id] = Some((*v, shard));
+                }
+            }
+        }
+    }
+
+    let skipped: Vec<String> = runtimes
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| {
+            v.encode_ts_ns != anchor_gen
+                || v.data_shards != anchor.data_shards
+                || v.parity_shards != anchor.parity_shards
+                || v.block_size != anchor.block_size
+        })
+        .map(|(pos, v)| {
+            if v.encode_ts_ns != anchor_gen {
+                format!(
+                    "EC volume {} shards at {} (position {}) belong to encode run {} but the scrub anchors on {}; they were not verified",
+                    v.volume_id.0, v.dir, pos, v.encode_ts_ns, anchor_gen
+                )
+            } else {
+                format!(
+                    "EC volume {} shards at {} (position {}) share encode run {} but disagree on geometry ({}+{} bs {} vs {}+{} bs {}); they were not verified",
+                    v.volume_id.0, v.dir, pos, v.encode_ts_ns,
+                    v.data_shards, v.parity_shards, v.block_size,
+                    anchor.data_shards, anchor.parity_shards, anchor.block_size
+                )
+            }
+        })
+        .collect();
+
+    Some(MergedEcRuntimes {
+        anchor,
+        merged,
+        slots,
+        skipped,
+    })
+}
+
 /// Self-contained input for an EC checksum scrub: the sidecar plus a duplicate
 /// of every mounted local shard handle, taken under the store read guard.
 ///
@@ -2955,15 +3802,125 @@ pub struct EcChecksumScrubPlan {
     pub status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus,
     pub parity_shards: u32,
     /// One entry per LOCAL shard: its id and a duplicate of the mounted
-    /// handle (or the error to report). Private so the plan can only be built
-    /// by `EcVolume::checksum_scrub_plan`, which is what makes "captured under
-    /// the guard" an invariant rather than a convention.
+    /// handle (or the error to report). Private so a plan can only be built
+    /// (via `checksum_scrub_plan()` or `for_volumes()`) from `&EcVolume`
+    /// references, which cannot be obtained without the store guard — which
+    /// is what makes "captured under the guard" an invariant rather than a
+    /// convention.
     ///
     /// `dup` shares the kernel file offset, so every read here is positional.
     shards: Vec<(u32, std::io::Result<File>)>,
+    /// Runtimes the identity/geometry fence excluded, one line each. Surfaced
+    /// through `run()`'s errors on the `On`/`Invalid` paths.
+    skipped: Vec<String>,
+    /// `Some(source_dir)` when the sidecar that supplied `prot`/`status` was
+    /// resolved from a directory belonging to a runtime the fence excluded.
+    /// `run()` reports unverifiable protection instead of blaming shards.
+    unverifiable_sidecar: Option<String>,
+    /// One line per merged runtime whose sidecar resolved `Invalid`. Reported
+    /// even when protection is taken from a sibling that is `On`, so a
+    /// malformed sidecar is never silently discarded.
+    invalid_sidecar_errors: Vec<String>,
 }
 
 impl EcChecksumScrubPlan {
+    /// Build one plan over every per-disk runtime of a volume id. `None` only
+    /// when `runtimes` is empty (the vanished-volume case).
+    pub fn for_volumes(runtimes: &[&EcVolume]) -> Option<Self> {
+        use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+
+        let merged = merge_ec_runtimes(runtimes)?;
+        let anchor = merged.anchor;
+
+        // Protection is per-DISK state: the `.ecsum` sidecar is not mirrored,
+        // and at mount each runtime resolves it from its own directories only,
+        // so after a restart the runtime without the sidecar mounts `Off`.
+        // Take the first merged runtime that has protection: `On` if any, else
+        // `Invalid`, else the anchor's `Off`. This only moves toward more
+        // verification (`Off->On`, `Off->Invalid`, `Invalid->On`), never toward
+        // silence — the anchor is itself in `merged`, so the fallback is `Off`
+        // only when every merged runtime is `Off`.
+        let protection_source = merged
+            .merged
+            .iter()
+            .copied()
+            .find(|v| matches!(v.bitrot_protection().1, BitrotStatus::On))
+            .or_else(|| {
+                merged
+                    .merged
+                    .iter()
+                    .copied()
+                    .find(|v| matches!(v.bitrot_protection().1, BitrotStatus::Invalid))
+            })
+            .unwrap_or(anchor);
+        let (prot, status) = protection_source.bitrot_protection();
+
+        // Collect every merged runtime whose sidecar resolved Invalid, excluding
+        // the protection_source (whose error the Invalid arm of run() already
+        // reports). These surface when protection is taken from a sibling that
+        // is On, so a malformed sidecar is never silently discarded.
+        let invalid_sidecar_errors: Vec<String> = merged
+            .merged
+            .iter()
+            .filter(|v| {
+                let v_ptr: *const EcVolume = **v;
+                let src_ptr: *const EcVolume = protection_source;
+                !std::ptr::eq(v_ptr, src_ptr)
+                    && matches!(v.bitrot_protection().1, BitrotStatus::Invalid)
+            })
+            .map(|v| {
+                format!(
+                    "EC volume {} bitrot sidecar at {} is malformed/unverifiable (sidecar integrity)",
+                    v.volume_id.0, v.dir
+                )
+            })
+            .collect();
+
+        let total = (anchor.data_shards + anchor.parity_shards) as usize;
+
+        let shards = match status {
+            crate::storage::erasure_coding::ec_bitrot::BitrotStatus::On => merged
+                .slots
+                .iter()
+                .take(total)
+                .enumerate()
+                .filter_map(|(id, slot)| slot.map(|(_, shard)| (id as u32, shard.try_clone_file())))
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        // If the fence excluded a runtime AND the sidecar that supplied
+        // protection was resolved from that excluded runtime's directory, the
+        // checksums cannot be trusted against the merged shards.
+        let unverifiable_sidecar = if merged.skipped.is_empty() {
+            None
+        } else {
+            let own_dirs: Vec<String> = merged
+                .merged
+                .iter()
+                .flat_map(|v| [v.dir.as_str(), v.dir_idx.as_str()])
+                .map(|d| d.trim_end_matches('/').to_string())
+                .collect();
+            let src = protection_source.bitrot_source_dir.trim_end_matches('/');
+            if src.is_empty() || own_dirs.iter().any(|d| d == src) {
+                None
+            } else {
+                Some(protection_source.bitrot_source_dir.clone())
+            }
+        };
+
+        Some(EcChecksumScrubPlan {
+            volume_id: anchor.volume_id,
+            prot,
+            status,
+            parity_shards: anchor.parity_shards,
+            shards,
+            skipped: merged.skipped,
+            unverifiable_sidecar,
+            invalid_sidecar_errors,
+        })
+    }
+
     /// The byte-verification pass. Touches only the filesystem — no store, no
     /// lock — so it is safe to hand to `spawn_blocking`.
     pub fn run(self) -> (u64, Vec<u32>, Vec<String>) {
@@ -2972,39 +3929,39 @@ impl EcChecksumScrubPlan {
 
         let mut errors: Vec<String> = Vec::new();
 
-        // Resolve the active-generation protection AND its status, mirroring
-        // Go's `ChecksumScrub` (`prot, status := ecv.BitrotProtection()`):
-        //   - BitrotOff   => sidecars are OPTIONAL; an absent (or generation/
-        //     config-mismatched) sidecar simply means protection is not enabled
-        //     for this generation. Return a CLEAN, EMPTY result — NOT an error —
-        //     so legacy/intentionally-unprotected volumes are never reported
-        //     broken. (Go: `case BitrotOff: return 0, nil, nil`.)
-        //   - BitrotInvalid => the sidecar is PRESENT but malformed/unverifiable
-        //     (self-integrity or manifest failure). That is the only status that
-        //     yields an integrity error here.
-        //   - BitrotOn    => scan local shards against it.
+        // Mirrors Go's `ChecksumScrub` (`prot, status := ecv.BitrotProtection()`):
+        //   - Off: sidecars are optional; return clean (Go: `case BitrotOff: return 0, nil, nil`).
+        //   - Invalid: sidecar is present but malformed; report an integrity error.
+        //   - On: scan local shards against it.
         let prot = match (self.prot, self.status) {
             (_, BitrotStatus::Off) => {
-                // Unprotected generation: nothing to verify. Not an error.
                 return (0, Vec::new(), Vec::new());
             }
             (_, BitrotStatus::Invalid) => {
-                return (
-                    0,
-                    Vec::new(),
-                    vec![format!(
-                        "EC volume {} bitrot sidecar is malformed/unverifiable (sidecar integrity)",
-                        self.volume_id.0
-                    )],
-                );
+                let mut errs = vec![format!(
+                    "EC volume {} bitrot sidecar is malformed/unverifiable (sidecar integrity)",
+                    self.volume_id.0
+                )];
+                errs.extend(self.skipped);
+                errs.extend(self.invalid_sidecar_errors);
+                return (0, Vec::new(), errs);
             }
             (Some(p), BitrotStatus::On) => p,
             (None, BitrotStatus::On) => {
-                // Unreachable: BitrotOn always carries a loaded sidecar. Treat a
-                // missing payload defensively as protection off (clean no-op).
                 return (0, Vec::new(), Vec::new());
             }
         };
+
+        errors.extend(self.skipped);
+        errors.extend(self.invalid_sidecar_errors);
+
+        if let Some(src) = self.unverifiable_sidecar {
+            errors.push(format!(
+                "EC volume {} bitrot sidecar was resolved from {}, which belongs to an excluded encode run; protection unverifiable",
+                self.volume_id.0, src
+            ));
+            return (0, Vec::new(), errors);
+        }
 
         let block_size = prot.block_size as i64;
 
@@ -3103,7 +4060,10 @@ impl EcIndexScrubPlan {
         if self.ecx_file_size == 0 {
             return (
                 0,
-                vec![format!("zero-size ECX file for EC volume {}", self.volume_id.0)],
+                vec![format!(
+                    "zero-size ECX file for EC volume {}",
+                    self.volume_id.0
+                )],
             );
         }
 
@@ -3112,12 +4072,7 @@ impl EcIndexScrubPlan {
         // after the two guards above so the error ordering is unchanged.
         let mut ecx_file = match self.ecx_handle {
             Ok(f) => f,
-            Err(e) => {
-                return (
-                    0,
-                    vec![format!("open ECX file {}: {}", self.ecx_path, e)],
-                )
-            }
+            Err(e) => return (0, vec![format!("open ECX file {}: {}", self.ecx_path, e)]),
         };
         crate::storage::idx::check_index_file(&mut ecx_file, self.ecx_file_size, self.version)
     }
@@ -3175,13 +4130,95 @@ pub struct EcLocalScrubPlan {
     index: EcIndexScrubPlan,
     ecx_path: String,
     ecx_walk: std::io::Result<File>,
-    /// Indexed BY SHARD ID; `None` is a shard this node does not hold.
+    /// Indexed BY SHARD ID; `None` is a shard no merged runtime holds.
     shards: Vec<Option<EcLocalShard>>,
+    /// Runtimes the identity fence excluded, one line each. LOCAL has no status
+    /// gate, so `run()` always reports these.
+    skipped: Vec<String>,
 }
 
 impl EcLocalScrubPlan {
+    /// Build one plan over every per-disk runtime of a volume id. `None` only
+    /// when `runtimes` is empty.
+    ///
+    /// The shard vector keeps its SLOT structure — index is the shard id, gaps
+    /// are shards no merged runtime holds. `run()` reads that distinction to
+    /// decide whether a needle can be reassembled locally at all, so compacting
+    /// it would silently change which needles get verified.
+    pub fn for_volumes(runtimes: &[&EcVolume]) -> Option<Self> {
+        let merged = merge_ec_runtimes(runtimes)?;
+        let anchor = merged.anchor;
+
+        Some(EcLocalScrubPlan {
+            volume_id: anchor.volume_id,
+            version: anchor.version,
+            data_shards: anchor.data_shards,
+            // locate_data wants shardSize = datFileSize / DataShards when known,
+            // else ecdFileSize - 1 (shards are padded to the small block size;
+            // the -1 avoids an off-by-one in the large-block row count).
+            //
+            // The fallback takes the MAX over every merged slot, not
+            // `anchor.shard_file_size()` -- which returns the anchor's FIRST
+            // held shard, not a maximum. Before aggregation the plan only read
+            // the anchor's own shards, so a truncated shard there mis-sized only
+            // its own runtime; now one disk's truncated shard would set
+            // `shard_size` for every merged sibling's shards, mis-offset
+            // `locate_data` and manufacture needle corruption across the whole
+            // node. `verify_ec_shards` already answers this same question the
+            // same way (`if size > shard_size { shard_size = size }`), so this
+            // is the in-tree convention rather than a preference. Reached only
+            // on the legacy `dat_file_size == 0` path.
+            //
+            // `.take(..)` honors the `slots` contract: the volume's shard-id
+            // range is the ANCHOR's geometry, and a same-generation runtime with
+            // a disagreeing `.vif` can populate slots beyond it. Scanning those
+            // would let an OUT-OF-GEOMETRY shard -- one nothing in this volume's
+            // layout describes -- set the offset math for every shard that IS in
+            // it, which is a narrower path to exactly the node-wide mis-sizing
+            // this max exists to close.
+            shard_size: if anchor.dat_file_size > 0 {
+                anchor.dat_file_size / anchor.data_shards as i64
+            } else {
+                merged
+                    .slots
+                    .iter()
+                    .take((anchor.data_shards + anchor.parity_shards) as usize)
+                    .flatten()
+                    .map(|(_, s)| s.file_size())
+                    .max()
+                    .unwrap_or(0)
+                    - 1
+            },
+            large_block_size: anchor.large_block_size(),
+            small_block_size: anchor.small_block_size(),
+            index: anchor.scrub_index_plan(),
+            ecx_path: anchor.ecx_file_name(),
+            // A second descriptor: the index plan's is consumed by its own walk,
+            // and both seek.
+            ecx_walk: File::open(anchor.ecx_file_name()),
+            shards: merged
+                .slots
+                .iter()
+                .map(|slot| {
+                    slot.map(|(_, s)| EcLocalShard {
+                        file: s.try_clone_file(),
+                        file_size: s.file_size(),
+                        info: s.to_ec_shard_info(),
+                    })
+                })
+                .collect(),
+            skipped: merged.skipped,
+        })
+    }
+
     /// The needle walk. Filesystem only — no store, no lock.
-    pub fn run(self) -> (u64, Vec<crate::pb::volume_server_pb::EcShardInfo>, Vec<String>) {
+    pub fn run(
+        self,
+    ) -> (
+        u64,
+        Vec<crate::pb::volume_server_pb::EcShardInfo>,
+        Vec<String>,
+    ) {
         let EcLocalScrubPlan {
             volume_id,
             version,
@@ -3193,10 +4230,15 @@ impl EcLocalScrubPlan {
             ecx_path,
             ecx_walk,
             shards,
+            skipped,
         } = self;
 
         // Local scan also verifies the index.
         let (_, mut errs) = index.run();
+
+        // LOCAL has no protection status to gate on, so an excluded runtime is
+        // always reported rather than silently unscanned.
+        errs.extend(skipped);
 
         let mut broken_shards: HashSet<ShardId> = HashSet::new();
         let mut count: u64 = 0;

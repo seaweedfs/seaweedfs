@@ -65,7 +65,10 @@ fn unix_now_seconds() -> f64 {
 /// caller mistake, not a concurrent change, and callers match on the message.
 fn scrub_vanished_volume(explicit: bool, kind: &str, vid: VolumeId) -> Option<Status> {
     if explicit {
-        return Some(Status::not_found(format!("{} id {} not found", kind, vid.0)));
+        return Some(Status::not_found(format!(
+            "{} id {} not found",
+            kind, vid.0
+        )));
     }
     tracing::info!(
         volume_id = vid.0,
@@ -146,9 +149,7 @@ fn save_state_file(
 }
 
 /// Load VolumeServerState from a state.pb file (matches Go's State.Load).
-pub fn load_state_file(
-    path: &str,
-) -> Option<volume_server_pb::VolumeServerState> {
+pub fn load_state_file(path: &str) -> Option<volume_server_pb::VolumeServerState> {
     if path.is_empty() || !std::path::Path::new(path).exists() {
         return None;
     }
@@ -184,8 +185,7 @@ fn select_rebuild_location(loc_infos: &[LocInfo]) -> Option<(usize, Vec<String>)
 
     for (i, info) in loc_infos.iter().enumerate() {
         let better = info.has_ecx
-            && rebuild_loc_idx
-                .is_none_or(|prev| info.shard_count > loc_infos[prev].shard_count);
+            && rebuild_loc_idx.is_none_or(|prev| info.shard_count > loc_infos[prev].shard_count);
         if better {
             if let Some(prev) = rebuild_loc_idx {
                 other_dirs.push(loc_infos[prev].dir.clone());
@@ -294,9 +294,7 @@ impl VolumeGrpcService {
                 host,
                 remote,
             );
-            return Err(Status::permission_denied(format!(
-                "not authorized: {host}"
-            )));
+            return Err(Status::permission_denied(format!("not authorized: {host}")));
         }
         Ok(())
     }
@@ -451,7 +449,11 @@ impl VolumeGrpcService {
                 let store = self.state.store.read().unwrap();
                 store.find_volume(*vid).map(|(_, v)| {
                     // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
-                    let r = if mode == 1 { v.scrub_index() } else { v.scrub() };
+                    let r = if mode == 1 {
+                        v.scrub_index()
+                    } else {
+                        v.scrub()
+                    };
                     (r, v.file_count())
                 })
             }) else {
@@ -599,24 +601,51 @@ impl VolumeGrpcService {
                     // deliberate divergence from Go FULL to preserve coverage. Drop
                     // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
                     //
-                    // The RS recompute needs every shard co-located, so only run it
-                    // when this node holds all data+parity shards (single-node EC);
-                    // on a distributed layout it would report every non-local shard
-                    // as missing. Snapshot under a brief lock; release before await.
-                    let Some((dir, collection, data_shards, parity_shards, all_local)) = ({
+                    // The RS recompute needs every shard, so only run it when this
+                    // node holds all data+parity shards (single-node EC); on a
+                    // distributed layout it would report every non-local shard as
+                    // missing. The shards need not share one disk: `verify_ec_shards`
+                    // takes a directory per shard id, so a reconciled volume split
+                    // across this node's disks still qualifies.
+                    // Snapshot under a brief lock; release before await.
+                    let Some((
+                        dirs,
+                        collection,
+                        data_shards,
+                        parity_shards,
+                        all_local,
+                        skipped,
+                        encode_ts_ns,
+                    )) = ({
                         let store = self.state.store.read().unwrap();
-                        store.find_ec_volume(vid).map(|ecv| {
-                            let total = (ecv.data_shards + ecv.parity_shards) as usize;
-                            let local = ecv.shards.iter().filter(|s| s.is_some()).count();
-                            (
-                                ecv.dir.clone(),
-                                ecv.collection.clone(),
-                                ecv.data_shards as usize,
-                                ecv.parity_shards as usize,
-                                local == total,
-                            )
-                        })
-                    }) else {
+                        let runtimes = store.find_all_ec_volumes(vid);
+                        crate::storage::erasure_coding::ec_volume::merge_ec_runtimes(&runtimes).map(
+                            |m| {
+                                let total =
+                                    (m.anchor.data_shards + m.anchor.parity_shards) as usize;
+                                let dirs: Vec<Option<String>> = (0..total)
+                                    .map(|id| {
+                                        m.slots
+                                            .get(id)
+                                            .copied()
+                                            .flatten()
+                                            .map(|(owner, _)| owner.dir.clone())
+                                    })
+                                    .collect();
+                                let all_local = dirs.iter().all(|d| d.is_some());
+                                (
+                                    dirs,
+                                    m.anchor.collection.clone(),
+                                    m.anchor.data_shards as usize,
+                                    m.anchor.parity_shards as usize,
+                                    all_local,
+                                    m.skipped,
+                                    m.anchor.encode_ts_ns,
+                                )
+                            },
+                        )
+                    })
+                    else {
                         if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
                             return Err(status);
                         }
@@ -629,19 +658,23 @@ impl VolumeGrpcService {
                         crate::server::store_ec::scrub_ec_volume_distributed(
                             &self.state,
                             vid,
+                            encode_ts_ns,
                             force_deleted_needles_check,
                             mode == 5,
                         )
                         .await;
-                    total_files += files as u64; // count comes from the needle walk only
+                    total_files += files as u64;
+
+                    errs.extend(skipped);
 
                     // (2) Local parity check, gated on all-shards-local. Blocking RS
                     // verify -> spawn_blocking; inputs are owned, no lock held.
-                    if all_local && !dir.is_empty() {
+                    if all_local {
                         let collection_pc = collection.clone();
+                        let dirs_pc = dirs;
                         let join = tokio::task::spawn_blocking(move || {
                             crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
-                                &dir,
+                                &dirs_pc,
                                 &collection_pc,
                                 vid,
                                 data_shards,
@@ -706,7 +739,11 @@ impl VolumeGrpcService {
                     // under the guard stalls the node. See EcChecksumScrubPlan.
                     let Some(plan) = ({
                         let store = self.state.store.read().unwrap();
-                        store.find_ec_volume(vid).map(|ecv| ecv.scrub_local_plan())
+                        // Every disk holding this vid, not just the first: a
+                        // reconciled volume's shards are split across runtimes.
+                        crate::storage::erasure_coding::ec_volume::EcLocalScrubPlan::for_volumes(
+                            &store.find_all_ec_volumes(vid),
+                        )
                     }) else {
                         if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
                             return Err(status);
@@ -747,9 +784,12 @@ impl VolumeGrpcService {
                     // under the guard stalls the node. See EcChecksumScrubPlan.
                     let Some((plan, collection)) = ({
                         let store = self.state.store.read().unwrap();
-                        store
-                            .find_ec_volume(vid)
-                            .map(|ecv| (ecv.checksum_scrub_plan(), ecv.collection.clone()))
+                        let runtimes = store.find_all_ec_volumes(vid);
+                        let collection = runtimes.first().map(|ecv| ecv.collection.clone());
+                        crate::storage::erasure_coding::ec_volume::EcChecksumScrubPlan::for_volumes(
+                            &runtimes,
+                        )
+                        .zip(collection)
                     }) else {
                         if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
                             return Err(status);
@@ -1717,8 +1757,12 @@ impl VolumeServer for VolumeGrpcService {
             };
             if let Err(e) = save_state_file(&self.state.state_file_path, &pb) {
                 // Rollback in-memory state on save failure (matches Go)
-                self.state.maintenance.store(prev_maintenance, Ordering::Relaxed);
-                self.state.state_version.store(prev_version, Ordering::Relaxed);
+                self.state
+                    .maintenance
+                    .store(prev_maintenance, Ordering::Relaxed);
+                self.state
+                    .state_version
+                    .store(prev_version, Ordering::Relaxed);
                 return Err(Status::internal(format!("failed to save state: {}", e)));
             }
 
@@ -1854,9 +1898,8 @@ impl VolumeServer for VolumeGrpcService {
         // Write a .note file to indicate copy in progress. A leftover note
         // fails the volume load on restart, so a write failure must abort.
         let note_path = format!("{}.note", data_base_name);
-        std::fs::write(&note_path, format!("copying from {}", source)).map_err(|e| {
-            Status::internal(format!("write .note for volume {}: {}", vid, e))
-        })?;
+        std::fs::write(&note_path, format!("copying from {}", source))
+            .map_err(|e| Status::internal(format!("write .note for volume {}: {}", vid, e)))?;
 
         let (tx, rx) =
             tokio::sync::mpsc::channel::<Result<volume_server_pb::VolumeCopyResponse, Status>>(16);
@@ -2959,7 +3002,7 @@ impl VolumeServer for VolumeGrpcService {
                 // (V3) or checksum only (V2) + padding. Validate minimum
                 // footer length for the protocol version.
                 use crate::storage::types::{
-                    NEEDLE_CHECKSUM_SIZE, TIMESTAMP_SIZE, VERSION_3, Version,
+                    Version, NEEDLE_CHECKSUM_SIZE, TIMESTAMP_SIZE, VERSION_3,
                 };
                 let version = Version(resp_version as u8);
                 let min_footer = if version >= VERSION_3 {
@@ -3031,10 +3074,7 @@ impl VolumeServer for VolumeGrpcService {
                 &dir, &idx_dir, collection, vid,
             )
             .map_err(|e| {
-                tonic::Status::internal(format!(
-                    "read ec shard config for volume {}: {}",
-                    vid.0, e
-                ))
+                tonic::Status::internal(format!("read ec shard config for volume {}: {}", vid.0, e))
             })?;
 
         let block_size = match crate::storage::erasure_coding::ec_encoder::write_ec_files(
@@ -3198,10 +3238,7 @@ impl VolumeServer for VolumeGrpcService {
                 vid,
             )
             .map_err(|e| {
-                tonic::Status::internal(format!(
-                    "read ec shard config for volume {}: {}",
-                    vid.0, e
-                ))
+                tonic::Status::internal(format!("read ec shard config for volume {}: {}", vid.0, e))
             })?;
         let total_shards = data_shards + parity_shards;
 
@@ -3630,7 +3667,8 @@ impl VolumeServer for VolumeGrpcService {
                 // shards. Unload and remove only the strictly-older disks, never node-wide.
                 let mut store = self.state.store.write().unwrap();
                 for disk_id in 0..store.locations.len() {
-                    let disk_gen = store.locations[disk_id].ec_generation_ts_ns(&req.collection, vid);
+                    let disk_gen =
+                        store.locations[disk_id].ec_generation_ts_ns(&req.collection, vid);
                     let older = matches!(disk_gen, Some(g) if g > 0 && g < req.encode_ts_ns);
                     if !older {
                         tracing::info!(
@@ -4379,10 +4417,7 @@ impl VolumeServer for VolumeGrpcService {
                 // The error otherwise goes to a channel nobody is
                 // reading, leaving an abandoned tier move with no trace.
                 if e.code() == tonic::Code::Cancelled {
-                    tracing::info!(
-                        "volume {} tier move to remote abandoned by its caller",
-                        vid
-                    );
+                    tracing::info!("volume {} tier move to remote abandoned by its caller", vid);
                 } else {
                     tracing::warn!("volume {} tier move to remote failed: {}", vid, e);
                 }
@@ -4544,14 +4579,25 @@ impl VolumeServer for VolumeGrpcService {
                 // Restore the .dat mtime so a reload computes TTL from real data age,
                 // not download time (matches Go VolumeTierMoveDatFromRemote).
                 if remote_modified_secs > 0 {
-                    let modified_ts_ns = (remote_modified_secs as i64).saturating_mul(1_000_000_000);
+                    let modified_ts_ns =
+                        (remote_modified_secs as i64).saturating_mul(1_000_000_000);
                     if let Err(e) = set_file_mtime(&dat_path, modified_ts_ns) {
-                        tracing::warn!("volume {} restore data file {} modified time: {}", vid, dat_path, e);
+                        tracing::warn!(
+                            "volume {} restore data file {} modified time: {}",
+                            vid,
+                            dat_path,
+                            e
+                        );
                     } else if let Ok(dat_file) = tokio::fs::File::open(&dat_path).await {
                         // Persist the restored mtime past the download's content fsync;
                         // best-effort, only TTL accuracy depends on it surviving a crash.
                         if let Err(e) = dat_file.sync_all().await {
-                            tracing::warn!("volume {} fsync data file {} after mtime restore: {}", vid, dat_path, e);
+                            tracing::warn!(
+                                "volume {} fsync data file {} after mtime restore: {}",
+                                vid,
+                                dat_path,
+                                e
+                            );
                         }
                     }
                 }
@@ -4983,10 +5029,15 @@ impl VolumeServer for VolumeGrpcService {
             req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
         } else {
             let store = self.state.store.read().unwrap();
+            // A vid mounted on N disks appears N times here. Left as-is, each
+            // duplicate rescans the same runtime and inflates total_volumes,
+            // while the sibling disks' shards are still never reached.
+            let mut seen = std::collections::HashSet::new();
             store
                 .locations
                 .iter()
                 .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
+                .filter(|vid| seen.insert(*vid))
                 .collect()
         };
 
@@ -5970,7 +6021,9 @@ mod tests {
         (format!("http://{}", addr), shutdown_tx, delete_count)
     }
 
-    fn make_remote_only_service(backend_id: &str) -> (
+    fn make_remote_only_service(
+        backend_id: &str,
+    ) -> (
         VolumeGrpcService,
         TempDir,
         tokio::sync::oneshot::Sender<()>,
@@ -6027,7 +6080,10 @@ mod tests {
         };
         {
             let mut registry = global_s3_tier_registry().write().unwrap();
-            registry.register(format!("s3.{}", backend_id), S3TierBackend::new(&tier_config));
+            registry.register(
+                format!("s3.{}", backend_id),
+                S3TierBackend::new(&tier_config),
+            );
         }
 
         let vif = crate::storage::volume::VifVolumeInfo {
@@ -6096,7 +6152,10 @@ mod tests {
                 // The tier-down handler resolves the backend from the per-server
                 // registry, so register it here too (reads use the global one).
                 let mut reg = crate::remote_storage::s3_tier::S3TierRegistry::new();
-                reg.register(format!("s3.{}", backend_id), S3TierBackend::new(&tier_config));
+                reg.register(
+                    format!("s3.{}", backend_id),
+                    S3TierBackend::new(&tier_config),
+                );
                 reg
             }),
             read_mode: crate::config::ReadMode::Local,
@@ -6236,13 +6295,14 @@ mod tests {
 
         // Carry a peer address so the admin gate sees a caller; the test guard
         // has an empty whitelist, so any peer is accepted.
-        let mut request = Request::new(volume_server_pb::VolumeConsolidateIndexRequest {
-            volume_id: 1,
-        });
-        request.extensions_mut().insert(tonic::transport::server::TcpConnectInfo {
-            local_addr: None,
-            remote_addr: Some("127.0.0.1:65000".parse().unwrap()),
-        });
+        let mut request =
+            Request::new(volume_server_pb::VolumeConsolidateIndexRequest { volume_id: 1 });
+        request
+            .extensions_mut()
+            .insert(tonic::transport::server::TcpConnectInfo {
+                local_addr: None,
+                remote_addr: Some("127.0.0.1:65000".parse().unwrap()),
+            });
 
         service.volume_consolidate_index(request).await.unwrap();
 
@@ -6344,9 +6404,7 @@ mod tests {
         let dest = format!("{}/aborted.dat", tmp.path().to_str().unwrap());
 
         let err = backend
-            .download_file(&dest, "remote-key", |_, _| {
-                Err("caller gone".to_string())
-            })
+            .download_file(&dest, "remote-key", |_, _| Err("caller gone".to_string()))
             .await
             .expect_err("a failing progress callback must abort the download");
         assert!(err.contains("caller gone"), "unexpected error: {}", err);
@@ -6496,9 +6554,7 @@ mod tests {
     // Serve a VolumeGrpcService over a real gRPC endpoint. VolumeCopy dials its
     // source_data_node rather than calling in process, so a cancellation test
     // needs a source that is reachable over the wire.
-    async fn serve_source(
-        service: VolumeGrpcService,
-    ) -> (u16, tokio::sync::oneshot::Sender<()>) {
+    async fn serve_source(service: VolumeGrpcService) -> (u16, tokio::sync::oneshot::Sender<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -6538,17 +6594,15 @@ mod tests {
             .connect()
             .await
             .unwrap();
-        let mut client =
-            volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
-                .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-                .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         let dest_tmp = TempDir::new().unwrap();
         let dest_path = format!("{}/copied.dat", dest_tmp.path().to_str().unwrap());
 
-        let (tx, rx) = tokio::sync::mpsc::channel::<
-            Result<volume_server_pb::VolumeCopyResponse, Status>,
-        >(16);
+        let (tx, rx) =
+            tokio::sync::mpsc::channel::<Result<volume_server_pb::VolumeCopyResponse, Status>>(16);
         drop(rx); // exactly what a client hanging up does to the sender
 
         let mut next_report_target: i64 = 128 * 1024 * 1024;
@@ -6781,7 +6835,10 @@ mod tests {
         assert_ne!(messages[0].modified_ts_ns, 0);
         assert!(messages[1..].iter().all(|m| m.modified_ts_ns == 0));
 
-        let copied: Vec<u8> = messages.iter().flat_map(|m| m.file_content.clone()).collect();
+        let copied: Vec<u8> = messages
+            .iter()
+            .flat_map(|m| m.file_content.clone())
+            .collect();
         assert_eq!(copied, dat_bytes);
     }
 
@@ -6846,7 +6903,10 @@ mod tests {
             "expected multiple streamed chunks, got {}",
             messages.len()
         );
-        let copied: Vec<u8> = messages.iter().flat_map(|m| m.file_content.clone()).collect();
+        let copied: Vec<u8> = messages
+            .iter()
+            .flat_map(|m| m.file_content.clone())
+            .collect();
         assert_eq!(copied, dat_bytes[super_block_size as usize..]);
     }
 
@@ -7074,7 +7134,11 @@ mod tests {
             v.compact_by_index(0, 0, |_| true).unwrap();
             v.commit_compact().unwrap();
 
-            (before, v.super_block.compaction_revision, v.last_compact_revision())
+            (
+                before,
+                v.super_block.compaction_revision,
+                v.last_compact_revision(),
+            )
         };
 
         assert_eq!(revision_before, 0, "fresh volume starts at revision 0");
@@ -7250,15 +7314,13 @@ mod tests {
             .await
             .unwrap();
         service
-            .volume_ec_shards_mount(Request::new(
-                volume_server_pb::VolumeEcShardsMountRequest {
-                    volume_id: 1,
-                    collection: String::new(),
-                    shard_ids: (0..14).collect(),
-                    source_disk_type: String::new(),
-                    recover_missing_index: false,
-                },
-            ))
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                collection: String::new(),
+                shard_ids: (0..14).collect(),
+                source_disk_type: String::new(),
+                recover_missing_index: false,
+            }))
             .await
             .unwrap();
 
@@ -7335,15 +7397,13 @@ mod tests {
             .await
             .unwrap();
         service
-            .volume_ec_shards_mount(Request::new(
-                volume_server_pb::VolumeEcShardsMountRequest {
-                    volume_id: 1,
-                    collection: String::new(),
-                    shard_ids: (0..14).collect(),
-                    source_disk_type: String::new(),
-                    recover_missing_index: false,
-                },
-            ))
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                collection: String::new(),
+                shard_ids: (0..14).collect(),
+                source_disk_type: String::new(),
+                recover_missing_index: false,
+            }))
             .await
             .unwrap();
 
@@ -7357,8 +7417,7 @@ mod tests {
             for sid in 0u8..14 {
                 locs.insert(sid, vec!["127.0.0.1:255.1".to_string()]);
             }
-            *ecv.shard_locations_refresh_time.lock().unwrap() =
-                Some(std::time::Instant::now());
+            *ecv.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
         }
 
         // All shards local: FULL is clean.
@@ -7392,6 +7451,766 @@ mod tests {
         assert_eq!(resp.total_files, 1);
     }
 
+    /// Two locations, one vid: the split-disk / cross-disk-reconcile layout
+    /// `build_split_disk_store` exercises in store_ec_reconcile.rs. Neither
+    /// disk holds a `.dat`, so each disk's orphan shard survives
+    /// `check_orphaned_shards` and `Store::add_location`'s automatic
+    /// `reconcile_ec_shards_across_disks()` mounts it against its own disk,
+    /// pointing at the sibling's `.ecx` -- the same layout a real
+    /// seaweedfs/seaweedfs#9212 report produces.
+    fn make_local_service_with_split_disk_ec_volume(vid_raw: u32) -> (VolumeGrpcService, TempDir) {
+        SplitDiskEcFixture::new(vid_raw).build()
+    }
+
+    /// Knobs on the two-location layout above, so one fixture can produce the
+    /// shapes the scrub tests need. `new()` reproduces the layout exactly as
+    /// `make_local_service_with_split_disk_ec_volume` has always built it; every
+    /// field is a deliberate departure from it.
+    struct SplitDiskEcFixture {
+        vid_raw: u32,
+        /// Which shard id each disk gets. Which disk holds the shard a needle
+        /// actually spans is the whole difference between reaching one disk and
+        /// reaching both, so the LOCAL/CHECKSUM tests move shard 0 to disk 1.
+        dir0_shard_id: u8,
+        dir1_shard_id: u8,
+        /// dir0's own `.vif` encode identity. `None` writes NO `.vif` in dir0 at
+        /// all -- the original layout, where `locate_vif_path` falls through to
+        /// dir1's copy and both runtimes therefore agree. `Some(ts)` writes one,
+        /// which is what lets the two disks disagree and drives the identity
+        /// fence in `merge_ec_runtimes`.
+        dir0_encode_ts_ns: Option<i64>,
+        dir1_encode_ts_ns: i64,
+        /// `false` writes the original 20 zero bytes: a structurally invalid
+        /// index, so every scrub that walks it reports something. `true` writes
+        /// one well-formed TOMBSTONE entry instead -- a deleted needle, which the
+        /// walk skips -- so a FULL/READS scrub of this volume is CLEAN and a
+        /// test can pin a clean-to-broken transition rather than a message.
+        clean_index: bool,
+        /// Where the generation-0 `.ecsum` is written. Its per-shard checksums
+        /// do not describe the placeholder bytes, so a CHECKSUM scrub reports
+        /// every shard it actually reads. With `Nowhere`, `bitrot_status` is
+        /// `Off` on both disks and `EcChecksumScrubPlan::run` returns clean
+        /// before touching a handle.
+        bitrot_sidecar: SidecarPlacement,
+    }
+
+    /// Which disks get the `.ecsum`. The sidecar is deliberately NOT mirrored
+    /// in production (`Store::ec_metadata_dirs` exists so one copy stays
+    /// reachable rather than being duplicated), and at mount `EcVolume::new`
+    /// resolves it with no sibling directories -- so `Dir1Only` is not an
+    /// artificial shape, it is what a volume server looks like after any
+    /// restart when the one copy happens to live on the non-anchor disk.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum SidecarPlacement {
+        Nowhere,
+        BothDisks,
+        Dir1Only,
+    }
+
+    impl SplitDiskEcFixture {
+        fn new(vid_raw: u32) -> Self {
+            SplitDiskEcFixture {
+                vid_raw,
+                dir0_shard_id: 0,
+                dir1_shard_id: 1,
+                dir0_encode_ts_ns: None,
+                dir1_encode_ts_ns: 0,
+                clean_index: false,
+                bitrot_sidecar: SidecarPlacement::Nowhere,
+            }
+        }
+
+        fn build(self) -> (VolumeGrpcService, TempDir) {
+            make_local_service_with_split_disk_ec_volume_from(self)
+        }
+    }
+
+    fn make_local_service_with_split_disk_ec_volume_from(
+        cfg: SplitDiskEcFixture,
+    ) -> (VolumeGrpcService, TempDir) {
+        let SplitDiskEcFixture {
+            vid_raw,
+            dir0_shard_id,
+            dir1_shard_id,
+            dir0_encode_ts_ns,
+            dir1_encode_ts_ns,
+            clean_index,
+            bitrot_sidecar,
+        } = cfg;
+
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&dir0).unwrap();
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        let ec_vif = |encode_ts_ns: i64| crate::storage::volume::VifVolumeInfo {
+            version: 3,
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 4,
+                encode_ts_ns,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // dir0: one shard, no .ecx.
+        std::fs::write(
+            dir0.join(format!("{}.ec{:02}", vid_raw, dir0_shard_id)),
+            b"shard data nonempty",
+        )
+        .unwrap();
+        if let Some(ts) = dir0_encode_ts_ns {
+            std::fs::write(
+                dir0.join(format!("{}.vif", vid_raw)),
+                serde_json::to_string(&ec_vif(ts)).unwrap(),
+            )
+            .unwrap();
+        }
+        // dir1: one shard plus the index files.
+        std::fs::write(
+            dir1.join(format!("{}.ec{:02}", vid_raw, dir1_shard_id)),
+            b"shard data nonempty",
+        )
+        .unwrap();
+        let ecx = if clean_index {
+            let mut buf: Vec<u8> = Vec::new();
+            crate::storage::idx::write_index_entry(
+                &mut buf,
+                crate::storage::types::NeedleId(1),
+                crate::storage::types::Offset::from_actual_offset(0),
+                crate::storage::types::TOMBSTONE_FILE_SIZE,
+            )
+            .unwrap();
+            buf
+        } else {
+            vec![0u8; 20]
+        };
+        std::fs::write(dir1.join(format!("{}.ecx", vid_raw)), ecx).unwrap();
+        std::fs::write(dir1.join(format!("{}.ecj", vid_raw)), b"").unwrap();
+        std::fs::write(
+            dir1.join(format!("{}.vif", vid_raw)),
+            serde_json::to_string(&ec_vif(dir1_encode_ts_ns)).unwrap(),
+        )
+        .unwrap();
+
+        if bitrot_sidecar != SidecarPlacement::Nowhere {
+            use crate::pb::volume_server_pb::{
+                ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
+            };
+            use crate::storage::erasure_coding::ec_bitrot;
+            let prot = EcBitrotProtection {
+                algorithm: ChecksumAlgorithm::ChecksumCrc32c as i32,
+                block_size: ec_bitrot::DEFAULT_BITROT_BLOCK_SIZE as u32,
+                generation: 0,
+                ec_shard_config: Some(ec_bitrot::ec_shard_config(10, 4, 0)),
+                shards: (0..14u32)
+                    .map(|shard_id| EcShardChecksums {
+                        shard_id,
+                        covered_size: 4,
+                        block_crc32c: vec![0u8; 4],
+                    })
+                    .collect(),
+                encode_uuid: vec![0u8; 16],
+            };
+            // Each runtime resolves its sidecar from its own directory at mount
+            // (`load_bitrot_for_generation` gets no sibling dirs there), so a
+            // disk that gets no copy here mounts `BitrotStatus::Off`.
+            let sidecar_dirs: Vec<&std::path::Path> = match bitrot_sidecar {
+                SidecarPlacement::Nowhere => Vec::new(),
+                SidecarPlacement::BothDisks => vec![dir0.as_path(), dir1.as_path()],
+                SidecarPlacement::Dir1Only => vec![dir1.as_path()],
+            };
+            for d in sidecar_dirs {
+                let base = crate::storage::volume::volume_file_name(
+                    d.to_str().unwrap(),
+                    "",
+                    VolumeId(vid_raw),
+                );
+                ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(&base, 0), &prot)
+                    .unwrap();
+            }
+        }
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        (split_disk_grpc_service(store), tmp)
+    }
+
+    /// Wrap a hand-built two-location `Store` in the full
+    /// `VolumeServerState` the gRPC handlers need. Shared by the split-disk
+    /// fixtures so a second one costs a store, not another copy of this
+    /// 50-line literal.
+    fn split_disk_grpc_service(store: Store) -> VolumeGrpcService {
+        let state = Arc::new(VolumeServerState {
+            store: RwLock::new(store),
+            guard: RwLock::new(Guard::new(
+                &[],
+                SigningKey(vec![]),
+                0,
+                SigningKey(vec![]),
+                0,
+            )),
+            is_stopping: RwLock::new(false),
+            maintenance: std::sync::atomic::AtomicBool::new(false),
+            state_version: std::sync::atomic::AtomicU32::new(0),
+            concurrent_upload_limit: 0,
+            concurrent_download_limit: 0,
+            inflight_upload_data_timeout: std::time::Duration::from_secs(60),
+            inflight_download_data_timeout: std::time::Duration::from_secs(60),
+            inflight_upload_bytes: std::sync::atomic::AtomicI64::new(0),
+            inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
+            upload_notify: tokio::sync::Notify::new(),
+            download_notify: tokio::sync::Notify::new(),
+            data_center: String::new(),
+            rack: String::new(),
+            file_size_limit_bytes: 0,
+            maintenance_byte_per_second: 0,
+            is_heartbeating: std::sync::atomic::AtomicBool::new(true),
+            has_master: false,
+            pre_stop_seconds: 0,
+            volume_state_notify: tokio::sync::Notify::new(),
+            write_queue: std::sync::OnceLock::new(),
+            s3_tier_registry: std::sync::RwLock::new(
+                crate::remote_storage::s3_tier::S3TierRegistry::new(),
+            ),
+            read_mode: crate::config::ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
+            master_url: String::new(),
+            master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
+            outgoing_grpc_tls: None,
+            metrics_runtime: std::sync::RwLock::new(
+                crate::server::volume_server::RuntimeMetricsConfig::default(),
+            ),
+            metrics_notify: tokio::sync::Notify::new(),
+            fix_jpg_orientation: false,
+            has_slow_read: false,
+            read_buffer_size_bytes: 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
+            state_file_path: String::new(),
+        });
+
+        VolumeGrpcService { state }
+    }
+
+    /// The dedupe lives on the implicit (empty `volume_ids`) path of
+    /// `scrub_ec_volume` itself -- `scrub_ec_volumes` is handed an
+    /// already-deduped list by every other caller in this test module, so it
+    /// cannot exercise this regression. Before the fix, flat-mapping every
+    /// location's `ec_volumes()` visited this split-disk vid twice and
+    /// `total_volumes` counted it twice.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_node_wide_dedupes_a_split_disk_volume() {
+        let (service, _tmp) = make_local_service_with_split_disk_ec_volume(7040);
+
+        let resp = service
+            .scrub_ec_volume(Request::new(volume_server_pb::ScrubEcVolumeRequest {
+                mode: 1,
+                volume_ids: vec![],
+                force_deleted_needles_check: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(
+            resp.total_volumes, 1,
+            "a vid split across two disks must be scrubbed once, not once per disk"
+        );
+    }
+
+    /// Issue one scrub mode against a single vid on a split-disk service.
+    async fn scrub_split_disk(
+        service: &VolumeGrpcService,
+        vid_raw: u32,
+        mode: i32,
+    ) -> volume_server_pb::ScrubEcVolumeResponse {
+        service
+            .scrub_ec_volume(Request::new(volume_server_pb::ScrubEcVolumeRequest {
+                mode,
+                volume_ids: vec![vid_raw],
+                force_deleted_needles_check: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
+    /// FULL/READS resolves shard locations up front, and with no master
+    /// configured that lookup fails and short-circuits the whole scrub with an
+    /// error of its own. Seed the cache so the needle walk actually runs and the
+    /// response reflects the volume rather than the missing master.
+    fn seed_all_shard_locations(service: &VolumeGrpcService, vid_raw: u32) {
+        let store = service.state.store.read().unwrap();
+        for ecv in store.find_all_ec_volumes(VolumeId(vid_raw)) {
+            let mut locs = ecv.shard_locations.write().unwrap();
+            for sid in 0u8..14 {
+                locs.insert(sid, vec!["127.0.0.1:255.1".to_string()]);
+            }
+            *ecv.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+        }
+    }
+
+    /// A disk the identity fence excluded is a disk the scrub did not read,
+    /// and the mode 2|5 arm must say so. `merge_ec_runtimes` hands the
+    /// exclusions back as `skipped`; the arm folds them into `errs`, which
+    /// flags the volume broken and prints the line. Before that, a volume
+    /// whose disks disagreed on encode identity scrubbed the anchor and
+    /// reported CLEAN -- the sibling disk went unmentioned.
+    ///
+    /// Both halves of the TRANSITION are asserted here: the same layout with
+    /// the disks AGREEING is clean, so the clean-to-broken change is pinned,
+    /// not just the message text.
+    ///
+    /// Across modes, `BitrotStatus::Off` is now the ONLY place an exclusion
+    /// goes unreported: modes 2|5 and 3 always report it, and mode 4 reports it
+    /// on `On` and (since `ec: report fenced-out disks on a malformed sidecar
+    /// too`) on `Invalid`. `Off` returns `(0, [], [])` before reporting
+    /// `skipped` because that is a hard Go-parity contract
+    /// (`case BitrotOff: return 0, nil, nil`), so on an unprotected generation
+    /// a CHECKSUM scrub of a fenced volume is clean and the excluded disk goes
+    /// unmentioned. That single exception is deliberate, not an oversight.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_full_reports_a_fenced_out_disk() {
+        // Control: identical layout, both disks on encode run 200.
+        let (agreeing, _tmp_a) = SplitDiskEcFixture {
+            dir0_encode_ts_ns: None, // no dir0 .vif => falls through to dir1's
+            dir1_encode_ts_ns: 200,
+            clean_index: true,
+            ..SplitDiskEcFixture::new(7050)
+        }
+        .build();
+        seed_all_shard_locations(&agreeing, 7050);
+        {
+            let store = agreeing.state.store.read().unwrap();
+            let gens: Vec<i64> = store
+                .find_all_ec_volumes(VolumeId(7050))
+                .iter()
+                .map(|v| v.encode_ts_ns)
+                .collect();
+            assert_eq!(gens, vec![200, 200], "control fixture must NOT be fenced");
+        }
+
+        // The fenced volume: dir0 carries its own, older encode identity.
+        let (fenced, _tmp_f) = SplitDiskEcFixture {
+            dir0_encode_ts_ns: Some(100),
+            dir1_encode_ts_ns: 200,
+            clean_index: true,
+            ..SplitDiskEcFixture::new(7051)
+        }
+        .build();
+        seed_all_shard_locations(&fenced, 7051);
+        {
+            let store = fenced.state.store.read().unwrap();
+            let gens: Vec<i64> = store
+                .find_all_ec_volumes(VolumeId(7051))
+                .iter()
+                .map(|v| v.encode_ts_ns)
+                .collect();
+            assert_eq!(
+                gens,
+                vec![100, 200],
+                "fixture must mount both disks with DISAGREEING encode identities \
+                 for this to be meaningful"
+            );
+        }
+
+        // Both FULL (2) and READS (5) share the arm, so both must report it.
+        for mode in [2, 5] {
+            let clean = scrub_split_disk(&agreeing, 7050, mode).await;
+            assert!(
+                clean.broken_volume_ids.is_empty() && clean.details.is_empty(),
+                "mode {mode}: agreeing disks must scrub clean, else the fenced \
+                 case below proves nothing: {:?} {:?}",
+                clean.broken_volume_ids,
+                clean.details
+            );
+
+            let resp = scrub_split_disk(&fenced, 7051, mode).await;
+            assert_eq!(
+                resp.broken_volume_ids,
+                vec![7051],
+                "mode {mode}: a fenced-out disk must flag the volume broken, not \
+                 pass silently: {:?}",
+                resp.details
+            );
+            assert_eq!(
+                resp.details.len(),
+                1,
+                "mode {mode}: the exclusion is the only finding: {:?}",
+                resp.details
+            );
+            assert!(
+                resp.details[0].starts_with("ecvol 7051: ")
+                    && resp.details[0].contains("belong to encode run 100")
+                    && resp.details[0].contains("they were not verified"),
+                "mode {mode}: {:?}",
+                resp.details
+            );
+        }
+    }
+
+    /// LOCAL and CHECKSUM must verify the shards on EVERY disk holding the vid,
+    /// not the ones on whichever disk `find_ec_volume` happened to return. The
+    /// layout makes that observable: disk 0 -- the disk the singular lookup
+    /// returns -- holds only shard 5, while shard 0 (the one the volume's single
+    /// needle spans, and the one the checksum sidecar is checked against) lives
+    /// on disk 1. Built from disk 0 alone, both scrubs simply never look at
+    /// shard 0.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_local_and_checksum_reach_the_sibling_disk() {
+        // LOCAL reads only the shards the volume's one needle spans, so shard 5
+        // is never touched; CHECKSUM reads every shard it holds, so both appear.
+        for (vid_raw, mode, bitrot_sidecar, want_broken) in [
+            (7052u32, 3i32, SidecarPlacement::Nowhere, &[0u32][..]),
+            (7053, 4, SidecarPlacement::BothDisks, &[0, 5][..]),
+        ] {
+            let (service, _tmp) = SplitDiskEcFixture {
+                dir0_shard_id: 5,
+                dir1_shard_id: 0,
+                bitrot_sidecar,
+                ..SplitDiskEcFixture::new(vid_raw)
+            }
+            .build();
+
+            {
+                let store = service.state.store.read().unwrap();
+                let first = store
+                    .find_ec_volume(VolumeId(vid_raw))
+                    .expect("the singular lookup must still resolve the vid");
+                assert!(
+                    !first.has_shard(0) && first.has_shard(5),
+                    "mode {mode}: the first-disk runtime must NOT hold shard 0, or a \
+                     first-disk-only scrub would reach it anyway and this proves nothing"
+                );
+                assert!(
+                    store
+                        .find_all_ec_volumes(VolumeId(vid_raw))
+                        .iter()
+                        .any(|v| v.has_shard(0)),
+                    "mode {mode}: fixture must mount shard 0 on the sibling disk"
+                );
+            }
+
+            let resp = scrub_split_disk(&service, vid_raw, mode).await;
+            let mut broken: Vec<u32> = resp.broken_shard_infos.iter().map(|s| s.shard_id).collect();
+            broken.sort_unstable();
+            assert!(
+                broken.contains(&0),
+                "mode {mode}: shard 0 lives on the sibling disk and was never \
+                 verified: shards={broken:?} details={:?}",
+                resp.details
+            );
+            assert_eq!(
+                broken, want_broken,
+                "mode {mode}: details={:?}",
+                resp.details
+            );
+            assert_eq!(resp.broken_volume_ids, vec![vid_raw]);
+        }
+    }
+
+    /// CHECKSUM must not source bitrot protection from the ANCHOR alone.
+    ///
+    /// The `.ecsum` sidecar is deliberately not mirrored across disks, and at
+    /// mount `EcVolume::new` resolves it with no sibling directories -- only
+    /// `VolumeEcShardsMount` ever passes `ec_metadata_dirs()`. So after any
+    /// volume-server restart the split-disk runtime that does not hold the
+    /// sidecar mounts `BitrotStatus::Off`. The anchor is the first
+    /// shard-bearing runtime at the maximum `encode_ts_ns`, picked with no
+    /// regard for which disk holds the sidecar -- so whenever the one copy
+    /// lands on the non-anchor disk (about half of all mirrored split-disk
+    /// layouts), taking `(prot, status)` from the anchor made `run()` return
+    /// `(0, [], [])` and the WHOLE volume scrubbed clean, silently. That is the
+    /// exact failure this branch exists to remove.
+    ///
+    /// The fixture is the same one the sibling-disk test uses, with the sidecar
+    /// written to dir1 ONLY. Both disks agree on encode identity, so nothing is
+    /// fenced and the plan's `unverifiable_sidecar` early return cannot fire --
+    /// the volume must actually be SCANNED, and the placeholder shard bytes do
+    /// not match the sidecar, so every shard the merge reaches is reported.
+    #[tokio::test]
+    async fn test_checksum_scrub_takes_protection_from_the_disk_that_has_the_sidecar() {
+        let (service, _tmp) = SplitDiskEcFixture {
+            dir0_shard_id: 5,
+            dir1_shard_id: 0,
+            bitrot_sidecar: SidecarPlacement::Dir1Only,
+            ..SplitDiskEcFixture::new(7054)
+        }
+        .build();
+
+        // Without this the test could pass for the wrong reason: if the anchor
+        // ever resolved the sibling's sidecar itself, sourcing from the anchor
+        // would be fine and this would prove nothing.
+        {
+            use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
+            let store = service.state.store.read().unwrap();
+            let runtimes = store.find_all_ec_volumes(VolumeId(7054));
+            assert_eq!(
+                runtimes.len(),
+                2,
+                "fixture must mount the vid on both disks"
+            );
+            assert_eq!(
+                runtimes[0].bitrot_status,
+                BitrotStatus::Off,
+                "the ANCHOR disk must have NO sidecar, or this proves nothing"
+            );
+            assert_eq!(
+                runtimes[1].bitrot_status,
+                BitrotStatus::On,
+                "the sibling disk must be the one carrying protection"
+            );
+            assert_eq!(
+                runtimes[0].encode_ts_ns, runtimes[1].encode_ts_ns,
+                "the disks must AGREE on encode identity, so nothing is fenced \
+                 and the unverifiable-sidecar early return cannot mask the scan"
+            );
+        }
+
+        let resp = scrub_split_disk(&service, 7054, 4).await;
+        let mut broken: Vec<u32> = resp.broken_shard_infos.iter().map(|s| s.shard_id).collect();
+        broken.sort_unstable();
+        assert_eq!(
+            broken,
+            vec![0, 5],
+            "the volume must be SCANNED against the sibling's sidecar, not \
+             returned clean-empty because the anchor mounted BitrotStatus::Off: \
+             details={:?}",
+            resp.details
+        );
+        assert_eq!(
+            resp.broken_volume_ids,
+            vec![7054],
+            "details={:?}",
+            resp.details
+        );
+    }
+
+    /// A two-location store holding a REAL 10+4 encoded volume with EVERY data
+    /// and parity shard present, scattered across both disks: shards 0..=6 on
+    /// disk 0, shards 7..=13 plus the `.ecx`/`.ecj`/`.vif` on disk 1. Disk 0
+    /// gets no index files, so its shards mount only through the cross-disk
+    /// reconcile -- the real split-disk shape.
+    ///
+    /// This is the only layout that reaches mode 2's local Reed-Solomon parity
+    /// check over a genuinely MULTI-DIRECTORY `dirs`. The check is gated on
+    /// `all_local`, so every shard has to be present; the existing all-local
+    /// fixture keeps them in one directory, where every entry of `dirs` is the
+    /// same string and a permutation or off-by-one in the `slots` -> `dirs`
+    /// mapping is invisible.
+    ///
+    /// The `.dat`/`.idx` are left in a third directory that is NOT a store
+    /// location, so `prune_incomplete_ec_with_sibling_dat` finds no sibling
+    /// `.dat` and cannot delete the EC artefacts out from under the fixture.
+    fn make_service_with_two_disk_complete_ec_volume(vid_raw: u32) -> (VolumeGrpcService, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        for d in [&src, &dir0, &dir1] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let src_s = src.to_str().unwrap();
+        let vid = VolumeId(vid_raw);
+
+        // A real volume, really encoded: a parity check needs genuine
+        // Reed-Solomon parity to agree with, or "no corruption" means nothing.
+        {
+            let mut v = crate::storage::volume::Volume::new(
+                src_s,
+                src_s,
+                "",
+                vid,
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                crate::storage::types::Version::current(),
+            )
+            .unwrap();
+            for i in 1..=8u64 {
+                let data = format!("test data for needle {} with a bit more length", i);
+                let mut n = crate::storage::needle::Needle {
+                    id: crate::storage::types::NeedleId(i),
+                    cookie: crate::storage::types::Cookie(i as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Default::default()
+                };
+                v.write_needle(&mut n, true, false).unwrap();
+            }
+            v.sync_to_disk().unwrap();
+            v.close();
+        }
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(src_s, src_s, "", vid, 10, 4)
+            .unwrap();
+
+        for id in 0..14u8 {
+            let target = if id < 7 { &dir0 } else { &dir1 };
+            std::fs::rename(
+                format!("{}/{}.ec{:02}", src_s, vid_raw, id),
+                format!("{}/{}.ec{:02}", target.to_str().unwrap(), vid_raw, id),
+            )
+            .unwrap();
+        }
+        let idx_dir = dir1.to_str().unwrap();
+        std::fs::rename(
+            format!("{}/{}.ecx", src_s, vid_raw),
+            format!("{}/{}.ecx", idx_dir, vid_raw),
+        )
+        .unwrap();
+        std::fs::write(format!("{}/{}.ecj", idx_dir, vid_raw), b"").unwrap();
+        std::fs::write(
+            format!("{}/{}.vif", idx_dir, vid_raw),
+            serde_json::to_string(&crate::storage::volume::VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for d in [&dir0, &dir1] {
+            store
+                .add_location(
+                    d.to_str().unwrap(),
+                    d.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+
+        (split_disk_grpc_service(store), tmp)
+    }
+
+    /// The branch's newest production behavior, end to end: a mode 2 scrub of a
+    /// SPLIT-DISK volume whose shards are all local but spread over two
+    /// directories.
+    ///
+    /// `all_local` is now computed from the merged view, so this layout reaches
+    /// the local Reed-Solomon parity check for the first time -- and
+    /// `verify_ec_shards` is handed a `dirs` vector whose entries differ.
+    /// `test_scrub_ec_volume_reads_mode_reconstructs_missing_shard` also reaches
+    /// `all_local == true`, but every entry of its `dirs` is the same string, so
+    /// a permutation or off-by-one in the `slots` -> `dirs` mapping (the mode
+    /// 2|5 arm) cannot be observed there; and
+    /// `test_verify_ec_shards_reads_shards_from_multiple_dirs` builds its `dirs`
+    /// by hand and never goes through `merge_ec_runtimes` at all.
+    #[tokio::test]
+    async fn test_scrub_ec_volume_full_parity_checks_a_two_disk_all_local_volume() {
+        let (service, tmp) = make_service_with_two_disk_complete_ec_volume(7060);
+        seed_all_shard_locations(&service, 7060);
+        let dir0 = tmp.path().join("data0").to_str().unwrap().to_string();
+        let dir1 = tmp.path().join("data1").to_str().unwrap().to_string();
+
+        // The fixture must actually produce the shape under test: every shard
+        // mounted, and the mapping the mode 2|5 arm builds `dirs` from spanning
+        // BOTH directories. Without this the test could pass over a one-disk
+        // layout and prove nothing about the mapping.
+        {
+            let store = service.state.store.read().unwrap();
+            let runtimes = store.find_all_ec_volumes(VolumeId(7060));
+            assert_eq!(runtimes.len(), 2, "the vid must mount on both disks");
+            let merged = crate::storage::erasure_coding::ec_volume::merge_ec_runtimes(&runtimes)
+                .expect("two runtimes merge");
+            assert!(merged.skipped.is_empty(), "{:?}", merged.skipped);
+            let dirs: Vec<String> = (0..14)
+                .map(|id| {
+                    merged.slots[id]
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "shard {id} is not mounted; all_local would be false \
+                                 and the parity check would never run"
+                            )
+                        })
+                        .0
+                        .dir
+                        .clone()
+                })
+                .collect();
+            assert_eq!(dirs[0], dir0);
+            assert_eq!(dirs[6], dir0);
+            assert_eq!(dirs[7], dir1);
+            assert_eq!(dirs[13], dir1);
+        }
+
+        // Real parity over a real encode, read through two directories: nothing
+        // may be fabricated as corrupt.
+        let resp = scrub_split_disk(&service, 7060, 2).await;
+        assert!(
+            resp.broken_volume_ids.is_empty() && resp.broken_shard_infos.is_empty(),
+            "an intact two-disk volume must not be reported broken: {:?}",
+            resp.details
+        );
+        assert!(resp.details.is_empty(), "{:?}", resp.details);
+        assert_eq!(resp.total_files, 8, "the needle walk must have run");
+
+        // ...and the parity check really RAN, over the SECOND disk's shards.
+        // Shard 13 is a PARITY shard: the per-needle walk reads only live
+        // data-shard intervals, so nothing but `verify_ec_shards` can see this,
+        // and nothing but a correct `slots` -> `dirs` mapping can find the file.
+        //
+        // `assert_eq!` rather than `contains`, and the reason is specific:
+        // `dirs` is indexed BY SHARD ID and carries only directories, so an
+        // off-by-one or a permutation that lands the wrong DIRECTORY at some
+        // index makes `verify_ec_shards` look for a shard file that is not
+        // there -- the reported set is then not exactly `[13]`, which
+        // `contains(&13)` would still accept. A permutation that stays WITHIN
+        // one disk is not caught here: both entries name the same directory, so
+        // it is unobservable through `dirs` at all. That is a limit of this
+        // fixture, stated rather than papered over.
+        let shard13 = format!("{}/7060.ec13", dir1);
+        let mut bytes = std::fs::read(&shard13).unwrap();
+        bytes[0] ^= 0xFF;
+        std::fs::write(&shard13, &bytes).unwrap();
+
+        let resp = scrub_split_disk(&service, 7060, 2).await;
+        let broken: Vec<u32> = resp.broken_shard_infos.iter().map(|s| s.shard_id).collect();
+        assert_eq!(
+            broken,
+            vec![13],
+            "the parity check must reach disk 1 and blame exactly shard 13: {:?}",
+            resp.details
+        );
+        assert_eq!(resp.broken_volume_ids, vec![7060]);
+        assert!(
+            resp.details
+                .iter()
+                .any(|d| d.contains("parity mismatch on shard 13")),
+            "the finding must come from the parity check, not the needle walk: {:?}",
+            resp.details
+        );
+    }
+
     #[tokio::test]
     async fn volume_delete_reports_absent_volume_as_not_found() {
         let (service, _tmp) = make_service_with_seed_masters(&[]);
@@ -7421,7 +8240,13 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
         assert!(err.message().contains("volume not empty"), "{err:?}");
         assert!(
-            service.state.store.read().unwrap().find_volume(VolumeId(1)).is_some(),
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_some(),
             "refused delete must leave the volume mounted"
         );
     }
