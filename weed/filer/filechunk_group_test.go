@@ -196,7 +196,7 @@ func TestChunkGroup_SearchChunks_Cancellation(t *testing.T) {
 		whence := uint32(3) // SEEK_DATA
 
 		// Call SearchChunks with cancelled context
-		found, resultOffset := group.SearchChunks(ctx, offset, fileSize, whence)
+		found, resultOffset, _ := group.SearchChunks(ctx, offset, fileSize, whence)
 
 		// For an empty ChunkGroup, SearchChunks should complete quickly
 		// The main goal is to verify the context parameter is properly threaded through
@@ -225,7 +225,7 @@ func TestChunkGroup_SearchChunks_Cancellation(t *testing.T) {
 		whence := uint32(3) // SEEK_DATA
 
 		// Call SearchChunks - should complete quickly for empty group
-		found, resultOffset := group.SearchChunks(ctx, offset, fileSize, whence)
+		found, resultOffset, _ := group.SearchChunks(ctx, offset, fileSize, whence)
 
 		// Verify reasonable behavior
 		assert.False(t, found, "should not find data in empty chunk group")
@@ -426,7 +426,8 @@ func TestChunkGroup_SearchChunks(t *testing.T) {
 				return
 			}
 
-			gotFound, gotOffset := group.SearchChunks(context.Background(), tt.args.offset, tt.args.fileSize, tt.args.whence)
+			gotFound, gotOffset, err := group.SearchChunks(context.Background(), tt.args.offset, tt.args.fileSize, tt.args.whence)
+			assert.NoError(t, err)
 			assert.Equalf(t, tt.wantFound, gotFound, "SearchChunks(%v, %v, %v) found", tt.args.offset, tt.args.fileSize, tt.args.whence)
 			assert.Equalf(t, tt.wantOffset, gotOffset, "SearchChunks(%v, %v, %v) offset", tt.args.offset, tt.args.fileSize, tt.args.whence)
 		})
@@ -454,6 +455,14 @@ func TestChunkGroup_ReadDataAt_ManifestResolveFailure(t *testing.T) {
 	n, _, readErr := group.ReadDataAt(context.Background(), 1<<20, buff, 0)
 	assert.ErrorIs(t, readErr, lookupErr)
 	assert.Equal(t, 0, n)
+
+	// lseek (SEEK_DATA/SEEK_HOLE) must fail too, not misreport the whole
+	// file as sparse.
+	for _, whence := range []uint32{SEEK_DATA, 4 /* SEEK_HOLE */} {
+		found, _, seekErr := group.SearchChunks(context.Background(), 0, 1<<20, whence)
+		assert.ErrorIs(t, seekErr, lookupErr, "whence %d", whence)
+		assert.False(t, found, "whence %d", whence)
+	}
 
 	// A later successful SetChunks must clear the error.
 	err = group.SetChunks([]*filer_pb.FileChunk{

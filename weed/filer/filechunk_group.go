@@ -277,11 +277,17 @@ const (
 	// SEEK_HOLE uint32 = 4 // seek to next hole after the offset
 )
 
-func (group *ChunkGroup) SearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
+func (group *ChunkGroup) SearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64, err error) {
 	group.sectionsLock.RLock()
 	defer group.sectionsLock.RUnlock()
 
-	return group.doSearchChunks(ctx, offset, fileSize, whence)
+	// the section map is unreliable after a failed manifest resolution
+	if group.resolveErr != nil {
+		return false, 0, group.resolveErr
+	}
+
+	found, out = group.doSearchChunks(ctx, offset, fileSize, whence)
+	return found, out, nil
 }
 
 func (group *ChunkGroup) doSearchChunks(ctx context.Context, offset, fileSize int64, whence uint32) (found bool, out int64) {
