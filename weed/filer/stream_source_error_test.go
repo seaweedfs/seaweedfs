@@ -9,8 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-// A chunk whose needle is gone answers 404, and that error is what tells a gone
-// source from a sink failure. The AWS SDK drops it, so the reader keeps it.
 func TestChunkStreamReaderSourceError(t *testing.T) {
 	server := createTestServer(map[string][]byte{})
 	defer server.Close()
@@ -36,7 +34,6 @@ func TestChunkStreamReaderSourceError(t *testing.T) {
 	}
 }
 
-// A lookup that cannot place the chunk fails before any volume is read.
 func TestChunkStreamReaderSourceErrorOnLookup(t *testing.T) {
 	master := &testMasterClient{urls: map[string][]string{}}
 	reader := NewChunkStreamReaderFromLookup(context.Background(), master.GetLookupFileIdFunction(),
@@ -50,7 +47,6 @@ func TestChunkStreamReaderSourceErrorOnLookup(t *testing.T) {
 	}
 }
 
-// Inlined content reaches no volume server and has no source error.
 func TestReaderSourceErrorInlineEntry(t *testing.T) {
 	reader := NewFileReader(nil, &filer_pb.Entry{Content: []byte("inline")})
 	if err := ReaderSourceError(reader); err != nil {

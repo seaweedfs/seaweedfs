@@ -541,8 +541,6 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	return nil
 }
 
-// rememberSourceError keeps the first lookup or chunk read failure.
-// Callers hold bufferLock, as fetchChunkToBuffer does.
 func (c *ChunkStreamReader) rememberSourceError(err error) error {
 	if c.sourceErr == nil {
 		c.sourceErr = err
@@ -550,17 +548,14 @@ func (c *ChunkStreamReader) rememberSourceError(err error) error {
 	return err
 }
 
-// SourceError returns the first lookup or chunk read failure, or nil. It is for
-// callers that pass this reader to a library dropping the error of a failed
-// read, such as the AWS SDK.
+// SourceError returns the first lookup or chunk read failure, or nil.
 func (c *ChunkStreamReader) SourceError() error {
 	c.bufferLock.Lock()
 	defer c.bufferLock.Unlock()
 	return c.sourceErr
 }
 
-// ReaderSourceError returns the SourceError of a reader from NewFileReader,
-// or nil for a reader of inlined content.
+// ReaderSourceError returns the SourceError of a reader from NewFileReader, or nil.
 func ReaderSourceError(r io.Reader) error {
 	if csr, ok := r.(*ChunkStreamReader); ok {
 		return csr.SourceError()
