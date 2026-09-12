@@ -147,6 +147,14 @@ func ecBlockSize(v *EcVolume) int64 {
 // merged shard set. ScrubLocal/ChecksumScrub read Shards, FindEcVolumeShard,
 // ECContext, ecxFile, BitrotProtection and Version — all of which the anchor
 // supplies except Shards, which is rebuilt from the merged slots.
+//
+// For legacy volumes (no datFileSize in .vif), LocateEcShardNeedleInterval
+// derives the shard size from Shards[0].ecdFileSize. The merged shard set is
+// compacted in shard-ID order, so a truncated lowest-ID shard would shrink
+// every interval and misread intact sibling shards. To prevent that, asVolume
+// synthesizes a datFileSize from the maximum mounted shard size when the
+// anchor lacks one, so the datFileSize>0 path in LocateEcShardNeedleInterval
+// uses the largest shard's size across all merged runtimes.
 func (m *MergedEcRuntimes) asVolume() *EcVolume {
 	anchor := m.Anchor
 	shards := make([]*EcVolumeShard, 0, len(m.Slots))
@@ -154,6 +162,16 @@ func (m *MergedEcRuntimes) asVolume() *EcVolume {
 		if s != nil {
 			shards = append(shards, s)
 		}
+	}
+	datFileSize := anchor.datFileSize
+	if datFileSize == 0 && anchor.ECContext != nil && anchor.ECContext.DataShards > 0 {
+		var maxShardSize int64
+		for _, s := range shards {
+			if s.ecdFileSize > maxShardSize {
+				maxShardSize = s.ecdFileSize
+			}
+		}
+		datFileSize = maxShardSize * int64(anchor.ECContext.DataShards)
 	}
 	return &EcVolume{
 		VolumeId:     anchor.VolumeId,
@@ -167,7 +185,7 @@ func (m *MergedEcRuntimes) asVolume() *EcVolume {
 		Shards:       shards,
 		Version:      anchor.Version,
 		diskType:     anchor.diskType,
-		datFileSize:  anchor.datFileSize,
+		datFileSize:  datFileSize,
 		ECContext:    anchor.ECContext,
 		EncodeTsNs:   anchor.EncodeTsNs,
 		bitrotLock:   anchor.bitrotLock,
@@ -215,11 +233,43 @@ func (m *MergedEcRuntimes) ChecksumScrub() (int64, []*volume_server_pb.EcShardIn
 		protectionSource = m.Anchor
 	}
 
+	prot, status := protectionSource.BitrotProtection()
+
+	// Fence the sidecar's encode generation: a merged runtime can load a
+	// sidecar from a sibling metadata directory (ReloadBitrotSidecar), and
+	// the merge fence may then exclude the runtime owning that directory.
+	// Generation-0 sidecars do not identify the encode run, so geometry
+	// validation alone cannot prove the borrowed manifest describes the
+	// anchor's shards. If the sidecar records a non-zero EncodeTsNs that
+	// disagrees with the anchor's, scanning would apply stale checksums to
+	// current shards and report false corruption. Refuse instead.
+	if status == BitrotOn && prot != nil && prot.EcShardConfig != nil {
+		sidecarGen := prot.EcShardConfig.EncodeTsNs
+		if sidecarGen != 0 && m.Anchor.EncodeTsNs != 0 && sidecarGen != m.Anchor.EncodeTsNs {
+			errs := []error{fmt.Errorf(
+				"ec volume %d: bitrot sidecar at %s records encode run %d but the scrub anchors on %d; protection is unverifiable",
+				m.Anchor.VolumeId, protectionSource.dir, sidecarGen, m.Anchor.EncodeTsNs)}
+			for _, rt := range m.Merged {
+				if rt == protectionSource {
+					continue
+				}
+				if _, s := rt.BitrotProtection(); s == BitrotInvalid {
+					errs = append(errs, fmt.Errorf(
+						"ec volume %d bitrot sidecar at %s is malformed/unverifiable (sidecar integrity)",
+						rt.VolumeId, rt.dir))
+				}
+			}
+			for _, s := range m.Skipped {
+				errs = append(errs, fmt.Errorf("%s", s))
+			}
+			return 0, nil, errs
+		}
+	}
+
 	// Run the byte scan against the protection source's sidecar, but over
 	// the merged shard set. The synthetic volume inherits the protection
 	// source's bitrot state so ChecksumScrub's BitrotOff/Invalid arms fire.
 	v := m.asVolume()
-	prot, status := protectionSource.BitrotProtection()
 	v.bitrot = prot
 	v.bitrotStatus = status
 
