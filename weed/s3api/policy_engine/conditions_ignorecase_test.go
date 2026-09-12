@@ -16,10 +16,6 @@ func TestConditionEvaluatorsIgnoreCase(t *testing.T) {
 		{"StringEqualsIgnoreCase - no match", "StringEqualsIgnoreCase", "alice", []string{"bob"}, false},
 		{"StringNotEqualsIgnoreCase - match", "StringNotEqualsIgnoreCase", "alice", []string{"bob"}, true},
 		{"StringNotEqualsIgnoreCase - no match", "StringNotEqualsIgnoreCase", "ALICE", []string{"alice"}, false},
-		{"StringLikeIgnoreCase - wildcard match", "StringLikeIgnoreCase", "TEST-*", []string{"test-value"}, true},
-		{"StringLikeIgnoreCase - wildcard no match", "StringLikeIgnoreCase", "TEST-*", []string{"other-value"}, false},
-		{"StringNotLikeIgnoreCase - wildcard match", "StringNotLikeIgnoreCase", "TEST-*", []string{"other-value"}, true},
-		{"StringNotLikeIgnoreCase - wildcard no match", "StringNotLikeIgnoreCase", "TEST-*", []string{"test-value"}, false},
 	}
 
 	for _, tt := range tests {
@@ -33,5 +29,13 @@ func TestConditionEvaluatorsIgnoreCase(t *testing.T) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
+	}
+}
+
+func TestGetConditionEvaluatorRejectsNonAWSIgnoreCaseOperators(t *testing.T) {
+	for _, op := range []string{"StringLikeIgnoreCase", "StringNotLikeIgnoreCase"} {
+		if _, err := GetConditionEvaluator(op); err == nil {
+			t.Fatalf("GetConditionEvaluator accepted non-AWS operator %q; expected error", op)
+		}
 	}
 }

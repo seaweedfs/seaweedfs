@@ -248,36 +248,6 @@ func (e *StringNotEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}
 	return true
 }
 
-// StringLikeIgnoreCaseEvaluator evaluates StringLikeIgnoreCase conditions
-type StringLikeIgnoreCaseEvaluator struct{}
-
-func (e *StringLikeIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	patterns := getCachedNormalizedValues(conditionValue)
-	for _, pattern := range patterns {
-		for _, contextValue := range contextValues {
-			if wildcard.MatchesWildcard(strings.ToLower(pattern), strings.ToLower(contextValue)) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// StringNotLikeIgnoreCaseEvaluator evaluates StringNotLikeIgnoreCase conditions
-type StringNotLikeIgnoreCaseEvaluator struct{}
-
-func (e *StringNotLikeIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
-	patterns := getCachedNormalizedValues(conditionValue)
-	for _, pattern := range patterns {
-		for _, contextValue := range contextValues {
-			if wildcard.MatchesWildcard(strings.ToLower(pattern), strings.ToLower(contextValue)) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // NumericEqualsEvaluator evaluates NumericEquals conditions
 type NumericEqualsEvaluator struct{}
 
@@ -714,10 +684,6 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 		return &StringEqualsIgnoreCaseEvaluator{}, nil
 	case "StringNotEqualsIgnoreCase":
 		return &StringNotEqualsIgnoreCaseEvaluator{}, nil
-	case "StringLikeIgnoreCase":
-		return &StringLikeIgnoreCaseEvaluator{}, nil
-	case "StringNotLikeIgnoreCase":
-		return &StringNotLikeIgnoreCaseEvaluator{}, nil
 	case "NumericEquals":
 		return &NumericEqualsEvaluator{}, nil
 	case "NumericNotEquals":
