@@ -218,6 +218,66 @@ func (e *StringNotLikeEvaluator) Evaluate(conditionValue interface{}, contextVal
 	return true
 }
 
+// StringEqualsIgnoreCaseEvaluator evaluates StringEqualsIgnoreCase conditions
+type StringEqualsIgnoreCaseEvaluator struct{}
+
+func (e *StringEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	expectedValues := getCachedNormalizedValues(conditionValue)
+	for _, expected := range expectedValues {
+		for _, contextValue := range contextValues {
+			if strings.EqualFold(expected, contextValue) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// StringNotEqualsIgnoreCaseEvaluator evaluates StringNotEqualsIgnoreCase conditions
+type StringNotEqualsIgnoreCaseEvaluator struct{}
+
+func (e *StringNotEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	expectedValues := getCachedNormalizedValues(conditionValue)
+	for _, expected := range expectedValues {
+		for _, contextValue := range contextValues {
+			if strings.EqualFold(expected, contextValue) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// StringLikeIgnoreCaseEvaluator evaluates StringLikeIgnoreCase conditions
+type StringLikeIgnoreCaseEvaluator struct{}
+
+func (e *StringLikeIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	patterns := getCachedNormalizedValues(conditionValue)
+	for _, pattern := range patterns {
+		for _, contextValue := range contextValues {
+			if wildcard.MatchesWildcard(strings.ToLower(pattern), strings.ToLower(contextValue)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// StringNotLikeIgnoreCaseEvaluator evaluates StringNotLikeIgnoreCase conditions
+type StringNotLikeIgnoreCaseEvaluator struct{}
+
+func (e *StringNotLikeIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	patterns := getCachedNormalizedValues(conditionValue)
+	for _, pattern := range patterns {
+		for _, contextValue := range contextValues {
+			if wildcard.MatchesWildcard(strings.ToLower(pattern), strings.ToLower(contextValue)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // NumericEqualsEvaluator evaluates NumericEquals conditions
 type NumericEqualsEvaluator struct{}
 
@@ -650,6 +710,14 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 		return &StringLikeEvaluator{}, nil
 	case "StringNotLike":
 		return &StringNotLikeEvaluator{}, nil
+	case "StringEqualsIgnoreCase":
+		return &StringEqualsIgnoreCaseEvaluator{}, nil
+	case "StringNotEqualsIgnoreCase":
+		return &StringNotEqualsIgnoreCaseEvaluator{}, nil
+	case "StringLikeIgnoreCase":
+		return &StringLikeIgnoreCaseEvaluator{}, nil
+	case "StringNotLikeIgnoreCase":
+		return &StringNotLikeIgnoreCaseEvaluator{}, nil
 	case "NumericEquals":
 		return &NumericEqualsEvaluator{}, nil
 	case "NumericNotEquals":
