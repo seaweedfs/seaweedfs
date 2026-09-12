@@ -4,7 +4,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // version. An explicit PROTOC still wins, for packagers supplying their own
     // and for the lance crates, whose own build scripts read the same variable.
     if std::env::var_os("PROTOC").is_none() {
-        std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
+        // SAFETY: a build script's main runs single-threaded before anything
+        // else in this process, so no other thread can be reading the
+        // environment concurrently.
+        unsafe {
+            std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
+        }
     }
 
     // Compiled straight out of the Go tree, the way seaweed-volume already reads

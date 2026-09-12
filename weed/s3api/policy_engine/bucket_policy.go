@@ -49,6 +49,12 @@ func ValidateBucketPolicy(policyDoc *PolicyDocument, bucket string) error {
 				return fmt.Errorf("statement %d: bucket policies only support S3 actions, got %s", i, action)
 			}
 		}
+
+		for operator := range statement.Condition {
+			if _, err := GetConditionEvaluator(operator); err != nil {
+				return fmt.Errorf("statement %d: unsupported condition operator %q: %v", i, operator, err)
+			}
+		}
 	}
 
 	return nil

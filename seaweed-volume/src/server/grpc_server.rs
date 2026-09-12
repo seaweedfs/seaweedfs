@@ -52,6 +52,71 @@ fn unix_now_seconds() -> f64 {
 
 /// Record scrub metrics. `broken_shards` is `Some` only for EC scrubs so the
 /// shard-failures family stays untouched on regular volume scrubs (matching Go).
+/// How a scrub reacts to a volume that is not in the store when its turn comes.
+///
+/// Nothing is held across the scan, so the volume set is free to change under a
+/// node-wide scrub: the heartbeat drops a volume that reported an I/O error and
+/// expires an EC volume whose destroy time passed, and a delete or an unmount
+/// can land between any two volumes. Failing there would discard every result
+/// gathered so far and leave every later volume unscrubbed.
+///
+/// `Some(status)` means fail the request; `None` means skip this volume and
+/// keep going. A volume the caller NAMED is always the former — that one is a
+/// caller mistake, not a concurrent change, and callers match on the message.
+fn scrub_vanished_volume(explicit: bool, kind: &str, vid: VolumeId) -> Option<Status> {
+    if explicit {
+        return Some(Status::not_found(format!("{} id {} not found", kind, vid.0)));
+    }
+    tracing::info!(
+        volume_id = vid.0,
+        "scrub: {} {} is no longer mounted, skipping",
+        kind,
+        vid.0
+    );
+    None
+}
+
+/// How a scrub reacts to a `spawn_blocking` scan that failed to join.
+///
+/// The scan runs on the blocking pool, so a panic in it reaches the loop as a
+/// `JoinError` instead of unwinding here. Propagating it would discard every
+/// volume already scanned AND skip `emit_scrub_metrics`: a panic scrubbing one
+/// volume would hide real corruption found on the others and leave the
+/// staleness alert firing with nothing recorded to explain it. Record it
+/// against this volume and let the loop finish, the same way `scrub_volumes`
+/// treats a per-volume scrub error.
+///
+/// A panic is evidence about the volume, so it counts as broken. A join error
+/// from runtime shutdown is not -- the volume was never scanned, and counting
+/// it would put a false corruption into SCRUB_VOLUME_FAILURES.
+fn record_scrub_join_failure(
+    e: &tokio::task::JoinError,
+    vid: VolumeId,
+    what: &str,
+    broken_volume_ids: &mut Vec<u32>,
+    details: &mut Vec<String>,
+) {
+    if e.is_panic() {
+        tracing::error!(
+            volume_id = vid.0,
+            "scrub: {} task for EC volume {} panicked: {}",
+            what,
+            vid.0,
+            e
+        );
+        broken_volume_ids.push(vid.0);
+        details.push(format!("ecvol {}: {} task panicked: {}", vid.0, what, e));
+    } else {
+        tracing::info!(
+            volume_id = vid.0,
+            "scrub: {} task for EC volume {} was cancelled, skipping",
+            what,
+            vid.0
+        );
+        details.push(format!("ecvol {}: {} task cancelled; skipped", vid.0, what));
+    }
+}
+
 fn emit_scrub_metrics(mode: i32, broken_volumes: usize, broken_shards: Option<usize>) {
     let mode_label = scrub_mode_label(mode);
     crate::metrics::SCRUB_LAST_TIME_SECONDS
@@ -341,6 +406,408 @@ impl VolumeGrpcService {
         // Step 3: notify master again to cover heartbeat race
         self.notify_master_volume_readonly(&info, true).await?;
         Ok(())
+    }
+
+    /// The scrub loop over an already-resolved volume list.
+    ///
+    /// Split out of `scrub_volume` so a test can hand it a list containing an
+    /// id that is not in the store: listing and lookup read the same map under
+    /// the same lock, so nothing outside can make an id vanish between them.
+    async fn scrub_volumes(
+        &self,
+        req: &volume_server_pb::ScrubVolumeRequest,
+        vids: Vec<VolumeId>,
+        explicit: bool,
+    ) -> Result<Response<volume_server_pb::ScrubVolumeResponse>, Status> {
+        let mode = req.mode;
+        let mut total_volumes: u64 = 0;
+        let mut total_files: u64 = 0;
+        let mut broken_volume_ids: Vec<u32> = Vec::new();
+        let mut details: Vec<String> = Vec::new();
+        let mut broken_vids: Vec<VolumeId> = Vec::new();
+
+        // Scrub phase. The store read guard is taken PER VOLUME, never across the
+        // whole loop.
+        //
+        // Holding one guard for the entire loop meant a node-wide scrub pinned the
+        // store lock for the full scan of every volume it holds. The periodic
+        // heartbeat takes store.write(); once that writer is pending, a
+        // write-preferring std::sync::RwLock queues every later reader behind it,
+        // so every HTTP handler blocks and the node stops serving and
+        // heart-beating until the scrub finishes. Re-acquiring per volume lets the
+        // writer land between volumes.
+        //
+        // NOTE: v.scrub() still runs under the guard for the duration of ONE
+        // volume, which for a large volume is still a long hold. In
+        // scrub_ec_volume the INDEX, LOCAL and CHECKSUM arms snapshot a plan and
+        // scan with the guard released; FULL/READS releases it across the index
+        // walk but still re-takes it per needle, in
+        // store_ec::scrub_snapshot_under_lock. The same treatment here needs
+        // Volume to expose an equivalent plan and is left as a follow-up.
+        for vid in &vids {
+            // Re-resolve under a fresh guard each iteration; the volume set can
+            // legitimately change between volumes now that the lock is released.
+            let Some((scrub_result, file_count)) = ({
+                let store = self.state.store.read().unwrap();
+                store.find_volume(*vid).map(|(_, v)| {
+                    // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
+                    let r = if mode == 1 { v.scrub_index() } else { v.scrub() };
+                    (r, v.file_count())
+                })
+            }) else {
+                if let Some(status) = scrub_vanished_volume(explicit, "volume", *vid) {
+                    return Err(status);
+                }
+                continue;
+            };
+            total_volumes += 1;
+
+            match scrub_result {
+                Ok((files, broken)) => {
+                    total_files += files;
+                    if !broken.is_empty() {
+                        broken_vids.push(*vid);
+                        broken_volume_ids.push(vid.0);
+                        for msg in broken {
+                            details.push(format!("vol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                Err(e) => {
+                    total_files += file_count.max(0) as u64;
+                    broken_vids.push(*vid);
+                    broken_volume_ids.push(vid.0);
+                    details.push(format!("vol {}: scrub error: {}", vid.0, e));
+                }
+            }
+        }
+
+        // Match Go: if mark_broken_volumes_readonly, call makeVolumeReadonly on each broken volume.
+        // Collect errors via errors.Join semantics (return joined error if any fail).
+        let mut errs: Vec<String> = Vec::new();
+        if req.mark_broken_volumes_readonly {
+            for vid in &broken_vids {
+                match self.make_volume_readonly(*vid, false, true).await {
+                    Ok(()) => {
+                        details.push(format!("volume {} is now read-only", vid.0));
+                    }
+                    // The volume was scrubbed, found broken, and then removed —
+                    // the same concurrent teardown the scrub loop tolerates, one
+                    // step later. There is nothing left to mark read-only, and
+                    // failing here would throw away the whole scrub report. Go
+                    // never reaches this at all: it passes makeVolumeReadonly the
+                    // *storage.Volume it already holds, so a volume that left the
+                    // store is still addressable there.
+                    Err(e) if e.code() == tonic::Code::NotFound => {
+                        tracing::info!(
+                            volume_id = vid.0,
+                            "scrub: volume {} vanished before mark-readonly, skipping",
+                            vid.0
+                        );
+                        details.push(format!(
+                            "volume {} vanished before mark-readonly; skipped",
+                            vid.0
+                        ));
+                    }
+                    Err(e) => {
+                        errs.push(e.message().to_string());
+                        details.push(e.message().to_string());
+                    }
+                }
+            }
+        }
+
+        // Record metrics before the post-scrub error check so scrub failures are
+        // persisted even when a follow-up admin action (mark-readonly) fails.
+        emit_scrub_metrics(mode, broken_vids.len(), None);
+
+        if !errs.is_empty() {
+            return Err(Status::internal(errs.join("\n")));
+        }
+
+        Ok(Response::new(volume_server_pb::ScrubVolumeResponse {
+            total_volumes,
+            total_files,
+            broken_volume_ids,
+            details,
+        }))
+    }
+
+    /// The EC scrub loop over an already-resolved volume list. Same split, and
+    /// same vanished-volume rule, as `scrub_volumes` — see its comment.
+    async fn scrub_ec_volumes(
+        &self,
+        req: &volume_server_pb::ScrubEcVolumeRequest,
+        vids: Vec<VolumeId>,
+        explicit: bool,
+    ) -> Result<Response<volume_server_pb::ScrubEcVolumeResponse>, Status> {
+        let mode = req.mode;
+        let force_deleted_needles_check = req.force_deleted_needles_check;
+        let mut total_volumes: u64 = 0;
+        let mut total_files: u64 = 0;
+        let mut broken_volume_ids: Vec<u32> = Vec::new();
+        let mut broken_shard_infos: Vec<volume_server_pb::EcShardInfo> = Vec::new();
+        let mut details: Vec<String> = Vec::new();
+
+        for vid in vids {
+            match mode {
+                1 => {
+                    // INDEX mode: check ecx index integrity only, no shard verification.
+                    // Same shape as the CHECKSUM arm below: snapshot, release
+                    // the store lock, then walk the index.
+                    let Some(plan) = ({
+                        let store = self.state.store.read().unwrap();
+                        store.find_ec_volume(vid).map(|ecv| ecv.scrub_index_plan())
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    // Counted as attempted BEFORE the join, so a failed join
+                    // cannot silently shrink total_volumes.
+                    total_volumes += 1;
+                    let (count, errs) = match tokio::task::spawn_blocking(move || plan.run()).await
+                    {
+                        Ok(v) => v,
+                        Err(e) => {
+                            record_scrub_join_failure(
+                                &e,
+                                vid,
+                                "index scrub",
+                                &mut broken_volume_ids,
+                                &mut details,
+                            );
+                            continue;
+                        }
+                    };
+                    total_files += count;
+                    if !errs.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                2 | 5 => {
+                    // FULL/READS: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
+                    // local Reed-Solomon parity check. The needle walk only reads
+                    // DATA-shard intervals of LIVE needles, so on its own it can't
+                    // catch silent bitrot in a PARITY shard or an unwalked cold
+                    // region. Go closes that gap with a separate CHECKSUM mode over
+                    // .ecsum, which Rust does not have yet; running both here is a
+                    // deliberate divergence from Go FULL to preserve coverage. Drop
+                    // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
+                    //
+                    // The RS recompute needs every shard co-located, so only run it
+                    // when this node holds all data+parity shards (single-node EC);
+                    // on a distributed layout it would report every non-local shard
+                    // as missing. Snapshot under a brief lock; release before await.
+                    let Some((dir, collection, data_shards, parity_shards, all_local)) = ({
+                        let store = self.state.store.read().unwrap();
+                        store.find_ec_volume(vid).map(|ecv| {
+                            let total = (ecv.data_shards + ecv.parity_shards) as usize;
+                            let local = ecv.shards.iter().filter(|s| s.is_some()).count();
+                            (
+                                ecv.dir.clone(),
+                                ecv.collection.clone(),
+                                ecv.data_shards as usize,
+                                ecv.parity_shards as usize,
+                                local == total,
+                            )
+                        })
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    total_volumes += 1;
+
+                    // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
+                    let (files, mut shard_infos, mut errs) =
+                        crate::server::store_ec::scrub_ec_volume_distributed(
+                            &self.state,
+                            vid,
+                            force_deleted_needles_check,
+                            mode == 5,
+                        )
+                        .await;
+                    total_files += files as u64; // count comes from the needle walk only
+
+                    // (2) Local parity check, gated on all-shards-local. Blocking RS
+                    // verify -> spawn_blocking; inputs are owned, no lock held.
+                    if all_local && !dir.is_empty() {
+                        let collection_pc = collection.clone();
+                        let join = tokio::task::spawn_blocking(move || {
+                            crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
+                                &dir,
+                                &collection_pc,
+                                vid,
+                                data_shards,
+                                parity_shards,
+                            )
+                        })
+                        .await;
+                        // Unlike the other arms this must NOT `continue`: the
+                        // needle walk above already produced findings for this
+                        // volume, and dropping them here would recreate the bug
+                        // this handles, one scope down. So a panic becomes an
+                        // error for the volume, and a cancellation -- which
+                        // spawn_blocking only reports when the runtime is going
+                        // down, so this response is unlikely to reach anyone --
+                        // records in details that the parity half did not run
+                        // rather than inventing a corruption for it.
+                        let (parity_broken, parity_details) = match join {
+                            Ok(r) => r.unwrap_or_else(|e| {
+                                (Vec::new(), vec![format!("verify_ec_shards: {}", e)])
+                            }),
+                            Err(e) if e.is_panic() => (
+                                Vec::new(),
+                                vec![format!("verify_ec_shards task panicked: {}", e)],
+                            ),
+                            Err(e) => {
+                                details.push(format!(
+                                    "ecvol {}: verify_ec_shards task cancelled; parity check skipped ({})",
+                                    vid.0, e
+                                ));
+                                (Vec::new(), Vec::new())
+                            }
+                        };
+
+                        let mut seen: std::collections::HashSet<u32> =
+                            shard_infos.iter().map(|s| s.shard_id).collect();
+                        for sid in parity_broken {
+                            if seen.insert(sid) {
+                                shard_infos.push(volume_server_pb::EcShardInfo {
+                                    shard_id: sid,
+                                    collection: collection.clone(),
+                                    volume_id: vid.0,
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                        shard_infos.sort_by_key(|s| s.shard_id);
+                        errs.extend(parity_details);
+                    }
+
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                3 => {
+                    // LOCAL: verify each needle against the locally-held shards.
+                    // Snapshot under a brief lock, then walk with the lock
+                    // RELEASED: this reads every local needle's bytes, which
+                    // under the guard stalls the node. See EcChecksumScrubPlan.
+                    let Some(plan) = ({
+                        let store = self.state.store.read().unwrap();
+                        store.find_ec_volume(vid).map(|ecv| ecv.scrub_local_plan())
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    total_volumes += 1;
+                    // Synchronous CPU + file I/O: keep it off the async workers.
+                    let (files, shard_infos, errs) =
+                        match tokio::task::spawn_blocking(move || plan.run()).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                record_scrub_join_failure(
+                                    &e,
+                                    vid,
+                                    "local scrub",
+                                    &mut broken_volume_ids,
+                                    &mut details,
+                                );
+                                continue;
+                            }
+                        };
+                    total_files += files;
+                    if !errs.is_empty() || !shard_infos.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        broken_shard_infos.extend(shard_infos);
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                4 => {
+                    // CHECKSUM: verify each local shard's raw bytes against the
+                    // bitrot checksum sidecar, exercising cold parity shards.
+                    // Read-only. Mirrors Go's v.ChecksumScrub().
+                    // Snapshot under a brief lock, then verify with the lock
+                    // RELEASED: this reads every byte of every local shard, which
+                    // under the guard stalls the node. See EcChecksumScrubPlan.
+                    let Some((plan, collection)) = ({
+                        let store = self.state.store.read().unwrap();
+                        store
+                            .find_ec_volume(vid)
+                            .map(|ecv| (ecv.checksum_scrub_plan(), ecv.collection.clone()))
+                    }) else {
+                        if let Some(status) = scrub_vanished_volume(explicit, "EC volume", vid) {
+                            return Err(status);
+                        }
+                        continue;
+                    };
+                    total_volumes += 1;
+                    // Synchronous CPU + file I/O: keep it off the async workers.
+                    // `plan.run()`'s first return is blocks scanned, not a file
+                    // count — Go discards it (`_, shardInfos, serrs = v.ChecksumScrub()`)
+                    // so TotalFiles stays a needle/file count and is not inflated
+                    // by the block count.
+                    let (_blocks_scanned, broken, errs) =
+                        match tokio::task::spawn_blocking(move || plan.run()).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                record_scrub_join_failure(
+                                    &e,
+                                    vid,
+                                    "checksum scrub",
+                                    &mut broken_volume_ids,
+                                    &mut details,
+                                );
+                                continue;
+                            }
+                        };
+                    if !errs.is_empty() || !broken.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for b in broken {
+                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
+                                volume_id: vid.0,
+                                collection: collection.clone(),
+                                shard_id: b,
+                                ..Default::default()
+                            });
+                        }
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                _ => unreachable!(), // validated above
+            }
+        }
+
+        emit_scrub_metrics(
+            mode,
+            broken_volume_ids.len(),
+            Some(broken_shard_infos.len()),
+        );
+
+        Ok(Response::new(volume_server_pb::ScrubEcVolumeResponse {
+            total_volumes,
+            total_files,
+            broken_volume_ids,
+            broken_shard_infos,
+            details,
+        }))
     }
 }
 
@@ -983,7 +1450,7 @@ impl VolumeServer for VolumeGrpcService {
 
         let mut store = self.state.store.write().unwrap();
         store
-            .mount_volume_by_id(vid)
+            .mount_volume_by_id(vid, req.collection.as_deref())
             .map_err(|e| Status::internal(e.to_string()))?;
         self.state.volume_state_notify.notify_one();
 
@@ -1155,7 +1622,7 @@ impl VolumeServer for VolumeGrpcService {
         if let Err(e) = store.configure_volume(vid, rp) {
             let mut error = format!("volume configure {}: {}", vid, e);
             // Error recovery: try to re-mount anyway
-            if let Err(mount_err) = store.mount_volume_by_id(vid) {
+            if let Err(mount_err) = store.mount_volume_by_id(vid, None) {
                 error += &format!(". Also failed to restore mount: {}", mount_err);
             }
             return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
@@ -1164,7 +1631,7 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         // Re-mount the volume
-        if let Err(e) = store.mount_volume_by_id(vid) {
+        if let Err(e) = store.mount_volume_by_id(vid, None) {
             return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
                 error: format!("volume configure mount {}: {}", vid, e),
             }));
@@ -1396,7 +1863,22 @@ impl VolumeServer for VolumeGrpcService {
         let state = self.state.clone();
 
         tokio::spawn(async move {
+            // Tracks whether mount_volume succeeded so the error branch can
+            // unmount (not just unlink) an orphaned replica. A mount that
+            // races a departing caller is the one case where the existing
+            // file-only cleanup leaves the volume loaded in memory.
+            let mut mounted = false;
             let result = async {
+                // Nothing below is worth doing for a caller that has already
+                // gone: the transfer would spend the source's bandwidth and the
+                // destination's disk on a volume nobody will take delivery of.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} copy cancelled by caller",
+                        vid
+                    )));
+                }
+
                 let report_interval: i64 = 128 * 1024 * 1024;
                 let mut next_report_target: i64 = report_interval;
                 let io_byte_per_second = if req.io_byte_per_second > 0 {
@@ -1410,12 +1892,24 @@ impl VolumeServer for VolumeGrpcService {
                 let mut preallocate_size: i64 = 0;
                 if !has_remote_dat {
                     let grpc_addr = super::heartbeat::to_grpc_address(&state.master_url);
-                    match super::heartbeat::try_get_master_configuration(
-                        &grpc_addr,
-                        state.outgoing_grpc_tls.as_ref(),
-                    )
-                    .await
-                    {
+                    // Race the master-configuration RPC against the caller's
+                    // response channel: a stalled master (or a slow leader
+                    // election) would otherwise hold the task and its .note
+                    // past a departing caller, since the per-chunk checks in
+                    // copy_file_from_source are never reached.
+                    let config = tokio::select! {
+                        res = super::heartbeat::try_get_master_configuration(
+                            &grpc_addr,
+                            state.outgoing_grpc_tls.as_ref(),
+                        ) => res,
+                        _ = tx.closed() => {
+                            return Err(Status::cancelled(format!(
+                                "volume {} copy cancelled by caller",
+                                vid
+                            )));
+                        }
+                    };
+                    match config {
                         Ok(resp) => {
                             if resp.volume_preallocate {
                                 preallocate_size = resp.volume_size_limit_m_b as i64 * 1024 * 1024;
@@ -1454,13 +1948,13 @@ impl VolumeServer for VolumeGrpcService {
                         ".dat",
                         false,
                         true,
-                        Some(&tx),
+                        &tx,
+                        true,
                         &mut next_report_target,
                         report_interval,
                         &mut throttler,
                     )
-                    .await
-                    .map_err(|e| Status::internal(e))?;
+                    .await?;
                     if dat_modified_ts_ns > 0 {
                         let _ = set_file_mtime(&dat_path, dat_modified_ts_ns);
                     }
@@ -1479,13 +1973,13 @@ impl VolumeServer for VolumeGrpcService {
                     ".idx",
                     false,
                     false,
-                    None,
+                    &tx,
+                    false,
                     &mut next_report_target,
                     report_interval,
                     &mut throttler,
                 )
-                .await
-                .map_err(|e| Status::internal(e))?;
+                .await?;
                 if idx_modified_ts_ns > 0 {
                     let _ = set_file_mtime(&idx_path, idx_modified_ts_ns);
                 }
@@ -1503,13 +1997,13 @@ impl VolumeServer for VolumeGrpcService {
                     ".vif",
                     false,
                     true,
-                    None,
+                    &tx,
+                    false,
                     &mut next_report_target,
                     report_interval,
                     &mut throttler,
                 )
-                .await
-                .map_err(|e| Status::internal(e))?;
+                .await?;
                 if vif_modified_ts_ns > 0 {
                     let _ = set_file_mtime(&vif_path, vif_modified_ts_ns);
                 }
@@ -1546,6 +2040,18 @@ impl VolumeServer for VolumeGrpcService {
                     vol_info.dat_file_timestamp_seconds * 1_000_000_000
                 };
 
+                // An orphaned mount is how an abandoned copy does lasting
+                // damage: the destination carries that volume's index cache for
+                // the lifetime of the process, and under replication=000 the
+                // cluster is left holding one volume id on two servers, both
+                // writable, which concurrent writes can diverge.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} copy cancelled by caller before mount",
+                        vid
+                    )));
+                }
+
                 // Mount the volume
                 {
                     let mut store = state.store.write().unwrap();
@@ -1554,23 +2060,69 @@ impl VolumeServer for VolumeGrpcService {
                         .map_err(|e| {
                             Status::internal(format!("failed to mount volume {}: {}", vid, e))
                         })?;
+                    mounted = true;
                 }
                 state.volume_state_notify.notify_one();
 
-                // Send final response with last_append_at_ns
-                let _ = tx
+                // Send final response with last_append_at_ns. A failed send
+                // means the caller is gone: the mount above raced a departing
+                // receiver (the pre-mount is_closed() check cannot close that
+                // window), and leaving the volume mounted is exactly the orphan
+                // this PR prevents. Surface it as Cancelled so the error branch
+                // unmounts and deletes the replica it just created.
+                if tx
                     .send(Ok(volume_server_pb::VolumeCopyResponse {
                         last_append_at_ns: last_append_at_ns,
                         processed_bytes: 0,
                     }))
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    return Err(Status::cancelled(format!(
+                        "volume {} copy cancelled by caller after mount",
+                        vid
+                    )));
+                }
 
                 Ok::<(), Status>(())
             }
             .await;
 
             if let Err(e) = result {
-                // Clean up on error
+                // An abandoned copy is otherwise invisible here: the error goes
+                // to a channel nobody is reading. Logging it gives the operator
+                // the cause behind the balancer's "delete that copy, then re-run
+                // the move".
+                if e.code() == tonic::Code::Cancelled {
+                    tracing::info!(
+                        "volume {} copy from {} abandoned by its caller, discarding the partial copy",
+                        vid,
+                        req.source_data_node
+                    );
+                } else {
+                    tracing::warn!(
+                        "volume {} copy from {} failed: {}",
+                        vid,
+                        req.source_data_node,
+                        e
+                    );
+                }
+                // Clean up on error. If the volume was mounted (the after-mount
+                // race), delete_volume unmounts it from the store AND removes
+                // the .dat/.idx/.vif in one step; the remove_file calls below
+                // cover the never-mounted partial-file case and are harmless
+                // no-ops when delete_volume already removed the files.
+                //
+                // keep_remote_data=true matches the pre-spawn delete_volume at
+                // the top of volume_copy: a remote-tier copy's .vif points at
+                // the same cloud object the source replica references, so
+                // destroying the abandoned destination with keep_remote_data=
+                // false would delete the source's remote data.
+                if mounted {
+                    let mut store = state.store.write().unwrap();
+                    let _ = store.delete_volume(vid, false, true);
+                    state.volume_state_notify.notify_one();
+                }
                 let _ = std::fs::remove_file(format!("{}.dat", data_base_name));
                 let _ = std::fs::remove_file(format!("{}.idx", idx_base_name));
                 let _ = std::fs::remove_file(format!("{}.vif", data_base_name));
@@ -2162,56 +2714,91 @@ impl VolumeServer for VolumeGrpcService {
             let mut draining_seconds = idle_timeout as i64;
 
             loop {
-                // Use binary search to find starting offset, then scan from there
-                let scan_result = {
+                // Resolve the start offset and the caught-up flag under one
+                // store read guard. is_last means the caller is caught up: send
+                // a heartbeat without scanning, as Go does. Dropping that flag
+                // re-reads the whole volume every iteration (a moved volume is
+                // read-only, so it is always caught up). The single guard
+                // spans both the search and the scan: a vacuum commit takes
+                // the store write lock and rewrites .dat/.idx, so an offset
+                // resolved under one guard would point into a different file
+                // under the next.
+                let resolved = {
                     let store = state.store.read().unwrap();
-                    if let Some((_, vol)) = store.find_volume(vid) {
-                        let start_offset = if last_timestamp_ns > 0 {
-                            match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
-                                Ok((offset, _is_last)) => {
-                                    if offset.is_zero() {
-                                        Ok(sb_size)
-                                    } else {
-                                        Ok(offset.to_actual_offset() as u64)
+                    match store.find_volume(vid) {
+                        Some((_, vol)) => {
+                            let start = if last_timestamp_ns > 0 {
+                                match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
+                                    Ok((offset, is_last)) => {
+                                        let off = if offset.is_zero() {
+                                            sb_size
+                                        } else {
+                                            offset.to_actual_offset() as u64
+                                        };
+                                        Ok((off, is_last))
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "fail to locate by appendAtNs {}: {}",
+                                            last_timestamp_ns,
+                                            e
+                                        );
+                                        Err(format!(
+                                            "fail to locate by appendAtNs {}: {}",
+                                            last_timestamp_ns, e
+                                        ))
                                     }
                                 }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "fail to locate by appendAtNs {}: {}",
-                                        last_timestamp_ns,
-                                        e
-                                    );
-                                    Err(format!(
-                                        "fail to locate by appendAtNs {}: {}",
-                                        last_timestamp_ns, e
-                                    ))
+                            } else {
+                                // No timestamp yet: the caller wants everything.
+                                Ok((sb_size, false))
+                            };
+                            Some(start.map(|(off, is_last)| {
+                                if is_last {
+                                    None
+                                } else {
+                                    Some(vol.scan_raw_needles_from(off))
                                 }
-                            }
-                        } else {
-                            Ok(sb_size)
-                        };
-                        match start_offset {
-                            Ok(off) => Ok(vol.scan_raw_needles_from(off)),
-                            Err(msg) => Err(msg),
+                            }))
                         }
-                    } else {
-                        break;
+                        None => None,
                     }
                 };
 
-                let scan_inner = match scan_result {
-                    Ok(r) => r,
-                    Err(msg) => {
+                let scan_result = match resolved {
+                    None => break,
+                    Some(Err(msg)) => {
                         let _ = tx.send(Err(Status::internal(msg))).await;
                         return;
                     }
+                    Some(Ok(scan_result)) => scan_result,
                 };
 
-                let entries = match scan_inner {
+                // Caught up: heartbeat WITHOUT scanning, as Go does.
+                let Some(scan_result) = scan_result else {
+                    let msg = volume_server_pb::VolumeTailSenderResponse {
+                        is_last_chunk: true,
+                        version,
+                        ..Default::default()
+                    };
+                    if tx.send(Ok(msg)).await.is_err() {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if idle_timeout == 0 {
+                        continue;
+                    }
+                    draining_seconds -= 1;
+                    if draining_seconds <= 0 {
+                        return; // EOF
+                    }
+                    continue;
+                };
+
+                let entries = match scan_result {
                     Ok(e) => e,
                     Err(_) => break,
                 };
-
                 // Filter entries since last_timestamp_ns
                 let mut last_processed_ns = last_timestamp_ns;
                 let mut sent_any = false;
@@ -3249,9 +3836,14 @@ impl VolumeServer for VolumeGrpcService {
         while bytes_read < total_size {
             let chunk_size = std::cmp::min(BUFFER_SIZE_LIMIT, total_size - bytes_read);
             let mut buf = vec![0u8; chunk_size];
-            let n = shard
-                .read_at(&mut buf, current_offset)
-                .map_err(|e| Status::internal(e.to_string()))?;
+            let n = match shard.read_at(&mut buf, current_offset) {
+                Ok(n) => n,
+                Err(e) => {
+                    ec_vol.check_read_write_error(Some(&e));
+                    return Err(Status::internal(e.to_string()));
+                }
+            };
+            ec_vol.check_read_write_error(None);
             if n == 0 {
                 break;
             }
@@ -3380,9 +3972,11 @@ impl VolumeServer for VolumeGrpcService {
 
             {
                 let mut store = self.state.store.write().unwrap();
-                store.mount_volume_by_id(vid).map_err(|e| {
-                    Status::internal(format!("mount staged volume {}: {}", req.volume_id, e))
-                })?;
+                store
+                    .mount_volume_by_id(vid, Some(req.collection.as_str()))
+                    .map_err(|e| {
+                        Status::internal(format!("mount staged volume {}: {}", req.volume_id, e))
+                    })?;
             }
             self.state.volume_state_notify.notify_one();
             tracing::info!(
@@ -3671,21 +4265,52 @@ impl VolumeServer for VolumeGrpcService {
 
         tokio::spawn(async move {
             let result: Result<(), Status> = async {
+                // Nothing below is worth doing for a caller that has already
+                // gone: the upload would spend bandwidth and S3 storage on a
+                // transition nobody is waiting to hear the result of.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} tier move to remote cancelled by caller",
+                        vid
+                    )));
+                }
+
                 // Upload the .dat file to S3 with progress
                 let tx_progress = tx.clone();
                 let mut last_report = std::time::Instant::now();
                 let (key, size) = backend
                     .upload_file(&dat_path, move |processed, percentage| {
+                        // Checked on every part, not only where progress is
+                        // reported: the report is rate-limited to one a second,
+                        // so its result alone would miss a caller that left in
+                        // between. Go aborts here too -- the progress callback
+                        // returns stream.Send's error (s3_upload.go).
+                        if tx_progress.is_closed() {
+                            return Err(format!(
+                                "volume {} tier move to remote cancelled by caller",
+                                vid
+                            ));
+                        }
                         let now = std::time::Instant::now();
                         if now.duration_since(last_report) >= std::time::Duration::from_secs(1) {
                             last_report = now;
-                            let _ = tx_progress.try_send(Ok(
-                                volume_server_pb::VolumeTierMoveDatToRemoteResponse {
-                                    processed,
-                                    processed_percentage: percentage,
-                                },
-                            ));
+                            if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
+                                tx_progress.try_send(Ok(
+                                    volume_server_pb::VolumeTierMoveDatToRemoteResponse {
+                                        processed,
+                                        processed_percentage: percentage,
+                                    },
+                                ))
+                            {
+                                return Err(format!(
+                                    "volume {} tier move to remote cancelled by caller",
+                                    vid
+                                ));
+                            }
+                            // A merely full channel is a slow reader, not a
+                            // departed one; drop the report and keep going.
                         }
+                        Ok(())
                     })
                     .await
                     .map_err(|e| {
@@ -3695,6 +4320,11 @@ impl VolumeServer for VolumeGrpcService {
                         ))
                     })?;
 
+                // Deliberately no cancellation check here. Once the object is
+                // in S3 the cheap bookkeeping that follows is what makes the
+                // state consistent; stopping now would leave the object paid
+                // for and referenced by nothing. Go does not gate here either:
+                // its progress callback only runs during the transfer.
                 // Update volume info with remote file reference
                 {
                     let mut store = state.store.write().unwrap();
@@ -3746,6 +4376,16 @@ impl VolumeServer for VolumeGrpcService {
             .await;
 
             if let Err(e) = result {
+                // The error otherwise goes to a channel nobody is
+                // reading, leaving an abandoned tier move with no trace.
+                if e.code() == tonic::Code::Cancelled {
+                    tracing::info!(
+                        "volume {} tier move to remote abandoned by its caller",
+                        vid
+                    );
+                } else {
+                    tracing::warn!("volume {} tier move to remote failed: {}", vid, e);
+                }
                 let _ = tx.send(Err(e)).await;
             }
         });
@@ -3828,25 +4468,73 @@ impl VolumeServer for VolumeGrpcService {
 
         tokio::spawn(async move {
             let result: Result<(), Status> = async {
+                // Nothing below is worth doing for a caller that has already
+                // gone, and the download would overwrite a .dat path the volume
+                // still reports as absent.
+                if tx.is_closed() {
+                    return Err(Status::cancelled(format!(
+                        "volume {} tier move from remote cancelled by caller",
+                        vid
+                    )));
+                }
+
                 // Download the .dat file from S3 with progress
                 let tx_progress = tx.clone();
                 let mut last_report = std::time::Instant::now();
                 let storage_name_clone = storage_name.clone();
                 let _size = backend
                     .download_file(&dat_path, &storage_key, move |processed, percentage| {
+                        // Checked on every part, not only where progress is
+                        // reported: the report is rate-limited to one a second,
+                        // so its result alone would miss a caller that left in
+                        // between. Go aborts here too -- the progress callback
+                        // returns stream.Send's error (s3_download.go).
+                        if tx_progress.is_closed() {
+                            return Err(format!(
+                                "volume {} tier move from remote cancelled by caller",
+                                vid
+                            ));
+                        }
                         let now = std::time::Instant::now();
                         if now.duration_since(last_report) >= std::time::Duration::from_secs(1) {
                             last_report = now;
-                            let _ = tx_progress.try_send(Ok(
-                                volume_server_pb::VolumeTierMoveDatFromRemoteResponse {
-                                    processed,
-                                    processed_percentage: percentage,
-                                },
-                            ));
+                            if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
+                                tx_progress.try_send(Ok(
+                                    volume_server_pb::VolumeTierMoveDatFromRemoteResponse {
+                                        processed,
+                                        processed_percentage: percentage,
+                                    },
+                                ))
+                            {
+                                return Err(format!(
+                                    "volume {} tier move from remote cancelled by caller",
+                                    vid
+                                ));
+                            }
+                            // A merely full channel is a slow reader, not a
+                            // departed one; drop the report and keep going.
                         }
+                        Ok(())
                     })
                     .await
                     .map_err(|e| {
+                        // download_file pre-allocates the destination to the
+                        // object's full size, so an aborted download leaves a
+                        // .dat that is the right length and the wrong content.
+                        // It has to go: this handler refuses to run at all when
+                        // a local .dat exists, so leaving one wedges every
+                        // retry on "already on local disk", and a restart would
+                        // load the sparse file as the volume's data.
+                        if let Err(rm) = std::fs::remove_file(&dat_path) {
+                            if rm.kind() != std::io::ErrorKind::NotFound {
+                                tracing::warn!(
+                                    "volume {} could not remove the incomplete download {}: {}",
+                                    vid,
+                                    dat_path,
+                                    rm
+                                );
+                            }
+                        }
                         Status::internal(format!(
                             "backend {} copy file {}: {}",
                             storage_name_clone, dat_path, e
@@ -3977,6 +4665,16 @@ impl VolumeServer for VolumeGrpcService {
             .await;
 
             if let Err(e) = result {
+                // The error otherwise goes to a channel nobody is
+                // reading, leaving an abandoned tier move with no trace.
+                if e.code() == tonic::Code::Cancelled {
+                    tracing::info!(
+                        "volume {} tier move from remote abandoned by its caller",
+                        vid
+                    );
+                } else {
+                    tracing::warn!("volume {} tier move from remote failed: {}", vid, e);
+                }
                 let _ = tx.send(Err(e)).await;
             }
         });
@@ -4239,85 +4937,14 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        let mut total_volumes: u64 = 0;
-        let mut total_files: u64 = 0;
-        let mut broken_volume_ids: Vec<u32> = Vec::new();
-        let mut details: Vec<String> = Vec::new();
-        let mut broken_vids: Vec<VolumeId> = Vec::new();
+        let explicit = !req.volume_ids.is_empty();
+        let vids: Vec<VolumeId> = if explicit {
+            req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+        } else {
+            self.state.store.read().unwrap().all_volume_ids()
+        };
 
-        // Scrub phase: hold store read lock, then drop before async readonly calls.
-        {
-            let store = self.state.store.read().unwrap();
-            let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
-                store.all_volume_ids()
-            } else {
-                req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
-            };
-
-            for vid in &vids {
-                let (_, v) = store
-                    .find_volume(*vid)
-                    .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
-                total_volumes += 1;
-
-                // INDEX mode (1) calls scrub_index; FULL (2) and LOCAL (3) call scrub
-                let scrub_result = if mode == 1 {
-                    v.scrub_index()
-                } else {
-                    v.scrub()
-                };
-                match scrub_result {
-                    Ok((files, broken)) => {
-                        total_files += files;
-                        if !broken.is_empty() {
-                            broken_vids.push(*vid);
-                            broken_volume_ids.push(vid.0);
-                            for msg in broken {
-                                details.push(format!("vol {}: {}", vid.0, msg));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        total_files += v.file_count().max(0) as u64;
-                        broken_vids.push(*vid);
-                        broken_volume_ids.push(vid.0);
-                        details.push(format!("vol {}: scrub error: {}", vid.0, e));
-                    }
-                }
-            }
-        } // store lock dropped here
-
-        // Match Go: if mark_broken_volumes_readonly, call makeVolumeReadonly on each broken volume.
-        // Collect errors via errors.Join semantics (return joined error if any fail).
-        let mut errs: Vec<String> = Vec::new();
-        if req.mark_broken_volumes_readonly {
-            for vid in &broken_vids {
-                match self.make_volume_readonly(*vid, false, true).await {
-                    Ok(()) => {
-                        details.push(format!("volume {} is now read-only", vid.0));
-                    }
-                    Err(e) => {
-                        errs.push(e.message().to_string());
-                        details.push(e.message().to_string());
-                    }
-                }
-            }
-        }
-
-        // Record metrics before the post-scrub error check so scrub failures are
-        // persisted even when a follow-up admin action (mark-readonly) fails.
-        emit_scrub_metrics(mode, broken_vids.len(), None);
-
-        if !errs.is_empty() {
-            return Err(Status::internal(errs.join("\n")));
-        }
-
-        Ok(Response::new(volume_server_pb::ScrubVolumeResponse {
-            total_volumes,
-            total_files,
-            broken_volume_ids,
-            details,
-        }))
+        self.scrub_volumes(&req, vids, explicit).await
     }
 
     async fn scrub_ec_volume(
@@ -4349,194 +4976,21 @@ impl VolumeServer for VolumeGrpcService {
 
         // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
         // reads remote shards and must not hold the !Send store guard across .await.
-        let vids: Vec<VolumeId> = {
+        // Collect the volume ids under a brief lock, then release it: FULL (mode 2)
+        // reads remote shards and must not hold the !Send store guard across .await.
+        let explicit = !req.volume_ids.is_empty();
+        let vids: Vec<VolumeId> = if explicit {
+            req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
+        } else {
             let store = self.state.store.read().unwrap();
-            if req.volume_ids.is_empty() {
-                store
-                    .locations
-                    .iter()
-                    .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
-                    .collect()
-            } else {
-                req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
-            }
+            store
+                .locations
+                .iter()
+                .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
+                .collect()
         };
 
-        let mut total_volumes: u64 = 0;
-        let mut total_files: u64 = 0;
-        let mut broken_volume_ids: Vec<u32> = Vec::new();
-        let mut broken_shard_infos: Vec<volume_server_pb::EcShardInfo> = Vec::new();
-        let mut details: Vec<String> = Vec::new();
-
-        for vid in vids {
-            match mode {
-                1 => {
-                    // INDEX mode: check ecx index integrity only, no shard verification.
-                    let (count, errs) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        ecv.scrub_index()
-                    };
-                    total_volumes += 1;
-                    total_files += count;
-                    if !errs.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                2 | 5 => {
-                    // FULL/READS: Go-parity per-needle local+remote walk, PLUS a TEMPORARY
-                    // local Reed-Solomon parity check. The needle walk only reads
-                    // DATA-shard intervals of LIVE needles, so on its own it can't
-                    // catch silent bitrot in a PARITY shard or an unwalked cold
-                    // region. Go closes that gap with a separate CHECKSUM mode over
-                    // .ecsum, which Rust does not have yet; running both here is a
-                    // deliberate divergence from Go FULL to preserve coverage. Drop
-                    // verify_ec_shards from this arm once mode 4 (CHECKSUM) lands.
-                    //
-                    // The RS recompute needs every shard co-located, so only run it
-                    // when this node holds all data+parity shards (single-node EC);
-                    // on a distributed layout it would report every non-local shard
-                    // as missing. Snapshot under a brief lock; release before await.
-                    let (dir, collection, data_shards, parity_shards, all_local) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        let total = (ecv.data_shards + ecv.parity_shards) as usize;
-                        let local = ecv.shards.iter().filter(|s| s.is_some()).count();
-                        (
-                            ecv.dir.clone(),
-                            ecv.collection.clone(),
-                            ecv.data_shards as usize,
-                            ecv.parity_shards as usize,
-                            local == total,
-                        )
-                    };
-                    total_volumes += 1;
-
-                    // (1) Per-needle local+remote walk (Go ScrubEcVolume parity).
-                    let (files, mut shard_infos, mut errs) =
-                        crate::server::store_ec::scrub_ec_volume_distributed(
-                            &self.state,
-                            vid,
-                            force_deleted_needles_check,
-                            mode == 5,
-                        )
-                        .await;
-                    total_files += files as u64; // count comes from the needle walk only
-
-                    // (2) Local parity check, gated on all-shards-local. Blocking RS
-                    // verify -> spawn_blocking; inputs are owned, no lock held.
-                    if all_local && !dir.is_empty() {
-                        let collection_pc = collection.clone();
-                        let (parity_broken, parity_details) = tokio::task::spawn_blocking(move || {
-                            crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
-                                &dir,
-                                &collection_pc,
-                                vid,
-                                data_shards,
-                                parity_shards,
-                            )
-                        })
-                        .await
-                        .map_err(|e| Status::internal(format!("verify_ec_shards join: {}", e)))?
-                        .unwrap_or_else(|e| (Vec::new(), vec![format!("verify_ec_shards: {}", e)]));
-
-                        let mut seen: std::collections::HashSet<u32> =
-                            shard_infos.iter().map(|s| s.shard_id).collect();
-                        for sid in parity_broken {
-                            if seen.insert(sid) {
-                                shard_infos.push(volume_server_pb::EcShardInfo {
-                                    shard_id: sid,
-                                    collection: collection.clone(),
-                                    volume_id: vid.0,
-                                    ..Default::default()
-                                });
-                            }
-                        }
-                        shard_infos.sort_by_key(|s| s.shard_id);
-                        errs.extend(parity_details);
-                    }
-
-                    if !errs.is_empty() || !shard_infos.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        broken_shard_infos.extend(shard_infos);
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                3 => {
-                    // LOCAL: verify each needle against the locally-held shards.
-                    let (files, shard_infos, errs) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        ecv.scrub_local()
-                    };
-                    total_volumes += 1;
-                    total_files += files;
-                    if !errs.is_empty() || !shard_infos.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        broken_shard_infos.extend(shard_infos);
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                4 => {
-                    // CHECKSUM: verify each local shard's raw bytes against the
-                    // bitrot checksum sidecar, exercising cold parity shards.
-                    // Read-only. Mirrors Go's v.ChecksumScrub().
-                    let (blocks_scanned, broken, errs, collection) = {
-                        let store = self.state.store.read().unwrap();
-                        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-                            Status::not_found(format!("EC volume id {} not found", vid.0))
-                        })?;
-                        let collection = ecv.collection.clone();
-                        let (blocks, broken, errs) = ecv.checksum_scrub();
-                        (blocks, broken, errs, collection)
-                    };
-                    total_volumes += 1;
-                    total_files += blocks_scanned;
-                    if !errs.is_empty() || !broken.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        for b in broken {
-                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
-                                volume_id: vid.0,
-                                collection: collection.clone(),
-                                shard_id: b,
-                                ..Default::default()
-                            });
-                        }
-                        for msg in errs {
-                            details.push(format!("ecvol {}: {}", vid.0, msg));
-                        }
-                    }
-                }
-                _ => unreachable!(), // validated above
-            }
-        }
-
-        emit_scrub_metrics(
-            mode,
-            broken_volume_ids.len(),
-            Some(broken_shard_infos.len()),
-        );
-
-        Ok(Response::new(volume_server_pb::ScrubEcVolumeResponse {
-            total_volumes,
-            total_files,
-            broken_volume_ids,
-            broken_shard_infos,
-            details,
-        }))
+        self.scrub_ec_volumes(&req, vids, explicit).await
     }
 
     type QueryStream = BoxStream<volume_server_pb::QueriedStripe>;
@@ -5009,13 +5463,12 @@ async fn copy_file_from_source<T>(
     ext: &str,
     is_append: bool,
     ignore_source_not_found: bool,
-    progress_tx: Option<
-        &tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
-    >,
+    progress_tx: &tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
+    report_progress: bool,
     next_report_target: &mut i64,
     report_interval: i64,
     throttler: &mut WriteThrottler,
-) -> Result<i64, String>
+) -> Result<i64, Status>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody>,
     T::Error: Into<tonic::codegen::StdError>,
@@ -5032,62 +5485,107 @@ where
         ignore_source_file_not_found: ignore_source_not_found,
     };
 
-    let mut stream = client
-        .copy_file(copy_req)
-        .await
-        .map_err(|e| {
-            format!(
-                "failed to start copying volume {} {} file: {}",
-                volume_id, ext, e
-            )
-        })?
-        .into_inner();
+    // Cancellation surfaces as Status::cancelled so the spawn's error branch
+    // can distinguish it from ordinary failures (logging + future handling).
+    // The other errors here stay Status::internal, matching the prior
+    // `.map_err(|e| Status::internal(e))` at the call sites.
+    let cancelled = || {
+        Status::cancelled(format!(
+            "volume {} {} copy cancelled by caller",
+            volume_id, ext
+        ))
+    };
+
+    // Race the initial RPC establishment against the caller's response channel:
+    // if the source stalls before sending response headers, the per-message
+    // select! below is never reached, and without this race the task, the
+    // source connection, and any preallocated files would outlive a caller
+    // that has already gone.
+    let mut stream = tokio::select! {
+        res = client.copy_file(copy_req) => {
+            res.map_err(|e| {
+                Status::internal(format!(
+                    "failed to start copying volume {} {} file: {}",
+                    volume_id, ext, e
+                ))
+            })?
+            .into_inner()
+        }
+        _ = progress_tx.closed() => return Err(cancelled()),
+    };
 
     let mut file = if is_append {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(dest_path)
-            .map_err(|e| format!("open file {}: {}", dest_path, e))?
+            .map_err(|e| Status::internal(format!("open file {}: {}", dest_path, e)))?
     } else {
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(dest_path)
-            .map_err(|e| format!("open file {}: {}", dest_path, e))?
+            .map_err(|e| Status::internal(format!("open file {}: {}", dest_path, e)))?
     };
 
     let mut progressed_bytes: i64 = 0;
     let mut modified_ts_ns: i64 = 0;
 
-    while let Some(resp) = stream
-        .message()
-        .await
-        .map_err(|e| format!("receiving {}: {}", dest_path, e))?
-    {
+    // The source stream's message() future is the one await in this loop that
+    // can hang indefinitely: a stalled source (slow disk, network partition,
+    // GC pause on the source host) never returns a chunk, and without racing
+    // it against the caller's response channel the detached task, the source
+    // connection, and the partial files (including the .note) all outlive the
+    // caller. select! lets a departing caller preempt the source read.
+    loop {
+        let resp = tokio::select! {
+            msg = stream.message() => {
+                msg.map_err(|e| Status::internal(format!("receiving {}: {}", dest_path, e)))?
+            }
+            _ = progress_tx.closed() => return Err(cancelled()),
+        };
+        let resp = match resp {
+            Some(r) => r,
+            None => break,
+        };
         if resp.modified_ts_ns != 0 {
             modified_ts_ns = resp.modified_ts_ns;
         }
         if !resp.file_content.is_empty() {
+            // The caller's response stream is the only thing that makes this
+            // copy worth finishing. Checked every chunk rather than only where
+            // progress is reported: the first report lands 128MB in, so a
+            // smaller volume would otherwise run to completion — and mount —
+            // long after its caller stopped listening.
+            if progress_tx.is_closed() {
+                return Err(cancelled());
+            }
             use std::io::Write;
             file.write_all(&resp.file_content)
-                .map_err(|e| format!("write file {}: {}", dest_path, e))?;
+                .map_err(|e| Status::internal(format!("write file {}: {}", dest_path, e)))?;
             progressed_bytes += resp.file_content.len() as i64;
-            throttler
-                .maybe_slowdown(resp.file_content.len() as i64)
-                .await;
+            // A throttled copy sleeps seconds at a time; wake for a departing
+            // caller instead of finishing the nap first.
+            tokio::select! {
+                _ = throttler.maybe_slowdown(resp.file_content.len() as i64) => {}
+                _ = progress_tx.closed() => return Err(cancelled()),
+            }
 
-            if let Some(tx) = progress_tx {
-                if progressed_bytes > *next_report_target {
-                    let _ = tx
-                        .send(Ok(volume_server_pb::VolumeCopyResponse {
-                            last_append_at_ns: 0,
-                            processed_bytes: progressed_bytes,
-                        }))
-                        .await;
-                    *next_report_target = progressed_bytes + report_interval;
+            if report_progress && progressed_bytes > *next_report_target {
+                // Go aborts the transfer when this send fails
+                // (volume_grpc_copy.go: `return false`); so do we.
+                if progress_tx
+                    .send(Ok(volume_server_pb::VolumeCopyResponse {
+                        last_append_at_ns: 0,
+                        processed_bytes: progressed_bytes,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    return Err(cancelled());
                 }
+                *next_report_target = progressed_bytes + report_interval;
             }
         }
     }
@@ -5830,6 +6328,95 @@ mod tests {
             .remove("s3.tier_down_delete");
     }
 
+    // The progress callback is the only thing a tier transfer polls, so it is
+    // the only place a departing caller can be noticed. Go gives it an error
+    // return for exactly this (s3_upload.go:99, s3_download.go:84); this checks
+    // the Rust port now honours one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_download_file_aborts_when_the_progress_callback_fails() {
+        let (service, tmp, shutdown_tx, _dat_bytes, _super_block_size, _delete_count) =
+            make_remote_only_service("tier_progress_abort");
+        let backend = global_s3_tier_registry()
+            .read()
+            .unwrap()
+            .get("s3.tier_progress_abort")
+            .expect("backend registered");
+        let dest = format!("{}/aborted.dat", tmp.path().to_str().unwrap());
+
+        let err = backend
+            .download_file(&dest, "remote-key", |_, _| {
+                Err("caller gone".to_string())
+            })
+            .await
+            .expect_err("a failing progress callback must abort the download");
+        assert!(err.contains("caller gone"), "unexpected error: {}", err);
+
+        drop(service);
+        let _ = shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_progress_abort");
+    }
+
+    // An abandoned tier-down must leave the volume exactly as it found it. The
+    // partial .dat matters most: download_file pre-allocates the destination to
+    // the object's full size, this handler refuses to run while a local .dat
+    // exists, and a restart would load that file as the volume's data -- so a
+    // leftover wedges every retry on "already on local disk" and corrupts the
+    // volume on the way.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_tier_move_from_remote_cancelled_leaves_the_volume_untouched() {
+        let (service, tmp, shutdown_tx, _dat_bytes, _super_block_size, delete_count) =
+            make_remote_only_service("tier_down_cancel");
+        let dat_path = format!("{}/1.dat", tmp.path().to_str().unwrap());
+        assert!(!std::path::Path::new(&dat_path).exists());
+
+        let response = service
+            .volume_tier_move_dat_from_remote(Request::new(
+                volume_server_pb::VolumeTierMoveDatFromRemoteRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    keep_remote_dat_file: false,
+                },
+            ))
+            .await
+            .unwrap();
+
+        // The caller hangs up: dropping the response drops the receiving half
+        // of the channel, which is all a cancelled RPC amounts to here.
+        drop(response);
+
+        for _ in 0..60 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            assert!(
+                !std::path::Path::new(&dat_path).exists(),
+                "abandoned tier-down left a local .dat behind"
+            );
+        }
+
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert!(
+                vol.has_remote_file,
+                "abandoned tier-down published the transition to local"
+            );
+            assert!(!vol.volume_info.files.is_empty());
+        }
+        assert_eq!(
+            delete_count.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "abandoned tier-down deleted the shared remote object"
+        );
+
+        let _ = shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_down_cancel");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_tier_move_from_remote_keep_remote_still_swaps_to_local() {
         let (service, tmp, shutdown_tx, dat_bytes, _super_block_size, delete_count) =
@@ -5904,6 +6491,256 @@ mod tests {
         };
         let dat_bytes = std::fs::read(&dat_path).unwrap();
         (service, tmp, dat_bytes)
+    }
+
+    // Serve a VolumeGrpcService over a real gRPC endpoint. VolumeCopy dials its
+    // source_data_node rather than calling in process, so a cancellation test
+    // needs a source that is reachable over the wire.
+    async fn serve_source(
+        service: VolumeGrpcService,
+    ) -> (u16, tokio::sync::oneshot::Sender<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = tonic::transport::Server::builder()
+                .add_service(
+                    crate::pb::volume_server_pb::volume_server_server::VolumeServerServer::new(
+                        service,
+                    ),
+                )
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await;
+        });
+        (port, shutdown_tx)
+    }
+
+    // The transfer itself must notice a caller that has gone, with no progress
+    // report to carry the news. The first report is 128MB in, so for anything
+    // smaller -- the ordinary case for a balance move -- the send result says
+    // nothing and only the closed channel does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_copy_file_from_source_stops_when_the_caller_is_gone() {
+        let (source_service, _source_tmp, dat_bytes) = make_local_service_with_large_volume();
+        assert!(
+            dat_bytes.len() > 2 * 1024 * 1024,
+            "fixture must span several 2MB chunks"
+        );
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{}", port))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client =
+            volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
+                .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+                .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+
+        let dest_tmp = TempDir::new().unwrap();
+        let dest_path = format!("{}/copied.dat", dest_tmp.path().to_str().unwrap());
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<
+            Result<volume_server_pb::VolumeCopyResponse, Status>,
+        >(16);
+        drop(rx); // exactly what a client hanging up does to the sender
+
+        let mut next_report_target: i64 = 128 * 1024 * 1024;
+        let mut throttler = WriteThrottler::new(0);
+        let err = copy_file_from_source(
+            &mut client,
+            false,
+            "",
+            1,
+            u32::MAX,
+            dat_bytes.len() as u64,
+            &dest_path,
+            ".dat",
+            false,
+            true,
+            &tx,
+            true,
+            &mut next_report_target,
+            128 * 1024 * 1024,
+            &mut throttler,
+        )
+        .await
+        .expect_err("a copy whose caller is gone must not run to completion");
+        // Cancellation must surface as Status::cancelled, not Status::internal:
+        // the spawn's error branch classifies on the code, so an Internal here
+        // would be logged as a generic failure instead of "abandoned by caller".
+        assert_eq!(
+            err.code(),
+            tonic::Code::Cancelled,
+            "expected Cancelled, got {:?}: {}",
+            err.code(),
+            err
+        );
+        assert!(
+            err.message().contains("cancelled by caller"),
+            "unexpected error: {}",
+            err
+        );
+
+        let copied = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
+        assert!(
+            copied < dat_bytes.len() as u64,
+            "copy should have stopped short, wrote {} of {} bytes",
+            copied,
+            dat_bytes.len()
+        );
+    }
+
+    // An abandoned VolumeCopy must leave nothing behind: no mounted volume (its
+    // index cache would be held for the life of the process, and under
+    // replication=000 the cluster would carry one volume id on two writable
+    // servers), and none of the partial files or the .note, which fails the
+    // volume load on the next restart.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_cancelled_by_caller_mounts_nothing_and_cleans_up() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store.delete_volume(VolumeId(1), false, false).unwrap();
+            // available_space is filled in by the periodic disk check, which
+            // does not run in a unit test; without it VolumeCopy finds no
+            // location with room and never gets as far as copying.
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_dir = dest_tmp.path().to_str().unwrap().to_string();
+        let dest_file = |ext: &str| format!("{}/1{}", dest_dir, ext);
+        assert!(
+            !std::path::Path::new(&dest_file(".dat")).exists(),
+            "destination must start without the volume for this test to mean anything"
+        );
+
+        let response = dest_service
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        // The caller hangs up. Dropping the response drops the receiving half of
+        // the channel, which is all a cancelled RPC amounts to on this side.
+        drop(response);
+
+        // Give the copy longer than it would need to finish, and hold it to the
+        // assertion throughout rather than only at the end.
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let store = dest_service.state.store.read().unwrap();
+            assert!(
+                store.find_volume(VolumeId(1)).is_none(),
+                "destination mounted a volume whose copy was abandoned"
+            );
+        }
+
+        for ext in [".dat", ".idx", ".vif", ".note"] {
+            assert!(
+                !std::path::Path::new(&dest_file(ext)).exists(),
+                "abandoned copy left {} behind",
+                dest_file(ext)
+            );
+        }
+    }
+
+    // If the caller departs in the narrow window between the pre-mount
+    // is_closed() check and the final tx.send, the volume is already mounted
+    // when the send fails. The task must roll back that mount — not just unlink
+    // the files — or the destination carries the volume's index cache for the
+    // life of the process.
+    //
+    // Reaching that window black-box needs a seam. The one the code already
+    // offers is the store write lock: the test takes it immediately after
+    // volume_copy returns, so the spawned task runs the copy to completion with
+    // the caller still attached, passes the pre-mount is_closed() check, then
+    // parks entering the mount block (state.store.write() blocks on the test's
+    // guard). The test then drops the response — the caller is gone — and
+    // releases the guard. The task acquires the lock, mounts, fails the final
+    // tx.send (receiver dropped), and must roll back via the error branch's
+    // delete_volume. Without the lock seam the task sees is_closed() at its
+    // very first check and returns before mount_volume, exercising the wrong
+    // path — the test would be green for the wrong reason.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_after_mount_cancellation_rolls_back_mount() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store.delete_volume(VolumeId(1), false, false).unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_dir = dest_tmp.path().to_str().unwrap().to_string();
+        let dest_file = |ext: &str| format!("{}/1{}", dest_dir, ext);
+
+        let response = dest_service
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        // Hold the store write lock so the task parks at the mount block after
+        // completing the copy and passing the pre-mount is_closed() check.
+        let store_guard = dest_service.state.store.write().unwrap();
+
+        // Give the copy time to complete and the task to reach the mount block.
+        // The 5 MB fixture copies in well under a second on a local loopback
+        // gRPC connection; 2 s is generous and keeps the test fast.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // The caller hangs up while the task is parked at the mount block.
+        drop(response);
+
+        // Release the store lock so the task can enter the mount block, mount,
+        // fail the final send, and roll back.
+        drop(store_guard);
+
+        // Wait for the rollback to finish.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let store = dest_service.state.store.read().unwrap();
+        assert!(
+            store.find_volume(VolumeId(1)).is_none(),
+            "destination still holds a mounted volume after after-mount cancellation"
+        );
+        drop(store);
+
+        for ext in [".dat", ".idx", ".vif", ".note"] {
+            assert!(
+                !std::path::Path::new(&dest_file(ext)).exists(),
+                "abandoned copy left {} behind",
+                dest_file(ext)
+            );
+        }
     }
 
     // copy_file must stream the whole .dat in 2MB chunks (not buffer it) and
@@ -6337,6 +7174,137 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(vif_path).unwrap()).unwrap();
         assert!(vif.expire_at_sec >= before + ttl.to_seconds());
         assert!(vif.expire_at_sec <= before + ttl.to_seconds() + 5);
+    }
+
+    /// REGRESSION: a node-wide scrub must survive a volume that legitimately
+    /// disappears while it runs.
+    ///
+    /// Nothing is held across the scan, so the volume set changes under the
+    /// loop: the heartbeat drops a volume that reported an I/O error, and a
+    /// delete or an unmount can land between any two volumes. Aborting there
+    /// discards every result gathered so far and leaves every later volume
+    /// unscrubbed — on a large node, one expiry costs a whole scrub pass.
+    ///
+    /// The absent id goes FIRST, so the assertion fails if the abort ever comes
+    /// back: the volume behind it would never be reached.
+    #[tokio::test]
+    async fn test_scrub_skips_a_vanished_volume_and_scrubs_the_rest() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        let resp = service
+            .scrub_volumes(
+                &volume_server_pb::ScrubVolumeRequest {
+                    mode: 1,
+                    volume_ids: Vec::new(),
+                    mark_broken_volumes_readonly: false,
+                },
+                vec![VolumeId(17), VolumeId(1)],
+                false,
+            )
+            .await
+            .expect("a volume missing from the node's own listing must not fail the scrub")
+            .into_inner();
+
+        assert_eq!(
+            resp.total_volumes, 1,
+            "the volume behind the vanished one must still be scrubbed"
+        );
+    }
+
+    /// A caller who NAMES a volume that is not here is making a mistake, not
+    /// racing a teardown, and still gets told — callers match on the message.
+    #[tokio::test]
+    async fn test_scrub_fails_on_an_explicitly_requested_missing_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        let err = service
+            .scrub_volumes(
+                &volume_server_pb::ScrubVolumeRequest {
+                    mode: 1,
+                    volume_ids: vec![17],
+                    mark_broken_volumes_readonly: false,
+                },
+                vec![VolumeId(17)],
+                true,
+            )
+            .await
+            .expect_err("an explicitly requested missing volume must still fail");
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert!(err.message().contains("volume id 17 not found"), "{}", err);
+    }
+
+    /// Same rule for EC volumes, which the heartbeat also expires under a store
+    /// write: delete_expired_ec_volumes destroys a volume whose destroy time has
+    /// passed, and volume_ec_shards_delete unmounts one on demand.
+    #[tokio::test]
+    async fn test_ec_scrub_skips_a_vanished_volume_and_scrubs_the_rest() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .volume_ec_shards_generate(Request::new(
+                volume_server_pb::VolumeEcShardsGenerateRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                },
+            ))
+            .await
+            .unwrap();
+        service
+            .volume_ec_shards_mount(Request::new(
+                volume_server_pb::VolumeEcShardsMountRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    shard_ids: (0..14).collect(),
+                    source_disk_type: String::new(),
+                    recover_missing_index: false,
+                },
+            ))
+            .await
+            .unwrap();
+
+        let resp = service
+            .scrub_ec_volumes(
+                &volume_server_pb::ScrubEcVolumeRequest {
+                    mode: 1,
+                    volume_ids: Vec::new(),
+                    force_deleted_needles_check: false,
+                },
+                vec![VolumeId(17), VolumeId(1)],
+                false,
+            )
+            .await
+            .expect("an EC volume missing from the node's own listing must not fail the scrub")
+            .into_inner();
+
+        assert_eq!(
+            resp.total_volumes, 1,
+            "the EC volume behind the vanished one must still be scrubbed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ec_scrub_fails_on_an_explicitly_requested_missing_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        let err = service
+            .scrub_ec_volumes(
+                &volume_server_pb::ScrubEcVolumeRequest {
+                    mode: 1,
+                    volume_ids: vec![17],
+                    force_deleted_needles_check: false,
+                },
+                vec![VolumeId(17)],
+                true,
+            )
+            .await
+            .expect_err("an explicitly requested missing EC volume must still fail");
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert!(
+            err.message().contains("EC volume id 17 not found"),
+            "{}",
+            err
+        );
     }
 
     async fn scrub_ec_volume_1(

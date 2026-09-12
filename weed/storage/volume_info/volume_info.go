@@ -3,6 +3,7 @@ package volume_info
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -68,6 +69,22 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 	return
 }
 
+// NotCrashDurableError indicates that the .vif file was renamed
+// successfully but the directory entry may not survive a crash. The
+// on-disk file already holds the new metadata, so callers should keep
+// in-memory state aligned with the file rather than rolling back, while
+// still propagating the durability failure to the user.
+type NotCrashDurableError struct {
+	FileName string
+	Err      error
+}
+
+func (e *NotCrashDurableError) Error() string {
+	return fmt.Sprintf("volume info %s saved but not crash-durable: %v", e.FileName, e.Err)
+}
+
+func (e *NotCrashDurableError) Unwrap() error { return e.Err }
+
 func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) error {
 
 	if exists, _, canWrite, _, _ := util.CheckFile(fileName); exists && !canWrite {
@@ -85,8 +102,49 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 		return fmt.Errorf("failed to marshal %s: %v", fileName, marshalErr)
 	}
 
-	if err := util.WriteFile(fileName, text, 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %v", fileName, err)
+	// Write atomically so a write/sync/close failure leaves the existing
+	// .vif file intact. PersistReadOnly rolls back in-memory state on
+	// error; the atomic rename guarantees the durable file still matches
+	// that rolled-back state rather than the requested mode. Use a
+	// unique temp file so concurrent saves for the same volume do not
+	// collide on a shared .tmp path.
+	f, err := os.CreateTemp(filepath.Dir(fileName), filepath.Base(fileName)+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file for %s: %w", fileName, err)
+	}
+	tmpName := f.Name()
+	if _, err := f.Write(text); err != nil {
+		f.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to write %s: %w", fileName, err)
+	}
+	if err := f.Chmod(0644); err != nil {
+		f.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to chmod %s: %w", fileName, err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to sync %s: %w", fileName, err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to close %s: %w", fileName, err)
+	}
+	if err := os.Rename(tmpName, fileName); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to rename %s: %w", fileName, err)
+	}
+	// The rename has committed the new metadata to the on-disk file.
+	// A directory fsync failure only risks losing the rename across a
+	// crash; the file content is already correct, so callers must not
+	// roll back in-memory state. Return NotCrashDurableError so they
+	// can distinguish this from a pre-commit failure and keep state
+	// aligned with the renamed file while still reporting the issue.
+	if err := util.FsyncDir(filepath.Dir(fileName)); err != nil {
+		glog.Warningf("fsync dir for %s: %v", fileName, err)
+		return &NotCrashDurableError{FileName: fileName, Err: err}
 	}
 
 	return nil

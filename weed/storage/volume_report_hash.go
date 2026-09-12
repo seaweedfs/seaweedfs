@@ -29,6 +29,9 @@ func (vi VolumeInfo) ReportHash() uint64 {
 	if vi.ReadOnly {
 		buf[56] = 1
 	}
+	if vi.ReadOnlyCanDelete {
+		buf[56] |= 2
+	}
 	h := xxhash.Sum64(buf[:])
 
 	var modified [8]byte

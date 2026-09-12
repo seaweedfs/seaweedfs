@@ -71,3 +71,62 @@ func TestSessionClaimsRoundTripParentUser(t *testing.T) {
 		t.Fatalf("ParentUser lost on round-trip: got %q want %q", info.ParentUser, parent)
 	}
 }
+
+func TestResolveIdentityClaimPrefersPreferredUsername(t *testing.T) {
+	ctx := map[string]interface{}{
+		"preferred_username": "grant.west",
+		"email":              "grant.west@example.com",
+		"sub":                "alice-sub",
+	}
+	if got := ResolveIdentityClaim(ctx); got != "grant.west" {
+		t.Fatalf("expected preferred_username, got %q", got)
+	}
+}
+
+func TestResolveIdentityClaimFallsBackThroughPriority(t *testing.T) {
+	if got := ResolveIdentityClaim(map[string]interface{}{"email": "g@example.com", "sub": "s"}); got != "g@example.com" {
+		t.Fatalf("expected email fallback, got %q", got)
+	}
+	if got := ResolveIdentityClaim(map[string]interface{}{"sub": "s"}); got != "s" {
+		t.Fatalf("expected sub fallback, got %q", got)
+	}
+}
+
+func TestResolveIdentityClaimEmpty(t *testing.T) {
+	if got := ResolveIdentityClaim(nil); got != "" {
+		t.Fatalf("expected empty for nil ctx, got %q", got)
+	}
+	if got := ResolveIdentityClaim(map[string]interface{}{}); got != "" {
+		t.Fatalf("expected empty for empty ctx, got %q", got)
+	}
+}
+
+func TestResolveIdentityClaimSkipsNonString(t *testing.T) {
+	ctx := map[string]interface{}{
+		"preferred_username": []string{"no"},
+		"sub":                "real-sub",
+	}
+	if got := ResolveIdentityClaim(ctx); got != "real-sub" {
+		t.Fatalf("expected sub after skipping non-string claim, got %q", got)
+	}
+}
+
+func TestResolveIdentityClaimTrimsWhitespace(t *testing.T) {
+	ctx := map[string]interface{}{
+		"preferred_username": "  grant.west  ",
+		"email":              "grant.west@example.com",
+	}
+	if got := ResolveIdentityClaim(ctx); got != "grant.west" {
+		t.Fatalf("expected trimmed preferred_username, got %q", got)
+	}
+}
+
+func TestResolveIdentityClaimSkipsWhitespaceOnly(t *testing.T) {
+	ctx := map[string]interface{}{
+		"preferred_username": "   ",
+		"email":              "grant.west@example.com",
+	}
+	if got := ResolveIdentityClaim(ctx); got != "grant.west@example.com" {
+		t.Fatalf("expected email after skipping whitespace-only preferred_username, got %q", got)
+	}
+}

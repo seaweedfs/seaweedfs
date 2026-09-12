@@ -42,6 +42,7 @@ var (
 type AdminOptions struct {
 	port             *int
 	grpcPort         *int
+	ip               *string
 	master           *string
 	masters          *string // deprecated, for backward compatibility
 	filerGroup       *string
@@ -49,16 +50,18 @@ type AdminOptions struct {
 	adminPassword    *string
 	readOnlyUser     *string
 	readOnlyPassword *string
-	dataDir          *string
-	icebergPort      *int
-	lancePort        *int
-	urlPrefix        *string
-	metricsHttpPort  *int
-	metricsHttpIp    *string
-	debug            *bool
-	debugPort        *int
-	cpuProfile       *string
-	memProfile       *string
+	// nil for callers other than runAdmin (e.g. `weed mini`)
+	allowInsecureBind *bool
+	dataDir           *string
+	icebergPort       *int
+	lancePort         *int
+	urlPrefix         *string
+	metricsHttpPort   *int
+	metricsHttpIp     *string
+	debug             *bool
+	debugPort         *int
+	cpuProfile        *string
+	memProfile        *string
 
 	// workerGrpcListener, when set, is a listener already bound to grpcPort by
 	// the caller. `weed mini` reserves the port this way because the admin
@@ -75,6 +78,7 @@ func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
 	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
+	a.ip = cmdAdmin.Flag.String("ip", "127.0.0.1", "ip address to listen on. Default is loopback; set to 0.0.0.0 to listen on all interfaces (requires -adminPassword or [https.admin] mTLS in security.toml).")
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
 	a.filerGroup = cmdAdmin.Flag.String("filerGroup", "", "filerGroup for the filers, brokers, and S3 servers")
@@ -84,6 +88,7 @@ func init() {
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
+	a.allowInsecureBind = cmdAdmin.Flag.Bool("allowInsecureBind", false, "INSECURE: allow binding a non-loopback ip without adminPassword or mTLS, exposing the admin API unauthenticated on the network")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 	a.lancePort = cmdAdmin.Flag.Int("lance.port", 9101, "Lance Namespace port (0 to hide in UI)")
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
@@ -136,6 +141,15 @@ var cmdAdmin = &Command{
     - Credentials can also be set via security.toml [admin] section or environment variables:
       WEED_ADMIN_USER, WEED_ADMIN_PASSWORD, WEED_ADMIN_READONLY_USER, WEED_ADMIN_READONLY_PASSWORD
     - Precedence: CLI flag > env var / security.toml > default value
+
+  Network Binding:
+    - By default the admin server binds to 127.0.0.1 (loopback only).
+    - Use -ip=0.0.0.0 to listen on all interfaces.
+    - When binding to a non-loopback address, authentication MUST be enabled
+      (-adminPassword) or mTLS configured ([https.admin] key and ca in security.toml).
+      Otherwise the server refuses to start.
+    - Use -allowInsecureBind to start anyway with an unauthenticated admin API
+      exposed on the network. INSECURE; only for trusted isolated networks.
 
   Security Configuration:
     - The admin server reads TLS configuration from security.toml
@@ -273,12 +287,39 @@ func runAdmin(cmd *Command, args []string) bool {
 		*a.grpcPort = *a.port + 10000
 	}
 
+	// Security validation: refuse to bind a non-loopback address without
+	// authentication or mTLS. This prevents accidental exposure of the
+	// unauthenticated admin REST API on the network. Server-only TLS
+	// (https.admin.key without ca) encrypts transport but does not authenticate
+	// clients, so it is not sufficient — the operator must also set a password
+	// or configure mTLS (both key and ca).
+	// -allowInsecureBind opts out of this check for operators who knowingly
+	// keep the pre-existing unauthenticated setup.
+	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
+	insecureAllowed := a.allowInsecureBind != nil && *a.allowInsecureBind
+	if !isLoopbackIp(*a.ip) && *a.adminPassword == "" && !hasMTLS {
+		if !insecureAllowed {
+			fmt.Printf("Error: the admin server is configured to bind to %s (non-loopback) with\n", *a.ip)
+			fmt.Printf("       authentication disabled. This would expose the admin API unauthenticated\n")
+			fmt.Printf("       on the network.\n")
+			fmt.Printf("       To fix this, either:\n")
+			fmt.Printf("         - set -adminPassword to enable authentication, or\n")
+			fmt.Printf("         - configure [https.admin] key and ca in security.toml for mTLS, or\n")
+			fmt.Printf("         - set -ip=127.0.0.1 to bind to loopback only, or\n")
+			fmt.Printf("         - set -allowInsecureBind to start anyway (INSECURE).\n")
+			return false
+		}
+		fmt.Printf("WARNING: -allowInsecureBind is set: the admin API is exposed on %s without\n", *a.ip)
+		fmt.Printf("         authentication. Anyone who can reach this address has full control\n")
+		fmt.Printf("         of the cluster. Set -adminPassword or configure mTLS instead.\n")
+	}
+
 	// Security warnings
-	if *a.adminPassword == "" {
+	if *a.adminPassword == "" && isLoopbackIp(*a.ip) {
 		fmt.Println("WARNING: Admin interface is running without authentication!")
 		fmt.Println("         Set -adminPassword for production use")
 	}
-	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
+	fmt.Printf("Starting SeaweedFS Admin Interface on %s\n", util.JoinHostPort(*a.ip, *a.port))
 	fmt.Printf("Worker gRPC server will run on port %d\n", *a.grpcPort)
 	fmt.Printf("Masters: %s\n", *a.master)
 	fmt.Printf("Filers will be discovered automatically from masters\n")
@@ -438,7 +479,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
 
 	// Server configuration
-	addr := fmt.Sprintf(":%d", *options.port)
+	addr := util.JoinHostPort(*options.ip, *options.port)
 	var handler http.Handler = r
 	if urlPrefix != "" {
 		stripped := http.StripPrefix(urlPrefix, r)
@@ -505,10 +546,10 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// and not forwarded.
 	serveErrCh := make(chan error, 1)
 	go func() {
-		glog.Infof("Starting SeaweedFS Admin Server on port %d", *options.port)
+		glog.Infof("Starting SeaweedFS Admin Server on %s", addr)
 		var serveErr error
 		if useTLS {
-			glog.Infof("Starting SeaweedFS Admin Server with TLS on port %d", *options.port)
+			glog.Infof("Starting SeaweedFS Admin Server with TLS on %s", addr)
 			serveErr = server.ListenAndServeTLS("", "")
 		} else {
 			serveErr = server.ListenAndServe()
@@ -701,4 +742,19 @@ func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string
 			*flagPtr = v
 		}
 	}
+}
+
+// isLoopbackIp reports whether the given bind address is loopback.
+// An empty string or "0.0.0.0" / "::" is treated as non-loopback (all
+// interfaces), since those expose the server to the network.
+func isLoopbackIp(ip string) bool {
+	if ip == "" {
+		return false
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		// Unresolved hostname — treat as non-loopback to be safe.
+		return false
+	}
+	return parsed.IsLoopback()
 }

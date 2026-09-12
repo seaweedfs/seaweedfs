@@ -487,6 +487,22 @@ var (
 			Help:      "Disk error status",
 		}, []string{"name", "type"})
 
+	VolumeServerStorageIoErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "storage_io_error_total",
+			Help:      "Counter of storage read/write EIO errors on volumes and EC shards.",
+		})
+
+	VolumeServerIoQuarantineGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "io_quarantine",
+			Help:      "Number of volumes or EC shards quarantined due to storage IO errors.",
+		}, []string{"kind"})
+
 	VolumeServerConcurrentDownloadLimit = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -1016,6 +1032,8 @@ func init() {
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
 	Gather.MustRegister(VolumeServerDiskErrorGauge)
+	Gather.MustRegister(VolumeServerStorageIoErrorCounter)
+	Gather.MustRegister(VolumeServerIoQuarantineGauge)
 	Gather.MustRegister(VolumeServerConcurrentDownloadLimit)
 	Gather.MustRegister(VolumeServerConcurrentUploadLimit)
 	Gather.MustRegister(VolumeServerInFlightDownloadSize)

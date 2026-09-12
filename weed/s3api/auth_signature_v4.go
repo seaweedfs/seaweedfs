@@ -38,6 +38,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	weed_iam "github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -323,6 +324,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		pathForSignature = r.URL.Path
 	}
 	forwardedPrefix := r.Header.Get("X-Forwarded-Prefix")
+	var matchedHost string
 	for i, hostCandidate := range extractHostHeaderCandidates(r, iam.externalHost) {
 		if i > 0 && !replaceSignedHostHeader(extractedSignedHeaders, hostCandidate) {
 			break
@@ -333,23 +335,37 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
 			calculatedSignature, errCode = verify(cleanedPath)
 			if errCode == s3err.ErrNone {
-				return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+				matchedHost = hostCandidate
+				break
 			}
 		}
 
 		// 10. Verify with the original path
 		calculatedSignature, errCode = verify(pathForSignature)
 		if errCode == s3err.ErrNone {
-			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+			matchedHost = hostCandidate
+			break
 		}
 
 		// 11. Retry with decoded path if signature used raw path encoding
 		if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
 			calculatedSignature, errCode = verify(decodedPath)
 			if errCode == s3err.ErrNone {
-				return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+				matchedHost = hostCandidate
+				break
 			}
 		}
+	}
+
+	if matchedHost != "" {
+		if signedBucket, ok := bucketFromVirtualHost(matchedHost, iam.domain); ok {
+			if routedBucket, _ := s3_constants.GetBucketAndObject(r); routedBucket != "" && routedBucket != signedBucket {
+				glog.V(2).Infof("reject %s %s: signed host %q implies bucket %q but routed to %q",
+					r.Method, r.URL.Path, matchedHost, signedBucket, routedBucket)
+				return nil, nil, "", nil, s3err.ErrAccessDenied
+			}
+		}
+		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
 	return nil, nil, "", nil, errCode
@@ -469,6 +485,14 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		PrincipalArn: sessionInfo.Principal,
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 		Claims:       claims,               // Populate Claims for policy variable substitution
+	}
+	// ParentUser is set only for OIDC-federated sessions (see
+	// AssumeRoleWithWebIdentity), so it gates the audit identity claim: without
+	// it the request context's sub is the opaque session subject injected by
+	// ValidateJWTWithClaims, not the OIDC subject, and must not be surfaced as
+	// an authoritative identity.
+	if sessionInfo.ParentUser != "" {
+		identity.IdentityClaim = sts.ResolveIdentityClaim(sessionInfo.RequestContext)
 	}
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
@@ -977,6 +1001,33 @@ func extractHostHeaderCandidates(r *http.Request, externalHost string) []string 
 		}
 	}
 	return candidates
+}
+
+func bucketFromVirtualHost(host, domainConfig string) (string, bool) {
+	if domainConfig == "" {
+		return "", false
+	}
+	h := host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		h = hh
+	}
+	h = strings.ToLower(h)
+	pathStyleDomains, virtualHostDomains := classifyDomainNames(strings.Split(domainConfig, ","))
+	for _, domain := range pathStyleDomains {
+		if h == strings.ToLower(strings.TrimSpace(domain)) {
+			return "", false
+		}
+	}
+	for _, domain := range virtualHostDomains {
+		suffix := "." + strings.ToLower(strings.TrimSpace(domain))
+		if strings.HasSuffix(h, suffix) {
+			bucket := h[:len(h)-len(suffix)]
+			if bucket != "" {
+				return bucket, true
+			}
+		}
+	}
+	return "", false
 }
 
 // joinSignedHost renders host:port the way AWS SDKs sign it: default ports are stripped

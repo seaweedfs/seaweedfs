@@ -265,6 +265,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	volumeApi := api.PathPrefix("/volumes").Subrouter()
 	volumeApi.HandleFunc("/export", h.clusterHandlers.ExportClusterVolumes).Methods(http.MethodGet)
 	volumeApi.Handle("/{id}/{server}/vacuum", wrapWrite(h.clusterHandlers.VacuumVolume)).Methods(http.MethodPost)
+	volumeApi.Handle("/{id}/{server}/read-only", wrapWrite(h.clusterHandlers.SetVolumeReadOnly)).Methods(http.MethodPost)
 
 	pluginApi := api.PathPrefix("/plugin").Subrouter()
 	pluginApi.HandleFunc("/status", h.adminServer.GetPluginStatusAPI).Methods(http.MethodGet)

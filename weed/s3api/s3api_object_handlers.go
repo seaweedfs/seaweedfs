@@ -1458,6 +1458,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		body.Commit()
 		return nil
 	}
+	if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
+		return fmt.Errorf("resolve encrypted chunk manifests: %w", err)
+	}
 
 	// Full object path: Optimize multipart vs single-part
 	var decryptedReader io.Reader
@@ -1613,9 +1616,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 // This implements the filer's ViewFromChunks approach for optimal range performance
 // Returns the number of bytes written and any error
 func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io.Writer, entry *filer_pb.Entry, offset int64, size int64, sseType string, decryptionKey interface{}) (int64, error) {
-	// Use filer's ViewFromChunks to resolve only needed chunks for the range
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
-	chunkViews := filer.ViewFromChunks(ctx, lookupFileIdFn, entry.GetChunks(), offset, size)
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, entry.GetChunks(), offset, offset+size, s3a.filerClient)
+	if err != nil {
+		return 0, err
+	}
+	chunkViews := filer.ViewFromChunks(ctx, nil, resolvedChunks, offset, size)
 
 	totalWritten := int64(0)
 	targetOffset := offset
@@ -1637,7 +1643,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 
 		// Find the corresponding FileChunk for this chunkView
 		var fileChunk *filer_pb.FileChunk
-		for _, chunk := range entry.GetChunks() {
+		for _, chunk := range resolvedChunks {
 			if chunk.GetFileIdString() == chunkView.FileId {
 				fileChunk = chunk
 				break
@@ -2653,48 +2659,24 @@ func (s3a *S3ApiServer) addObjectLockHeadersToResponse(w http.ResponseWriter, en
 
 // detectPrimarySSEType determines the primary SSE type by examining chunk metadata
 func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
-	// Safety check: handle nil entry
 	if entry == nil {
 		return "None"
 	}
 
-	if len(entry.GetChunks()) == 0 {
-		// No chunks - check object-level metadata only (single objects or smallContent)
-		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
-		hasSSEKMS := entry.Extended[s3_constants.AmzServerSideEncryption] != nil
-
-		// Check for SSE-S3: algorithm is AES256 but no customer key
-		if hasSSEKMS && !hasSSEC {
-			// Distinguish SSE-S3 from SSE-KMS: check the algorithm value and the presence of a KMS key ID
-			sseAlgo := string(entry.Extended[s3_constants.AmzServerSideEncryption])
-			switch sseAlgo {
-			case s3_constants.SSEAlgorithmAES256:
-				// Could be SSE-S3 or SSE-KMS, check for KMS key ID
-				if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
-					return s3_constants.SSETypeKMS
-				}
-				// No KMS key, this is SSE-S3
-				return s3_constants.SSETypeS3
-			case s3_constants.SSEAlgorithmKMS:
-				return s3_constants.SSETypeKMS
-			default:
-				// Unknown or unsupported algorithm
-				return "None"
+	metadataType := "None"
+	hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
+	if hasSSEC {
+		metadataType = s3_constants.SSETypeC
+	} else {
+		switch string(entry.Extended[s3_constants.AmzServerSideEncryption]) {
+		case s3_constants.SSEAlgorithmAES256:
+			metadataType = s3_constants.SSETypeS3
+			if _, hasKMSKey := entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId]; hasKMSKey {
+				metadataType = s3_constants.SSETypeKMS
 			}
-		} else if hasSSEC && !hasSSEKMS {
-			return s3_constants.SSETypeC
-		} else if hasSSEC && hasSSEKMS {
-			// Both present - this should only happen during cross-encryption copies
-			// Use content to determine actual encryption state
-			if len(entry.Content) > 0 {
-				// smallContent - check if it's encrypted (heuristic: random-looking data)
-				return s3_constants.SSETypeC // Default to SSE-C for mixed case
-			} else {
-				// No content, both headers - default to SSE-C
-				return s3_constants.SSETypeC
-			}
+		case s3_constants.SSEAlgorithmKMS:
+			metadataType = s3_constants.SSETypeKMS
 		}
-		return "None"
 	}
 
 	// Count chunk types to determine primary (multipart objects)
@@ -2735,7 +2717,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		return s3_constants.SSETypeS3
 	}
 
-	return "None"
+	return metadataType
 }
 
 // createMultipartSSECDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-C objects (direct volume path)

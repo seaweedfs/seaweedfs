@@ -285,7 +285,7 @@ func TestParkOnGapExits(t *testing.T) {
 		gapStall := newStall()
 		defer gapStall.resumed()
 		start := time.Now()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, nil, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, nil, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
@@ -299,7 +299,7 @@ func TestParkOnGapExits(t *testing.T) {
 		// old one keeps scanning the filer store until its TCP connection dies.
 		gapStall := newStall()
 		superseded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 2}
-		if _, _, done := fs.parkOnGap(context.Background(), superseded, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(context.Background(), superseded, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if !gapStall.since.IsZero() {
@@ -310,7 +310,7 @@ func TestParkOnGapExits(t *testing.T) {
 	t.Run("a bounded subscription past its window ends without parking", func(t *testing.T) {
 		gapStall := newStall()
 		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursorTs - 1}
-		if _, _, done := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if !gapStall.since.IsZero() {
@@ -324,7 +324,7 @@ func TestParkOnGapExits(t *testing.T) {
 		// everything <= UntilNs delivered. Parking would make fs.verify hang.
 		gapStall := newStall()
 		bounded := &filer_pb.SubscribeMetadataRequest{ClientId: 7, ClientEpoch: 3, UntilNs: cursorTs}
-		if _, _, done := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(context.Background(), bounded, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if !gapStall.since.IsZero() {
@@ -338,7 +338,7 @@ func TestParkOnGapExits(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		start := time.Now()
-		if _, _, done := fs.parkOnGap(ctx, req, gapStall, noEviction, cursor, nil, "test"); !done {
+		if _, _, done, _ := fs.parkOnGap(ctx, req, gapStall, noEviction, cursor, nil, "test", nil); !done {
 			t.Fatal("want done")
 		}
 		if elapsed := time.Since(start); elapsed >= unflushedGapRetryInterval {
@@ -354,7 +354,7 @@ func TestParkOnGapExits(t *testing.T) {
 		closed := make(chan struct{})
 		close(closed)
 		start := time.Now()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, closed, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, closed, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
@@ -369,7 +369,7 @@ func TestParkOnGapExits(t *testing.T) {
 		notify := make(chan struct{}, 1)
 		notify <- struct{}{}
 		start := time.Now()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, notify, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, noEviction, cursor, notify, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want a plain retry", skip, done)
 		}
@@ -507,7 +507,7 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		gapStall.since = time.Now().Add(-maxGapStall)
 
 		before := crossings()
-		skipTo, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test")
+		skipTo, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test", nil)
 		if done || !skip {
 			t.Fatalf("skip=%v done=%v, want a forced skip", skip, done)
 		}
@@ -530,7 +530,7 @@ func TestParkOnGapStallOutcomes(t *testing.T) {
 		defer gapStall.close() // release the gauge this test's park holds
 
 		before := crossings()
-		_, skip, done := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test")
+		_, skip, done, _ := fs.parkOnGap(context.Background(), req, gapStall, lb.GetLastEvictedTsNs, cursor, nil, "test", nil)
 		if skip || done {
 			t.Fatalf("skip=%v done=%v, want neither: nothing is being lost", skip, done)
 		}

@@ -2,8 +2,11 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
@@ -53,18 +56,15 @@ func TestOnIamConfigChangeReloadsOnIamIdentityDirectoryChanges(t *testing.T) {
 		t.Fatalf("failed to create alice in memory credential manager: %v", err)
 	}
 
-	err := s3a.onIamConfigChange(
+	if err := s3a.onIamConfigChange(
 		filer.IamConfigDirectory+"/identities",
 		nil,
 		&filer_pb.Entry{Name: "alice.json"},
-	)
-	if err != nil {
+	); err != nil {
 		t.Fatalf("onIamConfigChange returned error for identities directory update: %v", err)
 	}
 
-	if !hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("expected alice identity to be loaded after /etc/iam/identities update")
-	}
+	waitForIdentity(t, s3a.iam, "alice")
 }
 
 func newTestS3ApiServerWithMemoryIAM(t *testing.T, identities []*iam_pb.Identity) *S3ApiServer {
@@ -101,9 +101,12 @@ func newTestS3ApiServerWithMemoryIAM(t *testing.T, identities []*iam_pb.Identity
 		hashCounters:      make(map[string]*int32),
 		isAuthEnabled:     false,
 		stopChan:          make(chan struct{}),
+		reloadCh:          make(chan struct{}, 1),
 		useStaticConfig:   false,
 		credentialManager: cm,
 	}
+	go iam.reloadRetryLoop()
+	t.Cleanup(iam.Shutdown)
 
 	// Load test configuration
 	if err := iam.ReplaceS3ApiConfiguration(config); err != nil {
@@ -121,4 +124,79 @@ func hasIdentity(iam *IdentityAccessManagement, identityName string) bool {
 
 	_, ok := iam.nameToIdentity[identityName]
 	return ok
+}
+
+func waitForIdentity(t *testing.T, iam *IdentityAccessManagement, name string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !hasIdentity(iam, name) {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected identity %s to be loaded", name)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitForIdentityGone(t *testing.T, iam *IdentityAccessManagement, name string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for hasIdentity(iam, name) {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected identity %s to be gone", name)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// countingStore wraps a store and counts LoadConfiguration calls.
+type countingStore struct {
+	credential.CredentialStore
+	loads int64
+}
+
+func (c *countingStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
+	atomic.AddInt64(&c.loads, 1)
+	return c.CredentialStore.LoadConfiguration(ctx)
+}
+
+// A burst of IAM config change events must coalesce into a handful of reloads,
+// not one full reload per event.
+func TestOnIamConfigChangeCoalescesBurstReloads(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{{Name: "anonymous"}})
+
+	counter := &countingStore{CredentialStore: s3a.iam.credentialManager.Store}
+	s3a.iam.credentialManager.Store = counter
+
+	const burst = 50
+	for i := 0; i < burst; i++ {
+		if err := s3a.onIamConfigChange(
+			filer.IamConfigDirectory+"/identities",
+			nil,
+			&filer_pb.Entry{Name: fmt.Sprintf("u%d.json", i)},
+		); err != nil {
+			t.Fatalf("onIamConfigChange returned error: %v", err)
+		}
+	}
+
+	// Wait for the queue to drain: no pending signal.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s3a.iam.reloadMu.Lock()
+		empty := len(s3a.iam.reloadCh) == 0
+		s3a.iam.reloadMu.Unlock()
+		if empty {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reload queue did not drain")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Let any final coalesced reload finish.
+	time.Sleep(50 * time.Millisecond)
+
+	loads := atomic.LoadInt64(&counter.loads)
+	if loads > 3 {
+		t.Fatalf("expected a burst of %d events to coalesce into <=3 reloads, got %d", burst, loads)
+	}
 }

@@ -13,8 +13,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var _ CredentialStore = &PropagatingCredentialStore{}
@@ -48,6 +51,24 @@ func (s *PropagatingCredentialStore) SetFilerAddressFunc(getFiler func() pb.Serv
 	}
 }
 
+// withIamCacheAdminAuth attaches a Bearer token signed with jwt.filer_signing.key
+// to the outgoing context so the S3 gateway's IAM-cache gRPC handlers accept the
+// propagation. With no key configured it is a no-op, matching the S3 handler's
+// checkAdminAuth. Returns the token's lifetime (0 = no expiry) so callers can
+// cap any downstream timeout below it.
+func withIamCacheAdminAuth(ctx context.Context) (context.Context, time.Duration) {
+	signingKey := util.GetViper().GetString("jwt.filer_signing.key")
+	if signingKey == "" {
+		return ctx, 0
+	}
+	expiresAfterSec := util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds")
+	token := security.GenJwtForFilerAdmin(security.SigningKey(signingKey), expiresAfterSec)
+	if token == "" {
+		return ctx, 0
+	}
+	return metadata.AppendToOutgoingContext(ctx, "authorization", security.BearerPrefix+string(token)), time.Duration(expiresAfterSec) * time.Second
+}
+
 func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3IamCacheClient) error) {
 	if s.masterClient == nil {
 		return
@@ -77,8 +98,16 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 	}
 	glog.V(1).Infof("IAM: propagating change to %d S3 servers: %v", len(s3Servers), s3Servers)
 
-	// Create context with timeout for the propagation process
-	propagateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// Mint the admin token after master discovery so master retries can't burn
+	// through the token lifetime before the peer fan-out begins. Cap the
+	// propagation deadline below the token's expiry so slower peers don't see
+	// an expired token.
+	authedCtx, tokenTTL := withIamCacheAdminAuth(ctx)
+	propagateTimeout := 10 * time.Second
+	if tokenTTL > 0 && tokenTTL < propagateTimeout {
+		propagateTimeout = tokenTTL
+	}
+	propagateCtx, cancel := context.WithTimeout(authedCtx, propagateTimeout)
 	defer cancel()
 
 	var wg sync.WaitGroup

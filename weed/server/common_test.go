@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -9,7 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
 func TestParseURL(t *testing.T) {
@@ -256,4 +261,62 @@ func TestProcessRangeRequestRanges(t *testing.T) {
 			t.Errorf("%s: body %q, want %q", tt.rangeHeader, w.Body.String(), tt.wantBody)
 		}
 	}
+}
+
+// /submit must reject at the limit its master was given, not at a hardcoded
+// 256MB: weed server hands -volume.fileSizeLimitMB down to the master, and an
+// upload the volume server would store must not be turned away here (#6748).
+func TestSubmitForClientHandlerFileSizeLimit(t *testing.T) {
+	const fileSizeLimitBytes = int64(1 << 20)
+
+	submit := func(t *testing.T, dataSize int) *httptest.ResponseRecorder {
+		t.Helper()
+		var form bytes.Buffer
+		mw := multipart.NewWriter(&form)
+		part, err := mw.CreateFormFile("file", "test.bin")
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := part.Write(make([]byte, dataSize)); err != nil {
+			t.Fatalf("write form file: %v", err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatalf("close multipart writer: %v", err)
+		}
+
+		// Assigning a file id is not under test, and there is no master to ask.
+		// A cancelled context fails that step at once for an accepted upload.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/submit", bytes.NewReader(form.Bytes()))
+		r.Header.Set("Content-Type", mw.FormDataContentType())
+		w := httptest.NewRecorder()
+		masterFn := func(ctx context.Context) pb.ServerAddress { return pb.ServerAddress("localhost:9333") }
+		submitForClientHandler(w, r, masterFn, grpc.WithTransportCredentials(insecure.NewCredentials()), fileSizeLimitBytes)
+		return w
+	}
+
+	t.Run("over the limit", func(t *testing.T) {
+		w := submit(t, int(fileSizeLimitBytes)+1)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status: got %d want %d, body %q", w.Code, http.StatusBadRequest, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "over the limited") {
+			t.Errorf("body: got %q, want the file size limit error", w.Body.String())
+		}
+	})
+
+	t.Run("under the limit", func(t *testing.T) {
+		w := submit(t, int(fileSizeLimitBytes)-1)
+		if strings.Contains(w.Body.String(), "over the limited") {
+			t.Errorf("body: got %q, want no file size limit error", w.Body.String())
+		}
+		// Asserting on the message alone would still pass if the limit rejected
+		// this payload with different wording. Parser failures answer 400, and the
+		// cancelled assignment this request runs into answers 500, so a 400 here
+		// means the upload never got past parsing.
+		if w.Code == http.StatusBadRequest {
+			t.Errorf("status: got 400, want the request to reach assignment, body %q", w.Body.String())
+		}
+	})
 }

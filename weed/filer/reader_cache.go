@@ -28,6 +28,7 @@ type ReaderCache struct {
 	sync.Mutex
 	downloaders map[string]*SingleChunkCacher
 	limit       int
+	budget      *ReaderCacheBudget
 }
 
 type SingleChunkCacher struct {
@@ -46,9 +47,17 @@ type SingleChunkCacher struct {
 	done           chan struct{} // signals when download is complete
 }
 
-func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidator CacheInvalidator) *ReaderCache {
+func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType, cacheInvalidator CacheInvalidator, budgets ...*ReaderCacheBudget) *ReaderCache {
+	var budget *ReaderCacheBudget
+	if len(budgets) > 0 {
+		budget = budgets[0]
+	}
+	if budget == nil {
+		budget = NewReaderCacheBudget(DefaultReaderCacheMemoryLimit)
+	}
 	return &ReaderCache{
 		limit:            limit,
+		budget:           budget,
 		chunkCache:       chunkCache,
 		lookupFileIdFn:   lookupFileIdFn,
 		cacheInvalidator: cacheInvalidator,
@@ -105,6 +114,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 }
 
 func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
+retry:
 	rc.Lock()
 
 	for {
@@ -151,7 +161,9 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 		if oldestFid != "" {
 			oldDownloader := rc.downloaders[oldestFid]
 			delete(rc.downloaders, oldestFid)
+			rc.Unlock()
 			oldDownloader.destroy()
+			goto retry
 		}
 	}
 
@@ -169,22 +181,31 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 
 func (rc *ReaderCache) UnCache(fileId string) {
 	rc.Lock()
-	defer rc.Unlock()
-	// glog.V(4).Infof("uncache %s", fileId)
-	if downloader, found := rc.downloaders[fileId]; found {
+	downloader := rc.downloaders[fileId]
+	delete(rc.downloaders, fileId)
+	rc.Unlock()
+	if downloader != nil {
 		downloader.destroy()
-		delete(rc.downloaders, fileId)
 	}
+}
+
+func (rc *ReaderCache) remove(downloader *SingleChunkCacher) {
+	rc.Lock()
+	if rc.downloaders[downloader.chunkFileId] == downloader {
+		delete(rc.downloaders, downloader.chunkFileId)
+	}
+	rc.Unlock()
+	downloader.destroy()
 }
 
 func (rc *ReaderCache) destroy() {
 	rc.Lock()
-	defer rc.Unlock()
-
-	for _, downloader := range rc.downloaders {
+	downloaders := rc.downloaders
+	rc.downloaders = make(map[string]*SingleChunkCacher)
+	rc.Unlock()
+	for _, downloader := range downloaders {
 		downloader.destroy()
 	}
-
 }
 
 func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, isGzipped bool, chunkSize int, shouldCache bool) *SingleChunkCacher {
@@ -200,27 +221,31 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 	}
 }
 
-// startCaching downloads the chunk data in the background.
-// It does NOT hold the lock during the HTTP download to allow concurrent readers
-// to wait efficiently using the done channel.
-//
-// Concurrent downloads of the same chunk are already deduplicated by the
-// ReaderCache.downloaders map (guarded by the ReaderCache mutex). Each fileId
-// has at most one active SingleChunkCacher at any time.
+// startCaching downloads a chunk shared by concurrent readers.
 func (s *SingleChunkCacher) startCaching() {
 	s.wg.Add(1)
-	defer s.wg.Done()
-	defer close(s.done) // guarantee completion signal even on panic
+	defer func() {
+		close(s.done)
+		s.wg.Done()
+		if s.hasCompletedError() {
+			s.parent.remove(s)
+		} else {
+			s.parent.budget.complete(s)
+		}
+	}()
 
-	s.cacheStartedCh <- struct{}{} // signal that we've started
+	s.cacheStartedCh <- struct{}{}
+	if err := s.parent.budget.reserve(s); err != nil {
+		s.setError(err)
+		return
+	}
 
-	// Note: We intentionally use context.Background() here, NOT a request-specific context.
-	// The downloaded chunk is a shared resource - multiple concurrent readers may be waiting
-	// for this same download to complete. If we used a request context and that request was
-	// cancelled, it would abort the download and cause errors for all other waiting readers.
-	// The download should always complete once started to serve all potential consumers.
-
-	// Lookup file ID without holding the lock
+	// Intentionally use context.Background(), not a request-specific context.
+	// The downloaded chunk is a shared resource: multiple concurrent readers may
+	// wait on this same download via s.done. A request-scoped context that got
+	// cancelled would abort the download and error every other waiting reader.
+	// The download always runs to completion once started; readers that cancel
+	// individually drop out via readChunkAt's select on ctx.Done().
 	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
 		s.setError(fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err))
@@ -295,12 +320,12 @@ func (s *SingleChunkCacher) destroy() {
 	// wait for all reads to finish before destroying the data
 	s.wg.Wait()
 	s.Lock()
-	defer s.Unlock()
-
 	if s.data != nil {
 		mem.Free(s.data)
 		s.data = nil
 	}
+	s.Unlock()
+	s.parent.budget.release(s)
 }
 
 // readChunkAt reads data from the cached chunk.

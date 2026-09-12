@@ -105,11 +105,13 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 					var locations []Location
 					for _, masterLoc := range vidLoc.Locations {
 						loc := Location{
-							Url:          masterLoc.Url,
-							PublicUrl:    masterLoc.PublicUrl,
-							GrpcPort:     int(masterLoc.GrpcPort),
-							DataCenter:   masterLoc.DataCenter,
-							DataInRemote: masterLoc.DataInRemote,
+							Url:               masterLoc.Url,
+							PublicUrl:         masterLoc.PublicUrl,
+							GrpcPort:          int(masterLoc.GrpcPort),
+							DataCenter:        masterLoc.DataCenter,
+							DataInRemote:      masterLoc.DataInRemote,
+							ReadOnly:          masterLoc.ReadOnly,
+							ReadOnlyCanDelete: masterLoc.ReadOnlyCanDelete,
 						}
 						// Update cache with the location
 						p.masterClient.addLocation(uint32(vid), loc)
@@ -396,16 +398,43 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 			remoteVids[vid] = struct{}{}
 		}
 	}
+	var readOnlyVids map[uint32]struct{}
+	if len(resp.VolumeLocation.ReadOnlyVids) > 0 {
+		readOnlyVids = make(map[uint32]struct{}, len(resp.VolumeLocation.ReadOnlyVids))
+		for _, vid := range resp.VolumeLocation.ReadOnlyVids {
+			readOnlyVids[vid] = struct{}{}
+		}
+	}
+	var readOnlyCanDeleteVids map[uint32]struct{}
+	if len(resp.VolumeLocation.ReadOnlyCanDeleteVids) > 0 {
+		readOnlyCanDeleteVids = make(map[uint32]struct{}, len(resp.VolumeLocation.ReadOnlyCanDeleteVids))
+		for _, vid := range resp.VolumeLocation.ReadOnlyCanDeleteVids {
+			readOnlyCanDeleteVids[vid] = struct{}{}
+		}
+	}
 	for _, newVid := range resp.VolumeLocation.NewVids {
 		if _, isRemote := remoteVids[newVid]; isRemote {
 			continue
 		}
-		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
-		mc.addLocation(newVid, loc)
+		newLoc := loc
+		if _, isReadOnly := readOnlyVids[newVid]; isReadOnly {
+			newLoc.ReadOnly = true
+		}
+		if _, canDelete := readOnlyCanDeleteVids[newVid]; canDelete {
+			newLoc.ReadOnlyCanDelete = true
+		}
+		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, newLoc.Url, newVid)
+		mc.addLocation(newVid, newLoc)
 	}
 	for _, remoteVid := range resp.VolumeLocation.RemoteVids {
 		remoteLoc := loc
 		remoteLoc.DataInRemote = true
+		if _, isReadOnly := readOnlyVids[remoteVid]; isReadOnly {
+			remoteLoc.ReadOnly = true
+		}
+		if _, canDelete := readOnlyCanDeleteVids[remoteVid]; canDelete {
+			remoteLoc.ReadOnlyCanDelete = true
+		}
 		glog.V(2).Infof("%s.%s: %s masterClient adds remote volume %d", mc.FilerGroup, mc.clientType, remoteLoc.Url, remoteVid)
 		mc.addLocation(remoteVid, remoteLoc)
 	}

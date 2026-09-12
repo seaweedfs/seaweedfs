@@ -44,7 +44,7 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 			authenticated = true
 		} else if readOnlyPassword != "" && loginUsername == readOnlyUser && subtle.ConstantTimeCompare([]byte(loginPassword), []byte(readOnlyPassword)) == 1 {
 			// Check read-only credentials.
-			role = "readonly"
+			role = RoleReadOnly
 			authenticated = true
 		}
 

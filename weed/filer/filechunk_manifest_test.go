@@ -243,6 +243,47 @@ func TestManifestRoundTripPreservesChunks(t *testing.T) {
 	}
 }
 
+func TestMaybeManifestizePreservesSSEMetadata(t *testing.T) {
+	for _, sseType := range []filer_pb.SSEType{
+		filer_pb.SSEType_SSE_C,
+		filer_pb.SSEType_SSE_KMS,
+		filer_pb.SSEType_SSE_S3,
+	} {
+		t.Run(sseType.String(), func(t *testing.T) {
+			store := newTestManifestStore()
+			chunks := make([]*filer_pb.FileChunk, ManifestBatch+1)
+			for i := range chunks {
+				chunks[i] = testChunk(1, uint64(i+1), uint32(i+1), int64(i*8), 8, int64(i+1))
+				chunks[i].SseType = sseType
+				chunks[i].SseMetadata = []byte(fmt.Sprintf("metadata-%d", i))
+			}
+
+			packed, err := MaybeManifestize(store.saveFunc(), nil, chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifests, remainder := SeparateManifestChunks(packed)
+			if len(manifests) != 1 || len(remainder) != 1 {
+				t.Fatalf("got %d manifests and %d remaining chunks", len(manifests), len(remainder))
+			}
+
+			resolved, err := store.resolve(manifests[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, chunk := range resolved {
+				if chunk.GetSseType() != sseType {
+					t.Fatalf("chunk %d SSE type = %s, want %s", i, chunk.GetSseType(), sseType)
+				}
+				wantMetadata := fmt.Sprintf("metadata-%d", i)
+				if string(chunk.GetSseMetadata()) != wantMetadata {
+					t.Fatalf("chunk %d SSE metadata = %q, want %q", i, chunk.GetSseMetadata(), wantMetadata)
+				}
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Compact resolved overlapping manifests: older sub-chunks become garbage
 // ---------------------------------------------------------------------------

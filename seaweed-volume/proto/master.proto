@@ -145,6 +145,7 @@ message VolumeInformationMessage {
   uint64 delete_count = 5;
   uint64 deleted_byte_count = 6;
   bool read_only = 7;
+  bool read_only_can_delete = 17;
   uint32 replica_placement = 8;
   uint32 version = 9;
   uint32 ttl = 10;
@@ -164,6 +165,8 @@ message VolumeShortInformationMessage {
   uint32 ttl = 10;
   string disk_type = 15;
   uint32 disk_id = 16;
+  bool read_only = 17;
+  bool read_only_can_delete = 18;
 }
 
 message VolumeEcShardInformationMessage {
@@ -223,6 +226,8 @@ message VolumeLocation {
   repeated uint32 new_ec_vids = 8;
   repeated uint32 deleted_ec_vids = 9;
   repeated uint32 remote_vids = 10;
+  repeated uint32 read_only_vids = 11;
+  repeated uint32 read_only_can_delete_vids = 12;
 }
 
 message ClusterNodeUpdate {
@@ -269,6 +274,8 @@ message Location {
   uint32 grpc_port = 3;
   string data_center = 4;
   bool data_in_remote = 5;
+  bool read_only = 6;
+  bool read_only_can_delete = 7;
 }
 
 message AssignRequest {

@@ -176,7 +176,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetRemoteReplications(store, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -209,7 +209,14 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	if replicaCount > 0 { //send to other replica locations
 		// background, not r.Context(): a client disconnect must not orphan replica deletes
 		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
-			return util_http.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
+			url, normalizeErr := util_http.GetGlobalHttpClient().NormalizeHttpScheme(location.Url + r.URL.Path + "?type=replicate")
+			if normalizeErr != nil {
+				return normalizeErr
+			}
+			if jwt != "" && (!strings.HasPrefix(url, "https://") || !util_http.GetGlobalHttpClient().IsTLSVerified()) {
+				return fmt.Errorf("refusing to forward delete authorization to %s without HTTPS", location.Url)
+			}
+			return util_http.Delete(url, string(jwt))
 		}); err != nil {
 			reason := classifyReplicationError(err)
 			stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpDelete, reason).Inc()
@@ -270,7 +277,15 @@ func DistributedOperation(ctx context.Context, locations []operation.Location, o
 	return ret.Error()
 }
 
-func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
+func GetRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) ([]operation.Location, error) {
+	return getRemoteReplications(s, grpcDialOption, volumeId, masterFn, false)
+}
+
+func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) ([]operation.Location, error) {
+	return getRemoteReplications(s, grpcDialOption, volumeId, masterFn, true)
+}
+
+func getRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn, writableOnly bool) (remoteLocations []operation.Location, err error) {
 
 	v := s.GetVolume(volumeId)
 	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
@@ -278,10 +293,23 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	}
 
 	// not on local store, or has replications
-	lookupResult, lookupErr := operation.LookupVolumeId(masterFn, grpcDialOption, volumeId.String())
+	lookupResults, lookupErr := operation.LookupVolumeIds(masterFn, grpcDialOption, []string{volumeId.String()}, false)
+	lookupResult := lookupResults[volumeId.String()]
+	writableLocations := 0
 	if lookupErr == nil {
+		if lookupResult == nil {
+			err = fmt.Errorf("replicating lookup returned no result for %d", volumeId)
+			return
+		}
 		selfUrl := util.JoinHostPort(s.Ip, s.Port)
 		for _, location := range lookupResult.Locations {
+			if writableOnly && location.ReadOnly {
+				continue
+			}
+			if !writableOnly && location.ReadOnly && !location.ReadOnlyCanDelete {
+				continue
+			}
+			writableLocations++
 			if location.Url != selfUrl {
 				remoteLocations = append(remoteLocations, location)
 			}
@@ -294,11 +322,14 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	if v != nil {
 		// has one local and has remote replications
 		copyCount := v.ReplicaPlacement.GetCopyCount()
-		if len(lookupResult.Locations) < copyCount {
-			// drop the stale cache so the next write re-queries the master once it re-registers the missing replica
+		if writableLocations < copyCount {
 			operation.InvalidateVolumeIdLocationCache(volumeId.String())
-			err = fmt.Errorf("replicating operations [%d] is less than volume %d replication copy count [%d]",
-				len(lookupResult.Locations), volumeId, copyCount)
+			label := "replication"
+			if writableOnly {
+				label = "writable replication"
+			}
+			err = fmt.Errorf("%s locations [%d] is less than volume %d replication copy count [%d]",
+				label, writableLocations, volumeId, copyCount)
 		}
 	}
 

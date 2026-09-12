@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	dataPlanePolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`
-	iamAdminPolicy  = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"iam:*","Resource":"*"}]}`
+	dataPlanePolicy        = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`
+	iamAdminPolicy         = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"iam:*","Resource":"*"}]}`
+	iamCreateSvcAcctPolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:CreateServiceAccount"],"Resource":["*"]}]}`
 )
 
 func newIamAuthzTestIam(t *testing.T) *IdentityAccessManagement {
@@ -92,4 +93,24 @@ func TestAuthorizeIamActionDeniesAnonymous(t *testing.T) {
 		iam.AuthorizeIamAction(iamPostRequest(""), anonymous, "CreateAccessKey", ""))
 	assert.Equal(t, s3err.ErrAccessDenied,
 		iam.AuthorizeIamAction(iamPostRequest(""), anonymous, "CreateUser", "victim"))
+}
+
+// CreateServiceAccount takes its target from the ParentUser parameter, not
+// UserName. A non-admin holding only iam:CreateServiceAccount must not be able
+// to mint a service account for another identity (privilege escalation to that
+// identity's permissions).
+func TestAuthorizeIamActionCreateServiceAccountBindsTargetToCaller(t *testing.T) {
+	iam := newIamAuthzTestIam(t)
+	require.NoError(t, iam.PutPolicy("CreateSvcAcctPolicy", iamCreateSvcAcctPolicy))
+	dev := &Identity{Name: "dev", PolicyNames: []string{"CreateSvcAcctPolicy"}}
+	admin := &Identity{Name: "admin", Actions: []Action{s3_constants.ACTION_ADMIN}}
+
+	assert.Equal(t, s3err.ErrNone,
+		iam.AuthorizeIamAction(iamPostRequest(""), dev, "CreateServiceAccount", "dev"))
+	assert.Equal(t, s3err.ErrNone,
+		iam.AuthorizeIamAction(iamPostRequest(""), dev, "CreateServiceAccount", ""))
+	assert.Equal(t, s3err.ErrAccessDenied,
+		iam.AuthorizeIamAction(iamPostRequest(""), dev, "CreateServiceAccount", "admin"))
+	assert.Equal(t, s3err.ErrNone,
+		iam.AuthorizeIamAction(iamPostRequest(""), admin, "CreateServiceAccount", "victim"))
 }

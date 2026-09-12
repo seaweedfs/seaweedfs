@@ -46,3 +46,14 @@ func TestVolumeLocationCarriesTheRemoteTier(t *testing.T) {
 		t.Errorf("a tiered volume was reported as local: %+v", loc)
 	}
 }
+
+func TestVolumeLocationCarriesReadOnly(t *testing.T) {
+	topo, dn := changedTestCluster(t)
+	v := changedTestVolume(1, 1024)
+	v.ReadOnly = true
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{v}, dn)
+
+	if !topologyLocation(dn, needle.VolumeId(1)).ReadOnly {
+		t.Fatal("a read-only volume was reported as writable")
+	}
+}

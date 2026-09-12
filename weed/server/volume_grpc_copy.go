@@ -50,28 +50,26 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	//   send .dat file
 	//   confirm size and timestamp
 	var volFileInfoResp *volume_server_pb.ReadVolumeFileStatusResponse
+	var sourceVolumeStatus *volume_server_pb.VolumeStatusResponse
+	var sourceVolumeStatusAfterCopy *volume_server_pb.VolumeStatusResponse
 	var dataBaseFileName, indexBaseFileName, idxFileName, datFileName string
 	var hasRemoteDatFile bool
 	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		var err error
-		volFileInfoResp, err = client.ReadVolumeFileStatus(context.Background(),
+		sourceVolumeStatus, err = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
+			VolumeId: req.VolumeId,
+		})
+		if err != nil {
+			glog.Warningf("failed to read source volume %d status before copy; skip record count validation: %v", req.VolumeId, err)
+			sourceVolumeStatus = nil
+		}
+
+		volFileInfoResp, err = client.ReadVolumeFileStatus(stream.Context(),
 			&volume_server_pb.ReadVolumeFileStatusRequest{
 				VolumeId: req.VolumeId,
 			})
 		if nil != err {
 			return fmt.Errorf("read volume file status failed, %w", err)
-		}
-
-		// Source is reachable and holds the volume: only now is it safe to drop
-		// an existing local replica before overwriting its files.
-		if hasExistingVolume {
-			glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
-			// keep remote data: the inbound copy carries a .vif that may point at
-			// the same cloud-tier object the existing volume references.
-			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, true); delErr != nil {
-				return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
-			}
-			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 		}
 
 		diskType := volFileInfoResp.DiskType
@@ -87,9 +85,21 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
 			return location.DiskType == types.ToDiskType(diskType) &&
 				location.AvailableSpace.Load() > neededSpace
-		})
+		}, needle.VolumeId(req.VolumeId))
 		if location == nil {
 			return fmt.Errorf("%s %s", util.ErrVolumeNoSpaceLeft, types.ToDiskType(diskType).ReadableString())
+		}
+
+		// Source is reachable and a destination is reserved: only now is it
+		// safe to drop an existing local replica before overwriting its files.
+		if hasExistingVolume {
+			glog.V(0).Infof("volume %d already exists. deleting before copying from %s...", req.VolumeId, req.SourceDataNode)
+			// keep remote data: the inbound copy carries a .vif that may point at
+			// the same cloud-tier object the existing volume references.
+			if delErr := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), false, true); delErr != nil {
+				return fmt.Errorf("failed to delete existing volume %d: %v", req.VolumeId, delErr)
+			}
+			glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 		}
 
 		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
@@ -189,6 +199,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			return fmt.Errorf("remove .note for volume %d: %w", req.VolumeId, noteErr)
 		}
 
+		var statusErr error
+		sourceVolumeStatusAfterCopy, statusErr = client.VolumeStatus(stream.Context(), &volume_server_pb.VolumeStatusRequest{
+			VolumeId: req.VolumeId,
+		})
+		if statusErr != nil {
+			err = fmt.Errorf("read source volume %d status after copy failed: %w", req.VolumeId, statusErr)
+			return err
+		}
+
 		return nil
 	})
 
@@ -223,10 +242,22 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		}
 	}
 
-	// mount the volume
-	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId))
+	shouldValidateCopyCounts := copyCountsStable(sourceVolumeStatus, sourceVolumeStatusAfterCopy)
+	if !shouldValidateCopyCounts {
+		glog.V(1).Infof("source volume %d changed during copy; skip record count validation", req.VolumeId)
+	}
+
+	// Load and validate the volume before announcing it to the master. A failed
+	// validation is unloaded by the store without ever making the replica
+	// routable.
+	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId), &req.Collection, func(targetVolume *storage.Volume) error {
+		if !shouldValidateCopyCounts {
+			return nil
+		}
+		return checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount())
+	})
 	if err != nil {
-		return fmt.Errorf("failed to mount volume %d: %v", req.VolumeId, err)
+		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
 	}
 
 	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
@@ -266,11 +297,8 @@ func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeSe
 
 }
 
-/*
-*
-only check the differ of the file size
-todo: maybe should check the received count and deleted count of the volume
-*/
+// checkCopyFiles verifies the copied file sizes. Record counts are checked
+// after the target volume is mounted, when the target needle map is available.
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, hasRemoteDatFile bool, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {
@@ -298,6 +326,25 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 			stat.Size(), originFileInf.DatFileSize)
 	}
 	return nil
+}
+
+func checkCopyCounts(origin *volume_server_pb.VolumeStatusResponse, targetFileCount, targetDeletedCount uint64) error {
+	if origin.FileCount != targetFileCount {
+		return fmt.Errorf("target file count [%d] is not same as origin file count [%d]", targetFileCount, origin.FileCount)
+	}
+	if origin.FileDeletedCount != targetDeletedCount {
+		return fmt.Errorf("target deleted count [%d] is not same as origin deleted count [%d]", targetDeletedCount, origin.FileDeletedCount)
+	}
+	return nil
+}
+
+func copyCountsStable(before, after *volume_server_pb.VolumeStatusResponse) bool {
+	// A writable source may receive writes or deletions while its files are
+	// copied. In that case the before/after counts do not describe one stable
+	// snapshot, so strict target-count validation would report a false error.
+	return before != nil && after != nil &&
+		before.FileCount == after.FileCount &&
+		before.FileDeletedCount == after.FileDeletedCount
 }
 
 func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version needle.Version) (uint64, error) {

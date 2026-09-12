@@ -323,6 +323,9 @@ func runServer(cmd *Command, args []string) bool {
 	// masterOptions.pulseSeconds = pulseSeconds
 
 	masterOptions.whiteList = serverWhiteListOption
+	// The master's /submit buffers the upload before handing it to the volume
+	// server started here, so it must not reject what that volume server accepts.
+	masterOptions.fileSizeLimitMB = serverOptions.v.fileSizeLimitMB
 
 	filerOptions.dataCenter = serverDataCenter
 	filerOptions.rack = serverRack

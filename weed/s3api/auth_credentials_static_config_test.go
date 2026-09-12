@@ -38,9 +38,7 @@ func TestIamConfigWithoutIdentitiesIsNotStatic(t *testing.T) {
 	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err != nil {
 		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	if !hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("expected alice to load after filer change with -iam.config-only setup")
-	}
+	waitForIdentity(t, s3a.iam, "alice")
 }
 
 // A -config identity file protects its identities but must not block live
@@ -70,9 +68,7 @@ func TestConfigWithIdentitiesStillLiveReloadsDynamic(t *testing.T) {
 	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err != nil {
 		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	if !hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("expected alice to live-reload despite the static identity file")
-	}
+	waitForIdentity(t, s3a.iam, "alice")
 	if !hasIdentity(s3a.iam, "static-admin") {
 		t.Fatalf("static-admin must survive the dynamic reload")
 	}
@@ -84,9 +80,7 @@ func TestConfigWithIdentitiesStillLiveReloadsDynamic(t *testing.T) {
 	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", &filer_pb.Entry{Name: "alice.json"}, nil); err != nil {
 		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	if hasIdentity(s3a.iam, "alice") {
-		t.Fatalf("expected alice to be removed after deletion on the filer")
-	}
+	waitForIdentityGone(t, s3a.iam, "alice")
 	if !hasIdentity(s3a.iam, "static-admin") {
 		t.Fatalf("static-admin must survive the deletion reload")
 	}
@@ -285,7 +279,8 @@ func (f *flakyStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfig
 	return f.CredentialStore.LoadConfiguration(ctx)
 }
 
-// A failed event-driven reload must keep retrying until the store recovers.
+// A failed reload queued from an IAM config change must keep retrying until
+// the store recovers.
 func TestFailedReloadRetriesUntilSuccess(t *testing.T) {
 	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
 
@@ -293,26 +288,17 @@ func TestFailedReloadRetriesUntilSuccess(t *testing.T) {
 	iamReloadRetryInterval = 10 * time.Millisecond
 	t.Cleanup(func() { iamReloadRetryInterval = prev })
 
-	s3a.iam.reloadCh = make(chan struct{}, 1)
-	go s3a.iam.reloadRetryLoop()
-	t.Cleanup(s3a.iam.Shutdown)
-
 	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "alice"}); err != nil {
 		t.Fatalf("failed to create alice: %v", err)
 	}
 	s3a.iam.credentialManager.Store = &flakyStore{CredentialStore: s3a.iam.credentialManager.Store, failures: 2}
 
-	// the event-driven reload fails and hands off to the retry loop
-	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err == nil {
-		t.Fatalf("expected the event-driven reload to fail")
+	// onIamConfigChange only queues a coalesced reload; the retry loop does the
+	// work and retries through the transient store failures.
+	if err := s3a.onIamConfigChange(filer.IamConfigDirectory+"/identities", nil, &filer_pb.Entry{Name: "alice.json"}); err != nil {
+		t.Fatalf("onIamConfigChange returned error: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !hasIdentity(s3a.iam, "alice") {
-		if time.Now().After(deadline) {
-			t.Fatalf("expected alice to load once the store recovered")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForIdentity(t, s3a.iam, "alice")
 }
 
 func hasPolicy(iam *IdentityAccessManagement, name string) bool {

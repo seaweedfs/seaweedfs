@@ -103,7 +103,8 @@ func rewriteForeignDayPartitions(t *testing.T, valueFirst bool) {
 
 	// The merged manifest has to carry the days the foreign manifests held.
 	// iceberg-go writes a day partition as a bare Avro int, without the date
-	// logical type, so it reads back as int32 rather than iceberg.Date.
+	// logical type, but now converts day-transform partitions to iceberg.Date
+	// on read (applyDayTransformDates), so they read back as iceberg.Date.
 	got := make(map[string]any)
 	for _, mf := range currentManifests(t, client, setup) {
 		manifestData, err := loadFileByIcebergPath(context.Background(), client, setup.BucketName, setup.tablePath(), mf.FilePath())
@@ -122,7 +123,7 @@ func rewriteForeignDayPartitions(t *testing.T, valueFirst bool) {
 		t.Fatalf("merged manifests hold %d entries, want %d", len(got), len(wantDays))
 	}
 	for filePath, day := range wantDays {
-		if got[filePath] != int32(day) {
+		if got[filePath] != day {
 			t.Errorf("%s partition = %#v (%T), want %d", filePath, got[filePath], got[filePath], day)
 		}
 	}

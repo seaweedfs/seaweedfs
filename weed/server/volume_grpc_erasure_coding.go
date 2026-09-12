@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -164,7 +165,14 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		req.VolumeId, ecCtx.DataShards, ecCtx.ParityShards, ecCtx.Total())
 
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", volumeInfo); err != nil {
-		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
+		}
+		// The .vif is committed but may not be crash-durable. The EC
+		// config is already on disk, so do not clean up the generated
+		// shard files; a restart will find them and the matching metadata.
+		glog.Warningf("SaveVolumeInfo %s saved but not crash-durable: %v", baseFileName, err)
 	}
 
 	shouldCleanup = false
@@ -925,6 +933,12 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 		}
 		bytesread, err := ecShard.ReadAt(buffer[0:bufferSize], startOffset)
 
+		if err != nil && err != io.EOF {
+			ecVolume.CheckReadWriteError(err)
+		} else {
+			ecVolume.CheckReadWriteError(nil)
+		}
+
 		// println("read", ecShard.FileName(), "startOffset", startOffset, bytesread, "bytes, with target", bufferSize)
 		if bytesread > 0 {
 
@@ -1192,7 +1206,7 @@ func (vs *VolumeServer) adoptStagedVolume(req *volume_server_pb.VolumeEcShardsTo
 	}
 	os.Remove(noteFile)
 
-	if err := vs.store.MountVolume(vid); err != nil {
+	if err := vs.store.MountVolume(vid, &req.Collection); err != nil {
 		return nil, fmt.Errorf("mount staged volume %d: %w", req.VolumeId, err)
 	}
 	glog.V(0).Infof("VolumeEcShardsToVolume: adopted decoded volume %d from staging (%s)", req.VolumeId, base)

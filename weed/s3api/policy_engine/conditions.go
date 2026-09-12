@@ -218,6 +218,36 @@ func (e *StringNotLikeEvaluator) Evaluate(conditionValue interface{}, contextVal
 	return true
 }
 
+// StringEqualsIgnoreCaseEvaluator evaluates StringEqualsIgnoreCase conditions
+type StringEqualsIgnoreCaseEvaluator struct{}
+
+func (e *StringEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	expectedValues := getCachedNormalizedValues(conditionValue)
+	for _, expected := range expectedValues {
+		for _, contextValue := range contextValues {
+			if strings.EqualFold(expected, contextValue) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// StringNotEqualsIgnoreCaseEvaluator evaluates StringNotEqualsIgnoreCase conditions
+type StringNotEqualsIgnoreCaseEvaluator struct{}
+
+func (e *StringNotEqualsIgnoreCaseEvaluator) Evaluate(conditionValue interface{}, contextValues []string) bool {
+	expectedValues := getCachedNormalizedValues(conditionValue)
+	for _, expected := range expectedValues {
+		for _, contextValue := range contextValues {
+			if strings.EqualFold(expected, contextValue) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // NumericEqualsEvaluator evaluates NumericEquals conditions
 type NumericEqualsEvaluator struct{}
 
@@ -650,6 +680,10 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 		return &StringLikeEvaluator{}, nil
 	case "StringNotLike":
 		return &StringNotLikeEvaluator{}, nil
+	case "StringEqualsIgnoreCase":
+		return &StringEqualsIgnoreCaseEvaluator{}, nil
+	case "StringNotEqualsIgnoreCase":
+		return &StringNotEqualsIgnoreCaseEvaluator{}, nil
 	case "NumericEquals":
 		return &NumericEqualsEvaluator{}, nil
 	case "NumericNotEquals":
@@ -730,7 +764,7 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 		conditionEvaluator, err := GetConditionEvaluator(operator)
 		if err != nil {
 			glog.Warningf("Unsupported condition operator: %s", operator)
-			continue
+			return false
 		}
 
 		for key, value := range conditionMap {

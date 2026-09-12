@@ -297,7 +297,7 @@ func TestTierMoveDatFromRemote_KeepRemote_LeavesReplicaLocal(t *testing.T) {
 	if err := store.UnmountVolume(vid); err != nil {
 		t.Fatalf("unmount after download: %v", err)
 	}
-	if err := store.MountVolume(vid); err != nil {
+	if err := store.MountVolume(vid, &req.Collection); err != nil {
 		t.Fatalf("remount after download: %v", err)
 	}
 	v2 := store.GetVolume(vid)

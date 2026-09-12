@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -18,7 +19,8 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		return nil, err
 	}
 	vids := []needle.VolumeId{}
-	if len(req.GetVolumeIds()) == 0 {
+	explicit := len(req.GetVolumeIds()) != 0
+	if !explicit {
 		for _, l := range vs.store.Locations {
 			vids = append(vids, l.VolumeIds()...)
 		}
@@ -28,6 +30,22 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		}
 	}
 
+	return vs.scrubVolumes(ctx, req, vids, explicit)
+}
+
+// scrubVolumes walks an already-resolved volume list. Split out from
+// ScrubVolume so the vanished-volume handling below is reachable from a test:
+// the list and the store are read under the same lock nowhere, so a test
+// cannot otherwise arrange for an id to disappear between the two.
+//
+// explicit says the caller named the volumes. A named volume that is absent is
+// a caller error and still fails the request; an id that came from the node's
+// own listing is not, because nothing holds a lock across the scan and the
+// volume set is free to change under it — the heartbeat drops a volume with an
+// I/O error, and a delete or an unmount can land at any point. Failing there
+// would discard every result accumulated so far and leave every later volume
+// unscrubbed, which is the opposite of what a node-wide scrub is for.
+func (vs *VolumeServer) scrubVolumes(ctx context.Context, req *volume_server_pb.ScrubVolumeRequest, vids []needle.VolumeId, explicit bool) (*volume_server_pb.ScrubVolumeResponse, error) {
 	var details []string
 	var totalVolumes, totalFiles uint64
 	var brokenVolumes []*storage.Volume
@@ -35,7 +53,11 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 	for _, vid := range vids {
 		v := vs.store.GetVolume(vid)
 		if v == nil {
-			return nil, fmt.Errorf("volume id %d not found", vid)
+			if explicit {
+				return nil, fmt.Errorf("volume id %d not found", vid)
+			}
+			glog.V(0).Infof("scrub: volume %d is no longer mounted, skipping", vid)
+			continue
 		}
 
 		var files int64
@@ -103,7 +125,8 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 	}
 
 	vids := []needle.VolumeId{}
-	if len(req.GetVolumeIds()) == 0 {
+	explicit := len(req.GetVolumeIds()) != 0
+	if !explicit {
 		for _, l := range vs.store.Locations {
 			vids = append(vids, l.EcVolumeIds()...)
 		}
@@ -113,6 +136,12 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		}
 	}
 
+	return vs.scrubEcVolumes(req, vids, explicit)
+}
+
+// scrubEcVolumes walks an already-resolved EC volume list. Same split, and same
+// vanished-volume rule, as scrubVolumes — see its comment.
+func (vs *VolumeServer) scrubEcVolumes(req *volume_server_pb.ScrubEcVolumeRequest, vids []needle.VolumeId, explicit bool) (*volume_server_pb.ScrubEcVolumeResponse, error) {
 	var details []string
 	var totalVolumes, totalFiles uint64
 	var brokenVolumeIds []uint32
@@ -120,7 +149,11 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 	for _, vid := range vids {
 		v, found := vs.store.FindEcVolume(vid)
 		if !found {
-			return nil, fmt.Errorf("EC volume id %d not found", vid)
+			if explicit {
+				return nil, fmt.Errorf("EC volume id %d not found", vid)
+			}
+			glog.V(0).Infof("ec scrub: volume %d is no longer mounted, skipping", vid)
+			continue
 		}
 
 		var files int64

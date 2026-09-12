@@ -807,12 +807,19 @@ func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string
 // validateSessionDurationSeconds bounds a requested session lifetime the way
 // AWS STS does. Every assume-role entry point runs it, so a duration that came
 // from configuration is checked the same as one from a request.
-func validateSessionDurationSeconds(durationSeconds *int64) error {
+func (s *STSService) validateSessionDurationSeconds(durationSeconds *int64) error {
 	if durationSeconds == nil {
 		return nil
 	}
-	if *durationSeconds < 900 || *durationSeconds > 43200 { // 15min to 12 hours
-		return fmt.Errorf("DurationSeconds must be between 900 and 43200 seconds")
+	maxSec := int64(DefaultMaxSessionLength)
+	if s.Config != nil && s.Config.MaxSessionLength.Duration > 0 {
+		configuredMax := int64(s.Config.MaxSessionLength.Duration / time.Second)
+		if configuredMax >= 900 {
+			maxSec = configuredMax
+		}
+	}
+	if *durationSeconds < 900 || *durationSeconds > maxSec {
+		return fmt.Errorf("DurationSeconds must be between 900 and %d seconds", maxSec)
 	}
 	return nil
 }
@@ -857,7 +864,7 @@ func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *Assume
 	if request.Principal == "" {
 		return nil, fmt.Errorf("principal cannot be empty")
 	}
-	if err := validateSessionDurationSeconds(request.DurationSeconds); err != nil {
+	if err := s.validateSessionDurationSeconds(request.DurationSeconds); err != nil {
 		return nil, fmt.Errorf("invalid request: %w", err)
 	}
 
@@ -935,7 +942,7 @@ func (s *STSService) validateAssumeRoleWithWebIdentityRequest(request *AssumeRol
 		return fmt.Errorf("RoleSessionName is required")
 	}
 
-	return validateSessionDurationSeconds(request.DurationSeconds)
+	return s.validateSessionDurationSeconds(request.DurationSeconds)
 }
 
 // validateWebIdentityToken validates the web identity token with strict issuer-to-provider mapping
@@ -1152,7 +1159,7 @@ func (s *STSService) validateAssumeRoleWithCredentialsRequest(request *AssumeRol
 		return fmt.Errorf("ProviderName is required")
 	}
 
-	return validateSessionDurationSeconds(request.DurationSeconds)
+	return s.validateSessionDurationSeconds(request.DurationSeconds)
 }
 
 // ExpireSessionForTesting manually expires a session for testing purposes

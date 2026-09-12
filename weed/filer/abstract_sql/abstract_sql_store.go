@@ -32,6 +32,7 @@ type AbstractSqlStore struct {
 	DB                     *sql.DB
 	KvDB                   *sql.DB
 	SupportBucketTable     bool
+	SkipDDL                bool
 	dbs                    map[string]bool
 	dbsLock                sync.Mutex
 	RetryableErrorCallback func(err error) bool
@@ -40,7 +41,7 @@ type AbstractSqlStore struct {
 var _ filer.BucketAware = (*AbstractSqlStore)(nil)
 
 func (store *AbstractSqlStore) CanDropWholeBucket() bool {
-	return store.SupportBucketTable
+	return store.SupportBucketTable && !store.SkipDDL
 }
 func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
 	store.dbsLock.Lock()
@@ -356,7 +357,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 			return fmt.Errorf("findDB %s : %w", fullpath, err)
 		}
 
-		if isValidBucket(bucket) && shortPath == "/" {
+		if isValidBucket(bucket) && shortPath == "/" && store.CanDropWholeBucket() {
 			if err = store.deleteTable(ctx, bucket); err == nil {
 				store.dbsLock.Lock()
 				delete(store.dbs, bucket)
@@ -458,15 +459,19 @@ func isValidBucket(bucket string) bool {
 }
 
 func (store *AbstractSqlStore) CreateTable(ctx context.Context, bucket string) error {
-	if !store.SupportBucketTable {
+	if !store.SupportBucketTable || store.SkipDDL {
 		return nil
 	}
-	_, err := store.DB.ExecContext(ctx, store.SqlGenerator.GetSqlCreateTable(bucket))
+	sql := store.SqlGenerator.GetSqlCreateTable(bucket)
+	if sql == "" {
+		return nil
+	}
+	_, err := store.DB.ExecContext(ctx, sql)
 	return err
 }
 
 func (store *AbstractSqlStore) deleteTable(ctx context.Context, bucket string) error {
-	if !store.SupportBucketTable {
+	if !store.SupportBucketTable || store.SkipDDL {
 		return nil
 	}
 	_, err := store.DB.ExecContext(ctx, store.SqlGenerator.GetSqlDropTable(bucket))

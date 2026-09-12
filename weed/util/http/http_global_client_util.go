@@ -98,11 +98,11 @@ func Post(url string, values url.Values) ([]byte, error) {
 // github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
 // may need increasing http.Client.Timeout
 func Get(url string) ([]byte, bool, error) {
-	return GetAuthenticated(url, "")
+	return GetAuthenticated(context.Background(), url, "")
 }
 
-func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
-	request, err := http.NewRequest(http.MethodGet, url, nil)
+func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, true, err
 	}
@@ -111,7 +111,9 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 
 	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
-		recordUnreachable(request.URL.Host)
+		if ctx.Err() == nil {
+			recordUnreachable(request.URL.Host)
+		}
 		return nil, true, err
 	}
 	recordReachable(request.URL.Host)
@@ -135,6 +137,9 @@ func GetAuthenticated(url, jwt string) ([]byte, bool, error) {
 		return nil, retryable, fmt.Errorf("%s: %s", url, response.Status)
 	}
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, false, ctxErr
+		}
 		return nil, false, err
 	}
 	return b, false, nil
@@ -454,7 +459,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 }
 
 func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	encryptedData, retryable, err := GetAuthenticated(fileUrl, jwt)
+	encryptedData, retryable, err := GetAuthenticated(ctx, fileUrl, jwt)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}

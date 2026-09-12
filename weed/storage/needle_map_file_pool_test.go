@@ -77,7 +77,9 @@ func TestSortedFileNeedleMap_HoldsNoDescriptors(t *testing.T) {
 				t.Fatalf("write needle %d: %v", i, err)
 			}
 		}
-		v.PersistReadOnly(true, true)
+		if err := v.PersistReadOnly(true, true); err != nil {
+			t.Fatalf("persist read-only: %v", err)
+		}
 		v.Close()
 
 		v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)

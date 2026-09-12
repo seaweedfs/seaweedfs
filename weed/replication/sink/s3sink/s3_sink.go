@@ -220,6 +220,11 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
 	}
 	_, err = uploader.Upload(&uploadInput)
+	if err != nil {
+		if sourceErr := filer.ReaderSourceError(reader); sourceErr != nil {
+			return fmt.Errorf("read source %s: %w", key, sourceErr)
+		}
+	}
 
 	return err
 

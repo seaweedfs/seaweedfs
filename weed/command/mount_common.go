@@ -5,11 +5,13 @@ package command
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"path"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -184,6 +186,10 @@ type fileSystemParams struct {
 }
 
 func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS {
+	readerCacheSizeMB := int64(256)
+	if option.readerCacheSizeMB != nil {
+		readerCacheSizeMB = *option.readerCacheSizeMB
+	}
 	return mount.NewSeaweedFileSystem(&mount.Option{
 		MountDirectory:              p.dir,
 		FilerAddresses:              p.filerAddresses,
@@ -198,6 +204,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		ChunkSizeLimit:              int64(p.chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:           *option.concurrentWriters,
 		ConcurrentReaders:           *option.concurrentReaders,
+		ReaderCacheSizeMB:           readerCacheSizeMB,
 		CacheDirForRead:             p.cacheDirForRead,
 		CacheSizeMBForRead:          *option.cacheSizeMBForRead,
 		CacheDirForWrite:            p.cacheDirForWrite,
@@ -303,4 +310,19 @@ func lastSegment(p string) string {
 		return ""
 	}
 	return name
+}
+
+func configureMountMemory(option *MountOptions) error {
+	if option.readerCacheSizeMB != nil && (*option.readerCacheSizeMB <= 0 || *option.readerCacheSizeMB > math.MaxInt64>>20) {
+		return fmt.Errorf("readerCacheSizeMB must be positive and fit in an int64 byte budget")
+	}
+	if option.memoryLimitMB != nil {
+		if *option.memoryLimitMB < 0 || *option.memoryLimitMB > math.MaxInt64>>20 {
+			return fmt.Errorf("memoryLimitMB must be non-negative and fit in an int64 byte limit")
+		}
+		if *option.memoryLimitMB > 0 {
+			debug.SetMemoryLimit(*option.memoryLimitMB << 20)
+		}
+	}
+	return nil
 }

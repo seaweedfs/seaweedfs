@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -22,6 +23,35 @@ func ComputeParentUser(sub, iss string) string {
 	}
 	h := sha256.Sum256([]byte("openid:" + sub + ":" + iss))
 	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+// identityClaimPriority is the order in which ResolveIdentityClaim looks for a
+// human-readable, authoritative identity attribute in an STS request context.
+// The context is populated at federation time from the validated OIDC token
+// (see AssumeRoleWithWebIdentity), so every entry here is server-asserted and
+// not client-supplied. preferred_username/email/name are conventional OIDC
+// user claims; sub is the always-present stable subject identifier and the
+// final fallback so a federated session never audits as fully anonymous.
+var identityClaimPriority = []string{"preferred_username", "email", "name", "sub"}
+
+// ResolveIdentityClaim returns the most human-readable authoritative identity
+// claim available in ctx, or "" when none is present. ctx is the STS request
+// context (sessionInfo.RequestContext) populated from the validated OIDC token
+// at federation time. Non-string values are skipped so a structured claim
+// never leaks into an audit-facing field. Whitespace-only values are treated
+// as absent so a blank preferred claim does not mask a usable email or sub.
+func ResolveIdentityClaim(ctx map[string]interface{}) string {
+	if len(ctx) == 0 {
+		return ""
+	}
+	for _, key := range identityClaimPriority {
+		if v, ok := ctx[key].(string); ok {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 // defaultCredentialGenerator is a reusable instance for generating temporary credentials

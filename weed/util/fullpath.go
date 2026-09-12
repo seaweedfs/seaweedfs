@@ -2,7 +2,6 @@ package util
 
 import (
 	"path"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
@@ -40,7 +39,7 @@ func NewFullPath(dir, name string) FullPath {
 }
 
 func (fp FullPath) DirAndName() (string, string) {
-	dir, name := filepath.Split(string(fp))
+	dir, name := path.Split(string(fp))
 	name = SanitizeUTF8Name(name)
 	if dir == "/" {
 		return dir, name
@@ -55,7 +54,7 @@ func (fp FullPath) DirAndName() (string, string) {
 // via SanitizeUTF8Name so the result is always safe to place in a proto
 // string field or HTTP URL.
 func (fp FullPath) Name() string {
-	_, name := filepath.Split(string(fp))
+	_, name := path.Split(string(fp))
 	return SanitizeUTF8Name(name)
 }
 
@@ -104,7 +103,7 @@ func (fp FullPath) Split() []string {
 }
 
 func Join(names ...string) string {
-	return filepath.ToSlash(filepath.Join(names...))
+	return path.Join(names...)
 }
 
 func JoinPath(names ...string) FullPath {

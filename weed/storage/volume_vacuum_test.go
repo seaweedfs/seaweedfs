@@ -367,6 +367,72 @@ func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 	v.Close()
 }
 
+// TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck reproduces the
+// vacuum-vs-live-traffic race: a needle written to the volume after
+// CompactByIndex has already loaded its point-in-time index snapshot must not
+// trip the post-copy integrity check. CommitCompact's makeupDiff is what
+// reconciles a write landing mid-copy (see TestCommitCompactDeletionTailKeepsWritable);
+// the copy-phase check must not treat that expected case as corruption.
+func TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 8; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+
+	wroteConcurrently := false
+	opts := &CompactOptions{
+		ProgressCallback: func(processed int64) bool {
+			if !wroteConcurrently {
+				wroteConcurrently = true
+				// Simulate a client write landing on the live volume while
+				// CompactByIndex is still copying the pre-write snapshot.
+				if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(100)), true, false, false); err != nil {
+					t.Fatalf("concurrent write: %v", err)
+				}
+			}
+			return true
+		},
+	}
+
+	if err := v.CompactByIndex(opts); err != nil {
+		t.Fatalf("CompactByIndex should tolerate a write that lands mid-copy, got: %v", err)
+	}
+}
+
+// TestExceedsExpectedCompactedSize guards the copy-phase integrity check
+// against regressing into double-subtracting skipped bytes: expectedLiveBytes
+// already excludes needles dropped as unreadable (they return before being
+// added to the tally), so the check must compare it directly against the
+// compacted .dat size, with no further adjustment for skipped bytes.
+func TestExceedsExpectedCompactedSize(t *testing.T) {
+	cases := []struct {
+		name              string
+		expectedLiveBytes uint64
+		dstDatSize        int64
+		wantExceeds       bool
+	}{
+		{"destination matches expected size exactly", 100, 100, false},
+		{"destination larger than expected is fine", 100, 150, false},
+		{"destination short of expected signals data loss", 100, 90, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := exceedsExpectedCompactedSize(c.expectedLiveBytes, c.dstDatSize); got != c.wantExceeds {
+				t.Fatalf("exceedsExpectedCompactedSize(%d, %d) = %v, want %v", c.expectedLiveBytes, c.dstDatSize, got, c.wantExceeds)
+			}
+		})
+	}
+}
+
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
 	_, size, _, err := v.writeNeedle2(n, true, false, false)

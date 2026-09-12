@@ -17,26 +17,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
-// privateNetworks contains pre-parsed private IP ranges for efficient lookups
-var privateNetworks []*net.IPNet
-
-func init() {
-	// Private IPv4 ranges (RFC1918) and IPv6 Unique Local Addresses (ULA)
-	privateRanges := []string{
-		"10.0.0.0/8",     // IPv4 private
-		"172.16.0.0/12",  // IPv4 private
-		"192.168.0.0/16", // IPv4 private
-		"fc00::/7",       // IPv6 Unique Local Addresses (ULA)
-	}
-
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err == nil {
-			privateNetworks = append(privateNetworks, network)
-		}
-	}
-}
-
 // IAMIntegration defines the interface for IAM integration
 type IAMIntegration interface {
 	AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
@@ -196,7 +176,8 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 				EmailAddress: emailAddress,
 				Id:           identity.UserID,
 			},
-			Claims: claims,
+			Claims:        claims,
+			IdentityClaim: sts.ResolveIdentityClaim(claims),
 		}, s3err.ErrNone
 	}
 
@@ -234,6 +215,13 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			Id:           sessionInfo.Subject,
 		},
 		Claims: claims,
+	}
+	// ParentUser is set only for OIDC-federated sessions. Resolve the audit
+	// identity claim from the original request context (not the local claims
+	// map, whose sub was overwritten with the opaque session subject above) so
+	// the bearer path surfaces the same authoritative OIDC identity as SigV4.
+	if sessionInfo.ParentUser != "" {
+		identity.IdentityClaim = sts.ResolveIdentityClaim(sessionInfo.RequestContext)
 	}
 
 	glog.V(3).Infof("JWT authentication successful for principal: %s", identity.Principal)
@@ -348,12 +336,13 @@ func (s3iam *S3IAMIntegration) DefaultAllow() bool {
 
 // IAMIdentity represents an authenticated identity with session information
 type IAMIdentity struct {
-	Name         string
-	Principal    string
-	SessionToken string
-	Account      *Account
-	PolicyNames  []string
-	Claims       map[string]interface{}
+	Name          string
+	Principal     string
+	SessionToken  string
+	Account       *Account
+	PolicyNames   []string
+	Claims        map[string]interface{}
+	IdentityClaim string // Authoritative OIDC identity claim for audit logging; empty for non-federated sessions
 }
 
 // IsAdmin checks if the identity has admin privileges
@@ -423,62 +412,17 @@ func extractRequestContext(r *http.Request) map[string]interface{} {
 	return context
 }
 
-// extractSourceIP extracts the real source IP from the request
-// SECURITY: Prioritizes RemoteAddr over client-controlled headers to prevent spoofing
-// Only trusts X-Forwarded-For/X-Real-IP if RemoteAddr appears to be from a trusted proxy
+// extractSourceIP returns the direct TCP peer address for aws:SourceIp
+// condition evaluation. Forwarding headers (X-Forwarded-For, X-Real-IP) are
+// intentionally ignored: without a configurable trusted-proxy allowlist they
+// are client-controlled and spoofable, which would let a caller behind a
+// private-looking peer bypass any aws:SourceIp restriction.
 func extractSourceIP(r *http.Request) string {
-	// Always start with RemoteAddr as the most trustworthy source
 	remoteIP := r.RemoteAddr
 	if ip, _, err := net.SplitHostPort(remoteIP); err == nil {
 		remoteIP = ip
 	}
-
-	// NOTE: The current heuristic of using isPrivateIP assumes reverse proxies are on a
-	// private/local network. This may be insufficient for some cloud, CDN, or multi-tier
-	// proxy deployments where proxies terminate connections from public IPs. In such
-	// environments, deployment-specific controls (e.g., network ACLs or proxy configs)
-	// should be used to ensure only trusted components can set forwarding headers.
-	// Future enhancements may introduce an explicit, configurable trusted proxy CIDR list.
-	isTrustedProxy := isPrivateIP(remoteIP)
-
-	if isTrustedProxy {
-		// Check X-Real-IP header first (single IP, more reliable than X-Forwarded-For)
-		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-			return strings.TrimSpace(realIP)
-		}
-
-		// Check X-Forwarded-For header (can contain multiple IPs, take the first one)
-		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-			if ips := strings.Split(forwardedFor, ","); len(ips) > 0 {
-				return strings.TrimSpace(ips[0])
-			}
-		}
-	}
-
-	// Fall back to RemoteAddr (most secure)
 	return remoteIP
-}
-
-// isPrivateIP checks if an IP is in a private range (localhost or RFC1918)
-func isPrivateIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-
-	// Check for localhost and link-local addresses (IPv4/IPv6)
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return true
-	}
-
-	// Check against pre-parsed private CIDR ranges
-	for _, network := range privateNetworks {
-		if network.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // ParseUnverifiedJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification

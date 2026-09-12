@@ -57,6 +57,93 @@ func TestAuditRequesterArnForSTSSession(t *testing.T) {
 		"audit entry must name the assumed role and session")
 }
 
+// An OIDC-federated STS session authenticates as an opaque session subject, so
+// the requester field alone is useless for compliance auditing. The audit entry
+// must surface the authoritative OIDC identity claim (preferred_username, email
+// or sub) carried in the session request context, independent of the
+// client-supplied role session name. See issue #11264.
+func TestAuditRequesterIdentityForOIDCFederatedSession(t *testing.T) {
+	iam := &IdentityAccessManagement{
+		iamIntegration: &MockIAMIntegration{
+			validateSessionFunc: func(ctx context.Context, token string) (*sts.SessionInfo, error) {
+				return &sts.SessionInfo{
+					AssumedRoleUser: "S3ReadOnlyRole/boto3-session",
+					Principal:       "arn:aws:sts::assumed-role/S3ReadOnlyRole/boto3-session",
+					Subject:         "2a19e647c5d43a62a91ecf664d07dbe1",
+					SessionName:     "boto3-session",
+					Credentials: &sts.Credentials{
+						AccessKeyId:     "ASIA0189777d42cba8e2",
+						SecretAccessKey: "secret",
+					},
+					ExpiresAt:  time.Now().Add(time.Hour),
+					Policies:   []string{"S3ReadOnly"},
+					ParentUser: sts.ComputeParentUser("oidc-sub-123", "https://idp.example/"),
+					RequestContext: map[string]interface{}{
+						"preferred_username": "grant.west",
+						"email":              "grant.west@digital.mod.uk",
+						"sub":                "oidc-sub-123",
+					},
+				}, nil
+			},
+		},
+	}
+
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "http://s3/test/", nil))
+
+	identity, _, errCode := iam.validateSTSSessionToken(outer, "session-token", "ASIA0189777d42cba8e2")
+	require.Equal(t, s3err.ErrNone, errCode)
+
+	iam.handleAuthResult(httptest.NewRecorder(), outer, identity, s3err.ErrNone, func(http.ResponseWriter, *http.Request) {})
+
+	log := s3err.GetAccessLog(outer, http.StatusOK, s3err.ErrNone)
+	assert.Equal(t, "2a19e647c5d43a62a91ecf664d07dbe1", log.Requester,
+		"requester stays the opaque session subject for backward compatibility")
+	assert.Equal(t, "grant.west", log.RequesterIdentity,
+		"audit entry must surface the authoritative OIDC identity claim, not the client-supplied role session name")
+}
+
+// A non-federated STS session has no OIDC identity. ValidateJWTWithClaims merges
+// the JWT registered sub claim (the opaque session id) into RequestContext, so
+// the context carries a sub even though it is not an OIDC subject. The audit
+// entry must not surface that session id as a requester_identity — ParentUser
+// gates the resolution so only federated sessions report an identity claim.
+func TestAuditRequesterIdentityEmptyForNonFederatedSession(t *testing.T) {
+	iam := &IdentityAccessManagement{
+		iamIntegration: &MockIAMIntegration{
+			validateSessionFunc: func(ctx context.Context, token string) (*sts.SessionInfo, error) {
+				return &sts.SessionInfo{
+					AssumedRoleUser: "ClientRole/dev-session",
+					Principal:       "arn:aws:sts::000000000000:assumed-role/ClientRole/dev-session",
+					Subject:         "47ad4828c45b3f337bc3146081ba8f0f",
+					SessionName:     "dev-session",
+					Credentials: &sts.Credentials{
+						AccessKeyId:     "ASIA0189777d42cba8e2",
+						SecretAccessKey: "secret",
+					},
+					ExpiresAt: time.Now().Add(time.Hour),
+					Policies:  []string{"ClientPolicy"},
+					// Simulate ValidateJWTWithClaims merging the registered sub
+					// (the session id) into RequestContext for a session that has
+					// no OIDC identity and therefore no ParentUser.
+					RequestContext: map[string]interface{}{
+						"sub": "47ad4828c45b3f337bc3146081ba8f0f",
+					},
+				}, nil
+			},
+		},
+	}
+
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodGet, "http://s3/test/", nil))
+
+	identity, _, errCode := iam.validateSTSSessionToken(outer, "session-token", "ASIA0189777d42cba8e2")
+	require.Equal(t, s3err.ErrNone, errCode)
+
+	iam.handleAuthResult(httptest.NewRecorder(), outer, identity, s3err.ErrNone, func(http.ResponseWriter, *http.Request) {})
+
+	log := s3err.GetAccessLog(outer, http.StatusOK, s3err.ErrNone)
+	assert.Empty(t, log.RequesterIdentity, "non-federated session must not surface the session id as a requester_identity")
+}
+
 // A JWT-authenticated identity carries no PrincipalArn of its own — the auth
 // layer hands the principal over in a request header — so the audit entry has to
 // resolve the ARN the same way policy evaluation does.

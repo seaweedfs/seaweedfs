@@ -236,6 +236,7 @@ message VolumeIncrementalCopyResponse {
 
 message VolumeMountRequest {
     uint32 volume_id = 1;
+    optional string collection = 2;
 }
 message VolumeMountResponse {
 }

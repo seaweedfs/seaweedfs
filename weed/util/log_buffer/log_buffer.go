@@ -189,9 +189,9 @@ type LogBuffer struct {
 	notifyFn       func()
 	// Per-subscriber notification channels for instant wake-up
 	subscribersMu sync.RWMutex
-	subscribers   map[string]chan struct{} // subscriberID -> notification channel
+	subscribers   map[string]*subscription // subscriberID -> shared notification channel
 	// Notified only when a flush lands, for readers that cannot act on an append
-	flushSubscribers map[string]chan struct{}
+	flushSubscribers map[string]*subscription
 	isStopping       *atomic.Bool
 	shutdownCh       chan struct{}  // closed by ShutdownLogBuffer to wake blocked subscribers
 	loopsDone        sync.WaitGroup // loopFlush and loopInterval signal exit
@@ -223,8 +223,8 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		flushFn:          flushFn,
 		ReadFromDiskFn:   readFromDiskFn,
 		notifyFn:         notifyFn,
-		subscribers:      make(map[string]chan struct{}),
-		flushSubscribers: make(map[string]chan struct{}),
+		subscribers:      make(map[string]*subscription),
+		flushSubscribers: make(map[string]*subscription),
 		flushChan:        make(chan *dataToFlush, flushQueueDepth),
 		isStopping:       new(atomic.Bool),
 		shutdownCh:       make(chan struct{}),
@@ -242,32 +242,59 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 	return lb
 }
 
+// subscription is one notification channel and the number of readers holding
+// it. Registrations that share a subscriberID share the channel - two streams
+// of the same client, or an old one that has not noticed its replacement yet -
+// so it may only be closed once the last of them unregisters. Closing it under
+// a reader parked in awaitNotificationOrTimeoutFor makes every receive there
+// succeed instantly, spinning that reader on a full core for the rest of its
+// life.
+type subscription struct {
+	notifyChan chan struct{}
+	refCount   int
+}
+
+func registerSubscription(subscriptions map[string]*subscription, subscriberID string) chan struct{} {
+	if existing, exists := subscriptions[subscriberID]; exists {
+		existing.refCount++
+		return existing.notifyChan
+	}
+
+	// Create buffered channel (size 1) so notifications never block
+	sub := &subscription{notifyChan: make(chan struct{}, 1), refCount: 1}
+	subscriptions[subscriberID] = sub
+	return sub.notifyChan
+}
+
+func unregisterSubscription(subscriptions map[string]*subscription, subscriberID string) {
+	sub, exists := subscriptions[subscriberID]
+	if !exists {
+		return
+	}
+	sub.refCount--
+	if sub.refCount > 0 {
+		return
+	}
+	close(sub.notifyChan)
+	delete(subscriptions, subscriberID)
+}
+
 // RegisterSubscriber registers a subscriber for instant notifications when data is written
 // Returns a channel that will receive notifications (<1ms latency)
 func (logBuffer *LogBuffer) RegisterSubscriber(subscriberID string) chan struct{} {
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	// Check if already registered
-	if existingChan, exists := logBuffer.subscribers[subscriberID]; exists {
-		return existingChan
-	}
-
-	// Create buffered channel (size 1) so notifications never block
-	notifyChan := make(chan struct{}, 1)
-	logBuffer.subscribers[subscriberID] = notifyChan
-	return notifyChan
+	return registerSubscription(logBuffer.subscribers, subscriberID)
 }
 
 // UnregisterSubscriber removes a subscriber and closes its notification channel
+// once no other registration of the same subscriberID is left holding it.
 func (logBuffer *LogBuffer) UnregisterSubscriber(subscriberID string) {
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	if ch, exists := logBuffer.subscribers[subscriberID]; exists {
-		close(ch)
-		delete(logBuffer.subscribers, subscriberID)
-	}
+	unregisterSubscription(logBuffer.subscribers, subscriberID)
 }
 
 // RegisterFlushSubscriber registers a subscriber woken only when a flush lands.
@@ -279,23 +306,16 @@ func (logBuffer *LogBuffer) RegisterFlushSubscriber(subscriberID string) chan st
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	if existingChan, exists := logBuffer.flushSubscribers[subscriberID]; exists {
-		return existingChan
-	}
-	notifyChan := make(chan struct{}, 1)
-	logBuffer.flushSubscribers[subscriberID] = notifyChan
-	return notifyChan
+	return registerSubscription(logBuffer.flushSubscribers, subscriberID)
 }
 
 // UnregisterFlushSubscriber removes a flush subscriber and closes its channel
+// once no other registration of the same subscriberID is left holding it.
 func (logBuffer *LogBuffer) UnregisterFlushSubscriber(subscriberID string) {
 	logBuffer.subscribersMu.Lock()
 	defer logBuffer.subscribersMu.Unlock()
 
-	if ch, exists := logBuffer.flushSubscribers[subscriberID]; exists {
-		close(ch)
-		delete(logBuffer.flushSubscribers, subscriberID)
-	}
+	unregisterSubscription(logBuffer.flushSubscribers, subscriberID)
 }
 
 // IsOffsetInMemory checks if the given offset is available in the in-memory buffer
@@ -357,9 +377,9 @@ func (logBuffer *LogBuffer) notifySubscribers() {
 		return // No subscribers, skip notification
 	}
 
-	for _, notifyChan := range logBuffer.subscribers {
+	for _, sub := range logBuffer.subscribers {
 		select {
-		case notifyChan <- struct{}{}:
+		case sub.notifyChan <- struct{}{}:
 			// Notification sent successfully
 		default:
 			// Channel full - subscriber hasn't consumed previous notification yet
@@ -373,9 +393,9 @@ func (logBuffer *LogBuffer) notifyFlushSubscribers() {
 	logBuffer.subscribersMu.RLock()
 	defer logBuffer.subscribersMu.RUnlock()
 
-	for _, notifyChan := range logBuffer.flushSubscribers {
+	for _, sub := range logBuffer.flushSubscribers {
 		select {
-		case notifyChan <- struct{}{}:
+		case sub.notifyChan <- struct{}{}:
 		default:
 		}
 	}

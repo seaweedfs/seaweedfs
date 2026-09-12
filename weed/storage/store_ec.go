@@ -210,6 +210,9 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	for diskId, location := range s.Locations {
 		location.ecVolumesLock.RLock()
 		for _, ecShards := range location.ecVolumes {
+			if _, _, quarantined := ecShards.GetIoErrorState(); quarantined {
+				continue
+			}
 			ecShardMessages = append(ecShardMessages, ecShards.ToVolumeEcShardInformationMessage(uint32(diskId))...)
 
 			for _, ecShard := range ecShards.Shards {
@@ -771,8 +774,10 @@ func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shar
 
 	readBytes, err := shard.ReadAt(buf, offset)
 	if err != nil {
-		return fmt.Errorf("failed to read local EC shard %d for volume %d: %v", shardId, ecVolume.VolumeId, err)
+		ownerVolume.CheckReadWriteError(err)
+		return fmt.Errorf("failed to read local EC shard %d for volume %d: %w", shardId, ecVolume.VolumeId, err)
 	}
+	ownerVolume.CheckReadWriteError(nil)
 	if got, want := readBytes, len(buf); got != want {
 		return fmt.Errorf("expected %d bytes for local EC shard %d on volume %d, got %d", want, shardId, ecVolume.VolumeId, got)
 	}

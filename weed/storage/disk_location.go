@@ -511,7 +511,15 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool, kee
 	return
 }
 
-func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
+func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapKind NeedleMapKind, collection *string) bool {
+	if collection != nil {
+		for _, ext := range []string{".vif", ".idx"} {
+			filename := VolumeFileName(l.Directory, *collection, int(vid)) + ext
+			if fi, err := os.Stat(filename); err == nil && !fi.IsDir() {
+				return l.loadExistingVolume(fi.Name(), needleMapKind, false, 0, diskId)
+			}
+		}
+	}
 	if fileInfo, found := l.LocateVolume(vid); found {
 		return l.loadExistingVolume(fileInfo.Name(), needleMapKind, false, 0, diskId)
 	}

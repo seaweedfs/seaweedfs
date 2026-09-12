@@ -51,7 +51,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	req.Identifier = raw.Identifier
 	var statisticsUpdates []statisticsUpdate
 	if len(raw.Requirements) > 0 {
-		if err := json.Unmarshal(raw.Requirements, &req.Requirements); err != nil {
+		normalized, err := normalizeRequirements(raw.Requirements)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid requirements: "+err.Error())
+			return
+		}
+		if err := json.Unmarshal(normalized, &req.Requirements); err != nil {
 			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid requirements: "+err.Error())
 			return
 		}

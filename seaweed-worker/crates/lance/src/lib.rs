@@ -10,5 +10,6 @@ pub mod dataset;
 pub mod jobs;
 pub mod metrics;
 pub mod preview;
+pub mod tls;
 
 pub use jobs::handlers;

@@ -76,13 +76,12 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 		return fuse.OK
 	}
 
-	// in case we found no exact matches, we return the recommended fallbacks, that is:
-	// original offset for SEEK_DATA or end of file for an implicit hole
 	if in.Whence == SEEK_DATA {
-		out.Offset = in.Offset
-	} else {
-		out.Offset = uint64(fileSize)
+		return ENXIO
 	}
 
+	// If no explicit hole was found, the hole after the final data range is
+	// implicit and starts at the end of the file.
+	out.Offset = uint64(fileSize)
 	return fuse.OK
 }

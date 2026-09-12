@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestRenameSourceCandidates: AWS spells x-amz-rename-source as a bare key in
@@ -140,6 +142,122 @@ func TestSourceConditionalHeaderPrecedence(t *testing.T) {
 				r.Header.Set(names.ifUnmodifiedSince, after)
 				assert.Equal(t, s3err.ErrPreconditionFailed, validateSourceConditionalHeaders(r, entry, names))
 			})
+		})
+	}
+}
+
+// TestRenameTokenAnswersItsOwnRetry walks the retry x-amz-client-token is there
+// for: the rename commits, its response is lost, and the SDK resends the request
+// unchanged. The move carries the token to the destination, so the destination
+// can answer a retry that its own source no longer can.
+func TestRenameTokenAnswersItsOwnRetry(t *testing.T) {
+	const clientToken = "rename-token-of-this-request"
+	const renameSource = "/bucket/src.txt"
+
+	entry := &filer_pb.Entry{
+		Name:     "src.txt",
+		Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("d41d8cd98f00b204e9800998ecf8427e")},
+	}
+	require.NoError(t, markRenameToken(entry, clientToken, renameSource, "dst.txt"))
+
+	moved := proto.Clone(entry).(*filer_pb.Entry)
+	moved.Name = "dst.txt"
+
+	assert.Equal(t, renameTokenSameRequest, classifyRenameToken(moved, clientToken, renameSource, "dst.txt"))
+	assert.Equal(t, renameTokenReused, classifyRenameToken(moved, clientToken, "/bucket/other.txt", "dst.txt"))
+	assert.Equal(t, renameTokenUnrelated, classifyRenameToken(moved, "rename-token-of-another-request", renameSource, "dst.txt"))
+	// A copy of a renamed object carries its token along; the key it names does not.
+	assert.Equal(t, renameTokenUnrelated, classifyRenameToken(moved, clientToken, renameSource, "copy.txt"))
+
+	// The token is the gateway's own bookkeeping and must not reach a GET or HEAD.
+	assert.True(t, s3_constants.IsSeaweedFSInternalHeader(s3_constants.SeaweedFSRenameToken))
+}
+
+// A reused token is refused with 400 Bad Request, matching the AWS S3
+// RenameObject API documentation for IdempotencyParameterMismatch.
+func TestRenameTokenReuseAnswersBadRequest(t *testing.T) {
+	api := s3err.GetAPIError(s3err.ErrIdempotentParameterMismatch)
+	assert.Equal(t, http.StatusBadRequest, api.HTTPStatusCode)
+	assert.Equal(t, "IdempotentParameterMismatch", api.Code)
+}
+
+func TestClassifyRenameToken(t *testing.T) {
+	const clientToken = "rename-token-of-this-request"
+	const renameSource = "/bucket/src.txt"
+
+	stamped := func(token renameToken) *filer_pb.Entry {
+		raw, err := json.Marshal(token)
+		require.NoError(t, err)
+		return &filer_pb.Entry{Name: "dst.txt", Extended: map[string][]byte{s3_constants.SeaweedFSRenameToken: raw}}
+	}
+	live := renameToken{Token: clientToken, Source: renameSource, Dest: "dst.txt", Unix: time.Now().Unix()}
+
+	tests := []struct {
+		name        string
+		dstEntry    *filer_pb.Entry
+		clientToken string
+		want        renameTokenVerdict
+	}{
+		{"nothing at the destination", nil, clientToken, renameTokenUnrelated},
+		{"request without a token", stamped(live), "", renameTokenUnrelated},
+		{"destination the rename never wrote", &filer_pb.Entry{Name: "dst.txt"}, clientToken, renameTokenUnrelated},
+		{"another rename's token", stamped(live), "rename-token-of-another-request", renameTokenUnrelated},
+		{"same request", stamped(live), clientToken, renameTokenSameRequest},
+		{"token reused for another source", stamped(renameToken{Token: clientToken, Source: "/bucket/other.txt", Dest: "dst.txt", Unix: time.Now().Unix()}), clientToken, renameTokenReused},
+		{"token of a rename to another key", stamped(renameToken{Token: clientToken, Source: renameSource, Dest: "elsewhere.txt", Unix: time.Now().Unix()}), clientToken, renameTokenUnrelated},
+		{"expired token", stamped(renameToken{Token: clientToken, Source: renameSource, Dest: "dst.txt", Unix: time.Now().Add(-renameTokenValidity - time.Minute).Unix()}), clientToken, renameTokenUnrelated},
+		{"unreadable token", &filer_pb.Entry{Name: "dst.txt", Extended: map[string][]byte{s3_constants.SeaweedFSRenameToken: []byte("{")}}, clientToken, renameTokenUnrelated},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, classifyRenameToken(tc.dstEntry, tc.clientToken, renameSource, "dst.txt"))
+		})
+	}
+}
+
+// TestRetryRenameDecision covers the handler's retry branch, including the
+// fallthrough the classification alone cannot express: when the destination
+// carries this request's token but the source is still there, the rename is
+// performed rather than short-circuited.
+func TestRetryRenameDecision(t *testing.T) {
+	const clientToken = "rename-token-of-this-request"
+	const renameSource = "/bucket/src.txt"
+
+	stamped := func(token renameToken) *filer_pb.Entry {
+		raw, err := json.Marshal(token)
+		require.NoError(t, err)
+		return &filer_pb.Entry{Name: "dst.txt", Extended: map[string][]byte{s3_constants.SeaweedFSRenameToken: raw}}
+	}
+	live := renameToken{Token: clientToken, Source: renameSource, Dest: "dst.txt", Unix: time.Now().Unix()}
+
+	tests := []struct {
+		name        string
+		dstEntry    *filer_pb.Entry
+		clientToken string
+		srcErrCode  s3err.ErrorCode
+		wantErr     s3err.ErrorCode
+		wantSettled bool
+	}{
+		// A retry whose source is gone is answered as success.
+		{"same request, source gone", stamped(live), clientToken, s3err.ErrNoSuchKey, s3err.ErrNone, true},
+		// A retry whose source is back falls through: the rename proceeds.
+		{"same request, source present", stamped(live), clientToken, s3err.ErrNone, s3err.ErrNone, false},
+		// A reused token is refused regardless of source state.
+		{"reused token, source gone", stamped(renameToken{Token: clientToken, Source: "/bucket/other.txt", Dest: "dst.txt", Unix: time.Now().Unix()}), clientToken, s3err.ErrNoSuchKey, s3err.ErrIdempotentParameterMismatch, true},
+		{"reused token, source present", stamped(renameToken{Token: clientToken, Source: "/bucket/other.txt", Dest: "dst.txt", Unix: time.Now().Unix()}), clientToken, s3err.ErrNone, s3err.ErrIdempotentParameterMismatch, true},
+		// An unrelated destination falls through to the ordinary rename path.
+		{"unrelated, source gone", nil, clientToken, s3err.ErrNoSuchKey, s3err.ErrNone, false},
+		{"unrelated, source present", nil, clientToken, s3err.ErrNone, s3err.ErrNone, false},
+		// A request without a token is never settled by the retry path.
+		{"no token, destination stamped", stamped(live), "", s3err.ErrNoSuchKey, s3err.ErrNone, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errCode, settled := retryRenameDecision(tc.dstEntry, tc.clientToken, renameSource, "dst.txt", tc.srcErrCode)
+			assert.Equal(t, tc.wantSettled, settled)
+			assert.Equal(t, tc.wantErr, errCode)
 		})
 	}
 }

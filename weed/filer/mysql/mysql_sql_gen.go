@@ -73,6 +73,9 @@ func (gen *SqlGenMysql) GetSqlListInclusive(tableName string) string {
 }
 
 func (gen *SqlGenMysql) GetSqlCreateTable(tableName string) string {
+	if gen.CreateTableSqlTemplate == "" {
+		return ""
+	}
 	return fmt.Sprintf(gen.CreateTableSqlTemplate, tableName)
 }
 

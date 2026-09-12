@@ -41,6 +41,13 @@ var (
 	metadataGapSettledHorizon = 2 * filer.LogFlushInterval
 )
 
+// errAggregationUpgrade ends a delegated local stream when remote peers
+// appear, so the client reconnects to the aggregated stream. It is an
+// error, not a clean end: RetryUntil-driven followers treat a clean end as
+// "following finished" and stop reconnecting. It wraps StopReadingError so
+// LoopProcessLogData does not log it.
+var errAggregationUpgrade = fmt.Errorf("remote filer peers discovered after subscription started; reconnect for aggregated metadata: %w", log_buffer.StopReadingError)
+
 const (
 	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
 	MaxUnsyncedEvents = 1e3
@@ -70,6 +77,13 @@ const (
 // metadataStreamSender is satisfied by both gRPC stream types and pipelinedSender.
 type metadataStreamSender interface {
 	Send(*filer_pb.SubscribeMetadataResponse) error
+}
+
+// metadataLocalStream is the subset of the local-subscribe gRPC server stream
+// the local loop uses, so the aggregated stream type can delegate to it.
+type metadataLocalStream interface {
+	Send(*filer_pb.SubscribeMetadataResponse) error
+	Context() context.Context
 }
 
 const (
@@ -403,17 +417,17 @@ func (r *gapStallReporter) close() {
 // corresponds to the event being waited for. The park is where a stalled
 // subscriber spends all its time, so every exit the read loop relies on has to
 // be checked here too.
-func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, gapStall *gapStallReporter, evictedTsNs func() int64, cursor log_buffer.MessagePosition, notifyChan <-chan struct{}, reason string) (skipToTsNs int64, skip bool, done bool) {
+func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, gapStall *gapStallReporter, evictedTsNs func() int64, cursor log_buffer.MessagePosition, notifyChan <-chan struct{}, reason string, upgradeOnRemotePeer <-chan struct{}) (skipToTsNs int64, skip bool, done bool, upgrade bool) {
 	// Done exits run before park(): a finished stream was never parked, and
 	// marking it so leaves a false "still behind" trace. A cursor at UntilNs is
 	// finished - the bound is inclusive, cursors are exclusive, and
 	// LoopProcessLogData (the only place UntilNs ends a stream) is unreachable
 	// from a park.
 	if req.UntilNs != 0 && cursor.Time.UnixNano() >= req.UntilNs {
-		return 0, false, true
+		return 0, false, true, false
 	}
 	if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-		return 0, false, true
+		return 0, false, true, false
 	}
 	gapStall.park(cursor.Time, reason)
 	if gapStall.stalledFor() >= maxGapStall {
@@ -421,7 +435,7 @@ func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMet
 		// strictly after it, so the recorded loss is exactly (cursor, skipTo].
 		if evicted := evictedTsNs(); evicted > cursor.Time.UnixNano() {
 			gapStall.gaveUp(cursor.Time, evicted, reason)
-			return evicted, true, false
+			return evicted, true, false, false
 		}
 		// Nothing was withheld past the cursor - nothing to skip, nothing being
 		// lost; keep waiting on a fresh stall cycle.
@@ -445,13 +459,15 @@ func (fs *FilerServer) parkOnGap(ctx context.Context, req *filer_pb.SubscribeMet
 				continue
 			}
 		case <-ctx.Done():
-			return 0, false, true
+			return 0, false, true, false
+		case <-upgradeOnRemotePeer:
+			return 0, false, false, true
 		case <-retry:
 		}
 		if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-			return 0, false, true
+			return 0, false, true, false
 		}
-		return 0, false, false
+		return 0, false, false, false
 	}
 }
 
@@ -497,15 +513,16 @@ func resolveGapResume(currentTsNs, currentOffset, earliestMemTsNs, flushedTsNs, 
 // the two subscribe loops; everything else about them must stay identical, and
 // this PR's history shows they drift when edited separately.
 type gapPass struct {
-	fs        *FilerServer
-	req       *filer_pb.SubscribeMetadataRequest
-	gapStall  *gapStallReporter
-	earliest  func() time.Time
-	evicted   func() int64 // gap-proof watermark; aggregated uses the received-ts space
-	flushed   func() int64 // what the last disk read proved covered: flushed AND inside its listing
-	gapChan   <-chan struct{}
-	dataChan  <-chan struct{}
-	gapReason func(earliest time.Time, evictedTsNs int64) string
+	fs                  *FilerServer
+	req                 *filer_pb.SubscribeMetadataRequest
+	gapStall            *gapStallReporter
+	earliest            func() time.Time
+	evicted             func() int64 // gap-proof watermark; aggregated uses the received-ts space
+	flushed             func() int64 // what the last disk read proved covered: flushed AND inside its listing
+	gapChan             <-chan struct{}
+	dataChan            <-chan struct{}
+	gapReason           func(earliest time.Time, evictedTsNs int64) string
+	upgradeOnRemotePeer <-chan struct{}
 }
 
 type gapOutcome int
@@ -514,6 +531,7 @@ const (
 	gapProceed  gapOutcome = iota // read memory
 	gapContinue                   // restart the pass
 	gapDone                       // the stream is over
+	gapUpgrade                    // remote peer arrived; end for reconnect
 )
 
 // resolve is the gap decision both loops run between the disk pass and the
@@ -565,9 +583,12 @@ func (p *gapPass) resolve(ctx context.Context, cursor *log_buffer.MessagePositio
 }
 
 func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, latch *error, notifyChan <-chan struct{}, reason string) gapOutcome {
-	skipTo, skip, done := p.fs.parkOnGap(ctx, p.req, p.gapStall, p.evicted, *cursor, notifyChan, reason)
+	skipTo, skip, done, upgrade := p.fs.parkOnGap(ctx, p.req, p.gapStall, p.evicted, *cursor, notifyChan, reason, p.upgradeOnRemotePeer)
 	if done {
 		return gapDone
+	}
+	if upgrade {
+		return gapUpgrade
 	}
 	if skip {
 		*cursor = log_buffer.NewMessagePosition(skipTo, gapResumeCursorOffset)
@@ -577,8 +598,17 @@ func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, 
 }
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
-	if fs.filer.MetaAggregator == nil || !fs.filer.MetaAggregator.HasRemotePeers() {
-		return fs.SubscribeLocalMetadata(req, stream)
+	// A filer that has not learned remote peers yet serves the local log and
+	// upgrades when the first one appears. RemotePeerArrivedChan takes the
+	// arrival channel under the same lock as the peer check, so a peer
+	// learned in between returns nil and the stream goes straight to the
+	// aggregated path.
+	if fs.filer.MetaAggregator != nil {
+		if arrival := fs.filer.MetaAggregator.RemotePeerArrivedChan(); arrival != nil {
+			return fs.subscribeLocalMetadata(req, stream, arrival)
+		}
+	} else {
+		return fs.subscribeLocalMetadata(req, stream, nil)
 	}
 
 	ctx := stream.Context()
@@ -744,7 +774,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				diskPassProvenTsNs = refsStopTsNs
 			}
 			if refsStopTsNs > lastReadTime.Time.UnixNano() {
-				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs)
+				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs, nil)
 			} else {
 				processedTsNs, isDone, readPersistedLogErr = 0, false, nil
 			}
@@ -914,6 +944,14 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 }
 
 func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
+	return fs.subscribeLocalMetadata(req, stream, nil)
+}
+
+// subscribeLocalMetadata serves the filer's own log to the stream. Peer
+// aggregation streams pass upgradeOnRemotePeer == nil; the SubscribeMetadata
+// delegation passes the aggregator's arrival channel so the stream ends
+// when a remote peer appears and the client reconnects to the aggregated path.
+func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream metadataLocalStream, upgradeOnRemotePeer <-chan struct{}) error {
 
 	ctx := stream.Context()
 	peerAddress := findClientAddress(ctx, 0)
@@ -962,6 +1000,13 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastFlushReportNs int64
 	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		if upgradeOnRemotePeer != nil {
+			select {
+			case <-upgradeOnRemotePeer:
+				return false, errAggregationUpgrade
+			default:
+			}
+		}
 		lastSeenTsNs = logEntry.TsNs
 		return baseEachLogEntryFn(logEntry)
 	}
@@ -974,16 +1019,19 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastDiskReadTsNs int64 = -1     // Track the last read position we used for disk read
 	sentRefs := make(map[string]sentRefState)
 
+	var upgradedToAggregation bool
+
 	localBuffer := fs.filer.LocalMetaLogBuffer
 	gaps := &gapPass{
-		fs:       fs,
-		req:      req,
-		gapStall: gapStall,
-		earliest: localBuffer.GetEarliestTime,
-		evicted:  localBuffer.GetLastEvictedTsNs, // local disk carries the ring's own timestamps
-		flushed:  func() int64 { return lastCheckedFlushTsNs },
-		gapChan:  localFlushChan,
-		dataChan: localFlushChan,
+		fs:                  fs,
+		req:                 req,
+		gapStall:            gapStall,
+		earliest:            localBuffer.GetEarliestTime,
+		evicted:             localBuffer.GetLastEvictedTsNs, // local disk carries the ring's own timestamps
+		flushed:             func() int64 { return lastCheckedFlushTsNs },
+		gapChan:             localFlushChan,
+		dataChan:            localFlushChan,
+		upgradeOnRemotePeer: upgradeOnRemotePeer,
 		gapReason: func(earliest time.Time, evictedTsNs int64) string {
 			return fmt.Sprintf("gap is not flushed yet (earliest memory %v, flushed through %v)",
 				earliest, time.Unix(0, lastCheckedFlushTsNs))
@@ -991,6 +1039,15 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	}
 
 	for {
+		if upgradeOnRemotePeer != nil {
+			select {
+			case <-upgradeOnRemotePeer:
+				glog.V(0).Infof("remote peer discovered after local subscribe %s started: ending stream so the client reconnects to the aggregated stream", clientName)
+				return errAggregationUpgrade
+			default:
+			}
+		}
+
 		// Check if new data has been flushed to disk since last check, or if read position advanced
 		currentFlushTsNs := fs.filer.LocalMetaLogBuffer.GetLastFlushTsNs()
 		currentReadTsNs := lastReadTime.Time.UnixNano()
@@ -1005,11 +1062,14 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
 			if req.ClientSupportsMetadataChunks {
-				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, req.UntilNs, sentRefs)
+				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, req.UntilNs, sentRefs, upgradeOnRemotePeer)
 			} else {
 				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, eachLogEntryFn)
 			}
 			if readPersistedLogErr != nil {
+				if errors.Is(readPersistedLogErr, errAggregationUpgrade) {
+					return errAggregationUpgrade
+				}
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
 				return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
 			}
@@ -1043,6 +1103,8 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		switch gaps.resolve(ctx, &lastReadTime, &readInMemoryLogErr, diskAdvanced) {
 		case gapDone:
 			return nil
+		case gapUpgrade:
+			return errAggregationUpgrade
 		case gapContinue:
 			continue
 		}
@@ -1055,6 +1117,14 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				return false
 			default:
 			}
+			if upgradeOnRemotePeer != nil {
+				select {
+				case <-upgradeOnRemotePeer:
+					upgradedToAggregation = true
+					return false
+				default:
+				}
+			}
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
 				return false
 			}
@@ -1062,7 +1132,14 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			lastFlushReportNs = fs.maybeSendFlushReport(req, sender, lastFlushReportNs)
 			return true
 		}, eachLogEntryFn)
+		if upgradedToAggregation {
+			glog.V(0).Infof("remote peer discovered after local subscribe %s started: ending stream so the client reconnects to the aggregated stream", clientName)
+			return errAggregationUpgrade
+		}
 		if readInMemoryLogErr != nil {
+			if errors.Is(readInMemoryLogErr, errAggregationUpgrade) {
+				return errAggregationUpgrade
+			}
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
 				// Fell behind the ring: back to the disk pass (it re-runs when
 				// the flush or the cursor moved), and from there to the gap
@@ -1223,7 +1300,7 @@ func (fs *FilerServer) maybeSendIdleHeartbeat(req *filer_pb.SubscribeMetadataReq
 // empty-notification marker: both chunk consumers buffer refs until a non-ref
 // message, so an idle source would otherwise strand the backlog in the
 // client's pending list until the next mutation.
-func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamSender, startPos log_buffer.MessagePosition, untilNs int64, sent map[string]sentRefState) (processedTsNs int64, isDone bool, err error) {
+func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamSender, startPos log_buffer.MessagePosition, untilNs int64, sent map[string]sentRefState, upgradeOnRemotePeer <-chan struct{}) (processedTsNs int64, isDone bool, err error) {
 	collected, _, err := fs.filer.CollectLogFileRefs(ctx, startPos, untilNs)
 	if err != nil {
 		return 0, false, err
@@ -1232,8 +1309,15 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	if len(refs) == 0 {
 		return startPos.Time.UnixNano(), false, nil
 	}
-	if err := fs.sendRefsBatched(sender, refs); err != nil {
+	if err := fs.sendRefsBatched(sender, refs, upgradeOnRemotePeer); err != nil {
 		return 0, false, err
+	}
+	if upgradeOnRemotePeer != nil {
+		select {
+		case <-upgradeOnRemotePeer:
+			return 0, false, errAggregationUpgrade
+		default:
+		}
 	}
 
 	// Shipped content end, read from the shipped chunks alone - a fresh
@@ -1285,9 +1369,16 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 // sendRefsBatched sends refs through the pipelined sender, which keeps them
 // out of Events batches; gRPC allows one sending goroutine per stream and the
 // sender's goroutine is it.
-func (fs *FilerServer) sendRefsBatched(sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef) error {
+func (fs *FilerServer) sendRefsBatched(sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef, upgradeOnRemotePeer <-chan struct{}) error {
 	const maxRefsPerMessage = 64
 	for i := 0; i < len(refs); i += maxRefsPerMessage {
+		if upgradeOnRemotePeer != nil {
+			select {
+			case <-upgradeOnRemotePeer:
+				return errAggregationUpgrade
+			default:
+			}
+		}
 		end := i + maxRefsPerMessage
 		if end > len(refs) {
 			end = len(refs)

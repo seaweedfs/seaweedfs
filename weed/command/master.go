@@ -54,6 +54,7 @@ type MasterOptions struct {
 	peers                      *string
 	mastersDeprecated          *string // deprecated, for backward compatibility in master.follower
 	volumeSizeLimitMB          *uint
+	fileSizeLimitMB            *int
 	volumePreallocate          *bool
 	maxParallelVacuumPerServer *int
 	// pulseSeconds       *int
@@ -89,6 +90,7 @@ func init() {
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095; use 'none' for single-master mode")
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", util.DefaultVolumeSizeLimitMB, "Master stops directing writes to oversized volumes.")
+	m.fileSizeLimitMB = cmdMaster.Flag.Int("fileSizeLimitMB", 256, "limit the file size accepted by /submit, should match the volume servers' -fileSizeLimitMB (-volume.fileSizeLimitMB under weed server or weed mini, which set this for you)")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
@@ -468,6 +470,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		Master:                     masterAddress,
 		MetaFolder:                 *m.metaFolder,
 		VolumeSizeLimitMB:          uint32(*m.volumeSizeLimitMB),
+		FileSizeLimitMB:            *m.fileSizeLimitMB,
 		VolumePreallocate:          *m.volumePreallocate,
 		MaxParallelVacuumPerServer: *m.maxParallelVacuumPerServer,
 		// PulseSeconds:            *m.pulseSeconds,

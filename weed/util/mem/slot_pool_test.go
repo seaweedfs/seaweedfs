@@ -47,3 +47,12 @@ func TestBitCount(t *testing.T) {
 	}
 
 }
+
+func TestAllocationSize(t *testing.T) {
+	for _, size := range []int{0, 1, 1024, 1025, 4883, 2 << 20} {
+		buf := Allocate(size)
+		assert.Equal(t, cap(buf), AllocationSize(size))
+		Free(buf)
+	}
+	assert.Equal(t, 257<<20, AllocationSize(257<<20))
+}

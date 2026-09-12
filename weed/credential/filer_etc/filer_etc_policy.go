@@ -181,6 +181,9 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 
 			var content []byte
 			if len(entry.Content) > 0 {
@@ -188,26 +191,21 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			} else {
 				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					// fail the snapshot: a skipped policy would read as deleted
 					return fmt.Errorf("failed to read policy file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
 
-			if len(content) > 0 {
-				var policy policy_engine.PolicyDocument
-				if err := json.Unmarshal(content, &policy); err != nil {
-					glog.Warningf("Failed to unmarshal policy %s: %v", entry.Name, err)
-					continue
-				}
-
-				// The file name is "policyName.json"
-				policyName := entry.Name
-				if strings.HasSuffix(policyName, ".json") {
-					policyName = policyName[:len(policyName)-5]
-					policies[policyName] = policy
-				}
+			if len(content) == 0 {
+				return fmt.Errorf("policy file %s is empty", entry.Name)
 			}
+			var policy policy_engine.PolicyDocument
+			if err := json.Unmarshal(content, &policy); err != nil {
+				return fmt.Errorf("failed to unmarshal policy %s: %w", entry.Name, err)
+			}
+
+			policyName := strings.TrimSuffix(entry.Name, ".json")
+			policies[policyName] = policy
 		}
 		return nil
 	})
@@ -498,10 +496,10 @@ func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, erro
 			if entry.IsDirectory {
 				continue
 			}
-			name := entry.Name
-			if strings.HasSuffix(name, ".json") {
-				name = name[:len(name)-5]
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
 			}
+			name := entry.Name[:len(entry.Name)-5]
 			if _, found := seenNames[name]; found {
 				continue
 			}

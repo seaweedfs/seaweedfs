@@ -285,8 +285,12 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 	}
 	return nil
 }
-func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (ret *DiskLocation) {
+func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool, replaceVid ...needle.VolumeId) (ret *DiskLocation) {
 	max := int32(0)
+	var replace needle.VolumeId
+	if len(replaceVid) > 0 {
+		replace = replaceVid[0]
+	}
 	for _, location := range s.Locations {
 		if filterFn != nil && !filterFn(location) {
 			continue
@@ -295,6 +299,11 @@ func (s *Store) FindFreeLocation(filterFn func(location *DiskLocation) bool) (re
 			continue
 		}
 		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
+		if replace != 0 {
+			if _, found := location.FindVolume(replace); found {
+				currentFreeCount++
+			}
+		}
 		currentFreeCount *= erasure_coding.DataShardsCount
 		currentFreeCount -= int32(location.EcShardCount())
 		currentFreeCount /= erasure_coding.DataShardsCount
@@ -332,14 +341,17 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			volume.diskId = diskId // Set the disk ID
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d on disk ID %d", vid, diskId)
+			readOnly, _, readOnlyCanDelete, _ := volume.ReadOnlyReasons()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
-				Id:               uint32(vid),
-				Collection:       collection,
-				ReplicaPlacement: uint32(replicaPlacement.Byte()),
-				Version:          uint32(volume.Version()),
-				Ttl:              ttl.ToUint32(),
-				DiskType:         string(diskType),
-				DiskId:           diskId,
+				Id:                uint32(vid),
+				Collection:        collection,
+				ReplicaPlacement:  uint32(replicaPlacement.Byte()),
+				Version:           uint32(volume.Version()),
+				Ttl:               ttl.ToUint32(),
+				DiskType:          string(diskType),
+				DiskId:            diskId,
+				ReadOnly:          readOnly,
+				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
 			return nil
 		} else {
@@ -392,17 +404,19 @@ func collectStatsForOneLocation(location *DiskLocation) (stats []*VolumeInfo) {
 
 func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 
+	readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 	s = &VolumeInfo{
 		Id:               vid,
 		Collection:       v.Collection,
 		ReplicaPlacement: v.ReplicaPlacement,
 		Version:          v.Version(),
-		ReadOnly:         v.IsReadOnly(),
+		ReadOnly:         readOnly,
 		Ttl:              v.Ttl,
 		CompactRevision:  uint32(v.CompactionRevision),
 		DiskType:         v.DiskType().String(),
 		DiskId:           v.diskId,
 	}
+	s.ReadOnlyCanDelete = readOnlyCanDelete
 	s.RemoteStorageName, _ = v.RemoteStorageNameKey()
 
 	v.dataFileAccessLock.RLock()
@@ -446,6 +460,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	// master can tell whether applying what it was sent leaves it current.
 	// Volumes skipped below -- quarantined, phantom, expired -- are in neither.
 	var volumeDigest uint64
+	var quarantinedVolumes int
 	sendFullList, reportGeneration, reportPass := s.volumeReport.begin()
 	maxVolumeCounts := make(map[string]uint32)
 	// Per-disk effective max for DiskTag, captured alongside the per-type sum.
@@ -509,6 +524,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 						v.Id, ioCount, ioErr)
 					v.markIoQuarantined()
 				}
+				quarantinedVolumes++
 				v.noWriteLock.Lock()
 				v.noWriteOrDelete = true
 				v.noWriteLock.Unlock()
@@ -651,6 +667,19 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		state = s.State.Proto()
 	}
 
+	quarantinedEcShards := 0
+	for _, location := range s.Locations {
+		location.ecVolumesLock.RLock()
+		for _, ev := range location.ecVolumes {
+			if _, _, quarantined := ev.GetIoErrorState(); quarantined {
+				quarantinedEcShards += len(ev.Shards)
+			}
+		}
+		location.ecVolumesLock.RUnlock()
+	}
+	stats.VolumeServerIoQuarantineGauge.WithLabelValues("volume").Set(float64(quarantinedVolumes))
+	stats.VolumeServerIoQuarantineGauge.WithLabelValues("ec_shard").Set(float64(quarantinedEcShards))
+
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,
 		Port:            uint32(s.Port),
@@ -715,10 +744,13 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 
 		// Collect ecVolume to be deleted
 		var toDeleteEvs []*erasure_coding.EcVolume
+		var ioQuarantinedEvs []*erasure_coding.EcVolume
 		location.ecVolumesLock.RLock()
 		for _, ev := range location.ecVolumes {
 			if ev.IsTimeToDestroy() {
 				toDeleteEvs = append(toDeleteEvs, ev)
+			} else if ioErr, ioCount, quarantined := ev.GetIoErrorState(); quarantined || (ioErr != nil && ioCount >= IoErrorTolerance) {
+				ioQuarantinedEvs = append(ioQuarantinedEvs, ev)
 			} else {
 				messages := ev.ToVolumeEcShardInformationMessage(uint32(diskId))
 				ecShards = append(ecShards, messages...)
@@ -740,6 +772,19 @@ func (s *Store) deleteExpiredEcVolumes() (ecShards, deleted []*master_pb.VolumeE
 			// from volumes that were already collected
 			deleted = append(deleted, messages...)
 		}
+
+		// Quarantine EC volumes on faulty media: keep them in memory (so
+		// healthz can observe the quarantine state and an operator can
+		// recover) but stop reporting them so the master re-replicates
+		// from healthy peers. Mirrors the regular volume quarantine.
+		for _, ev := range ioQuarantinedEvs {
+			ioErr, ioCount, quarantined := ev.GetIoErrorState()
+			if !quarantined {
+				ev.MarkIoQuarantined()
+				glog.Warningf("ec volume %d quarantined after %d consecutive IO errors: %v",
+					ev.VolumeId, ioCount, ioErr)
+			}
+		}
 	}
 	return
 }
@@ -753,6 +798,31 @@ func (s *Store) SetStopping() {
 
 func (s *Store) IsStopping() bool {
 	return s.isStopping.Load()
+}
+
+// HasIoQuarantine reports whether any local volume or EC shard is currently
+// quarantined due to sustained storage-media EIO. Used by /healthz so a
+// load balancer can drain a server whose underlying media is faulty.
+func (s *Store) HasIoQuarantine() bool {
+	for _, location := range s.Locations {
+		location.volumesLock.RLock()
+		for _, v := range location.volumes {
+			if _, _, quarantined := v.getIoErrorState(); quarantined {
+				location.volumesLock.RUnlock()
+				return true
+			}
+		}
+		location.volumesLock.RUnlock()
+		location.ecVolumesLock.RLock()
+		for _, ev := range location.ecVolumes {
+			if _, _, quarantined := ev.GetIoErrorState(); quarantined {
+				location.ecVolumesLock.RUnlock()
+				return true
+			}
+		}
+		location.ecVolumesLock.RUnlock()
+	}
+	return false
 }
 
 func (s *Store) LoadNewVolumes() {
@@ -833,6 +903,8 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 		}
 	}
 	v.noWriteLock.Lock()
+	prevNoWriteOrDelete := v.noWriteOrDelete
+	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = !canDelete
 	if canDelete {
 		v.noWriteCanDelete = true
@@ -841,7 +913,18 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 		v.noWriteCanDelete = false
 	}
 	if persist {
-		v.PersistReadOnly(true, canDelete)
+		if err := v.PersistReadOnly(true, canDelete); err != nil {
+			// A pre-commit failure leaves the old .vif intact, so roll
+			// back the in-memory flags. A NotCrashDurableError means the
+			// rename already committed; keep flags aligned with the file.
+			var ndErr *volume_info.NotCrashDurableError
+			if !errors.As(err, &ndErr) {
+				v.noWriteOrDelete = prevNoWriteOrDelete
+				v.noWriteCanDelete = prevNoWriteCanDelete
+			}
+			v.noWriteLock.Unlock()
+			return fmt.Errorf("volume %d persist read-only: %w", i, err)
+		}
 	}
 	v.noWriteLock.Unlock()
 	return nil
@@ -860,34 +943,73 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 	}
 	v.noWriteLock.Lock()
+	prevNoWriteOrDelete := v.noWriteOrDelete
+	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false
 	// Remote-tiered volumes must stay noWriteCanDelete regardless of marks.
 	if !v.HasRemoteFile() {
 		v.noWriteCanDelete = false
 	}
-	v.PersistReadOnly(false, false)
+	persistErr := v.PersistReadOnly(false, false)
+	if persistErr != nil {
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(persistErr, &ndErr) {
+			// Pre-commit failure: the old .vif is intact, so roll back
+			// the in-memory flags and return early.
+			v.noWriteOrDelete = prevNoWriteOrDelete
+			v.noWriteCanDelete = prevNoWriteCanDelete
+			v.noWriteLock.Unlock()
+			return fmt.Errorf("volume %d persist writable: %w", i, persistErr)
+		}
+		// Post-rename durability failure: the file already holds the new
+		// mode. Wrap the error but continue with post-commit work so the
+		// volume is usable in memory even though the rename may not
+		// survive a crash.
+		persistErr = fmt.Errorf("volume %d persist writable: %w", i, persistErr)
+	}
 	v.noWriteLock.Unlock()
 	// Clear the EIO streak and the sticky quarantine flag so the next
 	// CollectHeartbeat can announce the volume again. If the disk is
 	// still bad, the next failed op will re-arm the streak.
 	v.resetIoErrorState()
-	return nil
+	return persistErr
 }
 
-func (s *Store) MountVolume(i needle.VolumeId) error {
+// MountVolume loads a volume and announces it after all optional validators
+// succeed. A validator failure unloads the volume before returning the error,
+// so an invalid newly copied replica is never announced to the master.
+func (s *Store) MountVolume(i needle.VolumeId, collection *string, validators ...func(*Volume) error) error {
+	return s.mountVolume(i, collection, validators...)
+}
+
+func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ...func(*Volume) error) error {
 	for diskId, location := range s.Locations {
-		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind); found == true {
+		if found := location.LoadVolume(uint32(diskId), i, s.NeedleMapKind, collection); found == true {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			v.diskId = uint32(diskId) // Set disk ID when mounting
+			for _, validator := range validators {
+				if validator == nil {
+					continue
+				}
+				if err := validator(v); err != nil {
+					if unloadErr := location.UnloadVolume(i); unloadErr != nil {
+						return fmt.Errorf("%w; failed to unload volume %d after validation error: %v", err, i, unloadErr)
+					}
+					return err
+				}
+			}
+			readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
-				Id:               uint32(v.Id),
-				Collection:       v.Collection,
-				ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
-				Version:          uint32(v.Version()),
-				Ttl:              v.Ttl.ToUint32(),
-				DiskType:         string(v.location.DiskType),
-				DiskId:           uint32(diskId),
+				Id:                uint32(v.Id),
+				Collection:        v.Collection,
+				ReplicaPlacement:  uint32(v.ReplicaPlacement.Byte()),
+				Version:           uint32(v.Version()),
+				Ttl:               v.Ttl.ToUint32(),
+				DiskType:          string(v.location.DiskType),
+				DiskId:            uint32(diskId),
+				ReadOnly:          readOnly,
+				ReadOnlyCanDelete: readOnlyCanDelete,
 			}
 			return nil
 		}

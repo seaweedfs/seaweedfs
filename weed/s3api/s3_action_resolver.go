@@ -116,6 +116,11 @@ var bucketQueryActions = map[string]map[string]string{
 		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS,
 		http.MethodDelete: s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS, // DELETE uses same permission as PUT
 	},
+	// SeaweedFS extension: bucket quota subresource
+	"seaweedfs-quota": {
+		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_QUOTA,
+		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_QUOTA,
+	},
 }
 
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
@@ -209,6 +214,12 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	if query.Has("versions") {
 		if method == http.MethodGet && !hasObject {
 			return s3_constants.S3_ACTION_LIST_BUCKET_VERSIONS
+		}
+	}
+
+	if query.Get("list-type") == "2" {
+		if method == http.MethodGet && !hasObject {
+			return s3_constants.S3_ACTION_LIST_BUCKET
 		}
 	}
 
@@ -366,6 +377,10 @@ func mapBaseActionToS3Format(baseAction string) string {
 		return s3_constants.S3_ACTION_PUT_BUCKET_POLICY
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
 		return s3_constants.S3_ACTION_DELETE_BUCKET_POLICY
+	case s3_constants.ACTION_PUT_BUCKET_QUOTA:
+		return s3_constants.S3_ACTION_PUT_BUCKET_QUOTA
+	case s3_constants.ACTION_GET_BUCKET_QUOTA:
+		return s3_constants.S3_ACTION_GET_BUCKET_QUOTA
 	default:
 		// For unknown actions, prefix with s3: to maintain format consistency
 		return "s3:" + baseAction

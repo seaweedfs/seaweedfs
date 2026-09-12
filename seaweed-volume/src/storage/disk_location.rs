@@ -1265,7 +1265,7 @@ fn check_dat_file_exists(path: &str) -> bool {
 /// True when a `.vif` references remote-tier files: a remote-only volume
 /// that has no local `.dat` but must still load via the remote path,
 /// rather than be skipped as a lone EC sidecar.
-fn vif_references_remote_file(vif_path: &str) -> bool {
+pub(crate) fn vif_references_remote_file(vif_path: &str) -> bool {
     fs::read_to_string(vif_path)
         .ok()
         .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())

@@ -14,6 +14,12 @@ one.
 
 ## Building
 
+Requires Rust 1.94.1+ (2024 edition), matching `rust-version` in `Cargo.toml`.
+The patch release matters: 1.94.0 does not build. The edition itself only needs
+1.85; the higher floor comes from the dependency tree — lance's `aws` feature
+pulls in the AWS SDK — so it moves with those crates. CI builds on the latest
+stable.
+
 `core` compiles `plugin.proto` with the protoc that protoc-bin-vendored ships,
 the way seaweed-volume does, so it needs no system install.
 

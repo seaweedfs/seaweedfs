@@ -1328,6 +1328,20 @@ admin:
   replicas: 1
   port: 23646  # Default admin port
   grpcPort: 33646  # Default gRPC port for worker connections
+  # IP address the admin server listens on. Since `weed admin` 4.46 defaults to
+  # loopback (127.0.0.1), the chart must bind a non-loopback address for the
+  # kubelet's httpGet readiness/liveness probes (which dial the pod IP) to ever
+  # succeed. "0.0.0.0" restores the pre-4.46 behaviour of listening on all
+  # interfaces. A non-loopback address requires authentication: set
+  # admin.secret.adminPassword or admin.secret.existingSecret, or supply
+  # WEED_ADMIN_PASSWORD via admin.extraEnvironmentVars /
+  # admin.secretExtraEnvironmentVars; otherwise the admin container will exit
+  # with a clear error rather than silently staying unready. The whole
+  # 127.0.0.0/8 range and ::1 are treated as loopback (matching weed admin).
+  # Set to a loopback address only if you also replace the httpGet probes.
+  # Note: the -ip flag requires SeaweedFS 4.46 or newer; pinning
+  # admin.imageOverride to an older image is not supported with this chart.
+  ip: "0.0.0.0"
   loggingOverrideLevel: null
 
   # Admin authentication

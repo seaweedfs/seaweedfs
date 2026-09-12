@@ -92,6 +92,9 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 			if entry.IsDirectory {
 				continue
 			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
 			hasIdentities = true
 
 			var content []byte
@@ -100,26 +103,28 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 			} else {
 				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					// fail the snapshot: a skipped identity would read as deleted
 					return fmt.Errorf("failed to read identity file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
 
-			if len(content) > 0 {
-				identity := &iam_pb.Identity{}
-				if err := json.Unmarshal(content, identity); err != nil {
-					glog.Warningf("Failed to unmarshal identity %s: %v", entry.Name, err)
-					continue
-				}
+			if len(content) == 0 {
+				return fmt.Errorf("identity file %s is empty", entry.Name)
+			}
+			identity := &iam_pb.Identity{}
+			if err := json.Unmarshal(content, identity); err != nil {
+				return fmt.Errorf("failed to unmarshal identity %s: %w", entry.Name, err)
+			}
+			if identity.Name == "" {
+				return fmt.Errorf("identity file %s has empty name", entry.Name)
+			}
 
-				// Merge logic: Overwrite existing or Append
-				idx := findIdentity(identity.Name)
-				if idx != -1 {
-					s3cfg.Identities[idx] = identity
-				} else {
-					s3cfg.Identities = append(s3cfg.Identities, identity)
-				}
+			// Merge logic: Overwrite existing or Append
+			idx := findIdentity(identity.Name)
+			if idx != -1 {
+				s3cfg.Identities[idx] = identity
+			} else {
+				s3cfg.Identities = append(s3cfg.Identities, identity)
 			}
 		}
 		return nil

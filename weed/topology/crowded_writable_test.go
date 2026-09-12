@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -72,4 +73,53 @@ func TestCrowdedCountStillMatchesWritables(t *testing.T) {
 	if writable != 1 || crowded != 1 {
 		t.Errorf("writable=%d crowded=%d, want 1 and 1", writable, crowded)
 	}
+}
+
+// SetVolumeCrowded mutates the crowded map while GetWritableVolumeCount reads
+// it on the Assign hot path. Under RLock both could run at once and the Go
+// runtime aborts with "concurrent map read and map write". Run with -race to
+// reproduce the original bug; the write lock makes this pass.
+func TestSetVolumeCrowdedNoRaceWithGetWritableVolumeCount(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := NewVolumeLayout(rp, needle.EMPTY_TTL, types.HardDriveType, 10000, false)
+	// GetWritableVolumeCount iterates vl.writables, so give it something to
+	// read while the crowded map is being mutated.
+	vl.writables = []needle.VolumeId{1, 2, 3}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					vl.SetVolumeCrowded(needle.VolumeId(2))
+				}
+			}
+		}()
+	}
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					vl.GetWritableVolumeCount()
+				}
+			}
+		}()
+	}
+
+	// The race detector needs only a brief window to flag a concurrent
+	// map read/write; let the goroutines hammer the lock briefly.
+	time.Sleep(50 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }

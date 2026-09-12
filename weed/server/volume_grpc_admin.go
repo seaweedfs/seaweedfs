@@ -27,6 +27,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 // checkGrpcAdminAuth verifies the gRPC caller is authorized for destructive
@@ -130,7 +131,7 @@ func (vs *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.V
 		return resp, err
 	}
 
-	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId))
+	err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), req.Collection)
 
 	if err != nil {
 		glog.Errorf("volume mount %v: %v", req, err)
@@ -252,7 +253,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		glog.Errorf("volume configure %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure %v: %v", req, err)
 		// Try to re-mount to restore the volume state
-		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); mountErr != nil {
+		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); mountErr != nil {
 			glog.Errorf("volume configure failed to restore mount %v: %v", req, mountErr)
 			resp.Error += fmt.Sprintf(". Also failed to restore mount: %v", mountErr)
 		}
@@ -260,7 +261,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 	}
 
 	// mount
-	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); err != nil {
+	if err := vs.store.MountVolume(needle.VolumeId(req.VolumeId), nil); err != nil {
 		glog.Errorf("volume configure mount %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure mount %v: %v", req, err)
 		return resp, nil
@@ -282,9 +283,18 @@ func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volum
 	// rare case 1.5: it will be unlucky if heartbeat happened between step 1 and 2.
 
 	// step 2: mark local volume as readonly
+	var persistErr error
 	if err := vs.store.MarkVolumeReadonly(v.Id, canDelete, persist); err != nil {
-		glog.Errorf("mark volume %d readonly: %v", v.Id, err)
-		return err
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			glog.Errorf("mark volume %d readonly: %v", v.Id, err)
+			return err
+		}
+		// Post-rename durability failure: the .vif already holds the new
+		// mode. Continue with step 3 so the master reflects the change,
+		// then propagate the durability warning.
+		glog.Warningf("mark volume %d readonly: %v", v.Id, err)
+		persistErr = err
 	} else {
 		glog.V(2).Infof("volume %d marked readonly", v.Id)
 	}
@@ -294,7 +304,7 @@ func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volum
 		return err
 	}
 
-	return nil
+	return persistErr
 }
 
 func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volume) error {
@@ -302,9 +312,18 @@ func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volum
 		return err
 	}
 
+	var persistErr error
 	if err := vs.store.MarkVolumeWritable(v.Id); err != nil {
-		glog.Errorf("mark volume %d writable: %v", v.Id, err)
-		return err
+		var ndErr *volume_info.NotCrashDurableError
+		if !errors.As(err, &ndErr) {
+			glog.Errorf("mark volume %d writable: %v", v.Id, err)
+			return err
+		}
+		// Post-rename durability failure: the .vif already holds the new
+		// mode. Continue notifying the master so traffic is redirected,
+		// then propagate the durability warning.
+		glog.Warningf("mark volume %d writable: %v", v.Id, err)
+		persistErr = err
 	} else {
 		glog.V(2).Infof("volume %d marked writable", v.Id)
 	}
@@ -314,7 +333,7 @@ func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volum
 		return err
 	}
 
-	return nil
+	return persistErr
 }
 
 func isNotLeaderErr(err error) bool {

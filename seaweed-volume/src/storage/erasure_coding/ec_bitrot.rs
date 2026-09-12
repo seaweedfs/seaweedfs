@@ -505,7 +505,21 @@ pub fn verify_shard_file_blocks(
     entry: &EcShardChecksums,
     block_size: i64,
 ) -> io::Result<Vec<usize>> {
-    let f = File::open(path)?;
+    verify_shard_blocks(&File::open(path)?, entry, block_size)
+}
+
+/// Same verification against an ALREADY-OPEN shard handle.
+///
+/// Go's `ChecksumScrub` reads through `shard.ReadAt`, i.e. the handle the
+/// EcVolumeShard already holds, so a concurrent teardown that unlinks the shard
+/// cannot turn an intentional removal into a scrub read error. A scrub that
+/// runs with the store lock released has to read the same way — see
+/// `EcChecksumScrubPlan`.
+pub fn verify_shard_blocks(
+    f: &File,
+    entry: &EcShardChecksums,
+    block_size: i64,
+) -> io::Result<Vec<usize>> {
     let file_size = f.metadata()?.len() as i64;
     let want = unpack_u32_le(&entry.block_crc32c);
 
@@ -523,7 +537,7 @@ pub fn verify_shard_file_blocks(
             break;
         }
         let to_read = to_read as usize;
-        read_full_at(&f, &mut buf[..to_read], offset as u64)?;
+        read_full_at(f, &mut buf[..to_read], offset as u64)?;
         if CRC::new(&buf[..to_read]).0 != *want_crc {
             mismatched.push(i);
         }

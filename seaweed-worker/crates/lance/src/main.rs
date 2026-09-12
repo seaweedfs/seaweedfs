@@ -113,6 +113,8 @@ fn metrics_address(ip: &str, port: u16) -> Result<SocketAddr> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    weed_lance_worker::tls::install_default_crypto_provider();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

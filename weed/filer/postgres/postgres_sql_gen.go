@@ -28,6 +28,21 @@ var (
 	_ = abstract_sql.SqlGenerator(&SqlGenPostgres{})
 )
 
+// ResolveCreateTableQuery normalizes the createTable config value. A boolean
+// true (read by viper as the string "true") selects the default template.
+// An empty or false value returns an empty string so the caller can skip
+// table creation. Any other value is treated as a custom SQL template.
+func ResolveCreateTableQuery(createTable string) string {
+	switch createTable {
+	case "true":
+		return DefaultCreateTableQuery
+	case "false", "":
+		return ""
+	default:
+		return createTable
+	}
+}
+
 func (gen *SqlGenPostgres) GetSqlInsert(tableName string) string {
 	if gen.UpsertQueryTemplate != "" {
 		return fmt.Sprintf(gen.UpsertQueryTemplate, tableName)
@@ -71,6 +86,9 @@ func (gen *SqlGenPostgres) GetSqlListInclusive(tableName string) string {
 }
 
 func (gen *SqlGenPostgres) GetSqlCreateTable(tableName string) string {
+	if gen.CreateTableSqlTemplate == "" {
+		return ""
+	}
 	return fmt.Sprintf(gen.CreateTableSqlTemplate, tableName)
 }
 

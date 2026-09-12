@@ -110,15 +110,16 @@ type IdentityAccessManagement struct {
 }
 
 type Identity struct {
-	Name         string
-	Account      *Account
-	Credentials  []*Credential
-	Actions      []Action
-	PolicyNames  []string               // Attached IAM policy names
-	PrincipalArn string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
-	Disabled     bool                   // User status: false = enabled (default), true = disabled
-	Claims       map[string]interface{} // JWT claims for policy substitution
-	IsStatic     bool                   // Whether identity was loaded from static config (immutable)
+	Name          string
+	Account       *Account
+	Credentials   []*Credential
+	Actions       []Action
+	PolicyNames   []string               // Attached IAM policy names
+	PrincipalArn  string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled      bool                   // User status: false = enabled (default), true = disabled
+	Claims        map[string]interface{} // JWT claims for policy substitution
+	IsStatic      bool                   // Whether identity was loaded from static config (immutable)
+	IdentityClaim string                 // Authoritative OIDC identity claim for audit logging (preferred_username/email/sub); empty for non-federated sessions
 }
 
 // Account represents a system user, a system user can
@@ -455,10 +456,11 @@ func (iam *IdentityAccessManagement) markStaticIdentities(config *iam_pb.S3ApiCo
 
 var iamReloadRetryInterval = 5 * time.Second
 
-// scheduleReload queues a full configuration reload that retries until it
-// succeeds. Signals coalesce, and the reload is state-based, so it is safe to
-// call for every failed event.
-func (iam *IdentityAccessManagement) scheduleReload() {
+// scheduleReload queues a coalesced full configuration reload that retries
+// until it succeeds. Safe to call for every IAM config change event: bursts
+// collapse into a single reload via the buffered reloadCh.
+func (iam *IdentityAccessManagement) scheduleReload(reason string) {
+	glog.V(1).Infof("IAM change detected in %s, scheduling reload", reason)
 	select {
 	case iam.reloadCh <- struct{}{}:
 	default:
@@ -1608,8 +1610,9 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 
 // recordIdentityInContext stores the authenticated identity, its name and its
 // principal ARN in the request context. An STS session's name is only an opaque
-// subject, so the ARN is what carries the assumed role and session name to the
-// audit log. A JWT-authenticated identity carries no PrincipalArn of its own,
+// session subject, so the ARN is what carries the assumed role and session name
+// to the audit log, and the identity claim carries the authoritative OIDC
+// identity. A JWT-authenticated identity carries no PrincipalArn of its own,
 // hence the resolution through buildPrincipalARN.
 func recordIdentityInContext(r *http.Request, identity *Identity) context.Context {
 	if identity == nil {
@@ -1617,6 +1620,7 @@ func recordIdentityInContext(r *http.Request, identity *Identity) context.Contex
 	}
 	ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
 	ctx = s3_constants.SetPrincipalArnInContext(ctx, buildPrincipalARN(identity, r))
+	ctx = s3_constants.SetIdentityClaimInContext(ctx, identity.IdentityClaim)
 	// Also store the full identity object for handlers that need it (e.g., ListBuckets)
 	// This is especially important for JWT users whose identity is not in the identities list
 	return s3_constants.SetIdentityInContext(ctx, identity)
@@ -1813,8 +1817,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			} else if evaluated {
 				// A bucket policy exists and was evaluated with a matching statement
 				if allowed {
-					// Policy explicitly allows this action - grant access immediately
-					// This bypasses IAM checks to support cross-account access and policy-only principals
+					// A resource policy may supply the Allow an identity policy omits
+					// (for cross-account access and policy-only principals), but it
+					// must not override an applicable explicit Deny from an identity,
+					// group, or session policy.
+					if iam.isActionExplicitlyDeniedByApplicablePolicies(r, identity, action, bucket, object) {
+						glog.V(3).Infof("identity policy explicitly denies %s to %s on %s/%s despite bucket policy allow", identity.Name, action, bucket, object)
+						return identity, s3err.ErrAccessDenied, reqAuthType
+					}
 					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s (bypassing IAM)", identity.Name, action, bucket, object)
 					policyAllows = true
 				} else {
@@ -2414,11 +2424,12 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 
 	// Convert IAMIdentity to existing Identity structure
 	identity := &Identity{
-		Name:        iamIdentity.Name,
-		Account:     iamIdentity.Account,
-		Actions:     []Action{}, // Empty - authorization handled by policy engine
-		PolicyNames: iamIdentity.PolicyNames,
-		Claims:      iamIdentity.Claims,
+		Name:          iamIdentity.Name,
+		Account:       iamIdentity.Account,
+		Actions:       []Action{}, // Empty - authorization handled by policy engine
+		PolicyNames:   iamIdentity.PolicyNames,
+		Claims:        iamIdentity.Claims,
+		IdentityClaim: iamIdentity.IdentityClaim,
 	}
 
 	// Store session info in request headers for later authorization
@@ -2452,12 +2463,22 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 	return iamAuthPathNone
 }
 
-// evaluateIAMPolicies evaluates attached IAM policies for a user identity.
-// Returns true if any matching statement explicitly allows the action.
-// Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
-func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+// attachedIAMPolicyResult is the tri-state outcome of evaluating an identity's
+// attached IAM policies: explicit Allow, explicit Deny, or no match.
+type attachedIAMPolicyResult int
+
+const (
+	attachedIAMPolicyNoMatch attachedIAMPolicyResult = iota
+	attachedIAMPolicyAllow
+	attachedIAMPolicyDeny
+)
+
+// evaluateAttachedIAMPolicies evaluates the identity's own and group attached
+// IAM policies and reports whether they explicitly allow, deny, or do not
+// match the action.
+func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) attachedIAMPolicyResult {
 	if identity == nil {
-		return false
+		return attachedIAMPolicyNoMatch
 	}
 
 	iam.m.RLock()
@@ -2479,11 +2500,11 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 
 	// Collect all policy names: user policies + group policies
 	if len(identity.PolicyNames) == 0 && len(groupPolicies) == 0 {
-		return false
+		return attachedIAMPolicyNoMatch
 	}
 
 	if engine == nil {
-		return false
+		return attachedIAMPolicyNoMatch
 	}
 
 	// List is bucket-level; the prefix promoted into object (for the legacy
@@ -2514,7 +2535,7 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 	for _, policyName := range identity.PolicyNames {
 		result := engine.EvaluatePolicy(policyName, evalArgs)
 		if result == policy_engine.PolicyResultDeny {
-			return false
+			return attachedIAMPolicyDeny
 		}
 		if result == policy_engine.PolicyResultAllow {
 			explicitAllow = true
@@ -2526,7 +2547,7 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		for _, policyName := range policyNames {
 			result := engine.EvaluatePolicy(policyName, evalArgs)
 			if result == policy_engine.PolicyResultDeny {
-				return false
+				return attachedIAMPolicyDeny
 			}
 			if result == policy_engine.PolicyResultAllow {
 				explicitAllow = true
@@ -2534,7 +2555,16 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		}
 	}
 
-	return explicitAllow
+	if explicitAllow {
+		return attachedIAMPolicyAllow
+	}
+	return attachedIAMPolicyNoMatch
+}
+
+// evaluateIAMPolicies is a bool projection of evaluateAttachedIAMPolicies for
+// callers that only need the allow outcome.
+func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	return iam.evaluateAttachedIAMPolicies(r, identity, action, bucket, object) == attachedIAMPolicyAllow
 }
 
 // isActionExplicitlyDeniedByIAM reports whether the identity's attached IAM
@@ -2586,6 +2616,24 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 		return true
 	}
 	return denied
+}
+
+// isActionExplicitlyDeniedByApplicablePolicies reports whether any applicable
+// identity-side policy (attached IAM policies, enabled-group policies, or the
+// IAM-integration session policy) explicitly denies the action. A bucket
+// policy may supply the Allow an identity policy omits, but it must not
+// override a matching explicit Deny. A nil identity has no identity-side
+// policy plane, so the bucket policy remains authoritative for public access.
+func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByApplicablePolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	if identity == nil {
+		return false
+	}
+	if iam.evaluateAttachedIAMPolicies(r, identity, action, bucket, object) == attachedIAMPolicyDeny {
+		return true
+	}
+	s3Action, resourceArn := resolveS3AuthTarget(action, bucket, object, r)
+	principal := buildPrincipalARN(identity, r)
+	return iam.isActionExplicitlyDeniedByIAM(r, identity, principal, s3Action, resourceArn)
 }
 
 // authorizationRoute is the mechanism that decides a request/identity pair's
@@ -2671,10 +2719,20 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 		// field is a lossy projection that cannot represent deny statements,
 		// conditions, or fine-grained action differences such as PutObject vs
 		// DeleteObject.
-		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
+		switch iam.evaluateAttachedIAMPolicies(r, identity, action, bucket, object) {
+		case attachedIAMPolicyAllow:
 			return s3err.ErrNone
+		case attachedIAMPolicyDeny:
+			return s3err.ErrAccessDenied
+		default:
+			// No matching statement: a native bare Admin grant survives
+			// attaching a policy (issue #11226). Scoped actions are not
+			// consulted because inline policies flatten lossily into Actions.
+			if identity.isAdmin() {
+				return s3err.ErrNone
+			}
+			return s3err.ErrAccessDenied
 		}
-		return s3err.ErrAccessDenied
 	case authorizeViaLegacyActions:
 		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
@@ -2815,6 +2873,9 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 		}
 		if evaluated {
 			if allowed {
+				if iam.isActionExplicitlyDeniedByApplicablePolicies(keyReq, identity, action, bucket, objectKey) {
+					return s3err.ErrAccessDenied
+				}
 				return s3err.ErrNone
 			}
 			return s3err.ErrAccessDenied
@@ -2901,6 +2962,19 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		Claims:      identity.Claims, // Copy claims for policy variable substitution
 	}
 
+	// A native bare Admin grant survives attaching a policy (issue #11226);
+	// an explicit Deny in an attached policy still wins. This runs before the
+	// auth-path switch so an Admin identity without a session principal or
+	// PrincipalArn is still authorized through its native grant.
+	if identity.isAdmin() {
+		s3Action, resourceArn := resolveS3AuthTarget(action, bucket, object, r)
+		principal := buildPrincipalARN(identity, r)
+		if !iam.isActionExplicitlyDeniedByIAM(r, identity, principal, s3Action, resourceArn) {
+			return s3err.ErrNone
+		}
+		return s3err.ErrAccessDenied
+	}
+
 	// Determine authorization path and configure identity
 	authPath := determineIAMAuthPath(sessionToken, principal, identity.PrincipalArn)
 	switch authPath {
@@ -2926,6 +3000,19 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 
 	// Use IAM integration for authorization
 	return iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
+}
+
+// resolveS3AuthTarget mirrors the action and resource resolution that
+// AuthorizeAction applies, so the native-permission floor's explicit-deny
+// check evaluates the same action and resource ARN as the policy engine.
+func resolveS3AuthTarget(action Action, bucket, object string, r *http.Request) (s3Action, resourceArn string) {
+	resourceObjectKey := object
+	if action == s3_constants.ACTION_LIST {
+		resourceObjectKey = ""
+	}
+	resourceArn = buildS3ResourceArn(bucket, resourceObjectKey)
+	s3Action = ResolveS3Action(r, string(action), bucket, object)
+	return
 }
 
 // PutPolicy adds or updates a policy

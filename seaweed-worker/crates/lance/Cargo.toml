@@ -2,6 +2,7 @@
 name = "weed-lance-worker"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "SeaweedFS maintenance worker for Lance tables"
 
 [lib]
@@ -35,6 +36,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rustls = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio.workspace = true
@@ -43,6 +45,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
+tonic.workspace = true
 arrow-array = "58"
 arrow-schema = "58"
 arrow-cast = "58"

@@ -2,6 +2,7 @@
 name = "seaweed-worker-sort"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "The sort specification shared by SeaweedFS sorting jobs"
 
 [lib]

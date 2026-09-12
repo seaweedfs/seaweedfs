@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
@@ -397,6 +398,57 @@ func (s *AdminServer) GetVolumeDetails(volumeID uint32, server string) (*VolumeD
 		ReplicationCount: len(replicas) + 1, // Include the primary volume
 		LastUpdated:      time.Now(),
 	}, nil
+}
+
+// SetVolumeReadOnly changes the access mode of a single volume replica.
+func (s *AdminServer) SetVolumeReadOnly(ctx context.Context, volumeID uint32, server string, readOnly bool) error {
+	var address pb.ServerAddress
+	err := s.masterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{VolumeIds: []uint32{volumeID}})
+		if err != nil {
+			return err
+		}
+		address, err = volumeReplicaAddress(resp.GetTopologyInfo(), volumeID, server)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.WithVolumeServerClient(address, func(client volume_server_pb.VolumeServerClient) error {
+		if readOnly {
+			_, err := client.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
+				VolumeId: volumeID,
+				Persist:  true,
+			})
+			return err
+		}
+		_, err := client.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: volumeID})
+		return err
+	})
+}
+
+// Resolve the selected replica through the master rather than dialing a
+// user-supplied address. Node IDs can differ from their network addresses.
+func volumeReplicaAddress(topology *master_pb.TopologyInfo, volumeID uint32, server string) (pb.ServerAddress, error) {
+	for _, dc := range topology.GetDataCenterInfos() {
+		for _, rack := range dc.GetRackInfos() {
+			for _, node := range rack.GetDataNodeInfos() {
+				if node.GetId() != server {
+					continue
+				}
+				for _, disk := range node.GetDiskInfos() {
+					for _, volume := range disk.GetVolumeInfos() {
+						// Older masters may ignore the volume ID filter.
+						if volume.GetId() == volumeID {
+							return pb.NewServerAddressFromDataNode(node), nil
+						}
+					}
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("volume %d not found on server %s", volumeID, server)
 }
 
 // VacuumVolume performs a vacuum operation on a specific volume

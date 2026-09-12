@@ -19,11 +19,12 @@ use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
 use crate::storage::store::Store;
+use crate::storage::types::{NeedleId, VolumeId};
 use crate::storage::volume_report::VolumeReportKey;
 use crate::storage::volume_report_hash::report_hash;
-use crate::storage::types::NeedleId;
 
 const DUPLICATE_UUID_RETRY_MESSAGE: &str = "duplicate UUIDs detected, retrying connection";
+const VOLUME_IO_ERROR_TOLERANCE: i32 = 3;
 const MAX_DUPLICATE_UUID_RETRIES: u32 = 3;
 
 /// Configuration for the heartbeat client.
@@ -92,8 +93,15 @@ pub async fn run_heartbeat_with_state(
                 SleepDuplicate(Duration),
                 SleepPulse,
             }
-            let action = match do_heartbeat(&config, &state, &grpc_addr, &target_addr, pulse, &mut shutdown_rx)
-                .await
+            let action = match do_heartbeat(
+                &config,
+                &state,
+                &grpc_addr,
+                &target_addr,
+                pulse,
+                &mut shutdown_rx,
+            )
+            .await
             {
                 Ok(Some(leader)) => {
                     info!("Master leader changed to {}", leader);
@@ -308,6 +316,10 @@ fn collect_ec_shard_delta_messages(
 
     for (disk_id, loc) in store.locations.iter().enumerate() {
         for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
             for shard in ec_vol.shards.iter().flatten() {
                 messages.insert(
                     (
@@ -418,8 +430,7 @@ async fn do_heartbeat(
     // form so Ping admission can recognise it once a leader change moves us
     // off the seed list. Mirrors Go's vs.setCurrentMaster(masterAddress).
     {
-        let normalised =
-            super::volume_server::to_http_address(current_master).into_owned();
+        let normalised = super::volume_server::to_http_address(current_master).into_owned();
         let mut guard = state.current_master_url.write().await;
         *guard = normalised;
     }
@@ -538,7 +549,12 @@ async fn do_heartbeat(
                 let mut del_vols = Vec::new();
 
                 for (id, vol) in &current_volumes {
-                    if !last_volumes.contains_key(id) {
+                    if let Some(previous) = last_volumes.get(id) {
+                        if previous != vol {
+                            del_vols.push(previous.to_short_message(*id));
+                            new_vols.push(vol.to_short_message(*id));
+                        }
+                    } else {
                         new_vols.push(vol.to_short_message(*id));
                     }
                 }
@@ -730,7 +746,7 @@ fn parse_bool_property(value: Option<&String>) -> bool {
 /// information message the heartbeat carries. A server holding millions of
 /// volumes cannot keep a whole message for each just to notice one leave; the
 /// Go report state keeps the same fields for the same reason.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct VolumeIdentity {
     collection: String,
     disk_type: String,
@@ -738,6 +754,8 @@ struct VolumeIdentity {
     replica_placement: u32,
     ttl: u32,
     disk_id: u32,
+    read_only: bool,
+    read_only_can_delete: bool,
 }
 
 impl VolumeIdentity {
@@ -749,6 +767,8 @@ impl VolumeIdentity {
             replica_placement: v.replica_placement,
             ttl: v.ttl,
             disk_id: v.disk_id,
+            read_only: v.read_only,
+            read_only_can_delete: v.read_only_can_delete,
         }
     }
 
@@ -761,6 +781,8 @@ impl VolumeIdentity {
             ttl: self.ttl,
             disk_type: self.disk_type.clone(),
             disk_id: self.disk_id,
+            read_only: self.read_only,
+            read_only_can_delete: self.read_only_can_delete,
         }
     }
 }
@@ -778,7 +800,10 @@ fn volume_identities(
 fn collect_heartbeat_with_snapshot(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
-) -> (master_pb::Heartbeat, Vec<master_pb::VolumeInformationMessage>) {
+) -> (
+    master_pb::Heartbeat,
+    Vec<master_pb::VolumeInformationMessage>,
+) {
     let mut store = state.store.write().unwrap();
     let (ec_shards, deleted_ec_shards) = store.delete_expired_ec_volumes();
     build_heartbeat_with_ec_status(
@@ -856,7 +881,10 @@ fn build_heartbeat_with_ec_status(
     deleted_ec_shards: Vec<master_pb::VolumeEcShardInformationMessage>,
     has_no_ec_shards: bool,
     commit_report: bool,
-) -> (master_pb::Heartbeat, Vec<master_pb::VolumeInformationMessage>) {
+) -> (
+    master_pb::Heartbeat,
+    Vec<master_pb::VolumeInformationMessage>,
+) {
     const MAX_TTL_VOLUME_REMOVAL_DELAY: u32 = 10;
 
     #[derive(Default)]
@@ -872,6 +900,7 @@ fn build_heartbeat_with_ec_status(
     // master can tell whether applying what it was sent leaves it current.
     // Volumes skipped below -- quarantined, phantom, expired -- are in neither.
     let mut volume_digest: u64 = 0;
+    let mut quarantined_volumes: u32 = 0;
     let (send_full_list, report_generation, report_pass) = store.volume_report.begin();
     let mut changed_volumes = Vec::new();
     let mut max_file_key = NeedleId(0);
@@ -914,6 +943,7 @@ fn build_heartbeat_with_ec_status(
             loc.disk_free_bytes.load(Ordering::Relaxed);
 
         let mut delete_vids = Vec::new();
+        let mut quarantine_vids: Vec<VolumeId> = Vec::new();
         for (_, vol) in loc.iter_volumes() {
             let cur_max = vol.max_file_key();
             if cur_max > max_file_key {
@@ -923,9 +953,18 @@ fn build_heartbeat_with_ec_status(
             let volume_size = vol.dat_file_size().unwrap_or(0);
             let mut should_delete_volume = false;
 
-            if vol.last_io_error().is_some() {
-                delete_vids.push(vol.id);
-                should_delete_volume = true;
+            let (_, io_count, io_quarantined) = vol.get_io_error_state();
+            if io_quarantined || io_count >= VOLUME_IO_ERROR_TOLERANCE {
+                if !io_quarantined {
+                    vol.mark_io_quarantined();
+                    warn!(
+                        "Volume {} quarantined after {} consecutive IO errors",
+                        vol.id.0, io_count
+                    );
+                }
+                quarantined_volumes += 1;
+                quarantine_vids.push(vol.id);
+                continue;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
                 // Detect phantom volumes: the .dat was unlinked from disk but is still
                 // held open as a deleted FD, so the volume keeps serving and heartbeating
@@ -939,7 +978,9 @@ fn build_heartbeat_with_ec_status(
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or(Duration::ZERO)
                         .as_nanos() as i64;
-                    if now_ns - vol.last_disk_check_ns.load(Ordering::Relaxed) > DISK_CHECK_INTERVAL_NS {
+                    if now_ns - vol.last_disk_check_ns.load(Ordering::Relaxed)
+                        > DISK_CHECK_INTERVAL_NS
+                    {
                         if !Path::new(&vol.file_name(".dat")).exists() {
                             warn!("Volume {}: data file {} missing (held open as deleted FD) - not reporting to master", vol.id.0, vol.file_name(".dat"));
                             continue;
@@ -957,6 +998,7 @@ fn build_heartbeat_with_ec_status(
                     delete_count: vol.deleted_count() as u64,
                     deleted_byte_count: vol.deleted_size(),
                     read_only: vol.is_read_only(),
+                    read_only_can_delete: vol.is_no_write_can_delete(),
                     replica_placement: vol.super_block.replica_placement.to_byte() as u32,
                     version: vol.super_block.version.0 as u32,
                     ttl: vol.super_block.ttl.to_u32(),
@@ -1015,11 +1057,16 @@ fn build_heartbeat_with_ec_status(
                     }
                 }
             }
-
         }
 
         for vid in delete_vids {
             let _ = loc.delete_volume(vid, false, false);
+        }
+
+        for vid in quarantine_vids {
+            if let Some(vol) = loc.find_volume_mut(vid) {
+                vol.set_no_write_or_delete(true);
+            }
         }
     }
 
@@ -1077,6 +1124,23 @@ fn build_heartbeat_with_ec_status(
     };
     let (location_uuids, disk_tags) = collect_location_metadata(store, &disk_max_by_id);
 
+    let mut quarantined_ec_shards: u32 = 0;
+    for loc in &store.locations {
+        for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                quarantined_ec_shards += ec_vol.shard_count() as u32;
+            }
+        }
+    }
+
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["volume"])
+        .set(quarantined_volumes as i64);
+    crate::metrics::IO_QUARANTINE_GAUGE
+        .with_label_values(&["ec_shard"])
+        .set(quarantined_ec_shards as i64);
+
     let heartbeat = master_pb::Heartbeat {
         id: store.id.clone(),
         ip: config.ip.clone(),
@@ -1112,6 +1176,10 @@ fn collect_live_ec_shards(
 
     for (disk_id, loc) in store.locations.iter().enumerate() {
         for (_, ec_vol) in loc.ec_volumes() {
+            let (_, _, quarantined) = ec_vol.get_io_error_state();
+            if quarantined {
+                continue;
+            }
             for message in ec_vol.to_volume_ec_shard_information_messages(disk_id as u32) {
                 if update_metrics {
                     let total_size: u64 = message
@@ -1146,7 +1214,10 @@ fn collect_live_ec_shards(
 }
 
 /// Collect EC shard information into a Heartbeat message.
-fn collect_ec_heartbeat(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) -> master_pb::Heartbeat {
+fn collect_ec_heartbeat(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> master_pb::Heartbeat {
     let store = state.store.read().unwrap();
     let ec_shards = collect_live_ec_shards(&store, true);
 
@@ -1169,10 +1240,10 @@ mod tests {
     use crate::config::MinFreeSpace;
     use crate::config::ReadMode;
     use crate::metrics::{
-        DISK_SIZE_GAUGE, DISK_SIZE_LABEL_DELETED_BYTES, DISK_SIZE_LABEL_EC,
-        DISK_SIZE_LABEL_NORMAL, READ_ONLY_LABEL_IS_DISK_SPACE_LOW,
-        READ_ONLY_LABEL_IS_READ_ONLY, READ_ONLY_LABEL_NO_WRITE_CAN_DELETE,
-        READ_ONLY_LABEL_NO_WRITE_OR_DELETE, READ_ONLY_VOLUME_GAUGE,
+        DISK_SIZE_GAUGE, DISK_SIZE_LABEL_DELETED_BYTES, DISK_SIZE_LABEL_EC, DISK_SIZE_LABEL_NORMAL,
+        READ_ONLY_LABEL_IS_DISK_SPACE_LOW, READ_ONLY_LABEL_IS_READ_ONLY,
+        READ_ONLY_LABEL_NO_WRITE_CAN_DELETE, READ_ONLY_LABEL_NO_WRITE_OR_DELETE,
+        READ_ONLY_VOLUME_GAUGE,
     };
     use crate::remote_storage::s3_tier::S3TierRegistry;
     use crate::security::{Guard, SigningKey};
@@ -1257,7 +1328,10 @@ mod tests {
     fn test_to_grpc_address_explicit_grpc_port() {
         // host:port.grpcPort form — gRPC port is what's after the dot.
         assert_eq!(to_grpc_address("10.85.183.6:5300.6300"), "10.85.183.6:6300");
-        assert_eq!(to_grpc_address("master.local:9333.19333"), "master.local:19333");
+        assert_eq!(
+            to_grpc_address("master.local:9333.19333"),
+            "master.local:19333"
+        );
     }
 
     #[test]
@@ -1311,7 +1385,10 @@ mod tests {
             heartbeat.disk_tags[0].tags,
             vec!["fast".to_string(), "ssd".to_string()]
         );
-        assert_eq!(heartbeat.disk_tags[0].r#type, DiskType::HardDrive.to_string());
+        assert_eq!(
+            heartbeat.disk_tags[0].r#type,
+            DiskType::HardDrive.to_string()
+        );
         assert_eq!(heartbeat.disk_tags[0].max_volume_count, 3);
     }
 
@@ -1350,7 +1427,10 @@ mod tests {
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
         assert_eq!(heartbeat.disk_tags[0].max_volume_count, 1);
-        assert_eq!(heartbeat.max_volume_counts[&DiskType::HardDrive.to_string()], 1);
+        assert_eq!(
+            heartbeat.max_volume_counts[&DiskType::HardDrive.to_string()],
+            1
+        );
     }
 
     #[test]
@@ -1568,10 +1648,9 @@ mod tests {
         let heartbeat = build_heartbeat(&test_config(), &mut store);
         assert_eq!(heartbeat.volumes.len(), 2);
 
-        let expected = heartbeat
-            .volumes
-            .iter()
-            .fold(0u64, |acc, m| acc ^ crate::storage::volume_report_hash::report_hash(m));
+        let expected = heartbeat.volumes.iter().fold(0u64, |acc, m| {
+            acc ^ crate::storage::volume_report_hash::report_hash(m)
+        });
         assert_eq!(heartbeat.volume_digest, Some(expected));
         assert_ne!(heartbeat.volume_digest, Some(0));
     }
@@ -1666,10 +1745,9 @@ mod tests {
             .iter()
             .flat_map(|family| family.get_metric().to_vec())
             .filter(|metric| {
-                metric
-                    .get_label()
-                    .iter()
-                    .any(|label| label.get_name() == "collection" && label.get_value() == collection)
+                metric.get_label().iter().any(|label| {
+                    label.get_name() == "collection" && label.get_value() == collection
+                })
             })
             .count()
     }
@@ -1803,7 +1881,9 @@ mod tests {
         assert_eq!(heartbeat.ec_shards[0].disk_id, 0);
         assert_eq!(
             heartbeat.ec_shards[0].disk_type,
-            state.store.read().unwrap().locations[0].disk_type.to_string()
+            state.store.read().unwrap().locations[0]
+                .disk_type
+                .to_string()
         );
         assert_eq!(heartbeat.ec_shards[0].ec_index_bits, 1);
         assert_eq!(heartbeat.ec_shards[0].shard_sizes, vec![8]);
@@ -1939,8 +2019,13 @@ mod tests {
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
 
+        // A sustained IO error quarantines the volume: it stays mounted
+        // (so healthz can observe the quarantine state) but is not
+        // advertised to the master.
         assert!(heartbeat.volumes.is_empty());
-        assert!(!store.has_volume(VolumeId(51)));
+        assert!(store.has_volume(VolumeId(51)));
+        let (_, volume) = store.find_volume_mut(VolumeId(51)).unwrap();
+        assert!(volume.is_no_write_or_delete());
     }
 
     #[test]
@@ -1971,12 +2056,15 @@ mod tests {
             )
             .unwrap();
         let (_, volume) = store.find_volume_mut(VolumeId(71)).unwrap();
-        volume.volume_info.files.push(crate::storage::volume::PbRemoteFile {
-            backend_type: "s3".to_string(),
-            backend_id: "archive".to_string(),
-            key: "volumes/71.dat".to_string(),
-            ..Default::default()
-        });
+        volume
+            .volume_info
+            .files
+            .push(crate::storage::volume::PbRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "archive".to_string(),
+                key: "volumes/71.dat".to_string(),
+                ..Default::default()
+            });
         volume.refresh_remote_write_mode().unwrap();
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
@@ -2140,8 +2228,7 @@ mod tests {
             .mount_ec_shards(VolumeId(81), "ec_delta_case", &[0], "")
             .unwrap();
         let current = collect_ec_shard_delta_messages(&store);
-        let (new_ec_shards, deleted_ec_shards) =
-            diff_ec_shard_delta_messages(&previous, &current);
+        let (new_ec_shards, deleted_ec_shards) = diff_ec_shard_delta_messages(&previous, &current);
 
         assert_eq!(new_ec_shards.len(), 1);
         assert!(deleted_ec_shards.is_empty());

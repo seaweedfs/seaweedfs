@@ -86,7 +86,7 @@ func TestConsolidateVolumeIndexMovesIdxToIdxDir(t *testing.T) {
 	require.FileExists(t, dataIdx, "precondition: index co-located with the data")
 
 	store := newIdxSplitStore(t, dataDir, idxDir)
-	require.NoError(t, store.MountVolume(vid))
+	require.NoError(t, store.MountVolume(vid, nil))
 
 	// Write a needle so the relocate has real index state to preserve.
 	mounted := store.findVolume(vid)
@@ -122,7 +122,7 @@ func TestConsolidateVolumeIndexNoopWithoutIdxDir(t *testing.T) {
 	v.Close()
 
 	store := newIdxSplitStore(t, dataDir, dataDir) // idx dir == data dir
-	require.NoError(t, store.MountVolume(vid))
+	require.NoError(t, store.MountVolume(vid, nil))
 
 	require.NoError(t, store.ConsolidateVolumeIndex(vid))
 	require.FileExists(t, filepath.Join(dataDir, "8.idx"), "index stays put without -dir.idx")

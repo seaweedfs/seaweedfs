@@ -107,6 +107,9 @@ const (
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
 
 	// RenameObject
+	// AmzClientToken makes a rename idempotent. The AWS SDKs fill it in on every
+	// call, so it arrives on requests that were never written with it in mind.
+	AmzClientToken                   = "X-Amz-Client-Token"
 	AmzRenameSource                  = "X-Amz-Rename-Source"
 	AmzRenameSourceIfMatch           = "X-Amz-Rename-Source-If-Match"
 	AmzRenameSourceIfNoneMatch       = "X-Amz-Rename-Source-If-None-Match"
@@ -156,6 +159,12 @@ const (
 	SeaweedFSSSEKMSBucketKeyEnabled  = "x-seaweedfs-sse-kms-bucket-key-enabled" // Bucket key setting for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSEncryptionContext = "x-seaweedfs-sse-kms-encryption-context" // Encryption context for multipart upload SSE-KMS inheritance
 	SeaweedFSSSEKMSBaseIV            = "x-seaweedfs-sse-kms-base-iv"            // Base IV for multipart upload SSE-KMS (for IV offset calculation)
+
+	// SeaweedFSRenameToken records the x-amz-client-token of the rename that put an
+	// object at its key, together with the source that rename named. It rides on the
+	// object itself, so every gateway reads the same answer for a retry of that
+	// rename, and it is dropped whenever the key is written again.
+	SeaweedFSRenameToken = "x-seaweedfs-rename-token"
 
 	// Multipart upload metadata keys for SSE-S3
 	SeaweedFSSSES3Encryption = "x-seaweedfs-sse-s3-encryption" // Encryption type for multipart upload SSE-S3 inheritance
@@ -316,6 +325,7 @@ const (
 	contextKeyIdentityObject contextKey = "s3-identity-object"
 	contextKeyIdentityHolder contextKey = "s3-identity-holder"
 	contextKeyPrincipalArn   contextKey = "s3-principal-arn"
+	contextKeyIdentityClaim  contextKey = "s3-identity-claim"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -326,8 +336,9 @@ const (
 // holder installed before authentication is shared across all copies, so the
 // name written by the inner handler is readable by the outer middleware.
 type identityHolder struct {
-	name         atomic.Pointer[string]
-	principalArn atomic.Pointer[string]
+	name          atomic.Pointer[string]
+	principalArn  atomic.Pointer[string]
+	identityClaim atomic.Pointer[string]
 }
 
 // EnsureIdentityHolder attaches a mutable identity holder to the request context
@@ -401,6 +412,37 @@ func GetPrincipalArnFromContext(r *http.Request) string {
 	if h, ok := r.Context().Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
 		if arn := h.principalArn.Load(); arn != nil {
 			return *arn
+		}
+	}
+	return ""
+}
+
+// SetIdentityClaimInContext stores the authoritative OIDC identity claim (e.g.
+// preferred_username, email, sub) for the audit log. For an STS-assumed OIDC
+// session the requester name is an opaque session subject, so the claim is the
+// only place a stable, human-readable federated identity survives to the audit
+// log. Empty for non-federated sessions, where the requester name already
+// carries the real username.
+func SetIdentityClaimInContext(ctx context.Context, identityClaim string) context.Context {
+	if identityClaim == "" {
+		return ctx
+	}
+	if h, ok := ctx.Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		h.identityClaim.Store(&identityClaim)
+	}
+	return context.WithValue(ctx, contextKeyIdentityClaim, identityClaim)
+}
+
+// GetIdentityClaimFromContext retrieves the authoritative OIDC identity claim
+// from the request context, or "" when the request is unauthenticated or not
+// federated.
+func GetIdentityClaimFromContext(r *http.Request) string {
+	if claim, ok := r.Context().Value(contextKeyIdentityClaim).(string); ok && claim != "" {
+		return claim
+	}
+	if h, ok := r.Context().Value(contextKeyIdentityHolder).(*identityHolder); ok && h != nil {
+		if claim := h.identityClaim.Load(); claim != nil {
+			return *claim
 		}
 	}
 	return ""

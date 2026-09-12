@@ -30,6 +30,9 @@ pub fn report_hash(m: &master_pb::VolumeInformationMessage) -> u64 {
     if m.read_only {
         buf[56] = 1;
     }
+    if m.read_only_can_delete {
+        buf[56] |= 2;
+    }
     let mut h = xxh64(&buf, 0);
 
     h = fold(h, xxh64(&(m.modified_at_second as u64).to_le_bytes(), 0));
@@ -82,6 +85,7 @@ mod tests {
             delete_count: 2,
             deleted_byte_count: 99,
             read_only: true,
+            read_only_can_delete: false,
             replica_placement: 10,
             version: 3,
             ttl: 3 << 8,

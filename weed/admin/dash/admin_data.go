@@ -113,6 +113,34 @@ type UserDetails struct {
 	Groups      []string        `json:"groups"`
 }
 
+// RoleReadOnly is the session role assigned to read-only (view-only) admin
+// accounts. It matches the value stored by HandleLogin when the read-only
+// credentials are used.
+const RoleReadOnly = "readonly"
+
+// IsReadOnlyRole reports whether the given admin session role grants only
+// view-only access. Any other role (admin, or the empty role used when auth
+// is disabled) is treated as non-read-only.
+func IsReadOnlyRole(role string) bool {
+	return role == RoleReadOnly
+}
+
+// RedactSecretKey clears the plaintext S3 secret key from an object-store
+// user record. The access key (a public identifier) is retained so the
+// identity can still be listed; only the reusable secret is removed.
+func (u *ObjectStoreUser) RedactSecretKey() {
+	u.SecretKey = ""
+}
+
+// RedactSecretKeys clears the plaintext S3 secret keys from a user's access
+// key records. Access key identifiers are retained so the set of keys remains
+// visible; only the reusable secrets are removed.
+func (d *UserDetails) RedactSecretKeys() {
+	for i := range d.AccessKeys {
+		d.AccessKeys[i].SecretKey = ""
+	}
+}
+
 type FilerNode struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`

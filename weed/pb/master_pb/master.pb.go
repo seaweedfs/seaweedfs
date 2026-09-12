@@ -460,6 +460,7 @@ type VolumeInformationMessage struct {
 	DeleteCount       uint64                 `protobuf:"varint,5,opt,name=delete_count,json=deleteCount,proto3" json:"delete_count,omitempty"`
 	DeletedByteCount  uint64                 `protobuf:"varint,6,opt,name=deleted_byte_count,json=deletedByteCount,proto3" json:"deleted_byte_count,omitempty"`
 	ReadOnly          bool                   `protobuf:"varint,7,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	ReadOnlyCanDelete bool                   `protobuf:"varint,17,opt,name=read_only_can_delete,json=readOnlyCanDelete,proto3" json:"read_only_can_delete,omitempty"`
 	ReplicaPlacement  uint32                 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`
 	Version           uint32                 `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
 	Ttl               uint32                 `protobuf:"varint,10,opt,name=ttl,proto3" json:"ttl,omitempty"`
@@ -552,6 +553,13 @@ func (x *VolumeInformationMessage) GetReadOnly() bool {
 	return false
 }
 
+func (x *VolumeInformationMessage) GetReadOnlyCanDelete() bool {
+	if x != nil {
+		return x.ReadOnlyCanDelete
+	}
+	return false
+}
+
 func (x *VolumeInformationMessage) GetReplicaPlacement() uint32 {
 	if x != nil {
 		return x.ReplicaPlacement
@@ -616,16 +624,18 @@ func (x *VolumeInformationMessage) GetDiskId() uint32 {
 }
 
 type VolumeShortInformationMessage struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Id               uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Collection       string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
-	ReplicaPlacement uint32                 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`
-	Version          uint32                 `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
-	Ttl              uint32                 `protobuf:"varint,10,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	DiskType         string                 `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	DiskId           uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Id                uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Collection        string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
+	ReplicaPlacement  uint32                 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`
+	Version           uint32                 `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
+	Ttl               uint32                 `protobuf:"varint,10,opt,name=ttl,proto3" json:"ttl,omitempty"`
+	DiskType          string                 `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	DiskId            uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
+	ReadOnly          bool                   `protobuf:"varint,17,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	ReadOnlyCanDelete bool                   `protobuf:"varint,18,opt,name=read_only_can_delete,json=readOnlyCanDelete,proto3" json:"read_only_can_delete,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *VolumeShortInformationMessage) Reset() {
@@ -705,6 +715,20 @@ func (x *VolumeShortInformationMessage) GetDiskId() uint32 {
 		return x.DiskId
 	}
 	return 0
+}
+
+func (x *VolumeShortInformationMessage) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *VolumeShortInformationMessage) GetReadOnlyCanDelete() bool {
+	if x != nil {
+		return x.ReadOnlyCanDelete
+	}
+	return false
 }
 
 type VolumeEcShardInformationMessage struct {
@@ -1051,19 +1075,21 @@ func (x *KeepConnectedRequest) GetRack() string {
 }
 
 type VolumeLocation struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
-	PublicUrl     string                 `protobuf:"bytes,2,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
-	NewVids       []uint32               `protobuf:"varint,3,rep,packed,name=new_vids,json=newVids,proto3" json:"new_vids,omitempty"`
-	DeletedVids   []uint32               `protobuf:"varint,4,rep,packed,name=deleted_vids,json=deletedVids,proto3" json:"deleted_vids,omitempty"`
-	Leader        string                 `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`                           // optional when leader is not itself
-	DataCenter    string                 `protobuf:"bytes,6,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"` // optional when DataCenter is in use
-	GrpcPort      uint32                 `protobuf:"varint,7,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
-	NewEcVids     []uint32               `protobuf:"varint,8,rep,packed,name=new_ec_vids,json=newEcVids,proto3" json:"new_ec_vids,omitempty"`
-	DeletedEcVids []uint32               `protobuf:"varint,9,rep,packed,name=deleted_ec_vids,json=deletedEcVids,proto3" json:"deleted_ec_vids,omitempty"`
-	RemoteVids    []uint32               `protobuf:"varint,10,rep,packed,name=remote_vids,json=remoteVids,proto3" json:"remote_vids,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Url                   string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	PublicUrl             string                 `protobuf:"bytes,2,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
+	NewVids               []uint32               `protobuf:"varint,3,rep,packed,name=new_vids,json=newVids,proto3" json:"new_vids,omitempty"`
+	DeletedVids           []uint32               `protobuf:"varint,4,rep,packed,name=deleted_vids,json=deletedVids,proto3" json:"deleted_vids,omitempty"`
+	Leader                string                 `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`                           // optional when leader is not itself
+	DataCenter            string                 `protobuf:"bytes,6,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"` // optional when DataCenter is in use
+	GrpcPort              uint32                 `protobuf:"varint,7,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
+	NewEcVids             []uint32               `protobuf:"varint,8,rep,packed,name=new_ec_vids,json=newEcVids,proto3" json:"new_ec_vids,omitempty"`
+	DeletedEcVids         []uint32               `protobuf:"varint,9,rep,packed,name=deleted_ec_vids,json=deletedEcVids,proto3" json:"deleted_ec_vids,omitempty"`
+	RemoteVids            []uint32               `protobuf:"varint,10,rep,packed,name=remote_vids,json=remoteVids,proto3" json:"remote_vids,omitempty"`
+	ReadOnlyVids          []uint32               `protobuf:"varint,11,rep,packed,name=read_only_vids,json=readOnlyVids,proto3" json:"read_only_vids,omitempty"`
+	ReadOnlyCanDeleteVids []uint32               `protobuf:"varint,12,rep,packed,name=read_only_can_delete_vids,json=readOnlyCanDeleteVids,proto3" json:"read_only_can_delete_vids,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *VolumeLocation) Reset() {
@@ -1162,6 +1188,20 @@ func (x *VolumeLocation) GetDeletedEcVids() []uint32 {
 func (x *VolumeLocation) GetRemoteVids() []uint32 {
 	if x != nil {
 		return x.RemoteVids
+	}
+	return nil
+}
+
+func (x *VolumeLocation) GetReadOnlyVids() []uint32 {
+	if x != nil {
+		return x.ReadOnlyVids
+	}
+	return nil
+}
+
+func (x *VolumeLocation) GetReadOnlyCanDeleteVids() []uint32 {
+	if x != nil {
+		return x.ReadOnlyCanDeleteVids
 	}
 	return nil
 }
@@ -1463,14 +1503,16 @@ func (x *LookupVolumeResponse) GetVolumeIdLocations() []*LookupVolumeResponse_Vo
 }
 
 type Location struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
-	PublicUrl     string                 `protobuf:"bytes,2,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
-	GrpcPort      uint32                 `protobuf:"varint,3,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
-	DataCenter    string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
-	DataInRemote  bool                   `protobuf:"varint,5,opt,name=data_in_remote,json=dataInRemote,proto3" json:"data_in_remote,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Url               string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	PublicUrl         string                 `protobuf:"bytes,2,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
+	GrpcPort          uint32                 `protobuf:"varint,3,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
+	DataCenter        string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	DataInRemote      bool                   `protobuf:"varint,5,opt,name=data_in_remote,json=dataInRemote,proto3" json:"data_in_remote,omitempty"`
+	ReadOnly          bool                   `protobuf:"varint,6,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
+	ReadOnlyCanDelete bool                   `protobuf:"varint,7,opt,name=read_only_can_delete,json=readOnlyCanDelete,proto3" json:"read_only_can_delete,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Location) Reset() {
@@ -1534,6 +1576,20 @@ func (x *Location) GetDataCenter() string {
 func (x *Location) GetDataInRemote() bool {
 	if x != nil {
 		return x.DataInRemote
+	}
+	return false
+}
+
+func (x *Location) GetReadOnly() bool {
+	if x != nil {
+		return x.ReadOnly
+	}
+	return false
+}
+
+func (x *Location) GetReadOnlyCanDelete() bool {
+	if x != nil {
+		return x.ReadOnlyCanDelete
 	}
 	return false
 }
@@ -5013,7 +5069,7 @@ const file_master_proto_rawDesc = "" +
 	"\x10duplicated_uuids\x18\x06 \x03(\tR\x0fduplicatedUuids\x12 \n" +
 	"\vpreallocate\x18\a \x01(\bR\vpreallocate\x125\n" +
 	"\x17resend_full_volume_list\x18\b \x01(\bR\x14resendFullVolumeList\x126\n" +
-	"\x17volume_digest_supported\x18\t \x01(\bR\x15volumeDigestSupported\"\xb1\x04\n" +
+	"\x17volume_digest_supported\x18\t \x01(\bR\x15volumeDigestSupported\"\xe2\x04\n" +
 	"\x18VolumeInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x1e\n" +
@@ -5024,7 +5080,8 @@ const file_master_proto_rawDesc = "" +
 	"file_count\x18\x04 \x01(\x04R\tfileCount\x12!\n" +
 	"\fdelete_count\x18\x05 \x01(\x04R\vdeleteCount\x12,\n" +
 	"\x12deleted_byte_count\x18\x06 \x01(\x04R\x10deletedByteCount\x12\x1b\n" +
-	"\tread_only\x18\a \x01(\bR\breadOnly\x12+\n" +
+	"\tread_only\x18\a \x01(\bR\breadOnly\x12/\n" +
+	"\x14read_only_can_delete\x18\x11 \x01(\bR\x11readOnlyCanDelete\x12+\n" +
 	"\x11replica_placement\x18\b \x01(\rR\x10replicaPlacement\x12\x18\n" +
 	"\aversion\x18\t \x01(\rR\aversion\x12\x10\n" +
 	"\x03ttl\x18\n" +
@@ -5034,7 +5091,7 @@ const file_master_proto_rawDesc = "" +
 	"\x13remote_storage_name\x18\r \x01(\tR\x11remoteStorageName\x12,\n" +
 	"\x12remote_storage_key\x18\x0e \x01(\tR\x10remoteStorageKey\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xde\x01\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xac\x02\n" +
 	"\x1dVolumeShortInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -5045,7 +5102,9 @@ const file_master_proto_rawDesc = "" +
 	"\x03ttl\x18\n" +
 	" \x01(\rR\x03ttl\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xd4\x02\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\x12\x1b\n" +
+	"\tread_only\x18\x11 \x01(\bR\breadOnly\x12/\n" +
+	"\x14read_only_can_delete\x18\x12 \x01(\bR\x11readOnlyCanDelete\"\xd4\x02\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -5088,7 +5147,7 @@ const file_master_proto_rawDesc = "" +
 	"filerGroup\x12\x1f\n" +
 	"\vdata_center\x18\x06 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
-	"\x04rack\x18\a \x01(\tR\x04rack\"\xbe\x02\n" +
+	"\x04rack\x18\a \x01(\tR\x04rack\"\x9e\x03\n" +
 	"\x0eVolumeLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
@@ -5103,7 +5162,9 @@ const file_master_proto_rawDesc = "" +
 	"\x0fdeleted_ec_vids\x18\t \x03(\rR\rdeletedEcVids\x12\x1f\n" +
 	"\vremote_vids\x18\n" +
 	" \x03(\rR\n" +
-	"remoteVids\"\xa6\x01\n" +
+	"remoteVids\x12$\n" +
+	"\x0eread_only_vids\x18\v \x03(\rR\freadOnlyVids\x128\n" +
+	"\x19read_only_can_delete_vids\x18\f \x03(\rR\x15readOnlyCanDeleteVids\"\xa6\x01\n" +
 	"\x11ClusterNodeUpdate\x12\x1b\n" +
 	"\tnode_type\x18\x01 \x01(\tR\bnodeType\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x15\n" +
@@ -5131,7 +5192,7 @@ const file_master_proto_rawDesc = "" +
 	"\x11volume_or_file_id\x18\x01 \x01(\tR\x0evolumeOrFileId\x121\n" +
 	"\tlocations\x18\x02 \x03(\v2\x13.master_pb.LocationR\tlocations\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x12\x12\n" +
-	"\x04auth\x18\x04 \x01(\tR\x04auth\"\x9f\x01\n" +
+	"\x04auth\x18\x04 \x01(\tR\x04auth\"\xed\x01\n" +
 	"\bLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
@@ -5139,7 +5200,9 @@ const file_master_proto_rawDesc = "" +
 	"\tgrpc_port\x18\x03 \x01(\rR\bgrpcPort\x12\x1f\n" +
 	"\vdata_center\x18\x04 \x01(\tR\n" +
 	"dataCenter\x12$\n" +
-	"\x0edata_in_remote\x18\x05 \x01(\bR\fdataInRemote\"\xfe\x02\n" +
+	"\x0edata_in_remote\x18\x05 \x01(\bR\fdataInRemote\x12\x1b\n" +
+	"\tread_only\x18\x06 \x01(\bR\breadOnly\x12/\n" +
+	"\x14read_only_can_delete\x18\a \x01(\bR\x11readOnlyCanDelete\"\xfe\x02\n" +
 	"\rAssignRequest\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x04R\x05count\x12 \n" +
 	"\vreplication\x18\x02 \x01(\tR\vreplication\x12\x1e\n" +

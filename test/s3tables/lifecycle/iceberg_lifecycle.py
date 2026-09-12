@@ -99,6 +99,7 @@ def connect(args):
         "uri": args.catalog_url,
         "warehouse": f"s3://{args.bucket}/",
         "prefix": args.bucket,
+        "auth": {"type": "noop"},
         "s3.endpoint": args.s3_endpoint,
         "s3.access-key-id": args.access_key,
         "s3.secret-access-key": args.secret_key,
