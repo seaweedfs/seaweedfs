@@ -110,10 +110,19 @@ admin access), the integration uses a **narrow, scoped S3 subresource**:
 - `PUT /{bucket}?seaweedfs-quota` — set bucket quota (IAM permission `s3:PutBucketQuota`)
 - `GET /{bucket}?seaweedfs-quota` — get bucket quota (IAM permission `s3:GetBucketQuota`)
 
-The request/response body is JSON:
+**PUT request body** (JSON):
 ```json
 {"quota_size": 100, "quota_unit": "GB", "quota_enabled": true}
 ```
+
+**GET response body** (JSON):
+```json
+{"quota_size": 107374182400, "quota_unit": "B", "quota_enabled": true}
+```
+
+Note: GET always returns `quota_unit: "B"` and the absolute byte count, not
+the original unit. A disabled-but-retained quota returns a positive
+`quota_size` with `quota_enabled: false`.
 
 Quota is stored on the bucket's filer entry (positive = enabled, negative =
 disabled but retained, zero = no quota), matching the existing admin REST API
@@ -121,15 +130,21 @@ behavior. When quota is cleared, the bucket's read-only flag is also lifted.
 
 **Authentication** uses the existing S3 SigV4 flow — no new global secret is
 needed. The CloudStack service credential (the `accesskey`/`secretkey` on the
-object store) is granted only `s3:PutBucketQuota` and `s3:GetBucketQuota` via an
-IAM policy, so it cannot delete buckets, manage users, or change cluster
-topology. This is the principle of least privilege applied to the integration
-boundary.
+object store) is the admin credential used for all driver operations: bucket
+CRUD, IAM user provisioning, and quota management. It must have broad S3 and
+IAM permissions. The per-account IAM users created by `createUser` are the
+ones with restricted permissions (full S3 access except bucket
+creation/deletion). A future hardening could split quota management onto a
+separate credential scoped to only `s3:PutBucketQuota`/`s3:GetBucketQuota`,
+but the MVP uses the single admin credential for simplicity, matching how
+the MinIO and Ceph providers work.
 
 The plugin's `setBucketQuota` signs and sends the `PUT /{bucket}?seaweedfs-quota`
-request using the AWS SDK v1 `S3Signer` for SigV4 signing, then sends the signed
-request via `java.net.http.HttpClient` (the AWS S3 SDK doesn't natively support
-custom subresources, so we sign manually and send the request ourselves).
+request using the AWS SDK v1 `AWSS3V4Signer` for SigV4 signing, then sends the
+signed request via `java.net.http.HttpClient` (the AWS S3 SDK doesn't natively
+support custom subresources, so we sign manually and send the request
+ourselves). The `seaweedfs-quota` query parameter is included in the signed
+canonical query string.
 
 ### Usage reporting
 
