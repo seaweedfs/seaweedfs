@@ -43,8 +43,13 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, nil
 	}
 
-	client, _, found := f.RemoteStorage.FindRemoteStorageClient(p)
+	remoteConf, found := f.RemoteStorage.FindRemoteStorageConf(p)
 	if !found {
+		return nil, nil
+	}
+	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+	if clientErr != nil {
+		glog.V(1).InfofCtx(ctx, "maybeLazyFetchFromRemote: reject %s: %v", p, clientErr)
 		return nil, nil
 	}
 

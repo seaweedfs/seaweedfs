@@ -30,6 +30,13 @@ type FilerRemoteStorage struct {
 	storageNameToConf map[string]*remote_pb.RemoteConf
 }
 
+// RemoteStorageClientBuilder builds a remote-storage client for a conf. The
+// filer server sets it to the guarded builder (endpoint deny-list + DNS
+// rebinding-safe dialer) so the lazy-remote paths apply the same SSRF checks
+// as the volume and streaming read paths. When nil the lazy paths fall back to
+// the shared unguarded cache.
+type RemoteStorageClientBuilder func(ctx context.Context, remoteConf *remote_pb.RemoteConf, allowUntrusted bool) (remote_storage.RemoteStorageClient, error)
+
 func NewFilerRemoteStorage() (rs *FilerRemoteStorage) {
 	rs = &FilerRemoteStorage{
 		rules:             ptrie.New[*remote_pb.RemoteStorageLocation](),
@@ -139,6 +146,21 @@ func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client
 		return
 	}
 	return
+}
+
+func (rs *FilerRemoteStorage) FindRemoteStorageConf(p util.FullPath) (*remote_pb.RemoteConf, bool) {
+	_, storageLocation := rs.FindMountDirectory(p)
+	if storageLocation == nil {
+		return nil, false
+	}
+	return rs.GetRemoteStorageConf(storageLocation.Name)
+}
+
+func (rs *FilerRemoteStorage) GetRemoteStorageConf(storageName string) (*remote_pb.RemoteConf, bool) {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	conf, found := rs.storageNameToConf[storageName]
+	return conf, found
 }
 
 func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *remote_pb.RemoteStorageMapping, err error) {

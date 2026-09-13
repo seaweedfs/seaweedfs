@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 
 	"google.golang.org/grpc"
 
@@ -42,33 +44,35 @@ var (
 )
 
 type Filer struct {
-	UniqueFilerId           int32
-	UniqueFilerEpoch        int32
-	Store                   VirtualFilerStore
-	MasterClient            *wdclient.MasterClient
-	FileIdDeletionQueue     *util.UnboundedQueue
-	GrpcDialOption          grpc.DialOption
-	DirBucketsPath          string
-	Cipher                  bool
-	LocalMetaLogBuffer      *log_buffer.LogBuffer
-	metaLogCollection       string
-	metaLogReplication      string
-	DefaultDiskType         string
-	MetaAggregator          *MetaAggregator
-	Signature               int32
-	FilerConf               *FilerConf
-	placementOverlay        PlacementOverlay
-	RemoteStorage           *FilerRemoteStorage
-	lazyFetchGroup          singleflight.Group
-	lazyListGroup           singleflight.Group
-	Dlm                     *lock_manager.DistributedLockManager
-	MaxFilenameLength       uint32
-	deletionQuit            chan struct{}
-	DeletionRetryQueue      *DeletionRetryQueue
-	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
-	EmptyFolderCleanupDelay time.Duration
-	persistedLogCache       *persistedLogCache
-	metaLogInflight         metaLogInflight
+	UniqueFilerId                 int32
+	UniqueFilerEpoch              int32
+	Store                         VirtualFilerStore
+	MasterClient                  *wdclient.MasterClient
+	FileIdDeletionQueue           *util.UnboundedQueue
+	GrpcDialOption                grpc.DialOption
+	DirBucketsPath                string
+	Cipher                        bool
+	LocalMetaLogBuffer            *log_buffer.LogBuffer
+	metaLogCollection             string
+	metaLogReplication            string
+	DefaultDiskType               string
+	MetaAggregator                *MetaAggregator
+	Signature                     int32
+	FilerConf                     *FilerConf
+	placementOverlay              PlacementOverlay
+	RemoteStorage                 *FilerRemoteStorage
+	BuildGuardedRemoteClient      RemoteStorageClientBuilder
+	AllowUntrustedRemoteEndpoints bool
+	lazyFetchGroup                singleflight.Group
+	lazyListGroup                 singleflight.Group
+	Dlm                           *lock_manager.DistributedLockManager
+	MaxFilenameLength             uint32
+	deletionQuit                  chan struct{}
+	DeletionRetryQueue            *DeletionRetryQueue
+	EmptyFolderCleaner            *empty_folder_cleanup.EmptyFolderCleaner
+	EmptyFolderCleanupDelay       time.Duration
+	persistedLogCache             *persistedLogCache
+	metaLogInflight               metaLogInflight
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -106,6 +110,13 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	go f.loopProcessingDeletion()
 
 	return f
+}
+
+func (f *Filer) buildRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+	if f.BuildGuardedRemoteClient != nil {
+		return f.BuildGuardedRemoteClient(ctx, remoteConf, f.AllowUntrustedRemoteEndpoints)
+	}
+	return remote_storage.GetRemoteStorage(remoteConf)
 }
 
 func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
