@@ -570,7 +570,6 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	if f.visibleIntervals == nil {
 		f.visibleIntervals, err = filer.NonOverlappingVisibleIntervals(f.ctx, f.fs.filerClient.GetLookupFileIdFunction(), f.entry.GetChunks(), 0, fileSize)
 		if err != nil {
-			// fail instead of streaming zeros for unresolved manifest chunks
 			return 0, err
 		}
 		f.reader = nil

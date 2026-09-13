@@ -434,9 +434,7 @@ func TestChunkGroup_SearchChunks(t *testing.T) {
 	}
 }
 
-// Regression test for silent zero-fill reads when chunk manifest resolution
-// fails: ReadDataAt must return an error instead of treating the unresolved
-// sections as sparse holes (https://github.com/seaweedfs/seaweedfs/issues/11286).
+// ReadDataAt must return an error when chunk manifest resolution fails, instead of zero-filling.
 func TestChunkGroup_ReadDataAt_ManifestResolveFailure(t *testing.T) {
 	lookupErr := errors.New("lookup failed")
 	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
@@ -450,21 +448,17 @@ func TestChunkGroup_ReadDataAt_ManifestResolveFailure(t *testing.T) {
 	group, err := NewChunkGroup(lookupFn, nil, chunks, 1, nil, nil)
 	assert.Error(t, err, "manifest resolution should fail")
 
-	// Reads must fail with the resolve error, not silently return zeros.
 	buff := make([]byte, 16)
 	n, _, readErr := group.ReadDataAt(context.Background(), 1<<20, buff, 0)
 	assert.ErrorIs(t, readErr, lookupErr)
 	assert.Equal(t, 0, n)
 
-	// lseek (SEEK_DATA/SEEK_HOLE) must fail too, not misreport the whole
-	// file as sparse.
 	for _, whence := range []uint32{SEEK_DATA, 4 /* SEEK_HOLE */} {
 		found, _, seekErr := group.SearchChunks(context.Background(), 0, 1<<20, whence)
 		assert.ErrorIs(t, seekErr, lookupErr, "whence %d", whence)
 		assert.False(t, found, "whence %d", whence)
 	}
 
-	// A later successful SetChunks must clear the error.
 	err = group.SetChunks([]*filer_pb.FileChunk{
 		{FileId: "2,data", Offset: 0, Size: 16},
 	})

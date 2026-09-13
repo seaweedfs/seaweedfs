@@ -8,10 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Regression test for #11286: stream preparation must fail when chunk
-// manifest resolution fails, instead of serving a zero-filled stream.
+// Stream preparation must fail when chunk manifest resolution fails, instead of serving a zero-filled stream.
 func TestPrepareStreamContent_ManifestResolveFailure(t *testing.T) {
-	master := &testMasterClient{} // no urls registered: every lookup fails
+	master := &testMasterClient{}
 
 	chunks := []*filer_pb.FileChunk{
 		{FileId: "1,1879011dc64abd40", IsChunkManifest: true, Offset: 0, Size: 1 << 20},
