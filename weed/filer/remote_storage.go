@@ -22,12 +22,28 @@ import (
 const REMOTE_STORAGE_CONF_SUFFIX = ".conf"
 const REMOTE_STORAGE_MOUNT_FILE = "mount.mapping"
 
+// RemoteStorageConfValidator rejects a RemoteConf whose endpoint resolves to
+// an address the filer must not dial (loopback / link-local / private / IMDS).
+// The filer server injects the volume server's SSRF deny-list validator so the
+// filer package — which cannot import the server package — applies the same
+// check the volume server's BuildGuardedRemoteStorageClient does. A nil
+// validator leaves the historical unguarded behavior for unit tests that
+// never dial.
+type RemoteStorageConfValidator func(ctx context.Context, conf *remote_pb.RemoteConf) error
+
 type FilerRemoteStorage struct {
 	// guards rules and storageNameToConf, which are replaced wholesale
 	// whenever /etc/remote changes
 	mu                sync.RWMutex
 	rules             ptrie.Trie[*remote_pb.RemoteStorageLocation]
 	storageNameToConf map[string]*remote_pb.RemoteConf
+	// confValidator, when set, is applied to every RemoteConf as it is loaded
+	// from /etc/remote. A conf that fails is dropped from storageNameToConf so
+	// the lazy-fetch, lazy-list, and remote-delete paths (which resolve clients
+	// by name) can never dial its endpoint. This closes the unauthenticated-plant
+	// SSRF: a conf written to /etc/remote with a loopback S3 endpoint is rejected
+	// at reload instead of being dialed on the next cache miss.
+	confValidator RemoteStorageConfValidator
 }
 
 // RemoteStorageClientBuilder builds a remote-storage client for a conf. The
@@ -43,6 +59,15 @@ func NewFilerRemoteStorage() (rs *FilerRemoteStorage) {
 		storageNameToConf: make(map[string]*remote_pb.RemoteConf),
 	}
 	return rs
+}
+
+// SetConfValidator installs the SSRF deny-list validator applied to every
+// RemoteConf loaded from /etc/remote. It is called once by the filer server
+// after construction.
+func (rs *FilerRemoteStorage) SetConfValidator(v RemoteStorageConfValidator) {
+	rs.mu.Lock()
+	rs.confValidator = v
+	rs.mu.Unlock()
 }
 
 func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *Filer) (err error) {
@@ -77,6 +102,16 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 		conf := &remote_pb.RemoteConf{}
 		if err := proto.Unmarshal(entry.Content, conf); err != nil {
 			return fmt.Errorf("unmarshal %s/%s: %v", DirectoryEtcRemote, entry.Name(), err)
+		}
+		if rs.confValidator != nil {
+			if vErr := rs.confValidator(context.Background(), conf); vErr != nil {
+				// Drop the conf rather than fail the whole load: a single bad conf
+				// must not evict the rest of /etc/remote, and the mount mapping that
+				// references it resolves to "no client" on the lazy paths instead
+				// of dialing the blocked endpoint.
+				glog.Warningf("reject remote storage conf %s/%s: %v", DirectoryEtcRemote, entry.Name(), vErr)
+				continue
+			}
 		}
 		storageNameToConf[conf.Name] = conf
 	}
