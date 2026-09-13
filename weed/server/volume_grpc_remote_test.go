@@ -702,4 +702,17 @@ func TestValidateRemoteConfForLoad(t *testing.T) {
 	if err := ValidateRemoteConfForLoad(context.Background(), nil, false); err != nil {
 		t.Errorf("nil conf should be a no-op: %v", err)
 	}
+	// A hostname endpoint is not resolved at load time (DNS is left to the
+	// build-time guard at dial), so it must pass even if it would resolve to a
+	// blocked address. This prevents transient DNS failures from disabling
+	// working mounts during /etc/remote reload.
+	hostnameS3 := &remote_pb.RemoteConf{
+		Name:       "host",
+		Type:       "s3",
+		S3Endpoint: "http://internal.example.com",
+		S3Region:   "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), hostnameS3, false); err != nil {
+		t.Errorf("hostname endpoint should pass at load (DNS deferred to dial): %v", err)
+	}
 }

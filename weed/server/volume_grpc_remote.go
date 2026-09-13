@@ -407,9 +407,39 @@ func ValidateRemoteConfForLoad(ctx context.Context, remoteConf *remote_pb.Remote
 		}
 	}
 	if endpoint, _, ok := guardedRemoteClient(remoteConf); ok {
-		if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
+		if validateErr := validateRemoteEndpointForLoad(endpoint); validateErr != nil {
 			return fmt.Errorf("reject remote endpoint: %w", validateErr)
 		}
+	}
+	return nil
+}
+
+// validateRemoteEndpointForLoad applies the static parts of the SSRF deny-list
+// (scheme, IMDS hostnames, IP-literal blocked addresses) without resolving
+// hostnames. DNS resolution is left to BuildGuardedRemoteStorageClient at dial
+// time, so a transient DNS failure during /etc/remote reload cannot drop a
+// working mount from the live map.
+func validateRemoteEndpointForLoad(endpoint string) error {
+	if strings.TrimSpace(endpoint) == "" {
+		return fmt.Errorf("remote endpoint is empty")
+	}
+	u, parseErr := url.Parse(endpoint)
+	if parseErr != nil {
+		return fmt.Errorf("parse remote endpoint %q: %w", endpoint, parseErr)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("remote endpoint %q must use http or https, got %q", endpoint, u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("remote endpoint %q has no host", endpoint)
+	}
+	if _, ok := blockedIMDSHosts[strings.ToLower(host)]; ok {
+		return fmt.Errorf("remote endpoint %q targets instance metadata service", endpoint)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return checkBlockedIP(endpoint, ip)
 	}
 	return nil
 }
