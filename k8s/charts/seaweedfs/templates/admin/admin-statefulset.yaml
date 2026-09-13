@@ -9,7 +9,7 @@
 {{- $adminAuthEnabled := include "seaweedfs.admin.authEnabled" . }}
 {{- $adminIp := .Values.admin.ip | default "0.0.0.0" }}
 {{- if and (not (include "seaweedfs.admin.isLoopbackIp" $adminIp)) (ne $adminAuthEnabled "true") }}
-{{- fail (printf "admin.ip is set to %q (non-loopback) but admin authentication is not configured. Since `weed admin` 4.46 refuses to bind a non-loopback address without authentication, the admin container would exit on startup. Set admin.secret.adminPassword or admin.secret.existingSecret, or supply WEED_ADMIN_PASSWORD via admin.extraEnvironmentVars / admin.secretExtraEnvironmentVars, or set admin.ip to a loopback address such as 127.0.0.1 (note: a loopback bind makes the chart's httpGet readiness/liveness probes fail)." $adminIp) -}}
+{{- fail (printf "admin.ip is set to %q (non-loopback) but admin authentication is not configured. Since `weed admin` 4.46 refuses to bind a non-loopback address without authentication, the admin container would exit on startup. Set admin.secret.adminPassword or admin.secret.existingSecret, or supply WEED_ADMIN_PASSWORD via admin.extraEnvironmentVars / admin.secretExtraEnvironmentVars, or set admin.ip to a loopback address such as 127.0.0.1 (note: a loopback bind makes the chart's httpGet readiness/liveness probes fail), or set admin.allowInsecureBind to true to opt out via -allowInsecureBind (INSECURE: exposes the admin API unauthenticated on the network)." $adminIp) -}}
 {{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -176,14 +176,17 @@ spec:
               -dataDir={{ .Values.admin.dataDir }} \
               {{- end }}
               {{- if .Values.admin.masters }}
-              -masters={{ .Values.admin.masters }}{{- if or $urlPrefix .Values.admin.extraArgs }} \{{ end }}
+              -masters={{ .Values.admin.masters }} \
               {{- else if .Values.global.seaweedfs.masterServer }}
-              -masters={{ .Values.global.seaweedfs.masterServer }}{{- if or $urlPrefix .Values.admin.extraArgs }} \{{ end }}
+              -masters={{ .Values.global.seaweedfs.masterServer }} \
               {{- else }}
-              -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{- if or $urlPrefix .Values.admin.extraArgs }} \{{ end }}
+              -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }} \
               {{- end }}
               {{- if $urlPrefix }}
-              -urlPrefix={{ $urlPrefix }}{{- if .Values.admin.extraArgs }} \{{ end }}
+              -urlPrefix={{ $urlPrefix }} \
+              {{- end }}
+              {{- if .Values.admin.allowInsecureBind }}
+              -allowInsecureBind \
               {{- end }}
               {{- range $index, $arg := .Values.admin.extraArgs }}
               {{ $arg }}{{- if lt $index (sub (len $.Values.admin.extraArgs) 1) }} \{{ end }}

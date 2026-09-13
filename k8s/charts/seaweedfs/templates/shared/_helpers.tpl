@@ -105,13 +105,15 @@ true
 {{- end -}}
 {{- end -}}
 
-{{/* Whether admin authentication is enabled from any supported source:
-     admin.secret (adminPassword or existingSecret), or WEED_ADMIN_PASSWORD
-     supplied via extraEnvironmentVars / secretExtraEnvironmentVars (which
-     weed admin picks up through viper's AutomaticEnv). A secret-backed
-     entry counts as enabled even though the chart cannot read its value. */}}
+{{/* Whether the admin server's non-loopback bind guard is satisfied, from
+     any supported source: admin.secret (adminPassword or existingSecret),
+     WEED_ADMIN_PASSWORD supplied via extraEnvironmentVars /
+     secretExtraEnvironmentVars (which weed admin picks up through viper's
+     AutomaticEnv), or admin.allowInsecureBind (renders -allowInsecureBind,
+     the binary's own explicit opt-out). A secret-backed entry counts as
+     enabled even though the chart cannot read its value. */}}
 {{- define "seaweedfs.admin.authEnabled" -}}
-{{- if or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword -}}
+{{- if or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword .Values.admin.allowInsecureBind -}}
 true
 {{- else -}}
 {{- $merged := dict -}}
