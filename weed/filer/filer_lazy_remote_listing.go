@@ -75,8 +75,13 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		}
 	}
 
-	client, _, found := f.RemoteStorage.FindRemoteStorageClient(lookupPath)
+	remoteConf, found := f.RemoteStorage.FindRemoteStorageConf(lookupPath)
 	if !found {
+		return
+	}
+	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+	if clientErr != nil {
+		glog.V(1).InfofCtx(ctx, "maybeLazyListFromRemote: reject %s: %v", p, clientErr)
 		return
 	}
 
