@@ -20,6 +20,9 @@ import (
 // CAS, object-lock check, dispatch by kind. Errors surface as outcomes;
 // reader cursors and pending state are the worker's concern.
 func (s3a *S3ApiServer) LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	if err := s3a.checkAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req == nil || req.Bucket == "" || req.ObjectPath == "" {
 		return blocked("FATAL_EVENT_ERROR: empty bucket or object_path"), nil
 	}
