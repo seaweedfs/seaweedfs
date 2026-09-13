@@ -1350,6 +1350,10 @@ admin:
   ip: "0.0.0.0"
   loggingOverrideLevel: null
 
+  # Let the admin server bind a non-loopback ip without adminPassword
+  # or mTLS configured.
+  allowInsecureBind: false
+
   # Admin authentication
   secret:
     # Name of an existing secret containing admin credentials. If set, adminUser and adminPassword below are ignored.

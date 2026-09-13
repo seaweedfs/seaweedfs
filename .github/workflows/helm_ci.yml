@@ -117,6 +117,23 @@ jobs:
           echo "Security configuration renders correctly"
 
           echo ""
+          echo "=== Testing admin.allowInsecureBind satisfies the admin auth render guard ==="
+          # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
+          # refuses to bind without authentication (see PR #11228 for the
+          # -allowInsecureBind opt-out this flag maps to).
+          helm template test $CHART_DIR --set admin.enabled=true --set admin.allowInsecureBind=true \
+            > /tmp/admin-allow-insecure-bind.yaml
+          grep -q -- "-allowInsecureBind" /tmp/admin-allow-insecure-bind.yaml
+          echo "admin.allowInsecureBind renders -allowInsecureBind and passes the render guard"
+
+          if helm template test $CHART_DIR --set admin.enabled=true > /tmp/admin-no-auth.yaml 2>/tmp/admin-no-auth.err; then
+            echo "FAIL: admin.enabled=true with no auth configured should fail to render"
+            exit 1
+          fi
+          grep -q "admin.allowInsecureBind" /tmp/admin-no-auth.err
+          echo "admin with no auth configured still fails the render guard, and the guard mentions admin.allowInsecureBind"
+
+          echo ""
           echo "=== Testing JWT expiration overrides ==="
           helm template test $CHART_DIR \
             --set global.seaweedfs.securityConfig.jwtSigning.expiresAfterSeconds.volumeWrite=11 \
