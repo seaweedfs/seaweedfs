@@ -486,7 +486,12 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	defer func() {
 		// makeupDiff appends new needles/tombstones to the .cpx; its fsync is the
 		// durability gate that must succeed before CommitCompact writes the .cpc
-		// marker and swaps the files.
+		// marker and swaps the files. Sync the dat file once after all appends
+		// rather than per-needle — a fsync per entry scales poorly on slow disks
+		// and can exceed test timeouts with large entry counts.
+		if syncErr := dstDatBackend.Sync(); syncErr != nil && err == nil {
+			err = fmt.Errorf("sync dat %s: %v", newDatFileName, syncErr)
+		}
 		if syncErr := idx.Sync(); syncErr != nil && err == nil {
 			err = fmt.Errorf("sync idx %s: %v", newIdxFileName, syncErr)
 		}
@@ -536,9 +541,6 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %w", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
 			dstDatBackend.Write(needleBytes)
-			if err := dstDatBackend.Sync(); err != nil {
-				return fmt.Errorf("cannot sync needle %s: %v", dstDatBackend.File.Name(), err)
-			}
 			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
 		} else { //deleted needle
 			//fakeDelNeedle's default Data field is nil
