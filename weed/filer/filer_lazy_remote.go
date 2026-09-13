@@ -131,9 +131,13 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		return false, nil
 	}
 
-	client, _, found := f.RemoteStorage.GetRemoteStorageClient(remoteLoc.Name)
+	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
 	if !found {
 		return false, fmt.Errorf("resolve remote storage client for %s: not found", entry.FullPath)
+	}
+	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+	if clientErr != nil {
+		return false, fmt.Errorf("resolve remote storage client for %s: %w", entry.FullPath, clientErr)
 	}
 	if client == nil {
 		return false, fmt.Errorf("resolve remote storage client for %s: initialization failed", entry.FullPath)
