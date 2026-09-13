@@ -2,13 +2,17 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestComputeEntryIdentity_BasicFields(t *testing.T) {
@@ -327,5 +331,35 @@ func TestRecordMetadataOnlyIf_EmptyRuleHashCollapsesToEmptyLabel(t *testing.T) {
 	recordMetadataOnlyIf(true, &s3_lifecycle_pb.LifecycleDeleteRequest{Bucket: bucket})
 	if got := testutil.ToFloat64(c.WithLabelValues(bucket, "")); got != before+1 {
 		t.Fatalf("nil rule_hash should produce empty-label series; before=%v after=%v", before, got)
+	}
+}
+
+func TestLifecycleDelete_RequiresAdminAuth(t *testing.T) {
+	s := newTestS3IamCacheServer(t, testS3IamCacheSigningKey)
+	_, err := s.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket: "victim", ObjectPath: "important.dat",
+		ActionKind: s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+	})
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("LifecycleDelete without token: got code %v, want %v (err=%v)", got, want, err)
+	}
+	bad := security.GenJwtForFilerAdmin(security.SigningKey("a-different-key"), 60)
+	_, err = s.LifecycleDelete(s3IamCacheBearerCtx(string(bad)), &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket: "victim", ObjectPath: "important.dat",
+		ActionKind: s3_lifecycle_pb.ActionKind_EXPIRATION_DAYS,
+	})
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("LifecycleDelete with mis-signed token: got code %v, want %v (err=%v)", got, want, err)
+	}
+}
+
+func TestLifecycleDelete_NoSigningKey_Allowed(t *testing.T) {
+	s := newTestS3IamCacheServer(t, "")
+	resp, err := s.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{})
+	if err != nil {
+		t.Fatalf("LifecycleDelete without signing key: unexpected error %v", err)
+	}
+	if resp == nil || resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
+		t.Fatalf("expected BLOCKED for empty request without signing key, got %v", resp)
 	}
 }

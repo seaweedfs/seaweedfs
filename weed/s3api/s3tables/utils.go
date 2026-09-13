@@ -126,6 +126,58 @@ func TableDataDirFromMetadataLocation(metadataLocation string) string {
 	return path.Join(TablesPath, loc)
 }
 
+// ValidateMetadataLocation checks that an s3:// metadata location stays within
+// the authorized table bucket and rejects traversal segments that path.Join
+// would collapse to escape the bucket directory. Empty locations are allowed
+// (the catalog derives one). A non-empty location must include a table path so
+// its metadata directory is table-specific, not shared at the bucket level.
+func ValidateMetadataLocation(metadataLocation, bucketName string) error {
+	if metadataLocation == "" {
+		return nil
+	}
+	bucket, tablePath, err := parseS3Location(metadataLocation)
+	if err != nil {
+		return err
+	}
+	if bucket != bucketName {
+		return fmt.Errorf("metadata location must be within bucket %s", bucketName)
+	}
+	hasSegment := false
+	for _, segment := range strings.Split(tablePath, "/") {
+		if segment == "" {
+			continue
+		}
+		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\\\x00") {
+			return fmt.Errorf("invalid metadata location path")
+		}
+		hasSegment = true
+	}
+	if !hasSegment {
+		return fmt.Errorf("metadata location must include a table path")
+	}
+	return nil
+}
+
+func parseS3Location(location string) (bucket, tablePath string, err error) {
+	if !strings.HasPrefix(location, "s3://") {
+		return "", "", fmt.Errorf("unsupported location: %s", location)
+	}
+	trimmed := strings.TrimPrefix(location, "s3://")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" {
+		return "", "", fmt.Errorf("invalid location: %s", location)
+	}
+	parts := strings.SplitN(trimmed, "/", 2)
+	bucket = parts[0]
+	if bucket == "" {
+		return "", "", fmt.Errorf("invalid location bucket: %s", location)
+	}
+	if len(parts) == 2 {
+		tablePath = parts[1]
+	}
+	return bucket, tablePath, nil
+}
+
 // GetTableObjectRootDir returns the root path for table bucket object storage
 func GetTableObjectRootDir() string {
 	return path.Join(TablesPath, tableObjectRootDirName)
