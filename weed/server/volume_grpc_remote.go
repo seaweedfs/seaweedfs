@@ -2,10 +2,12 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // lookupIPAddrFunc resolves a host to one or more IP addresses. It is a
@@ -313,10 +316,12 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 	// gcs reaches a fixed object host, but the token exchange goes wherever the
 	// supplied credentials say, so guard that endpoint instead.
 	if remoteConf.Type == "gcs" && remoteConf.GcsGoogleApplicationCredentials != "" {
-		if _, tokenURL, err := gcsremote.ParseInlineCredentials(remoteConf.GcsGoogleApplicationCredentials); err == nil {
-			return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
-				return gcsremote.MakeWithHTTPClient(remoteConf, httpClient, gcsremote.StaticKeyCredentialTypes...)
-			}, true
+		if data, err := loadGcsCredentialsContent(remoteConf.GcsGoogleApplicationCredentials); err == nil {
+			if _, tokenURL, parseErr := gcsremote.ParseInlineCredentials(string(data)); parseErr == nil {
+				return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+					return gcsremote.MakeWithHTTPClient(remoteConf, httpClient, gcsremote.StaticKeyCredentialTypes...)
+				}, true
+			}
 		}
 	}
 	return "", nil, false
@@ -328,6 +333,27 @@ func gcsCredentialsArePath(creds string) bool {
 	return creds != "" && !strings.HasPrefix(creds, "{")
 }
 
+var errGcsCredentialsUnreadable = errors.New("gcs credentials file is not readable or does not contain valid credentials")
+
+// loadGcsCredentialsContent returns the credential JSON for a gcs credentials
+// value, reading from disk when it is a filesystem path (as written by
+// remote.configure -gcs.appCredentialsFile). This mirrors what the gcs client
+// itself does in MakeWithHTTPClient, so the guard validates the same content
+// the client will eventually load.
+func loadGcsCredentialsContent(creds string) ([]byte, error) {
+	if creds == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(creds, "{") {
+		return []byte(creds), nil
+	}
+	data, err := os.ReadFile(util.ResolvePath(creds))
+	if err != nil {
+		return nil, errGcsCredentialsUnreadable
+	}
+	return data, nil
+}
+
 // checkGcsCredentials rejects a caller-supplied gcs credentials value that
 // would make the SDK read from somewhere other than the credentials themselves,
 // so the request fails before any client is built.
@@ -335,12 +361,11 @@ func checkGcsCredentials(creds string) error {
 	if creds == "" {
 		return nil
 	}
-	// A filesystem path is read from disk by the SDK. Accept only inline JSON
-	// on the request; the server env var still supplies a path.
-	if gcsCredentialsArePath(creds) {
-		return fmt.Errorf("gcs credentials must be inline JSON")
+	data, err := loadGcsCredentialsContent(creds)
+	if err != nil {
+		return err
 	}
-	credType, _, parseErr := gcsremote.ParseInlineCredentials(creds)
+	credType, _, parseErr := gcsremote.ParseInlineCredentials(string(data))
 	if parseErr != nil {
 		return parseErr
 	}

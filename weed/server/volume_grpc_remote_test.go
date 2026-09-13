@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -666,8 +668,40 @@ func TestBuildGuardedRemoteStorageClient(t *testing.T) {
 		GcsGoogleApplicationCredentials: "/etc/hostname",
 	}
 	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsPathCreds, false); err == nil {
-		t.Error("expected a gcs credentials path to be rejected")
+		t.Error("expected a non-credentials file path to be rejected")
 	} else if !strings.Contains(err.Error(), "reject remote credentials") {
 		t.Errorf("error = %v, want reject remote credentials", err)
+	} else if strings.Contains(err.Error(), "/etc/hostname") {
+		t.Errorf("error must not leak the file path: %v", err)
+	}
+
+	// A file path that points to valid GCS credentials should be accepted.
+	credsFile := filepath.Join(t.TempDir(), "service-account.json")
+	validCreds := `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token","client_email":"sa@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\nMIIBVwIBADANBgkqhkiG9w0BAQEFAASCAUEwggE9AgEAAkEAxY\n-----END PRIVATE KEY-----\n","private_key_id":"key1"}`
+	if err := os.WriteFile(credsFile, []byte(validCreds), 0600); err != nil {
+		t.Fatalf("write creds file: %v", err)
+	}
+	gcsFileCreds := &remote_pb.RemoteConf{
+		Name:                            "good",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: credsFile,
+	}
+	if err := checkGcsCredentials(credsFile); err != nil {
+		t.Errorf("valid gcs credentials file should pass: %v", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsFileCreds, false); err != nil {
+		t.Errorf("valid gcs credentials file should build: %v", err)
+	}
+
+	// A nonexistent path must be rejected without leaking the path in the error.
+	gcsMissingCreds := &remote_pb.RemoteConf{
+		Name:                            "missing",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: filepath.Join(t.TempDir(), "does-not-exist.json"),
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsMissingCreds, false); err == nil {
+		t.Error("expected a nonexistent credentials file to be rejected")
+	} else if strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error must not leak the file path: %v", err)
 	}
 }
