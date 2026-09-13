@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // lookupIPAddrFunc resolves a host to one or more IP addresses. It is a
@@ -331,6 +333,8 @@ func gcsCredentialsArePath(creds string) bool {
 	return creds != "" && !strings.HasPrefix(creds, "{")
 }
 
+var errGcsCredentialsUnreadable = errors.New("gcs credentials file is not readable or does not contain valid credentials")
+
 // loadGcsCredentialsContent returns the credential JSON for a gcs credentials
 // value, reading from disk when it is a filesystem path (as written by
 // remote.configure -gcs.appCredentialsFile). This mirrors what the gcs client
@@ -343,9 +347,9 @@ func loadGcsCredentialsContent(creds string) ([]byte, error) {
 	if strings.HasPrefix(creds, "{") {
 		return []byte(creds), nil
 	}
-	data, err := os.ReadFile(creds)
+	data, err := os.ReadFile(util.ResolvePath(creds))
 	if err != nil {
-		return nil, fmt.Errorf("read gcs credentials file %q: %w", creds, err)
+		return nil, errGcsCredentialsUnreadable
 	}
 	return data, nil
 }
