@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -150,7 +151,11 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 							// wrap above, so followers and growth-disabled
 							// masters name the unserved medium too — the
 							// initiator block is skipped for both.
-							lastErr = fmt.Errorf("%s and no volume server carries disk type %q for %s", err.Error(), option.DiskType.ReadableString(), option.String())
+							// The empty disk type is the legacy unlabeled
+							// layout; naming it "hdd" here sends operators
+							// looking for servers that were never labeled.
+							lastErr = fmt.Errorf("%s and no volume server carries the %s disk layout for %s", err.Error(), describeDiskLayout(option.DiskType), option.String())
+							assignUnservedLayoutWarning.Do(option.String(), lastErr)
 						}
 						break // surface the real error, not a retryable shed
 					}
@@ -218,3 +223,31 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 	return nil, lastErr
 }
+
+// describeDiskLayout names the disk layout an assign targets. The empty disk
+// type is the legacy unlabeled layout on servers that were never started with
+// -disk; naming it "hdd" sends operators looking for servers that were never
+// labeled.
+func describeDiskLayout(dt types.DiskType) string {
+	if dt == types.HardDriveType {
+		return "default (unlabeled)"
+	}
+	return fmt.Sprintf("%q", dt.String())
+}
+
+// assignUnservedLayoutWarning logs a repeated assign failure once per option
+// instead of once per write attempt: a layout no volume server serves is a
+// state a retry cannot change, so repeating it only buries the actionable
+// first warning.
+type unservedLayoutWarning struct {
+	once sync.Map
+}
+
+func (w *unservedLayoutWarning) Do(optionKey string, lastErr error) {
+	if _, dup := w.once.LoadOrStore(optionKey, struct{}{}); dup {
+		return
+	}
+	glog.Warningf("assign requests for %s will keep failing until a volume server registers that disk layout or clients change their assignment disk type: %v", optionKey, lastErr)
+}
+
+var assignUnservedLayoutWarning unservedLayoutWarning

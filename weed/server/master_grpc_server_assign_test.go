@@ -268,7 +268,7 @@ func TestAssignFailsFastWhenDiskTypeUnserved(t *testing.T) {
 				assert.NotEqual(t, codes.ResourceExhausted, st.Code())
 			}
 			assert.Contains(t, err.Error(), topology.NoWritableVolumes)
-			assert.Contains(t, err.Error(), `no volume server carries disk type "hdd"`)
+			assert.Contains(t, err.Error(), `no volume server carries the default (unlabeled) disk layout`)
 			assert.Less(t, elapsed, 2*time.Second)
 		})
 	}
