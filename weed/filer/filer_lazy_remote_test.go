@@ -483,6 +483,36 @@ func TestMaybeLazyFetchFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 	assert.Equal(t, 0, countingStub.statCalls, "guard should prevent StatFile from being called")
 }
 
+func TestMaybeLazyFetchFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {
+	const storageType = "stub_lazy_guarded"
+	countingStub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
+		},
+	}
+	defer registerStubMaker(t, storageType, countingStub)()
+
+	conf := &remote_pb.RemoteConf{Name: "guardedstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "guardedstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	f.BuildGuardedRemoteClient = func(ctx context.Context, _ *remote_pb.RemoteConf, _ bool) (remote_storage.RemoteStorageClient, error) {
+		return nil, fmt.Errorf("reject remote endpoint")
+	}
+
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/file.txt")
+	require.NoError(t, err)
+	assert.Nil(t, entry, "guarded rejection should yield no entry")
+	assert.Equal(t, 0, countingStub.statCalls, "guarded rejection should not reach the remote")
+}
+
 func TestFindEntry_LazyFetchOnMiss(t *testing.T) {
 	const storageType = "stub_lazy_findentry"
 	stub := &stubRemoteClient{
