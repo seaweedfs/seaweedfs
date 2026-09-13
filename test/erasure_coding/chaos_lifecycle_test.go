@@ -750,7 +750,13 @@ func (r *chaosRun) seedAndSpread() {
 			if spread[server] < 2 && growsPerServer[server] < maxGrowsPerServer {
 				out, gerr := captureCommandOutput(r.t, shell.Commands[findCommandIndex("volume.grow")],
 					[]string{"-collection", chaosCollection, "-dataNode", server, "-count", "1"}, r.env)
-				growsPerServer[server]++
+				// Only count successful grows toward the cap: a transient
+				// collectTopologyInfo or VolumeGrow RPC error would otherwise
+				// exhaust the retry budget without creating any volume, and
+				// the loop would then only poll until the Eventually timeout.
+				if gerr == nil {
+					growsPerServer[server]++
+				}
 				r.t.Logf("volume.grow on %s: err=%v output:\n%s", server, gerr, out)
 			}
 		}
