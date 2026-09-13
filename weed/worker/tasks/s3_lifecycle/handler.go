@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -423,6 +424,7 @@ type lifecycleRPCAdapter struct {
 }
 
 func (a lifecycleRPCAdapter) LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error) {
+	ctx, _ = credential.WithS3InternalAdminAuth(ctx)
 	return a.c.LifecycleDelete(ctx, req)
 }
 
