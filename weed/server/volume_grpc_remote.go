@@ -301,6 +301,9 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 		return "", nil, false
 	}
 	if ep, isS3 := s3remote.S3CompatibleEndpoint(remoteConf); isS3 {
+		if ep == "" && remoteConf.Type == "s3" {
+			return "", nil, false
+		}
 		return ep, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 			return s3remote.MakeWithHTTPClient(remoteConf, httpClient)
 		}, true

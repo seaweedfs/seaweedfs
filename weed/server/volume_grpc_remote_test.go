@@ -715,4 +715,33 @@ func TestValidateRemoteConfForLoad(t *testing.T) {
 	if err := ValidateRemoteConfForLoad(context.Background(), hostnameS3, false); err != nil {
 		t.Errorf("hostname endpoint should pass at load (DNS deferred to dial): %v", err)
 	}
+	// A standard AWS S3 config with no custom endpoint (empty S3Endpoint) has
+	// no caller-supplied endpoint to guard — the AWS SDK derives the regional
+	// endpoint. Both the load-time validator and the build-time guard must
+	// accept it so standard AWS S3 mounts keep working.
+	standardS3 := &remote_pb.RemoteConf{
+		Name:     "aws",
+		Type:     "s3",
+		S3Region: "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), standardS3, false); err != nil {
+		t.Errorf("standard AWS S3 (empty endpoint) should pass: %v", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), standardS3, false); err != nil {
+		t.Errorf("standard AWS S3 (empty endpoint) should build: %v", err)
+	}
+	// A non-s3 S3-compatible type with an empty endpoint is a misconfiguration
+	// (the AWS SDK would derive an AWS endpoint). The guard must reject it
+	// rather than fall through to the unguarded cache.
+	aliyunNoEndpoint := &remote_pb.RemoteConf{
+		Name:         "aliyun",
+		Type:         "aliyun",
+		AliyunRegion: "cn-hangzhou",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), aliyunNoEndpoint, false); err == nil {
+		t.Error("aliyun with empty endpoint should be rejected at load")
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), aliyunNoEndpoint, false); err == nil {
+		t.Error("aliyun with empty endpoint should be rejected by the guard")
+	}
 }
