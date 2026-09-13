@@ -43,7 +43,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, nil
 	}
 
-	client, _, found := f.RemoteStorage.FindRemoteStorageClient(p)
+	remoteConf, found := f.RemoteStorage.FindRemoteStorageConf(p)
 	if !found {
 		return nil, nil
 	}
@@ -67,6 +67,12 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 
 	key := string(p)
 	val, err, _ := f.lazyFetchGroup.Do(key, func() (interface{}, error) {
+		buildCtx := context.WithoutCancel(ctx)
+		client, clientErr := f.buildRemoteStorageClient(buildCtx, remoteConf)
+		if clientErr != nil {
+			glog.V(1).InfofCtx(ctx, "maybeLazyFetchFromRemote: reject %s: %v", p, clientErr)
+			return lazyFetchResult{nil}, nil
+		}
 		remoteEntry, statErr := client.StatFile(objectLoc)
 		if statErr != nil {
 			if errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
@@ -126,9 +132,17 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		return false, nil
 	}
 
-	client, _, found := f.RemoteStorage.GetRemoteStorageClient(remoteLoc.Name)
+	if !entry.IsDirectory() && entry.Remote == nil {
+		return false, nil
+	}
+
+	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
 	if !found {
 		return false, fmt.Errorf("resolve remote storage client for %s: not found", entry.FullPath)
+	}
+	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+	if clientErr != nil {
+		return false, fmt.Errorf("resolve remote storage client for %s: %w", entry.FullPath, clientErr)
 	}
 	if client == nil {
 		return false, fmt.Errorf("resolve remote storage client for %s: initialization failed", entry.FullPath)
@@ -145,10 +159,6 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		}
 		glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: deleted directory %s from remote", entry.FullPath)
 		return true, nil
-	}
-
-	if entry.Remote == nil {
-		return false, nil
 	}
 
 	if err := client.DeleteFile(objectLoc); err != nil {

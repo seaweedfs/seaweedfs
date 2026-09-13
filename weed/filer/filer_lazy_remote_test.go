@@ -483,6 +483,139 @@ func TestMaybeLazyFetchFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 	assert.Equal(t, 0, countingStub.statCalls, "guard should prevent StatFile from being called")
 }
 
+func TestMaybeLazyFetchFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {
+	const storageType = "stub_lazy_guarded"
+	countingStub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
+		},
+	}
+	defer registerStubMaker(t, storageType, countingStub)()
+
+	conf := &remote_pb.RemoteConf{Name: "guardedstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "guardedstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	f.BuildGuardedRemoteClient = func(ctx context.Context, _ *remote_pb.RemoteConf, _ bool) (remote_storage.RemoteStorageClient, error) {
+		return nil, fmt.Errorf("reject remote endpoint")
+	}
+
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/file.txt")
+	require.NoError(t, err)
+	assert.Nil(t, entry, "guarded rejection should yield no entry")
+	assert.Equal(t, 0, countingStub.statCalls, "guarded rejection should not reach the remote")
+}
+
+func TestMaybeLazyListFromRemote_GuardedClientRejectsEndpoint(t *testing.T) {
+	const storageType = "stub_lazy_list_guarded"
+	stub := &stubRemoteClient{
+		listDirFn: func(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+			return visitFn("/", "file.txt", false, &filer_pb.RemoteEntry{RemoteSize: 1})
+		},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "listguardedstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:                   "listguardedstore",
+		Bucket:                 "mybucket",
+		Path:                   "/",
+		ListingCacheTtlSeconds: 300,
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	f.BuildGuardedRemoteClient = func(ctx context.Context, _ *remote_pb.RemoteConf, _ bool) (remote_storage.RemoteStorageClient, error) {
+		return nil, fmt.Errorf("reject remote endpoint")
+	}
+
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
+	assert.Equal(t, 0, stub.listDirCalls, "guarded rejection should not reach the remote")
+}
+
+func TestDeleteEntryMetaAndData_GuardedClientRejectsRemoteBackedFile(t *testing.T) {
+	const storageType = "stub_lazy_delete_guarded"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "deleteguardedstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "deleteguardedstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/file.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 64,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 64},
+	}
+	f := newTestFiler(t, store, rs)
+	f.BuildGuardedRemoteClient = func(ctx context.Context, _ *remote_pb.RemoteConf, _ bool) (remote_storage.RemoteStorageClient, error) {
+		return nil, fmt.Errorf("reject remote endpoint")
+	}
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.Error(t, err, "guarded rejection should block the remote-backed delete")
+	assert.Len(t, stub.deleteCalls, 0, "guarded rejection should not reach the remote")
+}
+
+func TestDeleteEntryMetaAndData_GuardedClientAllowsLocalOnlyFile(t *testing.T) {
+	const storageType = "stub_lazy_delete_local_only"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "localonlystore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "localonlystore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/file.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 64,
+		},
+		// no Remote: a local-only file under the mount needs no remote delete
+	}
+	f := newTestFiler(t, store, rs)
+	f.BuildGuardedRemoteClient = func(ctx context.Context, _ *remote_pb.RemoteConf, _ bool) (remote_storage.RemoteStorageClient, error) {
+		return nil, fmt.Errorf("reject remote endpoint")
+	}
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.NoError(t, err, "local-only file should delete despite a rejected mount endpoint")
+	_, findErr := store.FindEntry(context.Background(), filePath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound, "local metadata should be deleted")
+	assert.Len(t, stub.deleteCalls, 0, "local-only file should not reach the remote")
+}
+
 func TestFindEntry_LazyFetchOnMiss(t *testing.T) {
 	const storageType = "stub_lazy_findentry"
 	stub := &stubRemoteClient{

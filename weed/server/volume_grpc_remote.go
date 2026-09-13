@@ -304,6 +304,9 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 		return "", nil, false
 	}
 	if ep, isS3 := s3remote.S3CompatibleEndpoint(remoteConf); isS3 {
+		if ep == "" && remoteConf.Type == "s3" {
+			return "", nil, false
+		}
 		return ep, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 			return s3remote.MakeWithHTTPClient(remoteConf, httpClient)
 		}, true
@@ -409,6 +412,64 @@ func BuildGuardedRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.
 		return nil, fmt.Errorf("get remote client: %w", err)
 	}
 	return client, nil
+}
+
+// ValidateRemoteConfForLoad applies the same SSRF deny-list and gcs credential
+// checks BuildGuardedRemoteStorageClient enforces at dial time, but without
+// building a client. It is injected into the filer's FilerRemoteStorage so a
+// RemoteConf planted under /etc/remote is rejected at load — before the
+// lazy-fetch / lazy-list / remote-delete paths can resolve and dial it. A conf
+// whose type does not steer a caller-supplied endpoint (and so dials a fixed
+// provider host) passes; allowUntrusted skips the check to mirror the volume
+// server opt-out.
+func ValidateRemoteConfForLoad(ctx context.Context, remoteConf *remote_pb.RemoteConf, allowUntrusted bool) error {
+	if remoteConf == nil {
+		return nil
+	}
+	if allowUntrusted {
+		return nil
+	}
+	if remoteConf.GetType() == "gcs" {
+		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+			return fmt.Errorf("reject remote credentials: %w", credsErr)
+		}
+	}
+	if endpoint, _, ok := guardedRemoteClient(remoteConf); ok {
+		if validateErr := validateRemoteEndpointForLoad(endpoint); validateErr != nil {
+			return fmt.Errorf("reject remote endpoint: %w", validateErr)
+		}
+	}
+	return nil
+}
+
+// validateRemoteEndpointForLoad applies the static parts of the SSRF deny-list
+// (scheme, IMDS hostnames, IP-literal blocked addresses) without resolving
+// hostnames. DNS resolution is left to BuildGuardedRemoteStorageClient at dial
+// time, so a transient DNS failure during /etc/remote reload cannot drop a
+// working mount from the live map.
+func validateRemoteEndpointForLoad(endpoint string) error {
+	if strings.TrimSpace(endpoint) == "" {
+		return fmt.Errorf("remote endpoint is empty")
+	}
+	u, parseErr := url.Parse(endpoint)
+	if parseErr != nil {
+		return fmt.Errorf("parse remote endpoint %q: %w", endpoint, parseErr)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("remote endpoint %q must use http or https, got %q", endpoint, u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("remote endpoint %q has no host", endpoint)
+	}
+	if _, ok := blockedIMDSHosts[strings.ToLower(host)]; ok {
+		return fmt.Errorf("remote endpoint %q targets instance metadata service", endpoint)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return checkBlockedIP(endpoint, ip)
+	}
+	return nil
 }
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
