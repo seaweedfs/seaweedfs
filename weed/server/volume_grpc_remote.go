@@ -386,6 +386,34 @@ func BuildGuardedRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.
 	return client, nil
 }
 
+// ValidateRemoteConfForLoad applies the same SSRF deny-list and gcs credential
+// checks BuildGuardedRemoteStorageClient enforces at dial time, but without
+// building a client. It is injected into the filer's FilerRemoteStorage so a
+// RemoteConf planted under /etc/remote is rejected at load — before the
+// lazy-fetch / lazy-list / remote-delete paths can resolve and dial it. A conf
+// whose type does not steer a caller-supplied endpoint (and so dials a fixed
+// provider host) passes; allowUntrusted skips the check to mirror the volume
+// server opt-out.
+func ValidateRemoteConfForLoad(ctx context.Context, remoteConf *remote_pb.RemoteConf, allowUntrusted bool) error {
+	if remoteConf == nil {
+		return nil
+	}
+	if allowUntrusted {
+		return nil
+	}
+	if remoteConf.GetType() == "gcs" {
+		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+			return fmt.Errorf("reject remote credentials: %w", credsErr)
+		}
+	}
+	if endpoint, _, ok := guardedRemoteClient(remoteConf); ok {
+		if validateErr := validateRemoteEndpoint(ctx, endpoint); validateErr != nil {
+			return fmt.Errorf("reject remote endpoint: %w", validateErr)
+		}
+	}
+	return nil
+}
+
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err

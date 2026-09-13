@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 
@@ -228,6 +229,14 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, nil)
 	fs.filer.Cipher = option.Cipher
 	fs.filer.DefaultDiskType = option.DiskType
+	// Apply the volume server's SSRF deny-list to every RemoteConf loaded from
+	// /etc/remote, so a conf planted with a loopback / private / metadata
+	// endpoint is rejected at reload instead of being dialed by the lazy-fetch
+	// path. The filer package cannot import this package, so the validator is
+	// injected; it mirrors BuildGuardedRemoteStorageClient's checks.
+	fs.filer.RemoteStorage.SetConfValidator(func(ctx context.Context, conf *remote_pb.RemoteConf) error {
+		return ValidateRemoteConfForLoad(ctx, conf, option.AllowUntrustedRemoteEndpoints)
+	})
 	// we do not support IP whitelist right now https://github.com/seaweedfs/seaweedfs/issues/7094
 	if v.GetString("guard.white_list") != "" {
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
