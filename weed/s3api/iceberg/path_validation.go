@@ -59,8 +59,11 @@ func validateRequestPath(next http.Handler) http.Handler {
 
 // isValidTablePath reports whether a "/"-separated table path (the part below
 // the bucket) is free of segments that path.Join would collapse to escape the
-// bucket directory. Empty segments (from leading/duplicate slashes) are ignored.
+// bucket directory. Empty segments (from leading/duplicate slashes) are
+// ignored, but the path must resolve to at least one real segment so it does
+// not collapse to the bucket-level metadata directory.
 func isValidTablePath(tablePath string) bool {
+	hasSegment := false
 	for _, segment := range strings.Split(tablePath, "/") {
 		if segment == "" {
 			continue
@@ -68,8 +71,9 @@ func isValidTablePath(tablePath string) bool {
 		if !isValidNameSegment(segment) {
 			return false
 		}
+		hasSegment = true
 	}
-	return true
+	return hasSegment
 }
 
 // isValidNameSegment rejects a single path-segment value (bucket prefix slot,
@@ -87,14 +91,11 @@ func isValidNameSegment(s string) bool {
 
 // confineMetadataLocation checks that a parsed s3 location stays within the
 // authorized table bucket and rejects traversal segments that path.Join in
-// saveMetadataBlob would collapse to escape it. A non-empty location must
-// include a table path so its metadata directory is table-specific.
+// saveMetadataBlob would collapse to escape it. The table path must resolve
+// to at least one real segment so its metadata directory is table-specific.
 func confineMetadataLocation(metadataBucket, metadataPath, bucketName string) error {
 	if metadataBucket != bucketName {
 		return fmt.Errorf("table location must be within bucket %s", bucketName)
-	}
-	if metadataPath == "" {
-		return fmt.Errorf("table location must include a table path")
 	}
 	if !isValidTablePath(metadataPath) {
 		return fmt.Errorf("invalid table location path")

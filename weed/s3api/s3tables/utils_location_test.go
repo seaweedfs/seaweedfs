@@ -14,6 +14,7 @@ func TestValidateMetadataLocation(t *testing.T) {
 		{"cross bucket rejected", "s3://other/ns/t/metadata/v1.metadata.json", "bkt", true},
 		{"bucket only rejected", "s3://bkt", "bkt", true},
 		{"bucket with trailing slash rejected", "s3://bkt/", "bkt", true},
+		{"slash-only path rejected", "s3://bkt///", "bkt", true},
 		{"dotdot in path rejected", "s3://bkt/../victim/metadata/v1.metadata.json", "bkt", true},
 		{"dotdot mid path rejected", "s3://bkt/ns/../../victim/metadata/v1.metadata.json", "bkt", true},
 		{"dot segment rejected", "s3://bkt/ns/./t/metadata/v1.metadata.json", "bkt", true},

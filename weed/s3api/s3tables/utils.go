@@ -142,9 +142,7 @@ func ValidateMetadataLocation(metadataLocation, bucketName string) error {
 	if bucket != bucketName {
 		return fmt.Errorf("metadata location must be within bucket %s", bucketName)
 	}
-	if tablePath == "" {
-		return fmt.Errorf("metadata location must include a table path")
-	}
+	hasSegment := false
 	for _, segment := range strings.Split(tablePath, "/") {
 		if segment == "" {
 			continue
@@ -152,6 +150,10 @@ func ValidateMetadataLocation(metadataLocation, bucketName string) error {
 		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\\\x00") {
 			return fmt.Errorf("invalid metadata location path")
 		}
+		hasSegment = true
+	}
+	if !hasSegment {
+		return fmt.Errorf("metadata location must include a table path")
 	}
 	return nil
 }
