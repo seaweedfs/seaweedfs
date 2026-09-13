@@ -131,6 +131,10 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		return false, nil
 	}
 
+	if !entry.IsDirectory() && entry.Remote == nil {
+		return false, nil
+	}
+
 	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
 	if !found {
 		return false, fmt.Errorf("resolve remote storage client for %s: not found", entry.FullPath)
@@ -154,10 +158,6 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		}
 		glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: deleted directory %s from remote", entry.FullPath)
 		return true, nil
-	}
-
-	if entry.Remote == nil {
-		return false, nil
 	}
 
 	if err := client.DeleteFile(objectLoc); err != nil {
