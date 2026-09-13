@@ -726,6 +726,20 @@ func (r *chaosRun) seedAndSpread() {
 	require.GreaterOrEqual(r.t, len(r.volumes), 2, "seeding should produce at least two volumes")
 	time.Sleep(3 * time.Second)
 
+	// Cap the grows per server so heartbeat lag cannot run away: the spread
+	// check reads the master topology, which lags the volume.grow writes, so
+	// an uncapped loop re-fires every tick and fills every disk to capacity
+	// before the master registers the prior grow. A full disk has no free EC
+	// shard slots and the source disk drops below the encode's FreeVolumeCount
+	// >= 2 health check, failing ec.encode with "no healthy replicas" or "no
+	// free ec shard slots".
+	//
+	// Use -count 1 so each grow lands exactly one volume on the volume
+	// server's least-loaded disk (deterministic spreading), and cap the
+	// total grows per server well below the per-disk max so the source disk
+	// always retains FreeVolumeCount >= 2 for ec.encode's shard generation.
+	growsPerServer := make(map[string]int)
+	const maxGrowsPerServer = 4
 	require.Eventually(r.t, func() bool {
 		spread := nodeVolumeDiskCounts(r.t, r.env)
 		if len(spread) == chaosServerCount && allAtLeast(spread, 2) {
@@ -733,9 +747,10 @@ func (r *chaosRun) seedAndSpread() {
 		}
 		for i := 0; i < chaosServerCount; i++ {
 			server := "127.0.0.1:" + chaosVolumePort(i)
-			if spread[server] < 2 {
+			if spread[server] < 2 && growsPerServer[server] < maxGrowsPerServer {
 				out, gerr := captureCommandOutput(r.t, shell.Commands[findCommandIndex("volume.grow")],
-					[]string{"-collection", chaosCollection, "-dataNode", server, "-count", "4"}, r.env)
+					[]string{"-collection", chaosCollection, "-dataNode", server, "-count", "1"}, r.env)
+				growsPerServer[server]++
 				r.t.Logf("volume.grow on %s: err=%v output:\n%s", server, gerr, out)
 			}
 		}
@@ -1159,7 +1174,13 @@ func (c *chaosCluster) startVolumeServer(ctx context.Context, i int, logName str
 			return nil, err
 		}
 		diskDirs = append(diskDirs, dir)
-		maxVolumes = append(maxVolumes, "4")
+		// ec.encode generates 14 shards on the source disk (2 volume-slot
+		// equivalents) and refuses a source whose disk has FreeVolumeCount < 2,
+		// and the cluster-wide capacity check needs at least one free EC shard
+		// slot. seedAndSpread's spread loop grows 4 volumes per tick and can
+		// over-grow before the master's topology catches up, so leave enough
+		// headroom that a near-full disk never starves the encode.
+		maxVolumes = append(maxVolumes, "8")
 		if d == chaosDisksPerNode-1 {
 			diskTypes = append(diskTypes, "ssd")
 		} else {
@@ -1176,6 +1197,7 @@ func (c *chaosCluster) startVolumeServer(ctx context.Context, i int, logName str
 		"-dir.idx", idxDir,
 		"-disk", strings.Join(diskTypes, ","),
 		"-max", strings.Join(maxVolumes, ","),
+		"-minFreeSpace", "0",
 		"-master", chaosMasterAddr,
 		"-ip", "127.0.0.1",
 		"-dataCenter", "dc1",
