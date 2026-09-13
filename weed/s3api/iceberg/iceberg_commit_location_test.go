@@ -22,14 +22,14 @@ func seedPoisonedTable(t *testing.T, fc *memFiler, bucket, namespace, tableName,
 		Iceberg: &s3tables.IcebergMetadata{TableUUID: "00000000-0000-0000-0000-000000000001"},
 	}
 	internal := map[string]any{
-		"name":              tableName,
-		"namespace":          namespace,
-		"format":            "ICEBERG",
-		"ownerAccountId":    s3_constants.AccountAdminId,
-		"versionToken":      "v1",
-		"metadataVersion":   1,
-		"metadataLocation":  metadataLocation,
-		"metadata":          meta,
+		"name":             tableName,
+		"namespace":        namespace,
+		"format":           "ICEBERG",
+		"ownerAccountId":   s3_constants.AccountAdminId,
+		"versionToken":     "v1",
+		"metadataVersion":  1,
+		"metadataLocation": metadataLocation,
+		"metadata":         meta,
 	}
 	metaBytes, _ := json.Marshal(internal)
 	fc.seed(s3tables.GetTablePath(bucket, namespace, tableName), &filer_pb.Entry{
