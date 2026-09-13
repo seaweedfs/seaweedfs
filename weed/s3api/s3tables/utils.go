@@ -129,7 +129,8 @@ func TableDataDirFromMetadataLocation(metadataLocation string) string {
 // ValidateMetadataLocation checks that an s3:// metadata location stays within
 // the authorized table bucket and rejects traversal segments that path.Join
 // would collapse to escape the bucket directory. Empty locations are allowed
-// (the catalog derives one).
+// (the catalog derives one). A non-empty location must include a table path so
+// its metadata directory is table-specific, not shared at the bucket level.
 func ValidateMetadataLocation(metadataLocation, bucketName string) error {
 	if metadataLocation == "" {
 		return nil
@@ -140,6 +141,9 @@ func ValidateMetadataLocation(metadataLocation, bucketName string) error {
 	}
 	if bucket != bucketName {
 		return fmt.Errorf("metadata location must be within bucket %s", bucketName)
+	}
+	if tablePath == "" {
+		return fmt.Errorf("metadata location must include a table path")
 	}
 	for _, segment := range strings.Split(tablePath, "/") {
 		if segment == "" {
