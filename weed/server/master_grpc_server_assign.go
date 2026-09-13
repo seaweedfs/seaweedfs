@@ -107,11 +107,12 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	vl.SetLastGrowCount(req.WritableVolumeCount)
 
 	var (
-		lastErr           error
-		maxTimeout        = time.Second * 10
-		startTime         = time.Now()
-		initiatedGrow     bool
-		repickedAfterGrow bool
+		lastErr              error
+		maxTimeout           = time.Second * 10
+		startTime            = time.Now()
+		initiatedGrow        bool
+		repickedAfterGrow    bool
+		unservedLayoutLogged bool
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
@@ -154,8 +155,9 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 							// The empty disk type is the legacy unlabeled
 							// layout; naming it "hdd" here sends operators
 							// looking for servers that were never labeled.
-							lastErr = fmt.Errorf("%s and no volume server carries the %s disk layout for %s", err.Error(), describeDiskLayout(option.DiskType), option.String())
+							lastErr = fmt.Errorf("%s and no volume server carries the %s disk layout for %s", err.Error(), describeDiskLayout(req.DiskType), option.String())
 							assignUnservedLayoutWarning.Do(option.String(), lastErr)
+							unservedLayoutLogged = true
 						}
 						break // surface the real error, not a retryable shed
 					}
@@ -218,7 +220,10 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if initiatedGrow && vl.HasGrowRequest() && ms.Topo.AvailableSpaceFor(option) > 0 {
 		return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
 	}
-	if lastErr != nil {
+	if lastErr != nil && !unservedLayoutLogged {
+		// The unserved-layout branch already logged this once per option via
+		// assignUnservedLayoutWarning; repeating it here would flood the log
+		// on every retry of a state a retry cannot change.
 		glog.V(0).Infof("assign %v %v: %v", req, option.String(), lastErr)
 	}
 	return nil, lastErr
@@ -228,11 +233,15 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 // type is the legacy unlabeled layout on servers that were never started with
 // -disk; naming it "hdd" sends operators looking for servers that were never
 // labeled.
-func describeDiskLayout(dt types.DiskType) string {
-	if dt == types.HardDriveType {
+//
+// Pass the original request disk type, not the canonicalized option.DiskType:
+// ToDiskType folds both "" and "hdd" into HardDriveType, so only the request
+// string can tell an unlabeled request from an explicit hdd one.
+func describeDiskLayout(reqDiskType string) string {
+	if reqDiskType == "" {
 		return "default (unlabeled)"
 	}
-	return fmt.Sprintf("%q", dt.String())
+	return fmt.Sprintf("%q", strings.ToLower(reqDiskType))
 }
 
 // assignUnservedLayoutWarning logs a repeated assign failure at most once per

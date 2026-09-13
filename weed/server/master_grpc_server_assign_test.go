@@ -275,6 +275,30 @@ func TestAssignFailsFastWhenDiskTypeUnserved(t *testing.T) {
 	}
 }
 
+// An explicit disk=hdd request is not the unlabeled default: the error must
+// name "hdd" so an operator reading it connects it to their hdd configuration.
+// ToDiskType folds both "" and "hdd" into HardDriveType, so the formatter must
+// look at the original request string, not the canonicalized option.DiskType.
+func TestAssignFailsFastNamesExplicitHdd(t *testing.T) {
+	ms := newLeaderMaster()
+	// ssd capacity registered, but the request explicitly asks for hdd.
+	ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"ssd": 1})
+
+	req := &master_pb.AssignRequest{Count: 1, Replication: "000", Collection: "fresh", DiskType: "hdd"}
+
+	start := time.Now()
+	resp, err := ms.Assign(context.Background(), req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	assert.Contains(t, err.Error(), topology.NoWritableVolumes)
+	assert.Contains(t, err.Error(), `no volume server carries the "hdd" disk layout`)
+	assert.NotContains(t, err.Error(), "default (unlabeled)")
+	assert.Less(t, elapsed, 2*time.Second)
+}
+
 func TestUnservedLayoutWarningBoundedAndExpiring(t *testing.T) {
 	w := &unservedLayoutWarning{
 		now:  func() time.Time { return time.Unix(0, 0) },
