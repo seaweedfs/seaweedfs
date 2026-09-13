@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -82,4 +83,17 @@ func isValidNameSegment(s string) bool {
 		return false
 	}
 	return !strings.ContainsAny(s, "/\\\x00")
+}
+
+// confineMetadataLocation checks that a parsed s3 location stays within the
+// authorized table bucket and rejects traversal segments that path.Join in
+// saveMetadataBlob would collapse to escape it.
+func confineMetadataLocation(metadataBucket, metadataPath, bucketName string) error {
+	if metadataBucket != bucketName {
+		return fmt.Errorf("table location must be within bucket %s", bucketName)
+	}
+	if !isValidTablePath(metadataPath) {
+		return fmt.Errorf("invalid table location path")
+	}
+	return nil
 }

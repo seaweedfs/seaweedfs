@@ -187,6 +187,13 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 			message: "Invalid table location: " + err.Error(),
 		}
 	}
+	if err := confineMetadataLocation(metadataBucket, metadataPath, input.markerBucket); err != nil {
+		return nil, &icebergRequestError{
+			status:  http.StatusBadRequest,
+			errType: "BadRequestException",
+			message: err.Error(),
+		}
+	}
 	if err := s.saveMetadataFile(ctx, metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		return nil, &icebergRequestError{
 			status:  http.StatusInternalServerError,
