@@ -235,19 +235,44 @@ func describeDiskLayout(dt types.DiskType) string {
 	return fmt.Sprintf("%q", dt.String())
 }
 
-// assignUnservedLayoutWarning logs a repeated assign failure once per option
-// instead of once per write attempt: a layout no volume server serves is a
-// state a retry cannot change, so repeating it only buries the actionable
-// first warning.
+// assignUnservedLayoutWarning logs a repeated assign failure at most once per
+// option per interval instead of once per write attempt: a layout no volume
+// server serves is a state a retry cannot change, so repeating it only buries
+// the actionable first warning.
+//
+// The remembered set is bounded and expires: option keys embed
+// request-derived fields (collection, disk type), so an unbounded, permanent
+// dedupe map would let a client grow master memory at will and would also
+// suppress the warning if the same option goes unserved again after the
+// topology recovers.
+const (
+	unservedLayoutWarnInterval = time.Hour
+	unservedLayoutWarnMaxKeys  = 1024
+)
+
 type unservedLayoutWarning struct {
-	once sync.Map
+	mu   sync.Mutex
+	now  func() time.Time
+	last map[string]time.Time
+}
+
+var assignUnservedLayoutWarning = &unservedLayoutWarning{
+	now:  time.Now,
+	last: make(map[string]time.Time),
 }
 
 func (w *unservedLayoutWarning) Do(optionKey string, lastErr error) {
-	if _, dup := w.once.LoadOrStore(optionKey, struct{}{}); dup {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := w.now()
+	if t, ok := w.last[optionKey]; ok && now.Sub(t) < unservedLayoutWarnInterval {
 		return
 	}
+	if len(w.last) >= unservedLayoutWarnMaxKeys {
+		// Client-driven keys must never grow the map without bound; a full
+		// reset trades a burst of repeated warnings for bounded memory.
+		w.last = make(map[string]time.Time)
+	}
+	w.last[optionKey] = now
 	glog.Warningf("assign requests for %s will keep failing until a volume server registers that disk layout or clients change their assignment disk type: %v", optionKey, lastErr)
 }
-
-var assignUnservedLayoutWarning unservedLayoutWarning

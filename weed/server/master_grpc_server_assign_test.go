@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -271,5 +272,44 @@ func TestAssignFailsFastWhenDiskTypeUnserved(t *testing.T) {
 			assert.Contains(t, err.Error(), `no volume server carries the default (unlabeled) disk layout`)
 			assert.Less(t, elapsed, 2*time.Second)
 		})
+	}
+}
+
+func TestUnservedLayoutWarningBoundedAndExpiring(t *testing.T) {
+	w := &unservedLayoutWarning{
+		now:  func() time.Time { return time.Unix(0, 0) },
+		last: make(map[string]time.Time),
+	}
+
+	// Dedupes within the interval.
+	w.Do("opt", fmt.Errorf("e1"))
+	w.Do("opt", fmt.Errorf("e2"))
+	if len(w.last) != 1 {
+		t.Fatalf("same option logged twice: %v", w.last)
+	}
+
+	// Re-warns after the interval expires.
+	base := time.Unix(0, 0)
+	w.now = func() time.Time { return base.Add(unservedLayoutWarnInterval) }
+	w.Do("opt", fmt.Errorf("e3"))
+	if len(w.last) != 1 || !w.last["opt"].Equal(base.Add(unservedLayoutWarnInterval)) {
+		t.Fatalf("expected refreshed timestamp after interval, got %v", w.last)
+	}
+
+	// Hard cap: a client-driven key flood cannot grow the map without bound.
+	w.now = func() time.Time { return base.Add(2 * unservedLayoutWarnInterval) }
+	flood := &unservedLayoutWarning{
+		now:  w.now,
+		last: make(map[string]time.Time),
+	}
+	for i := 0; i < unservedLayoutWarnMaxKeys; i++ {
+		flood.Do(fmt.Sprintf("opt-%d", i), fmt.Errorf("e"))
+	}
+	if len(flood.last) != unservedLayoutWarnMaxKeys {
+		t.Fatalf("expected exactly cap entries, got %d", len(flood.last))
+	}
+	flood.Do("opt-flood", fmt.Errorf("e"))
+	if len(flood.last) != 1 {
+		t.Fatalf("expected full reset at cap, got %d entries", len(flood.last))
 	}
 }
