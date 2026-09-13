@@ -67,7 +67,8 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 
 	key := string(p)
 	val, err, _ := f.lazyFetchGroup.Do(key, func() (interface{}, error) {
-		client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+		buildCtx := context.WithoutCancel(ctx)
+		client, clientErr := f.buildRemoteStorageClient(buildCtx, remoteConf)
 		if clientErr != nil {
 			glog.V(1).InfofCtx(ctx, "maybeLazyFetchFromRemote: reject %s: %v", p, clientErr)
 			return lazyFetchResult{nil}, nil

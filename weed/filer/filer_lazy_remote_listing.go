@@ -82,7 +82,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 
 	key := "list:" + string(p)
 	f.lazyListGroup.Do(key, func() (interface{}, error) {
-		client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+		client, clientErr := f.buildRemoteStorageClient(context.WithoutCancel(ctx), remoteConf)
 		if clientErr != nil {
 			glog.V(1).InfofCtx(ctx, "maybeLazyListFromRemote: reject %s: %v", p, clientErr)
 			return nil, nil
