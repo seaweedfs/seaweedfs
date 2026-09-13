@@ -228,6 +228,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, nil)
 	fs.filer.Cipher = option.Cipher
 	fs.filer.DefaultDiskType = option.DiskType
+	fs.filer.BuildGuardedRemoteClient = BuildGuardedRemoteStorageClient
+	fs.filer.AllowUntrustedRemoteEndpoints = option.AllowUntrustedRemoteEndpoints
 	// we do not support IP whitelist right now https://github.com/seaweedfs/seaweedfs/issues/7094
 	if v.GetString("guard.white_list") != "" {
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
