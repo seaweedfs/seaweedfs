@@ -146,6 +146,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 						writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid staged metadata location: "+parseLocationErr.Error())
 						return
 					}
+					if err := confineMetadataLocation(stagedBucket, stagedPath, bucketName); err != nil {
+						writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+						return
+					}
 					stagedMetadataBytes, loadErr := s.loadMetadataFile(r.Context(), stagedBucket, stagedPath, stagedFileName)
 					if loadErr != nil {
 						if !errors.Is(loadErr, filer_pb.ErrNotFound) {
