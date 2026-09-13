@@ -146,6 +146,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 						writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid staged metadata location: "+parseLocationErr.Error())
 						return
 					}
+					if err := confineMetadataLocation(stagedBucket, stagedPath, bucketName); err != nil {
+						writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+						return
+					}
 					stagedMetadataBytes, loadErr := s.loadMetadataFile(r.Context(), stagedBucket, stagedPath, stagedFileName)
 					if loadErr != nil {
 						if !errors.Is(loadErr, filer_pb.ErrNotFound) {
@@ -201,6 +205,16 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				createBucket, createPath, createLocErr := parseS3Location(location)
+				if createLocErr != nil {
+					writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+createLocErr.Error())
+					return
+				}
+				if err := confineMetadataLocation(createBucket, createPath, bucketName); err != nil {
+					writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+					return
+				}
+
 				repairManifests(location)
 
 				result, reqErr := s.finalizeCreateOnCommit(r.Context(), createOnCommitInput{
@@ -232,6 +246,15 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 		if location == "" {
 			location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
+		}
+		locBucket, locPath, locErr := parseS3Location(location)
+		if locErr != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+locErr.Error())
+			return
+		}
+		if err := confineMetadataLocation(locBucket, locPath, bucketName); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+			return
 		}
 		tableUUID := uuid.Nil
 		if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
@@ -318,6 +341,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		metadataBucket, metadataPath, err := parseS3Location(location)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
+			return
+		}
+		if err := confineMetadataLocation(metadataBucket, metadataPath, bucketName); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
 			return
 		}
 		metadataFileName, newMetadataLocation, err = s.stageCommitMetadata(r.Context(), metadataBucket, metadataPath, location, metadataFileName, metadataBytes)
