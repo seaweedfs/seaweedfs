@@ -50,11 +50,6 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		return err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
-		return err
-	}
-
 	// Check if namespace exists
 	namespacePath := GetNamespacePath(bucketName, namespaceName)
 	namespaceMetadata, err := h.loadNamespaceMetadata(r.Context(), filerClient, bucketName, namespaceName)
@@ -123,6 +118,11 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		return nil
 	} else if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check view: %v", err))
+		return err
+	}
+
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
 

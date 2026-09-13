@@ -22,14 +22,14 @@ func seedPoisonedTable(t *testing.T, fc *memFiler, bucket, namespace, tableName,
 		Iceberg: &s3tables.IcebergMetadata{TableUUID: "00000000-0000-0000-0000-000000000001"},
 	}
 	internal := map[string]any{
-		"name":              tableName,
-		"namespace":          namespace,
-		"format":            "ICEBERG",
-		"ownerAccountId":    s3_constants.AccountAdminId,
-		"versionToken":      "v1",
-		"metadataVersion":   1,
-		"metadataLocation":  metadataLocation,
-		"metadata":          meta,
+		"name":             tableName,
+		"namespace":        namespace,
+		"format":           "ICEBERG",
+		"ownerAccountId":   s3_constants.AccountAdminId,
+		"versionToken":     "v1",
+		"metadataVersion":  1,
+		"metadataLocation": metadataLocation,
+		"metadata":         meta,
 	}
 	metaBytes, _ := json.Marshal(internal)
 	fc.seed(s3tables.GetTablePath(bucket, namespace, tableName), &filer_pb.Entry{
@@ -57,6 +57,9 @@ func TestCommitTableRejectsStoredTraversalLocation(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleUpdateTable(w, r)
 
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
 	for p := range fc.entries {
 		if strings.Contains(p, "/"+victim+"/") && !strings.Contains(p, "/"+attacker+"/") {
 			t.Fatalf("cross-tenant write escaped into victim tree at %s (status=%d body=%s)", p, w.Code, w.Body.String())
@@ -83,6 +86,9 @@ func TestCommitTransactionRejectsStoredTraversalLocation(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleCommitTransaction(w, r)
 
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
 	for p := range fc.entries {
 		if strings.Contains(p, "/"+victim+"/") && !strings.Contains(p, "/"+attacker+"/") {
 			t.Fatalf("cross-tenant transaction write escaped into victim tree at %s (status=%d body=%s)", p, w.Code, w.Body.String())

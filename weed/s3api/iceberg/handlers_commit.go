@@ -201,6 +201,16 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				createBucket, createPath, createLocErr := parseS3Location(location)
+				if createLocErr != nil {
+					writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+createLocErr.Error())
+					return
+				}
+				if err := confineMetadataLocation(createBucket, createPath, bucketName); err != nil {
+					writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+					return
+				}
+
 				repairManifests(location)
 
 				result, reqErr := s.finalizeCreateOnCommit(r.Context(), createOnCommitInput{
@@ -232,6 +242,15 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 		if location == "" {
 			location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
+		}
+		locBucket, locPath, locErr := parseS3Location(location)
+		if locErr != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+locErr.Error())
+			return
+		}
+		if err := confineMetadataLocation(locBucket, locPath, bucketName); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
+			return
 		}
 		tableUUID := uuid.Nil
 		if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
