@@ -47,11 +47,6 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 	if !found {
 		return nil, nil
 	}
-	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
-	if clientErr != nil {
-		glog.V(1).InfofCtx(ctx, "maybeLazyFetchFromRemote: reject %s: %v", p, clientErr)
-		return nil, nil
-	}
 
 	relPath := strings.TrimPrefix(string(p), string(mountDir))
 	if relPath != "" && !strings.HasPrefix(relPath, "/") {
@@ -72,6 +67,11 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 
 	key := string(p)
 	val, err, _ := f.lazyFetchGroup.Do(key, func() (interface{}, error) {
+		client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+		if clientErr != nil {
+			glog.V(1).InfofCtx(ctx, "maybeLazyFetchFromRemote: reject %s: %v", p, clientErr)
+			return lazyFetchResult{nil}, nil
+		}
 		remoteEntry, statErr := client.StatFile(objectLoc)
 		if statErr != nil {
 			if errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
