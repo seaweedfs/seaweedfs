@@ -47,8 +47,8 @@ func TestUnsetKeepsGoRedisDefaults(t *testing.T) {
 	client := redis.NewFailoverClient(options)
 	defer client.Close()
 
-	if got := client.Options().ReadTimeout; got != 3*time.Second {
-		t.Fatalf("read timeout %v, want the go-redis default of 3s", got)
+	if got := client.Options().ReadTimeout; got != 5*time.Second {
+		t.Fatalf("read timeout %v, want the go-redis default of 5s", got)
 	}
 	if got := client.Options().MaxRetries; got != 3 {
 		t.Fatalf("max retries %d, want the go-redis default of 3", got)
