@@ -29,8 +29,8 @@ func (c *commandVolumeTierCompact) Name() string {
 func (c *commandVolumeTierCompact) Help() string {
 	return `compact remote volumes to reclaim space on cloud storage
 
-	volume.tier.compact [-volumeId=<volume_id>]
-	volume.tier.compact [-collection=""] [-garbageThreshold=0.3]
+	volume.tier.compact [-volumeId=<volume_id>] [-concurrent=<n>]
+	volume.tier.compact [-collection=""] [-garbageThreshold=0.3] [-concurrent=<n>]
 
 	e.g.:
 	volume.tier.compact -volumeId=7
@@ -64,6 +64,7 @@ func (c *commandVolumeTierCompact) Do(args []string, commandEnv *CommandEnv, wri
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
 	collection := tierCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
 	garbageThreshold := tierCommand.Float64("garbageThreshold", 0.3, "compact when garbage ratio exceeds this value")
+	concurrent := tierCommand.Int("concurrent", 0, "S3 multipart transfer concurrency (0 = backend default 5)")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -107,7 +108,7 @@ func (c *commandVolumeTierCompact) Do(args []string, commandEnv *CommandEnv, wri
 
 	var failedCount int
 	for _, rv := range remoteVolumes {
-		if err = doVolumeTierCompact(commandEnv, writer, rv, *garbageThreshold); err != nil {
+		if err = doVolumeTierCompact(commandEnv, writer, rv, *garbageThreshold, *concurrent); err != nil {
 			fmt.Fprintf(writer, "error compacting volume %d: %v\n", rv.vid, err)
 			failedCount++
 		}
@@ -194,7 +195,7 @@ func collectRemoteVolumesWithInfo(topoInfo *master_pb.TopologyInfo, collectionPa
 	return result, nil
 }
 
-func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolumeInfo, garbageThreshold float64) error {
+func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolumeInfo, garbageThreshold float64, concurrent int) error {
 	grpcDialOption := commandEnv.option.GrpcDialOption
 
 	// step 1: check garbage level
@@ -214,7 +215,7 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolu
 	// step 2: download .dat from remote to local
 	// this deletes the remote file and reloads the volume as local, then re-uploads below
 	fmt.Fprintf(writer, "  downloading volume %d from %s to local...\n", rv.vid, rv.remoteStorageName)
-	err = downloadDatFromRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, false)
+	err = downloadDatFromRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, false, concurrent)
 	if err != nil {
 		return fmt.Errorf("download volume %d from remote: %v", rv.vid, err)
 	}
@@ -227,7 +228,7 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolu
 		// upload the uncompacted volume back to restore cloud tier state
 		fmt.Fprintf(writer, "  compaction failed: %v\n", err)
 		fmt.Fprintf(writer, "  re-uploading volume %d to %s without compaction...\n", rv.vid, rv.remoteStorageName)
-		uploadErr := uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, rv.remoteStorageName, false)
+		uploadErr := uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, rv.remoteStorageName, false, concurrent)
 		if uploadErr != nil {
 			return fmt.Errorf("compaction failed (%v) and re-upload also failed (%v), volume %d remains local",
 				err, uploadErr, rv.vid)
@@ -238,7 +239,7 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolu
 
 	// step 4: upload compacted volume back to remote
 	fmt.Fprintf(writer, "  uploading compacted volume %d to %s...\n", rv.vid, rv.remoteStorageName)
-	err = uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, rv.remoteStorageName, false)
+	err = uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, rv.remoteStorageName, false, concurrent)
 	if err != nil {
 		return fmt.Errorf("upload compacted volume %d to %s: %v (volume remains local with compacted data)",
 			rv.vid, rv.remoteStorageName, err)

@@ -45,6 +45,9 @@ func (c *commandRemoteConfigure) Help() string {
 	remote.configure -name=cloud7 -type=storj -storj.access_key=xxx -storj.secret_key=yyy -storj.endpoint=https://gateway.us1.storjshare.io
 	remote.configure -name=cloud8 -type=filebase -filebase.access_key=xxx -filebase.secret_key=yyy -filebase.endpoint=https://s3.filebase.com
 
+	# tune transfer concurrency (applies to s3-compatible and azure storage)
+	remote.configure -name=cloud1 -upload_concurrency=4 -download_concurrency=8
+
 	# delete one configuration
 	remote.configure -delete -name=cloud1
 
@@ -68,6 +71,9 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 
 	remoteConfigureCommand.StringVar(&conf.Name, "name", "", "a short name to identify the remote storage")
 	remoteConfigureCommand.StringVar(&conf.Type, "type", "s3", fmt.Sprintf("[%s] storage type", remote_storage.GetAllRemoteStorageNames()))
+
+	uploadConcurrency := remoteConfigureCommand.Int("upload_concurrency", 0, "concurrent part uploads per file (0 = client default: s3 1, azure 16)")
+	downloadConcurrency := remoteConfigureCommand.Int("download_concurrency", 0, "concurrent part downloads per read (0 = client default: s3 5, azure 16)")
 
 	remoteConfigureCommand.StringVar(&conf.S3AccessKey, "s3.access_key", "", "s3 access key")
 	remoteConfigureCommand.StringVar(&conf.S3SecretKey, "s3.secret_key", "", "s3 secret key")
@@ -120,6 +126,13 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 
 	if err = remoteConfigureCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if *uploadConcurrency > 0 {
+		conf.UploadConcurrency = uint32(*uploadConcurrency)
+	}
+	if *downloadConcurrency > 0 {
+		conf.DownloadConcurrency = uint32(*downloadConcurrency)
 	}
 
 	if conf.Type != "s3" {
