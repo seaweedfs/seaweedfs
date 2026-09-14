@@ -2518,7 +2518,7 @@ func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request
 	principal := buildPrincipalARN(identity, r)
 	s3Action := ResolveS3Action(r, string(action), bucket, resourceObject)
 	explicitAllow := false
-	conditions := policy_engine.ExtractConditionValuesFromRequest(r)
+	conditions := engine.ExtractConditionValuesFromRequest(r)
 	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
 		conditions[k] = v
 	}
