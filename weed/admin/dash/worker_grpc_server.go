@@ -47,10 +47,11 @@ type WorkerGrpcServer struct {
 	logRequestsMutex   sync.RWMutex
 
 	// gRPC server
-	grpcServer *grpc.Server
-	listener   net.Listener
-	running    bool
-	stopChan   chan struct{}
+	grpcServer  *grpc.Server
+	listener    net.Listener
+	running     bool
+	stopChan    chan struct{}
+	mtlsEnabled bool
 }
 
 // LogRequestContext tracks pending log requests
@@ -100,7 +101,9 @@ func (s *WorkerGrpcServer) StartWithTLS(bindIp string, port int, listener net.Li
 	}
 
 	// Create gRPC server with optional TLS
-	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
+	tlsOption, _ := security.LoadServerTLS(util.GetViper(), "grpc.admin")
+	s.mtlsEnabled = tlsOption != nil
+	grpcServer := pb.NewGrpcServer(tlsOption)
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
 	if plugin := s.adminServer.GetPlugin(); plugin != nil {

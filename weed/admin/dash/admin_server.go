@@ -1627,6 +1627,12 @@ func (s *AdminServer) StartWorkerGrpcServer(bindIp string, grpcPort int, listene
 	return s.workerGrpcServer.StartWithTLS(bindIp, grpcPort, listener)
 }
 
+// WorkerGrpcMTLSEnabled reports whether the worker gRPC server actually loaded
+// grpc.admin mTLS credentials, not just whether they were configured.
+func (s *AdminServer) WorkerGrpcMTLSEnabled() bool {
+	return s.workerGrpcServer != nil && s.workerGrpcServer.mtlsEnabled
+}
+
 // StopWorkerGrpcServer stops the worker gRPC server
 func (s *AdminServer) StopWorkerGrpcServer() error {
 	if s.workerGrpcServer != nil {

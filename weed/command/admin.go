@@ -465,7 +465,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %w", err)
 	}
-	warnInsecureWorkerGrpcBind(*options.ip, *options.grpcPort)
+	warnInsecureWorkerGrpcBind(*options.ip, *options.grpcPort, adminServer.WorkerGrpcMTLSEnabled())
 
 	// Set up cleanup for gRPC server
 	defer func() {
@@ -762,11 +762,13 @@ func isLoopbackIp(ip string) bool {
 
 // warnInsecureWorkerGrpcBind warns when the worker gRPC control plane is
 // reachable off loopback without grpc.admin mTLS, its only auth once exposed.
-func warnInsecureWorkerGrpcBind(ip string, grpcPort int) {
+// mtlsEnabled reflects whether the worker gRPC actually loaded mTLS, so a
+// misconfigured cert/key that fails to load still triggers the warning.
+func warnInsecureWorkerGrpcBind(ip string, grpcPort int, mtlsEnabled bool) {
 	if isLoopbackIp(ip) {
 		return
 	}
-	if viper.GetString("grpc.admin.cert") != "" && viper.GetString("grpc.admin.key") != "" && viper.GetString("grpc.ca") != "" {
+	if mtlsEnabled {
 		return
 	}
 	glog.Warningf("Worker gRPC control plane is bound to %s (non-loopback) without grpc.admin mTLS.", ip)
