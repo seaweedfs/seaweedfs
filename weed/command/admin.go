@@ -461,7 +461,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}
 
 	// Start worker gRPC server for worker connections
-	err = adminServer.StartWorkerGrpcServer(*options.grpcPort, options.workerGrpcListener)
+	err = adminServer.StartWorkerGrpcServer(*options.ip, *options.grpcPort, options.workerGrpcListener)
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %w", err)
 	}
