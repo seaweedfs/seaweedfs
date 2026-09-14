@@ -953,7 +953,7 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	// first: an in-process rerun would otherwise inherit the closed listener
 	// of the previous run and only find out inside Serve.
 	miniAdminOptions.workerGrpcListener = nil
-	if listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *miniAdminOptions.grpcPort)); err != nil {
+	if listener, err := net.Listen("tcp", util.JoinHostPort(bindIp, *miniAdminOptions.grpcPort)); err != nil {
 		glog.Warningf("Could not reserve Admin gRPC port %d: %v", *miniAdminOptions.grpcPort, err)
 	} else {
 		miniAdminOptions.workerGrpcListener = listener

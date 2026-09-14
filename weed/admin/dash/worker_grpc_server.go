@@ -47,10 +47,11 @@ type WorkerGrpcServer struct {
 	logRequestsMutex   sync.RWMutex
 
 	// gRPC server
-	grpcServer *grpc.Server
-	listener   net.Listener
-	running    bool
-	stopChan   chan struct{}
+	grpcServer  *grpc.Server
+	listener    net.Listener
+	running     bool
+	stopChan    chan struct{}
+	mtlsEnabled bool
 }
 
 // LogRequestContext tracks pending log requests
@@ -84,22 +85,25 @@ func NewWorkerGrpcServer(adminServer *AdminServer) *WorkerGrpcServer {
 }
 
 // StartWithTLS starts the gRPC server on the specified port with optional TLS.
-// A caller that already holds the port passes its listener instead.
-func (s *WorkerGrpcServer) StartWithTLS(port int, listener net.Listener) error {
+// A caller that already holds the port passes its listener instead. When no
+// listener is supplied the server binds to bindIp to honor the operator's -ip.
+func (s *WorkerGrpcServer) StartWithTLS(bindIp string, port int, listener net.Listener) error {
 	if s.running {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
 
 	if listener == nil {
 		var err error
-		listener, err = net.Listen("tcp", fmt.Sprintf(":%d", port))
+		listener, err = net.Listen("tcp", util.JoinHostPort(bindIp, port))
 		if err != nil {
 			return fmt.Errorf("failed to listen on port %d: %v", port, err)
 		}
 	}
 
 	// Create gRPC server with optional TLS
-	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
+	tlsOption, _ := security.LoadServerTLS(util.GetViper(), "grpc.admin")
+	s.mtlsEnabled = tlsOption != nil
+	grpcServer := pb.NewGrpcServer(tlsOption)
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
 	if plugin := s.adminServer.GetPlugin(); plugin != nil {
