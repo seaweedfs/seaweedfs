@@ -31,7 +31,12 @@ func NewTrustedProxies(whiteList []string) *TrustedProxies {
 			}
 			tp.cidrs[entry] = cidrnet
 		} else {
-			tp.ips[entry] = struct{}{}
+			ip := net.ParseIP(entry)
+			if ip == nil {
+				glog.Errorf("Parse IP %s in s3 trusted_proxies failed", entry)
+				continue
+			}
+			tp.ips[ip.String()] = struct{}{}
 		}
 	}
 	return tp
@@ -82,6 +87,7 @@ func (tp *TrustedProxies) ExtractSourceIP(r *http.Request) string {
 	if tp.IsTrusted(host) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			entries := strings.Split(xff, ",")
+			malformed := false
 			for i := len(entries) - 1; i >= 0; i-- {
 				candidate := strings.TrimSpace(entries[i])
 				if candidate == "" {
@@ -89,17 +95,20 @@ func (tp *TrustedProxies) ExtractSourceIP(r *http.Request) string {
 				}
 				ip := net.ParseIP(candidate)
 				if ip == nil {
-					continue
+					malformed = true
+					break
 				}
 				if tp.IsTrusted(ip.String()) {
 					continue
 				}
 				return ip.String()
 			}
-			for _, candidate := range entries {
-				candidate = strings.TrimSpace(candidate)
-				if ip := net.ParseIP(candidate); ip != nil {
-					return ip.String()
+			if !malformed {
+				for _, candidate := range entries {
+					candidate = strings.TrimSpace(candidate)
+					if ip := net.ParseIP(candidate); ip != nil {
+						return ip.String()
+					}
 				}
 			}
 		}

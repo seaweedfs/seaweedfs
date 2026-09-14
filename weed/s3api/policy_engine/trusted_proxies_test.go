@@ -32,6 +32,23 @@ func TestTrustedProxies_IsTrusted(t *testing.T) {
 	}
 }
 
+func TestTrustedProxies_CanonicalizesBareIPv6(t *testing.T) {
+	tp := NewTrustedProxies([]string{"2001:0db8::1"})
+	if !tp.IsTrusted("2001:db8::1") {
+		t.Error("canonical IPv6 should match non-canonical allowlist entry")
+	}
+}
+
+func TestTrustedProxies_InvalidBareIPSkipped(t *testing.T) {
+	tp := NewTrustedProxies([]string{"not-an-ip", "10.0.0.5"})
+	if tp.IsTrusted("not-an-ip") {
+		t.Error("invalid entry should not be stored")
+	}
+	if !tp.IsTrusted("10.0.0.5") {
+		t.Error("valid entry after invalid one should still load")
+	}
+}
+
 func TestTrustedProxies_NilNotTrusted(t *testing.T) {
 	var tp *TrustedProxies
 	if tp.IsTrusted("127.0.0.1") {
@@ -60,6 +77,14 @@ func TestTrustedProxies_ExtractSourceIP_AllTrustedReturnsLeftmost(t *testing.T) 
 	r := newReq("10.0.0.1:1234", "10.0.0.5, 10.0.0.6", "")
 	if got := tp.ExtractSourceIP(r); got != "10.0.0.5" {
 		t.Errorf("all-trusted chain: want leftmost 10.0.0.5, got %s", got)
+	}
+}
+
+func TestTrustedProxies_ExtractSourceIP_MalformedXFFFallsBackToPeer(t *testing.T) {
+	tp := NewTrustedProxies([]string{"10.0.0.0/24"})
+	r := newReq("10.0.0.1:1234", "8.8.8.8, garbage", "")
+	if got := tp.ExtractSourceIP(r); got != "10.0.0.1" {
+		t.Errorf("malformed XFF: want direct peer 10.0.0.1, got %s", got)
 	}
 }
 
