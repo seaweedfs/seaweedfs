@@ -1057,17 +1057,20 @@ impl EcVolume {
                     return Err(e);
                 }
             }
-            #[cfg(not(unix))]
+            #[cfg(windows)]
             {
-                use std::io::{Read, Seek, SeekFrom};
-                if let Err(e) = ecx_file.seek(SeekFrom::Start(file_offset)) {
+                // Positional read so concurrent find_needle_from_ecx calls on
+                // the shared .ecx handle don't interleave seek/read and corrupt
+                // each other's binary search. Mirrors the read_exact_at helper
+                // in storage::volume.
+                if let Err(e) = read_exact_at(ecx_file, &mut entry_buf, file_offset) {
                     self.check_read_write_error(Some(&e));
                     return Err(e);
                 }
-                if let Err(e) = ecx_file.read_exact(&mut entry_buf) {
-                    self.check_read_write_error(Some(&e));
-                    return Err(e);
-                }
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                compile_error!("Platform not supported: only unix and windows are supported");
             }
 
             let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
@@ -4406,4 +4409,28 @@ impl EcLocalScrubPlan {
 
         (count, broken, errs)
     }
+}
+
+/// Windows helper: loop `seek_read` until the buffer is fully filled.
+///
+/// `seek_read` is positional (it passes the offset through `OVERLAPPED` and
+/// never touches the shared file cursor), so concurrent callers reading the
+/// same `&File` — as `find_needle_from_ecx` does on the cached `.ecx` handle —
+/// can't interleave their reads. Mirrors the helper in `storage::volume`.
+#[cfg(windows)]
+fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = file.seek_read(&mut buf[filled..], offset)?;
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected EOF in seek_read",
+            ));
+        }
+        filled += n;
+        offset += n as u64;
+    }
+    Ok(())
 }
