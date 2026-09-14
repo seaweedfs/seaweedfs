@@ -5471,6 +5471,7 @@ type VolumeTierMoveDatToRemoteRequest struct {
 	Collection             string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	DestinationBackendName string                 `protobuf:"bytes,3,opt,name=destination_backend_name,json=destinationBackendName,proto3" json:"destination_backend_name,omitempty"`
 	KeepLocalDatFile       bool                   `protobuf:"varint,4,opt,name=keep_local_dat_file,json=keepLocalDatFile,proto3" json:"keep_local_dat_file,omitempty"`
+	Concurrency            int32                  `protobuf:"varint,5,opt,name=concurrency,proto3" json:"concurrency,omitempty"` // multipart upload concurrency, 0 = backend default (5 for S3)
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -5533,6 +5534,13 @@ func (x *VolumeTierMoveDatToRemoteRequest) GetKeepLocalDatFile() bool {
 	return false
 }
 
+func (x *VolumeTierMoveDatToRemoteRequest) GetConcurrency() int32 {
+	if x != nil {
+		return x.Concurrency
+	}
+	return 0
+}
+
 type VolumeTierMoveDatToRemoteResponse struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Processed           int64                  `protobuf:"varint,1,opt,name=processed,proto3" json:"processed,omitempty"`
@@ -5590,6 +5598,7 @@ type VolumeTierMoveDatFromRemoteRequest struct {
 	VolumeId          uint32                 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	Collection        string                 `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	KeepRemoteDatFile bool                   `protobuf:"varint,3,opt,name=keep_remote_dat_file,json=keepRemoteDatFile,proto3" json:"keep_remote_dat_file,omitempty"`
+	Concurrency       int32                  `protobuf:"varint,4,opt,name=concurrency,proto3" json:"concurrency,omitempty"` // multipart download concurrency, 0 = backend default (5 for S3)
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -5643,6 +5652,13 @@ func (x *VolumeTierMoveDatFromRemoteRequest) GetKeepRemoteDatFile() bool {
 		return x.KeepRemoteDatFile
 	}
 	return false
+}
+
+func (x *VolumeTierMoveDatFromRemoteRequest) GetConcurrency() int32 {
+	if x != nil {
+		return x.Concurrency
+	}
+	return 0
 }
 
 type VolumeTierMoveDatFromRemoteResponse struct {
@@ -7644,23 +7660,25 @@ const file_volume_server_proto_rawDesc = "" +
 	"\vBytesOffset\x18\x04 \x01(\rR\vBytesOffset\x12\"\n" +
 	"\rdat_file_size\x18\x05 \x01(\x03R\vdatFileSize\x12 \n" +
 	"\vDestroyTime\x18\x06 \x01(\x04R\vDestroyTime\x12\x1b\n" +
-	"\tread_only\x18\a \x01(\bR\breadOnly\"\xc8\x01\n" +
+	"\tread_only\x18\a \x01(\bR\breadOnly\"\xea\x01\n" +
 	" VolumeTierMoveDatToRemoteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x128\n" +
 	"\x18destination_backend_name\x18\x03 \x01(\tR\x16destinationBackendName\x12-\n" +
-	"\x13keep_local_dat_file\x18\x04 \x01(\bR\x10keepLocalDatFile\"s\n" +
+	"\x13keep_local_dat_file\x18\x04 \x01(\bR\x10keepLocalDatFile\x12 \n" +
+	"\vconcurrency\x18\x05 \x01(\x05R\vconcurrency\"s\n" +
 	"!VolumeTierMoveDatToRemoteResponse\x12\x1c\n" +
 	"\tprocessed\x18\x01 \x01(\x03R\tprocessed\x120\n" +
-	"\x13processedPercentage\x18\x02 \x01(\x02R\x13processedPercentage\"\x92\x01\n" +
+	"\x13processedPercentage\x18\x02 \x01(\x02R\x13processedPercentage\"\xb4\x01\n" +
 	"\"VolumeTierMoveDatFromRemoteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
 	"collection\x12/\n" +
-	"\x14keep_remote_dat_file\x18\x03 \x01(\bR\x11keepRemoteDatFile\"u\n" +
+	"\x14keep_remote_dat_file\x18\x03 \x01(\bR\x11keepRemoteDatFile\x12 \n" +
+	"\vconcurrency\x18\x04 \x01(\x05R\vconcurrency\"u\n" +
 	"#VolumeTierMoveDatFromRemoteResponse\x12\x1c\n" +
 	"\tprocessed\x18\x01 \x01(\x03R\tprocessed\x120\n" +
 	"\x13processedPercentage\x18\x02 \x01(\x02R\x13processedPercentage\"\x1b\n" +

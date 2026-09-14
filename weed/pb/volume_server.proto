@@ -659,6 +659,7 @@ message VolumeTierMoveDatToRemoteRequest {
     string collection = 2;
     string destination_backend_name = 3;
     bool keep_local_dat_file = 4;
+    int32 concurrency = 5; // multipart upload concurrency, 0 = backend default (5 for S3)
 }
 message VolumeTierMoveDatToRemoteResponse {
     int64 processed = 1;
@@ -669,6 +670,7 @@ message VolumeTierMoveDatFromRemoteRequest {
     uint32 volume_id = 1;
     string collection = 2;
     bool keep_remote_dat_file = 3;
+    int32 concurrency = 4; // multipart download concurrency, 0 = backend default (5 for S3)
 }
 message VolumeTierMoveDatFromRemoteResponse {
     int64 processed = 1;
