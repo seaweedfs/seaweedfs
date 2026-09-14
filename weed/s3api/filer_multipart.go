@@ -1072,10 +1072,14 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 			if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
 				continue
 			}
-			output.Upload = append(output.Upload, &s3.MultipartUpload{
+			upload := &s3.MultipartUpload{
 				Key:      objectKey(aws.String(key)),
 				UploadId: aws.String(entry.Name),
-			})
+			}
+			if entry.Attributes != nil {
+				upload.Initiated = aws.Time(time.Unix(entry.Attributes.Crtime, int64(entry.Attributes.CrtimeNs)))
+			}
+			output.Upload = append(output.Upload, upload)
 			uploadsCount += 1
 		}
 		if uploadsCount >= *input.MaxUploads {
