@@ -2610,7 +2610,11 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 	if manager == nil {
 		return false
 	}
-	denied, err := manager.IsPrincipalActionExplicitlyDenied(r.Context(), principal, action, resource, policyNames, sessionToken, extractRequestContext(r))
+	var requestContext map[string]interface{}
+	if s3iam, ok := iam.iamIntegration.(*S3IAMIntegration); ok {
+		requestContext = s3iam.extractRequestContext(r)
+	}
+	denied, err := manager.IsPrincipalActionExplicitlyDenied(r.Context(), principal, action, resource, policyNames, sessionToken, requestContext)
 	if err != nil {
 		glog.Warningf("AssumeRole explicit-deny check failed for %s, denying: %v", identity.Name, err)
 		return true
