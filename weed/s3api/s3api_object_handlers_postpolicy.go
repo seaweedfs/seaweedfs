@@ -14,6 +14,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -126,8 +127,6 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
-
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType
 	contentType := formValues.Get("Content-Type")
@@ -145,15 +144,49 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Use fileSize, not r.ContentLength: the multipart body wrapping form
-	// fields and boundaries inflates ContentLength relative to the
-	// object body, which would mis-evaluate any size-filtered rule.
-	ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil, false, "")
+	versioningState, err := s3a.getVersioningState(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		glog.Errorf("PostPolicyBucketHandler: versioning state for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("PostPolicyBucketHandler: object lock state for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	if err := s3a.validateObjectLockHeaders(r, objectLockEnabled); err != nil {
+		glog.V(2).Infof("PostPolicyBucketHandler: object lock header validation failed for %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
+		return
+	}
+
+	var etag string
+	var versionId string
+	var sseMetadata SSEResponseMetadata
+	switch versioningState {
+	case s3_constants.VersioningEnabled:
+		versionId, etag, errCode, sseMetadata = s3a.putVersionedObject(r, bucket, object, fileBody, contentType)
+	case s3_constants.VersioningSuspended:
+		etag, errCode, sseMetadata = s3a.putSuspendedVersioningObject(r, bucket, object, fileBody, contentType)
+	default:
+		filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
+		// Use fileSize, not r.ContentLength: the multipart body inflates ContentLength.
+		ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
+		etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil, false, "")
+	}
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
 	}
 
 	if successRedirect != "" {
