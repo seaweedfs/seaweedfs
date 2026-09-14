@@ -729,19 +729,26 @@ func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 	return key[:keyLen], key[keyLen:], nil
 }
 
+// isFlagExplicitlySet reports whether the named flag was passed on the
+// command line (as opposed to left at its default).
+func isFlagExplicitlySet(cmd *Command, flagName string) bool {
+	set := false
+	cmd.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == flagName {
+			set = true
+		}
+	})
+	return set
+}
+
 // applyViperFallback sets a flag's value from viper (security.toml / env var)
 // when the flag was not explicitly set on the command line.
 func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string) {
-	explicitlySet := false
-	cmd.Flag.Visit(func(f *flag.Flag) {
-		if f.Name == flagName {
-			explicitlySet = true
-		}
-	})
-	if !explicitlySet {
-		if v := util.GetViper().GetString(viperKey); v != "" {
-			*flagPtr = v
-		}
+	if isFlagExplicitlySet(cmd, flagName) {
+		return
+	}
+	if v := util.GetViper().GetString(viperKey); v != "" {
+		*flagPtr = v
 	}
 }
 
