@@ -78,7 +78,7 @@ impl EcVolumeShard {
         let file = self
             .ecd_file
             .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "shard file not open"))?;
+            .ok_or_else(|| io::Error::other("shard file not open"))?;
 
         #[cfg(unix)]
         {
@@ -102,7 +102,7 @@ impl EcVolumeShard {
         let file = self
             .ecd_file
             .as_mut()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "shard file not open"))?;
+            .ok_or_else(|| io::Error::other("shard file not open"))?;
         file.write_all(data)?;
         self.ecd_file_size += data.len() as i64;
         Ok(())
@@ -123,7 +123,7 @@ impl EcVolumeShard {
     pub fn try_clone_file(&self) -> io::Result<File> {
         self.ecd_file
             .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "shard file not open"))?
+            .ok_or_else(|| io::Error::other("shard file not open"))?
             .try_clone()
     }
 

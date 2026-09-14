@@ -324,10 +324,7 @@ pub fn write_idx_file_from_ec_index(
         // and treat only NotFound as "no journal": Path::exists would also
         // swallow a permission/IO error and silently skip deletions, which
         // would resurrect deleted needles as live.
-        let mut idx_file = std::fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(&tmp_path)?;
+        let mut idx_file = std::fs::OpenOptions::new().append(true).open(&tmp_path)?;
         match std::fs::read(&ecj_path) {
             Ok(ecj_data) => {
                 let count = ecj_data.len() / NEEDLE_ID_SIZE;

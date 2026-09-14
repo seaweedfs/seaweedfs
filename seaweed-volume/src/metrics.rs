@@ -377,10 +377,8 @@ fn delete_partial_match_collection(gauge: &GaugeVec, collection: &str) {
                     type_value = Some(label.get_value().to_string());
                 }
             }
-            if matches_collection {
-                if let Some(ref tv) = type_value {
-                    let _ = gauge.remove_label_values(&[collection, tv]);
-                }
+            if matches_collection && let Some(ref tv) = type_value {
+                let _ = gauge.remove_label_values(&[collection, tv]);
             }
         }
     }

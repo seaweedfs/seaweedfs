@@ -560,7 +560,7 @@ impl Needle {
 
         // Padding to 8-byte alignment
         let padding = padding_length(self.size, version).0 as usize;
-        buf.extend(std::iter::repeat(0u8).take(padding));
+        buf.extend(std::iter::repeat_n(0u8, padding));
 
         buf
     }

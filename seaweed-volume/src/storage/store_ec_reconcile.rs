@@ -293,10 +293,10 @@ impl Store {
                 // may be sole copies of a distributed volume.
                 let mut node_wide_bits = ev.shard_bits().0;
                 for other in &self.locations {
-                    if let Some(other_ev) = other.find_ec_volume(*vid) {
-                        if other_ev.collection == ev.collection {
-                            node_wide_bits |= other_ev.shard_bits().0;
-                        }
+                    if let Some(other_ev) = other.find_ec_volume(*vid)
+                        && other_ev.collection == ev.collection
+                    {
+                        node_wide_bits |= other_ev.shard_bits().0;
                     }
                 }
                 let node_wide = node_wide_bits.count_ones() as usize;
@@ -497,6 +497,53 @@ impl Store {
             }
         }
     }
+}
+
+/// Walk a disk's data directory and return the `.ec??` shard files
+/// that are present on disk but not yet registered in the location's
+/// `ec_volumes` map. Keyed by (collection, vid) so callers can match
+/// each group against its `.ecx`-owning disk in one lookup. Zero-byte
+/// shard files are ignored — same shape as `load_all_ec_shards`.
+fn collect_orphan_ec_shards(
+    loc: &crate::storage::disk_location::DiskLocation,
+    _loc_idx: usize,
+) -> HashMap<EcKey, Vec<(String, u32)>> {
+    let mut orphans: HashMap<EcKey, Vec<(String, u32)>> = HashMap::new();
+    let Ok(read) = fs::read_dir(&loc.directory) else {
+        return orphans;
+    };
+    for ent in read.flatten() {
+        if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = ent.file_name().to_string_lossy().into_owned();
+        let Some(dot) = name.rfind('.') else {
+            continue;
+        };
+        let (base, ext) = name.split_at(dot);
+        let Some(shard_id) = is_ec_shard_extension(ext) else {
+            continue;
+        };
+        // Ignore zero-byte shards. Use the DirEntry's metadata so we
+        // don't pay a second stat syscall per file beyond what
+        // read_dir already returned.
+        match ent.metadata() {
+            Ok(meta) if meta.len() > 0 => {}
+            _ => continue,
+        }
+        let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
+            continue;
+        };
+        // Skip shards that are already registered to an EcVolume.
+        if let Some(ecv) = loc.find_ec_volume(vid)
+            && ecv.has_shard(shard_id as u8)
+        {
+            continue;
+        }
+        let key = EcKey { collection, vid };
+        orphans.entry(key).or_default().push((name, shard_id));
+    }
+    orphans
 }
 
 #[cfg(test)]
@@ -1758,51 +1805,4 @@ mod tests {
         assert!(std::path::Path::new(&format!("{}.ec02", ec_base)).exists());
         assert!(std::path::Path::new(&format!("{}.ecx", ec_base)).exists());
     }
-}
-
-/// Walk a disk's data directory and return the `.ec??` shard files
-/// that are present on disk but not yet registered in the location's
-/// `ec_volumes` map. Keyed by (collection, vid) so callers can match
-/// each group against its `.ecx`-owning disk in one lookup. Zero-byte
-/// shard files are ignored — same shape as `load_all_ec_shards`.
-fn collect_orphan_ec_shards(
-    loc: &crate::storage::disk_location::DiskLocation,
-    _loc_idx: usize,
-) -> HashMap<EcKey, Vec<(String, u32)>> {
-    let mut orphans: HashMap<EcKey, Vec<(String, u32)>> = HashMap::new();
-    let Ok(read) = fs::read_dir(&loc.directory) else {
-        return orphans;
-    };
-    for ent in read.flatten() {
-        if ent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let name = ent.file_name().to_string_lossy().into_owned();
-        let Some(dot) = name.rfind('.') else {
-            continue;
-        };
-        let (base, ext) = name.split_at(dot);
-        let Some(shard_id) = is_ec_shard_extension(ext) else {
-            continue;
-        };
-        // Ignore zero-byte shards. Use the DirEntry's metadata so we
-        // don't pay a second stat syscall per file beyond what
-        // read_dir already returned.
-        match ent.metadata() {
-            Ok(meta) if meta.len() > 0 => {}
-            _ => continue,
-        }
-        let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
-            continue;
-        };
-        // Skip shards that are already registered to an EcVolume.
-        if let Some(ecv) = loc.find_ec_volume(vid) {
-            if ecv.has_shard(shard_id as u8) {
-                continue;
-            }
-        }
-        let key = EcKey { collection, vid };
-        orphans.entry(key).or_default().push((name, shard_id));
-    }
-    orphans
 }

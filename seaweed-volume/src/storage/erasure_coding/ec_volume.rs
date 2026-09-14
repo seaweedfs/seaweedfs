@@ -565,32 +565,31 @@ impl EcVolume {
         // A sidecar written for THIS generation that contradicts the volume's
         // geometry is not "no protection" — it says the layout the volume is
         // about to serve reads with is wrong. Fail the mount.
-        if let Ok(prot) = &loaded {
-            if prot.generation == generation
-                && !ec_bitrot::geometry_matches(
-                    prot,
-                    self.data_shards as usize,
-                    self.parity_shards as usize,
+        if let Ok(prot) = &loaded
+            && prot.generation == generation
+            && !ec_bitrot::geometry_matches(
+                prot,
+                self.data_shards as usize,
+                self.parity_shards as usize,
+                self.block_size,
+            )
+        {
+            let cfg = prot.ec_shard_config.as_ref();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "ec volume {} generation {}: {} records layout {}+{} block {} but the volume is mounted as {}+{} block {}; refusing to serve one of the two layouts",
+                    self.volume_id.0,
+                    generation,
+                    path,
+                    cfg.map(|c| c.data_shards).unwrap_or(0),
+                    cfg.map(|c| c.parity_shards).unwrap_or(0),
+                    cfg.map(|c| c.block_size).unwrap_or(0),
+                    self.data_shards,
+                    self.parity_shards,
                     self.block_size,
-                )
-            {
-                let cfg = prot.ec_shard_config.as_ref();
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "ec volume {} generation {}: {} records layout {}+{} block {} but the volume is mounted as {}+{} block {}; refusing to serve one of the two layouts",
-                        self.volume_id.0,
-                        generation,
-                        path,
-                        cfg.map(|c| c.data_shards).unwrap_or(0),
-                        cfg.map(|c| c.parity_shards).unwrap_or(0),
-                        cfg.map(|c| c.block_size).unwrap_or(0),
-                        self.data_shards,
-                        self.parity_shards,
-                        self.block_size,
-                    ),
-                ));
-            }
+                ),
+            ));
         }
         let status = ec_bitrot::resolve_status(
             &loaded,
@@ -698,7 +697,7 @@ impl EcVolume {
         let mut set = self
             .deleted_needles
             .write()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "deleted_needles lock poisoned"))?;
+            .map_err(|_| io::Error::other("deleted_needles lock poisoned"))?;
         let mut off: i64 = 0;
         while off + NEEDLE_ID_SIZE as i64 <= self.ecj_file_size {
             #[cfg(unix)]
@@ -826,10 +825,8 @@ impl EcVolume {
     /// default to the physical location's disk type.
     pub fn set_disk_type(&mut self, d: DiskType) {
         self.disk_type = d.clone();
-        for slot in self.shards.iter_mut() {
-            if let Some(shard) = slot {
-                shard.disk_type = d.clone();
-            }
+        for shard in self.shards.iter_mut().flatten() {
+            shard.disk_type = d.clone();
         }
     }
 
@@ -986,21 +983,21 @@ impl EcVolume {
 
     pub fn check_read_write_error(&self, err: Option<&io::Error>) {
         use std::sync::atomic::Ordering;
-        if let Some(e) = err {
-            if crate::storage::volume::is_storage_io_error(e) {
-                self.io_error_count.fetch_add(1, Ordering::Relaxed);
-                if let Ok(mut guard) = self.last_io_error.lock() {
-                    *guard = Some(e.to_string());
-                }
-                crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
-                return;
+        if let Some(e) = err
+            && crate::storage::volume::is_storage_io_error(e)
+        {
+            self.io_error_count.fetch_add(1, Ordering::Relaxed);
+            if let Ok(mut guard) = self.last_io_error.lock() {
+                *guard = Some(e.to_string());
             }
+            crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
+            return;
         }
         self.io_error_count.store(0, Ordering::Relaxed);
-        if let Ok(mut guard) = self.last_io_error.lock() {
-            if guard.is_some() {
-                *guard = None;
-            }
+        if let Ok(mut guard) = self.last_io_error.lock()
+            && guard.is_some()
+        {
+            *guard = None;
         }
     }
 
@@ -1033,7 +1030,7 @@ impl EcVolume {
         let ecx_file = self
             .ecx_file
             .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecx file not open"))?;
+            .ok_or_else(|| io::Error::other("ecx file not open"))?;
 
         let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
         if entry_count == 0 {
@@ -1253,10 +1250,8 @@ impl EcVolume {
 
     /// Get the size of a single shard (all shards are the same size).
     fn shard_file_size(&self) -> i64 {
-        for shard in &self.shards {
-            if let Some(s) = shard {
-                return s.file_size();
-            }
+        if let Some(s) = self.shards.iter().flatten().next() {
+            return s.file_size();
         }
         0
     }
@@ -1363,13 +1358,10 @@ impl EcVolume {
     /// the index (ignored by callers) and an error on IO failure.
     fn tombstone_ecx_entry(&self, needle_id: NeedleId) -> io::Result<bool> {
         let ecx_file = self.ecx_file.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "ec volume {} has no open .ecx file (closed or corrupt)",
-                    self.volume_id.0
-                ),
-            )
+            io::Error::other(format!(
+                "ec volume {} has no open .ecx file (closed or corrupt)",
+                self.volume_id.0
+            ))
         })?;
 
         let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
@@ -1510,7 +1502,7 @@ impl EcVolume {
             let ecj_file = self
                 .ecj_file
                 .as_mut()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecj file not open"))?;
+                .ok_or_else(|| io::Error::other("ecj file not open"))?;
             let mut buf = [0u8; NEEDLE_ID_SIZE];
             needle_id.to_bytes(&mut buf);
             ecj_file.write_all(&buf).and_then(|_| ecj_file.sync_all())
@@ -1528,15 +1520,15 @@ impl EcVolume {
                 // write_all may have extended the file on disk before
                 // sync_all failed; truncate back to the known-good size so
                 // the on-disk journal never drifts past `deleted_needles`.
-                if let Some(ecj) = self.ecj_file.as_mut() {
-                    if let Err(trunc_err) = ecj.set_len(prev_ecj_size as u64) {
-                        tracing::error!(
-                            volume_id = self.volume_id.0,
-                            needle_id = needle_id.0,
-                            truncate_error = %trunc_err,
-                            "failed to truncate ecj after append failure"
-                        );
-                    }
+                if let Some(ecj) = self.ecj_file.as_mut()
+                    && let Err(trunc_err) = ecj.set_len(prev_ecj_size as u64)
+                {
+                    tracing::error!(
+                        volume_id = self.volume_id.0,
+                        needle_id = needle_id.0,
+                        truncate_error = %trunc_err,
+                        "failed to truncate ecj after append failure"
+                    );
                 }
                 Err(e)
             }
@@ -1550,7 +1542,7 @@ impl EcVolume {
         let ecx_file = self
             .ecx_file
             .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecx file not open"))?;
+            .ok_or_else(|| io::Error::other("ecx file not open"))?;
         let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
         if entry_count == 0 {
             return Ok(None);
@@ -1590,31 +1582,32 @@ impl EcVolume {
         if cookie.0 != 0 {
             // Try to read the needle's cookie from the EC shards to validate
             // Look up the needle in ecx index to find its offset, then read header from shard
-            if let Ok(Some((offset, size))) = self.find_needle_from_ecx(needle_id) {
-                if !size.is_deleted() && !offset.is_zero() {
-                    let actual_offset = offset.to_actual_offset() as u64;
-                    // Determine which shard contains this offset and read the cookie
-                    let shard_size = self
-                        .shards
-                        .iter()
-                        .filter_map(|s| s.as_ref())
-                        .map(|s| s.file_size())
-                        .next()
-                        .unwrap_or(0) as u64;
-                    if shard_size > 0 {
-                        let shard_id = (actual_offset / shard_size) as usize;
-                        let shard_offset = actual_offset % shard_size;
-                        if let Some(Some(shard)) = self.shards.get(shard_id) {
-                            let mut header_buf = [0u8; 4]; // cookie is first 4 bytes of needle
-                            if shard.read_at(&mut header_buf, shard_offset).is_ok() {
-                                let needle_cookie =
-                                    crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
-                                if needle_cookie != cookie {
-                                    return Err(io::Error::new(
-                                        io::ErrorKind::InvalidData,
-                                        format!("unexpected cookie {:x}", cookie.0),
-                                    ));
-                                }
+            if let Ok(Some((offset, size))) = self.find_needle_from_ecx(needle_id)
+                && !size.is_deleted()
+                && !offset.is_zero()
+            {
+                let actual_offset = offset.to_actual_offset() as u64;
+                // Determine which shard contains this offset and read the cookie
+                let shard_size = self
+                    .shards
+                    .iter()
+                    .filter_map(|s| s.as_ref())
+                    .map(|s| s.file_size())
+                    .next()
+                    .unwrap_or(0) as u64;
+                if shard_size > 0 {
+                    let shard_id = (actual_offset / shard_size) as usize;
+                    let shard_offset = actual_offset % shard_size;
+                    if let Some(Some(shard)) = self.shards.get(shard_id) {
+                        let mut header_buf = [0u8; 4]; // cookie is first 4 bytes of needle
+                        if shard.read_at(&mut header_buf, shard_offset).is_ok() {
+                            let needle_cookie =
+                                crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
+                            if needle_cookie != cookie {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!("unexpected cookie {:x}", cookie.0),
+                                ));
                             }
                         }
                     }
@@ -3742,10 +3735,10 @@ pub(crate) fn merge_ec_runtimes<'a>(runtimes: &[&'a EcVolume]) -> Option<MergedE
     let mut slots: Vec<Option<(&'a EcVolume, &'a EcVolumeShard)>> = vec![None; width];
     for v in &merged {
         for (id, slot) in v.shards.iter().enumerate() {
-            if let Some(shard) = slot.as_ref() {
-                if slots[id].is_none() {
-                    slots[id] = Some((*v, shard));
-                }
+            if let Some(shard) = slot.as_ref()
+                && slots[id].is_none()
+            {
+                slots[id] = Some((*v, shard));
             }
         }
     }
@@ -4366,13 +4359,10 @@ impl EcLocalScrubPlan {
 
             if read != want {
                 // Like Go, returning from the walk callback aborts the scan.
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "expected {} bytes for needle {} on volume {}, got {}",
-                        want, id.0, volume_id.0, read
-                    ),
-                ));
+                return Err(io::Error::other(format!(
+                    "expected {} bytes for needle {} on volume {}, got {}",
+                    want, id.0, volume_id.0, read
+                )));
             }
 
             // Only a fully-local needle can be reassembled and CRC-checked.
@@ -4405,7 +4395,7 @@ impl EcLocalScrubPlan {
             .filter_map(|sid| shards.get(*sid as usize).and_then(|s| s.as_ref()))
             .map(|s| s.info.clone())
             .collect();
-        broken.sort_by(|a, b| a.shard_id.cmp(&b.shard_id));
+        broken.sort_by_key(|a| a.shard_id);
 
         (count, broken, errs)
     }
