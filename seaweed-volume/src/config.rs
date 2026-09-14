@@ -371,17 +371,18 @@ fn merge_options_file(args: Vec<String>) -> Vec<String> {
         if arg == "--" {
             break;
         }
-        if arg.starts_with("--") {
-            let key = if let Some(eq) = arg.find('=') {
-                arg[2..eq].to_string()
+        if let Some(long) = arg.strip_prefix("--") {
+            let key = if let Some(eq) = long.find('=') {
+                long[..eq].to_string()
             } else {
-                arg[2..].to_string()
+                long.to_string()
             };
             cli_flags.insert(key);
-        } else if arg.starts_with('-') && arg.len() > 2 {
+        } else if arg.len() > 2
+            && let Some(without_dash) = arg.strip_prefix('-')
+        {
             // Single-dash long option (already normalized to -- at this point,
             // but handle both for safety)
-            let without_dash = &arg[1..];
             let key = if let Some(eq) = without_dash.find('=') {
                 without_dash[..eq].to_string()
             } else {
@@ -401,15 +402,14 @@ fn merge_options_file(args: Vec<String>) -> Vec<String> {
         }
 
         // Split on first `=`, ` `, or `:`
-        let (name, value) =
-            if let Some(pos) = trimmed.find(|c: char| c == '=' || c == ' ' || c == ':') {
-                (
-                    trimmed[..pos].trim().to_string(),
-                    trimmed[pos + 1..].trim().to_string(),
-                )
-            } else {
-                (trimmed.to_string(), String::new())
-            };
+        let (name, value) = if let Some(pos) = trimmed.find(['=', ' ', ':']) {
+            (
+                trimmed[..pos].trim().to_string(),
+                trimmed[pos + 1..].trim().to_string(),
+            )
+        } else {
+            (trimmed.to_string(), String::new())
+        };
 
         // Strip leading dashes from name
         let name = name.trim_start_matches('-').to_string();
@@ -436,10 +436,8 @@ fn merge_options_file(args: Vec<String>) -> Vec<String> {
 /// Extract the options file path from args (looks for --options or -options).
 fn find_options_arg(args: &[String]) -> String {
     for i in 1..args.len() {
-        if args[i] == "--options" || args[i] == "-options" {
-            if i + 1 < args.len() {
-                return args[i + 1].clone();
-            }
+        if (args[i] == "--options" || args[i] == "-options") && i + 1 < args.len() {
+            return args[i + 1].clone();
         }
         if let Some(rest) = args[i].strip_prefix("--options=") {
             return rest.to_string();
@@ -457,20 +455,22 @@ fn parse_duration(s: &str) -> std::time::Duration {
     if s.is_empty() {
         return std::time::Duration::from_secs(60);
     }
-    if let Some(secs) = s.strip_suffix('s') {
-        if let Ok(v) = secs.parse::<u64>() {
-            return std::time::Duration::from_secs(v);
-        }
+    if let Some(secs) = s.strip_suffix('s')
+        && let Ok(v) = secs.parse::<u64>()
+    {
+        return std::time::Duration::from_secs(v);
     }
-    if let Some(mins) = s.strip_suffix('m') {
-        if let Ok(v) = mins.parse::<u64>() {
-            return std::time::Duration::from_secs(v * 60);
-        }
+    if let Some(mins) = s.strip_suffix('m')
+        && let Ok(v) = mins.parse::<u64>()
+        && let Some(seconds) = v.checked_mul(60)
+    {
+        return std::time::Duration::from_secs(seconds);
     }
-    if let Some(hours) = s.strip_suffix('h') {
-        if let Ok(v) = hours.parse::<u64>() {
-            return std::time::Duration::from_secs(v * 3600);
-        }
+    if let Some(hours) = s.strip_suffix('h')
+        && let Ok(v) = hours.parse::<u64>()
+        && let Some(seconds) = v.checked_mul(3600)
+    {
+        return std::time::Duration::from_secs(seconds);
     }
     // Fallback: try parsing as raw seconds
     if let Ok(v) = s.parse::<u64>() {
@@ -503,40 +503,40 @@ fn parse_min_free_spaces(min_free_space: &str, min_free_space_percent: &str) -> 
             }
             // Try parsing human-readable bytes: e.g. "10GiB", "500MiB", "1TiB"
             let s_upper = s.to_uppercase();
-            if let Some(rest) = s_upper.strip_suffix("TIB") {
-                if let Ok(v) = rest.trim().parse::<f64>() {
-                    return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0 * 1024.0) as u64);
-                }
+            if let Some(rest) = s_upper.strip_suffix("TIB")
+                && let Ok(v) = rest.trim().parse::<f64>()
+            {
+                return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0 * 1024.0) as u64);
             }
-            if let Some(rest) = s_upper.strip_suffix("GIB") {
-                if let Ok(v) = rest.trim().parse::<f64>() {
-                    return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0) as u64);
-                }
+            if let Some(rest) = s_upper.strip_suffix("GIB")
+                && let Ok(v) = rest.trim().parse::<f64>()
+            {
+                return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0) as u64);
             }
-            if let Some(rest) = s_upper.strip_suffix("MIB") {
-                if let Ok(v) = rest.trim().parse::<f64>() {
-                    return MinFreeSpace::Bytes((v * 1024.0 * 1024.0) as u64);
-                }
+            if let Some(rest) = s_upper.strip_suffix("MIB")
+                && let Ok(v) = rest.trim().parse::<f64>()
+            {
+                return MinFreeSpace::Bytes((v * 1024.0 * 1024.0) as u64);
             }
-            if let Some(rest) = s_upper.strip_suffix("KIB") {
-                if let Ok(v) = rest.trim().parse::<f64>() {
-                    return MinFreeSpace::Bytes((v * 1024.0) as u64);
-                }
+            if let Some(rest) = s_upper.strip_suffix("KIB")
+                && let Ok(v) = rest.trim().parse::<f64>()
+            {
+                return MinFreeSpace::Bytes((v * 1024.0) as u64);
             }
-            if let Some(rest) = s_upper.strip_suffix("TB") {
-                if let Ok(v) = rest.trim().parse::<f64>() {
-                    return MinFreeSpace::Bytes((v * 1_000_000_000_000.0) as u64);
-                }
+            if let Some(rest) = s_upper.strip_suffix("TB")
+                && let Ok(v) = rest.trim().parse::<f64>()
+            {
+                return MinFreeSpace::Bytes((v * 1_000_000_000_000.0) as u64);
             }
-            if let Some(rest) = s_upper.strip_suffix("GB") {
-                if let Ok(v) = rest.trim().parse::<f64>() {
-                    return MinFreeSpace::Bytes((v * 1_000_000_000.0) as u64);
-                }
+            if let Some(rest) = s_upper.strip_suffix("GB")
+                && let Ok(v) = rest.trim().parse::<f64>()
+            {
+                return MinFreeSpace::Bytes((v * 1_000_000_000.0) as u64);
             }
-            if let Some(rest) = s_upper.strip_suffix("MB") {
-                if let Ok(v) = rest.trim().parse::<f64>() {
-                    return MinFreeSpace::Bytes((v * 1_000_000.0) as u64);
-                }
+            if let Some(rest) = s_upper.strip_suffix("MB")
+                && let Ok(v) = rest.trim().parse::<f64>()
+            {
+                return MinFreeSpace::Bytes((v * 1_000_000.0) as u64);
             }
             // Default: 1%
             MinFreeSpace::Percent(1.0)
@@ -1028,20 +1028,20 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                     "cipher_suites" => cfg.tls_policy.cipher_suites = value.to_string(),
                     _ => {}
                 },
-                Section::Guard => match key {
-                    "white_list" => {
+                Section::Guard => {
+                    if key == "white_list" {
                         cfg.guard_white_list = value
                             .split(',')
                             .map(|s| s.trim().to_string())
                             .filter(|s| !s.is_empty())
                             .collect();
                     }
-                    _ => {}
-                },
-                Section::Access => match key {
-                    "ui" => cfg.access_ui = value.parse().unwrap_or(false),
-                    _ => {}
-                },
+                }
+                Section::Access => {
+                    if key == "ui" {
+                        cfg.access_ui = value.parse().unwrap_or(false)
+                    }
+                }
                 Section::None => {}
             }
         }
@@ -1188,12 +1188,11 @@ fn apply_env_overrides(cfg: &mut SecurityConfig) {
 /// Mirrors Go's `util.DetectedHostAddress()`.
 fn detect_host_address() -> String {
     // Connect to a remote address to determine the local outbound IP
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                return addr.ip().to_string();
-            }
-        }
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0")
+        && socket.connect("8.8.8.8:80").is_ok()
+        && let Ok(addr) = socket.local_addr()
+    {
+        return addr.ip().to_string();
     }
     "localhost".to_string()
 }
@@ -1297,6 +1296,14 @@ mod tests {
         assert_eq!(parse_duration("1h"), std::time::Duration::from_secs(3600));
         assert_eq!(parse_duration("30"), std::time::Duration::from_secs(30));
         assert_eq!(parse_duration(""), std::time::Duration::from_secs(60));
+        assert_eq!(
+            parse_duration("307445734561825861m"),
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(
+            parse_duration("5124095576030432h"),
+            std::time::Duration::from_secs(60)
+        );
     }
 
     #[test]

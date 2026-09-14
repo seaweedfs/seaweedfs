@@ -21,7 +21,7 @@ impl CRC {
     /// Legacy `.Value()` function — deprecated in Go but needed for backward compat check.
     /// Formula: (crc >> 15 | crc << 17) + 0xa282ead8
     pub fn legacy_value(&self) -> u32 {
-        (self.0 >> 15 | self.0 << 17).wrapping_add(0xa282ead8)
+        self.0.rotate_right(15).wrapping_add(0xa282ead8)
     }
 }
 
@@ -67,7 +67,9 @@ mod tests {
     fn test_crc_legacy_value() {
         let crc = CRC(0x12345678);
         let v = crc.legacy_value();
-        let expected = (0x12345678u32 >> 15 | 0x12345678u32 << 17).wrapping_add(0xa282ead8);
+        // (0x12345678 >> 15 | 0x12345678 << 17) + 0xa282ead8, worked out by hand so
+        // the test checks the rotate rather than restating it.
+        let expected = 0x4f730f40_u32;
         assert_eq!(v, expected);
     }
 }

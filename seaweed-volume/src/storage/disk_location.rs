@@ -131,10 +131,10 @@ impl DiskLocation {
         for entry in entries {
             let entry = entry?;
             let name = entry.file_name().into_string().unwrap_or_default();
-            if let Some((collection, vid)) = parse_volume_filename(&name) {
-                if seen.insert((collection.clone(), vid)) {
-                    dat_files.push((collection, vid));
-                }
+            if let Some((collection, vid)) = parse_volume_filename(&name)
+                && seen.insert((collection.clone(), vid))
+            {
+                dat_files.push((collection, vid));
             }
         }
 
@@ -327,10 +327,10 @@ impl DiskLocation {
                         .strip_suffix(".cpc")
                         .or_else(|| name.strip_suffix(".cpd"))
                         .or_else(|| name.strip_suffix(".cpx"));
-                    if let Some(stem) = stem {
-                        if let Some(key) = parse_collection_volume_id(stem) {
-                            pending.insert(key);
-                        }
+                    if let Some(stem) = stem
+                        && let Some(key) = parse_collection_volume_id(stem)
+                    {
+                        pending.insert(key);
                     }
                 }
             }
@@ -426,11 +426,16 @@ impl DiskLocation {
         if shard_count == 0 {
             return false;
         }
-        if let (Some(actual), Some(expected)) = (actual_shard_size, expected_shard_size) {
-            if actual < expected {
-                warn!(volume_id = vid.0, actual, expected, "shards smaller than the .dat's full encode; reclaiming the complete .dat");
-                return false;
-            }
+        if let (Some(actual), Some(expected)) = (actual_shard_size, expected_shard_size)
+            && actual < expected
+        {
+            warn!(
+                volume_id = vid.0,
+                actual,
+                expected,
+                "shards smaller than the .dat's full encode; reclaiming the complete .dat"
+            );
+            return false;
         }
         true
     }
@@ -510,10 +515,10 @@ impl DiskLocation {
     pub(crate) fn ec_generation_ts_ns(&self, collection: &str, vid: VolumeId) -> Option<i64> {
         for dir in [&self.directory, &self.idx_directory] {
             let vif = format!("{}.vif", volume_file_name(dir, collection, vid));
-            if let Ok(s) = fs::read_to_string(&vif) {
-                if let Ok(vi) = serde_json::from_str::<VifVolumeInfo>(&s) {
-                    return Some(vi.ec_shard_config.map(|c| c.encode_ts_ns).unwrap_or(0));
-                }
+            if let Ok(s) = fs::read_to_string(&vif)
+                && let Ok(vi) = serde_json::from_str::<VifVolumeInfo>(&s)
+            {
+                return Some(vi.ec_shard_config.map(|c| c.encode_ts_ns).unwrap_or(0));
             }
             if self.directory == self.idx_directory {
                 break;
@@ -542,6 +547,7 @@ impl DiskLocation {
     }
 
     /// Create a new volume in this location.
+    #[expect(clippy::too_many_arguments)]
     pub fn create_volume(
         &mut self,
         vid: VolumeId,
@@ -777,18 +783,18 @@ impl DiskLocation {
     pub fn has_ecx_file_on_disk(&self, collection: &str, vid: VolumeId) -> bool {
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         let idx_path = format!("{}.ecx", idx_base);
-        if let Ok(meta) = fs::metadata(&idx_path) {
-            if !meta.is_dir() {
-                return true;
-            }
+        if let Ok(meta) = fs::metadata(&idx_path)
+            && !meta.is_dir()
+        {
+            return true;
         }
         if self.idx_directory != self.directory {
             let data_base = volume_file_name(&self.directory, collection, vid);
             let data_path = format!("{}.ecx", data_base);
-            if let Ok(meta) = fs::metadata(&data_path) {
-                if !meta.is_dir() {
-                    return true;
-                }
+            if let Ok(meta) = fs::metadata(&data_path)
+                && !meta.is_dir()
+            {
+                return true;
             }
         }
         false
@@ -1107,7 +1113,7 @@ impl DiskLocation {
 
     /// Close all volumes.
     pub fn close(&mut self) {
-        for (_, v) in self.volumes.iter_mut() {
+        for v in self.volumes.values_mut() {
             v.close();
         }
         self.volumes.clear();
@@ -1184,10 +1190,9 @@ fn ec_data_shards_from_vif(directory: &str, idx_directory: &str, collection: &st
             .and_then(|s| serde_json::from_str::<VifVolumeInfo>(&s).ok())
             .and_then(|vi| vi.ec_shard_config)
             .map(|c| c.data_shards as usize)
+            && ds > 0
         {
-            if ds > 0 {
-                return ds;
-            }
+            return ds;
         }
         if directory == idx_directory {
             break;

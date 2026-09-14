@@ -226,10 +226,7 @@ impl SortedFileNeedleMap {
             .fail_sdx_mark
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "injected .sdx mark failure",
-            ));
+            return Err(io::Error::other("injected .sdx mark failure"));
         }
         let mut buf = [0u8; SIZE_SIZE];
         TOMBSTONE_FILE_SIZE.to_bytes(&mut buf);
@@ -309,7 +306,7 @@ impl SortedFileNeedleMap {
             let rows = rows_per_read.min(entry_count - done) as usize;
             let bytes = &mut block[..rows * NEEDLE_MAP_ENTRY_SIZE];
             read_exact_at(&file, bytes, done * NEEDLE_MAP_ENTRY_SIZE as u64)?;
-            for entry in bytes.chunks_exact(NEEDLE_MAP_ENTRY_SIZE) {
+            for entry in bytes.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>().0 {
                 let (key, offset, size) = idx_entry_from_bytes(entry);
                 if !size.is_valid() || pending.contains_key(&key) {
                     continue; // deleted in place, or still awaiting that mark

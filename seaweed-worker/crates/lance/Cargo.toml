@@ -50,3 +50,6 @@ arrow-array = "58"
 arrow-schema = "58"
 arrow-cast = "58"
 lance-linalg = "10"
+
+[lints]
+workspace = true

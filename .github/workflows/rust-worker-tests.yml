@@ -73,6 +73,12 @@ jobs:
       - name: Build the plugin workers
         run: cd seaweed-worker && cargo build --release
 
+      # The workspace is warning-free under clippy as of the sweep that added
+      # this step. Uncomment to make that a gate; `[workspace.lints.clippy]`
+      # in seaweed-worker/Cargo.toml is where crate-wide exceptions live.
+      # - name: Clippy
+      #   run: cd seaweed-worker && cargo clippy --workspace --all-targets -- -D warnings
+
       # The tests that need a live gateway skip themselves without one, the way
       # the Go integration tests skip without Docker; the lifecycle suite in
       # test/s3tables/lifecycle is what runs them against a real cluster.

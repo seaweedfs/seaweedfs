@@ -73,8 +73,10 @@ mod tests {
         let empty = master_pb::VolumeInformationMessage::default();
         assert_eq!(report_hash(&empty), 10988706248825469653);
 
-        let mut one = master_pb::VolumeInformationMessage::default();
-        one.id = 1;
+        let one = master_pb::VolumeInformationMessage {
+            id: 1,
+            ..Default::default()
+        };
         assert_eq!(report_hash(&one), 2035849960016744285);
 
         let full = master_pb::VolumeInformationMessage {

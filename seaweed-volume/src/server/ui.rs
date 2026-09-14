@@ -423,13 +423,12 @@ fn collect_ui_data(
                     shard_id: shard.shard_id,
                     size: shard_size,
                 });
-                if created_at == "-" {
-                    if let Ok(metadata) = std::fs::metadata(shard.file_name()) {
-                        if let Ok(modified) = metadata.modified() {
-                            let ts: chrono::DateTime<chrono::Local> = modified.into();
-                            created_at = ts.format("%Y-%m-%d %H:%M").to_string();
-                        }
-                    }
+                if created_at == "-"
+                    && let Ok(metadata) = std::fs::metadata(shard.file_name())
+                    && let Ok(modified) = metadata.modified()
+                {
+                    let ts: chrono::DateTime<chrono::Local> = modified.into();
+                    created_at = ts.format("%Y-%m-%d %H:%M").to_string();
                 }
             }
             let preferred_size = ec_volume.dat_file_size.max(0) as u64;

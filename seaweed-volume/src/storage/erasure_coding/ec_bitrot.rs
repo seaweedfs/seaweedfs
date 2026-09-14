@@ -164,16 +164,16 @@ pub fn remove_bitrot_sidecars(base: &str) -> io::Result<()> {
     };
     let mut first_err: Option<io::Error> = None;
     let mut record = |res: io::Result<()>| {
-        if let Err(e) = res {
-            if first_err.is_none() {
-                first_err = Some(e);
-            }
+        if let Err(e) = res
+            && first_err.is_none()
+        {
+            first_err = Some(e);
         }
     };
     record(rm(format!("{}{}", base, BITROT_SIDECAR_EXT).into()));
     let path = Path::new(base);
     if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
-        let prefix = format!("{}{}.v", fname.to_string_lossy(), BITROT_SIDECAR_EXT);
+        let prefix = format!("{}{}.v", fname.display(), BITROT_SIDECAR_EXT);
         match fs::read_dir(parent) {
             Ok(entries) => {
                 for entry in entries.flatten() {
@@ -203,7 +203,7 @@ pub fn new_encode_uuid() -> Vec<u8> {
 
 /// Reports whether `block_size` is a power of two in [1 MiB, MAX_BITROT_BLOCK_SIZE].
 pub fn is_pow2_multiple_of_1mib(block_size: u32) -> bool {
-    block_size >= (1 << 20) && block_size <= MAX_BITROT_BLOCK_SIZE && block_size.count_ones() == 1
+    ((1 << 20)..=MAX_BITROT_BLOCK_SIZE).contains(&block_size) && block_size.count_ones() == 1
 }
 
 /// Returns ceil(covered_size / block_size).
@@ -402,7 +402,7 @@ pub fn validate_manifest(
             total
         ));
     }
-    let mut seen = vec![false; MAX_SHARD_COUNT];
+    let mut seen = [false; MAX_SHARD_COUNT];
     for s in &prot.shards {
         if s.shard_id >= total as u32 {
             return Err(format!(

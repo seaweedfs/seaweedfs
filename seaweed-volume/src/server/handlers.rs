@@ -193,10 +193,7 @@ impl http_body::Body for StreamingBody {
                             }
                             Ok(Err(e)) => return std::task::Poll::Ready(Some(Err(e))),
                             Err(e) => {
-                                return std::task::Poll::Ready(Some(Err(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    e,
-                                ))))
+                                return std::task::Poll::Ready(Some(Err(std::io::Error::other(e))));
                             }
                         }
                     }
@@ -322,10 +319,9 @@ fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
     // Try "vid,fid" or "vid/fid" or "vid/fid/filename" formats
     let (vid_str, fid_part) = if let Some(pos) = path.find(',') {
         (&path[..pos], &path[pos + 1..])
-    } else if let Some(pos) = path.find('/') {
-        (&path[..pos], &path[pos + 1..])
     } else {
-        return None;
+        let pos = path.find('/')?;
+        (&path[..pos], &path[pos + 1..])
     };
 
     // For fid part, strip extension from the fid (not from filename)
@@ -409,10 +405,10 @@ async fn lookup_volume(
         .json()
         .await
         .map_err(|e| format!("lookup parse failed: {}", e))?;
-    if let Some(err) = result.error {
-        if !err.is_empty() {
-            return Err(err);
-        }
+    if let Some(err) = result.error
+        && !err.is_empty()
+    {
+        return Err(err);
     }
     Ok(result.locations.unwrap_or_default())
 }
@@ -688,7 +684,8 @@ fn build_proxy_request_info(
             raw_fid
         };
         (trimmed[..pos].to_string(), fid.to_string())
-    } else if let Some(pos) = trimmed.find('/') {
+    } else {
+        let pos = trimmed.find('/')?;
         let after = &trimmed[pos + 1..];
         let fid_part = if let Some(slash) = after.find('/') {
             &after[..slash]
@@ -696,8 +693,6 @@ fn build_proxy_request_info(
             after
         };
         (trimmed[..pos].to_string(), fid_part.to_string())
-    } else {
-        return None;
     };
 
     Some(ProxyRequestInfo {
@@ -837,12 +832,12 @@ fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &s
     let mut query_params = Vec::new();
     if !info.original_query.is_empty() {
         for param in info.original_query.split('&') {
-            if let Some((key, value)) = param.split_once('=') {
-                if key == "collection" {
-                    query_params.push(format!("collection={}", value));
-                }
-                // Intentionally drop readDeleted and other params (Go parity)
+            if let Some((key, value)) = param.split_once('=')
+                && key == "collection"
+            {
+                query_params.push(format!("collection={}", value));
             }
+            // Intentionally drop readDeleted and other params (Go parity)
         }
     }
     query_params.push("proxied=true".to_string());
@@ -852,7 +847,7 @@ fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &s
     let target_http = to_http_address(&target.url);
     let raw_target = format!(
         "{}/{},{}?{}",
-        target_http, &info.vid_str, &info.fid_str, query
+        target_http, info.vid_str, info.fid_str, query
     );
     let location = match normalize_outgoing_http_url(scheme, &raw_target) {
         Ok(url) => url,
@@ -954,12 +949,12 @@ async fn get_or_head_handler_inner(
     // so invalid paths with JWT enabled return 401, not 400.
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) =
-        state
-            .guard
-            .read()
-            .unwrap()
-            .check_jwt_for_file(token.as_deref(), &file_id, false)
+    if state
+        .guard
+        .read()
+        .unwrap()
+        .check_jwt_for_file(token.as_deref(), &file_id, false)
+        .is_err()
     {
         let body = serde_json::json!({"error": "wrong jwt"});
         return Response::builder()
@@ -1015,16 +1010,15 @@ async fn get_or_head_handler_inner(
             let should_try_replica =
                 !query_string.contains("proxied=true") && !state.master_url.is_empty() && {
                     let store = state.store.read().unwrap();
-                    store.find_volume(vid).map_or(false, |(_, vol)| {
+                    store.find_volume(vid).is_some_and(|(_, vol)| {
                         vol.super_block.replica_placement.get_copy_count() > 1
                     })
                 };
-            if should_try_replica {
-                if let Some(info) =
+            if should_try_replica
+                && let Some(info) =
                     build_proxy_request_info(&path, request.headers(), &query_string)
-                {
-                    return proxy_or_redirect_to_target(&state, info, vid, true).await;
-                }
+            {
+                return proxy_or_redirect_to_target(&state, info, vid, true).await;
             }
 
             // Blocking wait loop (Go's waitForDownloadSlot)
@@ -1231,57 +1225,53 @@ async fn get_or_head_handler_inner(
     // Build Last-Modified header (RFC 1123 format) — must be done before conditional checks
     let last_modified_str = if n.last_modified > 0 {
         use chrono::{TimeZone, Utc};
-        if let Some(dt) = Utc.timestamp_opt(n.last_modified as i64, 0).single() {
-            Some(dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
-        } else {
-            None
-        }
+        Utc.timestamp_opt(n.last_modified as i64, 0)
+            .single()
+            .map(|dt| dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
     } else {
         None
     };
 
     // Check If-Modified-Since FIRST (Go checks this before If-None-Match)
-    if n.last_modified > 0 {
-        if let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE) {
-            if let Ok(ims_str) = ims_header.to_str() {
-                // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
-                if let Ok(ims_time) =
-                    chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
-                {
-                    if (n.last_modified as i64) <= ims_time.and_utc().timestamp() {
-                        let mut resp = StatusCode::NOT_MODIFIED.into_response();
-                        if let Some(ref lm) = last_modified_str {
-                            resp.headers_mut()
-                                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-                        }
-                        // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
-                        return resp;
-                    }
-                }
+    if n.last_modified > 0
+        && let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE)
+        && let Ok(ims_str) = ims_header.to_str()
+    {
+        // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
+        if let Ok(ims_time) =
+            chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
+            && (n.last_modified as i64) <= ims_time.and_utc().timestamp()
+        {
+            let mut resp = StatusCode::NOT_MODIFIED.into_response();
+            if let Some(ref lm) = last_modified_str {
+                resp.headers_mut()
+                    .insert(header::LAST_MODIFIED, lm.parse().unwrap());
             }
+            // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
+            return resp;
         }
     }
 
     // Check If-None-Match SECOND
-    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
-        if let Ok(inm) = if_none_match.to_str() {
-            if inm == etag {
-                let mut resp = StatusCode::NOT_MODIFIED.into_response();
-                if let Some(ref lm) = last_modified_str {
-                    resp.headers_mut()
-                        .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-                }
-                // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
-                return resp;
-            }
+    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
+        && let Ok(inm) = if_none_match.to_str()
+        && inm == etag
+    {
+        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+        if let Some(ref lm) = last_modified_str {
+            resp.headers_mut()
+                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
         }
+        // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
+        return resp;
     }
 
     // Chunk manifest expansion (needs full data) — after conditional checks, before response
     // Pass ETag so chunk manifest responses include it (matches Go: ETag is set on the
     // response writer before tryHandleChunkedFile runs).
-    if n.is_chunk_manifest() && !bypass_cm {
-        if let Some(resp) = try_expand_chunk_manifest(
+    if n.is_chunk_manifest()
+        && !bypass_cm
+        && let Some(resp) = try_expand_chunk_manifest(
             &state,
             &n,
             &headers,
@@ -1292,27 +1282,26 @@ async fn get_or_head_handler_inner(
             &last_modified_str,
         )
         .await
-        {
-            return resp;
-        }
-        // If manifest expansion fails (invalid JSON etc.), fall through to raw data
+    {
+        return resp;
     }
+    // If manifest expansion fails (invalid JSON etc.), fall through to raw data
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::ETAG, etag.parse().unwrap());
 
     // H1: Emit pairs as response headers
-    if n.has_pairs() && !n.pairs.is_empty() {
-        if let Ok(pair_map) =
+    if n.has_pairs()
+        && !n.pairs.is_empty()
+        && let Ok(pair_map) =
             serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
-        {
-            for (k, v) in &pair_map {
-                if let (Ok(hname), Ok(hval)) = (
-                    axum::http::HeaderName::from_bytes(k.as_bytes()),
-                    axum::http::HeaderValue::from_str(v),
-                ) {
-                    response_headers.insert(hname, hval);
-                }
+    {
+        for (k, v) in &pair_map {
+            if let (Ok(hname), Ok(hval)) = (
+                axum::http::HeaderName::from_bytes(k.as_bytes()),
+                axum::http::HeaderValue::from_str(v),
+            ) {
+                response_headers.insert(hname, hval);
             }
         }
     }
@@ -1322,10 +1311,10 @@ async fn get_or_head_handler_inner(
     let mut ext = ext;
     if n.name_size > 0 && filename.is_empty() {
         filename = String::from_utf8_lossy(&n.name).to_string();
-        if ext.is_empty() {
-            if let Some(dot_pos) = filename.rfind('.') {
-                ext = filename[dot_pos..].to_lowercase();
-            }
+        if ext.is_empty()
+            && let Some(dot_pos) = filename.rfind('.')
+        {
+            ext = filename[dot_pos..].to_lowercase();
         }
     }
 
@@ -1429,80 +1418,72 @@ async fn get_or_head_handler_inner(
     }
 
     // ---- Streaming path: large uncompressed files ----
-    if can_stream {
-        if let Some(info) = stream_info {
-            response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-            response_headers.insert(
-                header::CONTENT_LENGTH,
-                info.data_size.to_string().parse().unwrap(),
-            );
+    if can_stream && let Some(info) = stream_info {
+        response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            info.data_size.to_string().parse().unwrap(),
+        );
 
-            let tracked_bytes = info.data_size as i64;
-            let tracking_state = if download_guard.is_some() {
-                let new_val = state
-                    .inflight_download_bytes
-                    .fetch_add(tracked_bytes, Ordering::Relaxed)
-                    + tracked_bytes;
-                metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
-                Some(state.clone())
-            } else {
+        let tracked_bytes = info.data_size as i64;
+        let tracking_state = if download_guard.is_some() {
+            let new_val = state
+                .inflight_download_bytes
+                .fetch_add(tracked_bytes, Ordering::Relaxed)
+                + tracked_bytes;
+            metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
+            Some(state.clone())
+        } else {
+            None
+        };
+
+        let streaming = StreamingBody {
+            source: info.source,
+            data_offset: info.data_file_offset,
+            data_size: info.data_size,
+            pos: 0,
+            chunk_size: streaming_chunk_size(state.read_buffer_size_bytes, info.data_size as usize),
+            _held_read_lease: if state.has_slow_read {
                 None
-            };
+            } else {
+                Some(info.data_file_access_control.read_lock())
+            },
+            data_file_access_control: info.data_file_access_control,
+            hold_read_lock_for_stream: !state.has_slow_read,
+            pending: None,
+            state: tracking_state,
+            tracked_bytes,
+            server_state: state.clone(),
+            volume_id: info.volume_id,
+            needle_id: info.needle_id,
+            compaction_revision: info.compaction_revision,
+        };
 
-            let streaming = StreamingBody {
-                source: info.source,
-                data_offset: info.data_file_offset,
-                data_size: info.data_size,
-                pos: 0,
-                chunk_size: streaming_chunk_size(
-                    state.read_buffer_size_bytes,
-                    info.data_size as usize,
-                ),
-                _held_read_lease: if state.has_slow_read {
-                    None
-                } else {
-                    Some(info.data_file_access_control.read_lock())
-                },
-                data_file_access_control: info.data_file_access_control,
-                hold_read_lock_for_stream: !state.has_slow_read,
-                pending: None,
-                state: tracking_state,
-                tracked_bytes,
-                server_state: state.clone(),
-                volume_id: info.volume_id,
-                needle_id: info.needle_id,
-                compaction_revision: info.compaction_revision,
-            };
-
-            let body = Body::new(streaming);
-            let mut resp = Response::new(body);
-            *resp.status_mut() = StatusCode::OK;
-            *resp.headers_mut() = response_headers;
-            return resp;
-        }
+        let body = Body::new(streaming);
+        let mut resp = Response::new(body);
+        *resp.status_mut() = StatusCode::OK;
+        *resp.headers_mut() = response_headers;
+        return resp;
     }
 
-    if can_handle_head_from_meta {
-        if let Some(info) = stream_info {
-            response_headers.insert(
-                header::CONTENT_LENGTH,
-                info.data_size.to_string().parse().unwrap(),
-            );
-            return (StatusCode::OK, response_headers).into_response();
-        }
+    if can_handle_head_from_meta && let Some(info) = stream_info {
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            info.data_size.to_string().parse().unwrap(),
+        );
+        return (StatusCode::OK, response_headers).into_response();
     }
 
-    if can_handle_range_from_source {
-        if let (Some(range_header), Some(info)) = (headers.get(header::RANGE), stream_info) {
-            if let Ok(range_str) = range_header.to_str() {
-                return handle_range_request_from_source(
-                    range_str,
-                    info,
-                    response_headers,
-                    track_download.then(|| state.clone()),
-                );
-            }
-        }
+    if can_handle_range_from_source
+        && let (Some(range_header), Some(info)) = (headers.get(header::RANGE), stream_info)
+        && let Ok(range_str) = range_header.to_str()
+    {
+        return handle_range_request_from_source(
+            range_str,
+            info,
+            response_headers,
+            track_download.then(|| state.clone()),
+        );
     }
 
     // ---- Buffered path: small files, compressed, images, range requests ----
@@ -1572,15 +1553,15 @@ async fn get_or_head_handler_inner(
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
     // Check Range header
-    if let Some(range_header) = headers.get(header::RANGE) {
-        if let Ok(range_str) = range_header.to_str() {
-            return handle_range_request(
-                range_str,
-                &data,
-                response_headers,
-                track_download.then(|| state.clone()),
-            );
-        }
+    if let Some(range_header) = headers.get(header::RANGE)
+        && let Ok(range_str) = range_header.to_str()
+    {
+        return handle_range_request(
+            range_str,
+            &data,
+            response_headers,
+            track_download.then(|| state.clone()),
+        );
     }
 
     if method == Method::HEAD {
@@ -2006,7 +1987,7 @@ fn extract_extension_from_path(path: &str) -> String {
         if let Some(dot_pos) = filename.rfind('.') {
             return filename[dot_pos..].to_lowercase();
         }
-    } else if parts.len() >= 1 {
+    } else if !parts.is_empty() {
         // 2-segment path: /vid,fid.ext or /vid/fid.ext
         // Go's parseURLPath extracts ext from the full path for all formats
         let last = parts[parts.len() - 1];
@@ -2129,7 +2110,7 @@ pub async fn post_handler(
             // Go's r.ParseForm() returns 400 on malformed query strings
             return json_error_with_query(
                 StatusCode::BAD_REQUEST,
-                &format!("form parse error: {}", e),
+                format!("form parse error: {}", e),
                 Some(&query),
             );
         }
@@ -2145,11 +2126,12 @@ pub async fn post_handler(
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) = state
+    if state
         .guard
         .read()
         .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
     {
         return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
     }
@@ -2279,11 +2261,8 @@ pub async fn post_handler(
             .split(';')
             .find_map(|part| {
                 let part = part.trim();
-                if let Some(val) = part.strip_prefix("boundary=") {
-                    Some(val.trim_matches('"').to_string())
-                } else {
-                    None
-                }
+                part.strip_prefix("boundary=")
+                    .map(|val| val.trim_matches('"').to_string())
             })
             .unwrap_or_default();
 
@@ -2425,17 +2404,17 @@ pub async fn post_handler(
     } else {
         None
     };
-    if let (Some(expected_md5), Some(actual_md5)) = (&content_md5, &original_content_md5) {
-        if expected_md5 != actual_md5 {
-            return json_error_with_query(
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "Content-MD5 did not match md5 of file data expected [{}] received [{}] size {}",
-                    expected_md5, actual_md5, original_data_size
-                ),
-                Some(&query),
-            );
-        }
+    if let (Some(expected_md5), Some(actual_md5)) = (&content_md5, &original_content_md5)
+        && expected_md5 != actual_md5
+    {
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Content-MD5 did not match md5 of file data expected [{}] received [{}] size {}",
+                expected_md5, actual_md5, original_data_size
+            ),
+            Some(&query),
+        );
     }
 
     let now = std::time::SystemTime::now()
@@ -2577,7 +2556,7 @@ pub async fn post_handler(
         cookie,
         data_size: final_data.len() as u32,
         data: final_data,
-        last_modified: last_modified,
+        last_modified,
         ..Needle::default()
     };
     n.set_has_last_modified_date();
@@ -2595,22 +2574,21 @@ pub async fn post_handler(
     }
 
     // Set TTL on needle
-    if let Some(ref t) = ttl {
-        if !t.is_empty() {
-            n.ttl = Some(*t);
-            n.set_has_ttl();
-        }
+    if let Some(ref t) = ttl
+        && !t.is_empty()
+    {
+        n.ttl = Some(*t);
+        n.set_has_ttl();
     }
 
     // Set pairs on needle
-    if !pair_map.is_empty() {
-        if let Ok(pairs_json) = serde_json::to_vec(&pair_map) {
-            if pairs_json.len() < 65536 {
-                n.pairs_size = pairs_json.len() as u16;
-                n.pairs = pairs_json;
-                n.set_has_pairs();
-            }
-        }
+    if !pair_map.is_empty()
+        && let Ok(pairs_json) = serde_json::to_vec(&pair_map)
+        && pairs_json.len() < 65536
+    {
+        n.pairs_size = pairs_json.len() as u16;
+        n.pairs = pairs_json;
+        n.set_has_pairs();
     }
 
     // Set filename on needle (matches Go: if len(pu.FileName) < 256)
@@ -2639,9 +2617,9 @@ pub async fn post_handler(
     if !is_replicate && write_result.is_ok() && !state.master_url.is_empty() {
         let needs_replication = {
             let store = state.store.read().unwrap();
-            store.find_volume(vid).map_or(false, |(_, v)| {
-                v.super_block.replica_placement.get_copy_count() > 1
-            })
+            store
+                .find_volume(vid)
+                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
         };
         if needs_replication {
             let state_clone = state.clone();
@@ -2664,7 +2642,7 @@ pub async fn post_handler(
             let replication_result = replication
                 .await
                 .map_err(|e| format!("replication task failed: {}", e))
-                .and_then(|result| result);
+                .flatten();
             if let Err(e) = replication_result {
                 tracing::error!("replicated write failed: {}", e);
                 return json_error_with_query(
@@ -2758,11 +2736,12 @@ pub async fn delete_handler(
     // JWT check for writes (deletes use write key)
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) = state
+    if state
         .guard
         .read()
         .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
     {
         return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&del_query));
     }
@@ -2793,14 +2772,14 @@ pub async fn delete_handler(
                     let count = ec_needle.data_size as i64;
                     // Step 3: Journal the delete
                     let mut store = state.store.write().unwrap();
-                    if let Some(ecv) = store.find_ec_volume_mut(vid) {
-                        if let Err(e) = ecv.journal_delete(needle_id) {
-                            return json_error_with_query(
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Deletion Failed: {}", e),
-                                Some(&del_query),
-                            );
-                        }
+                    if let Some(ecv) = store.find_ec_volume_mut(vid)
+                        && let Err(e) = ecv.journal_delete(needle_id)
+                    {
+                        return json_error_with_query(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Deletion Failed: {}", e),
+                            Some(&del_query),
+                        );
                     }
                     let result = DeleteResult { size: count };
                     return json_response_with_params(
@@ -2946,12 +2925,12 @@ pub async fn delete_handler(
     if !is_replicate && delete_result.is_ok() && !state.master_url.is_empty() {
         let needs_replication = {
             let store = state.store.read().unwrap();
-            store.find_volume(vid).map_or(false, |(_, v)| {
-                v.super_block.replica_placement.get_copy_count() > 1
-            })
+            store
+                .find_volume(vid)
+                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
         };
-        if needs_replication {
-            if let Err(e) = do_replicated_request(
+        if needs_replication
+            && let Err(e) = do_replicated_request(
                 &state,
                 vid.0,
                 Method::DELETE,
@@ -2961,14 +2940,13 @@ pub async fn delete_handler(
                 None,
             )
             .await
-            {
-                tracing::error!("replicated delete failed: {}", e);
-                return json_error_with_query(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("replication failed: {}", e),
-                    Some(&del_query),
-                );
-            }
+        {
+            tracing::error!("replicated delete failed: {}", e);
+            return json_error_with_query(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("replication failed: {}", e),
+                Some(&del_query),
+            );
         }
     }
 
@@ -3234,7 +3212,6 @@ pub async fn ui_handler(State(state): State<Arc<VolumeServerState>>) -> Response
 // ============================================================================
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct ChunkManifest {
     #[serde(default)]
     name: String,
@@ -3254,6 +3231,7 @@ struct ChunkInfo {
 }
 
 /// Try to expand a chunk manifest needle. Returns None if manifest can't be parsed.
+#[expect(clippy::too_many_arguments)]
 async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
@@ -3382,53 +3360,53 @@ async fn try_expand_chunk_manifest(
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
     // Last-Modified — Go sets this on the response writer before tryHandleChunkedFile
-    if let Some(lm) = last_modified_str {
-        if let Ok(hval) = lm.parse() {
-            response_headers.insert(header::LAST_MODIFIED, hval);
-        }
+    if let Some(lm) = last_modified_str
+        && let Ok(hval) = lm.parse()
+    {
+        response_headers.insert(header::LAST_MODIFIED, hval);
     }
 
     // Pairs — Go sets needle pairs on the response writer before tryHandleChunkedFile
-    if n.has_pairs() && !n.pairs.is_empty() {
-        if let Ok(pair_map) =
+    if n.has_pairs()
+        && !n.pairs.is_empty()
+        && let Ok(pair_map) =
             serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
-        {
-            for (k, v) in &pair_map {
-                if let (Ok(hname), Ok(hval)) = (
-                    axum::http::HeaderName::from_bytes(k.as_bytes()),
-                    axum::http::HeaderValue::from_str(v),
-                ) {
-                    response_headers.insert(hname, hval);
-                }
+    {
+        for (k, v) in &pair_map {
+            if let (Ok(hname), Ok(hval)) = (
+                axum::http::HeaderName::from_bytes(k.as_bytes()),
+                axum::http::HeaderValue::from_str(v),
+            ) {
+                response_headers.insert(hname, hval);
             }
         }
     }
 
     // S3 response passthrough headers — Go sets these via AdjustPassthroughHeaders
-    if let Some(ref cc) = query.response_cache_control {
-        if let Ok(hval) = cc.parse() {
-            response_headers.insert(header::CACHE_CONTROL, hval);
-        }
+    if let Some(ref cc) = query.response_cache_control
+        && let Ok(hval) = cc.parse()
+    {
+        response_headers.insert(header::CACHE_CONTROL, hval);
     }
-    if let Some(ref ce) = query.response_content_encoding {
-        if let Ok(hval) = ce.parse() {
-            response_headers.insert(header::CONTENT_ENCODING, hval);
-        }
+    if let Some(ref ce) = query.response_content_encoding
+        && let Ok(hval) = ce.parse()
+    {
+        response_headers.insert(header::CONTENT_ENCODING, hval);
     }
-    if let Some(ref exp) = query.response_expires {
-        if let Ok(hval) = exp.parse() {
-            response_headers.insert(header::EXPIRES, hval);
-        }
+    if let Some(ref exp) = query.response_expires
+        && let Ok(hval) = exp.parse()
+    {
+        response_headers.insert(header::EXPIRES, hval);
     }
-    if let Some(ref cl) = query.response_content_language {
-        if let Ok(hval) = cl.parse() {
-            response_headers.insert("Content-Language", hval);
-        }
+    if let Some(ref cl) = query.response_content_language
+        && let Ok(hval) = cl.parse()
+    {
+        response_headers.insert("Content-Language", hval);
     }
-    if let Some(ref cd) = query.response_content_disposition {
-        if let Ok(hval) = cd.parse() {
-            response_headers.insert(header::CONTENT_DISPOSITION, hval);
-        }
+    if let Some(ref cd) = query.response_content_disposition
+        && let Ok(hval) = cd.parse()
+    {
+        response_headers.insert(header::CONTENT_DISPOSITION, hval);
     }
 
     // Content-Disposition
@@ -3459,7 +3437,6 @@ async fn try_expand_chunk_manifest(
     } else {
         String::new()
     };
-    let mut result = result;
     if is_image_crop_ext(&cm_ext) {
         result = maybe_crop_image(&result, &cm_ext, query);
     }
@@ -3735,33 +3712,33 @@ fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
     // 1. Check ?jwt= query parameter
     if let Some(query) = uri.query() {
         for pair in query.split('&') {
-            if let Some(value) = pair.strip_prefix("jwt=") {
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+            if let Some(value) = pair.strip_prefix("jwt=")
+                && !value.is_empty()
+            {
+                return Some(value.to_string());
             }
         }
     }
 
     // 2. Check Authorization: Bearer <token> (case-insensitive prefix)
-    if let Some(auth) = headers.get(header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth.to_str() {
-            if auth_str.len() > 7 && auth_str[..7].eq_ignore_ascii_case("bearer ") {
-                return Some(auth_str[7..].to_string());
-            }
-        }
+    if let Some(auth) = headers.get(header::AUTHORIZATION)
+        && let Ok(auth_str) = auth.to_str()
+        && auth_str.len() > 7
+        && auth_str[..7].eq_ignore_ascii_case("bearer ")
+    {
+        return Some(auth_str[7..].to_string());
     }
 
     // 3. Check Cookie
-    if let Some(cookie_header) = headers.get(header::COOKIE) {
-        if let Ok(cookie_str) = cookie_header.to_str() {
-            for cookie in cookie_str.split(';') {
-                let cookie = cookie.trim();
-                if let Some(value) = cookie.strip_prefix("AT=") {
-                    if !value.is_empty() {
-                        return Some(value.to_string());
-                    }
-                }
+    if let Some(cookie_header) = headers.get(header::COOKIE)
+        && let Ok(cookie_str) = cookie_header.to_str()
+    {
+        for cookie in cookie_str.split(';') {
+            let cookie = cookie.trim();
+            if let Some(value) = cookie.strip_prefix("AT=")
+                && !value.is_empty()
+            {
+                return Some(value.to_string());
             }
         }
     }

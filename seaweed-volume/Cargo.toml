@@ -23,6 +23,14 @@ default = ["5bytes"]
 # Pulls redb's experimental_cursor (and therefore experimental-api-5).
 redb-experimental-cursor = ["redb/experimental_cursor"]
 
+[lints.clippy]
+# Every RPC path returns tonic::Status (176 bytes). Boxing it would change
+# every handler signature for no gain, so the large-Err lint is off.
+result_large_err = "allow"
+# Protobuf message literals keep `..Default::default()` on purpose: it is
+# what lets a proto gain a field without touching every constructor.
+needless_update = "allow"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -48,7 +56,6 @@ clap = { version = "4", features = ["derive"] }
 
 # Metrics
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
-lazy_static = "1"
 
 # JWT
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }

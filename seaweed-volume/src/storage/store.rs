@@ -369,6 +369,7 @@ impl Store {
     }
 
     /// Create a new volume, placing it on the location with the most free space.
+    #[expect(clippy::too_many_arguments)]
     pub fn add_volume(
         &mut self,
         vid: VolumeId,
@@ -383,10 +384,10 @@ impl Store {
             return Err(VolumeError::AlreadyExists);
         }
         let loc_idx = self.find_free_location(&disk_type).ok_or_else(|| {
-            VolumeError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("no free location for disk type {:?}", disk_type),
-            ))
+            VolumeError::Io(io::Error::other(format!(
+                "no free location for disk type {:?}",
+                disk_type
+            )))
         })?;
 
         self.locations[loc_idx].create_volume(
@@ -459,7 +460,7 @@ impl Store {
         }
         // Find the location where the .dat file exists
         for loc in &mut self.locations {
-            if &loc.disk_type != &disk_type {
+            if loc.disk_type != disk_type {
                 continue;
             }
             let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
@@ -472,10 +473,10 @@ impl Store {
                 // Fail the mount so the caller (VolumeCopy) treats it as an error.
                 let note_path = format!("{}.note", base);
                 if std::path::Path::new(&note_path).exists() {
-                    return Err(VolumeError::Io(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("volume {} copy incomplete: .note still present", vid),
-                    )));
+                    return Err(VolumeError::Io(io::Error::other(format!(
+                        "volume {} copy incomplete: .note still present",
+                        vid
+                    ))));
                 }
                 return loc.create_volume(
                     vid,
@@ -600,7 +601,7 @@ impl Store {
             // register a phantom normal volume that shadows the real EC volume.
             // Match the guard in load_existing_volumes: only mount when a real
             // .dat is present, or the .vif points at a remote-tiered file.
-            let dat_exists = std::fs::metadata(&format!("{}.dat", base_path))
+            let dat_exists = std::fs::metadata(format!("{}.dat", base_path))
                 .map(|m| !m.is_dir())
                 .unwrap_or(false);
             let idx_base = crate::storage::volume::volume_file_name(
@@ -664,13 +665,12 @@ impl Store {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name = name.to_string_lossy();
-                    if let Some((collection, file_vid)) = parse_volume_filename(&name) {
-                        if file_vid == vid {
-                            if let Some(base) = strip_volume_suffix(&name) {
-                                let base_path = format!("{}/{}", loc.directory, base);
-                                results.push((loc_idx, base_path, collection));
-                            }
-                        }
+                    if let Some((collection, file_vid)) = parse_volume_filename(&name)
+                        && file_vid == vid
+                        && let Some(base) = strip_volume_suffix(&name)
+                    {
+                        let base_path = format!("{}/{}", loc.directory, base);
+                        results.push((loc_idx, base_path, collection));
                     }
                 }
             }
@@ -842,10 +842,8 @@ impl Store {
 
                 let vol_count = loc.volumes_len() as i32;
                 let loc_ec_shards = loc.ec_shard_count();
-                let ec_equivalent = ((loc_ec_shards
-                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT
-                    - 1)
-                    / crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                let ec_equivalent = loc_ec_shards
+                    .div_ceil(crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
                     as i32;
                 let mut max_count = vol_count + ec_equivalent;
 
@@ -1094,10 +1092,10 @@ impl Store {
     /// first disk and miss shards that live on a sibling.
     pub fn find_ec_shard_location(&self, vid: VolumeId, shard_id: u32) -> Option<usize> {
         for (i, loc) in self.locations.iter().enumerate() {
-            if let Some(ecv) = loc.find_ec_volume(vid) {
-                if ecv.has_shard(shard_id as u8) {
-                    return Some(i);
-                }
+            if let Some(ecv) = loc.find_ec_volume(vid)
+                && ecv.has_shard(shard_id as u8)
+            {
+                return Some(i);
             }
         }
         None
@@ -1106,16 +1104,12 @@ impl Store {
     /// Like [`Self::find_ec_shard_location`] but returns the EcVolume
     /// reference directly. Borrows the store immutably for the
     /// EcVolume's lifetime.
-    pub fn find_ec_volume_with_shard(
-        &self,
-        vid: VolumeId,
-        shard_id: u32,
-    ) -> Option<&EcVolume> {
+    pub fn find_ec_volume_with_shard(&self, vid: VolumeId, shard_id: u32) -> Option<&EcVolume> {
         for loc in &self.locations {
-            if let Some(ecv) = loc.find_ec_volume(vid) {
-                if ecv.has_shard(shard_id as u8) {
-                    return Some(ecv);
-                }
+            if let Some(ecv) = loc.find_ec_volume(vid)
+                && ecv.has_shard(shard_id as u8)
+            {
+                return Some(ecv);
             }
         }
         None
@@ -1144,9 +1138,9 @@ impl Store {
                 if found_vol.is_none() {
                     found_vol = Some(ecv);
                 }
-                for shard_id in 0..max_shard_count {
-                    if dirs[shard_id].is_none() && ecv.has_shard(shard_id as u8) {
-                        dirs[shard_id] = Some(loc.directory.clone());
+                for (shard_id, dir) in dirs.iter_mut().enumerate() {
+                    if dir.is_none() && ecv.has_shard(shard_id as u8) {
+                        *dir = Some(loc.directory.clone());
                     }
                 }
             }
@@ -1516,9 +1510,10 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
         read_only: bool,
     }
     if let Ok(legacy) = serde_json::from_str::<LegacyVolumeInfo>(&content) {
-        let mut vif = VifVolumeInfo::default();
-        vif.read_only = legacy.read_only;
-        return Ok(vif);
+        return Ok(VifVolumeInfo {
+            read_only: legacy.read_only,
+            ..VifVolumeInfo::default()
+        });
     }
     Err(VolumeError::Io(io::Error::new(
         io::ErrorKind::InvalidData,
@@ -1528,7 +1523,7 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
 
 fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeError> {
     let content = serde_json::to_string_pretty(info)
-        .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| VolumeError::Io(io::Error::other(e.to_string())))?;
     std::fs::write(path, content)?;
     Ok(())
 }

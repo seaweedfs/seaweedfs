@@ -1236,7 +1236,7 @@ impl VolumeServer for VolumeGrpcService {
             let mut store = self.state.store.write().unwrap();
             store
                 .delete_collection(collection)
-                .map_err(|e| Status::internal(e))?;
+                .map_err(Status::internal)?;
         }
         // The delta the notify path derives is the only thing that tells the
         // master these slots came free: a heartbeat carries the whole list only
@@ -1261,7 +1261,7 @@ impl VolumeServer for VolumeGrpcService {
         } else {
             Some(
                 crate::storage::needle::ttl::TTL::read(&req.ttl)
-                    .map_err(|e| Status::invalid_argument(e))?,
+                    .map_err(Status::invalid_argument)?,
             )
         };
         let disk_type = DiskType::from_string(&req.disk_type);
@@ -2053,13 +2053,13 @@ impl VolumeServer for VolumeGrpcService {
 
                 // Remove the .note file. A leftover note fails the load on the
                 // next restart, so a removal failure must fail the copy.
-                if let Err(e) = std::fs::remove_file(&note_path) {
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        return Err(Status::internal(format!(
-                            "remove .note for volume {}: {}",
-                            vid, e
-                        )));
-                    }
+                if let Err(e) = std::fs::remove_file(&note_path)
+                    && e.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(Status::internal(format!(
+                        "remove .note for volume {}: {}",
+                        vid, e
+                    )));
                 }
 
                 // Verify file sizes
@@ -2115,7 +2115,7 @@ impl VolumeServer for VolumeGrpcService {
                 // unmounts and deletes the replica it just created.
                 if tx
                     .send(Ok(volume_server_pb::VolumeCopyResponse {
-                        last_append_at_ns: last_append_at_ns,
+                        last_append_at_ns,
                         processed_bytes: 0,
                     }))
                     .await
@@ -3108,8 +3108,8 @@ impl VolumeServer for VolumeGrpcService {
                 dat_file_size,
                 expire_at_sec,
                 ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
-                    data_shards: data_shards,
-                    parity_shards: parity_shards,
+                    data_shards,
+                    parity_shards,
                     // This run's identity; the read path rejects a shard from a
                     // different encode run.
                     encode_ts_ns: std::time::SystemTime::now()
@@ -3833,15 +3833,14 @@ impl VolumeServer for VolumeGrpcService {
             if let Some((_offset, size)) = ec_vol
                 .find_needle_from_ecx(needle_id)
                 .map_err(|e| Status::internal(e.to_string()))?
+                && size.is_deleted()
             {
-                if size.is_deleted() {
-                    let results = vec![Ok(volume_server_pb::VolumeEcShardReadResponse {
-                        is_deleted: true,
-                        encode_ts_ns: served_encode_ts_ns,
-                        ..Default::default()
-                    })];
-                    return Ok(Response::new(Box::pin(tokio_stream::iter(results))));
-                }
+                let results = vec![Ok(volume_server_pb::VolumeEcShardReadResponse {
+                    is_deleted: true,
+                    encode_ts_ns: served_encode_ts_ns,
+                    ..Default::default()
+                })];
+                return Ok(Response::new(Box::pin(tokio_stream::iter(results))));
             }
         }
 
@@ -3915,13 +3914,13 @@ impl VolumeServer for VolumeGrpcService {
         let mut store = self.state.store.write().unwrap();
         if let Some(ec_vol) = store.find_ec_volume_mut(vid) {
             // Check if already deleted via ecx index
-            if let Ok(Some((_offset, size))) = ec_vol.find_needle_from_ecx(needle_id) {
-                if size.is_deleted() {
-                    // Already deleted, no-op
-                    return Ok(Response::new(
-                        volume_server_pb::VolumeEcBlobDeleteResponse {},
-                    ));
-                }
+            if let Ok(Some((_offset, size))) = ec_vol.find_needle_from_ecx(needle_id)
+                && size.is_deleted()
+            {
+                // Already deleted, no-op
+                return Ok(Response::new(
+                    volume_server_pb::VolumeEcBlobDeleteResponse {},
+                ));
             }
             ec_vol
                 .journal_delete(needle_id)
@@ -4056,8 +4055,8 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         // Check that all data shards are present somewhere on this server.
-        for shard_id in 0..data_shards {
-            if shard_dirs[shard_id].is_none() {
+        for (shard_id, dir) in shard_dirs[..data_shards].iter().enumerate() {
+            if dir.is_none() {
                 return Err(Status::internal(format!(
                     "ec volume {} missing shard {}",
                     req.volume_id, shard_id
@@ -4560,15 +4559,15 @@ impl VolumeServer for VolumeGrpcService {
                         // a local .dat exists, so leaving one wedges every
                         // retry on "already on local disk", and a restart would
                         // load the sparse file as the volume's data.
-                        if let Err(rm) = std::fs::remove_file(&dat_path) {
-                            if rm.kind() != std::io::ErrorKind::NotFound {
-                                tracing::warn!(
-                                    "volume {} could not remove the incomplete download {}: {}",
-                                    vid,
-                                    dat_path,
-                                    rm
-                                );
-                            }
+                        if let Err(rm) = std::fs::remove_file(&dat_path)
+                            && rm.kind() != std::io::ErrorKind::NotFound
+                        {
+                            tracing::warn!(
+                                "volume {} could not remove the incomplete download {}: {}",
+                                vid,
+                                dat_path,
+                                rm
+                            );
                         }
                         Status::internal(format!(
                             "backend {} copy file {}: {}",
@@ -4823,16 +4822,13 @@ impl VolumeServer for VolumeGrpcService {
         // provider default (e.g. real AWS S3) and cannot target an internal
         // host, so skip it. Extends the Go volume server's validateRemoteEndpoint
         // gate, which only covered type "s3".
-        if !self.state.allow_untrusted_remote_endpoints {
-            if let Some(endpoint) = crate::remote_storage::s3_compatible_endpoint(remote_conf) {
-                if !endpoint.trim().is_empty() {
-                    crate::remote_storage::validate_remote_endpoint(endpoint)
-                        .await
-                        .map_err(|e| {
-                            Status::invalid_argument(format!("reject remote endpoint: {}", e))
-                        })?;
-                }
-            }
+        if !self.state.allow_untrusted_remote_endpoints
+            && let Some(endpoint) = crate::remote_storage::s3_compatible_endpoint(remote_conf)
+            && !endpoint.trim().is_empty()
+        {
+            crate::remote_storage::validate_remote_endpoint(endpoint)
+                .await
+                .map_err(|e| Status::invalid_argument(format!("reject remote endpoint: {}", e)))?;
         }
 
         // Create remote storage client
@@ -5003,7 +4999,7 @@ impl VolumeServer for VolumeGrpcService {
         // Validate mode
         let mode = req.mode;
         match mode {
-            1 | 2 | 3 | 4 | 5 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4, READS=5
+            1..=5 => {} // INDEX=1, FULL=2, LOCAL=3, CHECKSUM=4, READS=5
             _ => {
                 return Err(Status::invalid_argument(format!(
                     "unsupported EC volume scrub mode {}",
@@ -5053,7 +5049,7 @@ impl VolumeServer for VolumeGrpcService {
         let mut stripes: Vec<Result<volume_server_pb::QueriedStripe, Status>> = Vec::new();
 
         for fid_str in &req.from_file_ids {
-            let file_id = needle::FileId::parse(fid_str).map_err(|e| Status::internal(e))?;
+            let file_id = needle::FileId::parse(fid_str).map_err(Status::internal)?;
 
             let mut n = Needle {
                 id: file_id.key,
@@ -5081,13 +5077,13 @@ impl VolumeServer for VolumeGrpcService {
             let input = req.input_serialization.as_ref();
 
             // CSV input: no output (Go does nothing for CSV)
-            if input.map_or(false, |i| i.csv_input.is_some()) {
+            if input.is_some_and(|i| i.csv_input.is_some()) {
                 // No stripes emitted for CSV
                 continue;
             }
 
             // JSON input: process lines
-            if input.map_or(false, |i| i.json_input.is_some()) {
+            if input.is_some_and(|i| i.json_input.is_some()) {
                 let filter = req.filter.as_ref();
                 let data_str = String::from_utf8_lossy(&n.data);
                 let mut records: Vec<u8> = Vec::new();
@@ -5102,69 +5098,70 @@ impl VolumeServer for VolumeGrpcService {
                     };
 
                     // Apply filter
-                    if let Some(f) = filter {
-                        if !f.field.is_empty() && !f.operand.is_empty() {
-                            let field_val = &parsed[&f.field];
-                            let pass = match f.operand.as_str() {
-                                ">" => {
-                                    if let (Some(fv), Ok(tv)) =
-                                        (field_val.as_f64(), f.value.parse::<f64>())
-                                    {
-                                        fv > tv
-                                    } else {
-                                        false
-                                    }
+                    if let Some(f) = filter
+                        && !f.field.is_empty()
+                        && !f.operand.is_empty()
+                    {
+                        let field_val = &parsed[&f.field];
+                        let pass = match f.operand.as_str() {
+                            ">" => {
+                                if let (Some(fv), Ok(tv)) =
+                                    (field_val.as_f64(), f.value.parse::<f64>())
+                                {
+                                    fv > tv
+                                } else {
+                                    false
                                 }
-                                ">=" => {
-                                    if let (Some(fv), Ok(tv)) =
-                                        (field_val.as_f64(), f.value.parse::<f64>())
-                                    {
-                                        fv >= tv
-                                    } else {
-                                        false
-                                    }
-                                }
-                                "<" => {
-                                    if let (Some(fv), Ok(tv)) =
-                                        (field_val.as_f64(), f.value.parse::<f64>())
-                                    {
-                                        fv < tv
-                                    } else {
-                                        false
-                                    }
-                                }
-                                "<=" => {
-                                    if let (Some(fv), Ok(tv)) =
-                                        (field_val.as_f64(), f.value.parse::<f64>())
-                                    {
-                                        fv <= tv
-                                    } else {
-                                        false
-                                    }
-                                }
-                                "=" => {
-                                    if let (Some(fv), Ok(tv)) =
-                                        (field_val.as_f64(), f.value.parse::<f64>())
-                                    {
-                                        fv == tv
-                                    } else {
-                                        field_val.as_str().map_or(false, |s| s == f.value)
-                                    }
-                                }
-                                "!=" => {
-                                    if let (Some(fv), Ok(tv)) =
-                                        (field_val.as_f64(), f.value.parse::<f64>())
-                                    {
-                                        fv != tv
-                                    } else {
-                                        field_val.as_str().map_or(true, |s| s != f.value)
-                                    }
-                                }
-                                _ => true,
-                            };
-                            if !pass {
-                                continue;
                             }
+                            ">=" => {
+                                if let (Some(fv), Ok(tv)) =
+                                    (field_val.as_f64(), f.value.parse::<f64>())
+                                {
+                                    fv >= tv
+                                } else {
+                                    false
+                                }
+                            }
+                            "<" => {
+                                if let (Some(fv), Ok(tv)) =
+                                    (field_val.as_f64(), f.value.parse::<f64>())
+                                {
+                                    fv < tv
+                                } else {
+                                    false
+                                }
+                            }
+                            "<=" => {
+                                if let (Some(fv), Ok(tv)) =
+                                    (field_val.as_f64(), f.value.parse::<f64>())
+                                {
+                                    fv <= tv
+                                } else {
+                                    false
+                                }
+                            }
+                            "=" => {
+                                if let (Some(fv), Ok(tv)) =
+                                    (field_val.as_f64(), f.value.parse::<f64>())
+                                {
+                                    fv == tv
+                                } else {
+                                    field_val.as_str().is_some_and(|s| s == f.value)
+                                }
+                            }
+                            "!=" => {
+                                if let (Some(fv), Ok(tv)) =
+                                    (field_val.as_f64(), f.value.parse::<f64>())
+                                {
+                                    fv != tv
+                                } else {
+                                    field_val.as_str().is_none_or(|s| s != f.value)
+                                }
+                            }
+                            _ => true,
+                        };
+                        if !pass {
+                            continue;
                         }
                     }
 
@@ -5208,7 +5205,7 @@ impl VolumeServer for VolumeGrpcService {
         let store = self.state.store.read().unwrap();
 
         // Try normal volume first
-        if let Some(_) = store.find_volume(vid) {
+        if store.find_volume(vid).is_some() {
             let mut n = Needle {
                 id: needle_id,
                 ..Needle::default()
@@ -5503,6 +5500,7 @@ async fn drain_copy_stream_to_file(
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
 /// Returns the modified_ts_ns received from the source.
+#[expect(clippy::too_many_arguments)]
 async fn copy_file_from_source<T>(
     client: &mut volume_server_pb::volume_server_client::VolumeServerClient<T>,
     is_ec_volume: bool,
@@ -5959,41 +5957,40 @@ mod tests {
                         if let Some(range) = headers
                             .get(header::RANGE)
                             .and_then(|value| value.to_str().ok())
+                            && let Some(range_value) = range.strip_prefix("bytes=")
                         {
-                            if let Some(range_value) = range.strip_prefix("bytes=") {
-                                let mut parts = range_value.splitn(2, '-');
-                                let start = parts
-                                    .next()
-                                    .and_then(|value| value.parse::<usize>().ok())
-                                    .unwrap_or(0);
-                                let end = parts
-                                    .next()
-                                    .and_then(|value| value.parse::<usize>().ok())
-                                    .unwrap_or_else(|| bytes.len().saturating_sub(1));
-                                let start = start.min(bytes.len());
-                                let end = end.min(bytes.len().saturating_sub(1));
-                                let payload = if start > end || start >= bytes.len() {
-                                    Vec::new()
-                                } else {
-                                    bytes[start..=end].to_vec()
-                                };
-                                let mut response_headers = HeaderMap::new();
-                                response_headers.insert(
-                                    header::CONTENT_RANGE,
-                                    HeaderValue::from_str(&format!(
-                                        "bytes {}-{}/{}",
-                                        start,
-                                        end,
-                                        bytes.len()
-                                    ))
-                                    .unwrap(),
-                                );
-                                response_headers.insert(
-                                    header::CONTENT_LENGTH,
-                                    HeaderValue::from_str(&payload.len().to_string()).unwrap(),
-                                );
-                                return (StatusCode::PARTIAL_CONTENT, response_headers, payload);
-                            }
+                            let mut parts = range_value.splitn(2, '-');
+                            let start = parts
+                                .next()
+                                .and_then(|value| value.parse::<usize>().ok())
+                                .unwrap_or(0);
+                            let end = parts
+                                .next()
+                                .and_then(|value| value.parse::<usize>().ok())
+                                .unwrap_or_else(|| bytes.len().saturating_sub(1));
+                            let start = start.min(bytes.len());
+                            let end = end.min(bytes.len().saturating_sub(1));
+                            let payload = if start > end || start >= bytes.len() {
+                                Vec::new()
+                            } else {
+                                bytes[start..=end].to_vec()
+                            };
+                            let mut response_headers = HeaderMap::new();
+                            response_headers.insert(
+                                header::CONTENT_RANGE,
+                                HeaderValue::from_str(&format!(
+                                    "bytes {}-{}/{}",
+                                    start,
+                                    end,
+                                    bytes.len()
+                                ))
+                                .unwrap(),
+                            );
+                            response_headers.insert(
+                                header::CONTENT_LENGTH,
+                                HeaderValue::from_str(&payload.len().to_string()).unwrap(),
+                            );
+                            return (StatusCode::PARTIAL_CONTENT, response_headers, payload);
                         }
 
                         let mut response_headers = HeaderMap::new();
@@ -6734,6 +6731,11 @@ mod tests {
     // very first check and returns before mount_volume, exercising the wrong
     // path — the test would be green for the wrong reason.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[expect(
+        clippy::await_holding_lock,
+        clippy::readonly_write_lock,
+        reason = "the store write guard is a barrier that parks the copy task at the mount block"
+    )]
     async fn test_volume_copy_after_mount_cancellation_rolls_back_mount() {
         let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
         let (port, _shutdown) = serve_source(source_service).await;

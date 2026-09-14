@@ -173,10 +173,10 @@ pub fn check_blocked_ip_policy(endpoint: &str, ip: IpAddr, allow_private: bool) 
     // same host wherever the matching relay exists (common in IPv6-only cloud).
     // to_ipv4_mapped above only covers ::ffff: mapped addresses, so pull the
     // embedded IPv4 out of the other forms and re-check it against the rules.
-    if let IpAddr::V6(v6) = ip {
-        if let Some(v4) = embedded_transition_ipv4(v6) {
-            return check_blocked_ip_policy(endpoint, IpAddr::V4(v4), allow_private);
-        }
+    if let IpAddr::V6(v6) = ip
+        && let Some(v4) = embedded_transition_ipv4(v6)
+    {
+        return check_blocked_ip_policy(endpoint, IpAddr::V4(v4), allow_private);
     }
     Ok(())
 }
@@ -214,9 +214,7 @@ fn precheck_endpoint(endpoint: &str) -> Result<HostCheck, String> {
 
     // Authority is everything up to the first '/', '?', or '#'.
     let after = &trimmed[scheme_end + 3..];
-    let authority_end = after
-        .find(|c| c == '/' || c == '?' || c == '#')
-        .unwrap_or(after.len());
+    let authority_end = after.find(['/', '?', '#']).unwrap_or(after.len());
     let authority = &after[..authority_end];
 
     // Strip optional userinfo ("user:pass@").

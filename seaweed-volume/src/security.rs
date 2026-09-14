@@ -297,10 +297,10 @@ impl Guard {
 /// Extract host from "host:port" or "[::1]:port" format.
 fn extract_host(addr: &str) -> String {
     // Handle IPv6 with brackets
-    if addr.starts_with('[') {
-        if let Some(end) = addr.find(']') {
-            return addr[1..end].to_string();
-        }
+    if addr.starts_with('[')
+        && let Some(end) = addr.find(']')
+    {
+        return addr[1..end].to_string();
     }
     // Handle host:port
     if let Some(pos) = addr.rfind(':') {

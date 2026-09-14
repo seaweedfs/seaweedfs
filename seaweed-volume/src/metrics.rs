@@ -6,7 +6,7 @@ use prometheus::{
     self, Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
     IntGaugeVec, Opts, Registry, TextEncoder,
 };
-use std::sync::Once;
+use std::sync::{LazyLock, Once};
 
 use crate::version;
 
@@ -16,220 +16,320 @@ pub struct PushGatewayConfig {
     pub interval_seconds: u32,
 }
 
-lazy_static::lazy_static! {
-    pub static ref REGISTRY: Registry = Registry::new();
+pub static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
 
-    // ---- Request metrics (Go: VolumeServerRequestCounter, VolumeServerRequestHistogram) ----
+// ---- Request metrics (Go: VolumeServerRequestCounter, VolumeServerRequestHistogram) ----
 
-    /// Request counter with labels `type` (HTTP method) and `code` (HTTP status).
-    pub static ref REQUEST_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("SeaweedFS_volumeServer_request_total", "Volume server requests"),
+/// Request counter with labels `type` (HTTP method) and `code` (HTTP status).
+pub static REQUEST_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_request_total",
+            "Volume server requests",
+        ),
         &["type", "code"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Request duration histogram with label `type` (HTTP method).
-    pub static ref REQUEST_DURATION: HistogramVec = HistogramVec::new(
+/// Request duration histogram with label `type` (HTTP method).
+pub static REQUEST_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    HistogramVec::new(
         HistogramOpts::new(
             "SeaweedFS_volumeServer_request_seconds",
             "Volume server request duration in seconds",
-        ).buckets(exponential_buckets(0.0001, 2.0, 24)),
+        )
+        .buckets(exponential_buckets(0.0001, 2.0, 24)),
         &["type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- Handler counters (Go: VolumeServerHandlerCounter) ----
+// ---- Handler counters (Go: VolumeServerHandlerCounter) ----
 
-    /// Handler-level operation counter with label `type`.
-    pub static ref HANDLER_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("SeaweedFS_volumeServer_handler_total", "Volume server handler counters"),
+/// Handler-level operation counter with label `type`.
+pub static HANDLER_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_handler_total",
+            "Volume server handler counters",
+        ),
         &["type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- Vacuuming metrics (Go: VolumeServerVacuuming*) ----
+// ---- Vacuuming metrics (Go: VolumeServerVacuuming*) ----
 
-    /// Vacuuming compact counter with label `success` (true/false).
-    pub static ref VACUUMING_COMPACT_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("SeaweedFS_volumeServer_vacuuming_compact_count", "Counter of volume vacuuming Compact counter"),
+/// Vacuuming compact counter with label `success` (true/false).
+pub static VACUUMING_COMPACT_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_vacuuming_compact_count",
+            "Counter of volume vacuuming Compact counter",
+        ),
         &["success"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Vacuuming commit counter with label `success` (true/false).
-    pub static ref VACUUMING_COMMIT_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("SeaweedFS_volumeServer_vacuuming_commit_count", "Counter of volume vacuuming commit counter"),
+/// Vacuuming commit counter with label `success` (true/false).
+pub static VACUUMING_COMMIT_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_vacuuming_commit_count",
+            "Counter of volume vacuuming commit counter",
+        ),
         &["success"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Vacuuming duration histogram with label `type` (compact/commit).
-    pub static ref VACUUMING_HISTOGRAM: HistogramVec = HistogramVec::new(
+/// Vacuuming duration histogram with label `type` (compact/commit).
+pub static VACUUMING_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    HistogramVec::new(
         HistogramOpts::new(
             "SeaweedFS_volumeServer_vacuuming_seconds",
             "Volume vacuuming duration in seconds",
-        ).buckets(exponential_buckets(0.0001, 2.0, 24)),
+        )
+        .buckets(exponential_buckets(0.0001, 2.0, 24)),
         &["type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- Volume gauges (Go: VolumeServerVolumeGauge, VolumeServerReadOnlyVolumeGauge) ----
+// ---- Volume gauges (Go: VolumeServerVolumeGauge, VolumeServerReadOnlyVolumeGauge) ----
 
-    /// Volumes per collection and type (volume/ec_shards).
-    pub static ref VOLUME_GAUGE: GaugeVec = GaugeVec::new(
+/// Volumes per collection and type (volume/ec_shards).
+pub static VOLUME_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
         Opts::new("SeaweedFS_volumeServer_volumes", "Number of volumes"),
         &["collection", "type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Read-only volumes per collection and type.
-    pub static ref READ_ONLY_VOLUME_GAUGE: GaugeVec = GaugeVec::new(
-        Opts::new("SeaweedFS_volumeServer_read_only_volumes", "Number of read-only volumes."),
+/// Read-only volumes per collection and type.
+pub static READ_ONLY_VOLUME_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_read_only_volumes",
+            "Number of read-only volumes.",
+        ),
         &["collection", "type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Maximum number of volumes this server can hold.
-    pub static ref MAX_VOLUMES: IntGauge = IntGauge::new(
+/// Maximum number of volumes this server can hold.
+pub static MAX_VOLUMES: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new(
         "SeaweedFS_volumeServer_max_volumes",
         "Maximum number of volumes",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- Disk size gauges (Go: VolumeServerDiskSizeGauge) ----
+// ---- Disk size gauges (Go: VolumeServerDiskSizeGauge) ----
 
-    /// Actual disk size used by volumes per collection and type (normal/deleted_bytes/ec).
-    pub static ref DISK_SIZE_GAUGE: GaugeVec = GaugeVec::new(
-        Opts::new("SeaweedFS_volumeServer_total_disk_size", "Actual disk size used by volumes"),
+/// Actual disk size used by volumes per collection and type (normal/deleted_bytes/ec).
+pub static DISK_SIZE_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_total_disk_size",
+            "Actual disk size used by volumes",
+        ),
         &["collection", "type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- Resource gauges (Go: VolumeServerResourceGauge) ----
+// ---- Resource gauges (Go: VolumeServerResourceGauge) ----
 
-    /// Disk resource usage per directory and type (all/used/free/avail).
-    pub static ref RESOURCE_GAUGE: GaugeVec = GaugeVec::new(
+/// Disk resource usage per directory and type (all/used/free/avail).
+pub static RESOURCE_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
         Opts::new("SeaweedFS_volumeServer_resource", "Server resource usage"),
         &["name", "type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- In-flight gauges (Go: VolumeServerInFlightRequestsGauge, InFlightDownload/UploadSize) ----
+// ---- In-flight gauges (Go: VolumeServerInFlightRequestsGauge, InFlightDownload/UploadSize) ----
 
-    /// In-flight requests per HTTP method.
-    pub static ref INFLIGHT_REQUESTS_GAUGE: IntGaugeVec = IntGaugeVec::new(
-        Opts::new("SeaweedFS_volumeServer_in_flight_requests", "Current number of in-flight requests being handled by volume server."),
+/// In-flight requests per HTTP method.
+pub static INFLIGHT_REQUESTS_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    IntGaugeVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_in_flight_requests",
+            "Current number of in-flight requests being handled by volume server.",
+        ),
         &["type"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Concurrent download limit in bytes.
-    pub static ref CONCURRENT_DOWNLOAD_LIMIT: IntGauge = IntGauge::new(
+/// Concurrent download limit in bytes.
+pub static CONCURRENT_DOWNLOAD_LIMIT: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new(
         "SeaweedFS_volumeServer_concurrent_download_limit",
         "Limit for total concurrent download size in bytes",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Concurrent upload limit in bytes.
-    pub static ref CONCURRENT_UPLOAD_LIMIT: IntGauge = IntGauge::new(
+/// Concurrent upload limit in bytes.
+pub static CONCURRENT_UPLOAD_LIMIT: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new(
         "SeaweedFS_volumeServer_concurrent_upload_limit",
         "Limit for total concurrent upload size in bytes",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Current in-flight download bytes.
-    pub static ref INFLIGHT_DOWNLOAD_SIZE: IntGauge = IntGauge::new(
+/// Current in-flight download bytes.
+pub static INFLIGHT_DOWNLOAD_SIZE: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new(
         "SeaweedFS_volumeServer_in_flight_download_size",
         "In flight total download size.",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Current in-flight upload bytes.
-    pub static ref INFLIGHT_UPLOAD_SIZE: IntGauge = IntGauge::new(
+/// Current in-flight upload bytes.
+pub static INFLIGHT_UPLOAD_SIZE: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new(
         "SeaweedFS_volumeServer_in_flight_upload_size",
         "In flight total upload size.",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Upload error counter by HTTP status code. Code "0" = transport error (no response).
-    pub static ref UPLOAD_ERROR_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("SeaweedFS_upload_error_total",
-            "Counter of upload errors by HTTP status code. Code 0 means transport error (no response received)."),
-        &["code"],
-    ).expect("metric can be created");
+/// Upload error counter by HTTP status code. Code "0" = transport error (no response).
+pub static UPLOAD_ERROR_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+    Opts::new("SeaweedFS_upload_error_total",
+        "Counter of upload errors by HTTP status code. Code 0 means transport error (no response received)."),
+    &["code"],
+).expect("metric can be created")
+});
 
-    // ---- Scrubbing metrics (Go: VolumeServerScrub*) ----
+// ---- Scrubbing metrics (Go: VolumeServerScrub*) ----
 
-    /// Last scrub execution time, as seconds since UNIX epoch, with label `mode`.
-    pub static ref SCRUB_LAST_TIME_SECONDS: GaugeVec = GaugeVec::new(
+/// Last scrub execution time, as seconds since UNIX epoch, with label `mode`.
+pub static SCRUB_LAST_TIME_SECONDS: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
         Opts::new(
             "SeaweedFS_volumeServer_scrub_last_time_seconds",
             "Last scrub execution time, as seconds since UNIX epoch.",
         ),
         &["mode"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Counter of overall volumes with issues detected during scrubbing, with label `mode`.
-    pub static ref SCRUB_VOLUME_FAILURES: IntCounterVec = IntCounterVec::new(
+/// Counter of overall volumes with issues detected during scrubbing, with label `mode`.
+pub static SCRUB_VOLUME_FAILURES: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
         Opts::new(
             "SeaweedFS_volumeServer_scrub_volume_failures",
             "Counter of overall volumes with issues detected during scrubbing.",
         ),
         &["mode"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Counter of overall EC shards with issues detected during scrubbing, with label `mode`.
-    pub static ref SCRUB_SHARD_FAILURES: IntCounterVec = IntCounterVec::new(
+/// Counter of overall EC shards with issues detected during scrubbing, with label `mode`.
+pub static SCRUB_SHARD_FAILURES: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
         Opts::new(
             "SeaweedFS_volumeServer_scrub_shard_failures",
             "Counter of overall EC shards with issues detected during scrubbing.",
         ),
         &["mode"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Counter of storage read/write EIO errors on volumes and EC shards.
-    /// Mirrors Go's VolumeServerStorageIoErrorCounter.
-    pub static ref STORAGE_IO_ERROR_COUNTER: IntCounter = IntCounter::new(
+/// Counter of storage read/write EIO errors on volumes and EC shards.
+/// Mirrors Go's VolumeServerStorageIoErrorCounter.
+pub static STORAGE_IO_ERROR_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
+    IntCounter::new(
         "SeaweedFS_volumeServer_storage_io_error_total",
         "Counter of storage read/write EIO errors on volumes and EC shards.",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Number of volumes quarantined due to storage IO errors.
-    /// Mirrors Go's VolumeServerIoQuarantineGauge.
-    pub static ref IO_QUARANTINE_GAUGE: IntGaugeVec = IntGaugeVec::new(
+/// Number of volumes quarantined due to storage IO errors.
+/// Mirrors Go's VolumeServerIoQuarantineGauge.
+pub static IO_QUARANTINE_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    IntGaugeVec::new(
         Opts::new(
             "SeaweedFS_volumeServer_io_quarantine",
             "Number of volumes or EC shards quarantined due to storage IO errors.",
         ),
         &["kind"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- Legacy aliases for backward compat with existing code ----
+// ---- Legacy aliases for backward compat with existing code ----
 
-    /// Total number of volumes on this server (flat gauge).
-    pub static ref VOLUMES_TOTAL: IntGauge = IntGauge::new(
-        "volume_server_volumes_total",
-        "Total number of volumes",
-    ).expect("metric can be created");
+/// Total number of volumes on this server (flat gauge).
+pub static VOLUMES_TOTAL: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new("volume_server_volumes_total", "Total number of volumes")
+        .expect("metric can be created")
+});
 
-    /// Disk size in bytes per directory.
-    pub static ref DISK_SIZE_BYTES: IntGaugeVec = IntGaugeVec::new(
+/// Disk size in bytes per directory.
+pub static DISK_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    IntGaugeVec::new(
         Opts::new("volume_server_disk_size_bytes", "Disk size in bytes"),
         &["dir"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Disk free bytes per directory.
-    pub static ref DISK_FREE_BYTES: IntGaugeVec = IntGaugeVec::new(
+/// Disk free bytes per directory.
+pub static DISK_FREE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    IntGaugeVec::new(
         Opts::new("volume_server_disk_free_bytes", "Disk free space in bytes"),
         &["dir"],
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Current number of in-flight requests (flat gauge).
-    pub static ref INFLIGHT_REQUESTS: IntGauge = IntGauge::new(
+/// Current number of in-flight requests (flat gauge).
+pub static INFLIGHT_REQUESTS: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new(
         "volume_server_inflight_requests",
         "Current number of in-flight requests",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    /// Total number of files stored across all volumes.
-    pub static ref VOLUME_FILE_COUNT: IntGauge = IntGauge::new(
+/// Total number of files stored across all volumes.
+pub static VOLUME_FILE_COUNT: LazyLock<IntGauge> = LazyLock::new(|| {
+    IntGauge::new(
         "volume_server_volume_file_count",
         "Total number of files stored across all volumes",
-    ).expect("metric can be created");
+    )
+    .expect("metric can be created")
+});
 
-    // ---- Build info (Go: BuildInfo) ----
+// ---- Build info (Go: BuildInfo) ----
 
-    /// Build information gauge, always set to 1. Matches Go:
-    /// Namespace="SeaweedFS", Subsystem="build", Name="info",
-    /// labels: version, commit, sizelimit, goos, goarch.
-    pub static ref BUILD_INFO: GaugeVec = GaugeVec::new(
-        Opts::new("SeaweedFS_build_info", "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built."),
-        &["version", "commit", "sizelimit", "goos", "goarch"],
-    ).expect("metric can be created");
-}
+/// Build information gauge, always set to 1. Matches Go:
+/// Namespace="SeaweedFS", Subsystem="build", Name="info",
+/// labels: version, commit, sizelimit, goos, goarch.
+pub static BUILD_INFO: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
+    Opts::new("SeaweedFS_build_info", "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built."),
+    &["version", "commit", "sizelimit", "goos", "goarch"],
+).expect("metric can be created")
+});
 
 /// Generate exponential bucket boundaries for histograms.
 fn exponential_buckets(start: f64, factor: f64, count: usize) -> Vec<f64> {
@@ -377,10 +477,8 @@ fn delete_partial_match_collection(gauge: &GaugeVec, collection: &str) {
                     type_value = Some(label.get_value().to_string());
                 }
             }
-            if matches_collection {
-                if let Some(ref tv) = type_value {
-                    let _ = gauge.remove_label_values(&[collection, tv]);
-                }
+            if matches_collection && let Some(ref tv) = type_value {
+                let _ = gauge.remove_label_values(&[collection, tv]);
             }
         }
     }

@@ -560,7 +560,7 @@ impl Needle {
 
         // Padding to 8-byte alignment
         let padding = padding_length(self.size, version).0 as usize;
-        buf.extend(std::iter::repeat(0u8).take(padding));
+        buf.extend(std::iter::repeat_n(0u8, padding));
 
         buf
     }
@@ -824,11 +824,13 @@ mod tests {
 
     #[test]
     fn test_needle_write_read_round_trip_v3() {
-        let mut n = Needle::default();
-        n.cookie = Cookie(42);
-        n.id = NeedleId(100);
-        n.data = b"hello world".to_vec();
-        n.flags = 0;
+        let mut n = Needle {
+            cookie: Cookie(42),
+            id: NeedleId(100),
+            data: b"hello world".to_vec(),
+            flags: 0,
+            ..Needle::default()
+        };
         n.set_has_name();
         n.name = b"test.txt".to_vec();
         n.name_size = 8;
@@ -867,11 +869,13 @@ mod tests {
 
     #[test]
     fn test_needle_write_read_round_trip_v2() {
-        let mut n = Needle::default();
-        n.cookie = Cookie(77);
-        n.id = NeedleId(200);
-        n.data = b"data v2".to_vec();
-        n.flags = 0;
+        let mut n = Needle {
+            cookie: Cookie(77),
+            id: NeedleId(200),
+            data: b"data v2".to_vec(),
+            flags: 0,
+            ..Needle::default()
+        };
 
         let bytes = n.write_bytes(VERSION_2);
         let expected_size = get_actual_size(n.size, VERSION_2);
@@ -886,10 +890,12 @@ mod tests {
 
     #[test]
     fn test_read_bytes_meta_only_handles_tombstone_v3() {
-        let mut tombstone = Needle::default();
-        tombstone.cookie = Cookie(0x1234abcd);
-        tombstone.id = NeedleId(300);
-        tombstone.append_at_ns = 999_999;
+        let mut tombstone = Needle {
+            cookie: Cookie(0x1234abcd),
+            id: NeedleId(300),
+            append_at_ns: 999_999,
+            ..Needle::default()
+        };
 
         let bytes = tombstone.write_bytes(VERSION_3);
 

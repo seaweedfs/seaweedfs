@@ -50,7 +50,7 @@ pub fn write_ec_files(
     let dat_size = dat_file.metadata()?.len() as i64;
 
     let rs = ReedSolomon::new(data_shards, parity_shards)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e)))?;
+        .map_err(|e| io::Error::other(format!("reed-solomon init: {:?}", e)))?;
 
     // Create shard files
     let total_shards = data_shards + parity_shards;
@@ -162,7 +162,7 @@ pub fn rebuild_ec_files(
     }
 
     let rs = ReedSolomon::new(data_shards, parity_shards)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e)))?;
+        .map_err(|e| io::Error::other(format!("reed-solomon init: {:?}", e)))?;
 
     let total_shards = data_shards + parity_shards;
     let mut shards: Vec<EcVolumeShard> = (0..total_shards as u8)
@@ -175,7 +175,7 @@ pub fn rebuild_ec_files(
     let mut shard_size = 0;
     for (i, shard) in shards.iter_mut().enumerate() {
         if !missing_shard_ids.contains(&(i as u32)) {
-            if let Ok(_) = shard.open() {
+            if shard.open().is_ok() {
                 let size = shard.file_size();
                 if size > shard_size {
                     shard_size = size;
@@ -185,7 +185,7 @@ pub fn rebuild_ec_files(
                 let mut found = false;
                 for &other_dir in additional_dirs {
                     let mut alt = EcVolumeShard::new(other_dir, collection, volume_id, i as u8);
-                    if let Ok(_) = alt.open() {
+                    if alt.open().is_ok() {
                         let size = alt.file_size();
                         if size > shard_size {
                             shard_size = size;
@@ -251,12 +251,8 @@ pub fn rebuild_ec_files(
         }
 
         // Reconstruct missing shards
-        rs.reconstruct(&mut buffers).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("reed-solomon reconstruct: {:?}", e),
-            )
-        })?;
+        rs.reconstruct(&mut buffers)
+            .map_err(|e| io::Error::other(format!("reed-solomon reconstruct: {:?}", e)))?;
 
         // Write recovered data into the missing shards
         for i in missing_shard_ids {
@@ -296,7 +292,7 @@ pub fn verify_ec_shards(
     parity_shards: usize,
 ) -> io::Result<(Vec<u32>, Vec<String>)> {
     let rs = ReedSolomon::new(data_shards, parity_shards)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e)))?;
+        .map_err(|e| io::Error::other(format!("reed-solomon init: {:?}", e)))?;
 
     let total_shards = data_shards + parity_shards;
     let mut shards: Vec<Option<EcVolumeShard>> = (0..total_shards)
@@ -378,27 +374,27 @@ pub fn verify_ec_shards(
         if !read_failed {
             // Need to convert Vec<Vec<u8>> to &[&[u8]] for rs.verify
             let slice_ptrs: Vec<&[u8]> = buffers.iter().map(|v| v.as_slice()).collect();
-            if let Ok(is_valid) = rs.verify(&slice_ptrs) {
-                if !is_valid {
-                    // Reed-Solomon verification failed. We cannot easily pinpoint which shard
-                    // is corrupted without recalculating parities or syndromes, so we just
-                    // log that this batch has corruption. Wait, we can test each parity shard!
-                    // Let's re-encode from the first `data_shards` and compare to the actual `parity_shards`.
+            if let Ok(is_valid) = rs.verify(&slice_ptrs)
+                && !is_valid
+            {
+                // Reed-Solomon verification failed. We cannot easily pinpoint which shard
+                // is corrupted without recalculating parities or syndromes, so we just
+                // log that this batch has corruption. Wait, we can test each parity shard!
+                // Let's re-encode from the first `data_shards` and compare to the actual `parity_shards`.
 
-                    let mut verify_buffers = buffers.clone();
-                    // Clear the parity parts
-                    for i in data_shards..total_shards {
-                        verify_buffers[i].fill(0);
-                    }
-                    if rs.encode(&mut verify_buffers).is_ok() {
-                        for i in 0..total_shards {
-                            if buffers[i] != verify_buffers[i] {
-                                broken_shards.insert(i as u32);
-                                details.push(format!(
-                                    "parity mismatch on shard {} at offset {}",
-                                    i, offset
-                                ));
-                            }
+                let mut verify_buffers = buffers.clone();
+                // Clear the parity parts
+                for buf in &mut verify_buffers[data_shards..total_shards] {
+                    buf.fill(0);
+                }
+                if rs.encode(&mut verify_buffers).is_ok() {
+                    for i in 0..total_shards {
+                        if buffers[i] != verify_buffers[i] {
+                            broken_shards.insert(i as u32);
+                            details.push(format!(
+                                "parity mismatch on shard {} at offset {}",
+                                i, offset
+                            ));
                         }
                     }
                 }
@@ -490,7 +486,7 @@ pub fn rebuild_ecx_file(
         .collect();
 
     for (i, shard) in shards.iter_mut().enumerate() {
-        if let Err(_) = shard.open() {
+        if shard.open().is_err() {
             let mut found = false;
             for &other_dir in additional_dirs {
                 let mut alt = EcVolumeShard::new(other_dir, collection, volume_id, i as u8);
@@ -507,7 +503,7 @@ pub fn rebuild_ecx_file(
                 }
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("cannot open data shard for ecx rebuild"),
+                    "cannot open data shard for ecx rebuild".to_string(),
                 ));
             }
         }
@@ -515,7 +511,7 @@ pub fn rebuild_ecx_file(
 
     // Determine total logical data size from shard sizes
     let shard_size = shards.iter().map(|s| s.file_size()).max().unwrap_or(0);
-    let total_data_size = shard_size as i64 * data_shards as i64;
+    let total_data_size = shard_size * data_shards as i64;
     // The volume's shard block layout: the .vif-recorded uniform block size,
     // or the legacy two-tier sizes when 0. The row count comes from the shard
     // length; -1 disambiguates a legacy shard that is an exact large-block
@@ -538,7 +534,7 @@ pub fn rebuild_ecx_file(
     let locate_shard_size = if dat_file_size > 0 {
         dat_file_size / data_shards as i64
     } else {
-        (shard_size as i64 - 1).max(0)
+        (shard_size - 1).max(0)
     };
 
     // Read version from superblock (first byte of logical data)
@@ -640,7 +636,6 @@ pub fn rebuild_ecx_file(
 /// Read bytes from EC data shards at a logical offset in the .dat file,
 /// resolving the shard/offset through the volume's block layout via
 /// locate_data — the same mapping the read path uses.
-#[allow(clippy::too_many_arguments)]
 fn read_from_data_shards(
     shards: &[EcVolumeShard],
     buf: &mut [u8],
@@ -714,7 +709,7 @@ const ENCODE_BUFFER_SIZE: usize = 256 * 1024;
 /// 2. Process remaining data with small blocks
 ///
 /// `buffer_size` must divide both block sizes.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn encode_dat_file(
     dat_file: &File,
     dat_size: i64,
@@ -778,7 +773,7 @@ pub(crate) fn encode_dat_file(
 /// Encode one row of blocks, streaming it in ENCODE_BUFFER_SIZE sub-batches so
 /// arbitrarily large blocks never require block-sized allocations. Mirrors
 /// Go's encodeData.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn encode_data(
     dat_file: &File,
     row_offset: u64,
@@ -790,7 +785,7 @@ fn encode_data(
     data_shards: usize,
 ) -> io::Result<()> {
     let buffer_size = buffers[0].len();
-    if block_size % buffer_size != 0 {
+    if !block_size.is_multiple_of(buffer_size) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
@@ -817,7 +812,7 @@ fn encode_data(
 
 /// Encode one sub-batch: the same buffer-sized slice of every shard's block in
 /// this row. Mirrors Go's encodeDataOneBatch.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn encode_one_batch(
     dat_file: &File,
     offset: u64,
@@ -830,21 +825,15 @@ fn encode_one_batch(
 ) -> io::Result<()> {
     // Read data shards from the .dat file, zero-filling past EOF — the buffers
     // are reused across batches, so the tail must be cleared explicitly.
-    for i in 0..data_shards {
+    for (i, buf) in buffers[..data_shards].iter_mut().enumerate() {
         let read_offset = offset + (i * block_size) as u64;
-        let n = read_at_most(dat_file, &mut buffers[i], read_offset)?;
-        for b in buffers[i][n..].iter_mut() {
-            *b = 0;
-        }
+        let n = read_at_most(dat_file, buf, read_offset)?;
+        buf[n..].fill(0);
     }
 
     // Encode parity shards
-    rs.encode(&mut *buffers).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("reed-solomon encode: {:?}", e),
-        )
-    })?;
+    rs.encode(&mut *buffers)
+        .map_err(|e| io::Error::other(format!("reed-solomon encode: {:?}", e)))?;
 
     // Write all shard buffers to files and feed the same bytes to each
     // shard's bitrot checksum builder, keeping covered_size == on-disk length.

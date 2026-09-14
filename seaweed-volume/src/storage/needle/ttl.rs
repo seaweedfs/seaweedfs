@@ -81,7 +81,7 @@ impl TTL {
             return Ok(TTL::EMPTY);
         }
         let last_byte = s.as_bytes()[s.len() - 1];
-        let (num_str, unit_byte) = if last_byte >= b'0' && last_byte <= b'9' {
+        let (num_str, unit_byte) = if last_byte.is_ascii_digit() {
             // All digits — default to minutes (matching Go)
             (s, b'm')
         } else {
@@ -144,40 +144,73 @@ fn fit_ttl_count(count: u32, unit: u8) -> TTL {
     const MINUTE_SECS: u64 = 60;
 
     // First pass: try exact fits from largest to smallest
-    if seconds % YEAR_SECS == 0 && seconds / YEAR_SECS < 256 {
-        return TTL { count: (seconds / YEAR_SECS) as u8, unit: TTL_UNIT_YEAR };
+    if seconds.is_multiple_of(YEAR_SECS) && seconds / YEAR_SECS < 256 {
+        return TTL {
+            count: (seconds / YEAR_SECS) as u8,
+            unit: TTL_UNIT_YEAR,
+        };
     }
-    if seconds % MONTH_SECS == 0 && seconds / MONTH_SECS < 256 {
-        return TTL { count: (seconds / MONTH_SECS) as u8, unit: TTL_UNIT_MONTH };
+    if seconds.is_multiple_of(MONTH_SECS) && seconds / MONTH_SECS < 256 {
+        return TTL {
+            count: (seconds / MONTH_SECS) as u8,
+            unit: TTL_UNIT_MONTH,
+        };
     }
-    if seconds % WEEK_SECS == 0 && seconds / WEEK_SECS < 256 {
-        return TTL { count: (seconds / WEEK_SECS) as u8, unit: TTL_UNIT_WEEK };
+    if seconds.is_multiple_of(WEEK_SECS) && seconds / WEEK_SECS < 256 {
+        return TTL {
+            count: (seconds / WEEK_SECS) as u8,
+            unit: TTL_UNIT_WEEK,
+        };
     }
-    if seconds % DAY_SECS == 0 && seconds / DAY_SECS < 256 {
-        return TTL { count: (seconds / DAY_SECS) as u8, unit: TTL_UNIT_DAY };
+    if seconds.is_multiple_of(DAY_SECS) && seconds / DAY_SECS < 256 {
+        return TTL {
+            count: (seconds / DAY_SECS) as u8,
+            unit: TTL_UNIT_DAY,
+        };
     }
-    if seconds % HOUR_SECS == 0 && seconds / HOUR_SECS < 256 {
-        return TTL { count: (seconds / HOUR_SECS) as u8, unit: TTL_UNIT_HOUR };
+    if seconds.is_multiple_of(HOUR_SECS) && seconds / HOUR_SECS < 256 {
+        return TTL {
+            count: (seconds / HOUR_SECS) as u8,
+            unit: TTL_UNIT_HOUR,
+        };
     }
     // Minutes: truncating division
     if seconds / MINUTE_SECS < 256 {
-        return TTL { count: (seconds / MINUTE_SECS) as u8, unit: TTL_UNIT_MINUTE };
+        return TTL {
+            count: (seconds / MINUTE_SECS) as u8,
+            unit: TTL_UNIT_MINUTE,
+        };
     }
     // Second pass: truncating division from smallest to largest
     if seconds / HOUR_SECS < 256 {
-        return TTL { count: (seconds / HOUR_SECS) as u8, unit: TTL_UNIT_HOUR };
+        return TTL {
+            count: (seconds / HOUR_SECS) as u8,
+            unit: TTL_UNIT_HOUR,
+        };
     }
     if seconds / DAY_SECS < 256 {
-        return TTL { count: (seconds / DAY_SECS) as u8, unit: TTL_UNIT_DAY };
+        return TTL {
+            count: (seconds / DAY_SECS) as u8,
+            unit: TTL_UNIT_DAY,
+        };
     }
     if seconds / WEEK_SECS < 256 {
-        return TTL { count: (seconds / WEEK_SECS) as u8, unit: TTL_UNIT_WEEK };
+        return TTL {
+            count: (seconds / WEEK_SECS) as u8,
+            unit: TTL_UNIT_WEEK,
+        };
     }
     if seconds / MONTH_SECS < 256 {
-        return TTL { count: (seconds / MONTH_SECS) as u8, unit: TTL_UNIT_MONTH };
+        return TTL {
+            count: (seconds / MONTH_SECS) as u8,
+            unit: TTL_UNIT_MONTH,
+        };
     }
     if seconds / YEAR_SECS < 256 {
-        return TTL { count: (seconds / YEAR_SECS) as u8, unit: TTL_UNIT_YEAR };
+        return TTL {
+            count: (seconds / YEAR_SECS) as u8,
+            unit: TTL_UNIT_YEAR,
+        };
     }
     TTL::EMPTY
 }

@@ -312,16 +312,15 @@ async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Requ
             )
         }
     };
-    if method == Method::GET {
-        if let Some(response_bytes) = response
+    if method == Method::GET
+        && let Some(response_bytes) = response
             .headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value > 0)
-        {
-            super::server_stats::record_bytes_out(response_bytes);
-        }
+    {
+        super::server_stats::record_bytes_out(response_bytes);
     }
     super::server_stats::record_request_close();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
@@ -358,16 +357,15 @@ async fn public_store_handler(state: State<Arc<VolumeServerState>>, request: Req
         }
         _ => StatusCode::OK.into_response(),
     };
-    if method == Method::GET {
-        if let Some(response_bytes) = response
+    if method == Method::GET
+        && let Some(response_bytes) = response
             .headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value > 0)
-        {
-            super::server_stats::record_bytes_out(response_bytes);
-        }
+    {
+        super::server_stats::record_bytes_out(response_bytes);
     }
     super::server_stats::record_request_close();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE

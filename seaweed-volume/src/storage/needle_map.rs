@@ -97,12 +97,13 @@ impl NeedleMapMetric {
         self.file_byte_count
             .fetch_add(new_size.0 as u64, Ordering::Relaxed);
         // Go: if oldSize > 0 && oldSize.IsValid() { LogDeletionCounter(oldSize) }
-        if let Some(old_val) = old {
-            if old_val.size.0 > 0 && old_val.size.is_valid() {
-                self.deletion_count.fetch_add(1, Ordering::Relaxed);
-                self.deletion_byte_count
-                    .fetch_add(old_val.size.0 as u64, Ordering::Relaxed);
-            }
+        if let Some(old_val) = old
+            && old_val.size.0 > 0
+            && old_val.size.is_valid()
+        {
+            self.deletion_count.fetch_add(1, Ordering::Relaxed);
+            self.deletion_byte_count
+                .fetch_add(old_val.size.0 as u64, Ordering::Relaxed);
         }
     }
 
@@ -223,6 +224,12 @@ pub struct CompactNeedleMap {
     metric: NeedleMapMetric,
     idx_file: Option<Box<dyn IdxFileWriter>>,
     idx_file_offset: u64,
+}
+
+impl Default for CompactNeedleMap {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CompactNeedleMap {
@@ -465,9 +472,9 @@ impl RedbNeedleMap {
     /// loses at most the writes since the last checkpoint from redb, and
     /// the next load replays them from .idx.
     fn begin_write_no_fsync(db: &Database) -> io::Result<redb::WriteTransaction> {
-        let mut txn = db.begin_write().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb begin_write: {}", e))
-        })?;
+        let mut txn = db
+            .begin_write()
+            .map_err(|e| io::Error::other(format!("redb begin_write: {}", e)))?;
         let _ = txn.set_durability(Durability::None);
         Ok(txn)
     }
@@ -501,7 +508,7 @@ impl RedbNeedleMap {
     pub fn checkpoint(&mut self, sync_idx: bool) -> io::Result<()> {
         let txn = self.begin_checkpoint(sync_idx)?;
         txn.commit()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb commit: {}", e)))?;
         self.writes_since_checkpoint = 0;
         Ok(())
     }
@@ -516,17 +523,17 @@ impl RedbNeedleMap {
         if sync_idx {
             self.sync()?;
         }
-        let mut txn = self.db_or_err()?.begin_write().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb begin_write: {}", e))
-        })?;
+        let mut txn = self
+            .db_or_err()?
+            .begin_write()
+            .map_err(|e| io::Error::other(format!("redb begin_write: {}", e)))?;
         txn.set_quick_repair(true);
         if self.idx_file.is_some() {
-            let mut meta = txn.open_table(META_TABLE).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e))
-            })?;
-            meta.insert(META_IDX_SIZE, self.idx_file_offset).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb insert meta: {}", e))
-            })?;
+            let mut meta = txn
+                .open_table(META_TABLE)
+                .map_err(|e| io::Error::other(format!("redb open meta: {}", e)))?;
+            meta.insert(META_IDX_SIZE, self.idx_file_offset)
+                .map_err(|e| io::Error::other(format!("redb insert meta: {}", e)))?;
         }
         Ok(txn)
     }
@@ -538,22 +545,20 @@ impl RedbNeedleMap {
         let db = Database::builder()
             .set_cache_size(cache_bytes)
             .create(db_path)
-            .map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb create error: {}", e))
-            })?;
+            .map_err(|e| io::Error::other(format!("redb create error: {}", e)))?;
 
         // Ensure tables exist
         let txn = Self::begin_write_no_fsync(&db)?;
         {
-            let _table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-            })?;
-            let _meta = txn.open_table(META_TABLE).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb open_table meta: {}", e))
-            })?;
+            let _table = txn
+                .open_table(NEEDLE_TABLE)
+                .map_err(|e| io::Error::other(format!("redb open_table: {}", e)))?;
+            let _meta = txn
+                .open_table(META_TABLE)
+                .map_err(|e| io::Error::other(format!("redb open_table meta: {}", e)))?;
         }
         txn.commit()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb commit: {}", e)))?;
 
         Ok(RedbNeedleMap {
             db: Some(db),
@@ -572,16 +577,14 @@ impl RedbNeedleMap {
     fn save_idx_size_meta(&self, idx_size: u64) -> io::Result<()> {
         let txn = Self::begin_write_no_fsync(self.db_or_err()?)?;
         {
-            let mut meta = txn.open_table(META_TABLE).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e))
-            })?;
-            meta.insert(META_IDX_SIZE, idx_size).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb insert meta: {}", e))
-            })?;
+            let mut meta = txn
+                .open_table(META_TABLE)
+                .map_err(|e| io::Error::other(format!("redb open meta: {}", e)))?;
+            meta.insert(META_IDX_SIZE, idx_size)
+                .map_err(|e| io::Error::other(format!("redb insert meta: {}", e)))?;
         }
-        txn.commit().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb commit meta: {}", e))
-        })?;
+        txn.commit()
+            .map_err(|e| io::Error::other(format!("redb commit meta: {}", e)))?;
         Ok(())
     }
 
@@ -590,22 +593,18 @@ impl RedbNeedleMap {
         let txn = self
             .db_or_err()?
             .begin_read()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb begin_read: {}", e)))?;
         let meta = txn
             .open_table(META_TABLE)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb open meta: {}", e)))?;
         // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
-        // ReadableTable::get guard borrows `meta`; bind the match so the
-        // temporary Result is dropped before `meta`.
-        let result = match meta.get(META_IDX_SIZE) {
+        // ReadableTable::get guard borrows `meta`; edition 2024 drops the tail
+        // expression's temporaries before `meta`, so no extra binding is needed.
+        match meta.get(META_IDX_SIZE) {
             Ok(Some(guard)) => Ok(Some(guard.value())),
             Ok(None) => Ok(None),
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("redb get meta: {}", e),
-            )),
-        };
-        result
+            Err(e) => Err(io::Error::other(format!("redb get meta: {}", e))),
+        }
     }
 
     /// Load from an .idx file, reusing an existing .rdb if it is consistent.
@@ -648,7 +647,7 @@ impl RedbNeedleMap {
         let db = Database::builder()
             .set_cache_size(cache_bytes)
             .open(db_path)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb open: {}", e)))?;
 
         let mut nm = RedbNeedleMap {
             db: Some(db),
@@ -663,14 +662,11 @@ impl RedbNeedleMap {
 
         let stored_idx_size = nm
             .read_idx_size_meta()?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no idx_size in redb meta"))?;
+            .ok_or_else(|| io::Error::other("no idx_size in redb meta"))?;
 
         if stored_idx_size > idx_size {
             // .idx shrank — corrupted or truncated, need full rebuild
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "idx file smaller than stored size",
-            ));
+            return Err(io::Error::other("idx file smaller than stored size"));
         }
 
         // Counters come from the whole .idx history, never from the table,
@@ -683,40 +679,37 @@ impl RedbNeedleMap {
             let start_entry = stored_idx_size / NEEDLE_MAP_ENTRY_SIZE as u64;
             let txn = Self::begin_write_no_fsync(nm.db.as_ref().unwrap())?;
             {
-                let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-                    io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-                })?;
+                let mut table = txn
+                    .open_table(NEEDLE_TABLE)
+                    .map_err(|e| io::Error::other(format!("redb open_table: {}", e)))?;
                 idx::walk_index_file(reader, start_entry, |key, offset, size| {
                     let key_u64: u64 = key.into();
                     if offset.is_zero() || size.is_deleted() {
                         // Delete: store a tombstone (negative size, original
                         // offset) over a live value; already deleted is a no-op.
-                        if let Ok(Some(old)) = nm.get_via_table(&table, key_u64) {
-                            if old.size.is_valid() {
-                                let deleted_nv = NeedleValue {
-                                    offset: old.offset,
-                                    size: Size(-(old.size.0)),
-                                };
-                                let packed = pack_needle_value(&deleted_nv);
-                                table.insert(key_u64, packed.as_slice()).map_err(|e| {
-                                    io::Error::new(
-                                        io::ErrorKind::Other,
-                                        format!("redb insert: {}", e),
-                                    )
-                                })?;
-                            }
+                        if let Ok(Some(old)) = nm.get_via_table(&table, key_u64)
+                            && old.size.is_valid()
+                        {
+                            let deleted_nv = NeedleValue {
+                                offset: old.offset,
+                                size: Size(-(old.size.0)),
+                            };
+                            let packed = pack_needle_value(&deleted_nv);
+                            table
+                                .insert(key_u64, packed.as_slice())
+                                .map_err(|e| io::Error::other(format!("redb insert: {}", e)))?;
                         }
                     } else {
                         let packed = pack_needle_value(&NeedleValue { offset, size });
-                        table.insert(key_u64, packed.as_slice()).map_err(|e| {
-                            io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
-                        })?;
+                        table
+                            .insert(key_u64, packed.as_slice())
+                            .map_err(|e| io::Error::other(format!("redb insert: {}", e)))?;
                     }
                     Ok(())
                 })?;
             }
             txn.commit()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
+                .map_err(|e| io::Error::other(format!("redb commit: {}", e)))?;
 
             nm.save_idx_size_meta(idx_size)?;
         }
@@ -734,10 +727,7 @@ impl RedbNeedleMap {
         match table.get(key_u64) {
             Ok(Some(guard)) => Ok(packed_to_needle_value(guard.value())),
             Ok(None) => Ok(None),
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("redb get: {}", e),
-            )),
+            Err(e) => Err(io::Error::other(format!("redb get: {}", e))),
         }
     }
 
@@ -790,13 +780,13 @@ impl RedbNeedleMap {
 
             let txn = Self::begin_write_no_fsync(nm.db.as_ref().unwrap())?;
             {
-                let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-                    io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-                })?;
+                let mut table = txn
+                    .open_table(NEEDLE_TABLE)
+                    .map_err(|e| io::Error::other(format!("redb open_table: {}", e)))?;
                 if !unlinked {
-                    table.retain(|_, _| false).map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("redb retain: {}", e))
-                    })?;
+                    table
+                        .retain(|_, _| false)
+                        .map_err(|e| io::Error::other(format!("redb retain: {}", e)))?;
                 }
 
                 #[cfg(not(feature = "redb-experimental-cursor"))]
@@ -804,9 +794,9 @@ impl RedbNeedleMap {
                     for (key, nv) in &entries {
                         let key_u64: u64 = (*key).into();
                         let packed = pack_needle_value(nv);
-                        table.insert(key_u64, packed.as_slice()).map_err(|e| {
-                            io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
-                        })?;
+                        table
+                            .insert(key_u64, packed.as_slice())
+                            .map_err(|e| io::Error::other(format!("redb insert: {}", e)))?;
                     }
                 }
                 #[cfg(feature = "redb-experimental-cursor")]
@@ -835,7 +825,7 @@ impl RedbNeedleMap {
                 }
             }
             txn.commit()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
+                .map_err(|e| io::Error::other(format!("redb commit: {}", e)))?;
 
             nm.save_idx_size_meta(idx_size)?;
             Ok(())
@@ -901,23 +891,16 @@ impl RedbNeedleMap {
                     Ok(t) => t,
                     Err(e) => {
                         self.truncate_idx_to_offset();
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("redb open_table: {}", e),
-                        ));
+                        return Err(io::Error::other(format!("redb open_table: {}", e)));
                     }
                 };
-                let result = match table.insert(key_u64, packed.as_slice()) {
+                match table.insert(key_u64, packed.as_slice()) {
                     Ok(prev) => prev.and_then(|g| packed_to_needle_value(g.value())),
                     Err(e) => {
                         self.truncate_idx_to_offset();
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("redb insert: {}", e),
-                        ));
+                        return Err(io::Error::other(format!("redb insert: {}", e)));
                     }
-                };
-                result
+                }
             };
             match txn.commit() {
                 Ok(()) => old,
@@ -925,8 +908,7 @@ impl RedbNeedleMap {
                     // Transaction rolled back, database still usable:
                     // truncate the orphan .idx row.
                     self.truncate_idx_to_offset();
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
+                    return Err(io::Error::other(
                         "redb commit: Transaction was poisoned by a panic",
                     ));
                 }
@@ -935,12 +917,9 @@ impl RedbNeedleMap {
                     // visible and redb refuses further writes. Keep
                     // the .idx row (do NOT truncate) and reopen from
                     // .idx to repair redb's internal state.
-                    let err = io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e));
+                    let err = io::Error::other(format!("redb commit: {}", e));
                     if let Err(reopen_err) = self.reopen_from_idx() {
-                        tracing::warn!(
-                            "redb reopen after put commit error failed: {}",
-                            reopen_err
-                        );
+                        tracing::warn!("redb reopen after put commit error failed: {}", reopen_err);
                     }
                     return Err(err);
                 }
@@ -968,39 +947,32 @@ impl RedbNeedleMap {
         let txn = self
             .db_or_err()?
             .begin_read()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb begin_read: {}", e)))?;
         let table = txn
             .open_table(NEEDLE_TABLE)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb open_table: {}", e)))?;
         // experimental-api-5 drops inherent ReadOnlyTable::get ('static guard).
-        // ReadableTable::get guard borrows `table`; bind the match so the
-        // temporary Result is dropped before `table`.
-        let result = match table.get(key_u64) {
+        // ReadableTable::get guard borrows `table`; edition 2024 drops the tail
+        // expression's temporaries before `table`, so no extra binding is needed.
+        match table.get(key_u64) {
             Ok(Some(guard)) => Ok(packed_to_needle_value(guard.value())),
             Ok(None) => Ok(None),
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("redb get: {}", e),
-            )),
-        };
-        result
+            Err(e) => Err(io::Error::other(format!("redb get: {}", e))),
+        }
     }
 
     /// Mark a needle as deleted. Appends tombstone to .idx file, negates size in redb.
     pub fn delete(&mut self, key: NeedleId, offset: Offset) -> io::Result<Option<Size>> {
         let key_u64: u64 = key.into();
         let txn = Self::begin_write_no_fsync(self.db_or_err()?)?;
-        let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-        })?;
+        let mut table = txn
+            .open_table(NEEDLE_TABLE)
+            .map_err(|e| io::Error::other(format!("redb open_table: {}", e)))?;
         let old = match table.get(key_u64) {
             Ok(Some(guard)) => packed_to_needle_value(guard.value()),
             Ok(None) => None,
             Err(e) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("redb get: {}", e),
-                ));
+                return Err(io::Error::other(format!("redb get: {}", e)));
             }
         };
         let Some(old) = old.filter(|nv| nv.size.is_valid()) else {
@@ -1021,10 +993,7 @@ impl RedbNeedleMap {
         drop(table);
         if let Err(e) = insert_res {
             self.truncate_idx_to_offset();
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("redb insert: {}", e),
-            ));
+            return Err(io::Error::other(format!("redb insert: {}", e)));
         }
         match txn.commit() {
             Ok(()) => {}
@@ -1032,8 +1001,7 @@ impl RedbNeedleMap {
                 // Transaction rolled back, database still usable:
                 // truncate the orphan .idx row.
                 self.truncate_idx_to_offset();
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "redb commit: Transaction was poisoned by a panic",
                 ));
             }
@@ -1042,7 +1010,7 @@ impl RedbNeedleMap {
                 // and redb refuses further writes. Keep the .idx row
                 // (do NOT truncate) and reopen from .idx to repair
                 // redb's internal state.
-                let err = io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e));
+                let err = io::Error::other(format!("redb commit: {}", e));
                 if let Err(reopen_err) = self.reopen_from_idx() {
                     tracing::warn!(
                         "redb reopen after delete commit error failed: {}",
@@ -1105,10 +1073,10 @@ impl RedbNeedleMap {
     /// after the orphan, `idx_file_offset` advances past it, and a later
     /// checkpoint records an offset that makes the reload skip the orphan.
     fn truncate_idx_to_offset(&mut self) {
-        if let Some(ref mut idx_file) = self.idx_file {
-            if let Err(e) = idx_file.truncate_to(self.idx_file_offset) {
-                tracing::warn!("failed to truncate orphan .idx row: {}", e);
-            }
+        if let Some(ref mut idx_file) = self.idx_file
+            && let Err(e) = idx_file.truncate_to(self.idx_file_offset)
+        {
+            tracing::warn!("failed to truncate orphan .idx row: {}", e);
         }
     }
 
@@ -1198,10 +1166,10 @@ impl RedbNeedleMap {
         let txn = self
             .db_or_err()?
             .begin_read()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb begin_read: {}", e)))?;
         let table = txn
             .open_table(NEEDLE_TABLE)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb open_table: {}", e)))?;
 
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -1212,18 +1180,17 @@ impl RedbNeedleMap {
         // redb iterates in key order (u64 ascending)
         let iter = table
             .iter()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb iter: {}", e)))?;
+            .map_err(|e| io::Error::other(format!("redb iter: {}", e)))?;
 
         for entry in iter {
-            let (key_guard, val_guard) = entry.map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb iter next: {}", e))
-            })?;
+            let (key_guard, val_guard) =
+                entry.map_err(|e| io::Error::other(format!("redb iter next: {}", e)))?;
             let key_u64: u64 = key_guard.value();
             let bytes: &[u8] = val_guard.value();
-            if let Some(nv) = packed_to_needle_value(bytes) {
-                if nv.size.is_valid() {
-                    idx::write_index_entry(&mut file, NeedleId(key_u64), nv.offset, nv.size)?;
-                }
+            if let Some(nv) = packed_to_needle_value(bytes)
+                && nv.size.is_valid()
+            {
+                idx::write_index_entry(&mut file, NeedleId(key_u64), nv.offset, nv.size)?;
             }
         }
         file.sync_all()?;
@@ -1682,6 +1649,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&idx_path)
             .unwrap();
         let idx_size = idx_file.metadata().unwrap().len();
@@ -2344,12 +2312,14 @@ mod tests {
                 reloaded.deleted_count(),
                 reloaded.deleted_size(),
             );
-            assert_eq!(
-                after, live,
-                "close_first={close_first} rebuild={rebuild}"
-            );
+            assert_eq!(after, live, "close_first={close_first} rebuild={rebuild}");
             assert_eq!(reloaded.get(NeedleId(1)).unwrap().unwrap().size, Size(200));
-            assert!(reloaded.get(NeedleId(2)).unwrap().map_or(true, |v| v.size.is_deleted()));
+            assert!(
+                reloaded
+                    .get(NeedleId(2))
+                    .unwrap()
+                    .is_none_or(|v| v.size.is_deleted())
+            );
         }
     }
 }

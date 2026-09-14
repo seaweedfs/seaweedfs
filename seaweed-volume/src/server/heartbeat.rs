@@ -189,10 +189,10 @@ pub async fn run_heartbeat_with_state(
 pub fn to_grpc_address(master_addr: &str) -> String {
     if let Some((host, port_str)) = master_addr.rsplit_once(':') {
         // "host:port.grpcPort" — the part after the last '.' is the gRPC port.
-        if let Some((_, grpc_port)) = port_str.rsplit_once('.') {
-            if grpc_port.parse::<u16>().is_ok() {
-                return format!("{}:{}", host, grpc_port);
-            }
+        if let Some((_, grpc_port)) = port_str.rsplit_once('.')
+            && grpc_port.parse::<u16>().is_ok()
+        {
+            return format!("{}:{}", host, grpc_port);
         }
         if let Ok(port) = port_str.parse::<u16>() {
             let grpc_port = port + 10000;
@@ -922,10 +922,9 @@ fn build_heartbeat_with_ec_status(
         let mut effective_max_count = loc.max_volume_count.load(Ordering::Relaxed);
         if loc.is_disk_space_low.load(Ordering::Relaxed) {
             let used_slots = loc.volumes_len() as i32
-                + ((loc.ec_shard_count()
-                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT
-                    - 1)
-                    / crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                + loc
+                    .ec_shard_count()
+                    .div_ceil(crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
                     as i32;
             effective_max_count = used_slots;
         }

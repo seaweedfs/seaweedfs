@@ -73,6 +73,7 @@ pub fn find_dat_file_size_with_dirs(
 /// must live in `dir`. For the cross-disk reconciled layout where
 /// shards are split across multiple data dirs of the same node, use
 /// [`write_dat_file_from_shards_with_dirs`] instead.
+#[expect(clippy::too_many_arguments)]
 pub fn write_dat_file_from_shards(
     dir: &str,
     collection: &str,
@@ -120,7 +121,7 @@ pub fn write_dat_file_from_shards(
 /// size. `large_block_size`/`small_block_size` are the volume's shard
 /// block layout, e.g. `EcVolume::large_block_size()` /
 /// `small_block_size()` from its .vif EC config.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn write_dat_file_from_shards_with_dirs(
     dat_dir: &str,
     collection: &str,
@@ -145,7 +146,7 @@ pub fn write_dat_file_from_shards_with_dirs(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn write_dat_file(
     dat_dir: &str,
     collection: &str,
@@ -233,10 +234,10 @@ fn write_dat_file(
 
         // Read large blocks
         while encoded_remaining >= large_row_size && remaining > 0 {
-            for i in 0..data_shards {
+            for (i, shard) in shards[..data_shards].iter().enumerate() {
                 let to_write = large_block_size.min(remaining as usize);
                 let mut buf = vec![0u8; to_write];
-                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                let n = shard.read_at(&mut buf, shard_offset)?;
                 if n != to_write {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
@@ -255,10 +256,10 @@ fn write_dat_file(
 
         // Read small blocks
         while remaining > 0 {
-            for i in 0..data_shards {
+            for (i, shard) in shards[..data_shards].iter().enumerate() {
                 let to_write = small_block_size.min(remaining as usize);
                 let mut buf = vec![0u8; to_write];
-                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                let n = shard.read_at(&mut buf, shard_offset)?;
                 if n != to_write {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
@@ -324,10 +325,7 @@ pub fn write_idx_file_from_ec_index(
         // and treat only NotFound as "no journal": Path::exists would also
         // swallow a permission/IO error and silently skip deletions, which
         // would resurrect deleted needles as live.
-        let mut idx_file = std::fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(&tmp_path)?;
+        let mut idx_file = std::fs::OpenOptions::new().append(true).open(&tmp_path)?;
         match std::fs::read(&ecj_path) {
             Ok(ecj_data) => {
                 let count = ecj_data.len() / NEEDLE_ID_SIZE;

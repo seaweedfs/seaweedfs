@@ -59,6 +59,12 @@ jobs:
       - name: Build Rust volume server
         run: cd seaweed-volume && cargo build --release
 
+      # The crate is warning-free under clippy as of the sweep that added
+      # this step. Uncomment to make that a gate; `[lints.clippy]` in
+      # seaweed-volume/Cargo.toml is where crate-wide exceptions live.
+      # - name: Clippy
+      #   run: cd seaweed-volume && cargo clippy --all-targets -- -D warnings
+
       - name: Run Rust unit tests
         run: cd seaweed-volume && cargo test
 
