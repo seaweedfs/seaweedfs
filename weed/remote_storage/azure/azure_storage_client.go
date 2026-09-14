@@ -153,6 +153,15 @@ type azureRemoteStorageClient struct {
 var _ = remote_storage.RemoteStorageClient(&azureRemoteStorageClient{})
 var _ = remote_storage.RemoteStorageConcurrentReader(&azureRemoteStorageClient{})
 
+// uploadConcurrency returns the RemoteConf-configured upload concurrency, or
+// the previously hard-coded defaultConcurrency (16) when unset.
+func (az *azureRemoteStorageClient) uploadConcurrency() int {
+	if n := int(az.conf.GetUploadConcurrency()); n > 0 {
+		return n
+	}
+	return defaultConcurrency
+}
+
 func (az *azureRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 	pathKey := loc.Path[1:]
 	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
@@ -303,7 +312,7 @@ func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 }
 
 func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
-	return az.ReadFileWithConcurrency(loc, offset, size, defaultReadConcurrency)
+	return az.ReadFileWithConcurrency(loc, offset, size, int(az.conf.GetDownloadConcurrency()))
 }
 
 // ReadFileWithConcurrency fetches a byte range of a blob using the Azure SDK's
@@ -448,7 +457,7 @@ func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocati
 
 	_, err = blobClient.UploadStream(context.Background(), reader, &blockblob.UploadStreamOptions{
 		BlockSize:   defaultBlockSize,
-		Concurrency: defaultConcurrency,
+		Concurrency: az.uploadConcurrency(),
 		HTTPHeaders: httpHeaders,
 		Metadata:    metadata,
 	})
