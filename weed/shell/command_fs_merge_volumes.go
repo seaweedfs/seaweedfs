@@ -146,7 +146,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		}
 	}
 
-	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
+	needlesSeen := make(map[needle.VolumeId]int)
+
+	if err := commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if entry.IsDirectory {
 				return nil
@@ -176,6 +178,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					}
 					oldManifestFid := chunk.GetFileIdString()
 					oldManifestVid := chunk.Fid.VolumeId
+					if vid := needle.VolumeId(oldManifestVid); plan.isSource(vid) {
+						needlesSeen[vid]++
+					}
 					newChunk, changed, rewritten, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply)
 					if mErr != nil {
 						fmt.Printf("failed to rewrite manifest %s(%s): %v\n", entryPath, oldManifestFid, mErr)
@@ -199,6 +204,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				if !plan.isSource(chunkVolumeId) {
 					continue
 				}
+				needlesSeen[chunkVolumeId]++
 
 				oldFid := chunk.GetFileIdString()
 				oldVid := chunk.Fid.VolumeId
@@ -234,7 +240,30 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 			}
 			return nil
 		})
-	})
+	}); err != nil {
+		return err
+	}
+
+	c.warnUnreferencedSources(writer, plan, needlesSeen, dir)
+	return nil
+}
+
+// warnUnreferencedSources flags plan sources the traversal never saw: when a
+// source volume's index still holds needles but no filer entry references
+// any of them, there is nothing to move and the command would otherwise
+// finish looking successful while the real cleanup is volume.fsck (crashed
+// writes and wiped filer stores leave exactly this state behind).
+func (c *commandFsMergeVolumes) warnUnreferencedSources(writer io.Writer, plan *mergePlan, needlesSeen map[needle.VolumeId]int, dir string) {
+	for src := range plan.targets {
+		if needlesSeen[src] > 0 {
+			continue
+		}
+		info := c.volumes[src]
+		if info == nil || info.FileCount == 0 {
+			continue
+		}
+		fmt.Fprintf(writer, "warning: volume %d has %d needle(s) in its index but no filer entries reference them under %s — nothing merged (orphan needles? run volume.fsck)\n", src, info.FileCount, dir)
+	}
 }
 
 // orphanedNeedle is a needle no filer entry references any more: either a

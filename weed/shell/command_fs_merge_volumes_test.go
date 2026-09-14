@@ -271,3 +271,40 @@ func TestManifestMayReferencePlan(t *testing.T) {
 		}
 	}
 }
+
+// A source volume whose index still holds needles but that the traversal
+// never saw is made entirely of orphan needles — the merge legitimately
+// moves nothing, but the operator must be told the real cleanup is fsck.
+func TestWarnUnreferencedSources(t *testing.T) {
+	vol := &master_pb.VolumeInformationMessage{Id: 203, FileCount: 18}
+	c := newMergeCmd(250000, vol)
+	plan := &mergePlan{targets: map[needle.VolumeId][]needle.VolumeId{
+		needle.VolumeId(203): {needle.VolumeId(187)},
+	}}
+
+	var sb strings.Builder
+	c.warnUnreferencedSources(&sb, plan, map[needle.VolumeId]int{}, "/buckets/test")
+	out := sb.String()
+	if !strings.Contains(out, "volume 203") || !strings.Contains(out, "orphan needles") {
+		t.Fatalf("expected orphan warning, got %q", out)
+	}
+
+	// Needles seen during traversal: no warning.
+	sb.Reset()
+	c.warnUnreferencedSources(&sb, plan, map[needle.VolumeId]int{needle.VolumeId(203): 7}, "/buckets/test")
+	if sb.Len() != 0 {
+		t.Fatalf("expected no warning when needles were seen, got %q", sb.String())
+	}
+
+	// Zero FileCount (truly empty volume): nothing to report.
+	emptyVol := &master_pb.VolumeInformationMessage{Id: 204}
+	c2 := newMergeCmd(250000, emptyVol)
+	plan2 := &mergePlan{targets: map[needle.VolumeId][]needle.VolumeId{
+		needle.VolumeId(204): {needle.VolumeId(187)},
+	}}
+	sb.Reset()
+	c2.warnUnreferencedSources(&sb, plan2, map[needle.VolumeId]int{}, "/buckets/test")
+	if sb.Len() != 0 {
+		t.Fatalf("expected no warning for empty volume, got %q", sb.String())
+	}
+}
