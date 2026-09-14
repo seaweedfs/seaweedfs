@@ -463,12 +463,12 @@ fn parse_duration(s: &str) -> std::time::Duration {
     if let Some(mins) = s.strip_suffix('m')
         && let Ok(v) = mins.parse::<u64>()
     {
-        return std::time::Duration::from_secs(v * 60);
+        return std::time::Duration::from_mins(v);
     }
     if let Some(hours) = s.strip_suffix('h')
         && let Ok(v) = hours.parse::<u64>()
     {
-        return std::time::Duration::from_secs(v * 3600);
+        return std::time::Duration::from_hours(v);
     }
     // Fallback: try parsing as raw seconds
     if let Ok(v) = s.parse::<u64>() {

@@ -173,7 +173,7 @@ pub fn remove_bitrot_sidecars(base: &str) -> io::Result<()> {
     record(rm(format!("{}{}", base, BITROT_SIDECAR_EXT).into()));
     let path = Path::new(base);
     if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
-        let prefix = format!("{}{}.v", fname.to_string_lossy(), BITROT_SIDECAR_EXT);
+        let prefix = format!("{}{}.v", fname.display(), BITROT_SIDECAR_EXT);
         match fs::read_dir(parent) {
             Ok(entries) => {
                 for entry in entries.flatten() {

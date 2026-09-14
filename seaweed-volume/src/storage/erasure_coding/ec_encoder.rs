@@ -636,7 +636,6 @@ pub fn rebuild_ecx_file(
 /// Read bytes from EC data shards at a logical offset in the .dat file,
 /// resolving the shard/offset through the volume's block layout via
 /// locate_data — the same mapping the read path uses.
-#[allow(clippy::too_many_arguments)]
 fn read_from_data_shards(
     shards: &[EcVolumeShard],
     buf: &mut [u8],
@@ -710,7 +709,7 @@ const ENCODE_BUFFER_SIZE: usize = 256 * 1024;
 /// 2. Process remaining data with small blocks
 ///
 /// `buffer_size` must divide both block sizes.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn encode_dat_file(
     dat_file: &File,
     dat_size: i64,
@@ -774,7 +773,7 @@ pub(crate) fn encode_dat_file(
 /// Encode one row of blocks, streaming it in ENCODE_BUFFER_SIZE sub-batches so
 /// arbitrarily large blocks never require block-sized allocations. Mirrors
 /// Go's encodeData.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn encode_data(
     dat_file: &File,
     row_offset: u64,
@@ -813,7 +812,7 @@ fn encode_data(
 
 /// Encode one sub-batch: the same buffer-sized slice of every shard's block in
 /// this row. Mirrors Go's encodeDataOneBatch.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn encode_one_batch(
     dat_file: &File,
     offset: u64,

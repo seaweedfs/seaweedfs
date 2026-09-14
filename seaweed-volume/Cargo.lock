@@ -4582,7 +4582,6 @@ dependencies = [
  "image",
  "jsonwebtoken",
  "kamadak-exif",
- "lazy_static",
  "libc",
  "md-5",
  "memmap2",

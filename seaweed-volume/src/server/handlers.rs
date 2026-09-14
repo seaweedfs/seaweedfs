@@ -2642,7 +2642,7 @@ pub async fn post_handler(
             let replication_result = replication
                 .await
                 .map_err(|e| format!("replication task failed: {}", e))
-                .and_then(|result| result);
+                .flatten();
             if let Err(e) = replication_result {
                 tracing::error!("replicated write failed: {}", e);
                 return json_error_with_query(
@@ -3212,7 +3212,6 @@ pub async fn ui_handler(State(state): State<Arc<VolumeServerState>>) -> Response
 // ============================================================================
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct ChunkManifest {
     #[serde(default)]
     name: String,

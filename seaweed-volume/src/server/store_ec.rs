@@ -813,9 +813,9 @@ fn needs_refresh(
     let ttl = if stale || shard_count < data_shards {
         Duration::from_secs(11)
     } else if shard_count == total_shards {
-        Duration::from_secs(37 * 60)
+        Duration::from_mins(37)
     } else {
-        Duration::from_secs(7 * 60)
+        Duration::from_mins(7)
     };
     age >= ttl
 }

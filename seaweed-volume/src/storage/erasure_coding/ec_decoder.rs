@@ -121,7 +121,7 @@ pub fn write_dat_file_from_shards(
 /// size. `large_block_size`/`small_block_size` are the volume's shard
 /// block layout, e.g. `EcVolume::large_block_size()` /
 /// `small_block_size()` from its .vif EC config.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn write_dat_file_from_shards_with_dirs(
     dat_dir: &str,
     collection: &str,
@@ -146,7 +146,7 @@ pub fn write_dat_file_from_shards_with_dirs(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn write_dat_file(
     dat_dir: &str,
     collection: &str,

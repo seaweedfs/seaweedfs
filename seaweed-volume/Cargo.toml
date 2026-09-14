@@ -56,7 +56,6 @@ clap = { version = "4", features = ["derive"] }
 
 # Metrics
 prometheus = { version = "0.13", default-features = false, features = ["process"] }
-lazy_static = "1"
 
 # JWT
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }

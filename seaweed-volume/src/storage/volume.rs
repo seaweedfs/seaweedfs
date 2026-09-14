@@ -4234,7 +4234,6 @@ impl Volume {
     }
 
     /// Returns the last recorded I/O error string, if any.
-    #[allow(dead_code)]
     pub fn last_io_error(&self) -> Option<String> {
         self.last_io_error.lock().ok()?.clone()
     }
