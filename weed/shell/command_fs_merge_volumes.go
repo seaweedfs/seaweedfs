@@ -146,15 +146,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		}
 	}
 
-	// TraverseBfs runs callbacks on concurrent workers, so all access to
-	// needlesSeen is funneled through recordSeen.
-	var needlesSeenMu sync.Mutex
-	needlesSeen := make(map[needle.VolumeId]int)
-	recordSeen := func(vid needle.VolumeId) {
-		needlesSeenMu.Lock()
-		needlesSeen[vid]++
-		needlesSeenMu.Unlock()
-	}
+	seen := newSourceNeedleCounter()
 
 	if err := commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
@@ -187,9 +179,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					oldManifestFid := chunk.GetFileIdString()
 					oldManifestVid := chunk.Fid.VolumeId
 					if vid := needle.VolumeId(oldManifestVid); plan.isSource(vid) {
-						recordSeen(vid)
+						seen.record(vid)
 					}
-					newChunk, changed, rewritten, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply, recordSeen)
+					newChunk, changed, rewritten, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply, seen.record)
 					if mErr != nil {
 						fmt.Printf("failed to rewrite manifest %s(%s): %v\n", entryPath, oldManifestFid, mErr)
 						continue
@@ -212,7 +204,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				if !plan.isSource(chunkVolumeId) {
 					continue
 				}
-				recordSeen(chunkVolumeId)
+				seen.record(chunkVolumeId)
 
 				oldFid := chunk.GetFileIdString()
 				oldVid := chunk.Fid.VolumeId
@@ -252,18 +244,16 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		return err
 	}
 
-	c.warnUnreferencedSources(writer, plan, needlesSeen, dir)
+	c.warnUnreferencedSources(writer, plan, seen, dir)
 	return nil
 }
 
-// warnUnreferencedSources flags plan sources the traversal never saw: when a
-// source volume's index still holds needles but no filer entry references
-// any of them, there is nothing to move and the command would otherwise
-// finish looking successful while the real cleanup is volume.fsck (crashed
-// writes and wiped filer stores leave exactly this state behind).
-func (c *commandFsMergeVolumes) warnUnreferencedSources(writer io.Writer, plan *mergePlan, needlesSeen map[needle.VolumeId]int, dir string) {
+// warnUnreferencedSources warns when a plan source's index still holds needles
+// but no filer entry referenced any during traversal — the merge moves nothing
+// and the real cleanup is volume.fsck.
+func (c *commandFsMergeVolumes) warnUnreferencedSources(writer io.Writer, plan *mergePlan, seen *sourceNeedleCounter, dir string) {
 	for src := range plan.targets {
-		if needlesSeen[src] > 0 {
+		if seen.count(src) > 0 {
 			continue
 		}
 		info := c.volumes[src]
@@ -272,6 +262,29 @@ func (c *commandFsMergeVolumes) warnUnreferencedSources(writer io.Writer, plan *
 		}
 		fmt.Fprintf(writer, "warning: volume %d has %d needle(s) in its index but no filer entries reference them under %s — nothing merged (orphan needles? run volume.fsck)\n", src, info.FileCount, dir)
 	}
+}
+
+// sourceNeedleCounter records plan-source needles seen during filer traversal.
+// TraverseBfs runs callbacks on concurrent workers, so record is mutex-guarded.
+type sourceNeedleCounter struct {
+	mu   sync.Mutex
+	seen map[needle.VolumeId]int
+}
+
+func newSourceNeedleCounter() *sourceNeedleCounter {
+	return &sourceNeedleCounter{seen: make(map[needle.VolumeId]int)}
+}
+
+func (s *sourceNeedleCounter) record(vid needle.VolumeId) {
+	s.mu.Lock()
+	s.seen[vid]++
+	s.mu.Unlock()
+}
+
+func (s *sourceNeedleCounter) count(vid needle.VolumeId) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.seen[vid]
 }
 
 // orphanedNeedle is a needle no filer entry references any more: either a

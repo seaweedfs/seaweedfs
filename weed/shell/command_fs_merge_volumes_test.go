@@ -273,9 +273,9 @@ func TestManifestMayReferencePlan(t *testing.T) {
 	}
 }
 
-// A source volume whose index still holds needles but that the traversal
-// never saw is made entirely of orphan needles — the merge legitimately
-// moves nothing, but the operator must be told the real cleanup is fsck.
+// A source whose index still holds needles but that the traversal never saw is
+// made entirely of orphan needles — the merge moves nothing, but the operator
+// must be told the real cleanup is fsck.
 func TestWarnUnreferencedSources(t *testing.T) {
 	vol := &master_pb.VolumeInformationMessage{Id: 203, FileCount: 18}
 	c := newMergeCmd(250000, vol)
@@ -284,15 +284,19 @@ func TestWarnUnreferencedSources(t *testing.T) {
 	}}
 
 	var sb strings.Builder
-	c.warnUnreferencedSources(&sb, plan, map[needle.VolumeId]int{}, "/buckets/test")
+	c.warnUnreferencedSources(&sb, plan, newSourceNeedleCounter(), "/buckets/test")
 	out := sb.String()
 	if !strings.Contains(out, "volume 203") || !strings.Contains(out, "orphan needles") {
 		t.Fatalf("expected orphan warning, got %q", out)
 	}
 
 	// Needles seen during traversal: no warning.
+	seen := newSourceNeedleCounter()
+	for i := 0; i < 7; i++ {
+		seen.record(needle.VolumeId(203))
+	}
 	sb.Reset()
-	c.warnUnreferencedSources(&sb, plan, map[needle.VolumeId]int{needle.VolumeId(203): 7}, "/buckets/test")
+	c.warnUnreferencedSources(&sb, plan, seen, "/buckets/test")
 	if sb.Len() != 0 {
 		t.Fatalf("expected no warning when needles were seen, got %q", sb.String())
 	}
@@ -304,14 +308,14 @@ func TestWarnUnreferencedSources(t *testing.T) {
 		needle.VolumeId(204): {needle.VolumeId(187)},
 	}}
 	sb.Reset()
-	c2.warnUnreferencedSources(&sb, plan2, map[needle.VolumeId]int{}, "/buckets/test")
+	c2.warnUnreferencedSources(&sb, plan2, newSourceNeedleCounter(), "/buckets/test")
 	if sb.Len() != 0 {
 		t.Fatalf("expected no warning for empty volume, got %q", sb.String())
 	}
 }
 
-// Concurrent BFS workers increment the seen counter through recordSeen —
-// the counter must stay correct under -race with source-heavy inputs.
+// Concurrent BFS workers increment the production counter through record — the
+// count must stay correct under -race with source-heavy inputs.
 func TestWarnUnreferencedSources_ConcurrentRecording(t *testing.T) {
 	vol := &master_pb.VolumeInformationMessage{Id: 203, FileCount: 1000}
 	c := newMergeCmd(250000, vol)
@@ -319,28 +323,21 @@ func TestWarnUnreferencedSources_ConcurrentRecording(t *testing.T) {
 		needle.VolumeId(203): {needle.VolumeId(187)},
 	}}
 
-	var mu sync.Mutex
-	seen := make(map[needle.VolumeId]int)
-	recordSeen := func(vid needle.VolumeId) {
-		mu.Lock()
-		seen[vid]++
-		mu.Unlock()
-	}
-
+	seen := newSourceNeedleCounter()
 	var wg sync.WaitGroup
 	for w := 0; w < 5; w++ { // TraverseBfs worker count
 		wg.Add(1)
-		go func(worker int) {
+		go func() {
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
-				recordSeen(needle.VolumeId(203))
+				seen.record(needle.VolumeId(203))
 			}
-		}(w)
+		}()
 	}
 	wg.Wait()
 
-	if seen[needle.VolumeId(203)] != 1000 {
-		t.Fatalf("lost increments under concurrency: %d", seen[needle.VolumeId(203)])
+	if got := seen.count(needle.VolumeId(203)); got != 1000 {
+		t.Fatalf("lost increments under concurrency: %d", got)
 	}
 
 	var sb strings.Builder
