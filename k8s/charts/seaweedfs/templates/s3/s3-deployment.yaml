@@ -42,6 +42,12 @@ spec:
       {{- with .Values.s3.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.s3.existingConfigSecret }}
+        {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.s3.existingConfigSecret) | default dict }}
+        checksum/s3config: {{ $configSecret | toYaml | sha256sum }}
+      {{- else }}
+        checksum/s3config: {{ include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum }}
+      {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.s3.restartPolicy }}
       {{- if .Values.s3.affinity }}
