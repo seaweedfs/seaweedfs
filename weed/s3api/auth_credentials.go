@@ -86,6 +86,10 @@ type IdentityAccessManagement struct {
 	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
 	iamPolicyEngine *policy_engine.PolicyEngine
 
+	// trustedProxies is applied to every (re)built iamPolicyEngine so that
+	// aws:SourceIp resolution honors the configured allowlist across rebuilds.
+	trustedProxies *policy_engine.TrustedProxies
+
 	// background polling
 	stopChan     chan struct{}
 	shutdownOnce sync.Once
@@ -3139,7 +3143,20 @@ func (iam *IdentityAccessManagement) removeUserGroupLocked(username, groupName s
 func (iam *IdentityAccessManagement) ensureIAMPolicyEngine() {
 	if iam.iamPolicyEngine == nil {
 		iam.iamPolicyEngine = policy_engine.NewPolicyEngine()
+		iam.iamPolicyEngine.SetTrustedProxies(iam.trustedProxies)
 	}
+}
+
+// SetTrustedProxies configures the allowlist used by the IAM policy engine
+// when resolving aws:SourceIp from forwarded headers, and applies it to the
+// current cached engine if one exists.
+func (iam *IdentityAccessManagement) SetTrustedProxies(tp *policy_engine.TrustedProxies) {
+	iam.m.Lock()
+	iam.trustedProxies = tp
+	if iam.iamPolicyEngine != nil {
+		iam.iamPolicyEngine.SetTrustedProxies(tp)
+	}
+	iam.m.Unlock()
 }
 
 // rebuildIAMPolicyEngineLocked rebuilds the entire IAM policy engine cache
@@ -3150,6 +3167,7 @@ func (iam *IdentityAccessManagement) rebuildIAMPolicyEngineLocked() {
 		return
 	}
 	engine := policy_engine.NewPolicyEngine()
+	engine.SetTrustedProxies(iam.trustedProxies)
 	for name, p := range iam.policies {
 		if err := engine.SetBucketPolicy(name, p.Content); err != nil {
 			glog.Warningf("IAM policy cache rebuild: skipping invalid policy %q: %v", name, err)

@@ -232,6 +232,15 @@ kek = ""
 # Cannot be used while /etc/s3/sse_kek exists on the filer — delete it first.
 key = ""
 
+# Trusted reverse proxies allowed to set X-Forwarded-For / X-Real-Ip for
+# aws:SourceIp condition evaluation in S3 bucket and IAM policies. When the
+# direct TCP peer is in this list, forwarded headers are honored; otherwise
+# the direct peer address is used (matching AWS S3 semantics). Leave empty to
+# always use the direct peer, which is the safe default.
+# Can also be set via env var: WEED_S3_TRUSTED_PROXIES_WHITE_LIST
+[s3.trusted_proxies]
+white_list = "" # comma separated; bare IPs or CIDRs, e.g. "10.10.10.0/24"
+
 # white list. It's checking request ip address.
 [guard]
 white_list = ""
