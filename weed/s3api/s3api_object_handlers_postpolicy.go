@@ -126,8 +126,6 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
-
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType
 	contentType := formValues.Get("Content-Type")
@@ -145,15 +143,46 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Use fileSize, not r.ContentLength: the multipart body wrapping form
-	// fields and boundaries inflates ContentLength relative to the
-	// object body, which would mis-evaluate any size-filtered rule.
-	ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil, false, "")
+	bucketConfig, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	versioningState := bucketConfig.Versioning
+	objectLockEnabled := bucketConfig.ObjectLockConfig != nil
+	if objectLockEnabled {
+		versioningState = s3_constants.VersioningEnabled
+	}
+	if err := s3a.validateObjectLockHeaders(r, objectLockEnabled); err != nil {
+		glog.V(2).Infof("PostPolicyBucketHandler: object lock header validation failed for %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
+		return
+	}
+
+	var etag string
+	var versionId string
+	var sseMetadata SSEResponseMetadata
+	switch versioningState {
+	case s3_constants.VersioningEnabled:
+		versionId, etag, errCode, sseMetadata = s3a.putVersionedObject(r, bucket, object, fileBody, contentType)
+	case s3_constants.VersioningSuspended:
+		etag, errCode, sseMetadata = s3a.putSuspendedVersioningObject(r, bucket, object, fileBody, contentType)
+		versionId = "null"
+	default:
+		filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
+		// Use fileSize, not r.ContentLength: the multipart body wrapping form
+		// fields and boundaries inflates ContentLength relative to the
+		// object body, which would mis-evaluate any size-filtered rule.
+		ttlSec := s3a.lifecycleTTLForObjectWrite(bucket, object, fileSize)
+		etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, ttlSec, nil, false, "")
+	}
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+	if versionId != "" {
+		w.Header().Set("x-amz-version-id", versionId)
 	}
 
 	if successRedirect != "" {
