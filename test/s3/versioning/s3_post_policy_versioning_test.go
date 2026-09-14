@@ -197,10 +197,10 @@ func TestPostPolicyVersioningStateCompatibility(t *testing.T) {
 
 	suspended, err := postPolicyUpload(ctx, client, bucket, key, []byte("suspended-one"))
 	require.NoError(t, err)
-	require.Equal(t, "null", suspended.versionID)
+	require.Empty(t, suspended.versionID)
 	suspended, err = postPolicyUpload(ctx, client, bucket, key, []byte("suspended-two"))
 	require.NoError(t, err)
-	require.Equal(t, "null", suspended.versionID)
+	require.Empty(t, suspended.versionID)
 	requireVersionBody(t, client, bucket, key, "null", []byte("suspended-two"), "suspended POST replaces null version")
 	requireVersionBody(t, client, bucket, key, aws.ToString(versioned.VersionId), []byte("numbered"), "suspended POST preserves numbered version")
 
