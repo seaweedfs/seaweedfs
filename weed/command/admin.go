@@ -70,9 +70,9 @@ type AdminOptions struct {
 
 	// workerGrpcBindIp, when non-empty, is the address the worker gRPC
 	// listener binds to. It is separate from ip because the worker gRPC has
-	// no password auth (only mTLS), so it must not follow ip's auto-upgrade to
-	// 0.0.0.0 based on adminPassword. `weed mini` leaves it empty to fall
-	// back to ip.
+	// no password auth (its mTLS comes from grpc.admin, not https.admin), so
+	// it must not follow ip's auto-upgrade to 0.0.0.0 based on adminPassword.
+	// `weed mini` leaves it empty to fall back to ip.
 	workerGrpcBindIp string
 
 	// defaultS3PublicEndpoint, when set, is used for object URLs when
@@ -298,14 +298,12 @@ func runAdmin(cmd *Command, args []string) bool {
 
 	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
 
-	// The worker gRPC control plane has no password auth (only mTLS), so its
-	// bind address must not follow the HTTP auto-upgrade below. Capture the
-	// raw -ip value first; upgrade it to 0.0.0.0 only when mTLS protects it.
-	// An explicit -ip is always honored for both listeners.
+	// The worker gRPC control plane has no password auth (its mTLS comes from
+	// grpc.admin, separate from https.admin), so its bind address must not
+	// follow the HTTP auto-upgrade below. Capture the raw -ip value first;
+	// the worker gRPC stays on loopback unless the operator sets -ip
+	// explicitly, matching the pre-existing behavior.
 	a.workerGrpcBindIp = *a.ip
-	if !isFlagExplicitlySet(cmd, "ip") && hasMTLS {
-		a.workerGrpcBindIp = "0.0.0.0"
-	}
 
 	// -ip defaults to loopback so an unauthenticated admin API is never
 	// exposed on the network by accident. An authenticated deployment
