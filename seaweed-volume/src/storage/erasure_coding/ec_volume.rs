@@ -1030,7 +1030,12 @@ impl EcVolume {
 
     /// Find a needle's offset and size in the sorted .ecx index via binary search.
     pub fn find_needle_from_ecx(&self, needle_id: NeedleId) -> io::Result<Option<(Offset, Size)>> {
-        let ecx_file = self
+        // On non-Unix (Windows) the .ecx lookup falls back to `Seek`+`Read`
+        // (`&File` implements both), whose `&mut self` receivers require this
+        // binding to be mutable. On Unix `read_exact_at` takes `&self`, so the
+        // `mut` would be unused there — silence that one platform's warning.
+        #[cfg_attr(unix, allow(unused_mut))]
+        let mut ecx_file = self
             .ecx_file
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecx file not open"))?;
