@@ -462,13 +462,15 @@ fn parse_duration(s: &str) -> std::time::Duration {
     }
     if let Some(mins) = s.strip_suffix('m')
         && let Ok(v) = mins.parse::<u64>()
+        && let Some(seconds) = v.checked_mul(60)
     {
-        return std::time::Duration::from_mins(v);
+        return std::time::Duration::from_secs(seconds);
     }
     if let Some(hours) = s.strip_suffix('h')
         && let Ok(v) = hours.parse::<u64>()
+        && let Some(seconds) = v.checked_mul(3600)
     {
-        return std::time::Duration::from_hours(v);
+        return std::time::Duration::from_secs(seconds);
     }
     // Fallback: try parsing as raw seconds
     if let Ok(v) = s.parse::<u64>() {
@@ -1294,6 +1296,14 @@ mod tests {
         assert_eq!(parse_duration("1h"), std::time::Duration::from_secs(3600));
         assert_eq!(parse_duration("30"), std::time::Duration::from_secs(30));
         assert_eq!(parse_duration(""), std::time::Duration::from_secs(60));
+        assert_eq!(
+            parse_duration("307445734561825861m"),
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(
+            parse_duration("5124095576030432h"),
+            std::time::Duration::from_secs(60)
+        );
     }
 
     #[test]
