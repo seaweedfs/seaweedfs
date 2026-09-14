@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -37,7 +38,7 @@ type S3IAMIntegration struct {
 	stsService     *sts.STSService
 	filerAddress   string
 	enabled        bool
-	trustedProxies *policy_engine.TrustedProxies
+	trustedProxies atomic.Pointer[policy_engine.TrustedProxies]
 }
 
 // NewS3IAMIntegration creates a new S3 IAM integration
@@ -63,7 +64,7 @@ func (s3iam *S3IAMIntegration) GetIAMManager() *integration.IAMManager {
 // SetTrustedProxies configures the allowlist used to decide whether
 // forwarded headers are honored when extracting aws:SourceIp.
 func (s3iam *S3IAMIntegration) SetTrustedProxies(tp *policy_engine.TrustedProxies) {
-	s3iam.trustedProxies = tp
+	s3iam.trustedProxies.Store(tp)
 }
 
 // AuthenticateJWT authenticates JWT tokens using our STS service
@@ -418,7 +419,7 @@ func (s3iam *S3IAMIntegration) extractRequestContext(r *http.Request) map[string
 // evaluation, honoring forwarded headers only when the direct TCP peer is in
 // the configured trusted-proxy allowlist (see SetTrustedProxies).
 func (s3iam *S3IAMIntegration) extractSourceIP(r *http.Request) string {
-	return s3iam.trustedProxies.ExtractSourceIP(r)
+	return s3iam.trustedProxies.Load().ExtractSourceIP(r)
 }
 
 // ParseUnverifiedJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification

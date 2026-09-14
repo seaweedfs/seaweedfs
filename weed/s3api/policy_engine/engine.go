@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -31,7 +32,7 @@ type PolicyEvaluationContext struct {
 type PolicyEngine struct {
 	contexts       map[string]*PolicyEvaluationContext
 	mutex          sync.RWMutex
-	trustedProxies *TrustedProxies
+	trustedProxies atomic.Pointer[TrustedProxies]
 }
 
 // NewPolicyEngine creates a new policy evaluation engine
@@ -44,7 +45,7 @@ func NewPolicyEngine() *PolicyEngine {
 // SetTrustedProxies configures the allowlist used to decide whether
 // forwarded headers are honored when extracting aws:SourceIp.
 func (engine *PolicyEngine) SetTrustedProxies(tp *TrustedProxies) {
-	engine.trustedProxies = tp
+	engine.trustedProxies.Store(tp)
 }
 
 // SetBucketPolicy sets the policy for a bucket
@@ -529,7 +530,7 @@ func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) 
 // evaluation, honoring forwarded headers only when the direct TCP peer is in
 // the configured trusted-proxy allowlist (see SetTrustedProxies).
 func (engine *PolicyEngine) extractSourceIP(r *http.Request) string {
-	return engine.trustedProxies.ExtractSourceIP(r)
+	return engine.trustedProxies.Load().ExtractSourceIP(r)
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
