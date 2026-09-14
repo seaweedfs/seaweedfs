@@ -52,7 +52,7 @@ func (b *localDirBackend) NewStorageFile(key string, tierInfo *volume_server_pb.
 	return &localDirBackendFile{backend: b, key: key, tierInfo: tierInfo}
 }
 
-func (b *localDirBackend) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (b *localDirBackend) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error, concurrency int) (key string, size int64, err error) {
 	key = fmt.Sprintf("obj-%d-%d", time.Now().UnixNano(), os.Getpid())
 	dst := filepath.Join(b.root, key)
 	out, err := os.Create(dst)
@@ -73,7 +73,7 @@ func (b *localDirBackend) CopyFile(f *os.File, fn func(progressed int64, percent
 	return key, written, nil
 }
 
-func (b *localDirBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+func (b *localDirBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error, concurrency int) (size int64, err error) {
 	src := filepath.Join(b.root, key)
 	in, err := os.Open(src)
 	if err != nil {
@@ -193,7 +193,7 @@ func tierUpVolumeLive(t *testing.T, dir string, vid needle.VolumeId, b *localDir
 	diskFile, ok := v.DataBackend.(*backend.DiskFile)
 	require.True(t, ok, "expected on-disk backend before tier-up")
 
-	uploadKey, size, err := b.CopyFile(diskFile.File, nil)
+	uploadKey, size, err := b.CopyFile(diskFile.File, nil, 0)
 	require.NoError(t, err)
 
 	bType, bId := backend.BackendNameToTypeId(testBackendName)
@@ -422,7 +422,7 @@ func TestRemoteTier_ECEncodeDecode_AfterDownload(t *testing.T) {
 
 	baseFileName := filepath.Join(dir, fmt.Sprintf("%d", uint32(vid)))
 	datPath := baseFileName + ".dat"
-	_, err := b.DownloadFile(datPath, key, nil)
+	_, err := b.DownloadFile(datPath, key, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, erasure_coding.WriteSortedFileFromIdx(baseFileName, ".ecx"))
