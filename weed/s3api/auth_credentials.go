@@ -86,6 +86,10 @@ type IdentityAccessManagement struct {
 	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
 	iamPolicyEngine *policy_engine.PolicyEngine
 
+	// trustedProxies is applied to every (re)built iamPolicyEngine so that
+	// aws:SourceIp resolution honors the configured allowlist across rebuilds.
+	trustedProxies *policy_engine.TrustedProxies
+
 	// background polling
 	stopChan     chan struct{}
 	shutdownOnce sync.Once
@@ -2518,7 +2522,7 @@ func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request
 	principal := buildPrincipalARN(identity, r)
 	s3Action := ResolveS3Action(r, string(action), bucket, resourceObject)
 	explicitAllow := false
-	conditions := policy_engine.ExtractConditionValuesFromRequest(r)
+	conditions := engine.ExtractConditionValuesFromRequest(r)
 	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
 		conditions[k] = v
 	}
@@ -2610,7 +2614,11 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 	if manager == nil {
 		return false
 	}
-	denied, err := manager.IsPrincipalActionExplicitlyDenied(r.Context(), principal, action, resource, policyNames, sessionToken, extractRequestContext(r))
+	var requestContext map[string]interface{}
+	if s3iam, ok := iam.iamIntegration.(*S3IAMIntegration); ok {
+		requestContext = s3iam.extractRequestContext(r)
+	}
+	denied, err := manager.IsPrincipalActionExplicitlyDenied(r.Context(), principal, action, resource, policyNames, sessionToken, requestContext)
 	if err != nil {
 		glog.Warningf("AssumeRole explicit-deny check failed for %s, denying: %v", identity.Name, err)
 		return true
@@ -3135,7 +3143,20 @@ func (iam *IdentityAccessManagement) removeUserGroupLocked(username, groupName s
 func (iam *IdentityAccessManagement) ensureIAMPolicyEngine() {
 	if iam.iamPolicyEngine == nil {
 		iam.iamPolicyEngine = policy_engine.NewPolicyEngine()
+		iam.iamPolicyEngine.SetTrustedProxies(iam.trustedProxies)
 	}
+}
+
+// SetTrustedProxies configures the allowlist used by the IAM policy engine
+// when resolving aws:SourceIp from forwarded headers, and applies it to the
+// current cached engine if one exists.
+func (iam *IdentityAccessManagement) SetTrustedProxies(tp *policy_engine.TrustedProxies) {
+	iam.m.Lock()
+	iam.trustedProxies = tp
+	if iam.iamPolicyEngine != nil {
+		iam.iamPolicyEngine.SetTrustedProxies(tp)
+	}
+	iam.m.Unlock()
 }
 
 // rebuildIAMPolicyEngineLocked rebuilds the entire IAM policy engine cache
@@ -3146,6 +3167,7 @@ func (iam *IdentityAccessManagement) rebuildIAMPolicyEngineLocked() {
 		return
 	}
 	engine := policy_engine.NewPolicyEngine()
+	engine.SetTrustedProxies(iam.trustedProxies)
 	for name, p := range iam.policies {
 		if err := engine.SetBucketPolicy(name, p.Content); err != nil {
 			glog.Warningf("IAM policy cache rebuild: skipping invalid policy %q: %v", name, err)

@@ -426,6 +426,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 	}
 
+	s3ApiServer.applyTrustedProxies(util.GetViper())
+
 	// Initialize embedded IAM API if enabled
 	if option.EnableIam {
 		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam, option.IamReadOnly)
@@ -460,6 +462,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			v.GetString("jwt.filer_signing.read.key"),
 			v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
 		)
+		s3ApiServer.applyTrustedProxies(v)
 		util_http.ReloadJwtSigningReadConfig()
 	})
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
@@ -504,6 +507,22 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	s3ApiServer.versionsReconcilerStop = s3ApiServer.startVersioningReconciler()
 
 	return s3ApiServer, nil
+}
+
+// applyTrustedProxies reads [s3.trusted_proxies] from the security config and
+// propagates the allowlist to the bucket policy engine, the IAM policy
+// engine, and the IAM integration so aws:SourceIp honors forwarded headers
+// only from configured trusted proxies.
+func (s3a *S3ApiServer) applyTrustedProxies(v util.Configuration) {
+	whiteList := util.StringSplit(v.GetString("s3.trusted_proxies.white_list"), ",")
+	tp := policy_engine.NewTrustedProxies(whiteList)
+	if s3a.policyEngine != nil {
+		s3a.policyEngine.engine.SetTrustedProxies(tp)
+	}
+	s3a.iam.SetTrustedProxies(tp)
+	if s3a.iamIntegration != nil {
+		s3a.iamIntegration.SetTrustedProxies(tp)
+	}
 }
 
 func (s3a *S3ApiServer) Shutdown() {

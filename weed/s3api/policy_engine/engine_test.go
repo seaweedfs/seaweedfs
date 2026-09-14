@@ -380,7 +380,7 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 		RemoteAddr: "192.168.1.100:12345",
 	}
 
-	values := ExtractConditionValuesFromRequest(req)
+	values := NewPolicyEngine().ExtractConditionValuesFromRequest(req)
 
 	// Check extracted values
 	if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != "192.168.1.100" {
@@ -493,7 +493,7 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 				RemoteAddr: tt.remoteAddr,
 			}
 
-			values := ExtractConditionValuesFromRequest(req)
+			values := NewPolicyEngine().ExtractConditionValuesFromRequest(req)
 			if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != tt.expectedIP {
 				t.Errorf("Expected SourceIp %q, got %v", tt.expectedIP, values["aws:SourceIp"])
 			}
@@ -512,7 +512,7 @@ func TestExtractSourceIP_IgnoresForwardedHeaders(t *testing.T) {
 		RemoteAddr: "10.0.0.5:54321",
 	}
 
-	values := ExtractConditionValuesFromRequest(req)
+	values := NewPolicyEngine().ExtractConditionValuesFromRequest(req)
 	if got := values["aws:SourceIp"]; len(got) != 1 || got[0] != "10.0.0.5" {
 		t.Errorf("Expected SourceIp to be the direct peer 10.0.0.5, got %v", got)
 	}
@@ -542,10 +542,24 @@ func TestExtractSourceIP_EnforcesIPRestrictionPolicy(t *testing.T) {
 		Action:     "s3:GetObject",
 		Resource:   "arn:aws:s3:::secret-bucket/secret-key",
 		Principal:  "*",
-		Conditions: ExtractConditionValuesFromRequest(r),
+		Conditions: engine.ExtractConditionValuesFromRequest(r),
 	})
 	if result != PolicyResultDeny {
 		t.Errorf("Expected Deny for peer outside 10.0.0.0/24 despite spoofed X-Forwarded-For, got %v", result)
+	}
+}
+
+func TestExtractSourceIP_TrustedProxyHonorsForwardedHeader(t *testing.T) {
+	engine := NewPolicyEngine()
+	engine.SetTrustedProxies(NewTrustedProxies([]string{"10.0.0.0/24"}))
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.1:54321"
+	r.Header.Set("X-Forwarded-For", "203.0.113.99")
+
+	values := engine.ExtractConditionValuesFromRequest(r)
+	if got := values["aws:SourceIp"]; len(got) != 1 || got[0] != "203.0.113.99" {
+		t.Errorf("Expected trusted proxy to honor X-Forwarded-For 203.0.113.99, got %v", got)
 	}
 }
 

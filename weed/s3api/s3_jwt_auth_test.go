@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -195,8 +196,8 @@ func TestRequestContextExtraction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := tt.setupRequest()
 
-			// Extract request context
-			context := extractRequestContext(req)
+			s3iam := &S3IAMIntegration{}
+			context := s3iam.extractRequestContext(req)
 
 			if tt.expectedIP != "" {
 				assert.Equal(t, tt.expectedIP, context["aws:SourceIp"])
@@ -207,6 +208,20 @@ func TestRequestContextExtraction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRequestContextExtraction_TrustedProxy verifies that when a trusted
+// proxy allowlist is configured, X-Forwarded-For is honored.
+func TestRequestContextExtraction_TrustedProxy(t *testing.T) {
+	s3iam := &S3IAMIntegration{}
+	s3iam.SetTrustedProxies(policy_engine.NewTrustedProxies([]string{"10.0.0.0/24"}))
+
+	req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
+	req.Header.Set("X-Forwarded-For", "203.0.113.99")
+	req.RemoteAddr = "10.0.0.1:12345"
+
+	context := s3iam.extractRequestContext(req)
+	assert.Equal(t, "203.0.113.99", context["aws:SourceIp"])
 }
 
 // TestIPBasedPolicyEnforcement tests IP-based conditional policies

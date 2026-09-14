@@ -2,11 +2,11 @@ package policy_engine
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -30,8 +30,9 @@ type PolicyEvaluationContext struct {
 
 // PolicyEngine is the main policy evaluation engine
 type PolicyEngine struct {
-	contexts map[string]*PolicyEvaluationContext
-	mutex    sync.RWMutex
+	contexts       map[string]*PolicyEvaluationContext
+	mutex          sync.RWMutex
+	trustedProxies atomic.Pointer[TrustedProxies]
 }
 
 // NewPolicyEngine creates a new policy evaluation engine
@@ -39,6 +40,12 @@ func NewPolicyEngine() *PolicyEngine {
 	return &PolicyEngine{
 		contexts: make(map[string]*PolicyEvaluationContext),
 	}
+}
+
+// SetTrustedProxies configures the allowlist used to decide whether
+// forwarded headers are honored when extracting aws:SourceIp.
+func (engine *PolicyEngine) SetTrustedProxies(tp *TrustedProxies) {
+	engine.trustedProxies.Store(tp)
 }
 
 // SetBucketPolicy sets the policy for a bucket
@@ -405,11 +412,11 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 }
 
 // ExtractConditionValuesFromRequest extracts condition values from HTTP request
-func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
+func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
 	// AWS condition keys
-	values["aws:SourceIp"] = []string{extractSourceIP(r)}
+	values["aws:SourceIp"] = []string{engine.extractSourceIP(r)}
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
 	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
@@ -519,36 +526,11 @@ func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) 
 	return modified
 }
 
-// extractSourceIP returns the direct TCP peer address for aws:SourceIp
-// condition evaluation. Forwarding headers (X-Forwarded-For, X-Real-Ip) are
-// intentionally ignored: without a configurable trusted-proxy allowlist they
-// are client-controlled and spoofable, which would let a caller behind a
-// private-looking peer bypass any aws:SourceIp restriction.
-func extractSourceIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-
-	remoteAddr := strings.TrimSpace(r.RemoteAddr)
-	if remoteAddr == "" {
-		return ""
-	}
-
-	if remoteAddr == "@" {
-		return remoteAddr
-	}
-
-	host := remoteAddr
-	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = h
-	}
-
-	remoteIP := net.ParseIP(host)
-	if remoteIP == nil {
-		return ""
-	}
-
-	return remoteIP.String()
+// extractSourceIP returns the client IP for aws:SourceIp condition
+// evaluation, honoring forwarded headers only when the direct TCP peer is in
+// the configured trusted-proxy allowlist (see SetTrustedProxies).
+func (engine *PolicyEngine) extractSourceIP(r *http.Request) string {
+	return engine.trustedProxies.Load().ExtractSourceIP(r)
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
@@ -667,7 +649,7 @@ func (engine *PolicyEngine) GetAllBucketsWithPolicies() []string {
 func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, action, principal string, r *http.Request) PolicyEvaluationResult {
 	resource := BuildResourceArn(bucketName, objectName)
 	actionName := BuildActionName(action)
-	conditions := ExtractConditionValuesFromRequest(r)
+	conditions := engine.ExtractConditionValuesFromRequest(r)
 
 	// Extract principal information for variables
 	principalVars := ExtractPrincipalVariables(principal)

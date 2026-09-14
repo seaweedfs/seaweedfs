@@ -3,9 +3,9 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 )
@@ -33,10 +34,11 @@ type IAMManagerProvider interface {
 
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
-	iamManager   *integration.IAMManager
-	stsService   *sts.STSService
-	filerAddress string
-	enabled      bool
+	iamManager     *integration.IAMManager
+	stsService     *sts.STSService
+	filerAddress   string
+	enabled        bool
+	trustedProxies atomic.Pointer[policy_engine.TrustedProxies]
 }
 
 // NewS3IAMIntegration creates a new S3 IAM integration
@@ -57,6 +59,12 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 // GetIAMManager returns the IAMManager backing this integration.
 func (s3iam *S3IAMIntegration) GetIAMManager() *integration.IAMManager {
 	return s3iam.iamManager
+}
+
+// SetTrustedProxies configures the allowlist used to decide whether
+// forwarded headers are honored when extracting aws:SourceIp.
+func (s3iam *S3IAMIntegration) SetTrustedProxies(tp *policy_engine.TrustedProxies) {
+	s3iam.trustedProxies.Store(tp)
 }
 
 // AuthenticateJWT authenticates JWT tokens using our STS service
@@ -247,7 +255,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	}
 
 	// Extract request context for policy conditions
-	requestContext := extractRequestContext(r)
+	requestContext := s3iam.extractRequestContext(r)
 
 	// For list operations, populate the s3:prefix condition key and ensure the
 	// resource ARN stays at bucket level (matching AWS ListBucket semantics).
@@ -386,25 +394,20 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 }
 
 // extractRequestContext extracts request context for policy conditions
-func extractRequestContext(r *http.Request) map[string]interface{} {
+func (s3iam *S3IAMIntegration) extractRequestContext(r *http.Request) map[string]interface{} {
 	context := make(map[string]interface{})
 
-	// Extract source IP for IP-based conditions
-	// Use AWS-compatible key name for policy variable substitution
-	sourceIP := extractSourceIP(r)
+	sourceIP := s3iam.extractSourceIP(r)
 	if sourceIP != "" {
 		context["aws:SourceIp"] = sourceIP
 	}
 
-	// Extract user agent
 	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
 		context["userAgent"] = userAgent
 	}
 
-	// Extract request time
 	context["requestTime"] = r.Context().Value("requestTime")
 
-	// Extract additional headers that might be useful for conditions
 	if referer := r.Header.Get("Referer"); referer != "" {
 		context["referer"] = referer
 	}
@@ -412,17 +415,11 @@ func extractRequestContext(r *http.Request) map[string]interface{} {
 	return context
 }
 
-// extractSourceIP returns the direct TCP peer address for aws:SourceIp
-// condition evaluation. Forwarding headers (X-Forwarded-For, X-Real-IP) are
-// intentionally ignored: without a configurable trusted-proxy allowlist they
-// are client-controlled and spoofable, which would let a caller behind a
-// private-looking peer bypass any aws:SourceIp restriction.
-func extractSourceIP(r *http.Request) string {
-	remoteIP := r.RemoteAddr
-	if ip, _, err := net.SplitHostPort(remoteIP); err == nil {
-		remoteIP = ip
-	}
-	return remoteIP
+// extractSourceIP returns the client IP for aws:SourceIp condition
+// evaluation, honoring forwarded headers only when the direct TCP peer is in
+// the configured trusted-proxy allowlist (see SetTrustedProxies).
+func (s3iam *S3IAMIntegration) extractSourceIP(r *http.Request) string {
+	return s3iam.trustedProxies.Load().ExtractSourceIP(r)
 }
 
 // ParseUnverifiedJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification
