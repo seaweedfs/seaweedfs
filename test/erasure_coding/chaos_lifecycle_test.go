@@ -748,8 +748,18 @@ func (r *chaosRun) seedAndSpread() {
 		for i := 0; i < chaosServerCount; i++ {
 			server := "127.0.0.1:" + chaosVolumePort(i)
 			if spread[server] < 2 && growsPerServer[server] < maxGrowsPerServer {
+				// Pin the data center and rack as well as the data node. The
+				// master's grow picks the rack by weighted random when -rack is
+				// unset, and only one of the three racks holds the requested
+				// data node, so an unpinned grow lands on the wrong rack two
+				// times out of three and the VolumeGrow RPC swallows the
+				// "No matching data node" error (non-cache grows ignore the
+				// internal failure). Those silent no-ops exhaust the per-server
+				// cap before the volumes ever spread, so seedAndSpread times
+				// out. Pinning the rack makes every grow reach the target node.
 				out, gerr := captureCommandOutput(r.t, shell.Commands[findCommandIndex("volume.grow")],
-					[]string{"-collection", chaosCollection, "-dataNode", server, "-count", "1"}, r.env)
+					[]string{"-collection", chaosCollection, "-dataCenter", "dc1",
+						"-rack", fmt.Sprintf("rack%d", i), "-dataNode", server, "-count", "1"}, r.env)
 				// Only count successful grows toward the cap: a transient
 				// collectTopologyInfo or VolumeGrow RPC error would otherwise
 				// exhaust the retry budget without creating any volume, and
