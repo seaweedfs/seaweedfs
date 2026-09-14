@@ -349,6 +349,9 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Println("         Set -adminPassword for production use")
 	}
 	fmt.Printf("Starting SeaweedFS Admin Interface on %s\n", util.JoinHostPort(*a.ip, *a.port))
+	if isLoopbackIp(*a.ip) {
+		fmt.Printf("  (loopback only; not reachable from other hosts. Set -ip=0.0.0.0 with -adminPassword or mTLS to expose.)\n")
+	}
 	fmt.Printf("Worker gRPC server will run on port %d\n", *a.grpcPort)
 	fmt.Printf("Masters: %s\n", *a.master)
 	fmt.Printf("Filers will be discovered automatically from masters\n")
