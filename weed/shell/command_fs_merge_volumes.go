@@ -146,7 +146,15 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		}
 	}
 
+	// TraverseBfs runs callbacks on concurrent workers, so all access to
+	// needlesSeen is funneled through recordSeen.
+	var needlesSeenMu sync.Mutex
 	needlesSeen := make(map[needle.VolumeId]int)
+	recordSeen := func(vid needle.VolumeId) {
+		needlesSeenMu.Lock()
+		needlesSeen[vid]++
+		needlesSeenMu.Unlock()
+	}
 
 	if err := commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
@@ -179,9 +187,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					oldManifestFid := chunk.GetFileIdString()
 					oldManifestVid := chunk.Fid.VolumeId
 					if vid := needle.VolumeId(oldManifestVid); plan.isSource(vid) {
-						needlesSeen[vid]++
+						recordSeen(vid)
 					}
-					newChunk, changed, rewritten, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply)
+					newChunk, changed, rewritten, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply, recordSeen)
 					if mErr != nil {
 						fmt.Printf("failed to rewrite manifest %s(%s): %v\n", entryPath, oldManifestFid, mErr)
 						continue
@@ -204,7 +212,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				if !plan.isSource(chunkVolumeId) {
 					continue
 				}
-				needlesSeen[chunkVolumeId]++
+				recordSeen(chunkVolumeId)
 
 				oldFid := chunk.GetFileIdString()
 				oldVid := chunk.Fid.VolumeId
@@ -700,6 +708,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 	entryPath util.FullPath,
 	chunk *filer_pb.FileChunk,
 	apply bool,
+	recordSeen func(needle.VolumeId),
 ) (*filer_pb.FileChunk, bool, rewrittenNeedles, error) {
 	if !chunk.IsChunkManifest {
 		return chunk, false, rewrittenNeedles{}, fmt.Errorf("not a manifest chunk: %s", chunk.GetFileIdString())
@@ -727,7 +736,10 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 		if sub.IsChunkManifest {
 			oldSubManifestFid := sub.GetFileIdString()
 			oldSubManifestVid := sub.Fid.VolumeId
-			newSub, changed, nested, rErr := c.rewriteManifestChunk(ctx, commandEnv, lookupFn, plan, entryPath, sub, apply)
+			if vid := needle.VolumeId(oldSubManifestVid); plan.isSource(vid) {
+				recordSeen(vid)
+			}
+			newSub, changed, nested, rErr := c.rewriteManifestChunk(ctx, commandEnv, lookupFn, plan, entryPath, sub, apply, recordSeen)
 			if rErr != nil {
 				abandon()
 				return chunk, false, rewrittenNeedles{}, rErr
@@ -751,6 +763,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 		if !plan.isSource(subVid) {
 			continue
 		}
+		recordSeen(subVid)
 		oldSubFid := sub.GetFileIdString()
 		oldSubVid := sub.Fid.VolumeId
 		toVid, ok := plan.allocate(subVid, sub.Size)

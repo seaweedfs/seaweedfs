@@ -2,6 +2,7 @@ package shell
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -306,5 +307,45 @@ func TestWarnUnreferencedSources(t *testing.T) {
 	c2.warnUnreferencedSources(&sb, plan2, map[needle.VolumeId]int{}, "/buckets/test")
 	if sb.Len() != 0 {
 		t.Fatalf("expected no warning for empty volume, got %q", sb.String())
+	}
+}
+
+// Concurrent BFS workers increment the seen counter through recordSeen —
+// the counter must stay correct under -race with source-heavy inputs.
+func TestWarnUnreferencedSources_ConcurrentRecording(t *testing.T) {
+	vol := &master_pb.VolumeInformationMessage{Id: 203, FileCount: 1000}
+	c := newMergeCmd(250000, vol)
+	plan := &mergePlan{targets: map[needle.VolumeId][]needle.VolumeId{
+		needle.VolumeId(203): {needle.VolumeId(187)},
+	}}
+
+	var mu sync.Mutex
+	seen := make(map[needle.VolumeId]int)
+	recordSeen := func(vid needle.VolumeId) {
+		mu.Lock()
+		seen[vid]++
+		mu.Unlock()
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < 5; w++ { // TraverseBfs worker count
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				recordSeen(needle.VolumeId(203))
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	if seen[needle.VolumeId(203)] != 1000 {
+		t.Fatalf("lost increments under concurrency: %d", seen[needle.VolumeId(203)])
+	}
+
+	var sb strings.Builder
+	c.warnUnreferencedSources(&sb, plan, seen, "/buckets/test")
+	if sb.Len() != 0 {
+		t.Fatalf("expected no warning when all needles were seen, got %q", sb.String())
 	}
 }
