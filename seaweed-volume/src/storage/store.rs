@@ -369,6 +369,7 @@ impl Store {
     }
 
     /// Create a new volume, placing it on the location with the most free space.
+    #[expect(clippy::too_many_arguments)]
     pub fn add_volume(
         &mut self,
         vid: VolumeId,
@@ -1137,9 +1138,9 @@ impl Store {
                 if found_vol.is_none() {
                     found_vol = Some(ecv);
                 }
-                for shard_id in 0..max_shard_count {
-                    if dirs[shard_id].is_none() && ecv.has_shard(shard_id as u8) {
-                        dirs[shard_id] = Some(loc.directory.clone());
+                for (shard_id, dir) in dirs.iter_mut().enumerate() {
+                    if dir.is_none() && ecv.has_shard(shard_id as u8) {
+                        *dir = Some(loc.directory.clone());
                     }
                 }
             }
@@ -1509,9 +1510,10 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
         read_only: bool,
     }
     if let Ok(legacy) = serde_json::from_str::<LegacyVolumeInfo>(&content) {
-        let mut vif = VifVolumeInfo::default();
-        vif.read_only = legacy.read_only;
-        return Ok(vif);
+        return Ok(VifVolumeInfo {
+            read_only: legacy.read_only,
+            ..VifVolumeInfo::default()
+        });
     }
     Err(VolumeError::Io(io::Error::new(
         io::ErrorKind::InvalidData,

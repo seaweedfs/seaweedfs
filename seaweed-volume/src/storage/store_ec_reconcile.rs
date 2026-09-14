@@ -80,6 +80,11 @@ struct EcxOwnerInfo {
     idx_dir: String,
 }
 
+/// One unit of reconcile work: the disk holding orphan shards, the volume
+/// they belong to, the shard files, the `.ecx` owner, and whether the
+/// mirror already installed sidecars locally (`use_local_idx`).
+type OrphanShardLoad = (usize, EcKey, Vec<(String, u32)>, EcxOwnerInfo, bool);
+
 impl Store {
     /// Run cross-disk orphan-shard reconciliation. Should be called
     /// after every DiskLocation has finished its per-disk EC scan.
@@ -98,7 +103,7 @@ impl Store {
         // `use_local_idx` is the post-mirror fast path: when the
         // mirror already installed sidecars locally, mount against
         // loc.idx_directory instead of the owner disk.
-        let mut to_load: Vec<(usize, EcKey, Vec<(String, u32)>, EcxOwnerInfo, bool)> = Vec::new();
+        let mut to_load: Vec<OrphanShardLoad> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let orphans = collect_orphan_ec_shards(loc, loc_idx);
             for (key, shards) in orphans {

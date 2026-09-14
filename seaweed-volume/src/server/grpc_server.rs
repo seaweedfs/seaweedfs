@@ -4055,8 +4055,8 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         // Check that all data shards are present somewhere on this server.
-        for shard_id in 0..data_shards {
-            if shard_dirs[shard_id].is_none() {
+        for (shard_id, dir) in shard_dirs[..data_shards].iter().enumerate() {
+            if dir.is_none() {
                 return Err(Status::internal(format!(
                     "ec volume {} missing shard {}",
                     req.volume_id, shard_id
@@ -5500,6 +5500,7 @@ async fn drain_copy_stream_to_file(
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
 /// Returns the modified_ts_ns received from the source.
+#[expect(clippy::too_many_arguments)]
 async fn copy_file_from_source<T>(
     client: &mut volume_server_pb::volume_server_client::VolumeServerClient<T>,
     is_ec_volume: bool,
@@ -6730,6 +6731,11 @@ mod tests {
     // very first check and returns before mount_volume, exercising the wrong
     // path — the test would be green for the wrong reason.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[expect(
+        clippy::await_holding_lock,
+        clippy::readonly_write_lock,
+        reason = "the store write guard is a barrier that parks the copy task at the mount block"
+    )]
     async fn test_volume_copy_after_mount_cancellation_rolls_back_mount() {
         let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
         let (port, _shutdown) = serve_source(source_service).await;

@@ -73,6 +73,7 @@ pub fn find_dat_file_size_with_dirs(
 /// must live in `dir`. For the cross-disk reconciled layout where
 /// shards are split across multiple data dirs of the same node, use
 /// [`write_dat_file_from_shards_with_dirs`] instead.
+#[expect(clippy::too_many_arguments)]
 pub fn write_dat_file_from_shards(
     dir: &str,
     collection: &str,
@@ -233,10 +234,10 @@ fn write_dat_file(
 
         // Read large blocks
         while encoded_remaining >= large_row_size && remaining > 0 {
-            for i in 0..data_shards {
+            for (i, shard) in shards[..data_shards].iter().enumerate() {
                 let to_write = large_block_size.min(remaining as usize);
                 let mut buf = vec![0u8; to_write];
-                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                let n = shard.read_at(&mut buf, shard_offset)?;
                 if n != to_write {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
@@ -255,10 +256,10 @@ fn write_dat_file(
 
         // Read small blocks
         while remaining > 0 {
-            for i in 0..data_shards {
+            for (i, shard) in shards[..data_shards].iter().enumerate() {
                 let to_write = small_block_size.min(remaining as usize);
                 let mut buf = vec![0u8; to_write];
-                let n = shards[i].read_at(&mut buf, shard_offset)?;
+                let n = shard.read_at(&mut buf, shard_offset)?;
                 if n != to_write {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,

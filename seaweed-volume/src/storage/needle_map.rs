@@ -226,6 +226,12 @@ pub struct CompactNeedleMap {
     idx_file_offset: u64,
 }
 
+impl Default for CompactNeedleMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompactNeedleMap {
     /// Create a new empty in-memory map.
     pub fn new() -> Self {
@@ -1643,6 +1649,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&idx_path)
             .unwrap();
         let idx_size = idx_file.metadata().unwrap().len();

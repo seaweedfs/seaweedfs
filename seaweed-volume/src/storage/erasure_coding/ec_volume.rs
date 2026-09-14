@@ -1595,8 +1595,8 @@ impl EcVolume {
                     .map(|s| s.file_size())
                     .next()
                     .unwrap_or(0) as u64;
-                if shard_size > 0 {
-                    let shard_id = (actual_offset / shard_size) as usize;
+                if let Some(shard_id) = actual_offset.checked_div(shard_size) {
+                    let shard_id = shard_id as usize;
                     let shard_offset = actual_offset % shard_size;
                     if let Some(Some(shard)) = self.shards.get(shard_id) {
                         let mut header_buf = [0u8; 4]; // cookie is first 4 bytes of needle

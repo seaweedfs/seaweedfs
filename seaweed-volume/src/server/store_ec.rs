@@ -236,8 +236,10 @@ pub async fn read_ec_shard_needle_distributed(
         ));
     }
 
-    let mut n = Needle::default();
-    n.id = needle_id;
+    let mut n = Needle {
+        id: needle_id,
+        ..Needle::default()
+    };
     n.read_bytes(
         &bytes,
         snapshot.offset.to_actual_offset(),
@@ -965,6 +967,7 @@ fn format_location_as_server_address(loc: &master_pb::Location) -> String {
 
 /// Try direct peer read; on failure, reconstruct via Reed-Solomon
 /// from the other shards. Mirrors `readOneEcShardInterval`'s tail.
+#[expect(clippy::too_many_arguments)]
 async fn fetch_one_interval(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
@@ -1028,6 +1031,7 @@ async fn fetch_one_interval(
     .await
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn read_remote_ec_shard_interval(
     state: &Arc<VolumeServerState>,
     sources: &[String],
@@ -1064,6 +1068,7 @@ async fn read_remote_ec_shard_interval(
     }))
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn do_read_remote_ec_shard_interval(
     state: &Arc<VolumeServerState>,
     source: &str,
@@ -1166,6 +1171,7 @@ async fn do_read_remote_ec_shard_interval(
     Ok((out, false))
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn recover_one_remote_ec_shard_interval(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
@@ -1206,7 +1212,7 @@ async fn recover_one_remote_ec_shard_interval(
     let mut available = 0usize;
     {
         let store = state.store.read().unwrap();
-        for sid in 0..total_shards {
+        for (sid, slot) in bufs.iter_mut().enumerate() {
             if available >= data_shards {
                 break;
             }
@@ -1233,7 +1239,7 @@ async fn recover_one_remote_ec_shard_interval(
                     .map(|n| n == size)
                     .unwrap_or(false)
                 {
-                    bufs[sid] = Some(buf);
+                    *slot = Some(buf);
                     available += 1;
                 }
             }

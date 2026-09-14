@@ -384,8 +384,8 @@ pub fn verify_ec_shards(
 
                 let mut verify_buffers = buffers.clone();
                 // Clear the parity parts
-                for i in data_shards..total_shards {
-                    verify_buffers[i].fill(0);
+                for buf in &mut verify_buffers[data_shards..total_shards] {
+                    buf.fill(0);
                 }
                 if rs.encode(&mut verify_buffers).is_ok() {
                     for i in 0..total_shards {
@@ -826,12 +826,10 @@ fn encode_one_batch(
 ) -> io::Result<()> {
     // Read data shards from the .dat file, zero-filling past EOF — the buffers
     // are reused across batches, so the tail must be cleared explicitly.
-    for i in 0..data_shards {
+    for (i, buf) in buffers[..data_shards].iter_mut().enumerate() {
         let read_offset = offset + (i * block_size) as u64;
-        let n = read_at_most(dat_file, &mut buffers[i], read_offset)?;
-        for b in buffers[i][n..].iter_mut() {
-            *b = 0;
-        }
+        let n = read_at_most(dat_file, buf, read_offset)?;
+        buf[n..].fill(0);
     }
 
     // Encode parity shards

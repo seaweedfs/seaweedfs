@@ -949,12 +949,12 @@ async fn get_or_head_handler_inner(
     // so invalid paths with JWT enabled return 401, not 400.
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) =
-        state
-            .guard
-            .read()
-            .unwrap()
-            .check_jwt_for_file(token.as_deref(), &file_id, false)
+    if state
+        .guard
+        .read()
+        .unwrap()
+        .check_jwt_for_file(token.as_deref(), &file_id, false)
+        .is_err()
     {
         let body = serde_json::json!({"error": "wrong jwt"});
         return Response::builder()
@@ -2126,11 +2126,12 @@ pub async fn post_handler(
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) = state
+    if state
         .guard
         .read()
         .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
     {
         return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
     }
@@ -2735,11 +2736,12 @@ pub async fn delete_handler(
     // JWT check for writes (deletes use write key)
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) = state
+    if state
         .guard
         .read()
         .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
     {
         return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&del_query));
     }
@@ -3230,6 +3232,7 @@ struct ChunkInfo {
 }
 
 /// Try to expand a chunk manifest needle. Returns None if manifest can't be parsed.
+#[expect(clippy::too_many_arguments)]
 async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
@@ -3435,7 +3438,6 @@ async fn try_expand_chunk_manifest(
     } else {
         String::new()
     };
-    let mut result = result;
     if is_image_crop_ext(&cm_ext) {
         result = maybe_crop_image(&result, &cm_ext, query);
     }

@@ -371,17 +371,18 @@ fn merge_options_file(args: Vec<String>) -> Vec<String> {
         if arg == "--" {
             break;
         }
-        if arg.starts_with("--") {
-            let key = if let Some(eq) = arg.find('=') {
-                arg[2..eq].to_string()
+        if let Some(long) = arg.strip_prefix("--") {
+            let key = if let Some(eq) = long.find('=') {
+                long[..eq].to_string()
             } else {
-                arg[2..].to_string()
+                long.to_string()
             };
             cli_flags.insert(key);
-        } else if arg.starts_with('-') && arg.len() > 2 {
+        } else if arg.len() > 2
+            && let Some(without_dash) = arg.strip_prefix('-')
+        {
             // Single-dash long option (already normalized to -- at this point,
             // but handle both for safety)
-            let without_dash = &arg[1..];
             let key = if let Some(eq) = without_dash.find('=') {
                 without_dash[..eq].to_string()
             } else {

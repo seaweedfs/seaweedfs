@@ -16,6 +16,9 @@ pub mod stream;
 
 /// Generated plugin.proto types.
 pub mod pb {
+    // prost gives every oneof its own enum; the variant sizes are the
+    // messages' own, not a choice made here.
+    #![allow(clippy::large_enum_variant)]
     tonic::include_proto!("plugin");
 }
 

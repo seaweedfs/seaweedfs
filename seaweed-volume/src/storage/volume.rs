@@ -249,7 +249,7 @@ struct OldVersionVifVolumeInfo {
 
 impl OldVersionVifVolumeInfo {
     /// Convert to the standard VifVolumeInfo, mapping destroy_time -> expire_at_sec.
-    fn to_vif(self) -> VifVolumeInfo {
+    fn into_vif(self) -> VifVolumeInfo {
         VifVolumeInfo {
             files: self.files,
             version: self.version,
@@ -532,6 +532,10 @@ impl RemoteDatFile {
 // Volume
 // ============================================================================
 
+/// One raw needle as `scan_raw_needles_from` yields it: the header bytes,
+/// the body bytes, and the needle's `append_at_ns`.
+pub type RawNeedleEntry = (Vec<u8>, Vec<u8>, u64);
+
 pub struct Volume {
     pub id: VolumeId,
     dir: String,
@@ -608,6 +612,7 @@ fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()>
 
 impl Volume {
     /// Create and load a volume from disk.
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         dirname: &str,
         dir_idx: &str,
@@ -2740,12 +2745,12 @@ impl Volume {
     }
 
     /// Scan raw needle entries from the .dat file starting at `from_offset`.
-    /// Returns (needle_header_bytes, needle_body_bytes, append_at_ns) for each needle.
+    /// Returns a [`RawNeedleEntry`] for each needle.
     /// Used by VolumeTailSender to stream raw bytes.
     pub fn scan_raw_needles_from(
         &self,
         from_offset: u64,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>, u64)>, VolumeError> {
+    ) -> Result<Vec<RawNeedleEntry>, VolumeError> {
         let version = self.version();
         let dat_size = self.current_dat_file_size()?;
         let mut entries = Vec::new();
@@ -3002,7 +3007,7 @@ impl Volume {
             // Fall back to OldVersionVolumeInfo (Go's tryOldVersionVolumeInfo):
             // maps DestroyTime -> expire_at_sec
             if let Ok(old_info) = serde_json::from_str::<OldVersionVifVolumeInfo>(&content) {
-                let vif_info = old_info.to_vif();
+                let vif_info = old_info.into_vif();
                 let pb_info = vif_info.to_pb();
                 if pb_info.read_only {
                     self.no_write_or_delete = true;

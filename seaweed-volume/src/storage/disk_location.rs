@@ -547,6 +547,7 @@ impl DiskLocation {
     }
 
     /// Create a new volume in this location.
+    #[expect(clippy::too_many_arguments)]
     pub fn create_volume(
         &mut self,
         vid: VolumeId,
