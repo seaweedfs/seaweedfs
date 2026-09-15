@@ -59,77 +59,77 @@ type MonitoringData struct {
 }
 
 type MonitoringOverview struct {
-	UnderReplicatedVolumes []float64
-	WritableVolumes        []float64
-	CrowdedVolumes         []float64
-	DiskUsagePct           []float64
+	UnderReplicatedVolumes []Point
+	WritableVolumes        []Point
+	CrowdedVolumes         []Point
+	DiskUsagePct           []Point
 
-	VolumeReadRate   []float64
-	VolumeWriteRate  []float64
-	FilerRequestRate []float64
-	S3RequestRate    []float64
+	VolumeReadRate   []Point
+	VolumeWriteRate  []Point
+	FilerRequestRate []Point
+	S3RequestRate    []Point
 
-	VolumeP50 []float64
-	VolumeP95 []float64
-	VolumeP99 []float64
-	FilerP50  []float64
-	FilerP95  []float64
-	FilerP99  []float64
+	VolumeP50 []Point
+	VolumeP95 []Point
+	VolumeP99 []Point
+	FilerP50  []Point
+	FilerP95  []Point
+	FilerP99  []Point
 
-	VolumeErrorRate []float64
-	FilerErrorRate  []float64
-	S3ErrorRate     []float64
-	DiskErrors      []float64
-	Quarantined     []float64
+	VolumeErrorRate []Point
+	FilerErrorRate  []Point
+	S3ErrorRate     []Point
+	DiskErrors      []Point
+	Quarantined     []Point
 
-	QueueDepth []float64
-	SlotsUsed  []float64
-	SlotsMax   []float64
+	QueueDepth []Point
+	SlotsUsed  []Point
+	SlotsMax   []Point
 }
 
 type MonitoringVolumeServer struct {
 	Address      string
-	RequestRate  []float64
-	P99          []float64
-	DiskUsagePct []float64
-	ErrorRate    []float64
+	RequestRate  []Point
+	P99          []Point
+	DiskUsagePct []Point
+	ErrorRate    []Point
 	HasData      bool
 }
 
 type MonitoringFiler struct {
 	Address     string
-	RequestRate []float64
-	P99         []float64
-	StoreP99    []float64
-	InFlight    []float64
-	SyncLag     []float64
+	RequestRate []Point
+	P99         []Point
+	StoreP99    []Point
+	InFlight    []Point
+	SyncLag     []Point
 	HasData     bool
 }
 
 type MonitoringS3 struct {
 	Address     string
-	RequestRate []float64
-	Errors4xx   []float64
-	Errors5xx   []float64
-	P99         []float64
+	RequestRate []Point
+	Errors4xx   []Point
+	Errors5xx   []Point
+	P99         []Point
 	HasData     bool
 }
 
 type MonitoringMaster struct {
 	Address        string
 	IsLeader       bool
-	HeartbeatRate  []float64
-	VolumeCreation []float64
-	LeaderChanges  []float64
-	PlacementMiss  []float64
+	HeartbeatRate  []Point
+	VolumeCreation []Point
+	LeaderChanges  []Point
+	PlacementMiss  []Point
 	HasData        bool
 }
 
 type MonitoringWorkers struct {
-	QueueDepth []float64
-	SlotsUsed  []float64
-	SlotsMax   []float64
-	TaskRate   []float64
+	QueueDepth []Point
+	SlotsUsed  []Point
+	SlotsMax   []Point
+	TaskRate   []Point
 	Connected  int
 	Workers    []MonitoringWorker
 }
@@ -179,9 +179,13 @@ func isWriteRequest(labels map[string]string) bool {
 
 func (s *AdminServer) fillOverview(d *MonitoringData) {
 	o := &d.Overview
-	o.UnderReplicatedVolumes = s.sum(srcMaster, mMasterUnderReplicated)
-	o.WritableVolumes = s.sum(srcMaster, mMasterWritable)
-	o.CrowdedVolumes = s.sum(srcMaster, mMasterCrowded)
+	// These are cluster-wide gauges that only the leader maintains. Summing
+	// across masters would double-count, and a demoted master keeps serving
+	// stale values, so read them from the leader alone.
+	leader := s.leaderSource()
+	o.UnderReplicatedVolumes = s.sum(leader, mMasterUnderReplicated)
+	o.WritableVolumes = s.sum(leader, mMasterWritable)
+	o.CrowdedVolumes = s.sum(leader, mMasterCrowded)
 	o.DiskUsagePct = s.diskUsagePct(srcVolume)
 
 	o.VolumeReadRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, isReadRequest)
@@ -298,6 +302,22 @@ func (s *AdminServer) fillWorkers(d *MonitoringData) {
 	}
 }
 
+// leaderSource returns the store source for the current master leader, or
+// srcMaster when the leader is unknown. Cluster-wide master gauges are only
+// meaningful on the leader.
+func (s *AdminServer) leaderSource() string {
+	md, err := s.GetClusterMasters()
+	if err != nil || md == nil {
+		return srcMaster
+	}
+	for _, m := range md.Masters {
+		if m.IsLeader {
+			return srcMaster + "/" + m.Address
+		}
+	}
+	return srcMaster
+}
+
 // sourceAddresses lists the scraped server addresses for a component, sorted.
 func (s *AdminServer) sourceAddresses(component string) []string {
 	seen := map[string]bool{}
@@ -314,19 +334,19 @@ func (s *AdminServer) sourceAddresses(component string) []string {
 	return out
 }
 
-func (s *AdminServer) sum(source, metric string) []float64 {
+func (s *AdminServer) sum(source, metric string) []Point {
 	return s.sumFiltered(source, metric, nil)
 }
 
 // sumFiltered adds every matching series together per sample timestamp. Use it
 // for counts and rates, which are additive across servers and labels.
-func (s *AdminServer) sumFiltered(source, metric string, keep func(map[string]string) bool) []float64 {
+func (s *AdminServer) sumFiltered(source, metric string, keep func(map[string]string) bool) []Point {
 	return s.reduce(source, metric, keep, func(acc, v float64) float64 { return acc + v })
 }
 
 // max takes the worst value per timestamp. Use it for latency quantiles, which
 // cannot be summed meaningfully across servers.
-func (s *AdminServer) max(source, metric string) []float64 {
+func (s *AdminServer) max(source, metric string) []Point {
 	return s.reduce(source, metric, nil, func(acc, v float64) float64 {
 		if v > acc {
 			return v
@@ -335,45 +355,46 @@ func (s *AdminServer) max(source, metric string) []float64 {
 	})
 }
 
-func (s *AdminServer) reduce(source, metric string, keep func(map[string]string) bool, combine func(acc, v float64) float64) []float64 {
+// reduce combines all matching series into one, bucketing strictly by sample
+// timestamp so series scraped at different times are never paired by index.
+func (s *AdminServer) reduce(source, metric string, keep func(map[string]string) bool, combine func(acc, v float64) float64) []Point {
 	matches := s.metricsStore.matchFiltered(source, metric, keep)
 	if len(matches) == 0 {
 		return nil
 	}
 	byTime := map[time.Time]float64{}
-	var times []time.Time
 	for _, ser := range matches {
 		for _, sm := range ser.snapshot() {
-			if _, ok := byTime[sm.t]; !ok {
-				times = append(times, sm.t)
-			}
 			byTime[sm.t] = combine(byTime[sm.t], sm.values[""])
 		}
 	}
-	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
-	out := make([]float64, len(times))
-	for i, t := range times {
-		out[i] = byTime[t]
+	return pointsFromMap(byTime)
+}
+
+func pointsFromMap(byTime map[time.Time]float64) []Point {
+	out := make([]Point, 0, len(byTime))
+	for t, v := range byTime {
+		out = append(out, Point{T: t, V: v})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].T.Before(out[j].T) })
 	return out
 }
 
 // diskUsagePct derives used/total disk as a percentage from the volume server
 // resource gauge, which reports bytes per mount under type=used and type=all.
-func (s *AdminServer) diskUsagePct(source string) []float64 {
+// The two series are joined on timestamp, so a scrape that captured only one of
+// them never divides values from different cycles.
+func (s *AdminServer) diskUsagePct(source string) []Point {
 	used := s.sumFiltered(source, mVolumeResource, hasLabel("type", "used"))
 	all := s.sumFiltered(source, mVolumeResource, hasLabel("type", "all"))
-	n := len(used)
-	if len(all) < n {
-		n = len(all)
+	capacity := make(map[time.Time]float64, len(all))
+	for _, p := range all {
+		capacity[p.T] = p.V
 	}
-	if n == 0 {
-		return nil
-	}
-	out := make([]float64, n)
-	for i := 0; i < n; i++ {
-		if all[i] > 0 {
-			out[i] = used[i] / all[i] * 100
+	out := make([]Point, 0, len(used))
+	for _, p := range used {
+		if total, ok := capacity[p.T]; ok && total > 0 {
+			out = append(out, Point{T: p.T, V: p.V / total * 100})
 		}
 	}
 	return out

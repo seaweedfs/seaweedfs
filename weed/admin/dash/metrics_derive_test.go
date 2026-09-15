@@ -109,6 +109,63 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 }
 
+// Series scraped at different times must not be paired by index.
+func TestChartAlignsSeriesByTimestamp(t *testing.T) {
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	t0, t1, t2 := base, base.Add(15*time.Second), base.Add(30*time.Second)
+
+	dense := ChartSeries{Name: "dense", Data: []Point{{t0, 1}, {t1, 2}, {t2, 3}}}
+	// Sparse series missing the middle sample; it must land on t2, not t1.
+	sparse := ChartSeries{Name: "sparse", Data: []Point{{t0, 10}, {t2, 30}}}
+
+	times := unionTimes([]ChartSeries{dense, sparse})
+	if len(times) != 3 {
+		t.Fatalf("unionTimes = %d, want 3", len(times))
+	}
+	slot := map[time.Time]int{t0: 0, t1: 1, t2: 2}
+	runs := contiguousRuns(sparse.Data, slot)
+	if len(runs) != 2 {
+		t.Fatalf("gap should split into 2 runs, got %d", len(runs))
+	}
+	if runs[0][0].T != t0 || runs[1][0].T != t2 {
+		t.Errorf("runs landed on wrong timestamps: %v", runs)
+	}
+}
+
+func TestDiskUsagePctJoinsOnTimestamp(t *testing.T) {
+	s := &AdminServer{metricsStore: newMetricsStore()}
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	t0, t1 := base, base.Add(15*time.Second)
+
+	used := map[string]string{"type": "used", "name": "/data"}
+	all := map[string]string{"type": "all", "name": "/data"}
+
+	// t0 has both used and capacity; t1 captured only used.
+	s.metricsStore.recordLabeled("volume/a", mVolumeResource, used, 50, t0)
+	s.metricsStore.recordLabeled("volume/a", mVolumeResource, all, 200, t0)
+	s.metricsStore.recordLabeled("volume/a", mVolumeResource, used, 80, t1)
+
+	got := s.diskUsagePct("volume")
+	if len(got) != 1 {
+		t.Fatalf("want 1 point (only t0 has both series), got %d: %v", len(got), got)
+	}
+	if got[0].T != t0 || got[0].V != 25 {
+		t.Errorf("got %v, want 25%% at t0", got[0])
+	}
+}
+
+func TestLatestValueUsesNewestTimestamp(t *testing.T) {
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	// Deliberately out of order.
+	data := []Point{{base.Add(30 * time.Second), 3}, {base, 1}}
+	if got := LatestValue(data); got != 3 {
+		t.Errorf("LatestValue = %v, want 3", got)
+	}
+	if got := LatestValue(nil); got != 0 {
+		t.Errorf("LatestValue(nil) = %v, want 0", got)
+	}
+}
+
 func TestStoreRingIsBounded(t *testing.T) {
 	s := newMetricsSeries("volume/a", "reqs", nil)
 	for i := 0; i < metricsMaxSamples+50; i++ {
