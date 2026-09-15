@@ -3,9 +3,11 @@ package s3err
 import (
 	"bytes"
 	"encoding/xml"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/gorilla/mux"
@@ -18,6 +20,8 @@ type mimeType string
 const (
 	mimeNone mimeType = ""
 	MimeXML  mimeType = "application/xml"
+
+	errorResponseBodyDrainTimeout = 30 * time.Second
 )
 
 func WriteAwsXMLResponse(w http.ResponseWriter, r *http.Request, statusCode int, result interface{}) {
@@ -62,8 +66,20 @@ func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, error
 	if message != "" {
 		errorResponse.Message = message
 	}
+	drainRequestBody(w, r)
 	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
+}
+
+func drainRequestBody(w http.ResponseWriter, r *http.Request) {
+	if r == nil || r.Body == nil || r.Body == http.NoBody {
+		return
+	}
+	rc := http.NewResponseController(w)
+	if err := rc.SetReadDeadline(time.Now().Add(errorResponseBodyDrainTimeout)); err == nil {
+		defer rc.SetReadDeadline(time.Time{})
+	}
+	_, _ = io.Copy(io.Discard, r.Body)
 }
 
 func getRESTErrorResponse(err APIError, resource string, bucket, object, requestID string) RESTErrorResponse {
