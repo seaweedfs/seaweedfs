@@ -36,6 +36,27 @@ func Test_markerSortsBeforePrefix(t *testing.T) {
 	}
 }
 
+// A marker ending on the delimiter is trimmed to a shorter cutoff for the walk, which no
+// longer excludes the key the client named, so that key is skipped as it streams.
+func Test_excludedMarkerKey(t *testing.T) {
+	tests := []struct {
+		name          string
+		requestMarker string
+		marker        string
+		want          string
+	}{
+		{"marker trimmed to a shorter cutoff", "docker/", "docker", "docker/"},
+		{"leading slashes are dropped, as the keys carry none", "/docker/", "docker", "docker/"},
+		{"untrimmed marker: the walk already excludes it", "docker", "docker", ""},
+		{"no marker", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, excludedMarkerKey(tt.requestMarker, tt.marker), "excludedMarkerKey(%q, %q)", tt.requestMarker, tt.marker)
+		})
+	}
+}
+
 // TestListWithMarkerBeforePrefix walks the whole listing path the way listFilerEntries
 // does, for the two start-after values a registry sends against the same prefix.
 func TestListWithMarkerBeforePrefix(t *testing.T) {

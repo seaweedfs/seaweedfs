@@ -109,12 +109,14 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
+	requestMarker := marker
 	marker = adjustMarkerForDelimiter(marker, originalPrefix, delimiter)
 
 	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
 		bucket:          bucket,
 		prefix:          originalPrefix,
 		marker:          marker,
+		requestMarker:   requestMarker,
 		delimiter:       delimiter,
 		maxKeys:         maxKeys,
 		encodingTypeUrl: encodingTypeUrl,
@@ -188,6 +190,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		bucket:          bucket,
 		prefix:          originalPrefix,
 		marker:          marker,
+		requestMarker:   requestMarker,
 		delimiter:       delimiter,
 		maxKeys:         uint16(maxKeys),
 		encodingTypeUrl: encodingTypeUrl,
@@ -198,7 +201,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	sanitizeV1MarkerEcho(&response, requestMarker, marker, encodingTypeUrl)
+	sanitizeV1MarkerEcho(&response, marker, encodingTypeUrl)
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.bucketExists(bucket); existErr == nil && !exists {
@@ -211,11 +214,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, r, toListBucketResultV1(response))
 }
 
-// sanitizeV1MarkerEcho echoes the marker the client sent, not the cutoff the walk used:
-// a marker ending on the delimiter is trimmed for the walk. Only that cutoff is filtered
-// out of the page, so no key the walk spent a slot on silently disappears.
-func sanitizeV1MarkerEcho(response *ListBucketResult, requestMarker, marker string, encodingTypeUrl bool) {
-	response.Marker = requestMarker
+func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTypeUrl bool) {
 	if marker == "" {
 		return
 	}
@@ -256,9 +255,13 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, requestMarker, marker stri
 }
 
 type listObjectsRequest struct {
-	bucket          string
-	prefix          string
-	marker          string
+	bucket string
+	prefix string
+	marker string
+	// requestMarker is the marker as the client sent it, before a marker ending on the
+	// delimiter was trimmed to the walk's cutoff. The response echoes it, and no key it
+	// names is listed.
+	requestMarker   string
 	delimiter       string
 	maxKeys         uint16
 	encodingTypeUrl bool
@@ -269,6 +272,11 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 	bucket, originalPrefix, originalMarker := req.bucket, req.prefix, req.marker
 	maxKeys, delimiter := req.maxKeys, req.delimiter
 	encodingTypeUrl, fetchOwner := req.encodingTypeUrl, req.fetchOwner
+	requestMarker := req.requestMarker
+	if requestMarker == "" {
+		requestMarker = originalMarker
+	}
+	excludedKey := excludedMarkerKey(requestMarker, originalMarker)
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker, prefixEndsOnDelimiter := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := s3a.bucketPrefix(bucket)
@@ -291,7 +299,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 		response = ListBucketResult{
 			Name:           bucket,
 			Prefix:         originalPrefix,
-			Marker:         originalMarker,
+			Marker:         requestMarker,
 			NextMarker:     "",
 			MaxKeys:        int(maxKeys),
 			Delimiter:      delimiter,
@@ -529,6 +537,9 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 			nextMarker, doErr = s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: reqDir, prefix: prefix, marker: marker, delimiter: delimiter, bucket: bucket}, cursor, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				prunePendingNulls(dir, entry.Name)
+				if excludedKey != "" && !entry.IsDirectory && fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):] == excludedKey {
+					return
+				}
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					if originalPrefix != "" {
@@ -731,7 +742,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 		response = ListBucketResult{
 			Name:           bucket,
 			Prefix:         originalPrefix,
-			Marker:         originalMarker,
+			Marker:         requestMarker,
 			NextMarker:     nextMarker,
 			MaxKeys:        int(maxKeys),
 			Delimiter:      delimiter,
@@ -775,6 +786,17 @@ type ListingCursor struct {
 	// resolvePendingNulls settles trailing null objects whose .versions sibling
 	// has not streamed yet before a page is declared full.
 	resolvePendingNulls func() error
+}
+
+// excludedMarkerKey returns the key an exclusive marker names that the walk's cutoff no
+// longer excludes, because a marker ending on the delimiter is trimmed to that cutoff.
+// The key is skipped as it streams, rather than spending a slot of the page and being
+// dropped from the answer afterwards, which would turn a truncated page into a final one.
+func excludedMarkerKey(requestMarker, marker string) string {
+	if requestMarker == marker {
+		return ""
+	}
+	return strings.TrimLeft(requestMarker, "/")
 }
 
 // markerSortsBeforePrefix reports whether marker is a cutoff that excludes no key

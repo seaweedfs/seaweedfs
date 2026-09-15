@@ -610,7 +610,7 @@ func TestSanitizeV1MarkerEcho_NoProgressGuard(t *testing.T) {
 		},
 	}
 
-	sanitizeV1MarkerEcho(&response, "test.txt", "test.txt", false)
+	sanitizeV1MarkerEcho(&response, "test.txt", false)
 
 	assert.Empty(t, response.Contents)
 	assert.Equal(t, "", response.NextMarker)
@@ -625,33 +625,11 @@ func TestSanitizeV1MarkerEcho_NoProgressGuard(t *testing.T) {
 		},
 	}
 
-	sanitizeV1MarkerEcho(&response2, "test file.txt", "test file.txt", true)
+	sanitizeV1MarkerEcho(&response2, "test file.txt", true)
 
 	assert.Empty(t, response2.Contents)
 	assert.Equal(t, "", response2.NextMarker)
 	assert.False(t, response2.IsTruncated)
-}
-
-// A marker ending on the delimiter is trimmed to a cutoff for the walk, but the response
-// echoes what the client sent. Only the cutoff is filtered: a page the walk spent its
-// budget on must keep the keys it holds, or a truncated page would end the listing.
-func TestSanitizeV1MarkerEcho_DelimiterAdjustedMarker(t *testing.T) {
-	response := ListBucketResult{
-		Marker:      "docker",
-		NextMarker:  "docker/registry",
-		IsTruncated: true,
-		Contents: []ListEntry{
-			{Key: "docker"},
-			{Key: "docker/registry"},
-		},
-	}
-
-	sanitizeV1MarkerEcho(&response, "docker/", "docker", false)
-
-	assert.Equal(t, "docker/", response.Marker)
-	assert.Equal(t, []ListEntry{{Key: "docker/registry"}}, response.Contents)
-	assert.Equal(t, "docker/registry", response.NextMarker)
-	assert.True(t, response.IsTruncated)
 }
 
 // TestMaxKeysParameterValidation tests the validation of max-keys parameter
