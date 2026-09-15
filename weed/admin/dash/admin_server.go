@@ -126,6 +126,10 @@ type AdminServer struct {
 	dashSamples   []dashSample
 	dashSamplesMu sync.Mutex
 
+	// metricsStore holds scraped per-server Prometheus series for the
+	// monitoring pages. Filled by the scrape loop in startMetricsScraper.
+	metricsStore *metricsStore
+
 	// Filer discovery and caching
 	cachedFilers         []string
 	lastFilerUpdate      time.Time
@@ -210,6 +214,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
+		metricsStore:                  newMetricsStore(),
 	}
 
 	// Initialize topic retention purger
@@ -321,6 +326,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 	}
 
 	go server.publishMaintenanceMetrics(bgCtx)
+	go server.startMetricsScraper(bgCtx)
 
 	return server
 }
