@@ -65,6 +65,11 @@ jobs:
       # - name: Clippy
       #   run: cd seaweed-volume && cargo clippy --all-targets -- -D warnings
 
+      # The crate is rustfmt-clean as of the PR that added this step.
+      # Uncomment to keep it that way.
+      # - name: Check formatting
+      #   run: cd seaweed-volume && cargo fmt --check
+
       - name: Run Rust unit tests
         run: cd seaweed-volume && cargo test
 
