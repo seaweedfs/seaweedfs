@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/common/expfmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -62,31 +63,55 @@ func parsePrometheusText(r io.Reader) ([]scrapedMetric, error) {
 			for _, l := range m.Label {
 				labels[l.GetName()] = l.GetValue()
 			}
-			var v float64
-			switch {
-			case m.Gauge != nil:
-				v = m.Gauge.GetValue()
-			case m.Counter != nil:
-				v = m.Counter.GetValue()
-			case m.Untyped != nil:
-				v = m.Untyped.GetValue()
-			case m.Histogram != nil:
-				v = m.Histogram.GetSampleSum()
-			case m.Summary != nil:
-				v = m.Summary.GetSampleSum()
-			}
-			out = append(out, scrapedMetric{name: fam.GetName(), labels: labels, value: v})
+			out = append(out, scrapedMetric{name: fam.GetName(), labels: labels, value: metricValue(m)})
 		}
 	}
 	return out, nil
 }
 
+func metricValue(m *dto.Metric) float64 {
+	switch {
+	case m.Gauge != nil:
+		return m.Gauge.GetValue()
+	case m.Counter != nil:
+		return m.Counter.GetValue()
+	case m.Untyped != nil:
+		return m.Untyped.GetValue()
+	case m.Histogram != nil:
+		return m.Histogram.GetSampleSum()
+	case m.Summary != nil:
+		return m.Summary.GetSampleSum()
+	}
+	return 0
+}
+
+// gatherLocalMetrics records the admin's own registry (maintenance tasks,
+// worker slots) without a network round trip.
+func (s *AdminServer) gatherLocalMetrics(now time.Time) {
+	families, err := stats_collect.Gather.Gather()
+	if err != nil {
+		glog.V(1).Infof("gather admin metrics: %v", err)
+		return
+	}
+	for _, fam := range families {
+		for _, m := range fam.Metric {
+			labels := map[string]string{}
+			for _, l := range m.Label {
+				labels[l.GetName()] = l.GetValue()
+			}
+			s.metricsStore.recordLabeled("admin/local", fam.GetName(), labels, metricValue(m), now)
+		}
+	}
+}
+
 func (s *AdminServer) scrapeAllServers(ctx context.Context) {
+	now := time.Now()
+	s.gatherLocalMetrics(now)
+
 	targets := s.scrapeTargets()
 	if len(targets) == 0 {
 		return
 	}
-	now := time.Now()
 	type result struct {
 		source  string
 		metrics []scrapedMetric

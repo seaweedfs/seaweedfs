@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,8 +40,8 @@ func (s *metricsSeries) snapshot() []metricsSample {
 }
 
 type metricsStore struct {
-	mu      sync.Mutex
-	series  map[string]*metricsSeries
+	mu     sync.Mutex
+	series map[string]*metricsSeries
 }
 
 func newMetricsStore() *metricsStore {
@@ -91,6 +92,36 @@ func (s *metricsStore) getLabeled(source, name string, labels map[string]string)
 		return nil
 	}
 	return ser.snapshot()
+}
+
+// match returns every series whose source has the given prefix and whose
+// metric name matches exactly.
+func (s *metricsStore) match(sourcePrefix, name string) []*metricsSeries {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*metricsSeries
+	for k, ser := range s.series {
+		if !strings.HasPrefix(k, sourcePrefix) {
+			continue
+		}
+		rest := k[len(sourcePrefix):]
+		if !strings.HasPrefix(rest, "/") {
+			continue
+		}
+		rest = rest[1:]
+		// rest is either "<addr>/<metric>[/<labels>]" or "<metric>[/<labels>]".
+		if rest == name || strings.HasPrefix(rest, name+"/") {
+			out = append(out, ser)
+			continue
+		}
+		if i := strings.Index(rest, "/"); i >= 0 {
+			tail := rest[i+1:]
+			if tail == name || strings.HasPrefix(tail, name+"/") {
+				out = append(out, ser)
+			}
+		}
+	}
+	return out
 }
 
 func labelKey(labels map[string]string) string {
