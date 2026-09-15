@@ -9,10 +9,10 @@ use std::path::Path;
 use tracing::info;
 
 use crate::storage::idx;
-use crate::storage::needle::needle::needle_body_length;
 use crate::storage::needle::Needle;
+use crate::storage::needle::needle::needle_body_length;
 use crate::storage::types::*;
-use crate::storage::volume::{fsync_dir, Volume, VolumeError};
+use crate::storage::volume::{Volume, VolumeError, fsync_dir};
 
 /// Needles found in the head of .dat, keyed by id, plus the ids in .dat order.
 type DatHeadNeedles = (HashMap<NeedleId, (Offset, Size)>, Vec<NeedleId>);

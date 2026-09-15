@@ -801,23 +801,26 @@ impl RedbNeedleMap {
                 }
                 #[cfg(feature = "redb-experimental-cursor")]
                 {
-                    let mut cursor = table
-                        .upper_bound_mut(Bound::<u64>::Unbounded)
-                        .map_err(|e| {
-                            io::Error::new(
-                                io::ErrorKind::Other,
-                                format!("redb upper_bound_mut: {}", e),
-                            )
-                        })?;
+                    let mut cursor =
+                        table
+                            .upper_bound_mut(Bound::<u64>::Unbounded)
+                            .map_err(|e| {
+                                io::Error::new(
+                                    io::ErrorKind::Other,
+                                    format!("redb upper_bound_mut: {}", e),
+                                )
+                            })?;
                     for (key, nv) in &entries {
                         let key_u64: u64 = (*key).into();
                         let packed = pack_needle_value(nv);
-                        cursor.insert_before(key_u64, packed.as_slice()).map_err(|e| {
-                            io::Error::new(
-                                io::ErrorKind::Other,
-                                format!("redb insert_before: {}", e),
-                            )
-                        })?;
+                        cursor
+                            .insert_before(key_u64, packed.as_slice())
+                            .map_err(|e| {
+                                io::Error::new(
+                                    io::ErrorKind::Other,
+                                    format!("redb insert_before: {}", e),
+                                )
+                            })?;
                     }
                     cursor.close().map_err(|e| {
                         io::Error::new(io::ErrorKind::Other, format!("redb cursor close: {}", e))
@@ -1114,18 +1117,12 @@ impl RedbNeedleMap {
         let read_file = std::fs::OpenOptions::new()
             .read(true)
             .open(&idx_path)
-            .map_err(|e| {
-                io::Error::other(format!("reopen: open .idx {}: {}", idx_path, e))
-            })?;
+            .map_err(|e| io::Error::other(format!("reopen: open .idx {}: {}", idx_path, e)))?;
         let actual_idx_size = read_file.metadata()?.len();
         let mut reader = io::BufReader::new(read_file);
 
-        let reopened = Self::load_from_idx(
-            &self.rdb_path,
-            &mut reader,
-            self.version,
-            self.cache_bytes,
-        )?;
+        let reopened =
+            Self::load_from_idx(&self.rdb_path, &mut reader, self.version, self.cache_bytes)?;
 
         // Preserve the append writer and the paths/version/cache; adopt the
         // repaired database, metrics, and idx_file_offset from the reload.
@@ -2136,8 +2133,14 @@ mod tests {
         // server opens one redb database per volume, so the process-wide
         // ceiling is roughly (volumes x budget).
         assert_eq!(NeedleMapKind::Redb.redb_cache_bytes(), 4 * 1024 * 1024);
-        assert_eq!(NeedleMapKind::RedbMedium.redb_cache_bytes(), 8 * 1024 * 1024);
-        assert_eq!(NeedleMapKind::RedbLarge.redb_cache_bytes(), 16 * 1024 * 1024);
+        assert_eq!(
+            NeedleMapKind::RedbMedium.redb_cache_bytes(),
+            8 * 1024 * 1024
+        );
+        assert_eq!(
+            NeedleMapKind::RedbLarge.redb_cache_bytes(),
+            16 * 1024 * 1024
+        );
     }
 
     #[test]
@@ -2176,8 +2179,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut nm, db_path, _idx_path) = open_writable_redb(dir.path());
         for i in 1..EXPECTED_INTERVAL {
-            nm.put(NeedleId(i), Offset::from_actual_offset((i * 8) as i64), Size(1))
-                .unwrap();
+            nm.put(
+                NeedleId(i),
+                Offset::from_actual_offset((i * 8) as i64),
+                Size(1),
+            )
+            .unwrap();
             assert!(!nm.checkpoint_due(), "due after only {i} writes");
         }
         nm.put(
@@ -2187,7 +2194,11 @@ mod tests {
         )
         .unwrap();
         assert!(nm.checkpoint_due());
-        assert_eq!(durable_idx_size(&db_path), None, "put() must not commit durably");
+        assert_eq!(
+            durable_idx_size(&db_path),
+            None,
+            "put() must not commit durably"
+        );
 
         nm.checkpoint(true).unwrap();
         assert!(!nm.checkpoint_due());
@@ -2215,8 +2226,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
         for i in 1..=5u64 {
-            nm.put(NeedleId(i), Offset::from_actual_offset((i * 8) as i64), Size(1))
-                .unwrap();
+            nm.put(
+                NeedleId(i),
+                Offset::from_actual_offset((i * 8) as i64),
+                Size(1),
+            )
+            .unwrap();
         }
         nm.close();
         drop(nm);
@@ -2240,8 +2255,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut nm, db_path, idx_path) = open_writable_redb(dir.path());
         for i in 1..=5u64 {
-            nm.put(NeedleId(i), Offset::from_actual_offset((i * 8) as i64), Size(1))
-                .unwrap();
+            nm.put(
+                NeedleId(i),
+                Offset::from_actual_offset((i * 8) as i64),
+                Size(1),
+            )
+            .unwrap();
         }
         // Drop without close(): redb makes the table durable on drop, but the
         // recorded .idx size stays at its load-time value (0), so the reload

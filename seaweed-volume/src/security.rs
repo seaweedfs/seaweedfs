@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -481,9 +481,11 @@ mod tests {
         let token = gen_jwt(&key, 3600, "3,01637037d6").unwrap();
 
         // Correct file ID
-        assert!(guard
-            .check_jwt_for_file(Some(&token), "3,01637037d6", true)
-            .is_ok());
+        assert!(
+            guard
+                .check_jwt_for_file(Some(&token), "3,01637037d6", true)
+                .is_ok()
+        );
 
         // Wrong file ID
         let err = guard.check_jwt_for_file(Some(&token), "4,deadbeef", true);

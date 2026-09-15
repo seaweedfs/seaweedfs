@@ -10,11 +10,9 @@ use std::io::{Read, Seek, SeekFrom};
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
-use crate::pb::volume_server_pb::{
-    ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums,
-};
+use crate::pb::volume_server_pb::{ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums};
 use crate::storage::erasure_coding::ec_bitrot::{
-    self, ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+    self, DEFAULT_BITROT_BLOCK_SIZE, ShardChecksumBuilder,
 };
 use crate::storage::erasure_coding::ec_shard::*;
 use crate::storage::idx;
@@ -585,7 +583,8 @@ pub fn rebuild_ecx_file(
         }
 
         let cookie = Cookie::from_bytes(&header_buf[..COOKIE_SIZE]);
-        let needle_id = NeedleId::from_bytes(&header_buf[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
+        let needle_id =
+            NeedleId::from_bytes(&header_buf[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
         let size = Size::from_bytes(&header_buf[COOKIE_SIZE + NEEDLE_ID_SIZE..header_size]);
 
         // Validate: stop if we hit zero cookie+id (end of data)
@@ -1032,7 +1031,10 @@ mod tests {
         let victim = format!("{}/1.ec03", dir);
         let full = std::fs::metadata(&victim).unwrap().len();
         assert!(full > 0, "encoded shard should be non-empty");
-        let f = std::fs::OpenOptions::new().write(true).open(&victim).unwrap();
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&victim)
+            .unwrap();
         f.set_len(full / 2).unwrap();
         drop(f);
 
@@ -1224,7 +1226,10 @@ mod tests {
 
         rebuild_ecx_file(&dir, "", VolumeId(2), 10, block_size, 0, &[]).unwrap();
         let rebuilt = std::fs::read(&ecx_path).unwrap();
-        assert_eq!(canonical, rebuilt, "rebuilt .ecx must match the encode-time .ecx");
+        assert_eq!(
+            canonical, rebuilt,
+            "rebuilt .ecx must match the encode-time .ecx"
+        );
     }
 
     // A truncated data shard must FAIL the .ecx rebuild, not publish the

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-use lance::dataset::cleanup::{cleanup_old_versions, CleanupPolicy};
+use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
     ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
@@ -13,7 +13,7 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::catalog::{parse_id, NamespaceClient};
+use crate::catalog::{NamespaceClient, parse_id};
 use crate::dataset;
 use crate::jobs::{clamp, string_list, table_id};
 

@@ -258,7 +258,13 @@ mod tests {
         // 24h normalizes to 1d via fitTtlCount
         let ttl = TTL::read("24h").unwrap();
         assert_eq!(ttl.to_seconds(), 86400);
-        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_DAY
+            }
+        );
     }
 
     #[test]
@@ -304,12 +310,24 @@ mod tests {
     fn test_ttl_overflow_normalizes() {
         // Go's ReadTTL calls fitTtlCount: 300m = 18000s = 5h (exact fit)
         let ttl = TTL::read("300m").unwrap();
-        assert_eq!(ttl, TTL { count: 5, unit: TTL_UNIT_HOUR });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 5,
+                unit: TTL_UNIT_HOUR
+            }
+        );
 
         // 256h = 921600s. Doesn't fit in hours (256 >= 256), doesn't fit exact in days.
         // Second pass: 921600/86400 = 10 (truncated) < 256 -> 10d
         let ttl = TTL::read("256h").unwrap();
-        assert_eq!(ttl, TTL { count: 10, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 10,
+                unit: TTL_UNIT_DAY
+            }
+        );
     }
 
     #[test]
@@ -317,19 +335,49 @@ mod tests {
         // Go's ReadTTL calls fitTtlCount which normalizes to coarsest unit.
         // 120m -> 2h, 7d -> 1w, 24h -> 1d.
         let ttl = TTL::read("120m").unwrap();
-        assert_eq!(ttl, TTL { count: 2, unit: TTL_UNIT_HOUR });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 2,
+                unit: TTL_UNIT_HOUR
+            }
+        );
 
         let ttl = TTL::read("7d").unwrap();
-        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_WEEK });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_WEEK
+            }
+        );
 
         let ttl = TTL::read("24h").unwrap();
-        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_DAY
+            }
+        );
 
         // Values that don't simplify stay as-is
         let ttl = TTL::read("5d").unwrap();
-        assert_eq!(ttl, TTL { count: 5, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 5,
+                unit: TTL_UNIT_DAY
+            }
+        );
 
         let ttl = TTL::read("3m").unwrap();
-        assert_eq!(ttl, TTL { count: 3, unit: TTL_UNIT_MINUTE });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 3,
+                unit: TTL_UNIT_MINUTE
+            }
+        );
     }
 }

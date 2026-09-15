@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
-use tokio::sync::{mpsc, Semaphore};
+use anyhow::{Context, Result, anyhow};
+use tokio::sync::{Semaphore, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use tracing::{info, warn};
@@ -10,11 +10,11 @@ use tracing::{info, warn};
 use crate::config::WorkerOptions;
 use crate::metrics::Metrics;
 use crate::pb::{
+    ConfigSchemaResponse, ExecuteJobRequest, JobCompleted, ObjectPreviewResponse, PreviewRow,
+    RequestObjectPreview, RunDetectionRequest, RunningWork, WorkerHeartbeat, WorkerHello,
     admin_to_worker_message::Body as AdminBody,
     plugin_control_service_client::PluginControlServiceClient,
-    worker_to_admin_message::Body as WorkerBody, ConfigSchemaResponse, ExecuteJobRequest,
-    JobCompleted, ObjectPreviewResponse, PreviewRow, RequestObjectPreview, RunDetectionRequest,
-    RunningWork, WorkerHeartbeat, WorkerHello,
+    worker_to_admin_message::Body as WorkerBody,
 };
 use crate::registry::Registry;
 use crate::senders::{MeteredSender, StreamSender};

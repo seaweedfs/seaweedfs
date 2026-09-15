@@ -119,7 +119,11 @@ pub fn check_blocked_ip(endpoint: &str, ip: IpAddr) -> Result<(), String> {
 /// reachable for callers whose target legitimately sits on an internal network
 /// (peer volume servers), while still blocking loopback, link-local (IMDS) and
 /// unspecified. Mirrors Go's `checkBlockedIPPolicy`.
-pub fn check_blocked_ip_policy(endpoint: &str, ip: IpAddr, allow_private: bool) -> Result<(), String> {
+pub fn check_blocked_ip_policy(
+    endpoint: &str,
+    ip: IpAddr,
+    allow_private: bool,
+) -> Result<(), String> {
     // Normalize IPv4-mapped IPv6 (`::ffff:a.b.c.d`) to its IPv4 form so the
     // IPv4 deny rules apply. The OS routes these to the embedded IPv4 address,
     // so without this `::ffff:127.0.0.1` / `::ffff:169.254.169.254` would slip
@@ -231,7 +235,7 @@ fn precheck_endpoint(endpoint: &str) -> Result<HostCheck, String> {
                 return Err(format!(
                     "remote endpoint {:?} has a malformed IPv6 host",
                     endpoint
-                ))
+                ));
             }
         }
     } else {
@@ -307,7 +311,10 @@ pub async fn validate_replica_target(target: &str) -> Result<(), String> {
         return Err("replica target is empty".to_string());
     }
     if trimmed.contains("://") || trimmed.contains(['/', '?', '#', '@', '\\']) {
-        return Err(format!("replica target {:?} must be a bare host:port", target));
+        return Err(format!(
+            "replica target {:?} must be a bare host:port",
+            target
+        ));
     }
 
     // Require an explicit host:port, handling `[IPv6]:port`. A bracketless IPv6
@@ -316,12 +323,22 @@ pub async fn validate_replica_target(target: &str) -> Result<(), String> {
     let host = if let Some(rest) = trimmed.strip_prefix('[') {
         match rest.split_once(']') {
             Some((h, port)) if port.starts_with(':') && port.len() > 1 => h,
-            _ => return Err(format!("replica target {:?} must be a bare host:port", target)),
+            _ => {
+                return Err(format!(
+                    "replica target {:?} must be a bare host:port",
+                    target
+                ));
+            }
         }
     } else {
         match trimmed.rsplit_once(':') {
             Some((h, port)) if !port.is_empty() && !h.contains(':') => h,
-            _ => return Err(format!("replica target {:?} must be a bare host:port", target)),
+            _ => {
+                return Err(format!(
+                    "replica target {:?} must be a bare host:port",
+                    target
+                ));
+            }
         }
     };
 
@@ -340,7 +357,10 @@ pub async fn validate_replica_target(target: &str) -> Result<(), String> {
 
     let addrs = resolve_host(host).await?;
     if addrs.is_empty() {
-        return Err(format!("resolve replica target host {:?}: no addresses", host));
+        return Err(format!(
+            "resolve replica target host {:?}: no addresses",
+            host
+        ));
     }
     for ip in addrs {
         check_blocked_ip_policy(target, ip, true)?;
@@ -378,22 +398,30 @@ mod tests {
     #[test]
     fn rejects_empty_and_bad_scheme() {
         assert!(precheck_endpoint("").unwrap_err().contains("empty"));
-        assert!(precheck_endpoint("ftp://example.com/")
-            .unwrap_err()
-            .contains("http or https"));
-        assert!(precheck_endpoint("example.com/")
-            .unwrap_err()
-            .contains("http or https"));
+        assert!(
+            precheck_endpoint("ftp://example.com/")
+                .unwrap_err()
+                .contains("http or https")
+        );
+        assert!(
+            precheck_endpoint("example.com/")
+                .unwrap_err()
+                .contains("http or https")
+        );
     }
 
     #[test]
     fn rejects_imds_hostnames() {
-        assert!(precheck_endpoint("http://metadata.google.internal/")
-            .unwrap_err()
-            .contains("metadata service"));
-        assert!(precheck_endpoint("http://metadata/")
-            .unwrap_err()
-            .contains("metadata service"));
+        assert!(
+            precheck_endpoint("http://metadata.google.internal/")
+                .unwrap_err()
+                .contains("metadata service")
+        );
+        assert!(
+            precheck_endpoint("http://metadata/")
+                .unwrap_err()
+                .contains("metadata service")
+        );
     }
 
     #[test]
@@ -413,27 +441,41 @@ mod tests {
     #[test]
     fn check_blocked_ip_matches_resolved_categories() {
         // Mirror Go's "host resolves to X" cases at the address level.
-        assert!(check_blocked_ip("e", ip("127.0.0.1"))
-            .unwrap_err()
-            .contains("loopback"));
-        assert!(check_blocked_ip("e", ip("169.254.10.20"))
-            .unwrap_err()
-            .contains("link-local"));
-        assert!(check_blocked_ip("e", ip("10.1.2.3"))
-            .unwrap_err()
-            .contains("private"));
-        assert!(check_blocked_ip("e", ip("172.20.0.5"))
-            .unwrap_err()
-            .contains("private"));
-        assert!(check_blocked_ip("e", ip("192.168.1.1"))
-            .unwrap_err()
-            .contains("private"));
-        assert!(check_blocked_ip("e", ip("100.64.0.42"))
-            .unwrap_err()
-            .contains("CGNAT"));
-        assert!(check_blocked_ip("e", ip("fc00::1"))
-            .unwrap_err()
-            .contains("private"));
+        assert!(
+            check_blocked_ip("e", ip("127.0.0.1"))
+                .unwrap_err()
+                .contains("loopback")
+        );
+        assert!(
+            check_blocked_ip("e", ip("169.254.10.20"))
+                .unwrap_err()
+                .contains("link-local")
+        );
+        assert!(
+            check_blocked_ip("e", ip("10.1.2.3"))
+                .unwrap_err()
+                .contains("private")
+        );
+        assert!(
+            check_blocked_ip("e", ip("172.20.0.5"))
+                .unwrap_err()
+                .contains("private")
+        );
+        assert!(
+            check_blocked_ip("e", ip("192.168.1.1"))
+                .unwrap_err()
+                .contains("private")
+        );
+        assert!(
+            check_blocked_ip("e", ip("100.64.0.42"))
+                .unwrap_err()
+                .contains("CGNAT")
+        );
+        assert!(
+            check_blocked_ip("e", ip("fc00::1"))
+                .unwrap_err()
+                .contains("private")
+        );
         assert!(check_blocked_ip("e", ip("52.216.10.10")).is_ok());
         assert!(check_blocked_ip("e", ip("2606:4700:4700::1111")).is_ok());
     }
@@ -476,33 +518,45 @@ mod tests {
         assert!(check_blocked_ip("e", ip("2001::f7f7:f7f7")).is_ok());
         assert!(check_blocked_ip("e", ip("::808:808")).is_ok());
         // Bracketed transition literal via the full endpoint path.
-        assert!(precheck_endpoint("http://[64:ff9b::a9fe:a9fe]/")
-            .unwrap_err()
-            .contains("metadata"));
+        assert!(
+            precheck_endpoint("http://[64:ff9b::a9fe:a9fe]/")
+                .unwrap_err()
+                .contains("metadata")
+        );
     }
 
     #[test]
     fn rejects_ipv4_mapped_ipv6() {
         // IPv4-mapped IPv6 must be unmapped so the IPv4 rules catch it.
-        assert!(check_blocked_ip("e", ip("::ffff:127.0.0.1"))
-            .unwrap_err()
-            .contains("loopback"));
-        assert!(check_blocked_ip("e", ip("::ffff:169.254.169.254"))
-            .unwrap_err()
-            .contains("metadata"));
-        assert!(check_blocked_ip("e", ip("::ffff:10.0.0.1"))
-            .unwrap_err()
-            .contains("private"));
+        assert!(
+            check_blocked_ip("e", ip("::ffff:127.0.0.1"))
+                .unwrap_err()
+                .contains("loopback")
+        );
+        assert!(
+            check_blocked_ip("e", ip("::ffff:169.254.169.254"))
+                .unwrap_err()
+                .contains("metadata")
+        );
+        assert!(
+            check_blocked_ip("e", ip("::ffff:10.0.0.1"))
+                .unwrap_err()
+                .contains("private")
+        );
         // A mapped public address still passes, and genuine IPv6 loopback is
         // still caught by the V6 path.
         assert!(check_blocked_ip("e", ip("::ffff:52.216.10.10")).is_ok());
-        assert!(check_blocked_ip("e", ip("::1"))
-            .unwrap_err()
-            .contains("loopback"));
+        assert!(
+            check_blocked_ip("e", ip("::1"))
+                .unwrap_err()
+                .contains("loopback")
+        );
         // Bracketed mapped literal via the full endpoint path.
-        assert!(precheck_endpoint("http://[::ffff:127.0.0.1]/")
-            .unwrap_err()
-            .contains("loopback"));
+        assert!(
+            precheck_endpoint("http://[::ffff:127.0.0.1]/")
+                .unwrap_err()
+                .contains("loopback")
+        );
     }
 
     #[test]
@@ -512,60 +566,86 @@ mod tests {
         assert!(check_blocked_ip_policy("e", ip("192.168.1.5"), true).is_ok());
         assert!(check_blocked_ip_policy("e", ip("100.64.0.42"), true).is_ok());
         // Loopback / IMDS / unspecified stay blocked even when private is allowed.
-        assert!(check_blocked_ip_policy("e", ip("127.0.0.1"), true)
-            .unwrap_err()
-            .contains("loopback"));
-        assert!(check_blocked_ip_policy("e", ip("169.254.169.254"), true)
-            .unwrap_err()
-            .contains("metadata"));
-        assert!(check_blocked_ip_policy("e", ip("0.0.0.0"), true)
-            .unwrap_err()
-            .contains("unspecified"));
+        assert!(
+            check_blocked_ip_policy("e", ip("127.0.0.1"), true)
+                .unwrap_err()
+                .contains("loopback")
+        );
+        assert!(
+            check_blocked_ip_policy("e", ip("169.254.169.254"), true)
+                .unwrap_err()
+                .contains("metadata")
+        );
+        assert!(
+            check_blocked_ip_policy("e", ip("0.0.0.0"), true)
+                .unwrap_err()
+                .contains("unspecified")
+        );
     }
 
     #[tokio::test]
     async fn validate_replica_target_rejects_and_allows() {
         // A path plus a trailing ?a= would otherwise swallow ?type=replicate.
-        assert!(validate_replica_target("127.0.0.1:7000/status/x/?a=")
-            .await
-            .unwrap_err()
-            .contains("bare host:port"));
-        assert!(validate_replica_target("http://10.0.0.7:8080")
-            .await
-            .unwrap_err()
-            .contains("bare host:port"));
-        assert!(validate_replica_target("user@10.0.0.7:8080")
-            .await
-            .unwrap_err()
-            .contains("bare host:port"));
-        assert!(validate_replica_target("10.0.0.7")
-            .await
-            .unwrap_err()
-            .contains("bare host:port"));
-        assert!(validate_replica_target("peer.example.com")
-            .await
-            .unwrap_err()
-            .contains("bare host:port"));
-        assert!(validate_replica_target("127.0.0.1:8080")
-            .await
-            .unwrap_err()
-            .contains("loopback"));
-        assert!(validate_replica_target("[::1]:8080")
-            .await
-            .unwrap_err()
-            .contains("loopback"));
-        assert!(validate_replica_target("169.254.169.254:80")
-            .await
-            .unwrap_err()
-            .contains("metadata"));
-        assert!(validate_replica_target("metadata:80")
-            .await
-            .unwrap_err()
-            .contains("metadata"));
-        assert!(validate_replica_target("")
-            .await
-            .unwrap_err()
-            .contains("empty"));
+        assert!(
+            validate_replica_target("127.0.0.1:7000/status/x/?a=")
+                .await
+                .unwrap_err()
+                .contains("bare host:port")
+        );
+        assert!(
+            validate_replica_target("http://10.0.0.7:8080")
+                .await
+                .unwrap_err()
+                .contains("bare host:port")
+        );
+        assert!(
+            validate_replica_target("user@10.0.0.7:8080")
+                .await
+                .unwrap_err()
+                .contains("bare host:port")
+        );
+        assert!(
+            validate_replica_target("10.0.0.7")
+                .await
+                .unwrap_err()
+                .contains("bare host:port")
+        );
+        assert!(
+            validate_replica_target("peer.example.com")
+                .await
+                .unwrap_err()
+                .contains("bare host:port")
+        );
+        assert!(
+            validate_replica_target("127.0.0.1:8080")
+                .await
+                .unwrap_err()
+                .contains("loopback")
+        );
+        assert!(
+            validate_replica_target("[::1]:8080")
+                .await
+                .unwrap_err()
+                .contains("loopback")
+        );
+        assert!(
+            validate_replica_target("169.254.169.254:80")
+                .await
+                .unwrap_err()
+                .contains("metadata")
+        );
+        assert!(
+            validate_replica_target("metadata:80")
+                .await
+                .unwrap_err()
+                .contains("metadata")
+        );
+        assert!(
+            validate_replica_target("")
+                .await
+                .unwrap_err()
+                .contains("empty")
+        );
         // Legitimate peer volume servers on private networks pass.
         assert!(validate_replica_target("10.0.0.7:8080").await.is_ok());
         assert!(validate_replica_target("192.168.1.5:8080").await.is_ok());

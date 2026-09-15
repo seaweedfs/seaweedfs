@@ -38,15 +38,15 @@ use reed_solomon_erasure::galois_8::ReedSolomon;
 use tokio::sync::Semaphore;
 use tonic::Request;
 
-use crate::pb::master_pb::{self, seaweed_client::SeaweedClient, LookupEcVolumeRequest};
+use crate::pb::master_pb::{self, LookupEcVolumeRequest, seaweed_client::SeaweedClient};
 use crate::pb::volume_server_pb::{
-    volume_server_client::VolumeServerClient, CopyFileRequest, VolumeEcShardReadRequest,
+    CopyFileRequest, VolumeEcShardReadRequest, volume_server_client::VolumeServerClient,
 };
-use crate::server::grpc_client::{build_grpc_endpoint, parse_grpc_address, GRPC_MAX_MESSAGE_SIZE};
+use crate::server::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint, parse_grpc_address};
 use crate::server::request_id::outgoing_request_id_interceptor;
-use crate::server::volume_server::{to_http_address, VolumeServerState};
+use crate::server::volume_server::{VolumeServerState, to_http_address};
 use crate::storage::erasure_coding::ec_shard::ShardId;
-use crate::storage::needle::needle::{get_actual_size, Needle, NeedleError};
+use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
 use crate::storage::store_ec_reconcile::EcVolumeMissingIndex;
 use crate::storage::types::*;
 use crate::storage::volume::volume_file_name;
@@ -300,7 +300,7 @@ pub async fn scrub_ec_volume_distributed(
                     0,
                     Vec::new(),
                     vec![format!("EC volume id {} not found", vid.0)],
-                )
+                );
             }
         };
         // full scan means verifying the index as well
@@ -672,7 +672,7 @@ fn scrub_snapshot_under_lock(
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("EC volume {} not found (unmounted mid-scan)", vid.0),
-            ))
+            ));
         }
     };
     // The volume was torn down and remounted as a DIFFERENT encode run between

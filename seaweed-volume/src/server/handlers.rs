@@ -6,17 +6,17 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, Method, Request, StatusCode};
+use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
-use super::volume_server::{normalize_outgoing_http_url, to_http_address, VolumeServerState};
+use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
+use super::volume_server::{VolumeServerState, normalize_outgoing_http_url, to_http_address};
 use crate::config::ReadMode;
 use crate::metrics;
 use crate::pb::volume_server_pb;
@@ -1505,7 +1505,7 @@ async fn get_or_head_handler_inner(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         "compressed object exceeds decompression limit",
                     )
-                        .into_response()
+                        .into_response();
                 }
                 Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
             }
@@ -1531,7 +1531,7 @@ async fn get_or_head_handler_inner(
                             StatusCode::PAYLOAD_TOO_LARGE,
                             "compressed object exceeds decompression limit",
                         )
-                            .into_response()
+                            .into_response();
                     }
                     Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
                 }
@@ -1810,7 +1810,7 @@ fn handle_range_request_from_source(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("range read error: {}", err),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
         headers.insert(
@@ -1840,7 +1840,7 @@ fn handle_range_request_from_source(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("range read error: {}", err),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
         if i == 0 {
@@ -2118,7 +2118,11 @@ pub async fn post_handler(
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
         None => {
-            return json_error_with_query(StatusCode::BAD_REQUEST, "invalid URL path", Some(&query))
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                "invalid URL path",
+                Some(&query),
+            );
         }
     };
 
@@ -2728,7 +2732,7 @@ pub async fn delete_handler(
                 StatusCode::BAD_REQUEST,
                 "invalid URL path",
                 Some(&del_query),
-            )
+            );
         }
     };
 
@@ -3249,7 +3253,7 @@ async fn try_expand_chunk_manifest(
                         "compressed manifest exceeds decompression limit",
                     )
                         .into_response(),
-                )
+                );
             }
             Err(GunzipError::Decode) => return None,
         }
@@ -3296,7 +3300,7 @@ async fn try_expand_chunk_manifest(
                         format!("read chunk {}: {}", chunk.fid, e),
                     )
                         .into_response(),
-                )
+                );
             }
         };
         let offset = chunk.offset as usize;
@@ -3797,8 +3801,8 @@ fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
 
 /// Try to gzip data. Returns None on error.
 fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::io::Write;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(data).ok()?;
@@ -4240,7 +4244,7 @@ mod tests {
     /// replicated write to fail.
     #[tokio::test]
     async fn test_lookup_volume_strips_grpc_port_from_master_url() {
-        use axum::{routing::get, Router};
+        use axum::{Router, routing::get};
 
         let app = Router::new().route(
             "/dir/lookup",

@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use seaweed_worker_core::config_form::{number_field, text_field};
 use seaweed_worker_core::pb::ConfigField;
 

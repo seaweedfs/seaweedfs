@@ -3,12 +3,12 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustls::client::danger::HandshakeSignatureValid;
-use rustls::crypto::aws_lc_rs;
 use rustls::crypto::CryptoProvider;
+use rustls::crypto::aws_lc_rs;
 use rustls::pki_types::UnixTime;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::WebPkiClientVerifier;
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{
     CipherSuite, DigitallySignedStruct, DistinguishedName, RootCertStore, ServerConfig,
     SignatureScheme, SupportedCipherSuite, SupportedProtocolVersion,
@@ -376,7 +376,7 @@ fn go_tls_version_for_supported(version: &SupportedProtocolVersion) -> GoTlsVers
 
 #[cfg(test)]
 mod tests {
-    use super::{build_supported_versions, common_name_is_allowed, parse_cipher_suites, TlsPolicy};
+    use super::{TlsPolicy, build_supported_versions, common_name_is_allowed, parse_cipher_suites};
     use rustls::crypto::aws_lc_rs;
     use std::collections::HashSet;
 

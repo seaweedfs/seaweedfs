@@ -20,26 +20,71 @@ use std::collections::{HashMap, HashSet};
 fn ungated_handlers() -> HashMap<&'static str, &'static str> {
     [
         // Cluster-internal: issued volume server -> volume server.
-        ("copy_file", "replica sync and EC task pull whole files from a peer"),
-        ("read_needle_blob", "replica sync, vacuum and EC rebuild read needles from a peer"),
-        ("read_needle_meta", "replica sync compares needle metadata across peers"),
+        (
+            "copy_file",
+            "replica sync and EC task pull whole files from a peer",
+        ),
+        (
+            "read_needle_blob",
+            "replica sync, vacuum and EC rebuild read needles from a peer",
+        ),
+        (
+            "read_needle_meta",
+            "replica sync compares needle metadata across peers",
+        ),
         ("write_needle_blob", "replica sync repairs a peer's needle"),
-        ("receive_file", "EC shard distribution pushes shards to a peer"),
-        ("read_volume_file_status", "the copy path queries the source volume server"),
-        ("volume_ec_shard_read", "a volume server reads EC shards held by a peer"),
-        ("volume_ec_blob_delete", "EC delete is fanned out to the shard holders"),
-        ("volume_ec_shards_info", "EC verification polls shard holders"),
-        ("volume_ec_shards_mount", "EC shard distribution mounts on the receiving peer"),
-        ("volume_incremental_copy", "volume backup pulls increments from a peer"),
-        ("volume_sync_status", "sync compares volume state across peers"),
-        ("volume_tail_sender", "the tail source streams to the receiving peer"),
-        ("volume_status", "replica sync and the master's vacuum loop poll volume status"),
+        (
+            "receive_file",
+            "EC shard distribution pushes shards to a peer",
+        ),
+        (
+            "read_volume_file_status",
+            "the copy path queries the source volume server",
+        ),
+        (
+            "volume_ec_shard_read",
+            "a volume server reads EC shards held by a peer",
+        ),
+        (
+            "volume_ec_blob_delete",
+            "EC delete is fanned out to the shard holders",
+        ),
+        (
+            "volume_ec_shards_info",
+            "EC verification polls shard holders",
+        ),
+        (
+            "volume_ec_shards_mount",
+            "EC shard distribution mounts on the receiving peer",
+        ),
+        (
+            "volume_incremental_copy",
+            "volume backup pulls increments from a peer",
+        ),
+        (
+            "volume_sync_status",
+            "sync compares volume state across peers",
+        ),
+        (
+            "volume_tail_sender",
+            "the tail source streams to the receiving peer",
+        ),
+        (
+            "volume_status",
+            "replica sync and the master's vacuum loop poll volume status",
+        ),
         // Read-only or liveness: no state change.
         ("ping", "liveness probe"),
         ("get_state", "read-only volume server state"),
         ("query", "read-only data query"),
-        ("vacuum_volume_check", "read-only garbage ratio; the vacuum steps that act on it are gated"),
-        ("volume_server_status", "read-only status, the gRPC counterpart of the /status page"),
+        (
+            "vacuum_volume_check",
+            "read-only garbage ratio; the vacuum steps that act on it are gated",
+        ),
+        (
+            "volume_server_status",
+            "read-only status, the gRPC counterpart of the /status page",
+        ),
     ]
     .into_iter()
     .collect()
@@ -129,5 +174,9 @@ fn volume_server_admin_auth_coverage() {
         }
     }
 
-    assert!(problems.is_empty(), "admin-auth coverage gaps:\n{}", problems.join("\n"));
+    assert!(
+        problems.is_empty(),
+        "admin-auth coverage gaps:\n{}",
+        problems.join("\n")
+    );
 }

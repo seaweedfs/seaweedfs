@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
+use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
 use super::volume_server::VolumeServerState;
 use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
@@ -119,7 +119,9 @@ pub async fn run_heartbeat_with_state(
 
                     if err_msg.contains(DUPLICATE_UUID_RETRY_MESSAGE) {
                         if duplicate_retry_count >= MAX_DUPLICATE_UUID_RETRIES {
-                            error!("Shut down Volume Server due to persistent duplicate volume directories after 3 retries");
+                            error!(
+                                "Shut down Volume Server due to persistent duplicate volume directories after 3 retries"
+                            );
                             error!(
                                 "Please check if another volume server is using the same directory"
                             );
@@ -981,7 +983,11 @@ fn build_heartbeat_with_ec_status(
                         > DISK_CHECK_INTERVAL_NS
                     {
                         if !Path::new(&vol.file_name(".dat")).exists() {
-                            warn!("Volume {}: data file {} missing (held open as deleted FD) - not reporting to master", vol.id.0, vol.file_name(".dat"));
+                            warn!(
+                                "Volume {}: data file {} missing (held open as deleted FD) - not reporting to master",
+                                vol.id.0,
+                                vol.file_name(".dat")
+                            );
                             continue;
                         }
                         vol.last_disk_check_ns.store(now_ns, Ordering::Relaxed);
@@ -1249,8 +1255,8 @@ mod tests {
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::types::{DiskType, VolumeId};
     use crate::storage::volume::VolumeSpec;
-    use std::sync::atomic::Ordering;
     use std::sync::RwLock;
+    use std::sync::atomic::Ordering;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_config() -> HeartbeatConfig {

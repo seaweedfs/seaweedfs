@@ -2,9 +2,9 @@
 //!
 //! Works with AWS S3, MinIO, SeaweedFS S3, and all S3-compatible providers.
 
+use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client;
 
 use super::{RemoteEntry, RemoteStorageClient, RemoteStorageError};
 use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};

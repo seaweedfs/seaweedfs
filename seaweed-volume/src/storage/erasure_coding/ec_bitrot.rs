@@ -627,7 +627,10 @@ mod tests {
         save_bitrot_sidecar(path, &prot).unwrap();
         let bytes = std::fs::read(path).unwrap();
         let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-        assert_eq!(hex, CANONICAL_HEX, "Rust .ecsum bytes drifted from the Go canonical form");
+        assert_eq!(
+            hex, CANONICAL_HEX,
+            "Rust .ecsum bytes drifted from the Go canonical form"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -662,7 +665,11 @@ mod tests {
             format!("{}.ecsum.v1", base),
             format!("{}.ecsum.v7", base),
         ] {
-            assert!(!std::path::Path::new(&p).exists(), "{} should be removed", p);
+            assert!(
+                !std::path::Path::new(&p).exists(),
+                "{} should be removed",
+                p
+            );
         }
         assert!(std::path::Path::new(&keep_shard).exists());
         assert!(std::path::Path::new(&keep_other_vid).exists());
@@ -681,7 +688,9 @@ mod tests {
         assert!(!is_pow2_multiple_of_1mib(1 << 19)); // 512 KiB, too small
         assert!(!is_pow2_multiple_of_1mib(3 << 20)); // 3 MiB, not pow2
         assert!(!is_pow2_multiple_of_1mib(128 * 1024 * 1024)); // pow2 but > MAX_BITROT_BLOCK_SIZE
-        assert!(!is_pow2_multiple_of_1mib(DEFAULT_BITROT_BLOCK_SIZE as u32 + 1));
+        assert!(!is_pow2_multiple_of_1mib(
+            DEFAULT_BITROT_BLOCK_SIZE as u32 + 1
+        ));
     }
 
     #[test]
@@ -735,12 +744,7 @@ mod tests {
     #[test]
     fn test_save_load_roundtrip() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let path = tmp
-            .path()
-            .join("vol.ecsum")
-            .to_str()
-            .unwrap()
-            .to_string();
+        let path = tmp.path().join("vol.ecsum").to_str().unwrap().to_string();
 
         let mut builder = ShardChecksumBuilder::new(DEFAULT_BITROT_BLOCK_SIZE as i64);
         builder.write(b"hello world");
@@ -901,8 +905,7 @@ mod tests {
         assert_eq!(resolve_status(&notfound, 0, 10, 4), BitrotStatus::Off);
 
         // Integrity failure => Invalid.
-        let bad: Result<EcBitrotProtection, BitrotLoadError> =
-            Err(BitrotLoadError::BadMagic(0));
+        let bad: Result<EcBitrotProtection, BitrotLoadError> = Err(BitrotLoadError::BadMagic(0));
         assert_eq!(resolve_status(&bad, 0, 10, 4), BitrotStatus::Invalid);
 
         // Generation mismatch => Off.
