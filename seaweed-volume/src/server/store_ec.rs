@@ -186,15 +186,19 @@ pub async fn read_ec_shard_needle_distributed(
                     } => {
                         fetch_one_interval(
                             state,
-                            vid,
-                            needle_id,
-                            shard_id,
-                            shard_offset,
-                            size,
-                            shard_locations,
-                            data_shards,
-                            parity_shards,
-                            encode_ts_ns,
+                            EcInterval {
+                                vid,
+                                needle_id,
+                                shard_id,
+                                shard_offset,
+                                size,
+                                expected_encode_ts_ns: encode_ts_ns,
+                            },
+                            EcShardMap {
+                                locations: shard_locations,
+                                data_shards,
+                                parity_shards,
+                            },
                         )
                         .await
                     }
@@ -521,18 +525,15 @@ pub async fn scrub_ec_volume_distributed(
                 } => {
                     let sources: &[String] =
                         locations.get(shard_id).map(Vec::as_slice).unwrap_or(&[]);
-                    match read_remote_ec_shard_interval(
-                        state,
-                        sources,
+                    let iv = EcInterval {
                         vid,
-                        id,
-                        *shard_id,
-                        *shard_offset,
-                        *ssize,
-                        snapshot.encode_ts_ns,
-                    )
-                    .await
-                    {
+                        needle_id: id,
+                        shard_id: *shard_id,
+                        shard_offset: *shard_offset,
+                        size: *ssize,
+                        expected_encode_ts_ns: snapshot.encode_ts_ns,
+                    };
+                    match read_remote_ec_shard_interval(state, sources, iv).await {
                         // A deleted shard yields no bytes; zero-fill the interval so
                         // the assembled needle reaches read_bytes -> SizeMismatch{0}
                         // -> the delete-state suppression (mirrors Go's pre-zeroed buffer).
@@ -560,15 +561,12 @@ pub async fn scrub_ec_volume_distributed(
                             }
                             match recover_one_remote_ec_shard_interval(
                                 state,
-                                vid,
-                                id,
-                                *shard_id,
-                                *shard_offset,
-                                *ssize,
-                                &locations,
-                                data_shards,
-                                total_shards - data_shards,
-                                snapshot.encode_ts_ns,
+                                iv,
+                                EcShardMap {
+                                    locations: &locations,
+                                    data_shards,
+                                    parity_shards: total_shards - data_shards,
+                                },
                             )
                             .await
                             {
@@ -965,37 +963,44 @@ fn format_location_as_server_address(loc: &master_pb::Location) -> String {
     raw.to_string()
 }
 
-/// Try direct peer read; on failure, reconstruct via Reed-Solomon
-/// from the other shards. Mirrors `readOneEcShardInterval`'s tail.
-#[expect(clippy::too_many_arguments)]
-async fn fetch_one_interval(
-    state: &Arc<VolumeServerState>,
+/// One shard-relative byte range of a needle on an EC volume, the unit the
+/// peer-read and recovery paths work in. Mirrors the argument list of Go's
+/// `readOneEcShardInterval`.
+#[derive(Clone, Copy, Debug)]
+struct EcInterval {
     vid: VolumeId,
     needle_id: NeedleId,
+    /// The shard the bytes live on, or the one to rebuild when recovering.
     shard_id: ShardId,
     shard_offset: i64,
     size: usize,
-    shard_locations: &HashMap<ShardId, Vec<String>>,
+    /// Encode run the caller expects the shard to belong to; 0 accepts any,
+    /// for peers that predate the identity check.
+    expected_encode_ts_ns: i64,
+}
+
+/// Where the shards of one EC volume can be fetched from, and the volume's
+/// Reed-Solomon shape, as recovery needs both together.
+#[derive(Clone, Copy)]
+struct EcShardMap<'a> {
+    locations: &'a HashMap<ShardId, Vec<String>>,
     data_shards: usize,
     parity_shards: usize,
-    expected_encode_ts_ns: i64,
+}
+
+/// Try direct peer read; on failure, reconstruct via Reed-Solomon
+/// from the other shards. Mirrors `readOneEcShardInterval`'s tail.
+async fn fetch_one_interval(
+    state: &Arc<VolumeServerState>,
+    iv: EcInterval,
+    map: EcShardMap<'_>,
 ) -> io::Result<(Vec<u8>, bool)> {
+    let EcInterval { vid, shard_id, .. } = iv;
     // Direct peer read against the cached locations for this shard.
-    if let Some(sources) = shard_locations.get(&shard_id)
+    if let Some(sources) = map.locations.get(&shard_id)
         && !sources.is_empty()
     {
-        match read_remote_ec_shard_interval(
-            state,
-            sources,
-            vid,
-            needle_id,
-            shard_id,
-            shard_offset,
-            size,
-            expected_encode_ts_ns,
-        )
-        .await
-        {
+        match read_remote_ec_shard_interval(state, sources, iv).await {
             // A deleted needle short-circuits: don't reconstruct (every shard
             // would report deleted), let the caller return "deleted".
             Ok((buf, is_deleted)) => return Ok((buf, is_deleted)),
@@ -1016,46 +1021,17 @@ async fn fetch_one_interval(
 
     // Reconstruct: fan-out reads to every other shard at the same
     // (shard_offset, size). Mirrors `recoverOneRemoteEcShardInterval`.
-    recover_one_remote_ec_shard_interval(
-        state,
-        vid,
-        needle_id,
-        shard_id,
-        shard_offset,
-        size,
-        shard_locations,
-        data_shards,
-        parity_shards,
-        expected_encode_ts_ns,
-    )
-    .await
+    recover_one_remote_ec_shard_interval(state, iv, map).await
 }
 
-#[expect(clippy::too_many_arguments)]
 async fn read_remote_ec_shard_interval(
     state: &Arc<VolumeServerState>,
     sources: &[String],
-    vid: VolumeId,
-    needle_id: NeedleId,
-    shard_id: ShardId,
-    shard_offset: i64,
-    size: usize,
-    expected_encode_ts_ns: i64,
+    iv: EcInterval,
 ) -> io::Result<(Vec<u8>, bool)> {
     let mut last_err: Option<io::Error> = None;
     for src in sources {
-        match do_read_remote_ec_shard_interval(
-            state,
-            src,
-            vid,
-            needle_id,
-            shard_id,
-            shard_offset,
-            size,
-            expected_encode_ts_ns,
-        )
-        .await
-        {
+        match do_read_remote_ec_shard_interval(state, src, iv).await {
             Ok(res) => return Ok(res),
             Err(e) => last_err = Some(e),
         }
@@ -1063,22 +1039,24 @@ async fn read_remote_ec_shard_interval(
     Err(last_err.unwrap_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
-            format!("no source for ec shard {}.{}", vid.0, shard_id),
+            format!("no source for ec shard {}.{}", iv.vid.0, iv.shard_id),
         )
     }))
 }
 
-#[expect(clippy::too_many_arguments)]
 async fn do_read_remote_ec_shard_interval(
     state: &Arc<VolumeServerState>,
     source: &str,
-    vid: VolumeId,
-    needle_id: NeedleId,
-    shard_id: ShardId,
-    shard_offset: i64,
-    size: usize,
-    expected_encode_ts_ns: i64,
+    iv: EcInterval,
 ) -> io::Result<(Vec<u8>, bool)> {
+    let EcInterval {
+        vid,
+        needle_id,
+        shard_id,
+        shard_offset,
+        size,
+        expected_encode_ts_ns,
+    } = iv;
     let grpc_addr =
         parse_grpc_address(source).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     let endpoint = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
@@ -1171,19 +1149,24 @@ async fn do_read_remote_ec_shard_interval(
     Ok((out, false))
 }
 
-#[expect(clippy::too_many_arguments)]
 async fn recover_one_remote_ec_shard_interval(
     state: &Arc<VolumeServerState>,
-    vid: VolumeId,
-    needle_id: NeedleId,
-    shard_id_to_recover: ShardId,
-    shard_offset: i64,
-    size: usize,
-    shard_locations: &HashMap<ShardId, Vec<String>>,
-    data_shards: usize,
-    parity_shards: usize,
-    expected_encode_ts_ns: i64,
+    iv: EcInterval,
+    map: EcShardMap<'_>,
 ) -> io::Result<(Vec<u8>, bool)> {
+    let EcInterval {
+        vid,
+        needle_id,
+        shard_id: shard_id_to_recover,
+        shard_offset,
+        size,
+        expected_encode_ts_ns,
+    } = iv;
+    let EcShardMap {
+        locations: shard_locations,
+        data_shards,
+        parity_shards,
+    } = map;
     let total_shards = data_shards + parity_shards;
     let rs = ReedSolomon::new(data_shards, parity_shards)
         .map_err(|e| io::Error::other(format!("reed-solomon init: {:?}", e)))?;
@@ -1272,12 +1255,7 @@ async fn recover_one_remote_ec_shard_interval(
                 let res = read_remote_ec_shard_interval(
                     &state,
                     &locs,
-                    vid,
-                    needle_id,
-                    sid,
-                    shard_offset,
-                    size,
-                    expected_encode_ts_ns,
+                    EcInterval { shard_id: sid, ..iv },
                 )
                 .await;
                 (sid, res)
