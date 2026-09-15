@@ -485,8 +485,12 @@ impl NeedleStreamSource {
 /// and unmount or destroy close and unlink it, none of which rewrites the
 /// pinned bytes. `.dat` is otherwise append-only and a failed append
 /// truncates only its own bytes, so `[from, end)` holds complete records
-/// that nothing rewrites while the scan runs. The fields are private so a
-/// plan can only come from `dat_scan_plan`.
+/// that nothing rewrites while the scan runs. A short read below `end` can
+/// therefore only mean the inode was truncated under the plan (an unmount
+/// followed by a `VolumeCopy` of the same id reopens `.dat` with
+/// `truncate(true)`), and the scan fails rather than ending as if the
+/// snapshot had been read. The fields are private so a plan can only come
+/// from `dat_scan_plan`.
 pub(crate) struct DatScanPlan {
     source: NeedleStreamSource,
     version: Version,
@@ -508,6 +512,9 @@ impl DatScanPlan {
     /// visited is in memory. Reads are positional and never touch the
     /// `Volume`. The pass ends `Ok` at the end of the data, at a record that
     /// does not fit before `end`, at a corrupt header, or when `visit` breaks.
+    /// It fails on any read error, including a short read below `end`: every
+    /// byte below `end` existed when the plan was taken, so a short read means
+    /// the file was truncated under the plan and the pass is incomplete.
     pub(crate) fn scan(
         &self,
         mut visit: impl FnMut(RawNeedle<'_>) -> ControlFlow<()>,
@@ -515,11 +522,9 @@ impl DatScanPlan {
         let mut offset = self.from;
         while offset + NEEDLE_HEADER_SIZE as u64 <= self.end {
             let mut header = [0u8; NEEDLE_HEADER_SIZE];
-            match self.source.read_exact_at(&mut header, offset) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e.into()),
-            }
+            self.source
+                .read_exact_at(&mut header, offset)
+                .map_err(|e| self.read_error(e, offset))?;
 
             let (_cookie, id, size) = Needle::parse_header(&header);
             if size.0 == 0 && id.is_empty() {
@@ -551,14 +556,12 @@ impl DatScanPlan {
             // This is critical for incremental copy where tombstones must be propagated.
             let mut record = vec![0u8; total_size as usize];
             record[..NEEDLE_HEADER_SIZE].copy_from_slice(&header);
-            match self.source.read_exact_at(
-                &mut record[NEEDLE_HEADER_SIZE..],
-                offset + NEEDLE_HEADER_SIZE as u64,
-            ) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e.into()),
-            }
+            self.source
+                .read_exact_at(
+                    &mut record[NEEDLE_HEADER_SIZE..],
+                    offset + NEEDLE_HEADER_SIZE as u64,
+                )
+                .map_err(|e| self.read_error(e, offset + NEEDLE_HEADER_SIZE as u64))?;
 
             let append_at_ns = {
                 let mut n = Needle::default();
@@ -576,6 +579,24 @@ impl DatScanPlan {
             offset += total_size;
         }
         Ok(())
+    }
+
+    /// Name the snapshot in a read failure. A short read is the truncation
+    /// case described on the type; every other error is passed through with
+    /// the offset.
+    fn read_error(&self, e: io::Error, offset: u64) -> VolumeError {
+        let what = if e.kind() == io::ErrorKind::UnexpectedEof {
+            "short read below the snapshot end, the dat file was truncated under the scan"
+        } else {
+            "read failed"
+        };
+        VolumeError::Io(io::Error::new(
+            e.kind(),
+            format!(
+                "{} (offset {}, snapshot end {}): {}",
+                what, offset, self.end, e
+            ),
+        ))
     }
 }
 
@@ -5090,6 +5111,57 @@ mod tests {
         );
 
         assert_eq!(scan_all(&plan), before);
+    }
+
+    #[test]
+    fn dat_scan_plan_fails_when_the_snapshot_is_truncated() {
+        // Unmount followed by a VolumeCopy of the same id reopens .dat with
+        // truncate(true) on the inode a running plan holds. Every byte below
+        // the captured end existed when the plan was taken, so a short read
+        // there is an incomplete pass, not the end of the data: the stream
+        // must fail rather than let volume.move take a partial tail as
+        // complete.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        write_test_needle(&mut v, 1, b"kept");
+        write_test_needle(&mut v, 2, b"cut off");
+
+        let sb_size = v.super_block.block_size() as u64;
+        let first_record_len = {
+            let records = scan_all(&v.dat_scan_plan(sb_size).unwrap());
+            assert_eq!(records.len(), 2, "precondition: two records on disk");
+            (records[0].0.len() + records[0].1.len()) as u64
+        };
+        let plan = v.dat_scan_plan(sb_size).unwrap();
+        let end = plan.end;
+
+        // Truncate through the header of the second record.
+        let second = sb_size + first_record_len;
+        OpenOptions::new()
+            .write(true)
+            .open(v.file_name(".dat"))
+            .unwrap()
+            .set_len(second + NEEDLE_HEADER_SIZE as u64 / 2)
+            .unwrap();
+
+        let mut visited = Vec::new();
+        let err = plan
+            .scan(|n| {
+                visited.push(n.append_at_ns);
+                ControlFlow::Continue(())
+            })
+            .unwrap_err();
+        assert_eq!(visited.len(), 1, "the intact first record is still visited");
+        match err {
+            VolumeError::Io(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+                let msg = e.to_string();
+                assert!(msg.contains("truncated"), "{msg}");
+                assert!(msg.contains(&format!("snapshot end {end}")), "{msg}");
+            }
+            other => panic!("expected an I/O error, got {other:?}"),
+        }
     }
 
     #[test]
