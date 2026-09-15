@@ -90,6 +90,25 @@ func TestDeriveCounterResetSkipped(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		node string
+		port uint32
+		want string
+	}{
+		// The advertised port replaces the node's service port.
+		{"127.0.0.1:8080", 9327, "127.0.0.1:9327"},
+		{"127.0.0.1:8888.18888", 9327, "127.0.0.1:9327"},
+		{"[::1]:8080", 9327, "[::1]:9327"},
+		// A node without -metricsPort must never be scraped.
+		{"127.0.0.1:8080", 0, ""},
+	} {
+		if got := metricsEndpoint(tc.node, tc.port); got != tc.want {
+			t.Errorf("metricsEndpoint(%q, %d) = %q, want %q", tc.node, tc.port, got, tc.want)
+		}
+	}
+}
+
 func TestStoreRingIsBounded(t *testing.T) {
 	s := newMetricsSeries()
 	for i := 0; i < metricsMaxSamples+50; i++ {

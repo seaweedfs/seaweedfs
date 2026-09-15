@@ -50,6 +50,8 @@ type VolumeServer struct {
 	DiskUsage     int64     `json:"disk_usage"`
 	DiskCapacity  int64     `json:"disk_capacity"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
+	// MetricsPort is the node's advertised Prometheus port, 0 when disabled.
+	MetricsPort uint32 `json:"metrics_port"`
 
 	// EC shard information
 	EcVolumes      int                  `json:"ec_volumes"`       // Number of EC volumes this server has shards for

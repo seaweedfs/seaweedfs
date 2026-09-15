@@ -146,6 +146,8 @@ type FilerNode struct {
 	DataCenter  string    `json:"datacenter"`
 	Rack        string    `json:"rack"`
 	LastUpdated time.Time `json:"last_updated"`
+	// MetricsPort is the node's advertised Prometheus port, 0 when disabled.
+	MetricsPort uint32 `json:"metrics_port"`
 }
 
 type MessageBrokerNode struct {
@@ -159,6 +161,8 @@ type S3Node struct {
 	Address     string    `json:"address"`
 	DataCenter  string    `json:"datacenter"`
 	LastUpdated time.Time `json:"last_updated"`
+	// MetricsPort is the node's advertised Prometheus port, 0 when disabled.
+	MetricsPort uint32 `json:"metrics_port"`
 }
 
 // GetAdminData retrieves admin data as a struct (for reuse by both JSON and HTML handlers)
@@ -356,6 +360,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
 				LastUpdated: time.Now(),
+				MetricsPort: node.MetricsPort,
 			})
 		}
 
@@ -433,6 +438,7 @@ func (s *AdminServer) getS3NodesStatus() []S3Node {
 				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter:  node.DataCenter,
 				LastUpdated: time.Now(),
+				MetricsPort: node.MetricsPort,
 			})
 		}
 

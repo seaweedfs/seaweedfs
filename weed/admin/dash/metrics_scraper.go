@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +15,8 @@ import (
 	"github.com/prometheus/common/expfmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -153,26 +158,95 @@ func (s *AdminServer) scrapeAllServers(ctx context.Context) {
 	}
 }
 
+// scrapeTarget is one Prometheus endpoint. source is the endpoint address, not
+// a component name: a combined "weed server" advertises one listener for
+// master, volume, filer and S3 alike, and metric names already identify the
+// component. nodes records which cluster members advertised this endpoint, so
+// the UI can label it.
 type scrapeTarget struct {
 	source  string
 	address string
+	nodes   []string
 }
 
+// scrapeTargets lists the distinct metrics endpoints advertised by the cluster.
+// Nodes started without -metricsPort advertise 0 and are skipped, so nothing is
+// scraped from a client-facing service port.
 func (s *AdminServer) scrapeTargets() []scrapeTarget {
-	var out []scrapeTarget
-	if topo, err := s.GetClusterTopology(); err == nil && topo != nil {
-		for _, m := range topo.Masters {
-			out = append(out, scrapeTarget{source: "master/" + m.Address, address: m.Address})
+	byAddress := map[string][]string{}
+	add := func(nodeAddress string, metricsPort uint32) {
+		endpoint := metricsEndpoint(nodeAddress, metricsPort)
+		if endpoint == "" {
+			return
 		}
+		byAddress[endpoint] = append(byAddress[endpoint], nodeAddress)
+	}
+
+	for _, m := range s.mastersWithMetricsPort() {
+		add(m.address, m.metricsPort)
+	}
+	if topo, err := s.GetClusterTopology(); err == nil && topo != nil {
 		for _, vs := range topo.VolumeServers {
-			out = append(out, scrapeTarget{source: "volume/" + vs.Address, address: vs.Address})
+			add(vs.Address, vs.MetricsPort)
 		}
 	}
 	for _, f := range s.getFilerNodesStatus() {
-		out = append(out, scrapeTarget{source: "filer/" + f.Address, address: f.Address})
+		add(f.Address, f.MetricsPort)
 	}
 	for _, n := range s.getS3NodesStatus() {
-		out = append(out, scrapeTarget{source: "s3/" + n.Address, address: n.Address})
+		add(n.Address, n.MetricsPort)
+	}
+
+	out := make([]scrapeTarget, 0, len(byAddress))
+	for endpoint, nodes := range byAddress {
+		sort.Strings(nodes)
+		out = append(out, scrapeTarget{source: endpoint, address: endpoint, nodes: nodes})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].source < out[j].source })
+	return out
+}
+
+// metricsEndpoint combines a node's host with its advertised metrics port.
+// Returns "" when the node does not run a metrics listener.
+func metricsEndpoint(nodeAddress string, metricsPort uint32) string {
+	if metricsPort == 0 {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(nodeAddress)
+	if err != nil {
+		host = nodeAddress
+	}
+	return net.JoinHostPort(host, strconv.Itoa(int(metricsPort)))
+}
+
+type masterMetricsTarget struct {
+	address     string
+	metricsPort uint32
+}
+
+// mastersWithMetricsPort asks each master for its own metrics port.
+// GetMasterConfiguration reports the configuration of the master that answers,
+// so it is called per address rather than once via the leader.
+func (s *AdminServer) mastersWithMetricsPort() []masterMetricsTarget {
+	md, err := s.GetClusterMasters()
+	if err != nil || md == nil {
+		return nil
+	}
+	var out []masterMetricsTarget
+	for _, m := range md.Masters {
+		address := m.Address
+		err := pb.WithMasterClient(context.Background(), false, pb.ServerAddress(address), s.grpcDialOption, false,
+			func(client master_pb.SeaweedClient) error {
+				resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+				if err != nil {
+					return err
+				}
+				out = append(out, masterMetricsTarget{address: address, metricsPort: resp.MetricsPort})
+				return nil
+			})
+		if err != nil {
+			glog.V(1).Infof("master %s configuration: %v", address, err)
+		}
 	}
 	return out
 }

@@ -207,6 +207,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							DiskCapacity:  diskCapacity,
 							LastHeartbeat: time.Now(),
 							RemoteSize:    remoteSize,
+							MetricsPort:   node.MetricsPort,
 						}
 
 						rackObj.Nodes = append(rackObj.Nodes, vs)
