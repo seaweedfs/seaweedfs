@@ -30,6 +30,7 @@ type AdminHandlers struct {
 	mqHandlers             *MessageQueueHandlers
 	serviceAccountHandlers *ServiceAccountHandlers
 	groupHandlers          *GroupHandlers
+	monitoringHandlers     *MonitoringHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -43,6 +44,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
 	groupHandlers := NewGroupHandlers(adminServer)
+	monitoringHandlers := NewMonitoringHandlers(adminServer)
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		sessionStore:           store,
@@ -55,6 +57,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 		mqHandlers:             mqHandlers,
 		serviceAccountHandlers: serviceAccountHandlers,
 		groupHandlers:          groupHandlers,
+		monitoringHandlers:     monitoringHandlers,
 	}
 }
 
@@ -129,6 +132,14 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/cluster/s3", h.clusterHandlers.ShowClusterS3Servers).Methods(http.MethodGet)
 	r.HandleFunc("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers).Methods(http.MethodGet)
 	r.HandleFunc("/cluster/mount-clients", h.clusterHandlers.ShowMountClients).Methods(http.MethodGet)
+
+	// Monitoring routes
+	r.HandleFunc("/monitoring", h.monitoringHandlers.ShowOverview).Methods(http.MethodGet)
+	r.HandleFunc("/monitoring/volume-servers", h.monitoringHandlers.ShowVolumeServers).Methods(http.MethodGet)
+	r.HandleFunc("/monitoring/filers", h.monitoringHandlers.ShowFilers).Methods(http.MethodGet)
+	r.HandleFunc("/monitoring/s3", h.monitoringHandlers.ShowS3).Methods(http.MethodGet)
+	r.HandleFunc("/monitoring/masters", h.monitoringHandlers.ShowMasters).Methods(http.MethodGet)
+	r.HandleFunc("/monitoring/workers", h.monitoringHandlers.ShowWorkers).Methods(http.MethodGet)
 
 	// Storage management routes
 	r.HandleFunc("/storage/volumes", h.clusterHandlers.ShowClusterVolumes).Methods(http.MethodGet)
