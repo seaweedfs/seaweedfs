@@ -88,11 +88,8 @@ func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, 
 }
 
 // wormDeleteCondition returns the object-lock guards for a delete, or nil when
-// the bucket has no object lock. Legal hold always blocks. Retention blocks
-// while not elapsed; with governance bypass the retention guard is gated to
-// COMPLIANCE mode, so a governance-mode version becomes deletable while a
-// compliance-mode one stays protected — the filer decides from the version's
-// mode under the lock, so the gateway never has to read it.
+// the bucket has no object lock. Governance bypass gates the retention check to
+// COMPLIANCE mode so the filer still protects compliance versions under lock.
 func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 	if !worm {
 		return nil
@@ -111,15 +108,8 @@ func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 	}}
 }
 
-// routedDeleteSpecificVersion deletes one version off the distributed lock: in a
-// single transaction on the owner it recomputes the .versions pointer excluding
-// the version (repoint-before-delete, so a crash leaves a recoverable orphan
-// rather than a dangling pointer) and deletes the version file. lock_key is the
-// object (serializing the pointer recompute); for object-lock buckets the
-// condition gates the delete on the version's WORM guards evaluated on the owner.
-// Deleting the last version also removes the emptied .versions/ directory —
-// leaving it behind would keep re-triggering the read path's self-heal rescans
-// on every GET of the key (Veeam probes its deleted lock objects forever).
+// routedDeleteSpecificVersion removes one version under the owner filer's object
+// lock, first repointing .versions while excluding the deleted version.
 func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass bool) s3err.ErrorCode {
 	if !isValidVersionID(versionId) {
 		return s3err.ErrInvalidRequest
