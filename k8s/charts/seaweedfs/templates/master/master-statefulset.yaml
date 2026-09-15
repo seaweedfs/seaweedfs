@@ -50,6 +50,7 @@ spec:
       {{- with .Values.master.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+        checksum/config: {{ include (print .Template.BasePath "/master/master-configmap.yaml") . | sha256sum }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.master.restartPolicy }}
       {{- if .Values.master.affinity }}
