@@ -159,6 +159,24 @@ func hasLabel(key, value string) func(map[string]string) bool {
 	return func(labels map[string]string) bool { return labels[key] == value }
 }
 
+// The request counters label "type" with the HTTP method, so reads and writes
+// are classified by verb rather than by a dedicated label.
+func isReadRequest(labels map[string]string) bool {
+	switch labels["type"] {
+	case "GET", "HEAD":
+		return true
+	}
+	return false
+}
+
+func isWriteRequest(labels map[string]string) bool {
+	switch labels["type"] {
+	case "POST", "PUT", "PATCH", "DELETE":
+		return true
+	}
+	return false
+}
+
 func (s *AdminServer) fillOverview(d *MonitoringData) {
 	o := &d.Overview
 	o.UnderReplicatedVolumes = s.sum(srcMaster, mMasterUnderReplicated)
@@ -166,8 +184,8 @@ func (s *AdminServer) fillOverview(d *MonitoringData) {
 	o.CrowdedVolumes = s.sum(srcMaster, mMasterCrowded)
 	o.DiskUsagePct = s.diskUsagePct(srcVolume)
 
-	o.VolumeReadRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, hasLabel("type", "read"))
-	o.VolumeWriteRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, hasLabel("type", "write"))
+	o.VolumeReadRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, isReadRequest)
+	o.VolumeWriteRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, isWriteRequest)
 	o.FilerRequestRate = s.sum(srcFiler, mFilerRequests+suffixRate)
 	o.S3RequestRate = s.sum(srcS3, mS3Requests+suffixRate)
 
