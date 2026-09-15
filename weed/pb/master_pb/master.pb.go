@@ -113,8 +113,11 @@ type Heartbeat struct {
 	HasNoEcShards   bool                               `protobuf:"varint,19,opt,name=has_no_ec_shards,json=hasNoEcShards,proto3" json:"has_no_ec_shards,omitempty"`
 	MaxVolumeCounts map[string]uint32                  `protobuf:"bytes,4,rep,name=max_volume_counts,json=maxVolumeCounts,proto3" json:"max_volume_counts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	GrpcPort        uint32                             `protobuf:"varint,20,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
-	LocationUuids   []string                           `protobuf:"bytes,21,rep,name=location_uuids,json=locationUuids,proto3" json:"location_uuids,omitempty"`
-	Id              string                             `protobuf:"bytes,22,opt,name=id,proto3" json:"id,omitempty"` // volume server id, independent of ip:port for stable identification
+	// Port of this volume server's Prometheus /metrics listener (-metricsPort),
+	// or 0 when it is not enabled.
+	MetricsPort   uint32   `protobuf:"varint,29,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
+	LocationUuids []string `protobuf:"bytes,21,rep,name=location_uuids,json=locationUuids,proto3" json:"location_uuids,omitempty"`
+	Id            string   `protobuf:"bytes,22,opt,name=id,proto3" json:"id,omitempty"` // volume server id, independent of ip:port for stable identification
 	// state flags
 	State    *volume_server_pb.VolumeServerState `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
 	DiskTags []*DiskTag                          `protobuf:"bytes,24,rep,name=disk_tags,json=diskTags,proto3" json:"disk_tags,omitempty"`
@@ -279,6 +282,13 @@ func (x *Heartbeat) GetMaxVolumeCounts() map[string]uint32 {
 func (x *Heartbeat) GetGrpcPort() uint32 {
 	if x != nil {
 		return x.GrpcPort
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetMetricsPort() uint32 {
+	if x != nil {
+		return x.MetricsPort
 	}
 	return 0
 }
@@ -998,6 +1008,10 @@ type KeepConnectedRequest struct {
 	FilerGroup    string                 `protobuf:"bytes,5,opt,name=filer_group,json=filerGroup,proto3" json:"filer_group,omitempty"`
 	DataCenter    string                 `protobuf:"bytes,6,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
 	Rack          string                 `protobuf:"bytes,7,opt,name=rack,proto3" json:"rack,omitempty"`
+	// Port of this node's Prometheus /metrics listener (-metricsPort), or 0 when
+	// it is not enabled. Advertised so the admin server can scrape it without
+	// exposing metrics on the client-facing service port.
+	MetricsPort   uint32 `protobuf:"varint,8,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1072,6 +1086,13 @@ func (x *KeepConnectedRequest) GetRack() string {
 		return x.Rack
 	}
 	return ""
+}
+
+func (x *KeepConnectedRequest) GetMetricsPort() uint32 {
+	if x != nil {
+		return x.MetricsPort
+	}
+	return 0
 }
 
 type VolumeLocation struct {
@@ -2608,7 +2629,8 @@ type DataNodeInfo struct {
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	DiskInfos     map[string]*DiskInfo   `protobuf:"bytes,2,rep,name=diskInfos,proto3" json:"diskInfos,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	GrpcPort      uint32                 `protobuf:"varint,3,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
-	Address       string                 `protobuf:"bytes,4,opt,name=address,proto3" json:"address,omitempty"` // ip:port for connecting to the volume server
+	Address       string                 `protobuf:"bytes,4,opt,name=address,proto3" json:"address,omitempty"`                             // ip:port for connecting to the volume server
+	MetricsPort   uint32                 `protobuf:"varint,5,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"` // Prometheus /metrics port, or 0 when not enabled
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2669,6 +2691,13 @@ func (x *DataNodeInfo) GetAddress() string {
 		return x.Address
 	}
 	return ""
+}
+
+func (x *DataNodeInfo) GetMetricsPort() uint32 {
+	if x != nil {
+		return x.MetricsPort
+	}
+	return 0
 }
 
 type RackInfo struct {
@@ -3639,8 +3668,12 @@ type GetMasterConfigurationResponse struct {
 	// MIGRATION: fields 8-9 help migrate master.toml [master.maintenance] to admin script plugin. Remove after March 2027.
 	MaintenanceScripts      string `protobuf:"bytes,8,opt,name=maintenance_scripts,json=maintenanceScripts,proto3" json:"maintenance_scripts,omitempty"`
 	MaintenanceSleepMinutes uint32 `protobuf:"varint,9,opt,name=maintenance_sleep_minutes,json=maintenanceSleepMinutes,proto3" json:"maintenance_sleep_minutes,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Port of this master's Prometheus /metrics listener (-metricsPort), or 0
+	// when it is not enabled. metrics_address above is unrelated: it is the
+	// Prometheus push gateway that servers push to.
+	MetricsPort   uint32 `protobuf:"varint,10,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetMasterConfigurationResponse) Reset() {
@@ -3732,6 +3765,13 @@ func (x *GetMasterConfigurationResponse) GetMaintenanceScripts() string {
 func (x *GetMasterConfigurationResponse) GetMaintenanceSleepMinutes() uint32 {
 	if x != nil {
 		return x.MaintenanceSleepMinutes
+	}
+	return 0
+}
+
+func (x *GetMasterConfigurationResponse) GetMetricsPort() uint32 {
+	if x != nil {
+		return x.MetricsPort
 	}
 	return 0
 }
@@ -4865,12 +4905,14 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) GetLocations() []*Location {
 }
 
 type ListClusterNodesResponse_ClusterNode struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
-	CreatedAtNs   int64                  `protobuf:"varint,4,opt,name=created_at_ns,json=createdAtNs,proto3" json:"created_at_ns,omitempty"`
-	DataCenter    string                 `protobuf:"bytes,5,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
-	Rack          string                 `protobuf:"bytes,6,opt,name=rack,proto3" json:"rack,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Address     string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	Version     string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	CreatedAtNs int64                  `protobuf:"varint,4,opt,name=created_at_ns,json=createdAtNs,proto3" json:"created_at_ns,omitempty"`
+	DataCenter  string                 `protobuf:"bytes,5,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	Rack        string                 `protobuf:"bytes,6,opt,name=rack,proto3" json:"rack,omitempty"`
+	// Port of this node's Prometheus /metrics listener, or 0 when not enabled.
+	MetricsPort   uint32 `protobuf:"varint,7,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4938,6 +4980,13 @@ func (x *ListClusterNodesResponse_ClusterNode) GetRack() string {
 		return x.Rack
 	}
 	return ""
+}
+
+func (x *ListClusterNodesResponse_ClusterNode) GetMetricsPort() uint32 {
+	if x != nil {
+		return x.MetricsPort
+	}
+	return 0
 }
 
 type RaftListClusterServersResponse_ClusterServers struct {
@@ -5017,7 +5066,7 @@ const file_master_proto_rawDesc = "" +
 	"\adisk_id\x18\x01 \x01(\rR\x06diskId\x12\x12\n" +
 	"\x04tags\x18\x02 \x03(\tR\x04tags\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12(\n" +
-	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\xf0\v\n" +
+	"\x10max_volume_count\x18\x04 \x01(\x03R\x0emaxVolumeCount\"\x93\f\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1d\n" +
@@ -5041,7 +5090,8 @@ const file_master_proto_rawDesc = "" +
 	"\x11deleted_ec_shards\x18\x12 \x03(\v2*.master_pb.VolumeEcShardInformationMessageR\x0fdeletedEcShards\x12'\n" +
 	"\x10has_no_ec_shards\x18\x13 \x01(\bR\rhasNoEcShards\x12U\n" +
 	"\x11max_volume_counts\x18\x04 \x03(\v2).master_pb.Heartbeat.MaxVolumeCountsEntryR\x0fmaxVolumeCounts\x12\x1b\n" +
-	"\tgrpc_port\x18\x14 \x01(\rR\bgrpcPort\x12%\n" +
+	"\tgrpc_port\x18\x14 \x01(\rR\bgrpcPort\x12!\n" +
+	"\fmetrics_port\x18\x1d \x01(\rR\vmetricsPort\x12%\n" +
 	"\x0elocation_uuids\x18\x15 \x03(\tR\rlocationUuids\x12\x0e\n" +
 	"\x02id\x18\x16 \x01(\tR\x02id\x129\n" +
 	"\x05state\x18\x17 \x01(\v2#.volume_server_pb.VolumeServerStateR\x05state\x12/\n" +
@@ -5137,7 +5187,7 @@ const file_master_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\rR\x04data\x12\x16\n" +
 	"\x06parity\x18\x02 \x01(\rR\x06parity\x12\x1d\n" +
 	"\n" +
-	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\xce\x01\n" +
+	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\xf1\x01\n" +
 	"\x14KeepConnectedRequest\x12\x1f\n" +
 	"\vclient_type\x18\x01 \x01(\tR\n" +
 	"clientType\x12%\n" +
@@ -5147,7 +5197,8 @@ const file_master_proto_rawDesc = "" +
 	"filerGroup\x12\x1f\n" +
 	"\vdata_center\x18\x06 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
-	"\x04rack\x18\a \x01(\tR\x04rack\"\x9e\x03\n" +
+	"\x04rack\x18\a \x01(\tR\x04rack\x12!\n" +
+	"\fmetrics_port\x18\b \x01(\rR\vmetricsPort\"\x9e\x03\n" +
 	"\x0eVolumeLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
@@ -5296,12 +5347,13 @@ const file_master_proto_rawDesc = "" +
 	"\x0fdisk_free_bytes\x18\r \x01(\x04R\rdiskFreeBytes\x1aG\n" +
 	"\x19MaxVolumeCountByDiskEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xee\x01\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\x91\x02\n" +
 	"\fDataNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12D\n" +
 	"\tdiskInfos\x18\x02 \x03(\v2&.master_pb.DataNodeInfo.DiskInfosEntryR\tdiskInfos\x12\x1b\n" +
 	"\tgrpc_port\x18\x03 \x01(\rR\bgrpcPort\x12\x18\n" +
-	"\aaddress\x18\x04 \x01(\tR\aaddress\x1aQ\n" +
+	"\aaddress\x18\x04 \x01(\tR\aaddress\x12!\n" +
+	"\fmetrics_port\x18\x05 \x01(\rR\vmetricsPort\x1aQ\n" +
 	"\x0eDiskInfosEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
 	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\xf0\x01\n" +
@@ -5385,7 +5437,7 @@ const file_master_proto_rawDesc = "" +
 	" \x01(\bR\n" +
 	"isReadonly\"\x1c\n" +
 	"\x1aVolumeMarkReadonlyResponse\"\x1f\n" +
-	"\x1dGetMasterConfigurationRequest\"\xe0\x03\n" +
+	"\x1dGetMasterConfigurationRequest\"\x83\x04\n" +
 	"\x1eGetMasterConfigurationResponse\x12'\n" +
 	"\x0fmetrics_address\x18\x01 \x01(\tR\x0emetricsAddress\x128\n" +
 	"\x18metrics_interval_seconds\x18\x02 \x01(\rR\x16metricsIntervalSeconds\x12D\n" +
@@ -5395,22 +5447,25 @@ const file_master_proto_rawDesc = "" +
 	"\x15volume_size_limit_m_b\x18\x06 \x01(\rR\x11volumeSizeLimitMB\x12-\n" +
 	"\x12volume_preallocate\x18\a \x01(\bR\x11volumePreallocate\x12/\n" +
 	"\x13maintenance_scripts\x18\b \x01(\tR\x12maintenanceScripts\x12:\n" +
-	"\x19maintenance_sleep_minutes\x18\t \x01(\rR\x17maintenanceSleepMinutes\"q\n" +
+	"\x19maintenance_sleep_minutes\x18\t \x01(\rR\x17maintenanceSleepMinutes\x12!\n" +
+	"\fmetrics_port\x18\n" +
+	" \x01(\rR\vmetricsPort\"q\n" +
 	"\x17ListClusterNodesRequest\x12\x1f\n" +
 	"\vclient_type\x18\x01 \x01(\tR\n" +
 	"clientType\x12\x1f\n" +
 	"\vfiler_group\x18\x02 \x01(\tR\n" +
 	"filerGroup\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\x8d\x02\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\xb0\x02\n" +
 	"\x18ListClusterNodesResponse\x12T\n" +
-	"\rcluster_nodes\x18\x01 \x03(\v2/.master_pb.ListClusterNodesResponse.ClusterNodeR\fclusterNodes\x1a\x9a\x01\n" +
+	"\rcluster_nodes\x18\x01 \x03(\v2/.master_pb.ListClusterNodesResponse.ClusterNodeR\fclusterNodes\x1a\xbd\x01\n" +
 	"\vClusterNode\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\"\n" +
 	"\rcreated_at_ns\x18\x04 \x01(\x03R\vcreatedAtNs\x12\x1f\n" +
 	"\vdata_center\x18\x05 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
-	"\x04rack\x18\x06 \x01(\tR\x04rack\"\xc5\x01\n" +
+	"\x04rack\x18\x06 \x01(\tR\x04rack\x12!\n" +
+	"\fmetrics_port\x18\a \x01(\rR\vmetricsPort\"\xc5\x01\n" +
 	"\x16LeaseAdminTokenRequest\x12%\n" +
 	"\x0eprevious_token\x18\x01 \x01(\x03R\rpreviousToken\x12,\n" +
 	"\x12previous_lock_time\x18\x02 \x01(\x03R\x10previousLockTime\x12\x1b\n" +
