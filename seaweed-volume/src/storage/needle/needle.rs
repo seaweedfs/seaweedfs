@@ -581,23 +581,19 @@ impl Needle {
 // ============================================================================
 
 /// Compute padding to align needle to NEEDLE_PADDING_SIZE (8 bytes).
+///
+/// The sum is formed in i64: a size read from a corrupt header can sit near
+/// `i32::MAX`, and adding the header, checksum and timestamp widths to it in
+/// i32 would overflow (a panic with overflow checks, a wrapped padding
+/// without). The result is at most NEEDLE_PADDING_SIZE, so it fits `Size`.
 pub fn padding_length(needle_size: Size, version: Version) -> Size {
-    if version == VERSION_3 {
-        Size(
-            NEEDLE_PADDING_SIZE as i32
-                - ((NEEDLE_HEADER_SIZE as i32
-                    + needle_size.0
-                    + NEEDLE_CHECKSUM_SIZE as i32
-                    + TIMESTAMP_SIZE as i32)
-                    % NEEDLE_PADDING_SIZE as i32),
-        )
+    let fixed = if version == VERSION_3 {
+        NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE + TIMESTAMP_SIZE
     } else {
-        Size(
-            NEEDLE_PADDING_SIZE as i32
-                - ((NEEDLE_HEADER_SIZE as i32 + needle_size.0 + NEEDLE_CHECKSUM_SIZE as i32)
-                    % NEEDLE_PADDING_SIZE as i32),
-        )
-    }
+        NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE
+    };
+    let unpadded = fixed as i64 + needle_size.0 as i64;
+    Size((NEEDLE_PADDING_SIZE as i64 - unpadded % NEEDLE_PADDING_SIZE as i64) as i32)
 }
 
 /// Body length = Size + Checksum + [Timestamp] + Padding.
@@ -922,6 +918,21 @@ mod tests {
             let actual_v3 = get_actual_size(s, VERSION_3);
             assert_eq!(actual_v2 % 8, 0, "V2 size {} not aligned", size_val);
             assert_eq!(actual_v3 % 8, 0, "V3 size {} not aligned", size_val);
+        }
+    }
+
+    #[test]
+    fn padding_length_does_not_overflow_on_a_corrupt_size() {
+        // A header read from a corrupt or truncated file can carry any i32
+        // size. The scanners bound it against the bytes left before sizing a
+        // buffer, but on a volume with more than 2 GiB left a size near
+        // i32::MAX passes that bound, so the padding arithmetic itself must
+        // not overflow. Overflow checks are on in test builds, so an i32 sum
+        // here would panic rather than wrap.
+        for version in [VERSION_2, VERSION_3] {
+            let padding = padding_length(Size(i32::MAX), version).0 as i64;
+            assert!((1..=NEEDLE_PADDING_SIZE as i64).contains(&padding));
+            assert_eq!(get_actual_size(Size(i32::MAX), version) % 8, 0);
         }
     }
 
