@@ -4123,16 +4123,18 @@ impl VolumeServer for VolumeGrpcService {
         // dat_file_size. The decoder infers the layout from the shard size
         // when .vif does not record it.
         // Write .dat file using block-interleaved reading from shards.
-        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards_with_dirs(
-            &dat_dir,
-            &collection,
-            vid,
-            dat_file_size,
-            vif_dat_file_size,
-            data_shards,
-            &per_shard_dirs,
-            large_block_size as usize,
-            small_block_size as usize,
+        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards(
+            &crate::storage::erasure_coding::ec_decoder::DatRebuild {
+                dat_dir: &dat_dir,
+                collection: &collection,
+                volume_id: vid,
+                dat_file_size,
+                encoded_dat_file_size: vif_dat_file_size,
+                data_shards,
+                shard_dirs: Some(&per_shard_dirs),
+                large_block_size: large_block_size as usize,
+                small_block_size: small_block_size as usize,
+            },
         )
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 

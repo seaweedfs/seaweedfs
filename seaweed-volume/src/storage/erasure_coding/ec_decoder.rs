@@ -67,73 +67,45 @@ pub fn find_dat_file_size_with_dirs(
     Ok(dat_size)
 }
 
-/// Reconstruct a .dat file from EC data shards.
-///
-/// Reads from .ec00-.ec09 and writes a new .dat file. All data shards
-/// must live in `dir`. For the cross-disk reconciled layout where
-/// shards are split across multiple data dirs of the same node, use
-/// [`write_dat_file_from_shards_with_dirs`] instead.
-#[expect(clippy::too_many_arguments)]
-pub fn write_dat_file_from_shards(
-    dir: &str,
-    collection: &str,
-    volume_id: VolumeId,
-    dat_file_size: i64,
-    encoded_dat_file_size: i64,
-    data_shards: usize,
-    large_block_size: usize,
-    small_block_size: usize,
-) -> io::Result<()> {
-    let dirs: Vec<String> = (0..data_shards).map(|_| dir.to_string()).collect();
-    write_dat_file_from_shards_with_dirs(
-        dir,
-        collection,
-        volume_id,
-        dat_file_size,
-        encoded_dat_file_size,
-        data_shards,
-        &dirs,
-        large_block_size,
-        small_block_size,
-    )
-}
-
-/// Reconstruct a .dat file from EC data shards, taking the source
-/// directory for each shard separately.
-///
-/// `dat_dir` is where the produced `.dat` is written. `shard_dirs[i]`
-/// is the directory holding shard `i`. For the simple "all shards in
-/// one dir" case both can be the same value.
+/// What it takes to rebuild a volume's .dat from its EC data shards.
 ///
 /// Mirrors Go's `WriteDatFile(baseFileName, datFileSize,
 /// encodedDatFileSize, shardFileNames)` shape — Go passes per-shard
 /// paths so a reconciled volume with shards split across disks of the
 /// same volume server can still be decoded back to a regular .dat
 /// (seaweedfs/seaweedfs#9252).
+#[derive(Clone, Copy, Debug)]
+pub struct DatRebuild<'a> {
+    /// Where the produced `.dat` is written.
+    pub dat_dir: &'a str,
+    pub collection: &'a str,
+    pub volume_id: VolumeId,
+    /// The number of bytes to write, i.e. the live data extent from
+    /// [`find_dat_file_size`].
+    pub dat_file_size: i64,
+    /// The .dat size at encode time, which fixed the shard block layout:
+    /// deletions can move the live extent below the large-block row
+    /// boundary, and deriving the layout from the shrunk extent would read
+    /// the shards in the wrong block order. Zero when the .vif does not
+    /// record the encode-time size; the layout is then inferred from the
+    /// shard size.
+    pub encoded_dat_file_size: i64,
+    pub data_shards: usize,
+    /// `shard_dirs[i]` is the directory holding shard `i`. `None` means every
+    /// data shard sits in `dat_dir`.
+    pub shard_dirs: Option<&'a [String]>,
+    /// The volume's shard block layout, e.g. `EcVolume::large_block_size()`
+    /// / `small_block_size()` from its .vif EC config.
+    pub large_block_size: usize,
+    pub small_block_size: usize,
+}
+
+/// Reconstruct a .dat file from EC data shards.
 ///
-/// `dat_file_size` is the number of bytes to write, i.e. the live data
-/// extent from [`find_dat_file_size`]. `encoded_dat_file_size` is the
-/// .dat size at encode time, which fixed the shard block layout:
-/// deletions can move the live extent below the large-block row
-/// boundary, and deriving the layout from the shrunk extent would read
-/// the shards in the wrong block order. Pass zero when the .vif does
-/// not record the encode-time size to infer the layout from the shard
-/// size. `large_block_size`/`small_block_size` are the volume's shard
-/// block layout, e.g. `EcVolume::large_block_size()` /
-/// `small_block_size()` from its .vif EC config.
-#[expect(clippy::too_many_arguments)]
-pub fn write_dat_file_from_shards_with_dirs(
-    dat_dir: &str,
-    collection: &str,
-    volume_id: VolumeId,
-    dat_file_size: i64,
-    encoded_dat_file_size: i64,
-    data_shards: usize,
-    shard_dirs: &[String],
-    large_block_size: usize,
-    small_block_size: usize,
-) -> io::Result<()> {
-    write_dat_file(
+/// Reads from .ec00-.ec09 and writes a new .dat file, from one directory or
+/// from the per-shard directories of a cross-disk reconciled volume.
+pub fn write_dat_file_from_shards(spec: &DatRebuild<'_>) -> io::Result<()> {
+    let DatRebuild {
         dat_dir,
         collection,
         volume_id,
@@ -143,21 +115,15 @@ pub fn write_dat_file_from_shards_with_dirs(
         shard_dirs,
         large_block_size,
         small_block_size,
-    )
-}
-
-#[expect(clippy::too_many_arguments)]
-fn write_dat_file(
-    dat_dir: &str,
-    collection: &str,
-    volume_id: VolumeId,
-    dat_file_size: i64,
-    encoded_dat_file_size: i64,
-    data_shards: usize,
-    shard_dirs: &[String],
-    large_block_size: usize,
-    small_block_size: usize,
-) -> io::Result<()> {
+    } = *spec;
+    let same_dir: Vec<String>;
+    let shard_dirs: &[String] = match shard_dirs {
+        Some(dirs) => dirs,
+        None => {
+            same_dir = vec![dat_dir.to_string(); data_shards];
+            &same_dir
+        }
+    };
     if data_shards == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -428,16 +394,17 @@ mod tests {
         std::fs::remove_file(format!("{}/1.idx", dir)).unwrap();
 
         // Reconstruct from EC shards
-        write_dat_file_from_shards(
-            dir,
-            "",
-            VolumeId(1),
-            original_dat_size as i64,
-            original_dat_size as i64,
+        write_dat_file_from_shards(&DatRebuild {
+            dat_dir: dir,
+            collection: "",
+            volume_id: VolumeId(1),
+            dat_file_size: original_dat_size as i64,
+            encoded_dat_file_size: original_dat_size as i64,
             data_shards,
-            block_size as usize,
-            block_size as usize,
-        )
+            shard_dirs: None,
+            large_block_size: block_size as usize,
+            small_block_size: block_size as usize,
+        })
         .unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
 
@@ -483,16 +450,17 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         // No shard files exist, so de-striping must fail and publish nothing:
         // neither the final .dat nor a partial .dat.tmp may remain.
-        let res = write_dat_file_from_shards(
-            dir,
-            "",
-            VolumeId(7),
-            100,
-            100,
-            10,
-            ERASURE_CODING_LARGE_BLOCK_SIZE,
-            ERASURE_CODING_SMALL_BLOCK_SIZE,
-        );
+        let res = write_dat_file_from_shards(&DatRebuild {
+            dat_dir: dir,
+            collection: "",
+            volume_id: VolumeId(7),
+            dat_file_size: 100,
+            encoded_dat_file_size: 100,
+            data_shards: 10,
+            shard_dirs: None,
+            large_block_size: ERASURE_CODING_LARGE_BLOCK_SIZE,
+            small_block_size: ERASURE_CODING_SMALL_BLOCK_SIZE,
+        });
         assert!(res.is_err());
         assert!(!std::path::Path::new(&format!("{}/7.dat", dir)).exists());
         assert!(!std::path::Path::new(&format!("{}/7.dat.tmp", dir)).exists());
@@ -543,11 +511,13 @@ mod tests {
                 &rs,
                 &mut shards,
                 &mut builders,
-                data_shards,
-                parity_shards,
-                SMALL,
-                LARGE,
-                SMALL,
+                ec_encoder::EcEncodeLayout {
+                    data_shards,
+                    parity_shards,
+                    buffer_size: SMALL,
+                    large_block_size: LARGE,
+                    small_block_size: SMALL,
+                },
             )
             .unwrap();
             for shard in &mut shards {
@@ -565,7 +535,17 @@ mod tests {
          -> io::Result<Vec<u8>> {
             let out = format!("{}/{}", dir, sub);
             std::fs::create_dir_all(&out).unwrap();
-            write_dat_file(&out, "", VolumeId(1), live, encoded, 10, shard_dirs, LARGE, SMALL)?;
+            write_dat_file_from_shards(&DatRebuild {
+                dat_dir: &out,
+                collection: "",
+                volume_id: VolumeId(1),
+                dat_file_size: live,
+                encoded_dat_file_size: encoded,
+                data_shards: 10,
+                shard_dirs: Some(shard_dirs),
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            })?;
             Ok(std::fs::read(format!("{}/1.dat", out)).unwrap())
         };
 
@@ -635,11 +615,13 @@ mod tests {
             &rs,
             &mut shards,
             &mut builders,
-            data_shards,
-            parity_shards,
-            SMALL,
-            LARGE,
-            SMALL,
+            ec_encoder::EcEncodeLayout {
+                data_shards,
+                parity_shards,
+                buffer_size: SMALL,
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            },
         )
         .unwrap();
         for shard in &mut shards {
@@ -655,17 +637,17 @@ mod tests {
         std::fs::create_dir(&out_dir).unwrap();
         let out = out_dir.to_str().unwrap();
         let decode = |live_size: i64, encoded_size: i64| -> Vec<u8> {
-            write_dat_file(
-                out,
-                "",
-                VolumeId(1),
-                live_size,
-                encoded_size,
+            write_dat_file_from_shards(&DatRebuild {
+                dat_dir: out,
+                collection: "",
+                volume_id: VolumeId(1),
+                dat_file_size: live_size,
+                encoded_dat_file_size: encoded_size,
                 data_shards,
-                &shard_dirs,
-                LARGE,
-                SMALL,
-            )
+                shard_dirs: Some(&shard_dirs),
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            })
             .unwrap();
             let path = format!("{}/1.dat", out);
             let decoded = std::fs::read(&path).unwrap();
@@ -700,17 +682,17 @@ mod tests {
         assert_ne!(&original[..(large_row_size / 2) as usize], &control[..]);
 
         // the live extent can never exceed the encode-time size
-        assert!(write_dat_file(
-            out,
-            "",
-            VolumeId(1),
-            dat_size + 1,
-            dat_size,
+        assert!(write_dat_file_from_shards(&DatRebuild {
+            dat_dir: out,
+            collection: "",
+            volume_id: VolumeId(1),
+            dat_file_size: dat_size + 1,
+            encoded_dat_file_size: dat_size,
             data_shards,
-            &shard_dirs,
-            LARGE,
-            SMALL,
-        )
+            shard_dirs: Some(&shard_dirs),
+            large_block_size: LARGE,
+            small_block_size: SMALL,
+        })
         .is_err());
     }
 }
