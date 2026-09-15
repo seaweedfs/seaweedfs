@@ -1,0 +1,347 @@
+package app
+
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+// chartCard renders one titled chart with a legend.
+templ chartCard(title string, icon string, width string, series []dash.ChartSeries, opts dash.ChartOptions) {
+	<div class={ width, "mb-4" }>
+		<div class="card shadow h-100">
+			<div class="card-header py-2">
+				<h6 class="m-0 font-weight-bold text-primary">
+					<i class={ "fas", icon, "me-2" }></i>{ title }
+				</h6>
+			</div>
+			<div class="card-body">
+				@templ.Raw(dash.RenderChart(series, opts))
+				@templ.Raw(dash.RenderLegend(series))
+			</div>
+		</div>
+	</div>
+}
+
+// statCard shows a single headline number with a colored left border.
+templ statCard(label string, value string, icon string, accent string) {
+	<div class="col-xl-3 col-md-6 mb-4">
+		<div class={ "card", "border-left-" + accent, "shadow", "h-100", "py-2" }>
+			<div class="card-body">
+				<div class="row no-gutters align-items-center">
+					<div class="col mr-2">
+						<div class={ "text-xs", "font-weight-bold", "text-" + accent, "text-uppercase", "mb-1" }>
+							{ label }
+						</div>
+						<div class="h5 mb-0 font-weight-bold text-gray-800">{ value }</div>
+					</div>
+					<div class="col-auto">
+						<i class={ "fas", icon, "fa-2x", "text-gray-300" }></i>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+templ monitoringHeader(title string, icon string, lastUpdated string) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class={ "fas", icon, "me-2" }></i>{ title }
+		</h1>
+		<small class="text-muted">
+			<i class="fas fa-clock me-1"></i>Updated { lastUpdated }
+		</small>
+	</div>
+}
+
+templ noMetricsNotice() {
+	<div class="alert alert-info" role="alert">
+		<i class="fas fa-info-circle me-2"></i>
+		No metrics collected yet. The admin server scrapes each node's <code>/metrics</code>
+		endpoint every 15 seconds; charts fill in as samples accumulate.
+	</div>
+}
+
+templ Monitoring(data dash.MonitoringData) {
+	@monitoringHeader("Monitoring Overview", "fa-chart-line", data.LastUpdated.Format("15:04:05"))
+
+	if len(data.Overview.UnderReplicatedVolumes) == 0 && len(data.Overview.VolumeReadRate) == 0 {
+		@noMetricsNotice()
+	}
+
+	if dash.LatestValue(data.Overview.UnderReplicatedVolumes) > 0 {
+		<div class="alert alert-danger" role="alert">
+			<i class="fas fa-exclamation-triangle me-2"></i>
+			<strong>{ fmt.Sprintf("%.0f", dash.LatestValue(data.Overview.UnderReplicatedVolumes)) }</strong>
+			under-replicated volume(s). Data is at risk until replication catches up.
+		</div>
+	}
+
+	<div class="row">
+		@statCard("Under-replicated", fmt.Sprintf("%.0f", dash.LatestValue(data.Overview.UnderReplicatedVolumes)), "fa-clone", "danger")
+		@statCard("Writable Volumes", fmt.Sprintf("%.0f", dash.LatestValue(data.Overview.WritableVolumes)), "fa-pen", "success")
+		@statCard("Disk Usage", dash.FormatChartValue(dash.LatestValue(data.Overview.DiskUsagePct), dash.UnitPercent), "fa-hdd", "warning")
+		@statCard("Queue Depth", fmt.Sprintf("%.0f", dash.LatestValue(data.Overview.QueueDepth)), "fa-tasks", "info")
+	</div>
+
+	<h6 class="text-uppercase text-muted small mb-3">Health</h6>
+	<div class="row">
+		@chartCard("Under-replicated Volumes", "fa-clone", "col-xl-6", []dash.ChartSeries{
+			{Name: "Under-replicated", Color: dash.ChartDanger, Data: data.Overview.UnderReplicatedVolumes, Area: true},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+		@chartCard("Volume Capacity Pressure", "fa-pen", "col-xl-6", []dash.ChartSeries{
+			{Name: "Writable", Color: dash.ChartSuccess, Data: data.Overview.WritableVolumes},
+			{Name: "Crowded", Color: dash.ChartWarning, Data: data.Overview.CrowdedVolumes},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+		@chartCard("Cluster Disk Usage", "fa-hdd", "col-xl-6", []dash.ChartSeries{
+			{Name: "Disk used", Color: dash.ChartWarning, Data: data.Overview.DiskUsagePct, Area: true},
+		}, dash.ChartOptions{Unit: dash.UnitPercent, Threshold: diskThreshold()})
+		@chartCard("Disk & Quarantine Errors", "fa-triangle-exclamation", "col-xl-6", []dash.ChartSeries{
+			{Name: "Disk errors", Color: dash.ChartDanger, Data: data.Overview.DiskErrors},
+			{Name: "Quarantined", Color: dash.ChartWarning, Data: data.Overview.Quarantined},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+	</div>
+
+	<h6 class="text-uppercase text-muted small mb-3">Throughput</h6>
+	<div class="row">
+		@chartCard("Volume Server Request Rate", "fa-server", "col-xl-6", []dash.ChartSeries{
+			{Name: "Read", Color: dash.ChartPrimary, Data: data.Overview.VolumeReadRate},
+			{Name: "Write", Color: dash.ChartSuccess, Data: data.Overview.VolumeWriteRate},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+		@chartCard("Filer & S3 Request Rate", "fa-folder-open", "col-xl-6", []dash.ChartSeries{
+			{Name: "Filer", Color: dash.ChartInfo, Data: data.Overview.FilerRequestRate},
+			{Name: "S3", Color: dash.ChartPrimary, Data: data.Overview.S3RequestRate},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+	</div>
+
+	<h6 class="text-uppercase text-muted small mb-3">Latency</h6>
+	<div class="row">
+		@chartCard("Volume Server Latency", "fa-stopwatch", "col-xl-6", []dash.ChartSeries{
+			{Name: "p50", Color: dash.ChartSuccess, Data: data.Overview.VolumeP50},
+			{Name: "p95", Color: dash.ChartWarning, Data: data.Overview.VolumeP95},
+			{Name: "p99", Color: dash.ChartDanger, Data: data.Overview.VolumeP99},
+		}, dash.ChartOptions{Unit: dash.UnitSeconds})
+		@chartCard("Filer Latency", "fa-stopwatch", "col-xl-6", []dash.ChartSeries{
+			{Name: "p50", Color: dash.ChartSuccess, Data: data.Overview.FilerP50},
+			{Name: "p95", Color: dash.ChartWarning, Data: data.Overview.FilerP95},
+			{Name: "p99", Color: dash.ChartDanger, Data: data.Overview.FilerP99},
+		}, dash.ChartOptions{Unit: dash.UnitSeconds})
+	</div>
+
+	<h6 class="text-uppercase text-muted small mb-3">Errors</h6>
+	<div class="row">
+		@chartCard("Request Error Rate by Component", "fa-bug", "col-xl-6", []dash.ChartSeries{
+			{Name: "Volume", Color: dash.ChartDanger, Data: data.Overview.VolumeErrorRate},
+			{Name: "Filer", Color: dash.ChartWarning, Data: data.Overview.FilerErrorRate},
+			{Name: "S3", Color: dash.ChartInfo, Data: data.Overview.S3ErrorRate},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+		@chartCard("Maintenance Queue & Worker Slots", "fa-tasks", "col-xl-6", []dash.ChartSeries{
+			{Name: "Queued tasks", Color: dash.ChartInfo, Data: data.Overview.QueueDepth},
+			{Name: "Slots used", Color: dash.ChartPrimary, Data: data.Overview.SlotsUsed},
+			{Name: "Slots max", Color: dash.ChartWarning, Data: data.Overview.SlotsMax},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+	</div>
+}
+
+templ MonitoringVolumeServers(data dash.MonitoringData) {
+	@monitoringHeader("Volume Servers", "fa-server", data.LastUpdated.Format("15:04:05"))
+
+	if len(data.VolumeServers) == 0 {
+		@noMetricsNotice()
+	}
+
+	<div class="card shadow mb-4">
+		<div class="card-header py-2">
+			<h6 class="m-0 font-weight-bold text-primary">
+				<i class="fas fa-heartbeat me-2"></i>Server Health
+			</h6>
+		</div>
+		<div class="card-body">
+			<div class="table-responsive">
+				<table class="table table-hover">
+					<thead>
+						<tr>
+							<th>Server</th>
+							<th>Request Rate</th>
+							<th>p99 Latency</th>
+							<th>Disk Usage</th>
+							<th>Error Rate</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, vs := range data.VolumeServers {
+							<tr>
+								<td>{ vs.Address }</td>
+								<td>{ dash.FormatChartValue(dash.LatestValue(vs.RequestRate), dash.UnitCount) }/s</td>
+								<td>{ dash.FormatChartValue(dash.LatestValue(vs.P99), dash.UnitSeconds) }</td>
+								<td>{ dash.FormatChartValue(dash.LatestValue(vs.DiskUsagePct), dash.UnitPercent) }</td>
+								<td>
+									if dash.LatestValue(vs.ErrorRate) > 0 {
+										<span class="badge bg-danger">
+											{ dash.FormatChartValue(dash.LatestValue(vs.ErrorRate), dash.UnitCount) }/s
+										</span>
+									} else {
+										<span class="text-muted">0</span>
+									}
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	for _, vs := range data.VolumeServers {
+		<h6 class="text-uppercase text-muted small mb-3">{ vs.Address }</h6>
+		<div class="row">
+			@chartCard("Request Rate", "fa-exchange-alt", "col-xl-6", []dash.ChartSeries{
+				{Name: "Requests", Color: dash.ChartPrimary, Data: vs.RequestRate, Area: true},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("p99 Latency", "fa-stopwatch", "col-xl-6", []dash.ChartSeries{
+				{Name: "p99", Color: dash.ChartDanger, Data: vs.P99},
+			}, dash.ChartOptions{Unit: dash.UnitSeconds})
+			@chartCard("Disk Usage", "fa-hdd", "col-xl-6", []dash.ChartSeries{
+				{Name: "Disk used", Color: dash.ChartWarning, Data: vs.DiskUsagePct, Area: true},
+			}, dash.ChartOptions{Unit: dash.UnitPercent, Threshold: diskThreshold()})
+			@chartCard("Error Rate", "fa-bug", "col-xl-6", []dash.ChartSeries{
+				{Name: "Errors", Color: dash.ChartDanger, Data: vs.ErrorRate},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+		</div>
+	}
+}
+
+templ MonitoringFilers(data dash.MonitoringData) {
+	@monitoringHeader("Filers", "fa-folder-open", data.LastUpdated.Format("15:04:05"))
+
+	if len(data.Filers) == 0 {
+		@noMetricsNotice()
+	}
+
+	for _, f := range data.Filers {
+		<h6 class="text-uppercase text-muted small mb-3">{ f.Address }</h6>
+		<div class="row">
+			@chartCard("Request Rate", "fa-exchange-alt", "col-xl-6", []dash.ChartSeries{
+				{Name: "Requests", Color: dash.ChartInfo, Data: f.RequestRate, Area: true},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("Latency", "fa-stopwatch", "col-xl-6", []dash.ChartSeries{
+				{Name: "Filer p99", Color: dash.ChartDanger, Data: f.P99},
+				{Name: "Store p99", Color: dash.ChartWarning, Data: f.StoreP99},
+			}, dash.ChartOptions{Unit: dash.UnitSeconds})
+			@chartCard("In-flight Requests", "fa-spinner", "col-xl-6", []dash.ChartSeries{
+				{Name: "In flight", Color: dash.ChartPrimary, Data: f.InFlight, Area: true},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("Replication Lag", "fa-clock-rotate-left", "col-xl-6", []dash.ChartSeries{
+				{Name: "Lag", Color: dash.ChartWarning, Data: f.SyncLag},
+			}, dash.ChartOptions{Unit: dash.UnitSeconds})
+		</div>
+	}
+}
+
+templ MonitoringS3(data dash.MonitoringData) {
+	@monitoringHeader("S3", "fa-cloud", data.LastUpdated.Format("15:04:05"))
+
+	if len(data.S3) == 0 {
+		@noMetricsNotice()
+	}
+
+	for _, n := range data.S3 {
+		<h6 class="text-uppercase text-muted small mb-3">{ n.Address }</h6>
+		<div class="row">
+			@chartCard("Operation Rate", "fa-exchange-alt", "col-xl-6", []dash.ChartSeries{
+				{Name: "Requests", Color: dash.ChartPrimary, Data: n.RequestRate, Area: true},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("Error Rate", "fa-bug", "col-xl-6", []dash.ChartSeries{
+				{Name: "4xx", Color: dash.ChartWarning, Data: n.Errors4xx},
+				{Name: "5xx", Color: dash.ChartDanger, Data: n.Errors5xx},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("p99 Latency", "fa-stopwatch", "col-xl-6", []dash.ChartSeries{
+				{Name: "p99", Color: dash.ChartDanger, Data: n.P99},
+			}, dash.ChartOptions{Unit: dash.UnitSeconds})
+		</div>
+	}
+}
+
+templ MonitoringMasters(data dash.MonitoringData) {
+	@monitoringHeader("Masters", "fa-crown", data.LastUpdated.Format("15:04:05"))
+
+	if len(data.Masters) == 0 {
+		@noMetricsNotice()
+	}
+
+	for _, m := range data.Masters {
+		<h6 class="text-uppercase text-muted small mb-3">
+			{ m.Address }
+			if m.IsLeader {
+				<span class="badge bg-warning text-dark ms-2">
+					<i class="fas fa-star me-1"></i>Leader
+				</span>
+			}
+		</h6>
+		<div class="row">
+			@chartCard("Heartbeat Rate", "fa-heartbeat", "col-xl-6", []dash.ChartSeries{
+				{Name: "Heartbeats", Color: dash.ChartSuccess, Data: m.HeartbeatRate, Area: true},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("Volume Creation Rate", "fa-plus", "col-xl-6", []dash.ChartSeries{
+				{Name: "Created", Color: dash.ChartPrimary, Data: m.VolumeCreation},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("Leader Changes", "fa-random", "col-xl-6", []dash.ChartSeries{
+				{Name: "Changes", Color: dash.ChartDanger, Data: m.LeaderChanges},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+			@chartCard("Placement Mismatches", "fa-triangle-exclamation", "col-xl-6", []dash.ChartSeries{
+				{Name: "Mismatched", Color: dash.ChartWarning, Data: m.PlacementMiss},
+			}, dash.ChartOptions{Unit: dash.UnitCount})
+		</div>
+	}
+}
+
+templ MonitoringWorkers(data dash.MonitoringData) {
+	@monitoringHeader("Workers", "fa-users-cog", data.LastUpdated.Format("15:04:05"))
+
+	<div class="row">
+		@statCard("Connected Workers", fmt.Sprintf("%d", data.Workers.Connected), "fa-users", "primary")
+		@statCard("Queue Depth", fmt.Sprintf("%.0f", dash.LatestValue(data.Workers.QueueDepth)), "fa-tasks", "info")
+		@statCard("Slots Used", fmt.Sprintf("%.0f", dash.LatestValue(data.Workers.SlotsUsed)), "fa-microchip", "success")
+		@statCard("Slots Max", fmt.Sprintf("%.0f", dash.LatestValue(data.Workers.SlotsMax)), "fa-layer-group", "warning")
+	</div>
+
+	<div class="row">
+		@chartCard("Task Queue Depth", "fa-tasks", "col-xl-6", []dash.ChartSeries{
+			{Name: "Queued", Color: dash.ChartInfo, Data: data.Workers.QueueDepth, Area: true},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+		@chartCard("Worker Slots", "fa-microchip", "col-xl-6", []dash.ChartSeries{
+			{Name: "Used", Color: dash.ChartPrimary, Data: data.Workers.SlotsUsed},
+			{Name: "Max", Color: dash.ChartWarning, Data: data.Workers.SlotsMax},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+		@chartCard("Task Completion Rate", "fa-check", "col-xl-6", []dash.ChartSeries{
+			{Name: "Completed", Color: dash.ChartSuccess, Data: data.Workers.TaskRate, Area: true},
+		}, dash.ChartOptions{Unit: dash.UnitCount})
+	</div>
+
+	<div class="card shadow mb-4">
+		<div class="card-header py-2">
+			<h6 class="m-0 font-weight-bold text-primary">
+				<i class="fas fa-users me-2"></i>Connected Workers
+			</h6>
+		</div>
+		<div class="card-body">
+			if len(data.Workers.Workers) > 0 {
+				<div class="table-responsive">
+					<table class="table table-hover">
+						<thead><tr><th>Worker ID</th></tr></thead>
+						<tbody>
+							for _, w := range data.Workers.Workers {
+								<tr><td>{ w.ID }</td></tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			} else {
+				<div class="text-center py-4">
+					<i class="fas fa-users fa-2x text-muted mb-2"></i>
+					<p class="text-muted mb-0">No workers are currently connected.</p>
+				</div>
+			}
+		</div>
+	</div>
+}

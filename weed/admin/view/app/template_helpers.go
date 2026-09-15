@@ -6,6 +6,15 @@ import (
 	"strings"
 )
 
+// diskUsageWarnPct is where disk-usage charts draw their reference line.
+const diskUsageWarnPct = 85.0
+
+// diskThreshold returns the disk-usage reference line for chart options.
+func diskThreshold() *float64 {
+	v := diskUsageWarnPct
+	return &v
+}
+
 // formatBytes converts bytes to human readable format
 func formatBytes(bytes int64) string {
 	if bytes == 0 {
