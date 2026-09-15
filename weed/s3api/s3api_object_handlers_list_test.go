@@ -166,11 +166,12 @@ func Test_normalizePrefixMarker(t *testing.T) {
 		marker string
 	}
 	tests := []struct {
-		name              string
-		args              args
-		wantAlignedDir    string
-		wantAlignedPrefix string
-		wantAlignedMarker string
+		name                      string
+		args                      args
+		wantAlignedDir            string
+		wantAlignedPrefix         string
+		wantAlignedMarker         string
+		wantPrefixEndsOnDelimiter bool
 	}{
 		{"bucket root listing with delimiter",
 			args{"/",
@@ -178,6 +179,7 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"",
 			"",
 			"",
+			true,
 		},
 		{"prefix is a directory",
 			args{"/parentDir/data/",
@@ -185,6 +187,7 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"parentDir",
 			"data",
 			"",
+			true,
 		},
 		{"normal case",
 			args{"/parentDir/data/0",
@@ -192,6 +195,7 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"parentDir/data",
 			"0",
 			"0e/0e149049a2137b0cc12e",
+			false,
 		},
 		{"empty prefix",
 			args{"",
@@ -199,6 +203,7 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"",
 			"",
 			"parentDir/data/0e/0e149049a2137b0cc12e",
+			false,
 		},
 		{"empty directory",
 			args{"parent",
@@ -206,6 +211,7 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"",
 			"parent",
 			"parentDir/data/0e/0e149049a2137b0cc12e",
+			false,
 		},
 		{"partial name prefix, marker resumes inside a matching subdirectory",
 			args{"data/a",
@@ -213,6 +219,7 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"data",
 			"a",
 			"a/1",
+			false,
 		},
 		{"partial name prefix, marker resumes inside a matching sibling directory",
 			args{"data/a",
@@ -220,6 +227,7 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"data",
 			"a",
 			"ab/1",
+			false,
 		},
 		{"top-level partial name prefix, marker resumes inside a matching subdirectory",
 			args{"a",
@@ -227,14 +235,32 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"",
 			"a",
 			"a/1",
+			false,
+		},
+		{"marker sorts before the prefix, so it excludes nothing under it",
+			args{"parentDir/data/",
+				"parentDir"},
+			"parentDir",
+			"data",
+			"",
+			true,
+		},
+		{"marker is the prefix directory, whose own key it excludes",
+			args{"parentDir/data/",
+				"parentDir/data/"},
+			"parentDir/data",
+			"",
+			"",
+			false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotAlignedDir, gotAlignedPrefix, gotAlignedMarker := normalizePrefixMarker(tt.args.prefix, tt.args.marker)
+			gotAlignedDir, gotAlignedPrefix, gotAlignedMarker, gotPrefixEndsOnDelimiter := normalizePrefixMarker(tt.args.prefix, tt.args.marker)
 			assert.Equalf(t, tt.wantAlignedDir, gotAlignedDir, "normalizePrefixMarker(%v, %v)", tt.args.prefix, tt.args.marker)
 			assert.Equalf(t, tt.wantAlignedPrefix, gotAlignedPrefix, "normalizePrefixMarker(%v, %v)", tt.args.prefix, tt.args.marker)
 			assert.Equalf(t, tt.wantAlignedMarker, gotAlignedMarker, "normalizePrefixMarker(%v, %v)", tt.args.prefix, tt.args.marker)
+			assert.Equalf(t, tt.wantPrefixEndsOnDelimiter, gotPrefixEndsOnDelimiter, "normalizePrefixMarker(%v, %v)", tt.args.prefix, tt.args.marker)
 		})
 	}
 }
