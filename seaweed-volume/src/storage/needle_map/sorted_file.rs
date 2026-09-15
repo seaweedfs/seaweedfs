@@ -133,9 +133,7 @@ impl SortedFileNeedleMap {
         }
         let file = pooled_index_files()
             .borrow(&self.db_file_name, false)
-            .map_err(|e| {
-                io::Error::new(e.kind(), format!("open {}: {}", self.db_file_name, e))
-            })?;
+            .map_err(|e| io::Error::new(e.kind(), format!("open {}: {}", self.db_file_name, e)))?;
         match search_sorted_index(&file, self.db_file_size, key)? {
             Some((_, offset, size)) => Ok(Some(NeedleValue { offset, size })),
             None => Ok(None),
@@ -700,10 +698,11 @@ mod tests {
         // without a reload — the same contract Go's Get has, where callers
         // check size.is_deleted().
         assert!(m.get(NeedleId(2)).unwrap().unwrap().size.is_deleted());
-        assert!(m
-            .delete(NeedleId(2), Offset::from_actual_offset(16))
-            .unwrap()
-            .is_none());
+        assert!(
+            m.delete(NeedleId(2), Offset::from_actual_offset(16))
+                .unwrap()
+                .is_none()
+        );
         assert!(!m.get(NeedleId(1)).unwrap().unwrap().size.is_deleted());
     }
 
@@ -999,7 +998,8 @@ mod tests {
 
         // The retry is a no-op: no second tombstone, no double counting.
         assert_eq!(
-            m.delete(NeedleId(1), Offset::from_actual_offset(8)).unwrap(),
+            m.delete(NeedleId(1), Offset::from_actual_offset(8))
+                .unwrap(),
             None
         );
         assert_eq!(m.deleted_count(), deleted_before + 2);
@@ -1029,7 +1029,8 @@ mod tests {
         );
         // And a retry must not append a second tombstone for it.
         assert_eq!(
-            m.delete(NeedleId(1), Offset::from_actual_offset(8)).unwrap(),
+            m.delete(NeedleId(1), Offset::from_actual_offset(8))
+                .unwrap(),
             None
         );
     }

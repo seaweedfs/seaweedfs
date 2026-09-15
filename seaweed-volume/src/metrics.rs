@@ -525,7 +525,7 @@ pub async fn push_metrics_once(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::put, Router};
+    use axum::{Router, routing::put};
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -597,7 +597,9 @@ mod tests {
         register_metrics();
 
         VOLUME_GAUGE.with_label_values(&["pics", "volume"]).set(2.0);
-        VOLUME_GAUGE.with_label_values(&["pics", "ec_shards"]).set(3.0);
+        VOLUME_GAUGE
+            .with_label_values(&["pics", "ec_shards"])
+            .set(3.0);
         READ_ONLY_VOLUME_GAUGE
             .with_label_values(&["pics", "volume"])
             .set(1.0);

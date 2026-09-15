@@ -10,7 +10,7 @@ use crate::storage::needle::Needle;
 use crate::storage::super_block::SuperBlock;
 use crate::storage::types::*;
 use crate::storage::volume::{
-    fsync_dir, needle_disk_end, scan_volume_file, Volume, VolumeError, VolumeFileVisitor,
+    Volume, VolumeError, VolumeFileVisitor, fsync_dir, needle_disk_end, scan_volume_file,
 };
 
 /// Writes one .idx row per .dat record, in .dat append order, which is the
@@ -105,8 +105,8 @@ impl Volume {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::needle::crc::CRC;
     use crate::storage::needle::Needle;
+    use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::types::*;
     use crate::storage::volume::{Volume, VolumeSpec};

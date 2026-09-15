@@ -198,8 +198,8 @@ impl Needle {
     /// the data payload from disk at all, matching Go's `ReadNeedleMeta`.
     pub fn read_paged_meta(
         &mut self,
-        header_bytes: &[u8],   // first 20 bytes: NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE
-        meta_bytes: &[u8],     // tail: non-data body metadata + checksum + timestamp + padding
+        header_bytes: &[u8], // first 20 bytes: NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE
+        meta_bytes: &[u8],   // tail: non-data body metadata + checksum + timestamp + padding
         offset: i64,
         expected_size: Size,
         version: Version,
@@ -770,7 +770,9 @@ pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NeedleError {
-    #[error("size mismatch at offset {offset}: found id={id} size={found:?}, expected size={expected:?}")]
+    #[error(
+        "size mismatch at offset {offset}: found id={id} size={found:?}, expected size={expected:?}"
+    )]
     SizeMismatch {
         offset: i64,
         id: NeedleId,

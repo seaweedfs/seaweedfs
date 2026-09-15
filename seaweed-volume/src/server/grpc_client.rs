@@ -40,7 +40,9 @@ pub fn load_outgoing_grpc_tls(
         (&config.grpc_client_cert_file, &config.grpc_client_key_file)
     } else {
         if !config.grpc_client_cert_file.is_empty() || !config.grpc_client_key_file.is_empty() {
-            tracing::warn!("grpc.volume.client_cert and grpc.volume.client_key must both be set, falling back to grpc.volume.cert and grpc.volume.key");
+            tracing::warn!(
+                "grpc.volume.client_cert and grpc.volume.client_key must both be set, falling back to grpc.volume.cert and grpc.volume.key"
+            );
         }
         (&config.grpc_cert_file, &config.grpc_key_file)
     };

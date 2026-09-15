@@ -987,7 +987,9 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                 },
                 Section::JwtSigning => match key {
                     "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
-                    "expires_after_seconds" => cfg.jwt_signing_expires = value.parse().unwrap_or(10),
+                    "expires_after_seconds" => {
+                        cfg.jwt_signing_expires = value.parse().unwrap_or(10)
+                    }
                     _ => {}
                 },
                 Section::HttpsClient => match key {

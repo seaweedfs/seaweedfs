@@ -458,14 +458,13 @@ mod tests {
         assert!(!std::path::Path::new(&format!("{}/7.dat.tmp", dir)).exists());
     }
 
-
     // Decoding when .vif does not record the encode-time size: the layout is
     // inferred from the shard size, except when that is an exact large-block
     // multiple and the live extent reaches the ambiguous region.
     #[test]
     fn test_write_dat_file_fallback_layout() {
         use crate::storage::erasure_coding::ec_bitrot::{
-            ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+            DEFAULT_BITROT_BLOCK_SIZE, ShardChecksumBuilder,
         };
         use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -551,14 +550,20 @@ mod tests {
         // each shard exactly one large block, indistinguishable from one large row
         let (dir, shard_dirs, _) = encode("ambig1", large_row_size - 1);
         let err = decode_to(&dir, "out", large_row_size / 2, 0, &shard_dirs).unwrap_err();
-        assert!(err.to_string().contains("does not identify the block layout"));
+        assert!(
+            err.to_string()
+                .contains("does not identify the block layout")
+        );
 
         // two-row equivalent: decoding within the agreed prefix still works
         let (dir, shard_dirs, original) = encode("ambig2", 2 * large_row_size - 1);
         let decoded = decode_to(&dir, "outa", large_row_size, 0, &shard_dirs).unwrap();
         assert_eq!(&original[..large_row_size as usize], &decoded[..]);
         let err = decode_to(&dir, "outb", large_row_size + 1, 0, &shard_dirs).unwrap_err();
-        assert!(err.to_string().contains("does not identify the block layout"));
+        assert!(
+            err.to_string()
+                .contains("does not identify the block layout")
+        );
     }
 
     // Decoding after deletions moved the live extent below the large-block row
@@ -567,7 +572,7 @@ mod tests {
     #[test]
     fn test_write_dat_file_after_tail_deletion() {
         use crate::storage::erasure_coding::ec_bitrot::{
-            ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+            DEFAULT_BITROT_BLOCK_SIZE, ShardChecksumBuilder,
         };
         use reed_solomon_erasure::galois_8::ReedSolomon;
 

@@ -8,7 +8,7 @@ use std::path::Path;
 
 use tracing::{info, warn};
 
-use crate::storage::disk_location::{parse_collection_volume_id_pub, DiskLocation};
+use crate::storage::disk_location::{DiskLocation, parse_collection_volume_id_pub};
 use crate::storage::store::Store;
 use crate::storage::types::VolumeId;
 
@@ -286,9 +286,7 @@ fn collect_shard_disk_volumes(loc: &DiskLocation) -> HashMap<EcKey, Vec<String>>
         let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
             continue;
         };
-        out.entry(EcKey { collection, vid })
-            .or_default()
-            .push(name);
+        out.entry(EcKey { collection, vid }).or_default().push(name);
     }
     out
 }

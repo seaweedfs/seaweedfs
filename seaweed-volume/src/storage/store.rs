@@ -6,8 +6,8 @@
 
 use std::collections::HashSet;
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
@@ -511,11 +511,8 @@ impl Store {
                 && collection != "..";
             if hint_safe {
                 for loc in &mut self.locations {
-                    let base = crate::storage::volume::volume_file_name(
-                        &loc.directory,
-                        collection,
-                        vid,
-                    );
+                    let base =
+                        crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                     // Confirm a collection-named sidecar exists before using the
                     // hint. A lone .vif/.idx (e.g. an EC sidecar whose .ecx is on
                     // a sibling disk) must NOT mount here: create_volume would
@@ -594,9 +591,10 @@ impl Store {
                 &collection,
                 vid,
             );
-            let has_remote = crate::storage::disk_location::vif_references_remote_file(
-                &format!("{}.vif", base_path),
-            ) || crate::storage::disk_location::vif_references_remote_file(
+            let has_remote = crate::storage::disk_location::vif_references_remote_file(&format!(
+                "{}.vif",
+                base_path
+            )) || crate::storage::disk_location::vif_references_remote_file(
                 &format!("{}.vif", idx_base),
             );
             if dat_exists || has_remote {
@@ -628,10 +626,12 @@ impl Store {
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| VolumeError::Io(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("volume {} not found on disk", vid),
-        ))))
+        Err(last_err.unwrap_or_else(|| {
+            VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("volume {} not found on disk", vid),
+            ))
+        }))
     }
 
     fn find_volume_file_base(&self, vid: VolumeId) -> Option<(usize, String, String)> {
@@ -970,12 +970,7 @@ impl Store {
                 );
                 continue;
             }
-            tracing::info!(
-                volume_id = vid.0,
-                shard_id,
-                disk_id,
-                "UnmountEcShards"
-            );
+            tracing::info!(volume_id = vid.0, shard_id, disk_id, "UnmountEcShards");
             self.locations[disk_id].unmount_ec_shards(vid, &[shard_id]);
         }
         // Go returns nil if shard not found (no error)
@@ -1149,7 +1144,8 @@ impl Store {
                     expired_vids.push(*vid);
                 } else {
                     let (_, io_count, quarantined) = ec_vol.get_io_error_state();
-                    if quarantined || io_count >= crate::storage::erasure_coding::ec_volume::IO_ERROR_TOLERANCE
+                    if quarantined
+                        || io_count >= crate::storage::erasure_coding::ec_volume::IO_ERROR_TOLERANCE
                     {
                         io_quarantined_vids.push(*vid);
                     } else {
@@ -1259,8 +1255,9 @@ impl Store {
                         collection,
                         vid,
                     );
-                    let _ =
-                        crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
+                    let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(
+                        &idx_base,
+                    );
                 }
             }
         }
@@ -1662,10 +1659,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let mut store = make_test_store(&[dir]);
 
-        let escaped = format!(
-            "{}/../evil_5.dat",
-            dir
-        );
+        let escaped = format!("{}/../evil_5.dat", dir);
         let err = store
             .mount_volume_by_id(VolumeId(5), Some("../evil"))
             .unwrap_err();
@@ -1706,9 +1700,7 @@ mod tests {
             .unwrap();
         assert!(store.unmount_volume(VolumeId(7)));
 
-        store
-            .mount_volume_by_id(VolumeId(7), Some("coll"))
-            .unwrap();
+        store.mount_volume_by_id(VolumeId(7), Some("coll")).unwrap();
         assert!(store.find_volume(VolumeId(7)).is_some());
 
         let mut got = Needle {
@@ -1745,7 +1737,9 @@ mod tests {
             data_size: 4,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(9), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(9), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(9)));
 
         // The hint is accepted and mounts the volume.
@@ -1788,7 +1782,9 @@ mod tests {
             data_size: 7,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(11), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(11), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(11)));
 
         // Simulate an interrupted copy: drop a .note marker.
@@ -1843,7 +1839,9 @@ mod tests {
             data_size: 4,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(13), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(13), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(13)));
 
         // No hint: the fallback scan finds the sidecar on disk 0 first (skip,
@@ -1896,10 +1894,14 @@ mod tests {
             data_size: 5,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(15), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(15), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(15)));
         // Clear the low-space flag so mount_volume_by_id considers disk 0.
-        store.locations[0].is_disk_space_low.store(false, Ordering::Relaxed);
+        store.locations[0]
+            .is_disk_space_low
+            .store(false, Ordering::Relaxed);
 
         // disk 0: a .dat that exists but is unreadable (chmod 000). The guard
         // sees dat_exists=true (metadata succeeds, not a dir), but
@@ -2492,7 +2494,10 @@ mod tests {
 
         // Mount an EC shard on disk 1 so has_ec_volume returns true.
         std::fs::write(
-            format!("{}/{}_{}.ec00", store.locations[1].directory, collection, vid.0),
+            format!(
+                "{}/{}_{}.ec00",
+                store.locations[1].directory, collection, vid.0
+            ),
             b"shard data",
         )
         .unwrap();
@@ -2505,7 +2510,12 @@ mod tests {
         std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
 
         let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
-        assert_eq!(got, Some(1), "expected the mounted disk to win; got {:?}", got);
+        assert_eq!(
+            got,
+            Some(1),
+            "expected the mounted disk to win; got {:?}",
+            got
+        );
     }
 
     /// Cold-volume case: no mount, no `.ecx` anywhere on this server.
@@ -2559,7 +2569,10 @@ mod tests {
         // free shard slots remaining; the old formula would have
         // rounded that to 0.
         std::fs::write(
-            format!("{}/{}_{}.ec00", store.locations[1].directory, collection, vid.0),
+            format!(
+                "{}/{}_{}.ec00",
+                store.locations[1].directory, collection, vid.0
+            ),
             b"shard data",
         )
         .unwrap();

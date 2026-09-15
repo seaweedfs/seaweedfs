@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::pb::master_pb;
 use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
-use crate::storage::needle::needle::{get_actual_size, Needle, NeedleError};
+use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
 use crate::storage::types::*;
 use crate::storage::volume_open::open_volume_file;
 
@@ -3328,7 +3328,7 @@ mod uniform_layout_tests {
                 // Legacy fixture: two-tier encode plus a .vif without a block
                 // size, the state every pre-upgrade EC volume is in.
                 use crate::storage::erasure_coding::ec_bitrot::{
-                    ShardChecksumBuilder, DEFAULT_BITROT_BLOCK_SIZE,
+                    DEFAULT_BITROT_BLOCK_SIZE, ShardChecksumBuilder,
                 };
                 use reed_solomon_erasure::galois_8::ReedSolomon;
                 let base = crate::storage::volume::volume_file_name(dir, "", vid);

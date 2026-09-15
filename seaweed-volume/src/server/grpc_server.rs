@@ -5,8 +5,8 @@
 //! EC operations are stubbed with appropriate error messages.
 
 use std::pin::Pin;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
@@ -21,7 +21,7 @@ use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 use crate::storage::volume::VolumeSpec;
 
-use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
+use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
 use super::volume_server::VolumeServerState;
 
 type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
@@ -1398,7 +1398,7 @@ impl VolumeServer for VolumeGrpcService {
                     return Err(Status::not_found(format!(
                         "remote dat not loaded for volume id {}",
                         vid
-                    )))
+                    )));
                 }
             }
         } else {
@@ -3008,7 +3008,7 @@ impl VolumeServer for VolumeGrpcService {
                 // (V3) or checksum only (V2) + padding. Validate minimum
                 // footer length for the protocol version.
                 use crate::storage::types::{
-                    Version, NEEDLE_CHECKSUM_SIZE, TIMESTAMP_SIZE, VERSION_3,
+                    NEEDLE_CHECKSUM_SIZE, TIMESTAMP_SIZE, VERSION_3, Version,
                 };
                 let version = Version(resp_version as u8);
                 let min_footer = if version >= VERSION_3 {
@@ -3019,7 +3019,10 @@ impl VolumeServer for VolumeGrpcService {
                 if needle_body.len() < min_footer {
                     return Err(Status::invalid_argument(format!(
                         "tombstone needle {} body too short: got {} bytes, need >= {} for version {}",
-                        n.id.0, needle_body.len(), min_footer, resp_version
+                        n.id.0,
+                        needle_body.len(),
+                        min_footer,
+                        resp_version
                     )));
                 }
             }
@@ -4983,7 +4986,7 @@ impl VolumeServer for VolumeGrpcService {
                 return Err(Status::invalid_argument(format!(
                     "unsupported volume scrub mode {}",
                     mode
-                )))
+                )));
             }
         }
 
@@ -5012,7 +5015,7 @@ impl VolumeServer for VolumeGrpcService {
                 return Err(Status::invalid_argument(format!(
                     "unsupported EC volume scrub mode {}",
                     mode
-                )))
+                )));
             }
         }
 
@@ -5312,7 +5315,7 @@ impl VolumeServer for VolumeGrpcService {
                     return Err(Status::internal(format!(
                         "ping {} {}: {}",
                         req.target_type, req.target, e
-                    )))
+                    )));
                 }
             }
         } else if req.target_type == "master" {
@@ -5323,7 +5326,7 @@ impl VolumeServer for VolumeGrpcService {
                     return Err(Status::internal(format!(
                         "ping {} {}: {}",
                         req.target_type, req.target, e
-                    )))
+                    )));
                 }
             }
         } else if req.target_type == "filer" {
@@ -5333,7 +5336,7 @@ impl VolumeServer for VolumeGrpcService {
                     return Err(Status::internal(format!(
                         "ping {} {}: {}",
                         req.target_type, req.target, e
-                    )))
+                    )));
                 }
             }
         } else {
@@ -5757,11 +5760,7 @@ fn find_last_append_at_ns(idx_path: &str, dat_path: &str, version: u32) -> Optio
     let ts = u64::from_be_bytes([
         tail[4], tail[5], tail[6], tail[7], tail[8], tail[9], tail[10], tail[11],
     ]);
-    if ts > 0 {
-        Some(ts)
-    } else {
-        None
-    }
+    if ts > 0 { Some(ts) } else { None }
 }
 
 /// Get disk usage (total, free) in bytes for the given path.
@@ -5789,7 +5788,7 @@ fn get_disk_usage(path: &str) -> (u64, u64) {
 mod tests {
     use super::*;
     use crate::config::MinFreeSpace;
-    use crate::remote_storage::s3_tier::{global_s3_tier_registry, S3TierBackend, S3TierConfig};
+    use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig, global_s3_tier_registry};
     use crate::security::{Guard, SigningKey};
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::store::Store;
@@ -5958,9 +5957,9 @@ mod tests {
         tokio::sync::oneshot::Sender<()>,
         std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ) {
-        use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
-        use axum::routing::any;
         use axum::Router;
+        use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+        use axum::routing::any;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let body = Arc::new(body);

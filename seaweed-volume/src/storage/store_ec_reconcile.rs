@@ -122,9 +122,7 @@ impl Store {
                 let use_local_idx = std::path::Path::new(&local_ecx).exists()
                     || std::path::Path::new(&local_ecx_in_data).exists();
 
-                if !use_local_idx
-                    && owner.location == loc_idx
-                    && owner.idx_dir == loc.idx_directory
+                if !use_local_idx && owner.location == loc_idx && owner.idx_dir == loc.idx_directory
                 {
                     // Same-disk no-op: load_all_ec_shards already
                     // tried and logged the failure.
@@ -593,7 +591,13 @@ mod tests {
         std::fs::write(&p, b"shard data nonempty").unwrap();
     }
 
-    fn write_index_files(idx_dir: &str, collection: &str, vid: u32, data_shards: u32, parity_shards: u32) {
+    fn write_index_files(
+        idx_dir: &str,
+        collection: &str,
+        vid: u32,
+        data_shards: u32,
+        parity_shards: u32,
+    ) {
         // Minimal sealed .ecx (the loader only opens the file; it
         // doesn't parse it during placement).
         std::fs::write(
@@ -947,15 +951,24 @@ mod tests {
         // dir1 owns the .ecx and so already has shard 1 mounted via
         // its own load_all_ec_shards.
         let ev1 = store.locations[1].find_ec_volume(VolumeId(vid));
-        assert!(ev1.is_some(), "baseline broken: dir1 should have mounted shard 1");
+        assert!(
+            ev1.is_some(),
+            "baseline broken: dir1 should have mounted shard 1"
+        );
 
         // dir0's shards must be reconciled across to its own
         // ec_volumes map, pointing at dir1's idx dir.
         let ev0 = store.locations[0]
             .find_ec_volume(VolumeId(vid))
             .expect("dir0 should now have an EcVolume after reconcile");
-        assert!(ev0.has_shard(0), "shard 0 missing from dir0 after reconcile");
-        assert!(ev0.has_shard(12), "shard 12 missing from dir0 after reconcile");
+        assert!(
+            ev0.has_shard(0),
+            "shard 0 missing from dir0 after reconcile"
+        );
+        assert!(
+            ev0.has_shard(12),
+            "shard 12 missing from dir0 after reconcile"
+        );
     }
 
     /// PR 9244 review case: idx_directory is configured but the
@@ -1064,7 +1077,13 @@ mod tests {
         assert!(store.locations[0].find_ec_volume(VolumeId(vid)).is_none());
         // Shard files must still exist on disk for operator recovery.
         for sid in [0u8, 12u8] {
-            let p = format!("{}/{}_{}.ec{:02}", dir0.to_str().unwrap(), collection, vid, sid);
+            let p = format!(
+                "{}/{}_{}.ec{:02}",
+                dir0.to_str().unwrap(),
+                collection,
+                vid,
+                sid
+            );
             assert!(
                 std::path::Path::new(&p).exists(),
                 "orphan shard {} was destroyed",
@@ -1129,10 +1148,12 @@ mod tests {
         assert!(ev1.has_shard(6), "dir1 shard missing");
 
         // Nothing left to recover.
-        assert!(store
-            .collect_ec_volumes_missing_index()
-            .iter()
-            .all(|m| m.vid != VolumeId(vid)));
+        assert!(
+            store
+                .collect_ec_volumes_missing_index()
+                .iter()
+                .all(|m| m.vid != VolumeId(vid))
+        );
     }
 
     #[test]
@@ -1164,10 +1185,12 @@ mod tests {
                 .unwrap();
         }
 
-        assert!(store
-            .collect_ec_volumes_missing_index()
-            .iter()
-            .all(|m| m.vid != VolumeId(vid)));
+        assert!(
+            store
+                .collect_ec_volumes_missing_index()
+                .iter()
+                .all(|m| m.vid != VolumeId(vid))
+        );
     }
 
     /// Helper: build a 2-disk store where reconcile produces the
@@ -1245,7 +1268,11 @@ mod tests {
         let vid = VolumeId(7010);
 
         let all = store.find_all_ec_volumes(vid);
-        assert_eq!(all.len(), 2, "expected one EcVolume per disk holding the vid");
+        assert_eq!(
+            all.len(),
+            2,
+            "expected one EcVolume per disk holding the vid"
+        );
 
         // Disk 0 carries shards 0 and 12; disk 1 carries shard 1.
         assert!(all[0].has_shard(0));
@@ -1266,7 +1293,7 @@ mod tests {
     #[test]
     fn test_scrub_plans_reach_every_disk_through_the_store() {
         use crate::storage::erasure_coding::ec_volume::{
-            merge_ec_runtimes, EcChecksumScrubPlan, EcLocalScrubPlan,
+            EcChecksumScrubPlan, EcLocalScrubPlan, merge_ec_runtimes,
         };
 
         let (store, _tmp) = build_split_disk_store(7030);
@@ -1281,8 +1308,15 @@ mod tests {
         let merged = merge_ec_runtimes(&runtimes).expect("two runtimes merge");
         assert!(merged.slots[0].is_some(), "disk 0's shard 0 unreachable");
         assert!(merged.slots[12].is_some(), "disk 0's shard 12 unreachable");
-        assert!(merged.slots[1].is_some(), "disk 1's shard 1 unreachable — the bug");
-        assert!(merged.skipped.is_empty(), "same generation: {:?}", merged.skipped);
+        assert!(
+            merged.slots[1].is_some(),
+            "disk 1's shard 1 unreachable — the bug"
+        );
+        assert!(
+            merged.skipped.is_empty(),
+            "same generation: {:?}",
+            merged.skipped
+        );
 
         // Shard 1 is owned by the sibling runtime, not the anchor.
         let (owner, _) = merged.slots[1].unwrap();
@@ -1389,17 +1423,22 @@ mod tests {
         let (_ev, dirs) = store.collect_ec_shard_dirs(vid, max_shards).unwrap();
 
         // Shards 0 and 12 → disk 0's directory.
-        assert_eq!(dirs[0].as_deref(), Some(store.locations[0].directory.as_str()));
-        assert_eq!(dirs[12].as_deref(), Some(store.locations[0].directory.as_str()));
+        assert_eq!(
+            dirs[0].as_deref(),
+            Some(store.locations[0].directory.as_str())
+        );
+        assert_eq!(
+            dirs[12].as_deref(),
+            Some(store.locations[0].directory.as_str())
+        );
         // Shard 1 → disk 1's directory.
-        assert_eq!(dirs[1].as_deref(), Some(store.locations[1].directory.as_str()));
+        assert_eq!(
+            dirs[1].as_deref(),
+            Some(store.locations[1].directory.as_str())
+        );
         // Unmounted shards → None.
         for sid in [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13] {
-            assert_eq!(
-                dirs[sid], None,
-                "shard {} unexpectedly reported a dir",
-                sid,
-            );
+            assert_eq!(dirs[sid], None, "shard {} unexpectedly reported a dir", sid,);
         }
     }
 
@@ -1708,11 +1747,7 @@ mod tests {
             vec![0u8; 20],
         )
         .unwrap();
-        std::fs::write(
-            ec_dir.join(format!("{}_{}.ecj", collection, vid)),
-            b"",
-        )
-        .unwrap();
+        std::fs::write(ec_dir.join(format!("{}_{}.ecj", collection, vid)), b"").unwrap();
 
         let mut store = Store::new(NeedleMapKind::InMemory);
         store

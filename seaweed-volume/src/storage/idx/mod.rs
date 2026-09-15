@@ -57,7 +57,7 @@ pub fn check_index_file<R: Read + Seek>(
         errs.push(format!("walk index file: {}", e));
     }
 
-    entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3 .0.cmp(&b.3 .0)));
+    entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.0.cmp(&b.3.0)));
 
     // Offset-0 logical tombstones (remote-tier deletes) occupy no physical extent,
     // so they cannot overlap anything — exclude them from the overlap check. They
@@ -213,7 +213,11 @@ mod tests {
         let size = data.len() as i64;
         let (count, errs) = check_index_file(&mut Cursor::new(data), size, Version(3));
         assert_eq!(count, 2, "tombstone row is still counted: {:?}", errs);
-        assert!(errs.is_empty(), "offset-0 tombstone must not overlap: {:?}", errs);
+        assert!(
+            errs.is_empty(),
+            "offset-0 tombstone must not overlap: {:?}",
+            errs
+        );
     }
 
     #[test]

@@ -14,12 +14,12 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 
 use axum::{
-    extract::{connect_info::ConnectInfo, Request, State},
-    http::{header, HeaderValue, Method, StatusCode},
+    Router,
+    extract::{Request, State, connect_info::ConnectInfo},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{any, get},
-    Router,
 };
 
 use crate::config::ReadMode;
@@ -200,9 +200,7 @@ pub fn to_http_address(addr: &str) -> std::borrow::Cow<'_, str> {
         // rather than being silently rewritten. Mirrors the validation already
         // done in `to_grpc_address` for the inverse direction.
         if let (Ok(_), Ok(_)) = (http_port.parse::<u16>(), grpc_port.parse::<u16>()) {
-            return std::borrow::Cow::Owned(
-                addr[..ports_sep_index + 1 + dot_idx].to_string(),
-            );
+            return std::borrow::Cow::Owned(addr[..ports_sep_index + 1 + dot_idx].to_string());
         }
     }
     std::borrow::Cow::Borrowed(addr)
@@ -514,7 +512,10 @@ mod tests {
         // "host:abc.def"), and silently rewriting it would just hide the bug.
         assert_eq!(to_http_address("host:abc.def"), "host:abc.def");
         assert_eq!(to_http_address("host:9333.notaport"), "host:9333.notaport");
-        assert_eq!(to_http_address("host:notaport.19333"), "host:notaport.19333");
+        assert_eq!(
+            to_http_address("host:notaport.19333"),
+            "host:notaport.19333"
+        );
         // Out-of-range ports must not be silently truncated either.
         assert_eq!(to_http_address("host:99999.19333"), "host:99999.19333");
     }
