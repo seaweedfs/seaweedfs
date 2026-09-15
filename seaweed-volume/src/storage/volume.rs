@@ -566,7 +566,7 @@ impl DatScanPlan {
 
             let append_at_ns = {
                 let mut n = Needle::default();
-                let _ = n.read_bytes(&record, offset as i64, size, self.version);
+                n.read_bytes(&record, offset as i64, size, self.version)?;
                 n.append_at_ns
             };
             let needle = RawNeedle {
@@ -5233,6 +5233,43 @@ mod tests {
             let records = scan_all(&v.dat_scan_plan(sb_size).unwrap());
             assert_eq!(records.len(), 1, "size {}: only the good record", bad_size);
         }
+    }
+
+    #[test]
+    fn dat_scan_plan_fails_when_the_record_body_is_corrupt() {
+        // A record can fit inside the captured snapshot and still fail needle
+        // parsing. The tail must surface that failure instead of emitting a
+        // raw record with a zero append timestamp and reporting a clean pass.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        write_test_needle(&mut v, 1, b"good");
+
+        let sb_size = v.super_block.block_size() as u64;
+        let plan = v.dat_scan_plan(sb_size).unwrap();
+
+        let mut dat = OpenOptions::new()
+            .write(true)
+            .open(v.file_name(".dat"))
+            .unwrap();
+        dat.seek(SeekFrom::Start(sb_size + NEEDLE_HEADER_SIZE as u64))
+            .unwrap();
+        dat.write_all(&u32::MAX.to_be_bytes()).unwrap();
+        drop(dat);
+
+        let mut visited = 0;
+        let err = plan
+            .scan(|_| {
+                visited += 1;
+                ControlFlow::Continue(())
+            })
+            .unwrap_err();
+
+        assert_eq!(visited, 0, "the corrupt record must not be emitted");
+        assert!(
+            matches!(err, VolumeError::Needle(_)),
+            "expected a needle parse error, got {err:?}"
+        );
     }
 
     #[test]
