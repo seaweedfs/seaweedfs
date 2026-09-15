@@ -51,6 +51,9 @@ spec:
         {{- else }}
         checksum/s3config: {{ include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum }}
         {{- end }}
+        {{- if not (or (hasKey (.Values.podAnnotations | default dict) "checksum/config") (hasKey (.Values.allInOne.podAnnotations | default dict) "checksum/config")) }}
+        checksum/config: {{ include (print .Template.BasePath "/master/master-configmap.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.allInOne.restartPolicy }}
       {{- if .Values.allInOne.affinity }}
