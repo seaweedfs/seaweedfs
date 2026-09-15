@@ -186,10 +186,20 @@ func FormatChartValue(v float64, unit string) string {
 	case UnitBytesPS:
 		return formatChartBytes(v) + "/s"
 	case UnitSeconds:
-		if v < 1 {
-			return fmt.Sprintf("%.0f ms", v*1000)
+		// Latency quantiles are often sub-millisecond, so step down the unit
+		// rather than rounding everything to "0 ms".
+		switch {
+		case v == 0:
+			return "0"
+		case v < 0.001:
+			return fmt.Sprintf("%.0f µs", v*1e6)
+		case v < 0.01:
+			return fmt.Sprintf("%.2f ms", v*1000)
+		case v < 1:
+			return fmt.Sprintf("%.1f ms", v*1000)
+		default:
+			return fmt.Sprintf("%.2f s", v)
 		}
-		return fmt.Sprintf("%.2f s", v)
 	case UnitPercent:
 		return fmt.Sprintf("%.0f%%", v)
 	default:
