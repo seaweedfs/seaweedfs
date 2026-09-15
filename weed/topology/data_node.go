@@ -15,9 +15,12 @@ import (
 
 type DataNode struct {
 	NodeImpl
-	Ip            string
-	Port          int
-	GrpcPort      int
+	Ip       string
+	Port     int
+	GrpcPort int
+	// MetricsPort is the volume server's Prometheus /metrics port as reported in
+	// its heartbeat, or 0 when it does not run a metrics listener.
+	MetricsPort   int
 	PublicUrl     string
 	LastSeen      int64 // unix time in seconds
 	Counter       int   // in race condition, the previous dataNode was not dead
@@ -404,9 +407,10 @@ func (dn *DataNode) ToDataNodeInfo(filter VolumeFilter) *master_pb.DataNodeInfo 
 		Id: string(dn.Id()),
 		// Start from disk usage counters so empty disks are still represented
 		// even when there are no volumes/EC shards on this data node yet.
-		DiskInfos: dn.diskUsages.ToDiskInfo(),
-		GrpcPort:  uint32(dn.GrpcPort),
-		Address:   dn.Url(), // ip:port for connecting to the volume server
+		DiskInfos:   dn.diskUsages.ToDiskInfo(),
+		GrpcPort:    uint32(dn.GrpcPort),
+		MetricsPort: uint32(dn.MetricsPort),
+		Address:     dn.Url(), // ip:port for connecting to the volume server
 	}
 	if m.DiskInfos == nil {
 		m.DiskInfos = make(map[string]*master_pb.DiskInfo)

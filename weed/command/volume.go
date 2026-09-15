@@ -438,7 +438,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		RecoveryCoef: *v.diskRecoveryCoef,
 	}
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
-		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
+		*v.ip, *v.port, *v.portGrpc, *v.metricsHttpPort, *v.publicUrl, volumeServerId,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,
 		util.ResolvePath(*v.idxFolder),
 		volumeNeedleMapKind,

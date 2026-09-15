@@ -188,6 +188,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), int(heartbeat.GrpcPort), heartbeat.PublicUrl, heartbeat.Id, heartbeat.MaxVolumeCounts)
+			dn.MetricsPort = int(heartbeat.MetricsPort)
 			glog.V(0).Infof("added volume server %d: %v (id=%s, ip=%v:%d) %v", dn.Counter, dn.Id(), heartbeat.Id, heartbeat.GetIp(), heartbeat.GetPort(), heartbeat.LocationUuids)
 			uuidlist, err := ms.RegisterUuids(heartbeat)
 			if err != nil {
@@ -418,7 +419,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	stopChan := make(chan bool, 1)
 
 	clientName, messageChan := ms.addClient(req.FilerGroup, req.ClientType, peerAddress)
-	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress, req.Version) {
+	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress, req.Version, req.MetricsPort) {
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
@@ -662,6 +663,7 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 	resp := &master_pb.GetMasterConfigurationResponse{
 		MetricsAddress:          ms.option.MetricsAddress,
 		MetricsIntervalSeconds:  uint32(ms.option.MetricsIntervalSec),
+		MetricsPort:             uint32(ms.option.MetricsPort),
 		StorageBackends:         backend.ToPbStorageBackends(),
 		DefaultReplication:      ms.option.DefaultReplicaPlacement,
 		VolumeSizeLimitMB:       uint32(ms.option.VolumeSizeLimitMB),

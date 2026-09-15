@@ -60,13 +60,17 @@ type ReadOption struct {
  * A VolumeServer contains one Store
  */
 type Store struct {
-	MasterAddress       pb.ServerAddress
-	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64      // read from the master
-	preallocate         atomic.Bool // read from the master
-	Ip                  string
-	Port                int
-	GrpcPort            int
+	MasterAddress   pb.ServerAddress
+	grpcDialOption  grpc.DialOption
+	volumeSizeLimit uint64      // read from the master
+	preallocate     atomic.Bool // read from the master
+	Ip              string
+	Port            int
+	GrpcPort        int
+	// MetricsPort is the Prometheus /metrics port this volume server serves,
+	// advertised to the master so the admin server can scrape it. 0 when
+	// disabled.
+	MetricsPort         int
 	PublicUrl           string
 	Id                  string // volume server id, independent of ip:port for stable identification
 	Locations           []*DiskLocation
@@ -684,6 +688,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Ip:              s.Ip,
 		Port:            uint32(s.Port),
 		GrpcPort:        uint32(s.GrpcPort),
+		MetricsPort:     uint32(s.MetricsPort),
 		PublicUrl:       s.PublicUrl,
 		Id:              s.Id,
 		MaxVolumeCounts: maxVolumeCounts,

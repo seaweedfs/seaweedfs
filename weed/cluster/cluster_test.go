@@ -16,7 +16,7 @@ func TestConcurrentAddRemoveNodes(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			address := strconv.Itoa(i)
-			c.AddClusterNode("", "filer", "", "", pb.ServerAddress(address), "23.45")
+			c.AddClusterNode("", "filer", "", "", pb.ServerAddress(address), "23.45", 0)
 		}(i)
 	}
 	wg.Wait()
@@ -43,8 +43,8 @@ func TestConcurrentAddRemoveNodes(t *testing.T) {
 func TestListClusterNodeUpdates(t *testing.T) {
 	c := NewCluster()
 	filer := pb.ServerAddress("10.0.0.20:8888")
-	c.AddClusterNode("group", FilerType, "dc1", "rack1", filer, "test")
-	c.AddClusterNode("group", BrokerType, "dc1", "rack1", pb.ServerAddress("10.0.0.20:17777"), "test")
+	c.AddClusterNode("group", FilerType, "dc1", "rack1", filer, "test", 0)
+	c.AddClusterNode("group", BrokerType, "dc1", "rack1", pb.ServerAddress("10.0.0.20:17777"), "test", 0)
 
 	updates := c.ListClusterNodeUpdates("group", FilerType)
 	if len(updates) != 1 {
@@ -64,7 +64,7 @@ func TestListClusterNodeUpdates(t *testing.T) {
 func TestIsKnownNode(t *testing.T) {
 	c := NewCluster()
 	filer := pb.ServerAddress("10.0.0.20:8888")
-	c.AddClusterNode("", FilerType, "dc1", "rack1", filer, "test")
+	c.AddClusterNode("", FilerType, "dc1", "rack1", filer, "test", 0)
 
 	if !c.IsKnownNode(FilerType, filer) {
 		t.Fatalf("registered filer %s should be known", filer)

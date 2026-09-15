@@ -380,6 +380,7 @@ func (fo *FilerOptions) startFiler() {
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:                   fo.masters,
+		MetricsPort:               uint32(*fo.metricsHttpPort),
 		FilerGroup:                *fo.filerGroup,
 		Collection:                *fo.collection,
 		DefaultReplication:        *fo.defaultReplicaPlacement,

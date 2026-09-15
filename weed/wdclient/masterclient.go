@@ -149,6 +149,7 @@ type MasterClient struct {
 	clientType           string
 	clientHost           pb.ServerAddress
 	rack                 string
+	metricsPort          uint32
 	currentMaster        pb.ServerAddress
 	currentMasterLock    sync.RWMutex
 	masters              pb.ServerDiscovery
@@ -178,6 +179,13 @@ func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientTy
 	mc.vidMapClient = newVidMapClient(provider, clientDataCenter, DefaultVidMapCacheSize)
 
 	return mc
+}
+
+// SetMetricsPort advertises this node's Prometheus /metrics port to the master,
+// so a central scraper can discover it. Must be called before
+// KeepConnectedToMaster starts, which is what publishes the value.
+func (mc *MasterClient) SetMetricsPort(port uint32) {
+	mc.metricsPort = port
 }
 
 func (mc *MasterClient) SetOnPeerUpdateFn(onPeerUpdate func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)) {
@@ -246,6 +254,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
 			Version:       version.Version(),
+			MetricsPort:   mc.metricsPort,
 		}); err != nil {
 			glog.V(0).Infof("%s.%s masterClient failed to send to %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToSend).Inc()

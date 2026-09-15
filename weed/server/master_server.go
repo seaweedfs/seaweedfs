@@ -58,10 +58,14 @@ type MasterOption struct {
 	DisableHttp             bool
 	MetricsAddress          string
 	MetricsIntervalSec      int
-	IsFollower              bool
-	TelemetryUrl            string
-	TelemetryEnabled        bool
-	VolumeGrowthDisabled    bool
+	// MetricsPort is this master's Prometheus /metrics port (-metricsPort),
+	// reported in GetMasterConfiguration so the admin server can scrape it.
+	// Unrelated to MetricsAddress, which is the Prometheus push gateway.
+	MetricsPort          int
+	IsFollower           bool
+	TelemetryUrl         string
+	TelemetryEnabled     bool
+	VolumeGrowthDisabled bool
 }
 
 type MasterServer struct {

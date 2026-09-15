@@ -63,7 +63,7 @@ type VolumeServer struct {
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
-	port int, grpcPort int, publicUrl string, id string,
+	port int, grpcPort int, metricsPort int, publicUrl string, id string,
 	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType, diskTags [][]string,
 	idxFolder string,
 	needleMapKind storage.NeedleMapKind,
@@ -136,6 +136,9 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.checkWithMaster()
 
 	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, diskTags, ldbTimeout, diskProbeConfig)
+	// Set before the heartbeat goroutine starts below, since the heartbeat is
+	// what advertises this port to the master.
+	vs.store.MetricsPort = metricsPort
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)

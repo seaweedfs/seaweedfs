@@ -27,6 +27,9 @@ type ClusterNode struct {
 	CreatedTs  time.Time
 	DataCenter DataCenter
 	Rack       Rack
+	// MetricsPort is the node's Prometheus /metrics port, or 0 when the node
+	// does not run a metrics listener.
+	MetricsPort uint32
 }
 
 type ClusterNodeGroups struct {
@@ -53,11 +56,11 @@ func (g *ClusterNodeGroups) getGroupMembers(filerGroup FilerGroupName, createIfN
 	return members
 }
 
-func (g *ClusterNodeGroups) AddClusterNode(filerGroup FilerGroupName, nodeType string, dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string) []*master_pb.KeepConnectedResponse {
+func (g *ClusterNodeGroups) AddClusterNode(filerGroup FilerGroupName, nodeType string, dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string, metricsPort uint32) []*master_pb.KeepConnectedResponse {
 	g.Lock()
 	defer g.Unlock()
 	m := g.getGroupMembers(filerGroup, true)
-	if t := m.addMember(dataCenter, rack, address, version); t != nil {
+	if t := m.addMember(dataCenter, rack, address, version, metricsPort); t != nil {
 		return buildClusterNodeUpdateMessage(true, filerGroup, nodeType, address)
 	}
 	return nil
@@ -95,15 +98,15 @@ func NewCluster() *Cluster {
 	}
 }
 
-func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string) []*master_pb.KeepConnectedResponse {
+func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string, metricsPort uint32) []*master_pb.KeepConnectedResponse {
 	filerGroup := FilerGroupName(ns)
 	switch nodeType {
 	case FilerType:
-		return cluster.filerGroups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version)
+		return cluster.filerGroups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version, metricsPort)
 	case BrokerType:
-		return cluster.brokerGroups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version)
+		return cluster.brokerGroups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version, metricsPort)
 	case S3Type:
-		return cluster.s3Groups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version)
+		return cluster.s3Groups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version, metricsPort)
 	case MasterType:
 		return buildClusterNodeUpdateMessage(true, filerGroup, nodeType, address)
 	}

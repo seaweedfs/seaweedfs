@@ -27,7 +27,7 @@ func TestMasterIsKnownPingTarget(t *testing.T) {
 
 	c := cluster.NewCluster()
 	filerAddr := pb.ServerAddress("10.0.0.20:8888")
-	c.AddClusterNode("", cluster.FilerType, "dc1", "rack1", filerAddr, "test")
+	c.AddClusterNode("", cluster.FilerType, "dc1", "rack1", filerAddr, "test", 0)
 
 	ms := &MasterServer{
 		option:  &MasterOption{Master: pb.ServerAddress("10.0.0.1:9333")},

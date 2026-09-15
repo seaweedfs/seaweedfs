@@ -22,6 +22,7 @@ func (ms *MasterServer) ListClusterNodes(ctx context.Context, req *master_pb.Lis
 			CreatedAtNs: node.CreatedTs.UnixNano(),
 			DataCenter:  string(node.DataCenter),
 			Rack:        string(node.Rack),
+			MetricsPort: node.MetricsPort,
 		})
 	}
 	return resp, nil

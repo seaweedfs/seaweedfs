@@ -358,6 +358,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		Filers:                    filerAddresses,
 		Masters:                   masterAddresses,
 		Port:                      *s3opt.port,
+		MetricsPort:               uint32(*s3opt.metricsHttpPort),
 		Config:                    *s3opt.config,
 		DomainName:                *s3opt.domainName,
 		AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),

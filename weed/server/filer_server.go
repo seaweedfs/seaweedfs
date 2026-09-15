@@ -88,7 +88,10 @@ type FilerOption struct {
 	TusMaxSize                int64
 	TusSessionExpiry          time.Duration
 	S3ConfigFile              string // optional path to static S3 identity config file
-	CredentialManager         *credential.CredentialManager
+	// MetricsPort is the Prometheus /metrics port this filer serves, advertised
+	// to the master so the admin server can scrape it. 0 when disabled.
+	MetricsPort       uint32
+	CredentialManager *credential.CredentialManager
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
@@ -244,6 +247,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
+	fs.filer.MasterClient.SetMetricsPort(option.MetricsPort)
 	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")

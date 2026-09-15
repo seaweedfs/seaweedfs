@@ -16,18 +16,21 @@ func newGroupMembers() *GroupMembers {
 	}
 }
 
-func (m *GroupMembers) addMember(dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string) *ClusterNode {
+func (m *GroupMembers) addMember(dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string, metricsPort uint32) *ClusterNode {
 	if existingNode, found := m.members[address]; found {
 		existingNode.counter++
+		// A restarted node may have gained or lost its metrics listener.
+		existingNode.MetricsPort = metricsPort
 		return nil
 	}
 	t := &ClusterNode{
-		Address:    address,
-		Version:    version,
-		counter:    1,
-		CreatedTs:  time.Now(),
-		DataCenter: dataCenter,
-		Rack:       rack,
+		Address:     address,
+		Version:     version,
+		counter:     1,
+		CreatedTs:   time.Now(),
+		DataCenter:  dataCenter,
+		Rack:        rack,
+		MetricsPort: metricsPort,
 	}
 	m.members[address] = t
 	return t

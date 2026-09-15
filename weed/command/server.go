@@ -343,6 +343,15 @@ func runServer(cmd *Command, args []string) bool {
 	webdavOptions.filer = &filerAddress
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 
+	// One process, one shared Prometheus registry, so a single metrics listener
+	// serves master, volume, filer and S3 series. Every component advertises
+	// that same port; the admin server deduplicates targets by address and
+	// attributes series by metric name.
+	masterOptions.metricsHttpPort = serverMetricsHttpPort
+	serverOptions.v.metricsHttpPort = serverMetricsHttpPort
+	filerOptions.metricsHttpPort = serverMetricsHttpPort
+	s3Options.metricsHttpPort = serverMetricsHttpPort
+
 	go stats_collect.StartMetricsServer(*serverMetricsHttpIp, *serverMetricsHttpPort)
 
 	*volumeDataFolders = util.ResolveCommaSeparatedPaths(*volumeDataFolders)

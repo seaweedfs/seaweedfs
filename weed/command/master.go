@@ -479,6 +479,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		WhiteList:               whiteList,
 		DisableHttp:             *m.disableHttp,
 		MetricsAddress:          *m.metricsAddress,
+		MetricsPort:             *m.metricsHttpPort,
 		MetricsIntervalSec:      *m.metricsIntervalSec,
 		TelemetryUrl:            *m.telemetryUrl,
 		TelemetryEnabled:        *m.telemetryEnabled,

@@ -65,10 +65,15 @@ type S3ApiServerOption struct {
 	Ip                        string // address advertised to the cluster; empty falls back to BindIp
 	BindIp                    string
 	GrpcPort                  int
-	ExternalUrl               string // external URL clients use, tried first during signature verification behind a reverse proxy
-	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
-	CacheSizeMB               int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
-	MaxMB                     int32  // filer's -maxMB, read from the filer configuration at startup
+	// MetricsPort is the Prometheus /metrics port this S3 server serves,
+	// advertised to the master so the admin server can scrape it. 0 when
+	// disabled. S3 metrics carry bucket labels, so they are deliberately not
+	// served on the client-facing S3 port.
+	MetricsPort     uint32
+	ExternalUrl     string // external URL clients use, tried first during signature verification behind a reverse proxy
+	DefaultFileMode uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
+	CacheSizeMB     int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
+	MaxMB           int32  // filer's -maxMB, read from the filer configuration at startup
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only object dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
@@ -209,6 +214,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 		clientHost := option.advertisedHost()
 		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), option.DataCenter, "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		masterClient.SetMetricsPort(option.MetricsPort)
 		// Build the object-write lock client and subscribe to the master's
 		// lock-ring updates BEFORE starting the master loop, so the initial
 		// LockRingUpdate sent on connect isn't dropped (the master only delivers
