@@ -65,6 +65,9 @@ message RemoteConf {
   string contabo_secret_key = 69;
   string contabo_endpoint = 70;
   string contabo_region = 71;
+
+  uint32 upload_concurrency = 72; // multipart upload concurrency per file, 0 = client default (1 for S3, 16 for Azure)
+  uint32 download_concurrency = 73; // multipart download concurrency per read, 0 = client default (5 for S3, 16 for Azure)
 }
 
 message RemoteStorageMapping {

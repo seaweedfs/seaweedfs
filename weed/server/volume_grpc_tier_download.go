@@ -70,7 +70,7 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 	}
 	// copy the data file (DownloadFile opens, fsyncs, and closes the .dat internally)
 	datFileName := v.FileName(".dat")
-	_, err := backendStorage.DownloadFile(datFileName, storageKey, fn)
+	_, err := backendStorage.DownloadFile(datFileName, storageKey, fn, clampTierConcurrency(int(req.Concurrency)))
 	if err != nil {
 		return fmt.Errorf("backend %s copy file %s: %v", storageName, datFileName, err)
 	}

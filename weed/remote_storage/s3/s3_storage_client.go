@@ -229,6 +229,25 @@ type s3RemoteStorageClient struct {
 	conn s3iface.S3API
 }
 
+const (
+	defaultUploadConcurrency = 1
+	defaultReadConcurrency   = 5
+)
+
+func (s *s3RemoteStorageClient) uploadConcurrency() int {
+	if n := int(s.conf.GetUploadConcurrency()); n > 0 {
+		return n
+	}
+	return defaultUploadConcurrency
+}
+
+func (s *s3RemoteStorageClient) downloadConcurrency() int {
+	if n := int(s.conf.GetDownloadConcurrency()); n > 0 {
+		return n
+	}
+	return defaultReadConcurrency
+}
+
 var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
 
 func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
@@ -374,12 +393,12 @@ func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (
 }
 
 func (s *s3RemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
-	return s.ReadFileWithConcurrency(loc, offset, size, 5)
+	return s.ReadFileWithConcurrency(loc, offset, size, 0)
 }
 
 func (s *s3RemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error) {
 	if concurrency <= 0 {
-		concurrency = 5
+		concurrency = s.downloadConcurrency()
 	}
 	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
 		u.PartSize = int64(4 * 1024 * 1024)
@@ -493,7 +512,7 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s.conn, func(u *s3manager.Uploader) {
 		u.PartSize = partSize
-		u.Concurrency = 1
+		u.Concurrency = s.uploadConcurrency()
 	})
 
 	// process tagging
