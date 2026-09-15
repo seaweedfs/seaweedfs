@@ -86,7 +86,10 @@ func (s *metricsStore) matchFiltered(sourcePrefix, name string, keep func(map[st
 		if ser.name != name {
 			continue
 		}
-		if ser.source != sourcePrefix && !strings.HasPrefix(ser.source, sourcePrefix+"/") {
+		// An empty prefix matches every source, for metrics whose name already
+		// identifies the component (e.g. SeaweedFS_s3_*, which a combined
+		// "weed server" process exports from the filer's registry).
+		if sourcePrefix != "" && ser.source != sourcePrefix && !strings.HasPrefix(ser.source, sourcePrefix+"/") {
 			continue
 		}
 		if keep != nil && !keep(ser.labels) {
