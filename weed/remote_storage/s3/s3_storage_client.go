@@ -229,8 +229,6 @@ type s3RemoteStorageClient struct {
 	conn s3iface.S3API
 }
 
-// concurrency defaults matching the previously hard-coded values; a
-// RemoteConf upload_concurrency/download_concurrency > 0 overrides them.
 const (
 	defaultUploadConcurrency = 1
 	defaultReadConcurrency   = 5
@@ -241,6 +239,13 @@ func (s *s3RemoteStorageClient) uploadConcurrency() int {
 		return n
 	}
 	return defaultUploadConcurrency
+}
+
+func (s *s3RemoteStorageClient) downloadConcurrency() int {
+	if n := int(s.conf.GetDownloadConcurrency()); n > 0 {
+		return n
+	}
+	return defaultReadConcurrency
 }
 
 var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
@@ -388,12 +393,12 @@ func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (
 }
 
 func (s *s3RemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
-	return s.ReadFileWithConcurrency(loc, offset, size, int(s.conf.GetDownloadConcurrency()))
+	return s.ReadFileWithConcurrency(loc, offset, size, 0)
 }
 
 func (s *s3RemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error) {
 	if concurrency <= 0 {
-		concurrency = defaultReadConcurrency
+		concurrency = s.downloadConcurrency()
 	}
 	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
 		u.PartSize = int64(4 * 1024 * 1024)
