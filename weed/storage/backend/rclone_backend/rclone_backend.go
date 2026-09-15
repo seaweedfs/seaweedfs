@@ -103,9 +103,6 @@ func (s *RcloneBackendStorage) NewStorageFile(key string, tierInfo *volume_serve
 	return f
 }
 
-// CopyFile uploads via rclone, which manages its own internal transfer
-// concurrency; the concurrency hint is accepted for the BackendStorage
-// interface but not used.
 func (s *RcloneBackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error, concurrency int) (key string, size int64, err error) {
 	randomUuid, err := uuid.NewRandom()
 	if err != nil {

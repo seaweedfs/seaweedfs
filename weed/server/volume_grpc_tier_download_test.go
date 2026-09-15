@@ -33,7 +33,6 @@ type tierTestBackend struct {
 	mu      sync.Mutex
 	deletes []string
 
-	// last concurrency values passed to CopyFile/DownloadFile, for plumbing tests
 	lastUploadConcurrency   int
 	lastDownloadConcurrency int
 }
@@ -343,9 +342,8 @@ func TestTierMoveDatFromRemote_KeepRemote_LeavesReplicaLocal(t *testing.T) {
 	}
 }
 
-// TestTierMoveConcurrencyPlumbing verifies the shell's -concurrent value
-// travels the whole tier-move path: VolumeTierMoveDatToRemote -> CopyFile and
-// VolumeTierMoveDatFromRemote -> DownloadFile.
+// TestTierMoveConcurrencyPlumbing verifies the -concurrency value travels the
+// whole tier-move path to CopyFile and DownloadFile.
 func TestTierMoveConcurrencyPlumbing(t *testing.T) {
 	b := &tierTestBackend{root: t.TempDir()}
 	backend.BackendStorages[tierTestBackendName] = b
@@ -372,8 +370,7 @@ func TestTierMoveConcurrencyPlumbing(t *testing.T) {
 		t.Fatalf("DownloadFile concurrency = %d (upload=%d), want 4", down, up)
 	}
 
-	// upload path: the volume is local again after the download; request
-	// concurrency must reach CopyFile
+	// upload path: the volume is local again after the download
 	if err := vs.VolumeTierMoveDatToRemote(&volume_server_pb.VolumeTierMoveDatToRemoteRequest{
 		VolumeId:               uint32(vid),
 		DestinationBackendName: tierTestBackendName,

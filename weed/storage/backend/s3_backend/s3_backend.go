@@ -83,14 +83,11 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	return m
 }
 
-// defaults matching the previously hard-coded s3manager concurrency
 const (
 	defaultUploadConcurrency   = 5
 	defaultDownloadConcurrency = 5
 )
 
-// parseConcurrency reads a concurrency setting; empty or invalid values fall
-// back to def. Values <= 0 also fall back to def, so "0" means default.
 func parseConcurrency(value string, def int) int {
 	if value == "" {
 		return def

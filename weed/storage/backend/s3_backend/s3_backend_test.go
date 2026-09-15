@@ -12,7 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
-// testProperties is a minimal backend.StringProperties for config tests.
 type testProperties map[string]string
 
 func (m testProperties) GetString(key string) string {
@@ -115,12 +114,12 @@ func TestParseConcurrency(t *testing.T) {
 		def      int
 		expected int
 	}{
-		{"", 5, 5},     // unset -> default
-		{"0", 5, 5},    // explicit zero means default
-		{"-3", 5, 5},   // invalid -> default
-		{"abc", 5, 5},  // invalid -> default
-		{"1", 5, 1},    // override
-		{"64", 5, 64},  // override
+		{"", 5, 5},    // unset -> default
+		{"0", 5, 5},   // explicit zero means default
+		{"-3", 5, 5},  // invalid -> default
+		{"abc", 5, 5}, // invalid -> default
+		{"1", 5, 1},   // override
+		{"64", 5, 64}, // override
 	}
 	for _, tt := range cases {
 		if got := parseConcurrency(tt.value, tt.def); got != tt.expected {
@@ -130,7 +129,6 @@ func TestParseConcurrency(t *testing.T) {
 }
 
 func TestS3BackendStorageConcurrencyConfigRoundTrip(t *testing.T) {
-	// no config -> the previously hard-coded defaults
 	s, err := newS3BackendStorage(testProperties{}, "", "test")
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +138,6 @@ func TestS3BackendStorageConcurrencyConfigRoundTrip(t *testing.T) {
 			s.uploadConcurrency, s.downloadConcurrency, defaultUploadConcurrency, defaultDownloadConcurrency)
 	}
 
-	// explicit config overrides
 	s, err = newS3BackendStorage(testProperties{
 		"upload_concurrency":   "1",
 		"download_concurrency": "17",
@@ -152,7 +149,6 @@ func TestS3BackendStorageConcurrencyConfigRoundTrip(t *testing.T) {
 		t.Fatalf("configured: upload=%d download=%d, want 1/17", s.uploadConcurrency, s.downloadConcurrency)
 	}
 
-	// ToProperties must carry the effective values so they reach volume servers
 	props := s.ToProperties()
 	if props["upload_concurrency"] != "1" || props["download_concurrency"] != "17" {
 		t.Fatalf("ToProperties: %v", props)
