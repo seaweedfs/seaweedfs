@@ -16,10 +16,25 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
+type metricKind int
+
+const (
+	kindGauge metricKind = iota
+	kindCounter
+	kindHistogram
+)
+
+type histogramBucket struct {
+	upperBound float64
+	count      float64
+}
+
 type scrapedMetric struct {
-	name   string
-	labels map[string]string
-	value  float64
+	name    string
+	labels  map[string]string
+	kind    metricKind
+	value   float64
+	buckets []histogramBucket
 }
 
 func scrapeMetrics(ctx context.Context, target string) ([]scrapedMetric, error) {
@@ -59,30 +74,34 @@ func parsePrometheusText(r io.Reader) ([]scrapedMetric, error) {
 			return nil, err
 		}
 		for _, m := range fam.Metric {
-			labels := map[string]string{}
-			for _, l := range m.Label {
-				labels[l.GetName()] = l.GetValue()
-			}
-			out = append(out, scrapedMetric{name: fam.GetName(), labels: labels, value: metricValue(m)})
+			out = append(out, toScrapedMetric(fam.GetName(), m))
 		}
 	}
 	return out, nil
 }
 
-func metricValue(m *dto.Metric) float64 {
-	switch {
-	case m.Gauge != nil:
-		return m.Gauge.GetValue()
-	case m.Counter != nil:
-		return m.Counter.GetValue()
-	case m.Untyped != nil:
-		return m.Untyped.GetValue()
-	case m.Histogram != nil:
-		return m.Histogram.GetSampleSum()
-	case m.Summary != nil:
-		return m.Summary.GetSampleSum()
+func toScrapedMetric(name string, m *dto.Metric) scrapedMetric {
+	labels := map[string]string{}
+	for _, l := range m.Label {
+		labels[l.GetName()] = l.GetValue()
 	}
-	return 0
+	sm := scrapedMetric{name: name, labels: labels}
+	switch {
+	case m.Counter != nil:
+		sm.kind, sm.value = kindCounter, m.Counter.GetValue()
+	case m.Histogram != nil:
+		sm.kind = kindHistogram
+		for _, b := range m.Histogram.Bucket {
+			sm.buckets = append(sm.buckets, histogramBucket{upperBound: b.GetUpperBound(), count: float64(b.GetCumulativeCount())})
+		}
+	case m.Summary != nil:
+		sm.kind, sm.value = kindCounter, m.Summary.GetSampleSum()
+	case m.Gauge != nil:
+		sm.value = m.Gauge.GetValue()
+	case m.Untyped != nil:
+		sm.value = m.Untyped.GetValue()
+	}
+	return sm
 }
 
 // gatherLocalMetrics records the admin's own registry (maintenance tasks,
@@ -95,11 +114,7 @@ func (s *AdminServer) gatherLocalMetrics(now time.Time) {
 	}
 	for _, fam := range families {
 		for _, m := range fam.Metric {
-			labels := map[string]string{}
-			for _, l := range m.Label {
-				labels[l.GetName()] = l.GetValue()
-			}
-			s.metricsStore.recordLabeled("admin/local", fam.GetName(), labels, metricValue(m), now)
+			s.metricsDeriver.record(s.metricsStore, "admin/local", toScrapedMetric(fam.GetName(), m), now)
 		}
 	}
 }
@@ -133,7 +148,7 @@ func (s *AdminServer) scrapeAllServers(ctx context.Context) {
 			continue
 		}
 		for _, m := range r.metrics {
-			s.metricsStore.recordLabeled(r.source, m.name, m.labels, m.value, now)
+			s.metricsDeriver.record(s.metricsStore, r.source, m, now)
 		}
 	}
 }

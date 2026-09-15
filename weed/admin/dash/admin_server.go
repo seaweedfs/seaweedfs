@@ -128,7 +128,10 @@ type AdminServer struct {
 
 	// metricsStore holds scraped per-server Prometheus series for the
 	// monitoring pages. Filled by the scrape loop in startMetricsScraper.
-	metricsStore *metricsStore
+	// metricsDeriver turns raw counters and histograms into interval rates
+	// and latency quantiles before they are stored.
+	metricsStore   *metricsStore
+	metricsDeriver *metricsDeriver
 
 	// Filer discovery and caching
 	cachedFilers         []string
@@ -215,6 +218,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		adminPresenceLock:             presenceLock,
 		bgCancel:                      bgCancel,
 		metricsStore:                  newMetricsStore(),
+		metricsDeriver:                newMetricsDeriver(),
 	}
 
 	// Initialize topic retention purger
