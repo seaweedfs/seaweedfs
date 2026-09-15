@@ -465,6 +465,12 @@ func peerIndex(self pb.ServerAddress, peers []pb.ServerAddress) int {
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
+	// Not every caller wires up every flag, so treat an unset metrics port as
+	// disabled rather than dereferencing nil.
+	metricsPort := 0
+	if m.metricsHttpPort != nil {
+		metricsPort = *m.metricsHttpPort
+	}
 	masterAddress := pb.NewServerAddress(*m.ip, *m.port, *m.portGrpc)
 	return &weed_server.MasterOption{
 		Master:                     masterAddress,
@@ -479,7 +485,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		WhiteList:               whiteList,
 		DisableHttp:             *m.disableHttp,
 		MetricsAddress:          *m.metricsAddress,
-		MetricsPort:             *m.metricsHttpPort,
+		MetricsPort:             metricsPort,
 		MetricsIntervalSec:      *m.metricsIntervalSec,
 		TelemetryUrl:            *m.telemetryUrl,
 		TelemetryEnabled:        *m.telemetryEnabled,

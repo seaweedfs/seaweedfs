@@ -1308,6 +1308,13 @@ func runMini(cmd *Command, args []string) bool {
 	}
 	pb.RegisterLocalGrpcSocket(*miniIp, *miniAdminOptions.grpcPort, fmt.Sprintf("/tmp/seaweedfs-admin-grpc-%d.sock", *miniAdminOptions.grpcPort))
 
+	// One process, one shared Prometheus registry, so this single listener
+	// serves every component's series. Point each component at it so they all
+	// advertise the same port to the master.
+	miniMasterOptions.metricsHttpPort = miniMetricsHttpPort
+	miniOptions.v.metricsHttpPort = miniMetricsHttpPort
+	miniFilerOptions.metricsHttpPort = miniMetricsHttpPort
+
 	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
 
 	if *miniMasterOptions.volumeSizeLimitMB > util.MaxVolumeSizeLimitMB {
