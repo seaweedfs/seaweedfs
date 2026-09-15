@@ -18,7 +18,7 @@ use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
 use crate::storage::types::*;
-use crate::storage::volume::{VifVolumeInfo, VolumeError};
+use crate::storage::volume::{VifVolumeInfo, VolumeError, VolumeSpec};
 
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
@@ -369,16 +369,11 @@ impl Store {
     }
 
     /// Create a new volume, placing it on the location with the most free space.
-    #[expect(clippy::too_many_arguments)]
     pub fn add_volume(
         &mut self,
         vid: VolumeId,
-        collection: &str,
-        replica_placement: Option<ReplicaPlacement>,
-        ttl: Option<crate::storage::needle::ttl::TTL>,
-        preallocate: u64,
         disk_type: DiskType,
-        version: Version,
+        spec: &VolumeSpec<'_>,
     ) -> Result<(), VolumeError> {
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
@@ -390,15 +385,7 @@ impl Store {
             )))
         })?;
 
-        self.locations[loc_idx].create_volume(
-            vid,
-            collection,
-            self.needle_map_kind,
-            replica_placement,
-            ttl,
-            preallocate,
-            version,
-        )
+        self.locations[loc_idx].create_volume(vid, self.needle_map_kind, spec)
     }
 
     /// Delete a volume from any location. When keep_remote_data is true the
@@ -480,12 +467,11 @@ impl Store {
                 }
                 return loc.create_volume(
                     vid,
-                    collection,
                     self.needle_map_kind,
-                    None,
-                    None,
-                    0,
-                    Version::current(),
+                    &VolumeSpec {
+                        collection,
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -573,12 +559,11 @@ impl Store {
                         // keep scanning (matches open_volumes / Go mountVolume).
                         match loc.create_volume(
                             vid,
-                            collection,
                             self.needle_map_kind,
-                            None,
-                            None,
-                            0,
-                            Version::current(),
+                            &VolumeSpec {
+                                collection,
+                                ..Default::default()
+                            },
                         ) {
                             Ok(()) => return Ok(()),
                             Err(e) => {
@@ -629,12 +614,11 @@ impl Store {
                 let loc = &mut self.locations[loc_idx];
                 match loc.create_volume(
                     vid,
-                    &collection,
                     self.needle_map_kind,
-                    None,
-                    None,
-                    0,
-                    Version::current(),
+                    &VolumeSpec {
+                        collection: &collection,
+                        ..Default::default()
+                    },
                 ) {
                     Ok(()) => return Ok(()),
                     Err(e) => {
@@ -1639,15 +1623,7 @@ mod tests {
         let mut store = make_test_store(&[dir]);
 
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
@@ -1709,12 +1685,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(7),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         // Write a needle so the volume has real data, then unmount it so the
@@ -1756,12 +1731,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(9),
-                "foo..bar",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "foo..bar",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1800,12 +1774,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(11),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1856,12 +1829,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(13),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1904,16 +1876,17 @@ mod tests {
         let mut store = make_test_store(&[dir0, dir1]);
 
         // Force add_volume onto disk 1 by marking disk 0 as low on space.
-        store.locations[0].is_disk_space_low.store(true, Ordering::Relaxed);
+        store.locations[0]
+            .is_disk_space_low
+            .store(true, Ordering::Relaxed);
         store
             .add_volume(
                 VolumeId(15),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1965,15 +1938,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let mut store = make_test_store(&[dir]);
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
 
         // Write
@@ -2039,15 +2004,7 @@ mod tests {
             )
             .unwrap();
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         let mut n = Needle {
             id: NeedleId(1),
@@ -2110,26 +2067,10 @@ mod tests {
 
         // Add volumes — should go to location with fewest volumes
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         store
-            .add_volume(
-                VolumeId(2),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(2), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
 
         assert_eq!(store.total_volume_count(), 2);
@@ -2147,34 +2088,31 @@ mod tests {
         store
             .add_volume(
                 VolumeId(1),
-                "pics",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
             )
             .unwrap();
         store
             .add_volume(
                 VolumeId(2),
-                "pics",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
             )
             .unwrap();
         store
             .add_volume(
                 VolumeId(3),
-                "docs",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "docs",
+                    ..Default::default()
+                },
             )
             .unwrap();
         assert_eq!(store.total_volume_count(), 3);
@@ -2210,23 +2148,21 @@ mod tests {
         store
             .add_volume(
                 VolumeId(61),
-                "preallocate_case",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "preallocate_case",
+                    ..Default::default()
+                },
             )
             .unwrap();
         store
             .add_volume(
                 VolumeId(62),
-                "preallocate_case",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "preallocate_case",
+                    ..Default::default()
+                },
             )
             .unwrap();
         for vid in [VolumeId(61), VolumeId(62)] {
@@ -2327,12 +2263,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(71),
-                "find_free_location_case",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "find_free_location_case",
+                    ..Default::default()
+                },
             )
             .unwrap();
 

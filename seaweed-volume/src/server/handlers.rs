@@ -1274,7 +1274,6 @@ async fn get_or_head_handler_inner(
         && let Some(resp) = try_expand_chunk_manifest(
             &state,
             &n,
-            &headers,
             &method,
             &path,
             &query,
@@ -3231,11 +3230,9 @@ struct ChunkInfo {
 }
 
 /// Try to expand a chunk manifest needle. Returns None if manifest can't be parsed.
-#[expect(clippy::too_many_arguments)]
 async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
-    _headers: &HeaderMap,
     method: &Method,
     path: &str,
     query: &ReadQueryParams,

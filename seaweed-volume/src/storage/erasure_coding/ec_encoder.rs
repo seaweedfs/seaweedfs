@@ -77,11 +77,13 @@ pub fn write_ec_files(
         &rs,
         &mut shards,
         &mut builders,
-        data_shards,
-        parity_shards,
-        ENCODE_BUFFER_SIZE,
-        block_size as usize,
-        block_size as usize,
+        EcEncodeLayout {
+            data_shards,
+            parity_shards,
+            buffer_size: ENCODE_BUFFER_SIZE,
+            large_block_size: block_size as usize,
+            small_block_size: block_size as usize,
+        },
     )?;
 
     // Close all shards
@@ -702,30 +704,50 @@ fn read_from_data_shards(
 /// the uniform block is.
 const ENCODE_BUFFER_SIZE: usize = 256 * 1024;
 
+/// Shape of one encode run: the Reed-Solomon split and the block sizes that
+/// fix where every byte of the .dat lands in the shards. Mirrors Go's
+/// `ECContext`. `buffer_size` must divide both block sizes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EcEncodeLayout {
+    pub(crate) data_shards: usize,
+    pub(crate) parity_shards: usize,
+    /// Bytes of each shard's block handled per sub-batch; bounds memory at
+    /// `total_shards * buffer_size` however large the blocks are.
+    pub(crate) buffer_size: usize,
+    pub(crate) large_block_size: usize,
+    pub(crate) small_block_size: usize,
+}
+
 /// Encode the .dat file data into shard files.
 ///
 /// Uses a two-phase approach matching Go's ec_encoder.go:
 /// 1. Process as many large blocks as possible
 /// 2. Process remaining data with small blocks
-///
-/// `buffer_size` must divide both block sizes.
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn encode_dat_file(
     dat_file: &File,
     dat_size: i64,
     rs: &ReedSolomon,
     shards: &mut [EcVolumeShard],
     builders: &mut [ShardChecksumBuilder],
-    data_shards: usize,
-    parity_shards: usize,
-    buffer_size: usize,
-    large_block_size: usize,
-    small_block_size: usize,
+    layout: EcEncodeLayout,
 ) -> io::Result<()> {
+    let EcEncodeLayout {
+        data_shards,
+        parity_shards,
+        buffer_size,
+        large_block_size,
+        small_block_size,
+    } = layout;
     let total_shards = data_shards + parity_shards;
-    let mut buffers: Vec<Vec<u8>> = (0..total_shards)
-        .map(|_| vec![0u8; buffer_size])
-        .collect();
+    let mut buffers: Vec<Vec<u8>> = (0..total_shards).map(|_| vec![0u8; buffer_size]).collect();
+    let mut run = EncodeRun {
+        dat_file,
+        rs,
+        buffers: &mut buffers,
+        shards,
+        builders,
+        data_shards,
+    };
 
     let mut remaining = dat_size;
     let mut offset: u64 = 0;
@@ -734,16 +756,7 @@ pub(crate) fn encode_dat_file(
     let large_row_size = large_block_size * data_shards;
 
     while remaining >= large_row_size as i64 {
-        encode_data(
-            dat_file,
-            offset,
-            large_block_size,
-            rs,
-            &mut buffers,
-            shards,
-            builders,
-            data_shards,
-        )?;
+        run.encode_row(offset, large_block_size)?;
         offset += large_row_size as u64;
         remaining -= large_row_size as i64;
     }
@@ -753,16 +766,7 @@ pub(crate) fn encode_dat_file(
 
     while remaining > 0 {
         let to_process = remaining.min(small_row_size as i64);
-        encode_data(
-            dat_file,
-            offset,
-            small_block_size,
-            rs,
-            &mut buffers,
-            shards,
-            builders,
-            data_shards,
-        )?;
+        run.encode_row(offset, small_block_size)?;
         offset += to_process as u64;
         remaining -= to_process;
     }
@@ -770,79 +774,66 @@ pub(crate) fn encode_dat_file(
     Ok(())
 }
 
-/// Encode one row of blocks, streaming it in ENCODE_BUFFER_SIZE sub-batches so
-/// arbitrarily large blocks never require block-sized allocations. Mirrors
-/// Go's encodeData.
-#[expect(clippy::too_many_arguments)]
-fn encode_data(
-    dat_file: &File,
-    row_offset: u64,
-    block_size: usize,
-    rs: &ReedSolomon,
-    buffers: &mut [Vec<u8>],
-    shards: &mut [EcVolumeShard],
-    builders: &mut [ShardChecksumBuilder],
+/// Everything one encode run streams through: the source .dat, the codec, a
+/// buffer per shard, and the per-shard file and checksum sinks.
+struct EncodeRun<'a> {
+    dat_file: &'a File,
+    rs: &'a ReedSolomon,
+    buffers: &'a mut [Vec<u8>],
+    shards: &'a mut [EcVolumeShard],
+    builders: &'a mut [ShardChecksumBuilder],
     data_shards: usize,
-) -> io::Result<()> {
-    let buffer_size = buffers[0].len();
-    if !block_size.is_multiple_of(buffer_size) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "unexpected block size {} buffer size {}",
-                block_size, buffer_size
-            ),
-        ));
-    }
-    let batch_count = block_size / buffer_size;
-    for b in 0..batch_count {
-        encode_one_batch(
-            dat_file,
-            row_offset + (b * buffer_size) as u64,
-            block_size,
-            rs,
-            buffers,
-            shards,
-            builders,
-            data_shards,
-        )?;
-    }
-    Ok(())
 }
 
-/// Encode one sub-batch: the same buffer-sized slice of every shard's block in
-/// this row. Mirrors Go's encodeDataOneBatch.
-#[expect(clippy::too_many_arguments)]
-fn encode_one_batch(
-    dat_file: &File,
-    offset: u64,
-    block_size: usize,
-    rs: &ReedSolomon,
-    buffers: &mut [Vec<u8>],
-    shards: &mut [EcVolumeShard],
-    builders: &mut [ShardChecksumBuilder],
-    data_shards: usize,
-) -> io::Result<()> {
-    // Read data shards from the .dat file, zero-filling past EOF — the buffers
-    // are reused across batches, so the tail must be cleared explicitly.
-    for (i, buf) in buffers[..data_shards].iter_mut().enumerate() {
-        let read_offset = offset + (i * block_size) as u64;
-        let n = read_at_most(dat_file, buf, read_offset)?;
-        buf[n..].fill(0);
+impl EncodeRun<'_> {
+    /// Encode one row of blocks, streaming it in ENCODE_BUFFER_SIZE sub-batches
+    /// so arbitrarily large blocks never require block-sized allocations.
+    /// Mirrors Go's encodeData.
+    fn encode_row(&mut self, row_offset: u64, block_size: usize) -> io::Result<()> {
+        let buffer_size = self.buffers[0].len();
+        if !block_size.is_multiple_of(buffer_size) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "unexpected block size {} buffer size {}",
+                    block_size, buffer_size
+                ),
+            ));
+        }
+        let batch_count = block_size / buffer_size;
+        for b in 0..batch_count {
+            self.encode_one_batch(row_offset + (b * buffer_size) as u64, block_size)?;
+        }
+        Ok(())
     }
 
-    // Encode parity shards
-    rs.encode(&mut *buffers)
-        .map_err(|e| io::Error::other(format!("reed-solomon encode: {:?}", e)))?;
+    /// Encode one sub-batch: the same buffer-sized slice of every shard's block
+    /// in this row. Mirrors Go's encodeDataOneBatch.
+    fn encode_one_batch(&mut self, offset: u64, block_size: usize) -> io::Result<()> {
+        // Read data shards from the .dat file, zero-filling past EOF — the
+        // buffers are reused across batches, so the tail must be cleared
+        // explicitly.
+        for (i, buf) in self.buffers[..self.data_shards].iter_mut().enumerate() {
+            let read_offset = offset + (i * block_size) as u64;
+            let n = read_at_most(self.dat_file, buf, read_offset)?;
+            buf[n..].fill(0);
+        }
 
-    // Write all shard buffers to files and feed the same bytes to each
-    // shard's bitrot checksum builder, keeping covered_size == on-disk length.
-    for (i, buf) in buffers.iter().enumerate() {
-        shards[i].write_all(buf)?;
-        builders[i].write(buf);
+        // Encode parity shards
+        self.rs
+            .encode(&mut *self.buffers)
+            .map_err(|e| io::Error::other(format!("reed-solomon encode: {:?}", e)))?;
+
+        // Write all shard buffers to files and feed the same bytes to each
+        // shard's bitrot checksum builder, keeping covered_size == on-disk
+        // length.
+        for (i, buf) in self.buffers.iter().enumerate() {
+            self.shards[i].write_all(buf)?;
+            self.builders[i].write(buf);
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 /// Read into `buf` at `offset` until it is full or EOF; returns bytes read.
@@ -873,7 +864,7 @@ mod tests {
     use super::*;
     use crate::storage::needle::needle::Needle;
     use crate::storage::needle_map::NeedleMapKind;
-    use crate::storage::volume::Volume;
+    use crate::storage::volume::{Volume, VolumeSpec};
     use tempfile::TempDir;
 
     #[test]
@@ -885,13 +876,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -936,13 +923,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=n {
@@ -1015,13 +998,9 @@ mod tests {
         let mut v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=20 {
@@ -1207,19 +1186,15 @@ mod tests {
     #[test]
     fn test_rebuild_ecx_file_uniform_layout() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
         let mut v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(2),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1u64..=12 {
@@ -1257,19 +1232,15 @@ mod tests {
     #[test]
     fn test_rebuild_ecx_file_fails_on_truncated_shard() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
         let mut v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(3),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1u64..=12 {
@@ -1367,13 +1338,9 @@ mod tests {
         let mut v = Volume::new(
             dat_dir,
             idx_dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -1451,13 +1418,9 @@ mod tests {
         let mut v = Volume::new(
             dat_dir,
             idx_dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -1489,13 +1452,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             vid,
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=8 {

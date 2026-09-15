@@ -19,6 +19,7 @@ use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
 use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
+use crate::storage::volume::VolumeSpec;
 
 use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
 use super::volume_server::VolumeServerState;
@@ -1276,12 +1277,14 @@ impl VolumeServer for VolumeGrpcService {
         store
             .add_volume(
                 vid,
-                &req.collection,
-                Some(rp),
-                ttl,
-                req.preallocate as u64,
                 disk_type,
-                version,
+                &VolumeSpec {
+                    collection: &req.collection,
+                    replica_placement: Some(rp),
+                    ttl,
+                    preallocate: req.preallocate as u64,
+                    version,
+                },
             )
             .map_err(|e| Status::internal(e.to_string()))?;
         self.state.volume_state_notify.notify_one();
@@ -1978,24 +1981,29 @@ impl VolumeServer for VolumeGrpcService {
                 }
 
                 // Copy .dat file
+                let mut progress = CopyProgress {
+                    tx: &tx,
+                    next_report_target: &mut next_report_target,
+                    report_interval,
+                    throttler: &mut throttler,
+                };
                 if !has_remote_dat {
                     let dat_path = format!("{}.dat", data_base_name);
                     let dat_modified_ts_ns = copy_file_from_source(
                         &mut client,
-                        false,
-                        &req.collection,
-                        req.volume_id,
-                        vol_info.compaction_revision,
-                        vol_info.dat_file_size,
-                        &dat_path,
-                        ".dat",
-                        false,
-                        true,
-                        &tx,
-                        true,
-                        &mut next_report_target,
-                        report_interval,
-                        &mut throttler,
+                        &CopyFileSpec {
+                            is_ec_volume: false,
+                            collection: &req.collection,
+                            volume_id: req.volume_id,
+                            compaction_revision: vol_info.compaction_revision,
+                            stop_offset: vol_info.dat_file_size,
+                            dest_path: &dat_path,
+                            ext: ".dat",
+                            is_append: false,
+                            ignore_source_not_found: true,
+                            report_progress: true,
+                        },
+                        &mut progress,
                     )
                     .await?;
                     if dat_modified_ts_ns > 0 {
@@ -2007,20 +2015,19 @@ impl VolumeServer for VolumeGrpcService {
                 let idx_path = format!("{}.idx", idx_base_name);
                 let idx_modified_ts_ns = copy_file_from_source(
                     &mut client,
-                    false,
-                    &req.collection,
-                    req.volume_id,
-                    vol_info.compaction_revision,
-                    vol_info.idx_file_size,
-                    &idx_path,
-                    ".idx",
-                    false,
-                    false,
-                    &tx,
-                    false,
-                    &mut next_report_target,
-                    report_interval,
-                    &mut throttler,
+                    &CopyFileSpec {
+                        is_ec_volume: false,
+                        collection: &req.collection,
+                        volume_id: req.volume_id,
+                        compaction_revision: vol_info.compaction_revision,
+                        stop_offset: vol_info.idx_file_size,
+                        dest_path: &idx_path,
+                        ext: ".idx",
+                        is_append: false,
+                        ignore_source_not_found: false,
+                        report_progress: false,
+                    },
+                    &mut progress,
                 )
                 .await?;
                 if idx_modified_ts_ns > 0 {
@@ -2031,20 +2038,19 @@ impl VolumeServer for VolumeGrpcService {
                 let vif_path = format!("{}.vif", data_base_name);
                 let vif_modified_ts_ns = copy_file_from_source(
                     &mut client,
-                    false,
-                    &req.collection,
-                    req.volume_id,
-                    vol_info.compaction_revision,
-                    1024 * 1024,
-                    &vif_path,
-                    ".vif",
-                    false,
-                    true,
-                    &tx,
-                    false,
-                    &mut next_report_target,
-                    report_interval,
-                    &mut throttler,
+                    &CopyFileSpec {
+                        is_ec_volume: false,
+                        collection: &req.collection,
+                        volume_id: req.volume_id,
+                        compaction_revision: vol_info.compaction_revision,
+                        stop_offset: 1024 * 1024,
+                        dest_path: &vif_path,
+                        ext: ".vif",
+                        is_append: false,
+                        ignore_source_not_found: true,
+                        report_progress: false,
+                    },
+                    &mut progress,
                 )
                 .await?;
                 if vif_modified_ts_ns > 0 {
@@ -4123,16 +4129,18 @@ impl VolumeServer for VolumeGrpcService {
         // dat_file_size. The decoder infers the layout from the shard size
         // when .vif does not record it.
         // Write .dat file using block-interleaved reading from shards.
-        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards_with_dirs(
-            &dat_dir,
-            &collection,
-            vid,
-            dat_file_size,
-            vif_dat_file_size,
-            data_shards,
-            &per_shard_dirs,
-            large_block_size as usize,
-            small_block_size as usize,
+        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards(
+            &crate::storage::erasure_coding::ec_decoder::DatRebuild {
+                dat_dir: &dat_dir,
+                collection: &collection,
+                volume_id: vid,
+                dat_file_size,
+                encoded_dat_file_size: vif_dat_file_size,
+                data_shards,
+                shard_dirs: Some(&per_shard_dirs),
+                large_block_size: large_block_size as usize,
+                small_block_size: small_block_size as usize,
+            },
         )
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 
@@ -5498,25 +5506,36 @@ async fn drain_copy_stream_to_file(
     }
 }
 
-/// Copy a file from a remote volume server via CopyFile streaming RPC.
-/// Returns the modified_ts_ns received from the source.
-#[expect(clippy::too_many_arguments)]
-async fn copy_file_from_source<T>(
-    client: &mut volume_server_pb::volume_server_client::VolumeServerClient<T>,
+/// One file of a volume copy: what to ask the source for and where it lands.
+#[derive(Clone, Copy)]
+struct CopyFileSpec<'a> {
     is_ec_volume: bool,
-    collection: &str,
+    collection: &'a str,
     volume_id: u32,
     compaction_revision: u32,
     stop_offset: u64,
-    dest_path: &str,
-    ext: &str,
+    dest_path: &'a str,
+    ext: &'a str,
     is_append: bool,
     ignore_source_not_found: bool,
-    progress_tx: &tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
+    /// Whether this file's bytes are reported back to the caller as progress.
     report_progress: bool,
-    next_report_target: &mut i64,
+}
+
+/// Progress reporting and throttling shared by every file of one volume copy.
+struct CopyProgress<'a> {
+    tx: &'a tokio::sync::mpsc::Sender<Result<volume_server_pb::VolumeCopyResponse, Status>>,
+    next_report_target: &'a mut i64,
     report_interval: i64,
-    throttler: &mut WriteThrottler,
+    throttler: &'a mut WriteThrottler,
+}
+
+/// Copy a file from a remote volume server via CopyFile streaming RPC.
+/// Returns the modified_ts_ns received from the source.
+async fn copy_file_from_source<T>(
+    client: &mut volume_server_pb::volume_server_client::VolumeServerClient<T>,
+    spec: &CopyFileSpec<'_>,
+    progress: &mut CopyProgress<'_>,
 ) -> Result<i64, Status>
 where
     T: tonic::client::GrpcService<tonic::body::Body>,
@@ -5524,6 +5543,19 @@ where
     T::ResponseBody: http_body::Body<Data = bytes::Bytes> + Send + 'static,
     <T::ResponseBody as http_body::Body>::Error: Into<tonic::codegen::StdError> + Send,
 {
+    let CopyFileSpec {
+        is_ec_volume,
+        collection,
+        volume_id,
+        compaction_revision,
+        stop_offset,
+        dest_path,
+        ext,
+        is_append,
+        ignore_source_not_found,
+        report_progress,
+    } = *spec;
+    let progress_tx = progress.tx;
     let copy_req = volume_server_pb::CopyFileRequest {
         volume_id,
         ext: ext.to_string(),
@@ -5617,11 +5649,11 @@ where
             // A throttled copy sleeps seconds at a time; wake for a departing
             // caller instead of finishing the nap first.
             tokio::select! {
-                _ = throttler.maybe_slowdown(resp.file_content.len() as i64) => {}
+                _ = progress.throttler.maybe_slowdown(resp.file_content.len() as i64) => {}
                 _ = progress_tx.closed() => return Err(cancelled()),
             }
 
-            if report_progress && progressed_bytes > *next_report_target {
+            if report_progress && progressed_bytes > *progress.next_report_target {
                 // Go aborts the transfer when this send fails
                 // (volume_grpc_copy.go: `return false`); so do we.
                 if progress_tx
@@ -5634,7 +5666,7 @@ where
                 {
                     return Err(cancelled());
                 }
-                *next_report_target = progressed_bytes + report_interval;
+                *progress.next_report_target = progressed_bytes + progress.report_interval;
             }
         }
     }
@@ -6035,13 +6067,9 @@ mod tests {
             let mut volume = crate::storage::volume::Volume::new(
                 dir,
                 dir,
-                "",
                 VolumeId(1),
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
+                &crate::storage::volume::VolumeSpec::default(),
             )
             .unwrap();
             let mut needle = Needle {
@@ -6208,12 +6236,12 @@ mod tests {
         store
             .add_volume(
                 VolumeId(1),
-                collection,
-                None,
-                ttl,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection,
+                    ttl,
+                    ..Default::default()
+                },
             )
             .unwrap();
         {
@@ -6606,20 +6634,24 @@ mod tests {
         let mut throttler = WriteThrottler::new(0);
         let err = copy_file_from_source(
             &mut client,
-            false,
-            "",
-            1,
-            u32::MAX,
-            dat_bytes.len() as u64,
-            &dest_path,
-            ".dat",
-            false,
-            true,
-            &tx,
-            true,
-            &mut next_report_target,
-            128 * 1024 * 1024,
-            &mut throttler,
+            &CopyFileSpec {
+                is_ec_volume: false,
+                collection: "",
+                volume_id: 1,
+                compaction_revision: u32::MAX,
+                stop_offset: dat_bytes.len() as u64,
+                dest_path: &dest_path,
+                ext: ".dat",
+                is_append: false,
+                ignore_source_not_found: true,
+                report_progress: true,
+            },
+            &mut CopyProgress {
+                tx: &tx,
+                next_report_target: &mut next_report_target,
+                report_interval: 128 * 1024 * 1024,
+                throttler: &mut throttler,
+            },
         )
         .await
         .expect_err("a copy whose caller is gone must not run to completion");
@@ -8041,13 +8073,9 @@ mod tests {
             let mut v = crate::storage::volume::Volume::new(
                 src_s,
                 src_s,
-                "",
                 vid,
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                crate::storage::types::Version::current(),
+                &crate::storage::volume::VolumeSpec::default(),
             )
             .unwrap();
             for i in 1..=8u64 {
