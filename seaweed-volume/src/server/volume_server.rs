@@ -430,13 +430,13 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
         .route("/healthz", get(handlers::healthz_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
-            "/seaweedfsstatic/*path",
+            "/seaweedfsstatic/{*path}",
             get(handlers::static_asset_handler),
         )
         .route("/", any(admin_store_handler))
-        .route("/:path", any(admin_store_handler))
-        .route("/:vid/:fid", any(admin_store_handler))
-        .route("/:vid/:fid/:filename", any(admin_store_handler))
+        .route("/{path}", any(admin_store_handler))
+        .route("/{vid}/{fid}", any(admin_store_handler))
+        .route("/{vid}/{fid}/{filename}", any(admin_store_handler))
         .fallback(admin_store_handler);
     if ui_enabled {
         // Note: /stats/* endpoints are commented out in Go's volume_server.go (L130-134).
@@ -453,13 +453,13 @@ pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
     Router::new()
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
-            "/seaweedfsstatic/*path",
+            "/seaweedfsstatic/{*path}",
             get(handlers::static_asset_handler),
         )
         .route("/", any(public_store_handler))
-        .route("/:path", any(public_store_handler))
-        .route("/:vid/:fid", any(public_store_handler))
-        .route("/:vid/:fid/:filename", any(public_store_handler))
+        .route("/{path}", any(public_store_handler))
+        .route("/{vid}/{fid}", any(public_store_handler))
+        .route("/{vid}/{fid}/{filename}", any(public_store_handler))
         .fallback(public_store_handler)
         .layer(middleware::from_fn(common_headers_middleware))
         .with_state(state)

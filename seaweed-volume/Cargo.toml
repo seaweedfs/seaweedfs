@@ -38,18 +38,19 @@ tokio-stream = { version = "0.1", features = ["net"] }
 tokio-io-timeout = "1"
 
 # gRPC + protobuf
-tonic = { version = "0.12", features = ["tls"] }
-tonic-reflection = "0.12"
-prost = "0.13"
-prost-types = "0.13"
+tonic = { version = "0.14", features = ["tls-aws-lc"] }
+tonic-prost = "0.14"
+tonic-reflection = "0.14"
+prost = "0.14"
+prost-types = "0.14"
 
 # HTTP server
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.8", features = ["multipart"] }
 http-body = "1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "service", "server-auto", "http1", "http2"] }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -149,7 +150,7 @@ pprof = { version = "0.15", features = ["prost-codec"] }
 tempfile = "3"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14"
 # Ships protoc with the build so neither CI nor a developer needs a system
 # install, and so the version is pinned rather than whatever the platform's
 # package manager happens to carry.
