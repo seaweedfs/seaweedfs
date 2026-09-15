@@ -88,22 +88,22 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	// previously stored credentials and endpoints. Only treat a confirmed
 	// missing entry as a new configuration; propagate all other load errors
 	// so a transient filer failure does not overwrite stored credentials.
+	requestedType := conf.Type
 	existing, loadErr := c.loadRemoteStorageConf(commandEnv, conf.Name)
 	if loadErr != nil && !errors.Is(loadErr, filer_pb.ErrNotFound) {
 		return fmt.Errorf("load existing configuration %s: %v", conf.Name, loadErr)
 	}
 	if existing != nil {
-		prevType := existing.Type
 		conf = existing
+		// On a type transition, reset backend-specific fields to the
+		// destination defaults before re-parsing so explicit flags override.
+		if requestedType != existing.Type {
+			conf.Type = requestedType
+			c.applyTypeDefaults(conf)
+		}
 		fs, isDelete, uploadConcurrency, downloadConcurrency = c.configureFlagSet(conf, true)
 		if err = fs.Parse(args); err != nil {
 			return nil
-		}
-		// A type transition should not inherit the old backend's defaults
-		// (e.g. empty S3Region from an Azure config). Reset to new-config
-		// defaults for the destination type when the type actually changed.
-		if conf.Type != prevType {
-			c.applyTypeDefaults(conf)
 		}
 	}
 
