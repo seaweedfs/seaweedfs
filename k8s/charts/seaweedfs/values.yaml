@@ -190,6 +190,8 @@ master:
   podLabels: {}
 
   # Annotations to be added to the master pods
+  # The chart sets checksum/master-config on master pods; other checksum/* keys
+  # can be used for custom rollouts.
   podAnnotations: {}
 
   # Annotations to be added to the master resources
@@ -773,6 +775,8 @@ filer:
   podLabels: {}
 
   # Annotations to be added to the filer pods
+  # The chart sets checksum/s3config on filer pods; other checksum/* keys can be
+  # used for custom rollouts.
   podAnnotations: {}
 
   # Annotations to be added to the filer resource
@@ -1078,6 +1082,8 @@ s3:
   podLabels: {}
 
   # Annotations to be added to the s3 pods
+  # The chart sets checksum/s3config on s3 pods; other checksum/* keys can be
+  # used for custom rollouts.
   podAnnotations: {}
 
   # Annotations to be added to the s3 resources
@@ -1788,6 +1794,8 @@ allInOne:
   initContainers: ""  # Init containers
   sidecars: ""  # Sidecar containers
   annotations: {}  # Annotations for the deployment
+  # The chart sets checksum/master-config and checksum/s3config on all-in-one
+  # pods; other checksum/* keys can be used for custom rollouts.
   podAnnotations: {}  # Annotations for the pods
   podLabels: {}  # Labels for the pods
 
@@ -1922,6 +1930,9 @@ certificates:
 # Labels to be added to all the created pods
 podLabels: {}
 # Annotations to be added to all the created pods
+# The chart sets checksum/master-config and checksum/s3config on pods whose
+# rendered ConfigMaps or Secrets should trigger rollouts. Other checksum/* keys
+# can be used for custom rollout annotations.
 podAnnotations: {}
 
 networkPolicy:
