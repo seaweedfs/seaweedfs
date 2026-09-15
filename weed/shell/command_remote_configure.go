@@ -88,6 +88,12 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	// previously stored credentials and endpoints. Only treat a confirmed
 	// missing entry as a new configuration; propagate all other load errors
 	// so a transient filer failure does not overwrite stored credentials.
+	typeExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "type" {
+			typeExplicit = true
+		}
+	})
 	requestedType := conf.Type
 	existing, loadErr := c.loadRemoteStorageConf(commandEnv, conf.Name)
 	if loadErr != nil && !errors.Is(loadErr, filer_pb.ErrNotFound) {
@@ -95,9 +101,10 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	}
 	if existing != nil {
 		conf = existing
-		// On a type transition, reset backend-specific fields to the
-		// destination defaults before re-parsing so explicit flags override.
-		if requestedType != existing.Type {
+		// On an explicit type transition, reset backend-specific fields to
+		// the destination defaults before re-parsing so explicit flags
+		// override. An omitted -type keeps the stored backend.
+		if typeExplicit && requestedType != existing.Type {
 			conf.Type = requestedType
 			c.applyTypeDefaults(conf)
 		}
