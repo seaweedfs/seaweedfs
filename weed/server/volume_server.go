@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -142,6 +143,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	adminMux.HandleFunc("/status", requestIDMiddleware(vs.statusHandler))
 	adminMux.HandleFunc("/healthz", requestIDMiddleware(vs.healthzHandler))
 	adminMux.HandleFunc("/readyz", requestIDMiddleware(vs.healthzHandler))
+	adminMux.Handle("/metrics", promhttp.HandlerFor(stats.Gather, promhttp.HandlerOpts{}))
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", requestIDMiddleware(vs.uiStatusHandler))
