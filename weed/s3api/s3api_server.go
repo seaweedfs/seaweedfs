@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -34,7 +33,6 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
@@ -790,7 +788,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/healthz").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/readyz").HandlerFunc(s3a.StatusHandler)
-	apiRouter.Methods(http.MethodGet).Path("/metrics").Handler(promhttp.HandlerFor(stats_collect.Gather, promhttp.HandlerOpts{}))
 
 	// Object path pattern with (?s) flag to match newlines in object keys
 	const objectPath = "/{object:(?s).+}"
