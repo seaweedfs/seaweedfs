@@ -22,6 +22,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"go.uber.org/atomic"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func init() {
@@ -34,6 +36,7 @@ type commandFsVerify struct {
 	volumeIds          map[uint32][]pb.ServerAddress
 	verbose            *bool
 	metadataFromLog    *bool
+	pruneEntries       *bool
 	concurrency        *int
 	modifyTimeAgoAtSec int64
 	writer             io.Writer
@@ -48,7 +51,12 @@ func (c *commandFsVerify) Name() string {
 func (c *commandFsVerify) Help() string {
 	return `recursively verify all files under a directory
 
-	fs.verify [-v] [-modifyTimeAgo 1h] /buckets/dir
+	fs.verify [-v] [-modifyTimeAgo 1h] [-pruneEntries] [-concurrency 4] /buckets/dir
+
+	-pruneEntries deletes filer entries whose needles are missing from every
+	volume location holding the volume (data lost, e.g. after a volume
+	truncation). The delete only applies when the entry is unchanged since
+	verification, so a re-uploaded file is never pruned.
 
 `
 }
@@ -65,6 +73,7 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	modifyTimeAgo := fsVerifyCommand.Duration("modifyTimeAgo", 0, "only include files after this modify time to verify")
 	c.concurrency = fsVerifyCommand.Int("concurrency", 0, "number of parallel verification per volume server")
 	c.metadataFromLog = fsVerifyCommand.Bool("metadataFromLog", false, "Using  filer log to get metadata")
+	c.pruneEntries = fsVerifyCommand.Bool("pruneEntries", false, "delete filer entries whose needles are missing from all volume locations (data lost); a changed entry is never deleted")
 	if err = fsVerifyCommand.Parse(args); err != nil {
 		return err
 	}
@@ -96,18 +105,15 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			defer close(c.waitChan[volumeServerStr])
 		}
 	}
-	var fCount, eCount uint64
+	var fCount, eCount, pCount uint64
 	if *c.metadataFromLog {
 		var wg sync.WaitGroup
-		fCount, eCount, err = c.verifyProcessMetadata(path, &wg)
+		fCount, eCount, pCount, err = c.verifyProcessMetadata(path, &wg)
 		wg.Wait()
-		if err != nil {
-			return err
-		}
 	} else {
-		fCount, eCount, err = c.verifyTraverseBfs(path)
+		fCount, eCount, pCount, err = c.verifyTraverseBfs(path)
 	}
-	fmt.Fprintf(writer, "verified %d files, error %d files \n", fCount, eCount)
+	fmt.Fprintf(writer, "verified %d files, error %d files, pruned %d entries \n", fCount, eCount, pCount)
 	return err
 }
 
@@ -154,11 +160,13 @@ func (c *commandFsVerify) verifyChunk(volumeServer pb.ServerAddress, fileId *fil
 }
 
 type ItemEntry struct {
-	chunks []*filer_pb.FileChunk
-	path   util.FullPath
+	chunks   []*filer_pb.FileChunk
+	path     util.FullPath
+	mtimeSec int64
+	md5      []byte
 }
 
-func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup) (fileCount uint64, errCount uint64, err error) {
+func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup) (fileCount uint64, errCount uint64, prunedCount uint64, err error) {
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
 		if resp.EventNotification.NewEntry == nil {
@@ -170,7 +178,7 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 		}
 		entryPath := fmt.Sprintf("%s/%s", message.NewParentPath, message.NewEntry.Name)
 		errorChunksCount := atomic.NewUint64(0)
-		if !c.verifyEntry(entryPath, message.NewEntry.Chunks, errorChunksCount, wg) {
+		if verified, hasMissingNeedles := c.verifyEntry(entryPath, message.NewEntry.Chunks, errorChunksCount, wg); !verified {
 			if err = c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				entryResp, errReq := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 					Directory: message.NewParentPath,
@@ -186,6 +194,17 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 					bytes.Equal(entryResp.Entry.Attributes.Md5, message.NewEntry.Attributes.Md5) {
 					fmt.Fprintf(c.writer, "file: %s needles:%d failed:%d\n", entryPath, chunkCount, errorChunksCount.Load())
 					errCount++
+					if *c.pruneEntries && hasMissingNeedles {
+						pruned, pruneErr := c.pruneEntry(
+							util.NewFullPath(message.NewParentPath, message.NewEntry.Name),
+							message.NewEntry.Attributes.Mtime,
+							message.NewEntry.Attributes.Md5)
+						if pruneErr != nil {
+							fmt.Fprintf(c.writer, "prune %s failed: %v\n", entryPath, pruneErr)
+						} else if pruned {
+							prunedCount++
+						}
+					}
 				}
 				return nil
 			}); err != nil {
@@ -211,17 +230,51 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 		StopTsNs:               time.Now().UnixNano(),
 		EventErrorType:         pb.DontLogError,
 	}
-	return fileCount, errCount, pb.FollowMetadata(c.env.option.FilerAddress, c.env.option.GrpcDialOption, metadataFollowOption, processEventFn)
+	err = pb.FollowMetadata(c.env.option.FilerAddress, c.env.option.GrpcDialOption, metadataFollowOption, processEventFn)
+	return fileCount, errCount, prunedCount, err
 }
 
-func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk, errorCount *atomic.Uint64, wg *sync.WaitGroup) bool {
+// isNeedleMissingError reports whether a VolumeNeedleStatus error means the
+// needle data is lost at that location: the volume server answered that the
+// needle is absent ("needle not found") or unreadable ("EOF" from a truncated
+// volume file). Both reach the client as gRPC code Unknown — any other code
+// (Unavailable, DeadlineExceeded, ...) is transport level and must never
+// trigger a prune. It must also NOT match "volume not found", which says
+// nothing about the needle itself.
+func isNeedleMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if st, ok := status.FromError(err); ok {
+		if st.Code() != codes.Unknown {
+			return false
+		}
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "needle not found") || strings.Contains(msg, "EOF")
+}
+
+// verifyEntry verifies all chunks of an entry. It returns verified=false when
+// any chunk failed. hasMissingNeedles is true when at least one needle is
+// missing from every volume location holding its volume, i.e. the data is
+// lost rather than a transient or routing error.
+func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk, errorCount *atomic.Uint64, wg *sync.WaitGroup) (verified bool, hasMissingNeedles bool) {
 	fileMsg := fmt.Sprintf("file:%s", path)
 	itemIsVerifed := atomic.NewBool(true)
+	hasMissingNeedlesFlag := atomic.NewBool(false)
+	// tracks this entry's in-flight verifications so the missing-needle
+	// decision at the end of each chunk is deterministic
+	itemWg := &sync.WaitGroup{}
+
 	for _, chunk := range chunks {
 		if volumeIds, ok := c.volumeIds[chunk.Fid.VolumeId]; ok {
+			chunkMissingLocations := atomic.NewUint64(0)
 			for _, volumeServer := range volumeIds {
 				if *c.concurrency == 0 {
 					if err := c.verifyChunk(volumeServer, chunk.Fid); err != nil {
+						if isNeedleMissingError(err) {
+							chunkMissingLocations.Add(1)
+						}
 						if !(*c.metadataFromLog && strings.HasSuffix(err.Error(), "not found")) {
 							fmt.Fprintf(c.writer, "%s failed verify fileId %s: %+v, at volume server %v\n",
 								fileMsg, chunk.GetFileIdString(), err, volumeServer)
@@ -246,10 +299,15 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 					continue
 				}
 				wg.Add(1)
+				itemWg.Add(1)
 				waitChan <- struct{}{}
-				go func(fChunk *filer_pb.FileChunk, path string, volumeServer pb.ServerAddress, msg string) {
+				go func(fChunk *filer_pb.FileChunk, path string, volumeServer pb.ServerAddress, msg string, chunkMissingLocations *atomic.Uint64) {
 					defer wg.Done()
+					defer itemWg.Done()
 					if err := c.verifyChunk(volumeServer, fChunk.Fid); err != nil {
+						if isNeedleMissingError(err) {
+							chunkMissingLocations.Add(1)
+						}
 						if !(*c.metadataFromLog && strings.HasSuffix(err.Error(), "not found")) {
 							fmt.Fprintf(c.writer, "%s failed verify fileId %s: %+v, at volume server %v\n",
 								msg, fChunk.GetFileIdString(), err, volumeServer)
@@ -260,7 +318,11 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 						}
 					}
 					<-waitChan
-				}(chunk, path, volumeServer, fileMsg)
+				}(chunk, path, volumeServer, fileMsg, chunkMissingLocations)
+			}
+			itemWg.Wait()
+			if chunkMissingLocations.Load() == uint64(len(volumeIds)) {
+				hasMissingNeedlesFlag.Store(true)
 			}
 		} else {
 			if !*c.metadataFromLog {
@@ -275,12 +337,55 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 			break
 		}
 	}
-	return itemIsVerifed.Load()
+	return itemIsVerifed.Load(), hasMissingNeedlesFlag.Load()
 }
 
-func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errCount uint64, err error) {
+// pruneEntry deletes an entry whose needles are gone, unless the entry
+// changed since verification (a re-PUT fixed it). IfNotModifiedAfter makes
+// the guard atomic on the filer side.
+func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []byte) (pruned bool, err error) {
+	dir, name := path.DirAndName()
+	lookupErr := c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "no entry is found in filer store") {
+				return nil // already gone
+			}
+			return err
+		}
+		att := lookupResp.Entry.GetAttributes()
+		if att.GetMtime() != mtimeSec {
+			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
+			return nil
+		}
+		if len(md5) > 0 && !bytes.Equal(att.GetMd5(), md5) {
+			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
+			return nil
+		}
+		deleteResp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:          dir,
+			Name:               name,
+			IfNotModifiedAfter: mtimeSec,
+		})
+		if err != nil {
+			return err
+		}
+		if deleteResp.Error != "" {
+			return fmt.Errorf("delete entry %s: %s", path, deleteResp.Error)
+		}
+		pruned = true
+		fmt.Fprintf(c.writer, "pruned entry with missing needles: %s\n", path)
+		return nil
+	})
+	return pruned, lookupErr
+}
+
+func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errCount uint64, prunedCount uint64, err error) {
 	timeNowAtSec := time.Now().Unix()
-	return fileCount, errCount, doTraverseBfsAndSaving(c.env, c.writer, path, false, false,
+	return fileCount, errCount, prunedCount, doTraverseBfsAndSaving(c.env, c.writer, path, false, false,
 		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if c.modifyTimeAgoAtSec > 0 {
 				if entry.Entry.Attributes != nil && c.modifyTimeAgoAtSec < timeNowAtSec-entry.Entry.Attributes.Mtime {
@@ -295,8 +400,10 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			if len(dataChunks) > 0 {
 				select {
 				case outputChan <- &ItemEntry{
-					chunks: dataChunks,
-					path:   util.NewFullPath(entry.Dir, entry.Entry.Name),
+					chunks:   dataChunks,
+					path:     util.NewFullPath(entry.Dir, entry.Entry.Name),
+					mtimeSec: entry.Entry.GetAttributes().GetMtime(),
+					md5:      entry.Entry.GetAttributes().GetMd5(),
 				}:
 				case <-ctx.Done():
 					return ctx.Err()
@@ -310,11 +417,18 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			for itemEntry := range outputChan {
 				i := itemEntry.(*ItemEntry)
 				itemPath := string(i.path)
-				if c.verifyEntry(itemPath, i.chunks, itemErrCount, &wg) {
+				if verified, hasMissingNeedles := c.verifyEntry(itemPath, i.chunks, itemErrCount, &wg); verified {
 					if *c.verbose {
 						fmt.Fprintf(c.writer, "file: %s needles:%d verified\n", itemPath, len(i.chunks))
 					}
 					fileCount++
+				} else if *c.pruneEntries && hasMissingNeedles {
+					pruned, pruneErr := c.pruneEntry(i.path, i.mtimeSec, i.md5)
+					if pruneErr != nil {
+						fmt.Fprintf(c.writer, "prune %s failed: %v\n", itemPath, pruneErr)
+					} else if pruned {
+						prunedCount++
+					}
 				}
 			}
 			wg.Wait()
