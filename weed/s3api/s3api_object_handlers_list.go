@@ -181,6 +181,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
+	requestMarker := marker
 	marker = adjustMarkerForDelimiter(marker, originalPrefix, delimiter)
 
 	response, err := s3a.listFilerEntries(r.Context(), listObjectsRequest{
@@ -197,7 +198,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	sanitizeV1MarkerEcho(&response, marker, encodingTypeUrl)
+	sanitizeV1MarkerEcho(&response, requestMarker, marker, encodingTypeUrl)
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.bucketExists(bucket); existErr == nil && !exists {
@@ -210,18 +211,25 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, r, toListBucketResultV1(response))
 }
 
-func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTypeUrl bool) {
-	if marker == "" {
+// sanitizeV1MarkerEcho echoes the marker the client sent, not the cutoff the walk used:
+// a marker ending on the delimiter is trimmed for the walk. Both are excluded from the
+// listing, since the marker names the last key of the previous page.
+func sanitizeV1MarkerEcho(response *ListBucketResult, requestMarker, marker string, encodingTypeUrl bool) {
+	response.Marker = requestMarker
+	if requestMarker == "" && marker == "" {
 		return
 	}
 
-	markerCandidates := map[string]struct{}{
-		marker:                          {},
-		strings.TrimPrefix(marker, "/"): {},
-	}
-	if encodingTypeUrl {
-		escapedMarker := urlPathEscape(strings.TrimPrefix(marker, "/"))
-		markerCandidates[escapedMarker] = struct{}{}
+	markerCandidates := map[string]struct{}{}
+	for _, m := range []string{requestMarker, marker} {
+		if m == "" {
+			continue
+		}
+		markerCandidates[m] = struct{}{}
+		markerCandidates[strings.TrimPrefix(m, "/")] = struct{}{}
+		if encodingTypeUrl {
+			markerCandidates[urlPathEscape(strings.TrimPrefix(m, "/"))] = struct{}{}
+		}
 	}
 	matchesMarker := func(v string) bool {
 		if _, ok := markerCandidates[v]; ok {
