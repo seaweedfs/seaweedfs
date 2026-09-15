@@ -19,6 +19,7 @@ use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
 use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
+use crate::storage::volume::VolumeSpec;
 
 use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
 use super::volume_server::VolumeServerState;
@@ -1276,12 +1277,14 @@ impl VolumeServer for VolumeGrpcService {
         store
             .add_volume(
                 vid,
-                &req.collection,
-                Some(rp),
-                ttl,
-                req.preallocate as u64,
                 disk_type,
-                version,
+                &VolumeSpec {
+                    collection: &req.collection,
+                    replica_placement: Some(rp),
+                    ttl,
+                    preallocate: req.preallocate as u64,
+                    version,
+                },
             )
             .map_err(|e| Status::internal(e.to_string()))?;
         self.state.volume_state_notify.notify_one();
@@ -6064,13 +6067,9 @@ mod tests {
             let mut volume = crate::storage::volume::Volume::new(
                 dir,
                 dir,
-                "",
                 VolumeId(1),
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
+                &crate::storage::volume::VolumeSpec::default(),
             )
             .unwrap();
             let mut needle = Needle {
@@ -6237,12 +6236,12 @@ mod tests {
         store
             .add_volume(
                 VolumeId(1),
-                collection,
-                None,
-                ttl,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection,
+                    ttl,
+                    ..Default::default()
+                },
             )
             .unwrap();
         {
@@ -8074,13 +8073,9 @@ mod tests {
             let mut v = crate::storage::volume::Volume::new(
                 src_s,
                 src_s,
-                "",
                 vid,
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                crate::storage::types::Version::current(),
+                &crate::storage::volume::VolumeSpec::default(),
             )
             .unwrap();
             for i in 1..=8u64 {

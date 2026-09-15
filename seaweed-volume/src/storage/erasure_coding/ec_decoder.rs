@@ -336,7 +336,7 @@ mod tests {
     use crate::storage::erasure_coding::ec_encoder;
     use crate::storage::needle::needle::Needle;
     use crate::storage::needle_map::NeedleMapKind;
-    use crate::storage::volume::Volume;
+    use crate::storage::volume::{Volume, VolumeSpec};
     use tempfile::TempDir;
 
     #[test]
@@ -348,13 +348,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -424,13 +420,9 @@ mod tests {
         let v2 = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -682,17 +674,19 @@ mod tests {
         assert_ne!(&original[..(large_row_size / 2) as usize], &control[..]);
 
         // the live extent can never exceed the encode-time size
-        assert!(write_dat_file_from_shards(&DatRebuild {
-            dat_dir: out,
-            collection: "",
-            volume_id: VolumeId(1),
-            dat_file_size: dat_size + 1,
-            encoded_dat_file_size: dat_size,
-            data_shards,
-            shard_dirs: Some(&shard_dirs),
-            large_block_size: LARGE,
-            small_block_size: SMALL,
-        })
-        .is_err());
+        assert!(
+            write_dat_file_from_shards(&DatRebuild {
+                dat_dir: out,
+                collection: "",
+                volume_id: VolumeId(1),
+                dat_file_size: dat_size + 1,
+                encoded_dat_file_size: dat_size,
+                data_shards,
+                shard_dirs: Some(&shard_dirs),
+                large_block_size: LARGE,
+                small_block_size: SMALL,
+            })
+            .is_err()
+        );
     }
 }

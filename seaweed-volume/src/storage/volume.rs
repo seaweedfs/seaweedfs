@@ -610,20 +610,48 @@ fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()>
     Ok(())
 }
 
+/// What a volume is created with beyond its id, directories and index kind:
+/// the tail of Go's `NewVolume` argument list. The default is an empty
+/// collection with no replication, no TTL and no preallocation at the
+/// current needle version, which is what most tests want.
+#[derive(Clone, Copy, Debug)]
+pub struct VolumeSpec<'a> {
+    pub collection: &'a str,
+    pub replica_placement: Option<ReplicaPlacement>,
+    pub ttl: Option<crate::storage::needle::ttl::TTL>,
+    /// Bytes to reserve for the .dat up front; 0 grows on demand.
+    pub preallocate: u64,
+    pub version: Version,
+}
+
+impl Default for VolumeSpec<'_> {
+    fn default() -> Self {
+        VolumeSpec {
+            collection: "",
+            replica_placement: None,
+            ttl: None,
+            preallocate: 0,
+            version: Version::current(),
+        }
+    }
+}
+
 impl Volume {
     /// Create and load a volume from disk.
-    #[expect(clippy::too_many_arguments)]
     pub fn new(
         dirname: &str,
         dir_idx: &str,
-        collection: &str,
         id: VolumeId,
         needle_map_kind: NeedleMapKind,
-        replica_placement: Option<ReplicaPlacement>,
-        ttl: Option<crate::storage::needle::ttl::TTL>,
-        preallocate: u64,
-        version: Version,
+        spec: &VolumeSpec<'_>,
     ) -> Result<Self, VolumeError> {
+        let VolumeSpec {
+            collection,
+            replica_placement,
+            ttl,
+            preallocate,
+            version,
+        } = *spec;
         let mut v = Volume {
             id,
             dir: dirname.to_string(),
@@ -4624,13 +4652,9 @@ mod tests {
         Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap()
     }
@@ -5215,13 +5239,9 @@ mod tests {
         let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         assert!(
@@ -5370,13 +5390,12 @@ mod tests {
         Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            Some(ttl),
-            0,
-            Version::current(),
+            &VolumeSpec {
+                ttl: Some(ttl),
+                ..Default::default()
+            },
         )
         .unwrap()
     }
@@ -5409,13 +5428,9 @@ mod tests {
         Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap()
     }
@@ -5455,13 +5470,12 @@ mod tests {
             let mut v = Volume::new(
                 dir,
                 dir,
-                "",
                 VolumeId(1),
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                VERSION_2,
+                &VolumeSpec {
+                    version: VERSION_2,
+                    ..Default::default()
+                },
             )
             .unwrap();
             for i in 1..=3u64 {
@@ -5799,13 +5813,9 @@ mod tests {
         let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         assert_eq!(v.file_count(), 3);
@@ -5826,13 +5836,9 @@ mod tests {
             Volume::new(
                 dir,
                 dir,
-                "",
                 VolumeId(1),
                 NeedleMapKind::Redb,
-                None,
-                None,
-                0,
-                Version::current(),
+                &VolumeSpec::default(),
             )
             .unwrap()
         };
@@ -5876,13 +5882,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::Redb,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let rdb_path = std::path::PathBuf::from(v.file_name(".rdb"));
@@ -5933,13 +5935,9 @@ mod tests {
         let mut v = Volume::new(
             data,
             data,
-            "",
             VolumeId(7),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let payload = b"payload-across-relocate".to_vec();
@@ -5995,13 +5993,9 @@ mod tests {
         let mut v = Volume::new(
             data,
             data,
-            "",
             VolumeId(7),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let payload = b"payload-beside-the-data".to_vec();
@@ -6021,13 +6015,9 @@ mod tests {
         let reopened = Volume::new(
             data,
             idx,
-            "",
             VolumeId(7),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         assert!(
@@ -6643,13 +6633,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -6746,13 +6732,9 @@ mod tests {
         Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap()
     }
@@ -6851,13 +6833,9 @@ mod tests {
         let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let mut probe = Needle {
@@ -6944,13 +6922,9 @@ mod tests {
         let loaded = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         );
         set_mode(0o755); // restore before any assertion, so cleanup works
 
@@ -7012,17 +6986,18 @@ mod tests {
         let loaded = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         );
         let marked = loaded.map(|mut v| {
             let r = v.set_writable();
-            (v.no_write_or_delete, v.is_read_only(), v.nm.as_ref().unwrap().has_idx_writer(), r)
+            (
+                v.no_write_or_delete,
+                v.is_read_only(),
+                v.nm.as_ref().unwrap().has_idx_writer(),
+                r,
+            )
         });
         // Restore before any assertion, so cleanup works.
         set_mode(tmp.path(), 0o755);
@@ -7072,13 +7047,9 @@ mod tests {
         let mut v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         assert_eq!(
@@ -7103,13 +7074,9 @@ mod tests {
         let v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for (id, want) in [(1u64, &b"first"[..]), (2u64, &b"second"[..])] {
@@ -7163,13 +7130,9 @@ mod tests {
         let loaded = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         );
         set_mode(tmp.path(), 0o755);
         set_mode(&idx_path, 0o644);
@@ -7255,13 +7218,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -7373,13 +7332,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         assert!(
@@ -7418,13 +7373,9 @@ mod tests {
         let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let mut probe = Needle {
@@ -7488,13 +7439,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         assert!(v.no_write_can_delete, "state must survive a restart");
@@ -7570,13 +7517,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         assert!(v.no_write_or_delete);
@@ -7627,13 +7570,9 @@ mod tests {
         let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -7667,13 +7606,9 @@ mod tests {
         let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -7704,13 +7639,9 @@ mod tests {
         let result = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         );
 
         match result {
@@ -7792,13 +7723,9 @@ mod tests {
         let v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -7891,13 +7818,9 @@ mod tests {
         let mut v = Volume::new(
             dat_dir,
             idx_dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 

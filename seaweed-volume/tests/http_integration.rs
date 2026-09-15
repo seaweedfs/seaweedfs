@@ -17,7 +17,8 @@ use seaweed_volume::server::volume_server::{
 };
 use seaweed_volume::storage::needle_map::NeedleMapKind;
 use seaweed_volume::storage::store::Store;
-use seaweed_volume::storage::types::{DiskType, Version, VolumeId};
+use seaweed_volume::storage::types::{DiskType, VolumeId};
+use seaweed_volume::storage::volume::VolumeSpec;
 
 use tempfile::TempDir;
 
@@ -73,12 +74,11 @@ fn build_test_state(
     store
         .add_volume(
             VolumeId(1),
-            "",
-            replica_placement,
-            None,
-            0,
             DiskType::HardDrive,
-            Version::current(),
+            &VolumeSpec {
+                replica_placement,
+                ..Default::default()
+            },
         )
         .expect("failed to create volume");
 
@@ -959,7 +959,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
     use seaweed_volume::storage::needle::needle::{FileId, Needle};
     use seaweed_volume::storage::types::{Cookie, NeedleId};
-    use seaweed_volume::storage::volume::Volume;
+    use seaweed_volume::storage::volume::{Volume, VolumeSpec};
 
     let (state, tmp) = test_state();
     let dir = tmp.path().to_str().unwrap();
@@ -976,13 +976,9 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(2),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let mut n = Needle {

@@ -739,9 +739,7 @@ pub(crate) fn encode_dat_file(
         small_block_size,
     } = layout;
     let total_shards = data_shards + parity_shards;
-    let mut buffers: Vec<Vec<u8>> = (0..total_shards)
-        .map(|_| vec![0u8; buffer_size])
-        .collect();
+    let mut buffers: Vec<Vec<u8>> = (0..total_shards).map(|_| vec![0u8; buffer_size]).collect();
     let mut run = EncodeRun {
         dat_file,
         rs,
@@ -866,7 +864,7 @@ mod tests {
     use super::*;
     use crate::storage::needle::needle::Needle;
     use crate::storage::needle_map::NeedleMapKind;
-    use crate::storage::volume::Volume;
+    use crate::storage::volume::{Volume, VolumeSpec};
     use tempfile::TempDir;
 
     #[test]
@@ -878,13 +876,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -929,13 +923,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=n {
@@ -1008,13 +998,9 @@ mod tests {
         let mut v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=20 {
@@ -1200,19 +1186,15 @@ mod tests {
     #[test]
     fn test_rebuild_ecx_file_uniform_layout() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
         let mut v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(2),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1u64..=12 {
@@ -1250,19 +1232,15 @@ mod tests {
     #[test]
     fn test_rebuild_ecx_file_fails_on_truncated_shard() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap().to_string();
         let mut v = Volume::new(
             &dir,
             &dir,
-            "",
             VolumeId(3),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1u64..=12 {
@@ -1360,13 +1338,9 @@ mod tests {
         let mut v = Volume::new(
             dat_dir,
             idx_dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -1444,13 +1418,9 @@ mod tests {
         let mut v = Volume::new(
             dat_dir,
             idx_dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -1482,13 +1452,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             vid,
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=8 {

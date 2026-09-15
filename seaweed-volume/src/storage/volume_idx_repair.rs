@@ -215,6 +215,7 @@ mod tests {
     use super::*;
     use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
+    use crate::storage::volume::VolumeSpec;
     use std::os::unix::fs::{FileExt, PermissionsExt};
     use tempfile::TempDir;
 
@@ -222,13 +223,9 @@ mod tests {
         Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap()
     }

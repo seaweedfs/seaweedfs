@@ -1255,7 +1255,10 @@ async fn recover_one_remote_ec_shard_interval(
                 let res = read_remote_ec_shard_interval(
                     &state,
                     &locs,
-                    EcInterval { shard_id: sid, ..iv },
+                    EcInterval {
+                        shard_id: sid,
+                        ..iv
+                    },
                 )
                 .await;
                 (sid, res)

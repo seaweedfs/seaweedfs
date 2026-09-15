@@ -1721,20 +1721,19 @@ mod tests {
     #[test]
     fn test_destroy_removes_bitrot_sidecar() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
             dir,
             dir,
-            "ec1c",
             VolumeId(2074),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec {
+                collection: "ec1c",
+                ..Default::default()
+            },
         )
         .unwrap();
         for i in 1..=3 {
@@ -1797,20 +1796,16 @@ mod tests {
     fn test_mount_loads_bitrot_sidecar() {
         use crate::storage::erasure_coding::ec_bitrot::BitrotStatus;
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=5 {
@@ -1855,20 +1850,16 @@ mod tests {
     #[test]
     fn test_scrub_plans_are_self_contained_and_match_direct_call() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=8 {
@@ -1948,20 +1939,16 @@ mod tests {
     #[test]
     fn test_local_scrub_plan_reports_negative_size_ecx_row() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=8 {
@@ -2040,20 +2027,16 @@ mod tests {
     #[test]
     fn test_scrub_plans_survive_files_removed_after_snapshot() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=8 {
@@ -2139,20 +2122,16 @@ mod tests {
     #[test]
     fn test_checksum_scrub_clean_and_detects_corruption() {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
 
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=8 {
@@ -2589,18 +2568,14 @@ mod tests {
     /// split-disk mount without needing N directories.
     fn split_runtimes(dir: &str, vid: VolumeId, subsets: &[&[u8]]) -> Vec<EcVolume> {
         use crate::storage::needle_map::NeedleMapKind;
-        use crate::storage::volume::Volume;
+        use crate::storage::volume::{Volume, VolumeSpec};
 
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             vid,
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for i in 1..=8 {
@@ -3307,7 +3282,7 @@ mod tests {
 mod uniform_layout_tests {
     use super::*;
     use crate::storage::needle_map::NeedleMapKind;
-    use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo, Volume};
+    use crate::storage::volume::{VifEcShardConfig, VifVolumeInfo, Volume, VolumeSpec};
     use tempfile::TempDir;
 
     // Write ~26MB of needles so the uniform block size (3MB) diverges from the
@@ -3324,13 +3299,9 @@ mod uniform_layout_tests {
             let mut v = Volume::new(
                 dir,
                 dir,
-                "",
                 vid,
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
+                &VolumeSpec::default(),
             )
             .unwrap();
             let mut expected: Vec<(NeedleId, Vec<u8>)> = Vec::new();

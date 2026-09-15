@@ -20,10 +20,10 @@ use crate::storage::erasure_coding::ec_shard::{
 };
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle_map::NeedleMapKind;
-use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
+use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::*;
 use crate::storage::volume::{
-    remove_volume_files, volume_file_name, VifVolumeInfo, Volume, VolumeError,
+    VifVolumeInfo, Volume, VolumeError, VolumeSpec, remove_volume_files, volume_file_name,
 };
 
 /// A single disk location managing volumes in one directory.
@@ -280,30 +280,33 @@ impl DiskLocation {
         let opened = Mutex::new(Vec::with_capacity(to_load.len()));
         std::thread::scope(|scope| {
             for _ in 0..workers {
-                scope.spawn(|| loop {
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some((vid, collections)) = to_load.get(i) else {
-                        return;
-                    };
-                    for collection in collections {
-                        match Volume::new(
-                            &self.directory,
-                            &self.idx_directory,
-                            collection,
-                            *vid,
-                            needle_map_kind,
-                            None, // replica placement read from superblock
-                            None, // TTL read from superblock
-                            0,    // no preallocate on load
-                            Version::current(),
-                        ) {
-                            Ok(mut v) => {
-                                v.location_disk_space_low = self.is_disk_space_low.clone();
-                                opened.lock().unwrap().push((collection.clone(), *vid, v));
-                                break;
-                            }
-                            Err(e) => {
-                                warn!(volume_id = vid.0, error = %e, "failed to load volume");
+                scope.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((vid, collections)) = to_load.get(i) else {
+                            return;
+                        };
+                        for collection in collections {
+                            // Replica placement and TTL are read back from the
+                            // superblock, and a load never preallocates.
+                            match Volume::new(
+                                &self.directory,
+                                &self.idx_directory,
+                                *vid,
+                                needle_map_kind,
+                                &VolumeSpec {
+                                    collection,
+                                    ..Default::default()
+                                },
+                            ) {
+                                Ok(mut v) => {
+                                    v.location_disk_space_low = self.is_disk_space_low.clone();
+                                    opened.lock().unwrap().push((collection.clone(), *vid, v));
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!(volume_id = vid.0, error = %e, "failed to load volume");
+                                }
                             }
                         }
                     }
@@ -547,31 +550,22 @@ impl DiskLocation {
     }
 
     /// Create a new volume in this location.
-    #[expect(clippy::too_many_arguments)]
     pub fn create_volume(
         &mut self,
         vid: VolumeId,
-        collection: &str,
         needle_map_kind: NeedleMapKind,
-        replica_placement: Option<ReplicaPlacement>,
-        ttl: Option<crate::storage::needle::ttl::TTL>,
-        preallocate: u64,
-        version: Version,
+        spec: &VolumeSpec<'_>,
     ) -> Result<(), VolumeError> {
         let mut v = Volume::new(
             &self.directory,
             &self.idx_directory,
-            collection,
             vid,
             needle_map_kind,
-            replica_placement,
-            ttl,
-            preallocate,
-            version,
+            spec,
         )?;
         v.location_disk_space_low = self.is_disk_space_low.clone();
         crate::metrics::VOLUME_GAUGE
-            .with_label_values(&[collection, "volume"])
+            .with_label_values(&[spec.collection, "volume"])
             .inc();
         self.volumes.insert(vid, v);
         Ok(())
@@ -1504,16 +1498,8 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(
-            VolumeId(1),
-            "",
-            NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
-        )
-        .unwrap();
+        loc.create_volume(VolumeId(1), NeedleMapKind::InMemory, &VolumeSpec::default())
+            .unwrap();
 
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_some());
@@ -1537,24 +1523,15 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-            loc.create_volume(
-                VolumeId(1),
-                "",
-                NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
-            )
-            .unwrap();
+            loc.create_volume(VolumeId(1), NeedleMapKind::InMemory, &VolumeSpec::default())
+                .unwrap();
             loc.create_volume(
                 VolumeId(2),
-                "test",
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "test",
+                    ..Default::default()
+                },
             )
             .unwrap();
             loc.close();
@@ -1597,12 +1574,11 @@ mod tests {
             .unwrap();
             loc.create_volume(
                 VolumeId(9),
-                "good",
                 NeedleMapKind::InMemory,
-                None,
-                None,
-                0,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "good",
+                    ..Default::default()
+                },
             )
             .unwrap();
             loc.close();
@@ -1646,26 +1622,10 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(
-            VolumeId(1),
-            "",
-            NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
-        )
-        .unwrap();
-        loc.create_volume(
-            VolumeId(2),
-            "",
-            NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
-        )
-        .unwrap();
+        loc.create_volume(VolumeId(1), NeedleMapKind::InMemory, &VolumeSpec::default())
+            .unwrap();
+        loc.create_volume(VolumeId(2), NeedleMapKind::InMemory, &VolumeSpec::default())
+            .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
         loc.delete_volume(VolumeId(1), false, false).unwrap();
@@ -1689,32 +1649,29 @@ mod tests {
 
         loc.create_volume(
             VolumeId(1),
-            "pics",
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec {
+                collection: "pics",
+                ..Default::default()
+            },
         )
         .unwrap();
         loc.create_volume(
             VolumeId(2),
-            "pics",
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec {
+                collection: "pics",
+                ..Default::default()
+            },
         )
         .unwrap();
         loc.create_volume(
             VolumeId(3),
-            "docs",
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec {
+                collection: "docs",
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(loc.volumes_len(), 3);
