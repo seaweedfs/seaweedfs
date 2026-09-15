@@ -254,11 +254,18 @@ func TestSingleStrongETag(t *testing.T) {
 // calls, standing in for a live filer that a routed write fails over to.
 type fakeTxnFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	calls int32
+	calls   int32
+	lastReq *filer_pb.ObjectTransactionRequest
+	resp    *filer_pb.ObjectTransactionResponse
+	err     error
 }
 
 func (f *fakeTxnFiler) ObjectTransaction(ctx context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
 	atomic.AddInt32(&f.calls, 1)
+	f.lastReq = req
+	if f.resp != nil || f.err != nil {
+		return f.resp, f.err
+	}
 	return &filer_pb.ObjectTransactionResponse{}, nil
 }
 
@@ -276,6 +283,89 @@ func startFakeFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAdd
 	t.Cleanup(srv.Stop)
 	port := lis.Addr().(*net.TCPAddr).Port
 	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", port))
+}
+
+func TestRoutedDeleteSpecificVersionUsesWormCondition(t *testing.T) {
+	versionId := "672a75d526ef29c79fe6b5680cad4a0d"
+	versionFile := "v_" + versionId
+	filer := &fakeTxnFiler{
+		resp: &filer_pb.ObjectTransactionResponse{
+			Error:     "precondition failed",
+			ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
+		},
+	}
+	owner := startFakeFiler(t, filer)
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		},
+	}
+
+	if code := s3a.routedDeleteSpecificVersion(owner, "b", "obj", versionId, true, false); code != s3err.ErrAccessDenied {
+		t.Fatalf("locked version delete returned %v, want %v", code, s3err.ErrAccessDenied)
+	}
+
+	req := filer.lastReq
+	if req == nil {
+		t.Fatal("expected an ObjectTransaction request")
+	}
+	if req.LockKey != "/buckets/b/obj" {
+		t.Fatalf("LockKey = %q", req.LockKey)
+	}
+	if req.ConditionKey != "/buckets/b/obj.versions/"+versionFile {
+		t.Fatalf("ConditionKey = %q", req.ConditionKey)
+	}
+	if req.RouteKey != "s3.object.write:/buckets/b/obj" {
+		t.Fatalf("RouteKey = %q", req.RouteKey)
+	}
+
+	if len(req.Condition.GetClauses()) != 2 {
+		t.Fatalf("condition clauses = %d, want 2", len(req.Condition.GetClauses()))
+	}
+	hold := req.Condition.GetClauses()[0]
+	if hold.Kind != filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL ||
+		hold.ExtKey != s3_constants.ExtLegalHoldKey ||
+		hold.ExtValue != s3_constants.LegalHoldOn {
+		t.Fatalf("legal hold clause = %+v", hold)
+	}
+	retain := req.Condition.GetClauses()[1]
+	if retain.Kind != filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED ||
+		retain.ExtKey != s3_constants.ExtRetentionUntilDateKey ||
+		retain.GateKey != "" {
+		t.Fatalf("retention clause = %+v", retain)
+	}
+
+	if len(req.Mutations) != 2 {
+		t.Fatalf("mutations = %d, want 2", len(req.Mutations))
+	}
+	recompute := req.Mutations[0]
+	if recompute.Type != filer_pb.ObjectMutation_RECOMPUTE_LATEST ||
+		recompute.GetRecompute().GetExcludeName() != versionFile {
+		t.Fatalf("recompute mutation = %+v", recompute)
+	}
+	deleteVersion := req.Mutations[1]
+	if deleteVersion.Type != filer_pb.ObjectMutation_DELETE ||
+		deleteVersion.Directory != "/buckets/b/obj.versions" ||
+		deleteVersion.Name != versionFile ||
+		!deleteVersion.IsDeleteData ||
+		!deleteVersion.RemoveEmptyParent {
+		t.Fatalf("delete mutation = %+v", deleteVersion)
+	}
+}
+
+func TestWormDeleteConditionForGovernanceBypass(t *testing.T) {
+	cond := wormDeleteCondition(true, true)
+	if len(cond.GetClauses()) != 2 {
+		t.Fatalf("condition clauses = %d, want 2", len(cond.GetClauses()))
+	}
+	retain := cond.GetClauses()[1]
+	if retain.Kind != filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED ||
+		retain.ExtKey != s3_constants.ExtRetentionUntilDateKey ||
+		retain.GateKey != s3_constants.ExtObjectLockModeKey ||
+		retain.GateValue != s3_constants.RetentionModeCompliance {
+		t.Fatalf("retention clause = %+v", retain)
+	}
 }
 
 // closedFilerAddress returns an address whose gRPC port has nothing listening,
