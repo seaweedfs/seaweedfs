@@ -270,10 +270,10 @@ impl Metrics {
 /// logged rather than fatal: a worker that cannot publish metrics should still
 /// do its work.
 pub async fn serve(metrics: Metrics, addr: SocketAddr) -> Result<()> {
+    use axum::Router;
     use axum::extract::State;
     use axum::http::StatusCode;
     use axum::routing::get;
-    use axum::Router;
 
     let app = Router::new()
         .route("/health", get(|| async { StatusCode::OK }))
@@ -355,28 +355,37 @@ mod tests {
 
         metrics.stream_connected();
         assert!(metrics.is_ready());
-        assert!(metrics
-            .gather()
-            .unwrap()
-            .contains("SeaweedFS_worker_connected 1"));
+        assert!(
+            metrics
+                .gather()
+                .unwrap()
+                .contains("SeaweedFS_worker_connected 1")
+        );
 
         metrics.stream_ended("closed");
         assert!(!metrics.is_ready());
-        assert!(metrics
-            .gather()
-            .unwrap()
-            .contains("SeaweedFS_worker_connected 0"));
-        assert!(metrics
-            .gather()
-            .unwrap()
-            .contains("SeaweedFS_worker_stream_events_total{event=\"closed\"} 1"));
+        assert!(
+            metrics
+                .gather()
+                .unwrap()
+                .contains("SeaweedFS_worker_connected 0")
+        );
+        assert!(
+            metrics
+                .gather()
+                .unwrap()
+                .contains("SeaweedFS_worker_stream_events_total{event=\"closed\"} 1")
+        );
     }
 
     #[test]
     fn build_info_names_the_worker() {
         let text = metrics().gather().expect("gather");
-        assert!(text
-            .contains("SeaweedFS_worker_build_info{version=\"0.1.0\",worker_id=\"worker-1\"} 1"));
+        assert!(
+            text.contains(
+                "SeaweedFS_worker_build_info{version=\"0.1.0\",worker_id=\"worker-1\"} 1"
+            )
+        );
     }
 
     // A format's own numbers land on the same registry, so one endpoint serves

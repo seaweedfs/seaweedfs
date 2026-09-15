@@ -14,8 +14,8 @@ pub mod sort;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use seaweed_worker_core::pb::{config_value::Kind, ConfigValue, ObjectObservation, StringList};
 use seaweed_worker_core::JobHandler;
+use seaweed_worker_core::pb::{ConfigValue, ObjectObservation, StringList, config_value::Kind};
 
 use crate::catalog::parse_id;
 

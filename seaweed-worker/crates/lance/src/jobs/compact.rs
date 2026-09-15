@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use lance::dataset::optimize::{compact_files, CompactionOptions};
+use lance::dataset::optimize::{CompactionOptions, compact_files};
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field, string_value};
 use seaweed_worker_core::pb::{
     ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
@@ -12,9 +12,9 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::catalog::{parse_id, NamespaceClient};
+use crate::catalog::{NamespaceClient, parse_id};
 use crate::dataset;
-use crate::jobs::{clamp, observation, string_list, table_id, FORMAT};
+use crate::jobs::{FORMAT, clamp, observation, string_list, table_id};
 
 pub const JOB_TYPE: &str = "lance_compact";
 

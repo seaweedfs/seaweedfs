@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use seaweed_worker_core::pb::{
-    config_value::Kind, ExecuteJobRequest, JobSpec, RunDetectionRequest,
+    ExecuteJobRequest, JobSpec, RunDetectionRequest, config_value::Kind,
 };
 use seaweed_worker_core::{JobHandler, PreviewProvider};
 use weed_lance_worker::catalog::NamespaceClient;
@@ -18,7 +18,7 @@ use weed_lance_worker::jobs::indices::OptimizeIndicesHandler;
 use weed_lance_worker::preview::LancePreview;
 
 mod common;
-use common::{fallback, int_config, namespace_url, Recorder};
+use common::{Recorder, fallback, int_config, namespace_url};
 
 /// These tests drive one live gateway and one shared catalog: `list_all_tables`
 /// sweeps everything, so a table another test is writing shows up in this test's
@@ -121,10 +121,10 @@ async fn seed_table(
         // The index is built after the first batch, so everything appended
         // afterwards is a row it does not cover.
         if with_index && i == 0 {
-            use lance::index::vector::VectorIndexParams;
             use lance::index::DatasetIndexExt;
-            use lance_index::vector::{ivf::IvfBuildParams, pq::PQBuildParams};
+            use lance::index::vector::VectorIndexParams;
             use lance_index::IndexType;
+            use lance_index::vector::{ivf::IvfBuildParams, pq::PQBuildParams};
 
             let mut dataset = dataset;
             let params = VectorIndexParams::with_ivf_pq_params(

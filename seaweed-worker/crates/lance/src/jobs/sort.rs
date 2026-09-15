@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use lance::dataset::scanner::ColumnOrdering;
 use lance::dataset::transaction::Operation;
 use lance::dataset::write::{CommitBuilder, InsertBuilder};
 use lance::dataset::{WriteDestination, WriteMode, WriteParams};
 use lance::index::DatasetIndexExt;
-use lance_datafusion::exec::{execute_plan, LanceExecutionOptions};
+use lance_datafusion::exec::{LanceExecutionOptions, execute_plan};
 use seaweed_worker_core::config_form::{form, int_or, int_value, string_or, string_value};
 use seaweed_worker_core::pb::{
     ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
@@ -17,15 +17,15 @@ use seaweed_worker_core::pb::{
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use seaweed_worker_sort::{
-    config_fields, resolve, verdict, FragmentSummary, SortSpec, SortState,
     CONFIG_MAX_ROWS_PER_FILE, CONFIG_MEMORY_BUDGET_MB, CONFIG_MIN_UNSORTED_ROWS,
-    CONFIG_SORT_FIELDS, DECLARED_FIELDS_KEY,
+    CONFIG_SORT_FIELDS, DECLARED_FIELDS_KEY, FragmentSummary, SortSpec, SortState, config_fields,
+    resolve, verdict,
 };
 use tracing::warn;
 
-use crate::catalog::{parse_id, NamespaceClient};
+use crate::catalog::{NamespaceClient, parse_id};
 use crate::dataset;
-use crate::jobs::{clamp, observation, string_list, table_id, FORMAT};
+use crate::jobs::{FORMAT, clamp, observation, string_list, table_id};
 
 pub const JOB_TYPE: &str = "lance_sort";
 
@@ -424,7 +424,7 @@ impl JobHandler for SortHandler {
             other => {
                 return Err(anyhow!(
                     "a sorted rewrite produced {other} instead of an overwrite"
-                ))
+                ));
             }
         }
 
