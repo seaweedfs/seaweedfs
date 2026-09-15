@@ -110,7 +110,7 @@ func TestMetricsEndpoint(t *testing.T) {
 }
 
 func TestStoreRingIsBounded(t *testing.T) {
-	s := newMetricsSeries()
+	s := newMetricsSeries("volume/a", "reqs", nil)
 	for i := 0; i < metricsMaxSamples+50; i++ {
 		s.record(time.Now(), map[string]float64{"": float64(i)})
 	}

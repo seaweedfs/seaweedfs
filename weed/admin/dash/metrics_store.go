@@ -14,12 +14,21 @@ type metricsSample struct {
 }
 
 type metricsSeries struct {
+	source string
+	name   string
+	labels map[string]string
+
 	mu      sync.Mutex
 	samples []metricsSample
 }
 
-func newMetricsSeries() *metricsSeries {
-	return &metricsSeries{samples: make([]metricsSample, 0, metricsMaxSamples)}
+func newMetricsSeries(source, name string, labels map[string]string) *metricsSeries {
+	return &metricsSeries{
+		source:  source,
+		name:    name,
+		labels:  labels,
+		samples: make([]metricsSample, 0, metricsMaxSamples),
+	}
 }
 
 func (s *metricsSeries) record(t time.Time, values map[string]float64) {
@@ -48,78 +57,42 @@ func newMetricsStore() *metricsStore {
 	return &metricsStore{series: make(map[string]*metricsSeries)}
 }
 
-func (s *metricsStore) record(source, name string, value float64, t time.Time) {
-	s.mu.Lock()
-	key := source + "/" + name
-	ser, ok := s.series[key]
-	if !ok {
-		ser = newMetricsSeries()
-		s.series[key] = ser
-	}
-	s.mu.Unlock()
-	ser.record(t, map[string]float64{"": value})
-}
-
 func (s *metricsStore) recordLabeled(source, name string, labels map[string]string, value float64, t time.Time) {
-	s.mu.Lock()
 	key := source + "/" + name + "/" + labelKey(labels)
+	s.mu.Lock()
 	ser, ok := s.series[key]
 	if !ok {
-		ser = newMetricsSeries()
+		ser = newMetricsSeries(source, name, labels)
 		s.series[key] = ser
 	}
 	s.mu.Unlock()
 	ser.record(t, map[string]float64{"": value})
 }
 
-func (s *metricsStore) get(source, name string) []metricsSample {
-	s.mu.Lock()
-	key := source + "/" + name
-	ser, ok := s.series[key]
-	s.mu.Unlock()
-	if !ok {
-		return nil
-	}
-	return ser.snapshot()
-}
-
-func (s *metricsStore) getLabeled(source, name string, labels map[string]string) []metricsSample {
-	s.mu.Lock()
-	key := source + "/" + name + "/" + labelKey(labels)
-	ser, ok := s.series[key]
-	s.mu.Unlock()
-	if !ok {
-		return nil
-	}
-	return ser.snapshot()
-}
-
-// match returns every series whose source has the given prefix and whose
-// metric name matches exactly.
+// match returns every series whose source equals or is prefixed by
+// sourcePrefix (at a "/" boundary) and whose metric name matches exactly.
+// Passing a component such as "volume" matches every server of that type;
+// passing "volume/10.0.0.1:8080" matches one server.
 func (s *metricsStore) match(sourcePrefix, name string) []*metricsSeries {
+	return s.matchFiltered(sourcePrefix, name, nil)
+}
+
+// matchFiltered is match restricted to series whose labels satisfy keep.
+func (s *metricsStore) matchFiltered(sourcePrefix, name string, keep func(map[string]string) bool) []*metricsSeries {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []*metricsSeries
-	for k, ser := range s.series {
-		if !strings.HasPrefix(k, sourcePrefix) {
+	for _, ser := range s.series {
+		if ser.name != name {
 			continue
 		}
-		rest := k[len(sourcePrefix):]
-		if !strings.HasPrefix(rest, "/") {
+		if ser.source != sourcePrefix && !strings.HasPrefix(ser.source, sourcePrefix+"/") {
 			continue
 		}
-		rest = rest[1:]
-		// rest is either "<addr>/<metric>[/<labels>]" or "<metric>[/<labels>]".
-		if rest == name || strings.HasPrefix(rest, name+"/") {
-			out = append(out, ser)
+		if keep != nil && !keep(ser.labels) {
 			continue
 		}
-		if i := strings.Index(rest, "/"); i >= 0 {
-			tail := rest[i+1:]
-			if tail == name || strings.HasPrefix(tail, name+"/") {
-				out = append(out, ser)
-			}
-		}
+		out = append(out, ser)
 	}
 	return out
 }
