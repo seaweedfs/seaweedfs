@@ -56,6 +56,7 @@ func TestListWithMarkerBeforePrefix(t *testing.T) {
 	}{
 		{"start-after is the root directory the walk starts from", "docker"},
 		{"start-after is the prefix itself", prefix},
+		{"start-after is the prefix with a leading slash", "/" + prefix},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			marker := adjustMarkerForDelimiter(tt.marker, prefix, "/")

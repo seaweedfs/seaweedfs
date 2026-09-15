@@ -1333,9 +1333,13 @@ func compareWithDelimiter(a, b, delimiter string) bool {
 // but still finds any "bop" or later entries. We add a high ASCII character rather than incrementing
 // the last character to avoid skipping potential directory entries.
 // This is essential for correct S3 list operations with delimiters and CommonPrefixes.
-// A marker equal to the prefix names no subtree to skip: it excludes only the prefix's own key.
+// A marker equal to the prefix names no subtree to skip: it excludes only the prefix's own
+// key. Leading slashes are insignificant here, as they are to normalizePrefixMarker.
 func adjustMarkerForDelimiter(marker, prefix, delimiter string) string {
-	if delimiter == "" || marker == prefix || !strings.HasSuffix(marker, delimiter) {
+	if delimiter == "" || !strings.HasSuffix(marker, delimiter) {
+		return marker
+	}
+	if strings.TrimLeft(marker, "/") == strings.TrimLeft(prefix, "/") {
 		return marker
 	}
 
