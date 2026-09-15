@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"golang.org/x/sync/singleflight"
@@ -260,6 +261,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
 		defaultMux.HandleFunc("/readyz", requestIDMiddleware(fs.filerHealthzHandler))
+		defaultMux.Handle("/metrics", promhttp.HandlerFor(stats.Gather, promhttp.HandlerOpts{}))
 		// TUS resumable upload protocol handler
 		if option.TusBasePath != "" {
 			// Normalize TusPath to always have a leading slash and no trailing slash
