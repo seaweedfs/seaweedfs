@@ -39,13 +39,13 @@ const (
 	mAdminWorkers       = "SeaweedFS_admin_workers_connected"
 )
 
-// Scrape source components.
+// Store sources. Scraped series are keyed by the metrics endpoint they came
+// from, so cluster-wide aggregates match on srcAny and rely on the metric name
+// to identify the component: one endpoint can serve master, volume, filer and
+// S3 series at once when they share a process.
 const (
-	srcMaster = "master"
-	srcVolume = "volume"
-	srcFiler  = "filer"
-	srcS3     = "s3"
-	srcAdmin  = "admin/local"
+	srcAdmin = "admin/local"
+	srcAny   = ""
 )
 
 type MonitoringData struct {
@@ -186,25 +186,25 @@ func (s *AdminServer) fillOverview(d *MonitoringData) {
 	o.UnderReplicatedVolumes = s.sum(leader, mMasterUnderReplicated)
 	o.WritableVolumes = s.sum(leader, mMasterWritable)
 	o.CrowdedVolumes = s.sum(leader, mMasterCrowded)
-	o.DiskUsagePct = s.diskUsagePct(srcVolume)
+	o.DiskUsagePct = s.diskUsagePct(srcAny)
 
-	o.VolumeReadRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, isReadRequest)
-	o.VolumeWriteRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, isWriteRequest)
-	o.FilerRequestRate = s.sum(srcFiler, mFilerRequests+suffixRate)
-	o.S3RequestRate = s.sum(srcS3, mS3Requests+suffixRate)
+	o.VolumeReadRate = s.sumFiltered(srcAny, mVolumeRequests+suffixRate, isReadRequest)
+	o.VolumeWriteRate = s.sumFiltered(srcAny, mVolumeRequests+suffixRate, isWriteRequest)
+	o.FilerRequestRate = s.sum(srcAny, mFilerRequests+suffixRate)
+	o.S3RequestRate = s.sum(srcAny, mS3Requests+suffixRate)
 
-	o.VolumeP50 = s.max(srcVolume, mVolumeLatency+suffixP50)
-	o.VolumeP95 = s.max(srcVolume, mVolumeLatency+suffixP95)
-	o.VolumeP99 = s.max(srcVolume, mVolumeLatency+suffixP99)
-	o.FilerP50 = s.max(srcFiler, mFilerLatency+suffixP50)
-	o.FilerP95 = s.max(srcFiler, mFilerLatency+suffixP95)
-	o.FilerP99 = s.max(srcFiler, mFilerLatency+suffixP99)
+	o.VolumeP50 = s.max(srcAny, mVolumeLatency+suffixP50)
+	o.VolumeP95 = s.max(srcAny, mVolumeLatency+suffixP95)
+	o.VolumeP99 = s.max(srcAny, mVolumeLatency+suffixP99)
+	o.FilerP50 = s.max(srcAny, mFilerLatency+suffixP50)
+	o.FilerP95 = s.max(srcAny, mFilerLatency+suffixP95)
+	o.FilerP99 = s.max(srcAny, mFilerLatency+suffixP99)
 
-	o.VolumeErrorRate = s.sumFiltered(srcVolume, mVolumeRequests+suffixRate, isErrorCode)
-	o.FilerErrorRate = s.sumFiltered(srcFiler, mFilerRequests+suffixRate, isErrorCode)
-	o.S3ErrorRate = s.sumFiltered(srcS3, mS3Requests+suffixRate, isErrorCode)
-	o.DiskErrors = s.sum(srcVolume, mVolumeDiskError)
-	o.Quarantined = s.sum(srcVolume, mVolumeQuarantine)
+	o.VolumeErrorRate = s.sumFiltered(srcAny, mVolumeRequests+suffixRate, isErrorCode)
+	o.FilerErrorRate = s.sumFiltered(srcAny, mFilerRequests+suffixRate, isErrorCode)
+	o.S3ErrorRate = s.sumFiltered(srcAny, mS3Requests+suffixRate, isErrorCode)
+	o.DiskErrors = s.sum(srcAny, mVolumeDiskError)
+	o.Quarantined = s.sum(srcAny, mVolumeQuarantine)
 
 	o.QueueDepth = s.sumFiltered(srcAdmin, mAdminTasksByStatus, func(l map[string]string) bool {
 		return l["status"] == "pending" || l["status"] == "assigned" || l["status"] == "in_progress"
@@ -214,25 +214,27 @@ func (s *AdminServer) fillOverview(d *MonitoringData) {
 }
 
 func (s *AdminServer) fillVolumeServers(d *MonitoringData) {
-	for _, addr := range s.sourceAddresses(srcVolume) {
-		src := srcVolume + "/" + addr
+	for _, t := range s.scrapeTargets() {
+		src := t.source
 		vs := MonitoringVolumeServer{
-			Address:      addr,
+			Address:      t.label(),
 			RequestRate:  s.sum(src, mVolumeRequests+suffixRate),
 			P99:          s.max(src, mVolumeLatency+suffixP99),
 			DiskUsagePct: s.diskUsagePct(src),
 			ErrorRate:    s.sumFiltered(src, mVolumeRequests+suffixRate, isErrorCode),
 		}
 		vs.HasData = len(vs.RequestRate) > 0 || len(vs.DiskUsagePct) > 0
-		d.VolumeServers = append(d.VolumeServers, vs)
+		if vs.HasData {
+			d.VolumeServers = append(d.VolumeServers, vs)
+		}
 	}
 }
 
 func (s *AdminServer) fillFilers(d *MonitoringData) {
-	for _, addr := range s.sourceAddresses(srcFiler) {
-		src := srcFiler + "/" + addr
+	for _, t := range s.scrapeTargets() {
+		src := t.source
 		f := MonitoringFiler{
-			Address:     addr,
+			Address:     t.label(),
 			RequestRate: s.sum(src, mFilerRequests+suffixRate),
 			P99:         s.max(src, mFilerLatency+suffixP99),
 			StoreP99:    s.max(src, mFilerStoreLat+suffixP99),
@@ -240,15 +242,17 @@ func (s *AdminServer) fillFilers(d *MonitoringData) {
 			SyncLag:     s.max(src, mFilerSyncLag),
 		}
 		f.HasData = len(f.RequestRate) > 0 || len(f.InFlight) > 0
-		d.Filers = append(d.Filers, f)
+		if f.HasData {
+			d.Filers = append(d.Filers, f)
+		}
 	}
 }
 
 func (s *AdminServer) fillS3(d *MonitoringData) {
-	for _, addr := range s.sourceAddresses(srcS3) {
-		src := srcS3 + "/" + addr
+	for _, t := range s.scrapeTargets() {
+		src := t.source
 		n := MonitoringS3{
-			Address:     addr,
+			Address:     t.label(),
 			RequestRate: s.sum(src, mS3Requests+suffixRate),
 			Errors4xx: s.sumFiltered(src, mS3Requests+suffixRate, func(l map[string]string) bool {
 				return strings.HasPrefix(l["code"], "4")
@@ -259,7 +263,9 @@ func (s *AdminServer) fillS3(d *MonitoringData) {
 			P99: s.max(src, mS3Latency+suffixP99),
 		}
 		n.HasData = len(n.RequestRate) > 0
-		d.S3 = append(d.S3, n)
+		if n.HasData {
+			d.S3 = append(d.S3, n)
+		}
 	}
 }
 
@@ -270,18 +276,20 @@ func (s *AdminServer) fillMasters(d *MonitoringData) {
 			leaders[m.Address] = m.IsLeader
 		}
 	}
-	for _, addr := range s.sourceAddresses(srcMaster) {
-		src := srcMaster + "/" + addr
+	for _, t := range s.scrapeTargets() {
+		src := t.source
 		m := MonitoringMaster{
-			Address:        addr,
-			IsLeader:       leaders[addr],
+			Address:        t.label(),
+			IsLeader:       t.anyNodeMatches(leaders),
 			HeartbeatRate:  s.sum(src, mMasterHeartbeats+suffixRate),
 			VolumeCreation: s.sum(src, mMasterVolumeCreation+suffixRate),
 			LeaderChanges:  s.sum(src, mMasterLeaderChanges+suffixRate),
 			PlacementMiss:  s.sum(src, mMasterPlacementMiss),
 		}
 		m.HasData = len(m.HeartbeatRate) > 0 || len(m.PlacementMiss) > 0
-		d.Masters = append(d.Masters, m)
+		if m.HasData {
+			d.Masters = append(d.Masters, m)
+		}
 	}
 }
 
@@ -302,36 +310,31 @@ func (s *AdminServer) fillWorkers(d *MonitoringData) {
 	}
 }
 
-// leaderSource returns the store source for the current master leader, or
-// srcMaster when the leader is unknown. Cluster-wide master gauges are only
-// meaningful on the leader.
+// leaderSource returns the metrics endpoint of the current master leader, or
+// srcAny when the leader is unknown or advertises no metrics port. Cluster-wide
+// master gauges are only maintained by the leader.
 func (s *AdminServer) leaderSource() string {
 	md, err := s.GetClusterMasters()
 	if err != nil || md == nil {
-		return srcMaster
+		return srcAny
 	}
+	leader := ""
 	for _, m := range md.Masters {
 		if m.IsLeader {
-			return srcMaster + "/" + m.Address
+			leader = m.Address
 		}
 	}
-	return srcMaster
-}
-
-// sourceAddresses lists the scraped server addresses for a component, sorted.
-func (s *AdminServer) sourceAddresses(component string) []string {
-	seen := map[string]bool{}
+	if leader == "" {
+		return srcAny
+	}
 	for _, t := range s.scrapeTargets() {
-		if strings.HasPrefix(t.source, component+"/") {
-			seen[strings.TrimPrefix(t.source, component+"/")] = true
+		for _, node := range t.nodes {
+			if node == leader {
+				return t.source
+			}
 		}
 	}
-	out := make([]string, 0, len(seen))
-	for addr := range seen {
-		out = append(out, addr)
-	}
-	sort.Strings(out)
-	return out
+	return srcAny
 }
 
 func (s *AdminServer) sum(source, metric string) []Point {

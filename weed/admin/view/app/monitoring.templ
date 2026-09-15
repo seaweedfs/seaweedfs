@@ -57,8 +57,12 @@ templ monitoringHeader(title string, icon string, lastUpdated string) {
 templ noMetricsNotice() {
 	<div class="alert alert-info" role="alert">
 		<i class="fas fa-info-circle me-2"></i>
-		No metrics collected yet. The admin server scrapes each node's <code>/metrics</code>
-		endpoint every 15 seconds; charts fill in as samples accumulate.
+		<strong>No metrics collected.</strong>
+		The admin server scrapes the Prometheus listener each server advertises, which
+		is only started when that server runs with <code>-metricsPort</code>. Metrics are
+		never served on a client-facing service port, so start the servers you want to
+		monitor with <code>-metricsPort=&lt;port&gt;</code>. Charts then fill in as samples
+		accumulate, one scrape every 15 seconds.
 	</div>
 }
 

@@ -328,7 +328,7 @@ func noMetricsNotice() templ.Component {
 			templ_7745c5c3_Var21 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<div class=\"alert alert-info\" role=\"alert\"><i class=\"fas fa-info-circle me-2\"></i> No metrics collected yet. The admin server scrapes each node's <code>/metrics</code> endpoint every 15 seconds; charts fill in as samples accumulate.</div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<div class=\"alert alert-info\" role=\"alert\"><i class=\"fas fa-info-circle me-2\"></i> <strong>No metrics collected.</strong> The admin server scrapes the Prometheus listener each server advertises, which is only started when that server runs with <code>-metricsPort</code>. Metrics are never served on a client-facing service port, so start the servers you want to monitor with <code>-metricsPort=&lt;port&gt;</code>. Charts then fill in as samples accumulate, one scrape every 15 seconds.</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -375,7 +375,7 @@ func Monitoring(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f", dash.LatestValue(data.Overview.UnderReplicatedVolumes)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 75, Col: 88}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 79, Col: 88}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
@@ -545,7 +545,7 @@ func MonitoringVolumeServers(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var25 string
 			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(vs.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 174, Col: 24}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 178, Col: 24}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
@@ -558,7 +558,7 @@ func MonitoringVolumeServers(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(dash.FormatChartValue(dash.LatestValue(vs.RequestRate), dash.UnitCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 175, Col: 85}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 179, Col: 85}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -571,7 +571,7 @@ func MonitoringVolumeServers(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var27 string
 			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(dash.FormatChartValue(dash.LatestValue(vs.P99), dash.UnitSeconds))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 176, Col: 79}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 180, Col: 79}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 			if templ_7745c5c3_Err != nil {
@@ -584,7 +584,7 @@ func MonitoringVolumeServers(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var28 string
 			templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(dash.FormatChartValue(dash.LatestValue(vs.DiskUsagePct), dash.UnitPercent))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 177, Col: 88}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 181, Col: 88}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 			if templ_7745c5c3_Err != nil {
@@ -602,7 +602,7 @@ func MonitoringVolumeServers(data dash.MonitoringData) templ.Component {
 				var templ_7745c5c3_Var29 string
 				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(dash.FormatChartValue(dash.LatestValue(vs.ErrorRate), dash.UnitCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 181, Col: 82}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 185, Col: 82}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 				if templ_7745c5c3_Err != nil {
@@ -635,7 +635,7 @@ func MonitoringVolumeServers(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var30 string
 			templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(vs.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 196, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 200, Col: 63}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 			if templ_7745c5c3_Err != nil {
@@ -717,7 +717,7 @@ func MonitoringFilers(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var32 string
 			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(f.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 222, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 226, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 			if templ_7745c5c3_Err != nil {
@@ -800,7 +800,7 @@ func MonitoringS3(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var34 string
 			templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(n.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 249, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 253, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 			if templ_7745c5c3_Err != nil {
@@ -877,7 +877,7 @@ func MonitoringMasters(data dash.MonitoringData) templ.Component {
 			var templ_7745c5c3_Var36 string
 			templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(m.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 274, Col: 14}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 278, Col: 14}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 			if templ_7745c5c3_Err != nil {
@@ -1015,7 +1015,7 @@ func MonitoringWorkers(data dash.MonitoringData) templ.Component {
 				var templ_7745c5c3_Var38 string
 				templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(w.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 334, Col: 22}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/monitoring.templ`, Line: 338, Col: 22}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 				if templ_7745c5c3_Err != nil {

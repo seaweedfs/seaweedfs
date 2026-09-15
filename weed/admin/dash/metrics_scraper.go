@@ -169,6 +169,25 @@ type scrapeTarget struct {
 	nodes   []string
 }
 
+// label names the target for the UI: the node that advertised the endpoint, or
+// the endpoint address itself when several nodes share one listener.
+func (t scrapeTarget) label() string {
+	if len(t.nodes) == 1 {
+		return t.nodes[0]
+	}
+	return t.address
+}
+
+// anyNodeMatches reports whether any node behind this endpoint is flagged.
+func (t scrapeTarget) anyNodeMatches(flagged map[string]bool) bool {
+	for _, node := range t.nodes {
+		if flagged[node] {
+			return true
+		}
+	}
+	return false
+}
+
 // scrapeTargets lists the distinct metrics endpoints advertised by the cluster.
 // Nodes started without -metricsPort advertise 0 and are skipped, so nothing is
 // scraped from a client-facing service port.
