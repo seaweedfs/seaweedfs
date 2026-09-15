@@ -264,8 +264,15 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 	bucket, originalPrefix, originalMarker := req.bucket, req.prefix, req.marker
 	maxKeys, delimiter := req.maxKeys, req.delimiter
 	encodingTypeUrl, fetchOwner := req.encodingTypeUrl, req.fetchOwner
+	// A marker (start-after) that sorts before the prefix excludes nothing under it:
+	// every key carrying the prefix already sorts after the marker. List as if no
+	// marker were given; the response still echoes the marker the client sent.
+	listMarker := originalMarker
+	if markerSortsBeforePrefix(originalPrefix, originalMarker) {
+		listMarker = ""
+	}
 	// convert full path prefix into directory name and prefix for entry name
-	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
+	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, listMarker)
 	bucketPrefix := s3a.bucketPrefix(bucket)
 	reqDir := bucketPrefix[:len(bucketPrefix)-1]
 	if requestDir != "" {
@@ -278,7 +285,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 	var nextMarker string
 	cursor := &ListingCursor{
 		maxKeys:               maxKeys,
-		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
+		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(listMarker) == 0,
 	}
 
 	// Special case: when maxKeys = 0, return empty results immediately with IsTruncated=false
@@ -314,7 +321,7 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 		marker = alignedMarker
 		*cursor = ListingCursor{
 			maxKeys:               maxKeys,
-			prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
+			prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(listMarker) == 0,
 		}
 
 		var lastEntryWasCommonPrefix bool
@@ -773,6 +780,30 @@ type ListingCursor struct {
 }
 
 // the prefix and marker may be in different directories
+// markerSortsBeforePrefix reports whether a non-empty marker (ListObjects marker,
+// ListObjectsV2 start-after or continuation-token) sorts strictly before the prefix
+// without being under it. S3 defines the marker as a plain key cutoff — "start
+// listing after this key" — so such a marker excludes no key carrying the prefix
+// and the listing must equal the one with no marker at all.
+//
+// Clients send this shape routinely: docker/distribution's S3 storage driver walks
+// prefix "<root>/<path>/" with start-after "<root>", the rootdirectory itself, and
+// an empty answer here reads to a registry as "no repositories", which is what
+// a zot registry on SeaweedFS saw — its startup storage parse then deleted every
+// repository's metadata.
+//
+// A marker that sorts after the prefix but is not under it is left alone: it may
+// legitimately sit inside a partial-name prefix's match set ("parent" also matches
+// "parentDir/…"), which normalizePrefixMarker already handles.
+func markerSortsBeforePrefix(prefix, marker string) bool {
+	prefix = strings.TrimLeft(prefix, "/")
+	marker = strings.TrimLeft(marker, "/")
+	if marker == "" || prefix == "" {
+		return false
+	}
+	return !strings.HasPrefix(marker, prefix) && marker < prefix
+}
+
 // normalizePrefixMarker ensures the prefix and marker both starts from the same directory
 func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
 	// alignedDir should not end with "/"
