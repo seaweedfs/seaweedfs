@@ -17,9 +17,6 @@ edition = "2024"
 rust-version = "1.94.1"
 
 [workspace.lints.clippy]
-# Every RPC path returns tonic::Status (176 bytes). Boxing it would change
-# every handler signature for no gain, so the large-Err lint is off.
-result_large_err = "allow"
 # Protobuf message literals keep `..Default::default()` on purpose: it is
 # what lets a proto gain a field without touching every constructor.
 needless_update = "allow"
@@ -27,14 +24,15 @@ needless_update = "allow"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
-prost = "0.13"
-prost-types = "0.13"
+prost = "0.14"
+prost-types = "0.14"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-tonic = { version = "0.12", features = ["tls"] }
+tonic = { version = "0.14", features = ["tls-aws-lc"] }
+tonic-prost = "0.14"
 # Already in the tree via tonic; named here so the metrics server can use them.
-axum = "0.7"
+axum = "0.8"
 prometheus = { version = "0.13", default-features = false }
-tonic-build = "0.12"
+tonic-prost-build = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
