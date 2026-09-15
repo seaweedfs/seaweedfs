@@ -538,11 +538,12 @@ impl DatScanPlan {
             }
 
             // Nothing past `end` was a complete record when the plan was
-            // taken. The size is checked against the bytes left before the
-            // body length is computed, whose padding arithmetic is i32 and
-            // overflows on a corrupt size near i32::MAX, and the whole record
-            // after it. Both run before allocating, so a corrupt size cannot
-            // size the buffer.
+            // taken. The size is checked against the bytes left, and the
+            // whole record after it. Both run before allocating, so a corrupt
+            // size cannot size the buffer. (The size check alone does not
+            // keep a corrupt size out of the padding arithmetic on a volume
+            // with more than 2 GiB left, which is why `padding_length` sums
+            // in i64.)
             if size.0 as u64 > self.end - offset - NEEDLE_HEADER_SIZE as u64 {
                 break;
             }
