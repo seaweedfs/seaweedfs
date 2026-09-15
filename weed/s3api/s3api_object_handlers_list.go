@@ -212,24 +212,21 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 }
 
 // sanitizeV1MarkerEcho echoes the marker the client sent, not the cutoff the walk used:
-// a marker ending on the delimiter is trimmed for the walk. Both are excluded from the
-// listing, since the marker names the last key of the previous page.
+// a marker ending on the delimiter is trimmed for the walk. Only that cutoff is filtered
+// out of the page, so no key the walk spent a slot on silently disappears.
 func sanitizeV1MarkerEcho(response *ListBucketResult, requestMarker, marker string, encodingTypeUrl bool) {
 	response.Marker = requestMarker
-	if requestMarker == "" && marker == "" {
+	if marker == "" {
 		return
 	}
 
-	markerCandidates := map[string]struct{}{}
-	for _, m := range []string{requestMarker, marker} {
-		if m == "" {
-			continue
-		}
-		markerCandidates[m] = struct{}{}
-		markerCandidates[strings.TrimPrefix(m, "/")] = struct{}{}
-		if encodingTypeUrl {
-			markerCandidates[urlPathEscape(strings.TrimPrefix(m, "/"))] = struct{}{}
-		}
+	markerCandidates := map[string]struct{}{
+		marker:                          {},
+		strings.TrimPrefix(marker, "/"): {},
+	}
+	if encodingTypeUrl {
+		escapedMarker := urlPathEscape(strings.TrimPrefix(marker, "/"))
+		markerCandidates[escapedMarker] = struct{}{}
 	}
 	matchesMarker := func(v string) bool {
 		if _, ok := markerCandidates[v]; ok {

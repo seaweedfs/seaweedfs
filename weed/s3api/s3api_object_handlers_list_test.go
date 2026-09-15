@@ -633,14 +633,15 @@ func TestSanitizeV1MarkerEcho_NoProgressGuard(t *testing.T) {
 }
 
 // A marker ending on the delimiter is trimmed to a cutoff for the walk, but the response
-// echoes what the client sent, and the key the client named stays excluded.
+// echoes what the client sent. Only the cutoff is filtered: a page the walk spent its
+// budget on must keep the keys it holds, or a truncated page would end the listing.
 func TestSanitizeV1MarkerEcho_DelimiterAdjustedMarker(t *testing.T) {
 	response := ListBucketResult{
 		Marker:      "docker",
 		NextMarker:  "docker/registry",
 		IsTruncated: true,
 		Contents: []ListEntry{
-			{Key: "docker/"},
+			{Key: "docker"},
 			{Key: "docker/registry"},
 		},
 	}
