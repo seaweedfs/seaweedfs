@@ -3383,11 +3383,13 @@ mod uniform_layout_tests {
                     &rs,
                     &mut shards,
                     &mut builders,
-                    10,
-                    4,
-                    256 * 1024,
-                    ERASURE_CODING_LARGE_BLOCK_SIZE,
-                    ERASURE_CODING_SMALL_BLOCK_SIZE,
+                    crate::storage::erasure_coding::ec_encoder::EcEncodeLayout {
+                        data_shards: 10,
+                        parity_shards: 4,
+                        buffer_size: 256 * 1024,
+                        large_block_size: ERASURE_CODING_LARGE_BLOCK_SIZE,
+                        small_block_size: ERASURE_CODING_SMALL_BLOCK_SIZE,
+                    },
                 )
                 .unwrap();
                 for shard in &mut shards {
