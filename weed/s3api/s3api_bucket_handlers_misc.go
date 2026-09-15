@@ -3,7 +3,6 @@ package s3api
 import (
 	"encoding/xml"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
@@ -92,9 +91,8 @@ func (s3a *S3ApiServer) PutBucketRequestPaymentHandler(w http.ResponseWriter, r 
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, putBucketRequestPaymentMaxBodyBytes)
 	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
+	body, err := readRequestBody(r, putBucketRequestPaymentMaxBodyBytes)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
