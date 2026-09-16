@@ -265,6 +265,18 @@ pub struct VolumeGrpcService {
 }
 
 impl VolumeGrpcService {
+    fn store_read(&self) -> std::sync::RwLockReadGuard<'_, crate::storage::store::Store> {
+        self.state.store.read().unwrap_or_else(|e| {
+            tracing::warn!("recovering poisoned store read lock");
+            e.into_inner()
+        })
+    }
+    fn store_write(&self) -> std::sync::RwLockWriteGuard<'_, crate::storage::store::Store> {
+        self.state.store.write().unwrap_or_else(|e| {
+            tracing::warn!("recovering poisoned store write lock");
+            e.into_inner()
+        })
+    }
     /// Verifies the gRPC caller is allowed to invoke a destructive admin
     /// operation. Mirrors the Go side's checkGrpcAdminAuth: an empty
     /// whitelist accepts everyone (insecure-by-default for tests and
@@ -2595,11 +2607,31 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let offset = req.offset;
         let size = Size(req.size);
+        if let Err(msg) = crate::storage::needle::needle::validate_wire_size(size) {
+            return Err(Status::invalid_argument(msg));
+        }
 
-        let store = self.state.store.read().unwrap();
+        let store = self.store_read();
         let (_, vol) = store
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+
+        // Framing: request `size` is body size, but read_needle_blob returns
+        // GetActualSize bytes + protobuf tag/len, so body==1<<30 always exceeds
+        // GRPC_MAX_MESSAGE_SIZE on the wire after allocation+disk read.
+        // Check actual encoded size post-lock (have vol.version() here).
+        // The 6-byte headroom is the exact protobuf overhead for this
+        // response at the boundary: 1 tag byte (`bytes needle_blob = 1`)
+        // plus a 5-byte varint length for sizes near 1 GiB. Sizes whose
+        // encoded form still fits are therefore accepted; anything larger
+        // is rejected before paying for the disk read.
+        let actual = crate::storage::needle::needle::get_actual_size(size, vol.version()) as u64;
+        if actual + 6 > crate::server::grpc_client::GRPC_MAX_MESSAGE_SIZE as u64 {
+            return Err(Status::invalid_argument(format!(
+                "needle blob size {} exceeds transport limit",
+                actual
+            )));
+        }
 
         let blob = vol.read_needle_blob(offset, size).map_err(|e| {
             Status::internal(format!(
@@ -2659,8 +2691,11 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let needle_id = NeedleId(req.needle_id);
         let size = Size(req.size);
+        if let Err(msg) = crate::storage::needle::needle::validate_wire_size(size) {
+            return Err(Status::invalid_argument(msg));
+        }
 
-        let mut store = self.state.store.write().unwrap();
+        let mut store = self.store_write();
         let (_, vol) = store
             .find_volume_mut(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
@@ -7287,6 +7322,53 @@ mod tests {
             .await;
         if let Err(err) = result {
             assert_ne!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_needle_blob_negative_returns_invalid_argument() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let err = service
+            .read_needle_blob(Request::new(volume_server_pb::ReadNeedleBlobRequest {
+                volume_id: 1,
+                offset: 0,
+                size: -100,
+            }))
+            .await
+            .expect_err("negative size must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn test_write_needle_blob_negative_returns_invalid_argument() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let err = service
+            .write_needle_blob(Request::new(volume_server_pb::WriteNeedleBlobRequest {
+                volume_id: 1,
+                needle_id: 11,
+                size: -100,
+                needle_blob: vec![],
+            }))
+            .await
+            .expect_err("negative size must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn test_read_needle_blob_zero_size_passes_gate() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        // Size(0) must pass the wire-size gate (may 404/Internal downstream,
+        // but must NOT be rejected as InvalidArgument).
+        match service
+            .read_needle_blob(Request::new(volume_server_pb::ReadNeedleBlobRequest {
+                volume_id: 1,
+                offset: 0,
+                size: 0,
+            }))
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => assert_ne!(e.code(), tonic::Code::InvalidArgument, "got {e:?}"),
         }
     }
 

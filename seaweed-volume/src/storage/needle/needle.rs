@@ -615,6 +615,30 @@ pub fn get_actual_size(size: Size, version: Version) -> i64 {
     NEEDLE_HEADER_SIZE as i64 + needle_body_length(size, version)
 }
 
+/// Validate a wire-supplied needle body size before any `as usize` cast.
+/// Rejects negative/deleted sizes and bodies larger than the gRPC max message.
+/// Size(0) is allowed: empty/anomalous entries and tombstones read as size 0
+/// (actual_size = header+checksum+pad > 0, safe alloc, no wrap).
+/// Transport cap only: storage paths must NOT use this cap — see volume.rs
+/// guards (a >1GiB stored needle from a high-limit cluster must remain
+/// readable/compaction-safe). Keep `get_actual_size` unchanged (it
+/// intentionally returns negative for deleted index entries).
+pub fn validate_wire_size(size: Size) -> Result<(), String> {
+    if size.0 < 0 {
+        return Err(format!("invalid needle size {}", size.0));
+    }
+    // Keep in sync with canonical `GRPC_MAX_MESSAGE_SIZE` in server/grpc_client.rs:10
+    // (duplicated here to avoid a storage->server import and prevent drift).
+    const WIRE_MAX_NEEDLE_SIZE: i32 = 1 << 30;
+    if size.0 > WIRE_MAX_NEEDLE_SIZE {
+        return Err(format!(
+            "needle size {} exceeds max {}",
+            size.0, WIRE_MAX_NEEDLE_SIZE
+        ));
+    }
+    Ok(())
+}
+
 /// Read 5 bytes as a u64 (big-endian, zero-padded high bytes).
 fn bytes_to_u64_5(bytes: &[u8]) -> u64 {
     assert!(bytes.len() >= 5);
@@ -979,5 +1003,17 @@ mod tests {
         assert_eq!(fid.volume_id, VolumeId(3));
         assert_eq!(fid.key, NeedleId(0x123));
         assert_eq!(fid.cookie, Cookie(0));
+    }
+
+    #[test]
+    fn test_validate_wire_size_boundaries() {
+        assert!(validate_wire_size(Size(-100)).is_err());
+        assert!(validate_wire_size(Size(-1)).is_err());
+        assert!(validate_wire_size(Size(0)).is_ok());
+        assert!(validate_wire_size(Size(1024)).is_ok());
+        assert!(validate_wire_size(Size(1)).is_ok());
+        assert!(validate_wire_size(Size(1 << 30)).is_ok());
+        assert!(validate_wire_size(Size((1 << 30) + 1)).is_err());
+        assert!(validate_wire_size(Size(i32::MAX)).is_err());
     }
 }

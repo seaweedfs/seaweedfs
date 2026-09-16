@@ -1574,6 +1574,15 @@ impl Volume {
         size: Size,
     ) -> Result<(), VolumeError> {
         let version = self.version();
+        // Storage guard: negativity-only (Go parity — storage allocates what the
+        // index says). Size(0) and >1GiB map sizes must still read; only
+        // negative wraps/panics. Transport cap lives in RPC handlers only.
+        if size.0 < 0 {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid needle size {}", size.0),
+            )));
+        }
         let actual_size = get_actual_size(size, version);
 
         let mut buf = vec![0u8; actual_size as usize];
@@ -1591,6 +1600,13 @@ impl Volume {
 
     fn read_needle_blob_unlocked(&self, offset: i64, size: Size) -> Result<Vec<u8>, VolumeError> {
         let version = self.version();
+        // Storage guard: negativity-only (Go parity). See read_needle_blob_and_parse.
+        if size.0 < 0 {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid needle size {}", size.0),
+            )));
+        }
         let actual_size = get_actual_size(size, version);
         let mut buf = vec![0u8; actual_size as usize];
         self.read_exact_at_backend(&mut buf, offset as u64)?;
@@ -3472,6 +3488,13 @@ impl Volume {
         // nm.put on a read-only volume fails only after the blob is appended to .dat.
         if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
+        }
+        // Storage guard: negativity-only (Go parity). See read_needle_blob_and_parse.
+        if size.0 < 0 {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid needle size {}", size.0),
+            )));
         }
 
         // size indexes the needle and places the v3 append timestamp, so a caller using
@@ -6535,6 +6558,38 @@ mod tests {
 
         v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
             .unwrap();
+    }
+
+    #[test]
+    fn test_read_blob_negative_does_not_panic() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        let res = v.read_needle_blob(0, Size(-100));
+        assert!(res.is_err(), "negative size must return Err, not panic");
+        match res.unwrap_err() {
+            VolumeError::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::InvalidData),
+            e => panic!("expected Io InvalidData, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_read_blob_zero_size_not_rejected_by_validation() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        // Size(0) must not be rejected by the negativity guard: the read may
+        // Ok or fail on empty-volume IO, but never with our validation message.
+        match v.read_needle_blob(0, Size(0)) {
+            Ok(_) => {}
+            Err(VolumeError::Io(e)) => {
+                assert!(
+                    !e.to_string().contains("invalid needle size"),
+                    "Size(0) must pass validation, got {e}"
+                );
+            }
+            Err(e) => panic!("unexpected error kind for Size(0): {e:?}"),
+        }
     }
 
     #[test]
