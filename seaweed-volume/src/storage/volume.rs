@@ -4418,6 +4418,18 @@ impl Volume {
         self.fail_fsync_for_test = fail;
     }
 
+    /// Test-only read of the redb META `.idx` size through the live handle.
+    /// See `needle_map::test_support::live_meta_idx_size` for why durability
+    /// tests read this live instead of copying the open `.rdb` (Windows
+    /// mandatory file locking rejects reads of the locked file).
+    #[cfg(test)]
+    pub(crate) fn live_meta_idx_size_for_test(&self) -> Option<u64> {
+        match self.nm.as_ref() {
+            Some(NeedleMap::Redb(nm)) => nm.live_meta_idx_size(),
+            _ => None,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn fail_next_idx_sync_for_test(&mut self, fail: bool) {
         self.fail_idx_sync_for_test = fail;
@@ -6270,8 +6282,6 @@ mod tests {
 
     #[test]
     fn test_redb_volume_checkpoint_flushes_dat_before_index() {
-        use crate::storage::needle_map::test_support::durable_idx_size;
-
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
@@ -6282,7 +6292,6 @@ mod tests {
             &VolumeSpec::default(),
         )
         .unwrap();
-        let rdb_path = std::path::PathBuf::from(v.file_name(".rdb"));
         let write = |v: &mut Volume, i: u64| {
             let mut n = Needle {
                 id: NeedleId(i),
@@ -6297,7 +6306,10 @@ mod tests {
         for i in 1..1000 {
             write(&mut v, i);
         }
-        assert_eq!(durable_idx_size(&rdb_path), None);
+        // No checkpoint due yet, so META still holds the load-time .idx
+        // size. Read live: copying the open .rdb fails on Windows, where
+        // redb's file lock is mandatory (see live_meta_idx_size).
+        assert_eq!(v.live_meta_idx_size_for_test(), Some(0));
 
         // The 1000th write makes an index checkpoint due. A checkpoint makes
         // the index durable, so the volume has to flush the .dat first, and
@@ -6305,12 +6317,16 @@ mod tests {
         // row pointing past the end of an unflushed .dat loads read-only.
         v.fail_next_fsync_for_test(true);
         write(&mut v, 1000);
-        assert_eq!(durable_idx_size(&rdb_path), None);
+        assert_eq!(
+            v.live_meta_idx_size_for_test(),
+            Some(0),
+            "skipped checkpoint must not record progress"
+        );
 
         v.fail_next_fsync_for_test(false);
         write(&mut v, 1001);
         assert_eq!(
-            durable_idx_size(&rdb_path),
+            v.live_meta_idx_size_for_test(),
             Some(1001 * NEEDLE_MAP_ENTRY_SIZE as u64)
         );
     }
