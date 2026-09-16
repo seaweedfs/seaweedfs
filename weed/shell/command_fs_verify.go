@@ -250,11 +250,13 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 // Error contract by server generation:
 //   - Go servers (with this change) and the Rust volume server answer absent
 //     needles with gRPC code NotFound and a "needle not found <id>" message.
-//   - Older Go servers return the raw read error as code Unknown: "needle not
-//     found <id>" or "EOF" (truncated volume file).
+//   - Older Go servers return the raw read error as code Unknown: exactly
+//     "needle not found <id>" or "EOF" (io.EOF from a truncated volume file).
 //
-// Anything else (Unavailable, DeadlineExceeded, "volume not found", ...) is
-// transport or routing and must never trigger a prune.
+// The legacy shapes are matched anchored/exactly, so unrelated application
+// errors that merely contain these substrings (e.g. "unexpected EOF") do not
+// classify as missing. Anything else (Unavailable, DeadlineExceeded, "volume
+// not found", ...) is transport or routing and must never trigger a prune.
 func isNeedleMissingError(err error) bool {
 	if err == nil {
 		return false
@@ -264,7 +266,7 @@ func isNeedleMissingError(err error) bool {
 		switch st.Code() {
 		case codes.NotFound:
 			// only the needle shape; "volume not found" keeps flowing here too
-			return strings.Contains(st.Message(), "needle not found")
+			return strings.HasPrefix(st.Message(), "needle not found ")
 		case codes.Unknown:
 			// older servers: prefer the status message, fall back to the
 			// wrapped string
@@ -275,7 +277,7 @@ func isNeedleMissingError(err error) bool {
 			return false
 		}
 	}
-	return strings.Contains(msg, "needle not found") || strings.Contains(msg, "EOF")
+	return strings.HasPrefix(msg, "needle not found ") || msg == "EOF"
 }
 
 // verifyEntry verifies all chunks of an entry. It returns verified=false when

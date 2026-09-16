@@ -140,6 +140,17 @@ func TestFsVerifyIsNeedleMissingError(t *testing.T) {
 	if !isNeedleMissingError(status.Error(codes.Unknown, "EOF")) {
 		t.Error("EOF must classify as missing (truncated needle data)")
 	}
+	// anchored matching: unrelated errors merely containing the substrings
+	// must not classify as missing
+	if isNeedleMissingError(status.Error(codes.Unknown, "unexpected EOF while reading trailer")) {
+		t.Error("unrelated EOF-containing errors must NOT classify as missing")
+	}
+	if isNeedleMissingError(fmt.Errorf("rpc error: code = Unknown desc = read needle: context deadline exceeded, stream EOF")) {
+		t.Error("deadline errors mentioning EOF must NOT classify as missing")
+	}
+	if isNeedleMissingError(status.Error(codes.NotFound, "needle not foundxyz")) {
+		t.Error("malformed needle-not-found prefix must NOT classify as missing")
+	}
 	// new Go servers and the Rust volume server answer with code NotFound
 	if !isNeedleMissingError(status.Error(codes.NotFound, "needle not found 42")) {
 		t.Error("NotFound needle-not-found must classify as missing")
