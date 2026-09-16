@@ -255,7 +255,7 @@ mod tests {
     /// writes (key, offset 0, tombstone) rows over the front of .idx instead of
     /// appending them.
     fn clobber_idx_head(idx_path: &str, keys: &[u64]) {
-        let file = OpenOptions::new().write(true).open(idx_path).unwrap();
+        let mut file = OpenOptions::new().write(true).open(idx_path).unwrap();
         for (i, key) in keys.iter().enumerate() {
             let mut row = Vec::new();
             idx::write_index_entry(
@@ -265,8 +265,13 @@ mod tests {
                 TOMBSTONE_FILE_SIZE,
             )
             .unwrap();
-            file.write_at(&row, (i * NEEDLE_MAP_ENTRY_SIZE) as u64)
+            // Positional write without Unix-only `FileExt::write_at`, so this
+            // helper (and the tests using it) also builds on Windows.
+            // Single-threaded test helper: no concurrent reader can move the
+            // offset between seek and write.
+            file.seek(SeekFrom::Start((i * NEEDLE_MAP_ENTRY_SIZE) as u64))
                 .unwrap();
+            file.write_all(&row).unwrap();
         }
     }
 
