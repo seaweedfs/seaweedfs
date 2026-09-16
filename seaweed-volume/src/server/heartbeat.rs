@@ -222,7 +222,7 @@ async fn check_with_master(config: &HeartbeatConfig, state: &Arc<VolumeServerSta
                     if changed {
                         state.metrics_notify.notify_waiters();
                     }
-                    apply_storage_backends(state, &resp.storage_backends);
+                    apply_storage_backends(&resp.storage_backends);
                     info!(
                         "Got master configuration from {}: metrics_address={}, metrics_interval={}s",
                         master_addr, resp.metrics_address, resp.metrics_interval_seconds
@@ -674,16 +674,15 @@ fn apply_metrics_push_settings(
     true
 }
 
-fn apply_storage_backends(
-    state: &VolumeServerState,
-    storage_backends: &[master_pb::StorageBackend],
-) {
+/// Registers the master's S3 storage backends in the process-wide tier
+/// registry, the single place both the tier-move handlers and `Volume` itself
+/// resolve a backend from.
+fn apply_storage_backends(storage_backends: &[master_pb::StorageBackend]) {
     if storage_backends.is_empty() {
         return;
     }
 
-    let mut registry = state.s3_tier_registry.write().unwrap();
-    let mut global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+    let mut registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
         .write()
         .unwrap();
     for backend in storage_backends {
@@ -714,7 +713,6 @@ fn apply_storage_backends(
             backend.id.as_str()
         };
         register_s3_backend(&mut registry, backend, backend_id, &config);
-        register_s3_backend(&mut global_registry, backend, backend_id, &config);
     }
 }
 
@@ -1250,7 +1248,6 @@ mod tests {
         READ_ONLY_LABEL_NO_WRITE_CAN_DELETE, READ_ONLY_LABEL_NO_WRITE_OR_DELETE,
         READ_ONLY_VOLUME_GAUGE,
     };
-    use crate::remote_storage::s3_tier::S3TierRegistry;
     use crate::security::{Guard, SigningKey};
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::types::{DiskType, VolumeId};
@@ -1302,7 +1299,6 @@ mod tests {
             pre_stop_seconds: 0,
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
-            s3_tier_registry: std::sync::RwLock::new(S3TierRegistry::new()),
             read_mode: ReadMode::Local,
             allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
@@ -2071,65 +2067,56 @@ mod tests {
         assert_eq!(heartbeat.volumes[0].remote_storage_key, "volumes/71.dat");
     }
 
+    // Not hermetic, and cannot be made so cheaply: `register_s3_backend` skips
+    // a name that is already registered, so had another test put `s3` or
+    // `s3.default` in the process-wide registry first, this would pass without
+    // proving that this call registered anything. Removing them afterwards is
+    // no better — unlike the tier tests' unique ids, the bare `s3` alias is the
+    // production one. Nothing else in the tree registers those two names.
     #[test]
     fn test_apply_storage_backends_registers_s3_default_aliases() {
-        let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
         // Do not call clear() on the global registry — other tests may be
         // running concurrently.  Just register our entries and verify them.
 
-        apply_storage_backends(
-            &state,
-            &[master_pb::StorageBackend {
-                r#type: "s3".to_string(),
-                id: "default".to_string(),
-                properties: std::collections::HashMap::from([
-                    ("aws_access_key_id".to_string(), "access".to_string()),
-                    ("aws_secret_access_key".to_string(), "secret".to_string()),
-                    ("bucket".to_string(), "bucket-a".to_string()),
-                    ("region".to_string(), "us-west-2".to_string()),
-                    ("endpoint".to_string(), "http://127.0.0.1:8333".to_string()),
-                    ("storage_class".to_string(), "STANDARD".to_string()),
-                    ("force_path_style".to_string(), "false".to_string()),
-                ]),
-            }],
-        );
+        apply_storage_backends(&[master_pb::StorageBackend {
+            r#type: "s3".to_string(),
+            id: "default".to_string(),
+            properties: std::collections::HashMap::from([
+                ("aws_access_key_id".to_string(), "access".to_string()),
+                ("aws_secret_access_key".to_string(), "secret".to_string()),
+                ("bucket".to_string(), "bucket-a".to_string()),
+                ("region".to_string(), "us-west-2".to_string()),
+                ("endpoint".to_string(), "http://127.0.0.1:8333".to_string()),
+                ("storage_class".to_string(), "STANDARD".to_string()),
+                ("force_path_style".to_string(), "false".to_string()),
+            ]),
+        }]);
 
-        let registry = state.s3_tier_registry.read().unwrap();
-        assert!(registry.get("s3.default").is_some());
-        assert!(registry.get("s3").is_some());
-        let global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+        let registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
             .read()
             .unwrap();
-        assert!(global_registry.get("s3.default").is_some());
-        assert!(global_registry.get("s3").is_some());
+        assert!(registry.get("s3.default").is_some());
+        assert!(registry.get("s3").is_some());
     }
 
     #[test]
     fn test_apply_storage_backends_ignores_unsupported_types() {
-        let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
         // Do not call clear() on the global registry — other tests may be
         // running concurrently.
 
-        apply_storage_backends(
-            &state,
-            &[master_pb::StorageBackend {
-                r#type: "rclone".to_string(),
-                id: "default".to_string(),
-                properties: std::collections::HashMap::new(),
-            }],
-        );
+        apply_storage_backends(&[master_pb::StorageBackend {
+            r#type: "rclone".to_string(),
+            id: "default".to_string(),
+            properties: std::collections::HashMap::new(),
+        }]);
 
-        // The per-state registry is freshly created and should have no entries
-        // since "rclone" is unsupported.
-        let registry = state.s3_tier_registry.read().unwrap();
-        assert!(registry.names().is_empty());
         // Only check that the unsupported type was not added to the global
         // registry.  Other tests may have their own entries present.
-        let global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+        let registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
             .read()
             .unwrap();
-        assert!(global_registry.get("rclone.default").is_none());
-        assert!(global_registry.get("rclone").is_none());
+        assert!(registry.get("rclone.default").is_none());
+        assert!(registry.get("rclone").is_none());
     }
 
     #[test]

@@ -112,9 +112,6 @@ fn build_test_state(
         pre_stop_seconds: 0,
         volume_state_notify: tokio::sync::Notify::new(),
         write_queue: std::sync::OnceLock::new(),
-        s3_tier_registry: std::sync::RwLock::new(
-            seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
-        ),
         read_mode: seaweed_volume::config::ReadMode::Local,
         allow_untrusted_remote_endpoints: false,
         master_url,

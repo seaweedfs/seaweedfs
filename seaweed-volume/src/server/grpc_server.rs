@@ -4221,7 +4221,9 @@ impl VolumeServer for VolumeGrpcService {
 
         // Look up the S3 tier backend
         let backend = {
-            let registry = self.state.s3_tier_registry.read().unwrap();
+            let registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .read()
+                .unwrap();
             registry.get(&req.destination_backend_name).ok_or_else(|| {
                 let keys = registry.names();
                 Status::not_found(format!(
@@ -4425,7 +4427,9 @@ impl VolumeServer for VolumeGrpcService {
 
         // Look up the S3 tier backend
         let backend = {
-            let registry = self.state.s3_tier_registry.read().unwrap();
+            let registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .read()
+                .unwrap();
             registry.get(&storage_name).ok_or_else(|| {
                 let keys = registry.names();
                 Status::not_found(format!(
@@ -6248,16 +6252,6 @@ mod tests {
             pre_stop_seconds: 0,
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
-            s3_tier_registry: std::sync::RwLock::new({
-                // The tier-down handler resolves the backend from the per-server
-                // registry, so register it here too (reads use the global one).
-                let mut reg = crate::remote_storage::s3_tier::S3TierRegistry::new();
-                reg.register(
-                    format!("s3.{}", backend_id),
-                    S3TierBackend::new(&tier_config),
-                );
-                reg
-            }),
             read_mode: crate::config::ReadMode::Local,
             allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
@@ -6361,9 +6355,6 @@ mod tests {
             pre_stop_seconds: 0,
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
-            s3_tier_registry: std::sync::RwLock::new(
-                crate::remote_storage::s3_tier::S3TierRegistry::new(),
-            ),
             read_mode: crate::config::ReadMode::Local,
             allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
@@ -6617,6 +6608,54 @@ mod tests {
             .write()
             .unwrap()
             .remove("s3.tier_down_keep");
+    }
+
+    // The tier-up handler has no end-to-end test — exercising it needs a fake
+    // S3 that accepts multipart uploads — so this probes only the part that
+    // changed: the destination is resolved from the process-wide registry, now
+    // the only one. A backend registered nowhere else has to get past that
+    // lookup. The response is dropped as soon as it arrives, so the spawned
+    // transfer sees a departed caller and never opens a connection.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_tier_move_to_remote_resolves_the_destination_from_the_global_registry() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        {
+            let mut registry = global_s3_tier_registry().write().unwrap();
+            registry.register(
+                "s3.tier_up_probe".to_string(),
+                S3TierBackend::new(&S3TierConfig {
+                    access_key: "access".to_string(),
+                    secret_key: "secret".to_string(),
+                    region: "us-east-1".to_string(),
+                    bucket: "bucket-a".to_string(),
+                    // Nothing listens here; no request is ever made to it.
+                    endpoint: "http://127.0.0.1:1".to_string(),
+                    storage_class: "STANDARD".to_string(),
+                    force_path_style: true,
+                }),
+            );
+        }
+
+        let outcome = service
+            .volume_tier_move_dat_to_remote(Request::new(
+                volume_server_pb::VolumeTierMoveDatToRemoteRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    destination_backend_name: "s3.tier_up_probe".to_string(),
+                    keep_local_dat_file: true,
+                },
+            ))
+            .await
+            // Dropping the response hangs up before the upload can start.
+            .map(drop)
+            .map_err(|status| status.to_string());
+
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_up_probe");
+
+        outcome.expect("tier-up must resolve its destination from the global registry");
     }
 
     /// Build a local service whose volume has a `.dat` large enough to span
@@ -7141,9 +7180,6 @@ mod tests {
             pre_stop_seconds: 0,
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
-            s3_tier_registry: std::sync::RwLock::new(
-                crate::remote_storage::s3_tier::S3TierRegistry::new(),
-            ),
             read_mode: crate::config::ReadMode::Local,
             allow_untrusted_remote_endpoints: false,
             master_url: master_urls.first().cloned().unwrap_or_default(),
@@ -7863,9 +7899,6 @@ mod tests {
             pre_stop_seconds: 0,
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
-            s3_tier_registry: std::sync::RwLock::new(
-                crate::remote_storage::s3_tier::S3TierRegistry::new(),
-            ),
             read_mode: crate::config::ReadMode::Local,
             allow_untrusted_remote_endpoints: false,
             master_url: String::new(),
