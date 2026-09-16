@@ -180,12 +180,18 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 		entryPath := fmt.Sprintf("%s/%s", message.NewParentPath, message.NewEntry.Name)
 		errorChunksCount := atomic.NewUint64(0)
 		// expand chunk manifests so needles hidden behind a manifest get
-		// verified (and pruned) like in the BFS path
-		dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), message.NewEntry.Chunks, 0, math.MaxInt64, nil)
-		if resolveErr != nil {
-			return fmt.Errorf("failed to ResolveChunkManifest for %s: %+v", entryPath, resolveErr)
+		// verified (and pruned) like in the BFS path. When the manifest
+		// itself is unreadable or gone, fall back to the raw chunks:
+		// verifyEntry then classifies the missing manifest needle itself.
+		// The callback's error must not be returned: FollowMetadata drops
+		// callback errors with DontLogError and moves on, so an error here
+		// would silently skip the entry instead of reporting it.
+		dataChunks := message.NewEntry.Chunks
+		if resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), message.NewEntry.Chunks, 0, math.MaxInt64, nil); resolveErr == nil {
+			dataChunks = append(resolved, manifestChunks...)
+		} else {
+			fmt.Fprintf(c.writer, "file: %s failed to resolve chunk manifest (%v), verifying raw chunks\n", entryPath, resolveErr)
 		}
-		dataChunks = append(dataChunks, manifestChunks...)
 		if verified, hasMissingNeedles := c.verifyEntry(entryPath, dataChunks, errorChunksCount, wg); !verified {
 			if err = c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				entryResp, errReq := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
