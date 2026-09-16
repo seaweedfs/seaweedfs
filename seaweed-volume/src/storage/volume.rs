@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
 use crate::storage::idx;
+use crate::storage::io::read_exact_at;
 use crate::storage::needle::needle::{self, Needle, NeedleError, get_actual_size};
 use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
@@ -455,22 +456,7 @@ impl NeedleStreamSource {
 
     pub(crate) fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
         match self {
-            NeedleStreamSource::Local(file) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::FileExt;
-                    file.read_exact_at(buf, offset)?;
-                }
-                #[cfg(windows)]
-                {
-                    read_exact_at(file, buf, offset)?;
-                }
-                #[cfg(not(any(unix, windows)))]
-                {
-                    compile_error!("Platform not supported: only unix and windows are supported");
-                }
-                Ok(())
-            }
+            NeedleStreamSource::Local(file) => read_exact_at(file, buf, offset),
             NeedleStreamSource::Remote(remote) => remote.read_exact_at(buf, offset),
         }
     }
@@ -720,25 +706,6 @@ pub struct Volume {
 
     /// Whether this volume has a remote file reference.
     pub has_remote_file: bool,
-}
-
-/// Windows helper: loop seek_read until buffer is fully filled.
-#[cfg(windows)]
-fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()> {
-    use std::os::windows::fs::FileExt;
-    let mut filled = 0;
-    while filled < buf.len() {
-        let n = file.seek_read(&mut buf[filled..], offset)?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected EOF in seek_read",
-            ));
-        }
-        filled += n;
-        offset += n as u64;
-    }
-    Ok(())
 }
 
 /// What a volume is created with beyond its id, directories and index kind:
@@ -1349,19 +1316,7 @@ impl Volume {
         offset: u64,
     ) -> Result<(), VolumeError> {
         if let Some(dat_file) = self.dat_file.as_ref() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileExt;
-                dat_file.read_exact_at(buf, offset)?;
-            }
-            #[cfg(windows)]
-            {
-                read_exact_at(dat_file, buf, offset)?;
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                compile_error!("Platform not supported: only unix and windows are supported");
-            }
+            read_exact_at(dat_file, buf, offset)?;
             Ok(())
         } else if let Some(remote_dat_file) = self.remote_dat_file.as_ref() {
             remote_dat_file.read_exact_at(buf, offset)?;
@@ -4119,20 +4074,11 @@ impl Volume {
                 let actual_size = crate::storage::needle::needle::get_actual_size(size, version);
                 let mut blob = vec![0u8; actual_size as usize];
 
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::FileExt;
-                    old_dat_file
-                        .read_exact_at(&mut blob, needle_offset.to_actual_offset() as u64)?;
-                }
-                #[cfg(windows)]
-                {
-                    crate::storage::volume::read_exact_at(
-                        &old_dat_file,
-                        &mut blob,
-                        needle_offset.to_actual_offset() as u64,
-                    )?;
-                }
+                read_exact_at(
+                    &old_dat_file,
+                    &mut blob,
+                    needle_offset.to_actual_offset() as u64,
+                )?;
 
                 dst_dat.write_all(&blob)?;
 

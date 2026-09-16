@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::pb::master_pb;
 use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
+use crate::storage::io::read_exact_at;
 use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
 use crate::storage::types::*;
 use crate::storage::volume_open::open_volume_file;
@@ -1045,28 +1046,12 @@ impl EcVolume {
             let mid = lo + (hi - lo) / 2;
             let file_offset = (mid * NEEDLE_MAP_ENTRY_SIZE) as u64;
 
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileExt;
-                if let Err(e) = ecx_file.read_exact_at(&mut entry_buf, file_offset) {
-                    self.check_read_write_error(Some(&e));
-                    return Err(e);
-                }
-            }
-            #[cfg(windows)]
-            {
-                // Positional read so concurrent find_needle_from_ecx calls on
-                // the shared .ecx handle don't interleave seek/read and corrupt
-                // each other's binary search. Mirrors the read_exact_at helper
-                // in storage::volume.
-                if let Err(e) = read_exact_at(ecx_file, &mut entry_buf, file_offset) {
-                    self.check_read_write_error(Some(&e));
-                    return Err(e);
-                }
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                compile_error!("Platform not supported: only unix and windows are supported");
+            // Positional read so concurrent find_needle_from_ecx calls on the
+            // shared .ecx handle don't interleave a seek and a read and corrupt
+            // each other's binary search.
+            if let Err(e) = read_exact_at(ecx_file, &mut entry_buf, file_offset) {
+                self.check_read_write_error(Some(&e));
+                return Err(e);
             }
 
             let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
@@ -4065,18 +4050,7 @@ impl EcLocalShard {
             .file
             .as_ref()
             .map_err(|e| io::Error::new(e.kind(), e.to_string()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            file.read_at(buf, offset)
-        }
-        #[cfg(not(unix))]
-        {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut f = file.try_clone()?;
-            f.seek(SeekFrom::Start(offset))?;
-            f.read(buf)
-        }
+        crate::storage::io::read_at(file, buf, offset)
     }
 }
 
@@ -4371,28 +4345,4 @@ impl EcLocalScrubPlan {
 
         (count, broken, errs)
     }
-}
-
-/// Windows helper: loop `seek_read` until the buffer is fully filled.
-///
-/// `seek_read` is positional (it passes the offset through `OVERLAPPED` and
-/// never touches the shared file cursor), so concurrent callers reading the
-/// same `&File` — as `find_needle_from_ecx` does on the cached `.ecx` handle —
-/// can't interleave their reads. Mirrors the helper in `storage::volume`.
-#[cfg(windows)]
-fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()> {
-    use std::os::windows::fs::FileExt;
-    let mut filled = 0;
-    while filled < buf.len() {
-        let n = file.seek_read(&mut buf[filled..], offset)?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected EOF in seek_read",
-            ));
-        }
-        filled += n;
-        offset += n as u64;
-    }
-    Ok(())
 }

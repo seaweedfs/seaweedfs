@@ -18,6 +18,7 @@ use std::sync::{Mutex, RwLock};
 
 use super::file_pool::pooled_index_files;
 use crate::storage::idx;
+use crate::storage::io::read_exact_at;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMapMetric, NeedleValue};
 use crate::storage::types::*;
 
@@ -518,32 +519,6 @@ fn search_sorted_index(
         }
     }
     Ok(None)
-}
-
-fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileExt;
-        file.read_exact_at(buf, offset)
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::FileExt;
-        let mut filled = 0;
-        let mut at = offset;
-        while filled < buf.len() {
-            let n = file.seek_read(&mut buf[filled..], at)?;
-            if n == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "unexpected EOF in seek_read",
-                ));
-            }
-            filled += n;
-            at += n as u64;
-        }
-        Ok(())
-    }
 }
 
 fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
