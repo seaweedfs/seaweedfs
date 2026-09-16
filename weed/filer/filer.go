@@ -727,6 +727,8 @@ func (f *Filer) Shutdown() {
 		f.EmptyFolderCleaner.Stop()
 	}
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
+	// The final metadata-log flush still needs the store to append its entry.
+	f.LocalMetaLogBuffer.WaitForShutdown()
 	f.Store.Shutdown()
 }
 
