@@ -324,9 +324,9 @@ pub async fn scrub_ec_volume_distributed(
         // mounted volume's encode_ts_ns no longer matches, abort like a
         // mid-scan unmount rather than mixing generations.
         let encode_ts_ns = ecv.encode_ts_ns;
-        // Bind to locals so the inner RwLock/Mutex guards drop before the block ends.
-        let cached_locations = ecv.shard_locations.read().unwrap().clone();
-        let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
+        // One read section, so the map and the refresh time it is aged against
+        // describe the same lookup.
+        let (cached_locations, cache_refreshed_at) = ecv.shard_locations_snapshot();
         let data_shards = ecv.data_shards as usize;
         let total_shards = (ecv.data_shards + ecv.parity_shards) as usize;
         (
@@ -428,7 +428,7 @@ pub async fn scrub_ec_volume_distributed(
                 );
             }
         };
-        ecv.shard_locations.read().unwrap().clone()
+        ecv.shard_locations_snapshot().0
     };
 
     // Walk the .ecx (private fd captured under the lock, no lock held) for the
@@ -773,8 +773,7 @@ fn build_snapshot(
     }
     let actual = get_actual_size(size, ecv.version);
     let interval_results = read_local_intervals(ecv, intervals);
-    let cached_locations = ecv.shard_locations.read().unwrap().clone();
-    let cache_refreshed_at = *ecv.shard_locations_refresh_time.lock().unwrap();
+    let (cached_locations, cache_refreshed_at) = ecv.shard_locations_snapshot();
 
     Ok(Snapshot {
         data_shards: ecv.data_shards,
@@ -826,14 +825,14 @@ fn needs_refresh(
 fn mark_shard_locations_stale(state: &Arc<VolumeServerState>, vid: VolumeId) {
     let store = state.store.read().unwrap();
     if let Some(ecv) = store.find_ec_volume(vid) {
-        *ecv.shard_locations_stale.lock().unwrap() = true;
+        ecv.mark_shard_locations_stale();
     }
 }
 
-/// Decide whether the cached map is due a master lookup and, when it is, consume
-/// its stale mark in the same critical section. A mark raised from here on
-/// belongs to the next refresh: the read that raised it has disproved the map
-/// this lookup is about to install.
+/// Decide whether the caller's snapshot is due a master lookup and, when it is,
+/// consume the cache's stale mark in the same critical section. A mark raised
+/// from here on belongs to the next refresh: the read that raised it has
+/// disproved the map this lookup is about to install.
 fn claim_shard_locations_refresh(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
@@ -846,12 +845,9 @@ fn claim_shard_locations_refresh(
     let Some(ecv) = store.find_ec_volume(vid) else {
         return needs_refresh(locations, refreshed_at, false, data_shards, total_shards);
     };
-    let mut stale = ecv.shard_locations_stale.lock().unwrap();
-    let refresh = needs_refresh(locations, refreshed_at, *stale, data_shards, total_shards);
-    if refresh {
-        *stale = false;
-    }
-    refresh
+    ecv.claim_shard_locations_refresh(|stale| {
+        needs_refresh(locations, refreshed_at, stale, data_shards, total_shards)
+    })
 }
 
 async fn cached_lookup_ec_shard_locations(

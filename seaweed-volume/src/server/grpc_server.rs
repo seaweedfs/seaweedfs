@@ -7592,11 +7592,11 @@ mod tests {
         {
             let store = service.state.store.read().unwrap();
             let ecv = store.find_ec_volume(VolumeId(1)).unwrap();
-            let mut locs = ecv.shard_locations.write().unwrap();
-            for sid in 0u8..14 {
-                locs.insert(sid, vec!["127.0.0.1:255.1".to_string()]);
-            }
-            *ecv.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+            ecv.merge_shard_locations(
+                (0u8..14)
+                    .map(|sid| (sid, vec!["127.0.0.1:255.1".to_string()]))
+                    .collect(),
+            );
         }
 
         // All shards local: FULL is clean.
@@ -7941,11 +7941,11 @@ mod tests {
     fn seed_all_shard_locations(service: &VolumeGrpcService, vid_raw: u32) {
         let store = service.state.store.read().unwrap();
         for ecv in store.find_all_ec_volumes(VolumeId(vid_raw)) {
-            let mut locs = ecv.shard_locations.write().unwrap();
-            for sid in 0u8..14 {
-                locs.insert(sid, vec!["127.0.0.1:255.1".to_string()]);
-            }
-            *ecv.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
+            ecv.merge_shard_locations(
+                (0u8..14)
+                    .map(|sid| (sid, vec!["127.0.0.1:255.1".to_string()]))
+                    .collect(),
+            );
         }
     }
 
