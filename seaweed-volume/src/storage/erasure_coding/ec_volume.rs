@@ -841,11 +841,23 @@ impl EcVolume {
     }
 
     /// Remove and close a shard.
-    pub fn remove_shard(&mut self, shard_id: ShardId) {
-        if let Some(ref mut shard) = self.shards[shard_id as usize] {
+    pub fn remove_shard(&mut self, shard_id: ShardId) -> io::Result<()> {
+        let idx = shard_id as usize;
+        if idx >= self.shards.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "invalid shard id {} (max {})",
+                    shard_id,
+                    self.shards.len().saturating_sub(1)
+                ),
+            ));
+        }
+        if let Some(ref mut shard) = self.shards[idx] {
             shard.close();
         }
-        self.shards[shard_id as usize] = None;
+        self.shards[idx] = None;
+        Ok(())
     }
 
     /// Get a ShardBits bitmap of locally available shards.
@@ -867,7 +879,7 @@ impl EcVolume {
     /// Reports whether `shard_id` is currently registered to this
     /// EcVolume (used by the cross-disk reconcile to skip already-
     /// loaded shards).
-    pub fn has_shard(&self, shard_id: u8) -> bool {
+    pub fn has_shard(&self, shard_id: ShardId) -> bool {
         self.shards
             .get(shard_id as usize)
             .map(|s| s.is_some())

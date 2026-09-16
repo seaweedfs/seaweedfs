@@ -21,7 +21,7 @@ use std::fs;
 use tracing::{error, info, warn};
 
 use crate::storage::disk_location::{is_ec_shard_extension, parse_collection_volume_id_pub};
-use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
+use crate::storage::erasure_coding::ec_shard::{DATA_SHARDS_COUNT, ShardId};
 use crate::storage::store::Store;
 use crate::storage::types::VolumeId;
 
@@ -83,7 +83,7 @@ struct EcxOwnerInfo {
 /// One unit of reconcile work: the disk holding orphan shards, the volume
 /// they belong to, the shard files, the `.ecx` owner, and whether the
 /// mirror already installed sidecars locally (`use_local_idx`).
-type OrphanShardLoad = (usize, EcKey, Vec<(String, u32)>, EcxOwnerInfo, bool);
+type OrphanShardLoad = (usize, EcKey, Vec<(String, ShardId)>, EcxOwnerInfo, bool);
 
 impl Store {
     /// Run cross-disk orphan-shard reconciliation. Should be called
@@ -135,7 +135,7 @@ impl Store {
         for (loc_idx, key, shards, owner, use_local_idx) in to_load {
             let shard_names: Vec<&str> = shards.iter().map(|(n, _)| n.as_str()).collect();
             let loc_dir = self.locations[loc_idx].directory.clone();
-            let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
+            let shard_ids: Vec<ShardId> = shards.iter().map(|(_, sid)| *sid).collect();
 
             if use_local_idx {
                 info!(
@@ -477,13 +477,13 @@ impl Store {
     /// Unlike `reconcile_ec_shards_across_disks` it needs no sibling disk, so a
     /// single-disk store recovers once its index has been fetched from a peer.
     fn load_orphan_ec_shards_with_local_index(&mut self) {
-        let mut work: Vec<(usize, EcKey, Vec<u32>)> = Vec::new();
+        let mut work: Vec<(usize, EcKey, Vec<ShardId>)> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             for (key, shards) in collect_orphan_ec_shards(loc, loc_idx) {
                 if !loc.has_ecx_file_on_disk(&key.collection, key.vid) {
                     continue;
                 }
-                let ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
+                let ids: Vec<ShardId> = shards.iter().map(|(_, sid)| *sid).collect();
                 work.push((loc_idx, key, ids));
             }
         }
@@ -510,8 +510,8 @@ impl Store {
 fn collect_orphan_ec_shards(
     loc: &crate::storage::disk_location::DiskLocation,
     _loc_idx: usize,
-) -> HashMap<EcKey, Vec<(String, u32)>> {
-    let mut orphans: HashMap<EcKey, Vec<(String, u32)>> = HashMap::new();
+) -> HashMap<EcKey, Vec<(String, ShardId)>> {
+    let mut orphans: HashMap<EcKey, Vec<(String, ShardId)>> = HashMap::new();
     let Ok(read) = fs::read_dir(&loc.directory) else {
         return orphans;
     };
@@ -539,7 +539,7 @@ fn collect_orphan_ec_shards(
         };
         // Skip shards that are already registered to an EcVolume.
         if let Some(ecv) = loc.find_ec_volume(vid)
-            && ecv.has_shard(shard_id as u8)
+            && ecv.has_shard(shard_id)
         {
             continue;
         }

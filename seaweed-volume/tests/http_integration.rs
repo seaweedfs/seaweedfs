@@ -957,6 +957,7 @@ async fn replicate_write_does_not_re_replicate() {
 #[tokio::test]
 async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
+    use seaweed_volume::storage::erasure_coding::ec_shard::ShardId;
     use seaweed_volume::storage::needle::needle::{FileId, Needle};
     use seaweed_volume::storage::types::{Cookie, NeedleId};
     use seaweed_volume::storage::volume::{Volume, VolumeSpec};
@@ -998,7 +999,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     // after ec.encode retired the regular volume.
     {
         let mut store = state.store.write().unwrap();
-        let shard_ids: Vec<u32> = (0..14).collect();
+        let shard_ids: Vec<ShardId> = (0..14).collect();
         store.mount_ec_shards(VolumeId(2), "", &shard_ids).unwrap();
     }
 

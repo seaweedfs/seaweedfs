@@ -17,7 +17,7 @@ use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
-use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
+use crate::storage::erasure_coding::ec_shard::{DATA_SHARDS_COUNT, ShardId, shard_id_try_from};
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 use crate::storage::volume::VolumeSpec;
@@ -3322,6 +3322,14 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
+        // Validate wire shard ids at the boundary: ShardId is u8 but only
+        // 0..MAX_SHARD_COUNT are valid. Rejects 256 (would truncate to 0)
+        // and 270 (would alias 14).
+        let mut shard_ids: Vec<ShardId> = Vec::with_capacity(req.shard_ids.len());
+        for &sid in &req.shard_ids {
+            shard_ids.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
+        }
+
         // Select target location:
         //   When disk_id > 0: use that specific location.
         //   When disk_id == 0 (unset): auto-select via
@@ -3355,7 +3363,7 @@ impl VolumeServer for VolumeGrpcService {
                 // writing them all to one disk would duplicate the other
                 // disks' claims. Refuse so the caller splits the batch per
                 // shard (or chooses explicitly via disk_id).
-                let owners = store.ec_shard_owner_disks(vid, &req.shard_ids);
+                let owners = store.ec_shard_owner_disks(vid, &shard_ids);
                 if owners.len() > 1 {
                     let dirs: Vec<&str> = owners
                         .iter()
@@ -3363,14 +3371,14 @@ impl VolumeServer for VolumeGrpcService {
                         .collect();
                     return Err(Status::failed_precondition(format!(
                         "volume {} shards {:?} are already owned by multiple local disks {:?}: no single destination; copy per shard or pass disk_id",
-                        req.volume_id, req.shard_ids, dirs
+                        req.volume_id, shard_ids, dirs
                     )));
                 }
                 match store.find_ec_shard_target_location(
                     &req.collection,
                     vid,
                     DATA_SHARDS_COUNT as u32,
-                    &req.shard_ids,
+                    &shard_ids,
                 ) {
                     Some(i) => {
                         let loc = &store.locations[i];
@@ -3417,7 +3425,7 @@ impl VolumeServer for VolumeGrpcService {
             .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Copy each shard
-        for &shard_id in &req.shard_ids {
+        for &shard_id in &shard_ids {
             let ext = format!(".ec{:02}", shard_id);
             let copy_req = volume_server_pb::CopyFileRequest {
                 volume_id: req.volume_id,
@@ -3674,7 +3682,11 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         let mut store = self.state.store.write().unwrap();
-        store.delete_ec_shards(vid, &req.collection, &req.shard_ids);
+        let mut shard_ids: Vec<ShardId> = Vec::with_capacity(req.shard_ids.len());
+        for &sid in &req.shard_ids {
+            shard_ids.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
+        }
+        store.delete_ec_shards(vid, &req.collection, &shard_ids);
         drop(store);
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(
@@ -3691,6 +3703,17 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
+        // Pre-validate the ENTIRE batch before any mutation: validating inside
+        // the mount loop would mount a prefix (e.g. shard 0 of [0, 32]) and
+        // then fail, leaving a partial mutation while skipping the sidecar
+        // reload + notify below. Reject up front so invalid batches change no
+        // state.
+        // Validate wire shard ids at the boundary (rejects truncation aliases like 256→0).
+        let mut validated: Vec<ShardId> = Vec::with_capacity(req.shard_ids.len());
+        for &sid in &req.shard_ids {
+            validated.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
+        }
+
         // Fetch a missing .ecx from a peer first so on-disk shards that never had
         // a local index can be mounted (issue #10104). Driven on demand by
         // ec.rebuild. volume_id 0 recovers every orphan on this server, including
@@ -3702,7 +3725,7 @@ impl VolumeServer for VolumeGrpcService {
         // Mount one shard at a time, returning error on first failure.
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.MountEcShards(...) }
         let mut store = self.state.store.write().unwrap();
-        for &shard_id in &req.shard_ids {
+        for &shard_id in &validated {
             store
                 .mount_ec_shard(vid, &req.collection, shard_id, &req.source_disk_type)
                 .map_err(|e| {
@@ -3746,10 +3769,20 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
+        // Pre-validate the ENTIRE batch before acquiring the write lock or
+        // mutating: validating inside the unmount loop would unmount a prefix
+        // (e.g. shard 0 of [0, 32]) and then fail, leaving a partial mutation.
+        // Reject up front so invalid batches change no state. Auth stays first.
+        // Validate wire shard ids at the boundary (rejects truncation aliases like 256→0).
+        let mut validated: Vec<ShardId> = Vec::with_capacity(req.shard_ids.len());
+        for &sid in &req.shard_ids {
+            validated.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
+        }
+
         // Unmount one shard at a time, returning error on first failure.
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.UnmountEcShards(...) }
         let mut store = self.state.store.write().unwrap();
-        for &shard_id in &req.shard_ids {
+        for &shard_id in &validated {
             store
                 .unmount_ec_shard(vid, shard_id, req.encode_ts_ns)
                 .map_err(|e| {
@@ -3770,6 +3803,7 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<Self::VolumeEcShardReadStream>, Status> {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
+        let shard_id = shard_id_try_from(req.shard_id).map_err(Status::invalid_argument)?;
 
         let store = self.state.store.read().unwrap();
         // Reconciled EC volumes can have their shards split across
@@ -3778,7 +3812,7 @@ impl VolumeServer for VolumeGrpcService {
         // rather than first-match `find_ec_volume(vid)` which would
         // miss shards that live on a sibling. Mirrors Go's findEcShard.
         let ec_vol = store
-            .find_ec_volume_with_shard(vid, req.shard_id)
+            .find_ec_volume_with_shard(vid, shard_id)
             .ok_or_else(|| {
                 Status::not_found(format!(
                     "ec volume {} shard {} not found",
@@ -3822,7 +3856,7 @@ impl VolumeServer for VolumeGrpcService {
         // find_ec_volume_with_shard already verified it.
         let shard = ec_vol
             .shards
-            .get(req.shard_id as usize)
+            .get(shard_id as usize)
             .and_then(|s| s.as_ref())
             .ok_or_else(|| {
                 Status::not_found(format!(
@@ -7710,6 +7744,91 @@ mod tests {
         assert!(resp.broken_shard_infos.iter().any(|s| s.shard_id == 0));
         assert!(resp.details.is_empty(), "{:?}", resp.details);
         assert_eq!(resp.total_files, 1);
+    }
+
+    /// Batch atomicity: mount pre-validates the ENTIRE shard_ids before
+    /// acquiring the write lock or mounting anything. A batch like [0, 32]
+    /// must fail with InvalidArgument and mount NOTHING — not the valid
+    /// prefix (shard 0). Regression test for the in-loop validation that
+    /// mounted 0 then returned InvalidArgument, skipping the sidecar reload
+    /// + notify.
+    #[tokio::test]
+    async fn test_mount_rejects_invalid_batch_without_partial_mutation() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .volume_ec_shards_generate(Request::new(
+                volume_server_pb::VolumeEcShardsGenerateRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let err = service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                collection: String::new(),
+                shard_ids: vec![0, 32],
+                source_disk_type: String::new(),
+                recover_missing_index: false,
+            }))
+            .await
+            .expect_err("batch with shard 32 must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err);
+
+        // No partial mutation: shard 0 must NOT be mounted.
+        let store = service.state.store.read().unwrap();
+        assert!(
+            store.find_ec_volume_with_shard(VolumeId(1), 0).is_none(),
+            "invalid batch must mount nothing, but shard 0 is mounted"
+        );
+    }
+
+    /// Batch atomicity (unmount side): unmount pre-validates the ENTIRE
+    /// shard_ids after admin auth but before the write lock / mutation. A
+    /// batch like [0, 32] must fail with InvalidArgument and unmount NOTHING.
+    #[tokio::test]
+    async fn test_unmount_rejects_invalid_batch_without_partial_mutation() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .volume_ec_shards_generate(Request::new(
+                volume_server_pb::VolumeEcShardsGenerateRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                },
+            ))
+            .await
+            .unwrap();
+        service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                collection: String::new(),
+                shard_ids: (0..14).collect(),
+                source_disk_type: String::new(),
+                recover_missing_index: false,
+            }))
+            .await
+            .unwrap();
+
+        let err = service
+            .volume_ec_shards_unmount(Request::new(
+                volume_server_pb::VolumeEcShardsUnmountRequest {
+                    volume_id: 1,
+                    shard_ids: vec![0, 32],
+                    encode_ts_ns: 0,
+                },
+            ))
+            .await
+            .expect_err("batch with shard 32 must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err);
+
+        // No partial mutation: shard 0 must STILL be mounted.
+        let store = service.state.store.read().unwrap();
+        assert!(
+            store.find_ec_volume_with_shard(VolumeId(1), 0).is_some(),
+            "invalid unmount batch must unmount nothing, but shard 0 is gone"
+        );
     }
 
     /// Two locations, one vid: the split-disk / cross-disk-reconcile layout

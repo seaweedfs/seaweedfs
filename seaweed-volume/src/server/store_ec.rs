@@ -45,7 +45,7 @@ use crate::pb::volume_server_pb::{
 use crate::server::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint, parse_grpc_address};
 use crate::server::request_id::outgoing_request_id_interceptor;
 use crate::server::volume_server::{VolumeServerState, to_http_address};
-use crate::storage::erasure_coding::ec_shard::ShardId;
+use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
 use crate::storage::store_ec_reconcile::EcVolumeMissingIndex;
 use crate::storage::types::*;
@@ -898,7 +898,12 @@ async fn cached_lookup_ec_shard_locations(
             .iter()
             .map(format_location_as_server_address)
             .collect();
-        out.insert(entry.shard_id as ShardId, addrs);
+        // Defensive: skip out-of-range shard ids from the master instead of
+        // truncating (256 would alias 0). Valid replies are unaffected.
+        let Ok(sid) = shard_id_try_from(entry.shard_id) else {
+            continue;
+        };
+        out.insert(sid, addrs);
     }
     Ok(out)
 }
@@ -1207,7 +1212,10 @@ async fn recover_one_remote_ec_shard_interval(
             // shard from a different encode run must not be fed to Reed-Solomon;
             // lenient only when the caller carries no identity (pre-upgrade).
             // Mirrors Go's `readLocalEcShardInterval`.
-            let owner = match store.find_ec_volume_with_shard(vid, sid as u32) {
+            let Ok(sid_shard) = ShardId::try_from(sid) else {
+                continue;
+            };
+            let owner = match store.find_ec_volume_with_shard(vid, sid_shard) {
                 Some(ecv)
                     if expected_encode_ts_ns == 0 || ecv.encode_ts_ns == expected_encode_ts_ns =>
                 {
