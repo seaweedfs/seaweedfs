@@ -40,7 +40,11 @@ pub(crate) fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Res
         let mut filled = 0;
         let mut at = offset;
         while filled < buf.len() {
-            let n = file.seek_read(&mut buf[filled..], at)?;
+            let n = match file.seek_read(&mut buf[filled..], at) {
+                Ok(n) => n,
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
+            };
             if n == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
