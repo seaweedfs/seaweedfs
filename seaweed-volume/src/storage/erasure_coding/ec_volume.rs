@@ -1579,39 +1579,51 @@ impl EcVolume {
     ) -> io::Result<()> {
         // cookie == 0 indicates SkipCookieCheck was requested
         if cookie.0 != 0 {
-            // Try to read the needle's cookie from the EC shards to validate
-            // Look up the needle in ecx index to find its offset, then read header from shard
-            if let Ok(Some((offset, size))) = self.find_needle_from_ecx(needle_id)
-                && !size.is_deleted()
-                && !offset.is_zero()
-            {
-                let actual_offset = offset.to_actual_offset() as u64;
-                // Determine which shard contains this offset and read the cookie
-                let shard_size = self
-                    .shards
-                    .iter()
-                    .filter_map(|s| s.as_ref())
-                    .map(|s| s.file_size())
-                    .next()
-                    .unwrap_or(0) as u64;
-                if let Some(shard_id) = actual_offset.checked_div(shard_size) {
-                    let shard_id = shard_id as usize;
-                    let shard_offset = actual_offset % shard_size;
-                    if let Some(Some(shard)) = self.shards.get(shard_id) {
-                        let mut header_buf = [0u8; 4]; // cookie is first 4 bytes of needle
-                        if shard.read_at(&mut header_buf, shard_offset).is_ok() {
-                            let needle_cookie =
-                                crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
-                            if needle_cookie != cookie {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    format!("unexpected cookie {:x}", cookie.0),
-                                ));
-                            }
-                        }
-                    }
-                }
+            let (offset, size) = match self.find_needle_from_ecx(needle_id)? {
+                Some((o, s)) => (o, s),
+                None => return self.journal_delete(needle_id),
+            };
+            if size.is_deleted() || offset.is_zero() {
+                return self.journal_delete(needle_id);
             }
+            let actual_offset = offset.to_actual_offset();
+            let intervals = self.locate_ec_shard_needle_interval(actual_offset, size);
+            if intervals.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("cannot verify cookie for needle {}", needle_id.0),
+                ));
+            }
+            let (shard_id, shard_offset) = self.interval_to_shard_id_and_offset(&intervals[0]);
+            let shard = self
+                .shards
+                .get(shard_id as usize)
+                .and_then(|s| s.as_ref())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("cannot verify cookie: shard {} not local", shard_id),
+                    )
+                })?;
+            let mut header_buf = [0u8; 4];
+            shard
+                .read_at(&mut header_buf, shard_offset as u64)
+                .map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("cannot verify cookie: {}", e),
+                    )
+                })?;
+            let needle_cookie = crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
+            if needle_cookie != cookie {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unexpected cookie {:x}", cookie.0),
+                ));
+            }
+            // Follow-up out of scope: peer-held shards via distributed reader
+            // (needs async/store context). This P0 makes non-local fail-closed
+            // instead of bypass.
         }
         self.journal_delete(needle_id)
     }
@@ -2261,6 +2273,86 @@ mod tests {
         vol.journal_delete(NeedleId(999)).unwrap();
         let (fc, dc) = vol.file_and_delete_count();
         assert_eq!((fc, dc), (2, 2));
+    }
+
+    /// P0-3: wrong-cookie BatchDelete must fail closed, never fall through to
+    /// the journal. The needle lives on a non-local shard (only shard 9 is
+    /// mounted), so there is no local header to compare against: the delete
+    /// must Err and append nothing to .ecj. The old first-local-shard-size
+    /// div + fall-through returned Ok here (bypass).
+    #[test]
+    fn test_journal_delete_wrong_cookie() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let needle = NeedleId(7);
+        let entries = vec![(needle, Offset::from_actual_offset(8), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        // dat_file_size makes the locate geometry well-defined.
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // Mount ONLY shard 9 (non-empty so add_shard accepts it beside an
+        // index with entries). The needle at offset 8 locates to a low shard,
+        // never to 9, so verification has no local header to read.
+        let mut shard9 = EcVolumeShard::new(dir, "", VolumeId(1), 9);
+        shard9.create().unwrap();
+        shard9.write_all(&[0xAAu8; 2048]).unwrap();
+        shard9.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 9))
+            .unwrap();
+
+        // Precondition: the geometry really does map away from the mounted shard.
+        let (off, size) = vol
+            .find_needle_from_ecx(needle)
+            .unwrap()
+            .expect("fixture needle must be indexed");
+        let intervals = vol.locate_ec_shard_needle_interval(off.to_actual_offset(), size);
+        assert!(
+            !intervals.is_empty(),
+            "fixture must locate to a shard for the test to be meaningful"
+        );
+        let (located, _) = vol.interval_to_shard_id_and_offset(&intervals[0]);
+        assert_ne!(
+            located, 9,
+            "fixture must locate away from mounted shard 9, got {}",
+            located
+        );
+
+        // Wrong cookie on a non-local shard must fail closed.
+        let res = vol.journal_delete_with_cookie(needle, Cookie(0xDEAD_BEEF));
+        let err = res.expect_err("wrong cookie must Err, not bypass to journal");
+        assert!(
+            err.to_string().contains("cannot verify cookie"),
+            "fail-closed error must say why, got: {}",
+            err
+        );
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            !deleted.contains(&needle),
+            "failed delete must not append to .ecj, got {:?}",
+            deleted
+        );
+
+        // Control: SkipCookieCheck (cookie 0) still journals on the same fixture,
+        // proving the Err above came from verification, not a broken fixture.
+        vol.journal_delete_with_cookie(needle, Cookie(0)).unwrap();
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            deleted.contains(&needle),
+            "cookie-0 delete must still journal, got {:?}",
+            deleted
+        );
     }
 
     #[test]
