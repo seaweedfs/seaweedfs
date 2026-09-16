@@ -4395,7 +4395,7 @@ impl VolumeServer for VolumeGrpcService {
         request: Request<volume_server_pb::VolumeTierMoveDatFromRemoteRequest>,
     ) -> Result<Response<Self::VolumeTierMoveDatFromRemoteStream>, Status> {
         self.check_grpc_admin_auth(&request)?;
-        self.state.check_maintenance()?;
+        // Note: Go does NOT check maintenance mode for TierMoveDatFromRemote
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
