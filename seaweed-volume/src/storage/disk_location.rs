@@ -1151,7 +1151,12 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
             Err(_) => return (0, 0),
         };
         // UTF-16 with trailing NUL for the Win32 wide-string call.
-        let wide: Vec<u16> = canonical.as_os_str().encode_wide().chain([0]).collect();
+        let mut wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
+        // UNC directory names must end in a backslash for GetDiskFreeSpaceExW.
+        if !wide.ends_with(&[0x5C]) {
+            wide.push(0x5C);
+        }
+        wide.push(0);
         // SAFETY: `wide` is NUL-terminated; the out-params are valid u64
         // writes; the call has no other preconditions.
         unsafe {
