@@ -12,7 +12,10 @@ use seaweed_volume::security::tls::{
 use seaweed_volume::security::{Guard, SigningKey};
 #[cfg(unix)]
 use seaweed_volume::server::debug::build_debug_router;
-use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
+use seaweed_volume::server::grpc_client::{
+    GRPC_INITIAL_WINDOW_SIZE, GRPC_KEEPALIVE_INTERVAL, GRPC_KEEPALIVE_TIMEOUT,
+    GRPC_MAX_MESSAGE_SIZE, load_outgoing_grpc_tls,
+};
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
 #[cfg(unix)]
 use seaweed_volume::server::profiling::CpuProfileSession;
@@ -31,10 +34,10 @@ type CpuProfileParam = Option<CpuProfileSession>;
 #[cfg(not(unix))]
 type CpuProfileParam = Option<()>;
 
-const GRPC_MAX_MESSAGE_SIZE: usize = 1 << 30;
-const GRPC_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-const GRPC_KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-const GRPC_INITIAL_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
+// The two settings that only make sense for the inbound server. The rest of
+// this server's HTTP/2 tuning — keepalive, window sizes, message size — is
+// imported from `server::grpc_client` above, which is also what the outgoing
+// clients dial with, so the two directions cannot drift apart.
 const GRPC_MAX_HEADER_LIST_SIZE: u32 = 8 * 1024 * 1024;
 const GRPC_MAX_CONCURRENT_STREAMS: u32 = 1000;
 
