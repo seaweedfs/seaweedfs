@@ -1138,10 +1138,45 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
         }
         (0, 0)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = path;
-        (0, 0)
+        use std::os::windows::ffi::OsStrExt;
+
+        // Canonicalize so symlinks, `.`/`..` segments, and relative paths
+        // resolve to the real location before querying. `\\?\`-prefixed
+        // extended-length paths and UNC (`\\?\UNC\...`) are passed through
+        // untouched: GetDiskFreeSpaceExW accepts them as-is.
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => return (0, 0),
+        };
+        // UTF-16 with trailing NUL for the Win32 wide-string call.
+        let mut wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
+        // UNC directory names must end in a backslash for GetDiskFreeSpaceExW.
+        if !wide.ends_with(&[0x5C]) {
+            wide.push(0x5C);
+        }
+        wide.push(0);
+        // SAFETY: `wide` is NUL-terminated; the out-params are valid u64
+        // writes; the call has no other preconditions.
+        unsafe {
+            let mut free_available: u64 = 0;
+            let mut total: u64 = 0;
+            let ok = windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_available,
+                &mut total,
+                std::ptr::null_mut(),
+            );
+            if ok == 0 {
+                return (0, 0);
+            }
+            return (total, free_available);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        compile_error!("get_disk_stats is implemented for unix and windows only");
     }
 }
 
@@ -1338,6 +1373,17 @@ fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// get_disk_stats must report real capacity for a real path on every
+    /// platform (Windows included) — consumers treat total==0 as "unknown"
+    /// and leave available_space at 0, which breaks volume assignment.
+    #[test]
+    fn test_get_disk_stats_reports_capacity_for_real_path() {
+        let tmp = TempDir::new().unwrap();
+        let (total, free) = get_disk_stats(tmp.path().to_str().unwrap());
+        assert!(total > 0, "expected total>0, got {total}");
+        assert!(free > 0, "expected free>0, got {free}");
+    }
 
     /// When `-dir.idx` is configured the EC `.vif` may live in the idx
     /// directory; the sweep must look there too, not only the data dir.

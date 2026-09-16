@@ -143,6 +143,11 @@ aws-types = "1"
 [target.'cfg(unix)'.dependencies]
 pprof = { version = "0.15", features = ["prost-codec"] }
 
+# GetDiskFreeSpaceExW for per-path disk capacity on Windows (0.61.2 already
+# in the tree via tempfile/mio, so this unifies rather than adding a version).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile = "3"
 
