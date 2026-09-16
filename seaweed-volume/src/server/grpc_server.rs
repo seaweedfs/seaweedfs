@@ -1075,7 +1075,12 @@ impl VolumeServer for VolumeGrpcService {
                 // EC volume deletion: journal the delete locally (with cookie validation, matching Go)
                 let mut store = self.state.store.write().unwrap();
                 if let Some(ec_vol) = store.find_ec_volume_mut(file_id.volume_id) {
-                    match ec_vol.journal_delete_with_cookie(n.id, n.cookie) {
+                    let cookie = if req.skip_cookie_check {
+                        crate::storage::types::Cookie(0)
+                    } else {
+                        n.cookie
+                    };
+                    match ec_vol.journal_delete_with_cookie(n.id, cookie) {
                         Ok(()) => {
                             results.push(volume_server_pb::DeleteResult {
                                 file_id: fid_str.clone(),

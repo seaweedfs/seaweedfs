@@ -1661,38 +1661,62 @@ impl EcVolume {
     ) -> io::Result<()> {
         // cookie == 0 indicates SkipCookieCheck was requested
         if cookie.0 != 0 {
-            // Try to read the needle's cookie from the EC shards to validate
-            // Look up the needle in ecx index to find its offset, then read header from shard
-            if let Ok(Some((offset, size))) = self.find_needle_from_ecx(needle_id)
-                && !size.is_deleted()
-                && !offset.is_zero()
-            {
-                let actual_offset = offset.to_actual_offset() as u64;
-                // Determine which shard contains this offset and read the cookie
-                let shard_size = self
-                    .shards
-                    .iter()
-                    .filter_map(|s| s.as_ref())
-                    .map(|s| s.file_size())
-                    .next()
-                    .unwrap_or(0) as u64;
-                if let Some(shard_id) = actual_offset.checked_div(shard_size) {
-                    let shard_id = shard_id as usize;
-                    let shard_offset = actual_offset % shard_size;
-                    if let Some(Some(shard)) = self.shards.get(shard_id) {
-                        let mut header_buf = [0u8; 4]; // cookie is first 4 bytes of needle
-                        if shard.read_at(&mut header_buf, shard_offset).is_ok() {
-                            let needle_cookie =
-                                crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
-                            if needle_cookie != cookie {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    format!("unexpected cookie {:x}", cookie.0),
-                                ));
-                            }
-                        }
+            let (offset, size) = match self.find_needle_from_ecx(needle_id)? {
+                Some((o, s)) => (o, s),
+                None => return self.journal_delete(needle_id),
+            };
+            if size.is_deleted() || offset.is_zero() {
+                return self.journal_delete(needle_id);
+            }
+            let actual_offset = offset.to_actual_offset();
+            let intervals = self.locate_ec_shard_needle_interval(actual_offset, size);
+            if intervals.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("cannot verify cookie for needle {}", needle_id.0),
+                ));
+            }
+            let (shard_id, shard_offset) = self.interval_to_shard_id_and_offset(&intervals[0]);
+            let shard = self
+                .shards
+                .get(shard_id as usize)
+                .and_then(|s| s.as_ref())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("cannot verify cookie: shard {} not local", shard_id),
+                    )
+                })?;
+            // Retry short reads, but fail closed on EOF.
+            let mut header_buf = [0u8; 4];
+            let mut filled = 0usize;
+            while filled < header_buf.len() {
+                match shard.read_at(
+                    &mut header_buf[filled..],
+                    shard_offset as u64 + filled as u64,
+                ) {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(e) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("cannot verify cookie: {}", e),
+                        ));
                     }
                 }
+            }
+            if filled != header_buf.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cannot verify cookie: incomplete header",
+                ));
+            }
+            let needle_cookie = crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
+            if needle_cookie != cookie {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unexpected cookie {:x}", cookie.0),
+                ));
             }
         }
         self.journal_delete(needle_id)
@@ -2343,6 +2367,147 @@ mod tests {
         vol.journal_delete(NeedleId(999)).unwrap();
         let (fc, dc) = vol.file_and_delete_count();
         assert_eq!((fc, dc), (2, 2));
+    }
+
+    #[test]
+    fn test_journal_delete_wrong_cookie() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let needle = NeedleId(7);
+        let entries = vec![(needle, Offset::from_actual_offset(8), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let mut shard9 = EcVolumeShard::new(dir, "", VolumeId(1), 9);
+        shard9.create().unwrap();
+        shard9.write_all(&[0xAAu8; 2048]).unwrap();
+        shard9.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 9))
+            .unwrap();
+
+        let (off, size) = vol
+            .find_needle_from_ecx(needle)
+            .unwrap()
+            .expect("fixture needle must be indexed");
+        let intervals = vol.locate_ec_shard_needle_interval(off.to_actual_offset(), size);
+        assert!(
+            !intervals.is_empty(),
+            "fixture must locate to a shard for the test to be meaningful"
+        );
+        let (located, _) = vol.interval_to_shard_id_and_offset(&intervals[0]);
+        assert_ne!(
+            located, 9,
+            "fixture must locate away from mounted shard 9, got {}",
+            located
+        );
+
+        let res = vol.journal_delete_with_cookie(needle, Cookie(0xDEAD_BEEF));
+        let err = res.expect_err("wrong cookie must Err, not bypass to journal");
+        assert!(
+            err.to_string().contains("cannot verify cookie"),
+            "fail-closed error must say why, got: {}",
+            err
+        );
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            !deleted.contains(&needle),
+            "failed delete must not append to .ecj, got {:?}",
+            deleted
+        );
+
+        vol.journal_delete_with_cookie(needle, Cookie(0)).unwrap();
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            deleted.contains(&needle),
+            "cookie-0 delete must still journal, got {:?}",
+            deleted
+        );
+    }
+
+    #[test]
+    fn test_journal_delete_incomplete_header() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let needle = NeedleId(7);
+        let entries = vec![(needle, Offset::from_actual_offset(8), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let probe = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        let (off, size) = probe
+            .find_needle_from_ecx(needle)
+            .unwrap()
+            .expect("fixture needle must be indexed");
+        let intervals = probe.locate_ec_shard_needle_interval(off.to_actual_offset(), size);
+        assert!(
+            !intervals.is_empty(),
+            "fixture must locate to a shard for the test to be meaningful"
+        );
+        let (located, located_offset) = probe.interval_to_shard_id_and_offset(&intervals[0]);
+        drop(probe);
+
+        let mut shard = EcVolumeShard::new(dir, "", VolumeId(1), located);
+        shard.create().unwrap();
+        shard.write_all(&[0x00u8; 2]).unwrap();
+        shard.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), located))
+            .unwrap();
+
+        let shard_ref = vol.shards[located as usize]
+            .as_ref()
+            .expect("located shard must be mounted");
+        assert!(
+            (shard_ref.file_size()) < located_offset + 4,
+            "fixture must truncate the header read (file {} bytes, offset {})",
+            shard_ref.file_size(),
+            located_offset
+        );
+
+        let res = vol.journal_delete_with_cookie(needle, Cookie(0x1234));
+        let err = res.expect_err("short header read must Err, not forge-match");
+        assert!(
+            err.to_string().contains("incomplete header"),
+            "short read must report incomplete header, got: {}",
+            err
+        );
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            !deleted.contains(&needle),
+            "failed delete must not append to .ecj, got {:?}",
+            deleted
+        );
+
+        vol.journal_delete_with_cookie(needle, Cookie(0)).unwrap();
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            deleted.contains(&needle),
+            "cookie-0 delete must still journal, got {:?}",
+            deleted
+        );
     }
 
     #[test]
