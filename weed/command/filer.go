@@ -94,7 +94,7 @@ type FilerOptions struct {
 	// and by weed mini; nil for standalone weed filer.
 	shutdownCtx context.Context
 	// gracefulStopTimeout caps how long startFiler waits for gRPC graceful
-	// stop before forcing the server to stop. Zero means the default of 10s.
+	// stop before forcing the server to stop. Zero means the default of 15s.
 	gracefulStopTimeout time.Duration
 }
 
@@ -416,14 +416,7 @@ func (fo *FilerOptions) startFiler() {
 	// percent-encoded directory names when a client follows it (#11125).
 	defaultHandler := weed_server.CleanPathHandler(defaultMux)
 
-	// Ensure fs.Shutdown() runs exactly once, whether triggered by a signal hook
-	// or by the main goroutine after Serve() returns (e.g., MiniCluster tests).
-	var shutdownOnce sync.Once
-	shutdownFiler := func() {
-		shutdownOnce.Do(func() {
-			fs.Shutdown()
-		})
-	}
+	var httpServers []*http.Server
 
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
@@ -433,14 +426,18 @@ func (fo *FilerOptions) startFiler() {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
 		publicHandler := weed_server.CleanPathHandler(publicVolumeMux)
+		publicServer := newHttpServer(publicHandler, nil)
+		httpServers = append(httpServers, publicServer)
 		go func() {
-			if e := http.Serve(publicListener, publicHandler); e != nil {
+			if e := publicServer.Serve(publicListener); e != nil && e != http.ErrServerClosed {
 				glog.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
 		if localPublicListener != nil {
+			localPublicServer := newHttpServer(publicHandler, nil)
+			httpServers = append(httpServers, localPublicServer)
 			go func() {
-				if e := http.Serve(localPublicListener, publicHandler); e != nil {
+				if e := localPublicServer.Serve(localPublicListener); e != nil && e != http.ErrServerClosed {
 					glog.Errorf("Volume server fail to serve public: %v", e)
 				}
 			}()
@@ -492,7 +489,7 @@ func (fo *FilerOptions) startFiler() {
 	// Helper to gracefully stop the gRPC server, waiting for active RPCs.
 	gracefulTimeout := fo.gracefulStopTimeout
 	if gracefulTimeout <= 0 {
-		gracefulTimeout = 10 * time.Second
+		gracefulTimeout = 15 * time.Second
 	}
 	stopGrpcServer := func() {
 		glog.V(0).Infof("Gracefully stopping gRPC server")
@@ -524,6 +521,7 @@ func (fo *FilerOptions) startFiler() {
 			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
 		}
 		socketServer = newHttpServer(defaultHandler, nil)
+		httpServers = append(httpServers, socketServer)
 		go socketServer.Serve(filerSocketListener)
 	}
 
@@ -567,6 +565,7 @@ func (fo *FilerOptions) startFiler() {
 		var localTLSServer *http.Server
 		if filerLocalListener != nil {
 			localTLSServer = newHttpServer(defaultHandler, tlsConfig)
+			httpServers = append(httpServers, localTLSServer)
 			go func() {
 				if err := localTLSServer.ServeTLS(filerLocalListener, "", ""); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
@@ -574,50 +573,28 @@ func (fo *FilerOptions) startFiler() {
 			}()
 		}
 		httpS := newHttpServer(defaultHandler, tlsConfig)
+		httpServers = append(httpServers, httpS)
+		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
 
-		// Register a single shutdown hook that runs the steps in the correct order:
-		// stop accepting new gRPC/HTTP requests, then close the filer database.
-		// Combining them into one hook keeps ordering intact regardless of how
-		// grace fires interrupt hooks (FIFO vs LIFO).
-		grace.OnInterrupt(func() {
-			stopGrpcServer()
-			glog.V(0).Infof("Gracefully stopping all HTTP servers")
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if socketServer != nil {
-				err = socketServer.Shutdown(shutdownCtx)
-				if err != nil {
-					glog.Warningf("socket server shutdown: %v", err)
-				}
-			}
-			if localTLSServer != nil {
-				err = localTLSServer.Shutdown(shutdownCtx)
-				if err != nil {
-					glog.Warningf("local TLS server shutdown: %v", err)
-				}
-			}
-			if err := httpS.Shutdown(shutdownCtx); err != nil {
-				glog.Warningf("HTTPS server shutdown: %v", err)
-			}
-			shutdownFiler()
-		})
+		grace.OnInterrupt(shutdown)
 
 		if fo.shutdownCtx != nil {
 			go func() {
 				<-fo.shutdownCtx.Done()
-				httpS.Shutdown(context.Background())
-				grpcS.Stop()
+				shutdown()
 			}()
 		}
 		if err := httpS.ServeTLS(filerListener, "", ""); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
-		// Close database after servers have stopped to prevent data corruption
-		shutdownFiler()
+		// Serve returns when listeners close, before active requests finish.
+		// Join the same shutdown sequence instead of closing the filer here.
+		shutdown()
 	} else {
 		var localHTTPServer *http.Server
 		if filerLocalListener != nil {
 			localHTTPServer = newHttpServer(defaultHandler, nil)
+			httpServers = append(httpServers, localHTTPServer)
 			go func() {
 				if err := localHTTPServer.Serve(filerLocalListener); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
@@ -625,39 +602,47 @@ func (fo *FilerOptions) startFiler() {
 			}()
 		}
 		httpS := newHttpServer(defaultHandler, nil)
+		httpServers = append(httpServers, httpS)
+		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
 
-		// Register a single shutdown hook that runs the steps in the correct order:
-		// stop accepting new gRPC/HTTP requests, then close the filer database.
-		// Combining them into one hook keeps ordering intact regardless of how
-		// grace fires interrupt hooks (FIFO vs LIFO).
-		grace.OnInterrupt(func() {
-			stopGrpcServer()
-			glog.V(0).Infof("Gracefully stopping all HTTP servers")
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if socketServer != nil {
-				socketServer.Shutdown(shutdownCtx)
-			}
-			if localHTTPServer != nil {
-				localHTTPServer.Shutdown(shutdownCtx)
-			}
-			if err := httpS.Shutdown(shutdownCtx); err != nil {
-				glog.Warningf("HTTP server shutdown: %v", err)
-			}
-			shutdownFiler()
-		})
+		grace.OnInterrupt(shutdown)
 
 		if fo.shutdownCtx != nil {
 			go func() {
 				<-fo.shutdownCtx.Done()
-				httpS.Shutdown(context.Background())
-				grpcS.Stop()
+				shutdown()
 			}()
 		}
 		if err := httpS.Serve(filerListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
-		// Close database after servers have stopped to prevent data corruption
-		shutdownFiler()
+		// Serve returns when listeners close, before active requests finish.
+		// Join the same shutdown sequence instead of closing the filer here.
+		shutdown()
 	}
+}
+
+// newFilerShutdown joins shutdown callers while gRPC and HTTP drain concurrently.
+func newFilerShutdown(stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
+	return sync.OnceFunc(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var drained sync.WaitGroup
+		drained.Add(1)
+		go func() {
+			defer drained.Done()
+			stopGrpc()
+		}()
+		for _, server := range httpServers {
+			drained.Add(1)
+			go func() {
+				defer drained.Done()
+				if err := server.Shutdown(shutdownCtx); err != nil {
+					glog.Warningf("filer HTTP shutdown: %v", err)
+				}
+			}()
+		}
+		drained.Wait()
+		shutdownFiler()
+	})
 }
