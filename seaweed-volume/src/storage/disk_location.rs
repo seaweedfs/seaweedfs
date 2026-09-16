@@ -1138,74 +1138,40 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
         }
         (0, 0)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        use std::path::Path;
-        use sysinfo::Disks;
-
-        /// Normalize a path for mount-point comparison: unify separators and
-        /// strip the `\\?\` extended-length prefix (mapping `\\?\UNC\server\share`
-        /// back to `\\server\share`) that `canonicalize` may produce on Windows.
-        fn normalize(p: &Path) -> String {
-            let s = p.to_string_lossy().replace('/', "\\");
-            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-                return format!("\\\\{rest}");
-            }
-            if let Some(rest) = s.strip_prefix(r"\\?\") {
-                return rest.to_string();
-            }
-            s
-        }
+        use std::os::windows::ffi::OsStrExt;
 
         // Canonicalize so symlinks, `.`/`..` segments, and relative paths
-        // resolve to the real location before matching against mount points.
-        let canonical =
-            std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
-        let want = normalize(&canonical);
-        // Case-insensitive: Windows drive letters and mount points have no
-        // stable casing (`C:\` vs `c:\`).
-        let want_cmp = want.to_lowercase();
-
-        let disks = Disks::new_with_refreshed_list();
-        let list = disks.list();
-        if list.is_empty() {
-            return (0, 0);
+        // resolve to the real location before querying. `\\?\`-prefixed
+        // extended-length paths and UNC (`\\?\UNC\...`) are passed through
+        // untouched: GetDiskFreeSpaceExW accepts them as-is.
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => return (0, 0),
+        };
+        // UTF-16 with trailing NUL for the Win32 wide-string call.
+        let wide: Vec<u16> = canonical.as_os_str().encode_wide().chain([0]).collect();
+        // SAFETY: `wide` is NUL-terminated; the out-params are valid u64
+        // writes; the call has no other preconditions.
+        unsafe {
+            let mut free_available: u64 = 0;
+            let mut total: u64 = 0;
+            let ok = windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_available,
+                &mut total,
+                std::ptr::null_mut(),
+            );
+            if ok == 0 {
+                return (0, 0);
+            }
+            return (total, free_available);
         }
-        // Longest mount-point prefix wins, mirroring get_disk_usage in grpc_server.
-        let mut best: Option<&sysinfo::Disk> = None;
-        let mut best_len = 0usize;
-        for disk in list {
-            let mount = normalize(disk.mount_point());
-            if mount.is_empty() {
-                continue;
-            }
-            let mount_cmp = mount.to_lowercase();
-            // Compare without a trailing separator so a `C:\` root mount still
-            // prefix-matches `C:\foo` via the separator-boundary check below.
-            let mount_cmp = mount_cmp.trim_end_matches('\\');
-            if mount_cmp.is_empty() {
-                continue;
-            }
-            // Separator-boundary-aware prefix match so e.g. `C:\data2` does not
-            // match a `C:\data` mount.
-            let matches = want_cmp == mount_cmp
-                || want_cmp
-                    .strip_prefix(mount_cmp)
-                    .is_some_and(|rest| rest.starts_with('\\'));
-            if matches && mount_cmp.len() > best_len {
-                best_len = mount_cmp.len();
-                best = Some(disk);
-            }
-        }
-        match best {
-            Some(disk) => (disk.total_space(), disk.available_space()),
-            // Never silently report zero capacity for a valid path: fall back
-            // to the first disk so callers see real capacity instead of 0.
-            None => {
-                let disk = &list[0];
-                (disk.total_space(), disk.available_space())
-            }
-        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        compile_error!("get_disk_stats is implemented for unix and windows only");
     }
 }
 
