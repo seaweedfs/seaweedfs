@@ -179,7 +179,14 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 		}
 		entryPath := fmt.Sprintf("%s/%s", message.NewParentPath, message.NewEntry.Name)
 		errorChunksCount := atomic.NewUint64(0)
-		if verified, hasMissingNeedles := c.verifyEntry(entryPath, message.NewEntry.Chunks, errorChunksCount, wg); !verified {
+		// expand chunk manifests so needles hidden behind a manifest get
+		// verified (and pruned) like in the BFS path
+		dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), message.NewEntry.Chunks, 0, math.MaxInt64, nil)
+		if resolveErr != nil {
+			return fmt.Errorf("failed to ResolveChunkManifest for %s: %+v", entryPath, resolveErr)
+		}
+		dataChunks = append(dataChunks, manifestChunks...)
+		if verified, hasMissingNeedles := c.verifyEntry(entryPath, dataChunks, errorChunksCount, wg); !verified {
 			if err = c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				entryResp, errReq := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 					Directory: message.NewParentPath,
@@ -407,7 +414,17 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 			Directory: dir,
 			Name:      name,
 		})
-		if err == nil && confirm.Entry != nil {
+		if err != nil {
+			if strings.Contains(err.Error(), "no entry is found in filer store") {
+				pruned = true
+				fmt.Fprintf(c.writer, "pruned entry with missing needles: %s\n", path)
+				return nil
+			}
+			// the delete outcome is unknown — never count it as pruned
+			fmt.Fprintf(c.writer, "skip pruning %s: delete not confirmed (%v)\n", path, err)
+			return nil
+		}
+		if confirm.Entry != nil {
 			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
 			return nil
 		}
