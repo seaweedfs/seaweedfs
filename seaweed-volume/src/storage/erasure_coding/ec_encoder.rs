@@ -427,22 +427,23 @@ pub(crate) fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::R
 
     // Read all idx entries
     let mut idx_file = File::open(idx_path)?;
-    let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
-
+    let mut last: std::collections::HashMap<NeedleId, (Offset, Size)> =
+        std::collections::HashMap::new();
     idx::walk_index_file(&mut idx_file, 0, |key, offset, size| {
-        entries.push((key, offset, size));
+        last.insert(key, (offset, size));
         Ok(())
     })?;
-
-    // Sort by NeedleId, then by actual offset so later entries come last
-    entries.sort_by_key(|&(key, offset, _)| (key, offset.to_actual_offset()));
-
-    // Remove duplicates (keep last/latest entry for each key).
-    // dedup_by_key keeps the first in each run, so we reverse first,
-    // dedup, then reverse back.
-    entries.reverse();
-    entries.dedup_by_key(|entry| entry.0);
-    entries.reverse();
+    let mut entries: Vec<(NeedleId, Offset, Size)> = last
+        .into_iter()
+        .filter_map(|(key, (offset, size))| {
+            if size.is_deleted() {
+                None
+            } else {
+                Some((key, offset, size))
+            }
+        })
+        .collect();
+    entries.sort_by_key(|&(key, _o, _s)| key);
 
     // Write sorted entries to .ecx
     let mut ecx_file = File::create(ecx_path)?;
@@ -1549,5 +1550,58 @@ mod tests {
             "an unmounted shard must be distinguished from an unopenable one, got {:?}",
             details
         );
+    }
+
+    #[test]
+    fn test_encode_drops_tombstone_last_wins() {
+        use crate::storage::idx;
+        use crate::storage::types::{NeedleId, Offset, Size, TOMBSTONE_FILE_SIZE};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let idx_path = format!("{}/t.idx", dir);
+        let ecx_path = format!("{}/t.ecx", dir);
+        let key = NeedleId(12345);
+        {
+            let mut f = std::fs::File::create(&idx_path).unwrap();
+            idx::write_index_entry(&mut f, key, Offset::from_actual_offset(1024), Size(100))
+                .unwrap();
+            idx::write_index_entry(&mut f, key, Offset::default(), TOMBSTONE_FILE_SIZE).unwrap();
+        }
+        super::write_sorted_ecx_from_idx(&idx_path, &ecx_path).unwrap();
+        let mut found = false;
+        {
+            let mut f = std::fs::File::open(&ecx_path).unwrap();
+            idx::walk_index_file(&mut f, 0, |k, _o, _s| {
+                if k == key {
+                    found = true;
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        assert!(!found, "tombstoned key must not appear in .ecx");
+        let idx2 = format!("{}/t2.idx", dir);
+        let ecx2 = format!("{}/t2.ecx", dir);
+        {
+            let mut f = std::fs::File::create(&idx2).unwrap();
+            idx::write_index_entry(&mut f, key, Offset::default(), TOMBSTONE_FILE_SIZE).unwrap();
+            idx::write_index_entry(&mut f, key, Offset::from_actual_offset(2048), Size(200))
+                .unwrap();
+        }
+        super::write_sorted_ecx_from_idx(&idx2, &ecx2).unwrap();
+        let mut found2 = false;
+        {
+            let mut f = std::fs::File::open(&ecx2).unwrap();
+            idx::walk_index_file(&mut f, 0, |k, o, s| {
+                if k == key {
+                    found2 = true;
+                    assert_eq!(o.to_actual_offset(), 2048);
+                    assert_eq!(s, Size(200));
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        assert!(found2, "re-created key must appear live");
     }
 }
