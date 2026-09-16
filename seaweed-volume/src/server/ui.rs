@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 
+use crate::server::absolute_display_path;
 use crate::server::server_stats;
 use crate::server::volume_server::VolumeServerState;
 use crate::storage::store::Store;
@@ -448,16 +449,6 @@ fn collect_ui_data(
     ec_volumes.sort_by_key(|row| row.volume_id);
 
     (disk_rows, volumes, remote_volumes, ec_volumes)
-}
-
-fn absolute_display_path(path: &str) -> String {
-    let p = std::path::Path::new(path);
-    if p.is_absolute() {
-        return path.to_string();
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(p).to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string())
 }
 
 fn join_i64(values: &[i64]) -> String {
