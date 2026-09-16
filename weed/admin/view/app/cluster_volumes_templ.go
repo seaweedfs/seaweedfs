@@ -35,19 +35,19 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"fas fa-database me-2\"></i>Cluster Volumes</h1>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"bi bi-database me-2\"></i>Cluster Volumes</h1>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.FilterCollection != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"d-flex align-items-center mt-2\"><span class=\"badge bg-info me-2\"><i class=\"fas fa-filter me-1\"></i>Collection: ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"d-flex align-items-center mt-2\"><span class=\"badge bg-info me-2\"><i class=\"bi bi-funnel me-1\"></i>Collection: ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.FilterCollection)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 18, Col: 92}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 18, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 			if templ_7745c5c3_Err != nil {
@@ -60,13 +60,13 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var3 templ.SafeURL
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/storage/volumes"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 20, Col: 64}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 20, Col: 64}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"fas fa-times me-1\"></i>Clear Filter</a></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"bi bi-x me-1\"></i>Clear Filter</a></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -111,20 +111,20 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, ">500 per page</option></select> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportVolumes()\"><i class=\"fas fa-download me-1\"></i>Export Page</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportVolumeList()\" title=\"Download the full cluster volume list as JSON\"><i class=\"fas fa-file-export me-1\"></i>Export All (JSON)</button></div></div></div><div id=\"volumes-content\"><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, ">500 per page</option></select> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportVolumes()\"><i class=\"bi bi-download me-1\"></i>Export Page</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportVolumeList()\" title=\"Download the full cluster volume list as JSON\"><i class=\"bi bi-file-earmark-arrow-up me-1\"></i>Export All (JSON)</button></div></div></div><div id=\"volumes-content\"><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 56, Col: 73}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 56, Col: 73}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</div></div><div class=\"col-auto\"><i class=\"fas fa-database fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-success shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-success text-uppercase mb-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</div></div><div class=\"col-auto\"><i class=\"bi bi-database icon-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-success shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-success text-uppercase mb-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -147,7 +147,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(data.SingleCollection)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 81, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 81, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -157,14 +157,14 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var6 string
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.CollectionCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 83, Col: 80}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 83, Col: 80}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</div></div><div class=\"col-auto\"><i class=\"fas fa-layer-group fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-info shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-info text-uppercase mb-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</div></div><div class=\"col-auto\"><i class=\"bi bi-layers icon-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-info shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-info text-uppercase mb-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -187,7 +187,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.SingleDataCenter)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 109, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 109, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -197,14 +197,14 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.DataCenterCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 111, Col: 80}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 111, Col: 80}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</div></div><div class=\"col-auto\"><i class=\"fas fa-building fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-secondary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-secondary text-uppercase mb-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</div></div><div class=\"col-auto\"><i class=\"bi bi-building icon-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-secondary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-secondary text-uppercase mb-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -227,7 +227,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.SingleRack)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 137, Col: 56}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 137, Col: 56}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -237,14 +237,14 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.RackCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 139, Col: 74}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 139, Col: 74}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</div></div><div class=\"col-auto\"><i class=\"fas fa-server fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-dark shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-dark text-uppercase mb-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</div></div><div class=\"col-auto\"><i class=\"bi bi-server icon-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-dark shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-dark text-uppercase mb-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -267,7 +267,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(data.SingleDiskType)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 165, Col: 60}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 165, Col: 60}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -277,14 +277,14 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(strings.Join(data.AllDiskTypes, ", "))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 167, Col: 78}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 167, Col: 78}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</div></div><div class=\"col-auto\"><i class=\"fas fa-hdd fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-purple shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-purple text-uppercase mb-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</div></div><div class=\"col-auto\"><i class=\"bi bi-device-hdd icon-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-purple shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-purple text-uppercase mb-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -307,7 +307,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(data.SingleVersion)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 193, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 193, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -317,27 +317,27 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(strings.Join(data.AllVersions, ", "))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 195, Col: 77}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 195, Col: 77}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</div></div><div class=\"col-auto\"><i class=\"fas fa-code-branch fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-warning shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-warning text-uppercase mb-1\">Total Size</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</div></div><div class=\"col-auto\"><i class=\"bi bi-diagram-3 icon-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-2 col-md-4 col-sm-6 mb-4\"><div class=\"card border-left-warning shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-warning text-uppercase mb-1\">Total Size</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var15 string
 		templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(data.TotalSize))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 216, Col: 64}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 216, Col: 64}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</div></div><div class=\"col-auto\"><i class=\"fas fa-chart-area fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Volumes Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-database me-2\"></i>Volume Details</h6></div><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</div></div><div class=\"col-auto\"><i class=\"bi bi-graph-up icon-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Volumes Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-database me-2\"></i>Volume Details</h6></div><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -472,7 +472,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var16 string
 				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("%d", volume.Id))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 320, Col: 94}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 320, Col: 94}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var16)
 				if templ_7745c5c3_Err != nil {
@@ -485,7 +485,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var17 string
 				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.Id))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 322, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 322, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 				if templ_7745c5c3_Err != nil {
@@ -498,7 +498,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var18 templ.SafeURL
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", volume.Server)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 326, Col: 116}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 326, Col: 116}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -511,13 +511,13 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Server)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 327, Col: 62}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 327, Col: 62}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></td>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -529,7 +529,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 					var templ_7745c5c3_Var20 string
 					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(volume.DataCenter)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 333, Col: 105}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 333, Col: 105}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 					if templ_7745c5c3_Err != nil {
@@ -548,7 +548,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Rack)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 338, Col: 99}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 338, Col: 99}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {
@@ -572,7 +572,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						var templ_7745c5c3_Var22 templ.SafeURL
 						templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/storage/volumes?collection=default"))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 344, Col: 115}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 344, Col: 115}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 						if templ_7745c5c3_Err != nil {
@@ -590,7 +590,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						var templ_7745c5c3_Var23 templ.SafeURL
 						templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, fmt.Sprintf("/storage/volumes?collection=%s", volume.Collection)))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 348, Col: 142}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 348, Col: 142}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 						if templ_7745c5c3_Err != nil {
@@ -603,7 +603,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						var templ_7745c5c3_Var24 string
 						templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Collection)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 349, Col: 107}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 349, Col: 107}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 						if templ_7745c5c3_Err != nil {
@@ -626,7 +626,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(int64(volume.Size)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 354, Col: 100}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 354, Col: 100}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -648,7 +648,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						return 0
 					}()))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 369, Col: 49}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 369, Col: 49}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -661,7 +661,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var27 string
 				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("Active: %s", formatBytes(int64(volume.Size-volume.DeletedByteCount))))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 370, Col: 132}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 370, Col: 132}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var27)
 				if templ_7745c5c3_Err != nil {
@@ -683,7 +683,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						return 0
 					}()))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 383, Col: 49}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 383, Col: 49}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
@@ -696,7 +696,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var29 string
 				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("Garbage: %s", formatBytes(int64(volume.DeletedByteCount))))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 384, Col: 119}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 384, Col: 119}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var29)
 				if templ_7745c5c3_Err != nil {
@@ -714,7 +714,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 					return "N/A"
 				}())
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 393, Col: 39}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 393, Col: 39}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 				if templ_7745c5c3_Err != nil {
@@ -727,7 +727,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var31 string
 				templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.FileCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 397, Col: 64}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 397, Col: 64}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 				if templ_7745c5c3_Err != nil {
@@ -740,7 +740,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var32 string
 				templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%03d", volume.ReplicaPlacement))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 399, Col: 101}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 399, Col: 101}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 				if templ_7745c5c3_Err != nil {
@@ -758,7 +758,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 					var templ_7745c5c3_Var33 string
 					templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(displayDiskType(volume.DiskType))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 403, Col: 112}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 403, Col: 112}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 					if templ_7745c5c3_Err != nil {
@@ -776,20 +776,20 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						var templ_7745c5c3_Var34 string
 						templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.ResolveAttributeValue(volume.RemoteStorageKey)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 405, Col: 126}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 405, Col: 126}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var34)
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 82, "\"><i class=\"fas fa-cloud me-1\"></i>")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 82, "\"><i class=\"bi bi-cloud me-1\"></i>")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var35 string
 						templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(volume.RemoteStorageName)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 406, Col: 114}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 406, Col: 113}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 						if templ_7745c5c3_Err != nil {
@@ -813,7 +813,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 					var templ_7745c5c3_Var36 string
 					templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("v%d", volume.Version))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 413, Col: 111}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 413, Col: 111}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 					if templ_7745c5c3_Err != nil {
@@ -831,20 +831,20 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var37 string
 				templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("%d", volume.Id))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 419, Col: 121}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 419, Col: 121}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var37)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-secondary btn-sm vacuum-btn\" title=\"Vacuum\" data-volume-id=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "\"><i class=\"bi bi-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-secondary btn-sm vacuum-btn\" title=\"Vacuum\" data-volume-id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var38 string
 				templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("%d", volume.Id))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 424, Col: 100}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 424, Col: 100}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var38)
 				if templ_7745c5c3_Err != nil {
@@ -857,13 +857,13 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var39 string
 				templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.ResolveAttributeValue(volume.Server)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 425, Col: 82}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 425, Col: 82}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var39)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "\"><i class=\"fas fa-compress-alt\"></i></button></div></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "\"><i class=\"bi bi-arrows-angle-contract\"></i></button></div></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -875,7 +875,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var40 string
 			templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", (data.CurrentPage-1)*data.PageSize+1))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 440, Col: 98}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 440, Col: 98}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 			if templ_7745c5c3_Err != nil {
@@ -888,7 +888,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", minInt(data.CurrentPage*data.PageSize, data.TotalVolumes)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 440, Col: 180}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 440, Col: 180}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 			if templ_7745c5c3_Err != nil {
@@ -901,7 +901,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 			var templ_7745c5c3_Var42 string
 			templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 440, Col: 222}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 440, Col: 222}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 			if templ_7745c5c3_Err != nil {
@@ -919,7 +919,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var43 string
 				templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.CurrentPage))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 446, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 446, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 				if templ_7745c5c3_Err != nil {
@@ -932,7 +932,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				var templ_7745c5c3_Var44 string
 				templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 446, Col: 117}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 446, Col: 117}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 				if templ_7745c5c3_Err != nil {
@@ -960,18 +960,18 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 					var templ_7745c5c3_Var45 string
 					templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("%d", data.CurrentPage-1))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 460, Col: 138}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 460, Col: 138}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var45)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 101, "\"><i class=\"fas fa-chevron-left\"></i></a></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 101, "\"><i class=\"bi bi-chevron-left\"></i></a></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 102, "<li class=\"page-item disabled\"><span class=\"page-link\"><i class=\"fas fa-chevron-left\"></i></span></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 102, "<li class=\"page-item disabled\"><span class=\"page-link\"><i class=\"bi bi-chevron-left\"></i></span></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -989,7 +989,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						var templ_7745c5c3_Var46 string
 						templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 476, Col: 93}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 476, Col: 93}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 						if templ_7745c5c3_Err != nil {
@@ -1007,7 +1007,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						var templ_7745c5c3_Var47 string
 						templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("%d", i))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 480, Col: 125}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 480, Col: 125}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var47)
 						if templ_7745c5c3_Err != nil {
@@ -1020,7 +1020,7 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 						var templ_7745c5c3_Var48 string
 						templ_7745c5c3_Var48, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 480, Col: 148}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 480, Col: 148}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var48))
 						if templ_7745c5c3_Err != nil {
@@ -1044,18 +1044,18 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 					var templ_7745c5c3_Var49 string
 					templ_7745c5c3_Var49, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprintf("%d", data.CurrentPage+1))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 488, Col: 138}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 488, Col: 138}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var49)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 111, "\"><i class=\"fas fa-chevron-right\"></i></a></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 111, "\"><i class=\"bi bi-chevron-right\"></i></a></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 112, "<li class=\"page-item disabled\"><span class=\"page-link\"><i class=\"fas fa-chevron-right\"></i></span></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 112, "<li class=\"page-item disabled\"><span class=\"page-link\"><i class=\"bi bi-chevron-right\"></i></span></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -1066,25 +1066,25 @@ func ClusterVolumes(data dash.ClusterVolumesData) templ.Component {
 				}
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 114, "<div class=\"text-center py-5\"><i class=\"fas fa-database fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Volumes Found</h5><p class=\"text-muted\">No volumes are currently available in the cluster.</p></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 114, "<div class=\"text-center py-5\"><i class=\"bi bi-database icon-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Volumes Found</h5><p class=\"text-muted\">No volumes are currently available in the cluster.</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 115, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 115, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"bi bi-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var50 string
 		templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/cluster_volumes.templ`, Line: 518, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volumes.templ`, Line: 518, Col: 81}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 116, "</small></div></div></div><!-- JavaScript for pagination and sorting --><script>\n        // Initialize pagination links when page loads\n        document.addEventListener('DOMContentLoaded', function() {\n            // Add click handlers to pagination links\n            document.querySelectorAll('.pagination-link').forEach(link => {\n                link.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const page = this.getAttribute('data-page');\n                    goToPage(page);\n                });\n            });\n            \n            // Add click handlers to view details buttons\n            document.querySelectorAll('.view-details-btn').forEach(button => {\n                button.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const volumeId = this.getAttribute('data-volume-id');\n                    viewVolumeDetails(volumeId);\n                });\n            });\n\n            // Add click handlers to volume ID links\n            document.querySelectorAll('.volume-id-link').forEach(link => {\n                link.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const volumeId = this.getAttribute('data-volume-id');\n                    viewVolumeDetails(volumeId);\n                });\n            });\n\n            // Add click handlers to vacuum buttons\n            document.querySelectorAll('.vacuum-btn').forEach(button => {\n                button.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const volumeId = this.getAttribute('data-volume-id');\n                    const server = this.getAttribute('data-server');\n                    performVacuum(volumeId, server, this);\n                });\n            });\n        });\n        \n        function goToPage(page) {\n            const url = new URL(window.location);\n            url.searchParams.set('page', page);\n            window.location.href = url.toString();\n        }\n        \n        function changePageSize() {\n            const pageSize = document.getElementById('pageSizeSelect').value;\n            const url = new URL(window.location);\n            url.searchParams.set('pageSize', pageSize);\n            url.searchParams.set('page', '1'); // Reset to first page\n            window.location.href = url.toString();\n        }\n        \n        function sortTable(column) {\n            const url = new URL(window.location);\n            const currentSort = url.searchParams.get('sortBy');\n            const currentOrder = url.searchParams.get('sortOrder') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === column && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            url.searchParams.set('sortBy', column);\n            url.searchParams.set('sortOrder', newOrder);\n            url.searchParams.set('page', '1'); // Reset to first page\n            window.location.href = url.toString();\n        }\n        \n        function viewVolumeDetails(volumeId) {\n            // Get the server from the current row - works for both buttons and volume ID links\n            const clickedElement = event.target;\n            const row = clickedElement.closest('tr');\n            const serverCell = row.querySelector('td:nth-child(2) a');\n            const server = serverCell ? serverCell.textContent.trim() : 'unknown';\n            \n            window.location.href = (window.__BASE_PATH__ || '') + `/storage/volumes/${volumeId}/${encodeURIComponent(server)}`;\n        }\n\n        function performVacuum(volumeId, server, button) {\n            // Disable button and show loading state\n            const originalHTML = button.innerHTML;\n            button.disabled = true;\n            button.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i>';\n\n            // Send vacuum request\n            fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.error) {\n                    showMessage(data.error, 'error');\n                } else {\n                    showMessage(data.message || 'Volume vacuum started successfully', 'success');\n                    // Optionally refresh the page after a delay to show updated vacuum status\n                    setTimeout(() => {\n                        window.location.reload();\n                    }, 2000);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                showMessage('Failed to start vacuum operation', 'error');\n            })\n            .finally(() => {\n                // Re-enable button\n                button.disabled = false;\n                button.innerHTML = originalHTML;\n            });\n        }\n\n        function showMessage(message, type) {\n            // Create toast notification\n            const toast = document.createElement('div');\n            toast.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show position-fixed`;\n            toast.style.top = '20px';\n            toast.style.right = '20px';\n            toast.style.zIndex = '9999';\n            toast.style.minWidth = '300px';\n            \n            toast.innerHTML = `\n                ${message}\n                <button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"alert\"></button>\n            `;\n            \n            document.body.appendChild(toast);\n            \n            // Auto-remove after 5 seconds\n            setTimeout(() => {\n                if (toast.parentNode) {\n                    toast.parentNode.removeChild(toast);\n                }\n            }, 5000);\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 116, "</small></div></div></div><!-- JavaScript for pagination and sorting --><script>\n        // Initialize pagination links when page loads\n        document.addEventListener('DOMContentLoaded', function() {\n            // Add click handlers to pagination links\n            document.querySelectorAll('.pagination-link').forEach(link => {\n                link.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const page = this.getAttribute('data-page');\n                    goToPage(page);\n                });\n            });\n            \n            // Add click handlers to view details buttons\n            document.querySelectorAll('.view-details-btn').forEach(button => {\n                button.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const volumeId = this.getAttribute('data-volume-id');\n                    viewVolumeDetails(volumeId);\n                });\n            });\n\n            // Add click handlers to volume ID links\n            document.querySelectorAll('.volume-id-link').forEach(link => {\n                link.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const volumeId = this.getAttribute('data-volume-id');\n                    viewVolumeDetails(volumeId);\n                });\n            });\n\n            // Add click handlers to vacuum buttons\n            document.querySelectorAll('.vacuum-btn').forEach(button => {\n                button.addEventListener('click', function(e) {\n                    e.preventDefault();\n                    const volumeId = this.getAttribute('data-volume-id');\n                    const server = this.getAttribute('data-server');\n                    performVacuum(volumeId, server, this);\n                });\n            });\n        });\n        \n        function goToPage(page) {\n            const url = new URL(window.location);\n            url.searchParams.set('page', page);\n            window.location.href = url.toString();\n        }\n        \n        function changePageSize() {\n            const pageSize = document.getElementById('pageSizeSelect').value;\n            const url = new URL(window.location);\n            url.searchParams.set('pageSize', pageSize);\n            url.searchParams.set('page', '1'); // Reset to first page\n            window.location.href = url.toString();\n        }\n        \n        function sortTable(column) {\n            const url = new URL(window.location);\n            const currentSort = url.searchParams.get('sortBy');\n            const currentOrder = url.searchParams.get('sortOrder') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === column && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            url.searchParams.set('sortBy', column);\n            url.searchParams.set('sortOrder', newOrder);\n            url.searchParams.set('page', '1'); // Reset to first page\n            window.location.href = url.toString();\n        }\n        \n        function viewVolumeDetails(volumeId) {\n            // Get the server from the current row - works for both buttons and volume ID links\n            const clickedElement = event.target;\n            const row = clickedElement.closest('tr');\n            const serverCell = row.querySelector('td:nth-child(2) a');\n            const server = serverCell ? serverCell.textContent.trim() : 'unknown';\n            \n            window.location.href = (window.__BASE_PATH__ || '') + `/storage/volumes/${volumeId}/${encodeURIComponent(server)}`;\n        }\n\n        function performVacuum(volumeId, server, button) {\n            // Disable button and show loading state\n            const originalHTML = button.innerHTML;\n            button.disabled = true;\n            button.innerHTML = '<i class=\"bi bi-arrow-repeat icon-spin\"></i>';\n\n            // Send vacuum request\n            fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.error) {\n                    showMessage(data.error, 'error');\n                } else {\n                    showMessage(data.message || 'Volume vacuum started successfully', 'success');\n                    // Optionally refresh the page after a delay to show updated vacuum status\n                    setTimeout(() => {\n                        window.location.reload();\n                    }, 2000);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                showMessage('Failed to start vacuum operation', 'error');\n            })\n            .finally(() => {\n                // Re-enable button\n                button.disabled = false;\n                button.innerHTML = originalHTML;\n            });\n        }\n\n        function showMessage(message, type) {\n            // Create toast notification\n            const toast = document.createElement('div');\n            toast.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show position-fixed`;\n            toast.style.top = '20px';\n            toast.style.right = '20px';\n            toast.style.zIndex = '9999';\n            toast.style.minWidth = '300px';\n            \n            toast.innerHTML = `\n                ${message}\n                <button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"alert\"></button>\n            `;\n            \n            document.body.appendChild(toast);\n            \n            // Auto-remove after 5 seconds\n            setTimeout(() => {\n                if (toast.parentNode) {\n                    toast.parentNode.removeChild(toast);\n                }\n            }, 5000);\n        }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1153,17 +1153,17 @@ func getSortIcon(column, currentSort, currentOrder string) templ.Component {
 		}
 		ctx = templ.ClearChildren(ctx)
 		if column != currentSort {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 117, "<i class=\"fas fa-sort text-muted ms-1\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 117, "<i class=\"bi bi-arrow-down-up text-muted ms-1\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else if currentOrder == "asc" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 118, "<i class=\"fas fa-sort-up text-primary ms-1\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 118, "<i class=\"bi bi-sort-up text-primary ms-1\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 119, "<i class=\"fas fa-sort-down text-primary ms-1\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 119, "<i class=\"bi bi-sort-down text-primary ms-1\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

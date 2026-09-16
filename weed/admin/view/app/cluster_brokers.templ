@@ -8,12 +8,12 @@ import (
 templ ClusterBrokers(data dash.ClusterBrokersData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			<i class="fas fa-comments me-2"></i>Message Brokers
+			<i class="bi bi-chat-dots me-2"></i>Message Brokers
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 				<button type="button" class="btn btn-sm btn-outline-primary" onclick="exportBrokers()">
-					<i class="fas fa-download me-1"></i>Export
+					<i class="bi bi-download me-1"></i>Export
 				</button>
 			</div>
 		</div>
@@ -35,7 +35,7 @@ templ ClusterBrokers(data dash.ClusterBrokersData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-comments fa-2x text-gray-300"></i>
+								<i class="bi bi-chat-dots icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -47,7 +47,7 @@ templ ClusterBrokers(data dash.ClusterBrokersData) {
 		<div class="card shadow mb-4">
 			<div class="card-header py-3">
 				<h6 class="m-0 font-weight-bold text-primary">
-					<i class="fas fa-comments me-2"></i>Message Brokers
+					<i class="bi bi-chat-dots me-2"></i>Message Brokers
 				</h6>
 			</div>
 			<div class="card-body">
@@ -92,7 +92,7 @@ templ ClusterBrokers(data dash.ClusterBrokersData) {
 					</div>
 				} else {
 					<div class="text-center py-5">
-						<i class="fas fa-comments fa-3x text-muted mb-3"></i>
+						<i class="bi bi-chat-dots icon-3x text-muted mb-3"></i>
 						<h5 class="text-muted">No Message Brokers Found</h5>
 						<p class="text-muted">No message broker servers are currently available in the cluster.</p>
 					</div>
@@ -104,7 +104,7 @@ templ ClusterBrokers(data dash.ClusterBrokersData) {
 		<div class="row">
 			<div class="col-12">
 				<small class="text-muted">
-					<i class="fas fa-clock me-1"></i>
+					<i class="bi bi-clock me-1"></i>
 					Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
 				</small>
 			</div>

@@ -16,15 +16,15 @@ templ PluginLane(page string, lane string) {
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
-                        <h2 class="mb-0"><i class="fas fa-layer-group me-2"></i>{ lane } Lane Workers</h2>
+                        <h2 class="mb-0"><i class="bi bi-layers me-2"></i>{ lane } Lane Workers</h2>
                         <p class="text-muted mb-0">Workers and scheduler status for the { lane } scheduling lane.</p>
                     </div>
                     <div class="btn-group">
                         <a href={ dash.PUrl(ctx, "/plugin") } class="btn btn-outline-secondary">
-                            <i class="fas fa-arrow-left me-1"></i>All Workers
+                            <i class="bi bi-arrow-left me-1"></i>All Workers
                         </a>
                         <button type="button" class="btn btn-outline-secondary" id="plugin-lane-refresh-btn">
-                            <i class="fas fa-sync-alt me-1"></i>Refresh
+                            <i class="bi bi-arrow-repeat me-1"></i>Refresh
                         </button>
                     </div>
                 </div>
@@ -35,11 +35,11 @@ templ PluginLane(page string, lane string) {
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="card-title mb-0"><i class="fas fa-server me-2"></i>Lane Scheduler Status</h5>
+                        <h5 class="card-title mb-0"><i class="bi bi-server me-2"></i>Lane Scheduler Status</h5>
                     </div>
                     <div class="card-body" id="plugin-lane-scheduler-status">
                         <div class="text-center text-muted py-3">
-                            <i class="fas fa-spinner fa-spin me-1"></i>Loading scheduler status...
+                            <i class="bi bi-arrow-repeat icon-spin me-1"></i>Loading scheduler status...
                         </div>
                     </div>
                 </div>
@@ -50,11 +50,11 @@ templ PluginLane(page string, lane string) {
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="card-title mb-0"><i class="fas fa-tasks me-2"></i>Job Types</h5>
+                        <h5 class="card-title mb-0"><i class="bi bi-list-check me-2"></i>Job Types</h5>
                     </div>
                     <div class="card-body" id="plugin-lane-job-types">
                         <div class="text-center text-muted py-3">
-                            <i class="fas fa-spinner fa-spin me-1"></i>Loading job types...
+                            <i class="bi bi-arrow-repeat icon-spin me-1"></i>Loading job types...
                         </div>
                     </div>
                 </div>
@@ -65,11 +65,11 @@ templ PluginLane(page string, lane string) {
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="card-title mb-0"><i class="fas fa-plug me-2"></i>Connected Workers</h5>
+                        <h5 class="card-title mb-0"><i class="bi bi-plug me-2"></i>Connected Workers</h5>
                     </div>
                     <div class="card-body" id="plugin-lane-workers">
                         <div class="text-center text-muted py-3">
-                            <i class="fas fa-spinner fa-spin me-1"></i>Loading workers...
+                            <i class="bi bi-arrow-repeat icon-spin me-1"></i>Loading workers...
                         </div>
                     </div>
                 </div>

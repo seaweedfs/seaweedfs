@@ -36,7 +36,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"fas fa-database me-2\"></i>Volume Details</h1><nav aria-label=\"breadcrumb\"><ol class=\"breadcrumb\"><li class=\"breadcrumb-item\"><a href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"bi bi-database me-2\"></i>Volume Details</h1><nav aria-label=\"breadcrumb\"><ol class=\"breadcrumb\"><li class=\"breadcrumb-item\"><a href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -75,7 +75,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</li></ol></nav></div><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"history.back()\"><i class=\"fas fa-arrow-left me-1\"></i>Back</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"window.location.reload()\"><i class=\"fas fa-refresh me-1\"></i>Refresh</button></div></div></div><div class=\"row\"><!-- Volume Information Card --><div class=\"col-lg-8\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-info-circle me-2\"></i>Volume Information</h6></div><div class=\"card-body\"><div class=\"row\"><div class=\"col-md-6\"><div class=\"mb-3\"><label class=\"form-label\"><strong>Volume ID:</strong></label><div><code class=\"fs-5\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</li></ol></nav></div><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"history.back()\"><i class=\"bi bi-arrow-left me-1\"></i>Back</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"window.location.reload()\"><i class=\"bi bi-arrow-clockwise me-1\"></i>Refresh</button></div></div></div><div class=\"row\"><!-- Volume Information Card --><div class=\"col-lg-8\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-info-circle me-2\"></i>Volume Information</h6></div><div class=\"card-body\"><div class=\"row\"><div class=\"col-md-6\"><div class=\"mb-3\"><label class=\"form-label\"><strong>Volume ID:</strong></label><div><code class=\"fs-5\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -114,7 +114,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></div></div><div class=\"mb-3\"><label class=\"form-label\"><strong>Data Center:</strong></label><div><span class=\"badge bg-light text-dark\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></div></div><div class=\"mb-3\"><label class=\"form-label\"><strong>Data Center:</strong></label><div><span class=\"badge bg-light text-dark\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -240,7 +240,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</span></div></div></div></div></div></div></div><!-- Statistics Card --><div class=\"col-lg-4\"><!-- Volume Statistics & Health Card --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-chart-pie me-2\"></i>Volume Statistics & Health</h6></div><div class=\"card-body\"><!-- Storage Metrics --><div class=\"row mb-3\"><div class=\"col-6\"><div class=\"text-center\"><div class=\"h4 mb-0 font-weight-bold text-success\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</span></div></div></div></div></div></div></div><!-- Statistics Card --><div class=\"col-lg-4\"><!-- Volume Statistics & Health Card --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-pie-chart me-2\"></i>Volume Statistics & Health</h6></div><div class=\"card-body\"><!-- Storage Metrics --><div class=\"row mb-3\"><div class=\"col-6\"><div class=\"text-center\"><div class=\"h4 mb-0 font-weight-bold text-success\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -346,7 +346,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if data.Volume.ReadOnly {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "<span class=\"badge bg-warning fs-6 px-3 py-2\"><i class=\"fas fa-lock me-1\"></i>Read Only</span> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "<span class=\"badge bg-warning fs-6 px-3 py-2\"><i class=\"bi bi-lock me-1\"></i>Read Only</span> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -357,12 +357,12 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 				}
 			}
 		} else if data.VolumeSizeLimit > data.Volume.Size {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "<span class=\"badge bg-success fs-6 px-3 py-2\"><i class=\"fas fa-edit me-1\"></i>Read/Write</span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "<span class=\"badge bg-success fs-6 px-3 py-2\"><i class=\"bi bi-pencil-square me-1\"></i>Read/Write</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<span class=\"badge bg-warning fs-6 px-3 py-2\"><i class=\"fas fa-exclamation-triangle me-1\"></i>Size Limit Reached</span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<span class=\"badge bg-warning fs-6 px-3 py-2\"><i class=\"bi bi-exclamation-triangle me-1\"></i>Size Limit Reached</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -405,14 +405,14 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if data.Volume.Ttl > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "<div class=\"mb-3 text-center\"><span class=\"badge bg-info fs-6 px-3 py-2\"><i class=\"fas fa-clock me-1\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "<div class=\"mb-3 text-center\"><span class=\"badge bg-info fs-6 px-3 py-2\"><i class=\"bi bi-clock me-1\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var25 string
 			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(formatTTL(data.Volume.Ttl))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 240, Col: 92}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 240, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
@@ -428,14 +428,14 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if data.Volume.RemoteStorageName != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<hr class=\"my-3\"><div class=\"mb-2\"><div class=\"text-center\"><div class=\"h6 mb-1 font-weight-bold text-info\"><i class=\"fas fa-cloud me-1\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<hr class=\"my-3\"><div class=\"mb-2\"><div class=\"text-center\"><div class=\"h6 mb-1 font-weight-bold text-info\"><i class=\"bi bi-cloud me-1\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(data.Volume.RemoteStorageName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 254, Col: 99}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 254, Col: 98}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -483,14 +483,14 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if len(data.Replicas) > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "<div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-copy me-2\"></i>Replicas (")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "<div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-copy me-2\"></i>Replicas (")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var29 string
 			templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.ReplicationCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 280, Col: 111}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/volume_details.templ`, Line: 280, Col: 110}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 			if templ_7745c5c3_Err != nil {
@@ -522,7 +522,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></strong> <span class=\"badge bg-success ms-2\">Primary</span></td><td><span class=\"badge bg-light text-dark\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></strong> <span class=\"badge bg-success ms-2\">Primary</span></td><td><span class=\"badge bg-light text-dark\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -605,7 +605,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></td><td><span class=\"badge bg-light text-dark\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></td><td><span class=\"badge bg-light text-dark\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -670,7 +670,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "\" class=\"btn btn-sm btn-outline-primary\"><i class=\"fas fa-eye me-1\"></i>View</a></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "\" class=\"btn btn-sm btn-outline-primary\"><i class=\"bi bi-eye me-1\"></i>View</a></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -680,7 +680,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<!-- Actions Card --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-tools me-2\"></i>Actions</h6></div><div class=\"card-body\"><div class=\"d-flex flex-wrap gap-2\"><button type=\"button\" class=\"btn btn-outline-danger vacuum-btn\" title=\"Vacuum Volume\" data-volume-id=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<!-- Actions Card --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-tools me-2\"></i>Actions</h6></div><div class=\"card-body\"><div class=\"d-flex flex-wrap gap-2\"><button type=\"button\" class=\"btn btn-outline-danger vacuum-btn\" title=\"Vacuum Volume\" data-volume-id=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -706,7 +706,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "\"><i class=\"fas fa-compress-alt me-1\"></i>Vacuum</button> ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "\"><i class=\"bi bi-arrows-angle-contract me-1\"></i>Vacuum</button> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -737,7 +737,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "\" data-read-only=\"true\"><i class=\"fas fa-lock me-1\"></i>Set Read-Only</button> <button type=\"button\" class=\"btn btn-outline-success volume-access-btn\" data-volume-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "\" data-read-only=\"true\"><i class=\"bi bi-lock me-1\"></i>Set Read-Only</button> <button type=\"button\" class=\"btn btn-outline-success volume-access-btn\" data-volume-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -763,7 +763,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "\" data-read-only=\"false\"><i class=\"fas fa-unlock me-1\"></i>Set Read/Write</button>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "\" data-read-only=\"false\"><i class=\"bi bi-unlock me-1\"></i>Set Read/Write</button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -778,7 +778,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<div class=\"mt-3\"><small class=\"text-muted\"><i class=\"fas fa-info-circle me-1\"></i> Use these actions to perform maintenance operations on the volume.</small></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<div class=\"mt-3\"><small class=\"text-muted\"><i class=\"bi bi-info-circle me-1\"></i> Use these actions to perform maintenance operations on the volume.</small></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"bi bi-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -791,7 +791,7 @@ func VolumeDetails(data dash.VolumeDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "</small></div></div><!-- JavaScript for volume actions --><script>\n        document.addEventListener('DOMContentLoaded', function() {\n            // Add click handler for vacuum button\n            const vacuumBtn = document.querySelector('.vacuum-btn');\n            if (vacuumBtn) {\n                vacuumBtn.addEventListener('click', function() {\n                    const volumeId = this.getAttribute('data-volume-id');\n                    const server = this.getAttribute('data-server');\n                    performVacuum(volumeId, server, this);\n                });\n            }\n            document.querySelectorAll('.volume-access-btn').forEach(button => {\n                button.addEventListener('click', function() {\n                    setVolumeReadOnly(this.dataset.volumeId, this.dataset.server, this.dataset.readOnly === 'true');\n                });\n            });\n        });\n\n        async function setVolumeReadOnly(volumeId, server, readOnly) {\n            const mode = readOnly ? 'read-only' : 'read/write';\n            if (!confirm(`Set volume ${volumeId} on ${server} to ${mode}? This applies only to this replica.`)) {\n                return;\n            }\n            const buttons = document.querySelectorAll('.volume-access-btn');\n            buttons.forEach(button => { button.disabled = true; });\n            try {\n                const response = await fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/read-only`, {\n                    method: 'POST',\n                    headers: { 'Content-Type': 'application/json' },\n                    body: JSON.stringify({ read_only: readOnly })\n                });\n                const data = await response.json();\n                if (!response.ok || data.error) {\n                    throw new Error(data.error || 'Failed to change volume access mode');\n                }\n                showMessage(data.message, 'success');\n                setTimeout(() => window.location.reload(), 1000);\n            } catch (error) {\n                showMessage(error.message, 'error');\n                buttons.forEach(button => { button.disabled = false; });\n            }\n        }\n\n        function performVacuum(volumeId, server, button) {\n            // Disable button and show loading state\n            const originalText = button.innerHTML;\n            button.disabled = true;\n            button.innerHTML = '<i class=\"fas fa-spinner fa-spin me-1\"></i>Vacuuming...';\n\n            // Send vacuum request\n            fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.error) {\n                    showMessage(data.error, 'error');\n                } else {\n                    showMessage(data.message || 'Volume vacuum started successfully', 'success');\n                    // Optionally refresh the page after a delay\n                    setTimeout(() => {\n                        window.location.reload();\n                    }, 2000);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                showMessage('Failed to start vacuum operation', 'error');\n            })\n            .finally(() => {\n                // Re-enable button\n                button.disabled = false;\n                button.innerHTML = originalText;\n            });\n        }\n\n        function showMessage(message, type) {\n            // Create toast notification\n            const toast = document.createElement('div');\n            toast.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show position-fixed`;\n            toast.style.top = '20px';\n            toast.style.right = '20px';\n            toast.style.zIndex = '9999';\n            toast.style.minWidth = '300px';\n            \n            toast.textContent = message;\n            const closeButton = document.createElement('button');\n            closeButton.type = 'button';\n            closeButton.className = 'btn-close';\n            closeButton.setAttribute('data-bs-dismiss', 'alert');\n            closeButton.setAttribute('aria-label', 'Close');\n            toast.appendChild(closeButton);\n            \n            document.body.appendChild(toast);\n            \n            // Auto-remove after 5 seconds\n            setTimeout(() => {\n                if (toast.parentNode) {\n                    toast.parentNode.removeChild(toast);\n                }\n            }, 5000);\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "</small></div></div><!-- JavaScript for volume actions --><script>\n        document.addEventListener('DOMContentLoaded', function() {\n            // Add click handler for vacuum button\n            const vacuumBtn = document.querySelector('.vacuum-btn');\n            if (vacuumBtn) {\n                vacuumBtn.addEventListener('click', function() {\n                    const volumeId = this.getAttribute('data-volume-id');\n                    const server = this.getAttribute('data-server');\n                    performVacuum(volumeId, server, this);\n                });\n            }\n            document.querySelectorAll('.volume-access-btn').forEach(button => {\n                button.addEventListener('click', function() {\n                    setVolumeReadOnly(this.dataset.volumeId, this.dataset.server, this.dataset.readOnly === 'true');\n                });\n            });\n        });\n\n        async function setVolumeReadOnly(volumeId, server, readOnly) {\n            const mode = readOnly ? 'read-only' : 'read/write';\n            if (!confirm(`Set volume ${volumeId} on ${server} to ${mode}? This applies only to this replica.`)) {\n                return;\n            }\n            const buttons = document.querySelectorAll('.volume-access-btn');\n            buttons.forEach(button => { button.disabled = true; });\n            try {\n                const response = await fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/read-only`, {\n                    method: 'POST',\n                    headers: { 'Content-Type': 'application/json' },\n                    body: JSON.stringify({ read_only: readOnly })\n                });\n                const data = await response.json();\n                if (!response.ok || data.error) {\n                    throw new Error(data.error || 'Failed to change volume access mode');\n                }\n                showMessage(data.message, 'success');\n                setTimeout(() => window.location.reload(), 1000);\n            } catch (error) {\n                showMessage(error.message, 'error');\n                buttons.forEach(button => { button.disabled = false; });\n            }\n        }\n\n        function performVacuum(volumeId, server, button) {\n            // Disable button and show loading state\n            const originalText = button.innerHTML;\n            button.disabled = true;\n            button.innerHTML = '<i class=\"bi bi-arrow-repeat icon-spin me-1\"></i>Vacuuming...';\n\n            // Send vacuum request\n            fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.error) {\n                    showMessage(data.error, 'error');\n                } else {\n                    showMessage(data.message || 'Volume vacuum started successfully', 'success');\n                    // Optionally refresh the page after a delay\n                    setTimeout(() => {\n                        window.location.reload();\n                    }, 2000);\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                showMessage('Failed to start vacuum operation', 'error');\n            })\n            .finally(() => {\n                // Re-enable button\n                button.disabled = false;\n                button.innerHTML = originalText;\n            });\n        }\n\n        function showMessage(message, type) {\n            // Create toast notification\n            const toast = document.createElement('div');\n            toast.className = `alert alert-${type === 'error' ? 'danger' : 'success'} alert-dismissible fade show position-fixed`;\n            toast.style.top = '20px';\n            toast.style.right = '20px';\n            toast.style.zIndex = '9999';\n            toast.style.minWidth = '300px';\n            \n            toast.textContent = message;\n            const closeButton = document.createElement('button');\n            closeButton.type = 'button';\n            closeButton.className = 'btn-close';\n            closeButton.setAttribute('data-bs-dismiss', 'alert');\n            closeButton.setAttribute('aria-label', 'Close');\n            toast.appendChild(closeButton);\n            \n            document.body.appendChild(toast);\n            \n            // Auto-remove after 5 seconds\n            setTimeout(() => {\n                if (toast.parentNode) {\n                    toast.parentNode.removeChild(toast);\n                }\n            }, 5000);\n        }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

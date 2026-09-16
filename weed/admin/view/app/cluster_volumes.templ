@@ -10,15 +10,15 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <div>
             <h1 class="h2">
-                <i class="fas fa-database me-2"></i>Cluster Volumes
+                <i class="bi bi-database me-2"></i>Cluster Volumes
             </h1>
             if data.FilterCollection != "" {
                 <div class="d-flex align-items-center mt-2">
                     <span class="badge bg-info me-2">
-                        <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
+                        <i class="bi bi-funnel me-1"></i>Collection: {data.FilterCollection}
                     </span>
                     <a href={ dash.PUrl(ctx, "/storage/volumes") } class="btn btn-sm btn-outline-secondary">
-                        <i class="fas fa-times me-1"></i>Clear Filter
+                        <i class="bi bi-x me-1"></i>Clear Filter
                     </a>
                 </div>
             }
@@ -32,10 +32,10 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                     <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
                 </select>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumes()">
-                    <i class="fas fa-download me-1"></i>Export Page
+                    <i class="bi bi-download me-1"></i>Export Page
                 </button>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumeList()" title="Download the full cluster volume list as JSON">
-                    <i class="fas fa-file-export me-1"></i>Export All (JSON)
+                    <i class="bi bi-file-earmark-arrow-up me-1"></i>Export All (JSON)
                 </button>
             </div>
         </div>
@@ -57,7 +57,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-database fa-2x text-gray-300"></i>
+                                <i class="bi bi-database icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -85,7 +85,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-layer-group fa-2x text-gray-300"></i>
+                                <i class="bi bi-layers icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -113,7 +113,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-building fa-2x text-gray-300"></i>
+                                <i class="bi bi-building icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -141,7 +141,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-server fa-2x text-gray-300"></i>
+                                <i class="bi bi-server icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -169,7 +169,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                                <i class="bi bi-device-hdd icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -197,7 +197,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-code-branch fa-2x text-gray-300"></i>
+                                <i class="bi bi-diagram-3 icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -217,7 +217,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-chart-area fa-2x text-gray-300"></i>
+                                <i class="bi bi-graph-up icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -229,7 +229,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
         <div class="card shadow mb-4">
             <div class="card-header py-3">
                 <h6 class="m-0 font-weight-bold text-primary">
-                    <i class="fas fa-database me-2"></i>Volume Details
+                    <i class="bi bi-database me-2"></i>Volume Details
                 </h6>
             </div>
             <div class="card-body">
@@ -325,7 +325,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                         <td>
                                             <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", volume.Server))} target="_blank" class="text-decoration-none">
                                                 {volume.Server}
-                                                <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                             </a>
                                         </td>
                                         if data.ShowDataCenterColumn {
@@ -403,7 +403,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                                 <span class="badge bg-primary">{displayDiskType(volume.DiskType)}</span>
                                                 if volume.RemoteStorageName != "" {
                                                     <span class="badge bg-info text-white ms-1" title={volume.RemoteStorageKey}>
-                                                        <i class="fas fa-cloud me-1"></i>{volume.RemoteStorageName}
+                                                        <i class="bi bi-cloud me-1"></i>{volume.RemoteStorageName}
                                                     </span>
                                                 }
                                             </td>
@@ -417,13 +417,13 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                             <div class="btn-group btn-group-sm">
                                                 <button type="button" class="btn btn-outline-primary btn-sm view-details-btn" 
                                                         title="View Details" data-volume-id={fmt.Sprintf("%d", volume.Id)}>
-                                                    <i class="fas fa-eye"></i>
+                                                    <i class="bi bi-eye"></i>
                                                 </button>
                                                 <button type="button" class="btn btn-outline-secondary btn-sm vacuum-btn" 
                                                         title="Vacuum"
                                                         data-volume-id={fmt.Sprintf("%d", volume.Id)}
                                                         data-server={volume.Server}>
-                                                    <i class="fas fa-compress-alt"></i>
+                                                    <i class="bi bi-arrows-angle-contract"></i>
                                                 </button>
                                             </div>
                                         </td>
@@ -458,13 +458,13 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                     if data.CurrentPage > 1 {
                                         <li class="page-item">
                                             <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage-1)}>
-                                                <i class="fas fa-chevron-left"></i>
+                                                <i class="bi bi-chevron-left"></i>
                                             </a>
                                         </li>
                                     } else {
                                         <li class="page-item disabled">
                                             <span class="page-link">
-                                                <i class="fas fa-chevron-left"></i>
+                                                <i class="bi bi-chevron-left"></i>
                                             </span>
                                         </li>
                                     }
@@ -486,13 +486,13 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                     if data.CurrentPage < data.TotalPages {
                                         <li class="page-item">
                                             <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage+1)}>
-                                                <i class="fas fa-chevron-right"></i>
+                                                <i class="bi bi-chevron-right"></i>
                                             </a>
                                         </li>
                                     } else {
                                         <li class="page-item disabled">
                                             <span class="page-link">
-                                                <i class="fas fa-chevron-right"></i>
+                                                <i class="bi bi-chevron-right"></i>
                                             </span>
                                         </li>
                                     }
@@ -502,7 +502,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                     }
                 } else {
                     <div class="text-center py-5">
-                        <i class="fas fa-database fa-3x text-muted mb-3"></i>
+                        <i class="bi bi-database icon-3x text-muted mb-3"></i>
                         <h5 class="text-muted">No Volumes Found</h5>
                         <p class="text-muted">No volumes are currently available in the cluster.</p>
                     </div>
@@ -514,7 +514,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
         <div class="row">
             <div class="col-12">
                 <small class="text-muted">
-                    <i class="fas fa-clock me-1"></i>
+                    <i class="bi bi-clock me-1"></i>
                     Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
                 </small>
             </div>
@@ -607,7 +607,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
             // Disable button and show loading state
             const originalHTML = button.innerHTML;
             button.disabled = true;
-            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            button.innerHTML = '<i class="bi bi-arrow-repeat icon-spin"></i>';
 
             // Send vacuum request
             fetch((window.__BASE_PATH__ || '') + `/api/volumes/${volumeId}/${encodeURIComponent(server)}/vacuum`, {
@@ -708,11 +708,11 @@ func countUniqueDiskTypes(volumes []dash.VolumeWithTopology) int {
 
 templ getSortIcon(column, currentSort, currentOrder string) {
     if column != currentSort {
-        <i class="fas fa-sort text-muted ms-1"></i>
+        <i class="bi bi-arrow-down-up text-muted ms-1"></i>
     } else if currentOrder == "asc" {
-        <i class="fas fa-sort-up text-primary ms-1"></i>
+        <i class="bi bi-sort-up text-primary ms-1"></i>
     } else {
-        <i class="fas fa-sort-down text-primary ms-1"></i>
+        <i class="bi bi-sort-down text-primary ms-1"></i>
     }
 }
 

@@ -11,17 +11,17 @@ import (
 templ IcebergCatalog(data dash.IcebergCatalogData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			<i class="fas fa-snowflake me-2"></i>Iceberg Catalog
+			<i class="bi bi-snow me-2"></i>Iceberg Catalog
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 				<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") } class="btn btn-sm btn-primary">
-					<i class="fas fa-plus me-1"></i>Create Table Bucket
+					<i class="bi bi-plus me-1"></i>Create Table Bucket
 				</a>
 			</div>
 			<div class="btn-group me-2">
 				<a id="iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("//localhost:%d/v1/config", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
-					<i class="fas fa-external-link-alt me-1"></i>REST API
+					<i class="bi bi-box-arrow-up-right me-1"></i>REST API
 				</a>
 			</div>
 		</div>
@@ -30,7 +30,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 		<!-- Info Alert about Iceberg REST -->
 		<div class="alert alert-info mb-4">
 			<div class="d-flex align-items-center">
-				<i class="fas fa-info-circle fa-2x me-3"></i>
+				<i class="bi bi-info-circle icon-2x me-3"></i>
 				<div>
 					<strong>Iceberg REST Catalog</strong>
 					<p id="iceberg-rest-info" class="mb-0 mt-1" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
@@ -71,7 +71,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-database fa-2x text-gray-300"></i>
+								<i class="bi bi-database icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -90,7 +90,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-plug fa-2x text-gray-300"></i>
+								<i class="bi bi-plug icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -113,7 +113,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-clock fa-2x text-gray-300"></i>
+								<i class="bi bi-clock icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -127,7 +127,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 				<div class="card shadow mb-4">
 					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
 						<h6 class="m-0 font-weight-bold text-primary">
-							<i class="fas fa-snowflake me-2"></i>Available Catalogs
+							<i class="bi bi-snow me-2"></i>Available Catalogs
 						</h6>
 					</div>
 					<div class="card-body">
@@ -149,7 +149,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 									for _, catalog := range data.Catalogs {
 										<tr>
 											<td>
-												<i class="fas fa-snowflake text-info me-2"></i>
+												<i class="bi bi-snow text-info me-2"></i>
 												<strong>{ catalog.Name }</strong>
 											</td>
 											<td>{ catalog.OwnerAccountID }</td>
@@ -168,11 +168,11 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(catalog.ARN) }}
 													if parseErr == nil {
 														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(bucketName))) } title="Browse Namespaces">
-															<i class="fas fa-folder-open"></i>
+															<i class="bi bi-folder2-open"></i>
 														</a>
 													} else {
 														<button type="button" class="btn btn-outline-secondary btn-sm" disabled title={ parseErr.Error() }>
-															<i class="fas fa-exclamation-triangle"></i>
+															<i class="bi bi-exclamation-triangle"></i>
 														</button>
 													}
 												</div>
@@ -182,12 +182,12 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 									if len(data.Catalogs) == 0 {
 										<tr>
 											<td colspan="5" class="text-center text-muted py-4">
-												<i class="fas fa-snowflake fa-3x mb-3 text-muted"></i>
+												<i class="bi bi-snow icon-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No catalogs available</h5>
 													<p>Create an S3 Table Bucket first to use as an Iceberg catalog.</p>
 													<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") } class="btn btn-primary">
-														<i class="fas fa-plus me-1"></i>Create Table Bucket
+														<i class="bi bi-plus me-1"></i>Create Table Bucket
 													</a>
 												</div>
 											</td>
@@ -207,7 +207,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 				<div class="card shadow mb-4">
 					<div class="card-header py-3">
 						<h6 class="m-0 font-weight-bold text-primary">
-							<i class="fas fa-code me-2"></i>Example Usage
+							<i class="bi bi-code me-2"></i>Example Usage
 						</h6>
 					</div>
 					<div class="card-body">
