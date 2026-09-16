@@ -5,32 +5,15 @@
 //! instead fails as "frame with invalid size", which reads like a protocol bug
 //! rather than a wrong port, so getting this right is worth its own module.
 //! Mirrors pb.ServerToGrpcAddress in weed/pb/grpc_client_server.go.
-
-const GRPC_PORT_OFFSET: u16 = 10000;
+//!
+//! The rule itself now lives in `seaweed_common::address`, shared with the Rust
+//! volume server, which had its own copy of it. What stays here is the `Option`
+//! shape this crate's callers expect, and the tests that pin it.
 
 /// Converts `host:port` to the gRPC address, and accepts the explicit
 /// `host:port.grpcPort` form the Go side also understands.
 pub fn server_to_grpc_address(server: &str) -> Option<String> {
-    let (host, port_part) = server.rsplit_once(':')?;
-
-    // "port.grpcPort" states the gRPC port outright.
-    if let Some((_, grpc_port)) = port_part.split_once('.')
-        && let Ok(port) = grpc_port.parse::<u16>()
-    {
-        return Some(join_host_port(host, port));
-    }
-
-    let port: u16 = port_part.parse().ok()?;
-    Some(join_host_port(host, port.checked_add(GRPC_PORT_OFFSET)?))
-}
-
-fn join_host_port(host: &str, port: u16) -> String {
-    // An IPv6 literal has to keep its brackets or the port reads as part of it.
-    if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
+    seaweed_common::address::to_grpc_address(server).ok()
 }
 
 #[cfg(test)]
@@ -69,5 +52,12 @@ mod tests {
     fn rejects_what_it_cannot_parse() {
         assert!(server_to_grpc_address("localhost").is_none());
         assert!(server_to_grpc_address("localhost:notaport").is_none());
+    }
+
+    #[test]
+    fn rejects_a_dotted_form_whose_http_port_is_not_a_port() {
+        // Tightened by the move to seaweed-common: this copy used to ignore the
+        // HTTP port of the dotted form and answer Some("host:18080").
+        assert!(server_to_grpc_address("host:abc.18080").is_none());
     }
 }

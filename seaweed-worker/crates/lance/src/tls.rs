@@ -1,12 +1,10 @@
-use rustls::crypto::aws_lc_rs;
-
 // aws-lc-rs and ring both get linked transitively (lance's aws backend pulls
 // aws-lc-rs, reqwest's rustls-tls pulls ring), so rustls can't auto-select a
 // provider and tonic's client TLS panics on first use. Pin the default to
-// aws-lc-rs, matching the Rust volume server. Idempotent.
-pub fn install_default_crypto_provider() {
-    let _ = aws_lc_rs::default_provider().install_default();
-}
+// aws-lc-rs. The body lives in seaweed-common so this binary and the Rust
+// volume server cannot end up installing different providers; re-exported here
+// so callers keep their import path.
+pub use seaweed_common::tls::install_default_crypto_provider;
 
 #[cfg(test)]
 mod tests {

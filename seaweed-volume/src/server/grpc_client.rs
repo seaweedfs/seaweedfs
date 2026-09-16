@@ -126,46 +126,13 @@ pub fn build_grpc_endpoint(
 /// Shared between `grpc_server.rs` and the distributed-EC-read path
 /// in `store_ec.rs` — keep this as the single source of truth so the
 /// HTTP↔gRPC port translation can't drift between callers.
+///
+/// The rule itself lives in `seaweed_common::address`, which the Rust
+/// plugin workers share; this wrapper only flattens the typed error
+/// back to the `String` its callers already handle. Unbracketed IPv6
+/// literals come back bracketed, which this copy used to get wrong.
 pub fn parse_grpc_address(source: &str) -> Result<String, String> {
-    let colon_idx = source
-        .rfind(':')
-        .ok_or_else(|| format!("cannot parse address: {}", source))?;
-    let host = &source[..colon_idx];
-    let port_part = &source[colon_idx + 1..];
-
-    if let Some(dot_idx) = port_part.rfind('.') {
-        // Format: "ip:port.grpcPort". Validate BOTH ports as u16
-        // so a malformed HTTP port (e.g. `host:abc.18080`) is
-        // rejected here rather than tripping a downstream
-        // `build_grpc_endpoint` URI parse failure with a less
-        // useful error.
-        let http_port = &port_part[..dot_idx];
-        let grpc_port = &port_part[dot_idx + 1..];
-        http_port
-            .parse::<u16>()
-            .map_err(|e| format!("invalid http port {:?}: {}", http_port, e))?;
-        grpc_port
-            .parse::<u16>()
-            .map_err(|e| format!("invalid grpc port {:?}: {}", grpc_port, e))?;
-        return Ok(format!("{}:{}", host, grpc_port));
-    }
-
-    // Format: "ip:port" → grpc = port + 10000. Reject inputs whose
-    // implicit grpc port would overflow the TCP port range (e.g.
-    // `host:60000` produces 70000 — invalid). Without this check
-    // the cast silently wraps and the endpoint call later fails
-    // with an opaque connection error.
-    let port: u16 = port_part
-        .parse()
-        .map_err(|e| format!("invalid port {:?}: {}", port_part, e))?;
-    let grpc_port = port as u32 + 10000;
-    if grpc_port > u16::MAX as u32 {
-        return Err(format!(
-            "implicit grpc port out of range: {} + 10000 = {}",
-            port, grpc_port
-        ));
-    }
-    Ok(format!("{}:{}", host, grpc_port))
+    seaweed_common::address::to_grpc_address(source).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -366,5 +333,24 @@ mod tests {
         use super::parse_grpc_address;
         let err = parse_grpc_address("hostname").unwrap_err();
         assert!(err.contains("cannot parse"), "{}", err);
+    }
+
+    #[test]
+    fn test_parse_grpc_address_brackets_ipv6_literals() {
+        use super::parse_grpc_address;
+        // This used to come back as `::1:29333`, which is not a valid
+        // authority: `build_grpc_endpoint` reads the last colon as the port
+        // separator and rejects the rest.
+        assert_eq!(parse_grpc_address("::1:19333").unwrap(), "[::1]:29333");
+        assert_eq!(parse_grpc_address("::1:9333.19333").unwrap(), "[::1]:19333");
+        // Already bracketed, so it is left alone.
+        assert_eq!(parse_grpc_address("[::1]:9333").unwrap(), "[::1]:19333");
+    }
+
+    #[test]
+    fn test_build_grpc_endpoint_accepts_an_ipv6_master_address() {
+        use super::parse_grpc_address;
+        let endpoint = build_grpc_endpoint(&parse_grpc_address("::1:9333").unwrap(), None).unwrap();
+        assert_eq!(endpoint.uri().port_u16(), Some(19333));
     }
 }

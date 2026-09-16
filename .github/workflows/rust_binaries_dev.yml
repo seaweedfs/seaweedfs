@@ -5,6 +5,7 @@ on:
     branches: [ master ]
     paths:
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
       - '.github/workflows/rust_binaries_dev.yml'
 
 permissions:

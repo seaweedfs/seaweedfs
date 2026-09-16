@@ -6,6 +6,7 @@ on:
     paths:
       - 'weed/**'
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
       - 'seaweed-worker/**'
       - 'docker/**'
       - 'go.mod'
