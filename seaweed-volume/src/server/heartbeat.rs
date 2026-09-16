@@ -24,7 +24,6 @@ use crate::storage::volume_report::VolumeReportKey;
 use crate::storage::volume_report_hash::report_hash;
 
 const DUPLICATE_UUID_RETRY_MESSAGE: &str = "duplicate UUIDs detected, retrying connection";
-const VOLUME_IO_ERROR_TOLERANCE: i32 = 3;
 const MAX_DUPLICATE_UUID_RETRIES: u32 = 3;
 
 /// Configuration for the heartbeat client.
@@ -952,8 +951,8 @@ fn build_heartbeat_with_ec_status(
             let volume_size = vol.dat_file_size().unwrap_or(0);
             let mut should_delete_volume = false;
 
-            let (_, io_count, io_quarantined) = vol.get_io_error_state();
-            if io_quarantined || io_count >= VOLUME_IO_ERROR_TOLERANCE {
+            if vol.should_quarantine() {
+                let (_, io_count, io_quarantined) = vol.get_io_error_state();
                 if !io_quarantined {
                     vol.mark_io_quarantined();
                     warn!(
