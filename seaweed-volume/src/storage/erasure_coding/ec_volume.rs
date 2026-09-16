@@ -12,13 +12,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::pb::master_pb;
 use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
+use crate::storage::io_error::IoErrorTracker;
 use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
 use crate::storage::types::*;
 use crate::storage::volume_open::open_volume_file;
 
 /// An erasure-coded volume managing its local shards and index.
-pub const IO_ERROR_TOLERANCE: i32 = 3;
-
 pub struct EcVolume {
     pub volume_id: VolumeId,
     pub collection: String,
@@ -91,9 +90,9 @@ pub struct EcVolume {
     /// sidecar other than the one those two fields actually hold.
     pub(crate) bitrot_source_dir: String,
 
-    io_error_count: std::sync::atomic::AtomicI32,
-    io_error_quarantined: std::sync::atomic::AtomicBool,
-    last_io_error: std::sync::Mutex<Option<String>>,
+    /// Consecutive storage-media errors and the quarantine they lead to,
+    /// for EC volume health monitoring.
+    io_errors: IoErrorTracker,
 }
 
 /// Locate the `.vif` for a (collection, vid) by preferring the data dir
@@ -448,9 +447,7 @@ impl EcVolume {
             bitrot: None,
             bitrot_status: crate::storage::erasure_coding::ec_bitrot::BitrotStatus::Off,
             bitrot_source_dir: String::new(),
-            io_error_count: std::sync::atomic::AtomicI32::new(0),
-            io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
-            last_io_error: std::sync::Mutex::new(None),
+            io_errors: IoErrorTracker::default(),
         };
 
         // Open .ecx file (sorted index) in read/write mode for in-place deletion marking.
@@ -981,45 +978,21 @@ impl EcVolume {
     // ---- I/O error tracking (mirrors Go's EcVolume IoErrorTracker) ----
 
     pub fn check_read_write_error(&self, err: Option<&io::Error>) {
-        use std::sync::atomic::Ordering;
-        if let Some(e) = err
-            && crate::storage::volume::is_storage_io_error(e)
-        {
-            self.io_error_count.fetch_add(1, Ordering::Relaxed);
-            if let Ok(mut guard) = self.last_io_error.lock() {
-                *guard = Some(e.to_string());
-            }
-            crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
-            return;
-        }
-        self.io_error_count.store(0, Ordering::Relaxed);
-        if let Ok(mut guard) = self.last_io_error.lock()
-            && guard.is_some()
-        {
-            *guard = None;
-        }
+        self.io_errors.record(err);
     }
 
     pub fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
-        use std::sync::atomic::Ordering;
-        let err = self.last_io_error.lock().ok().and_then(|g| g.clone());
-        let count = self.io_error_count.load(Ordering::Relaxed);
-        let quarantined = self.io_error_quarantined.load(Ordering::Relaxed);
-        (err, count, quarantined)
+        self.io_errors.state()
+    }
+
+    /// Whether sustained storage-media errors mean the EC volume has to be
+    /// quarantined and stop being reported to the master.
+    pub fn should_quarantine(&self) -> bool {
+        self.io_errors.should_quarantine()
     }
 
     pub fn mark_io_quarantined(&self) {
-        self.io_error_quarantined
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    pub fn reset_io_error_state(&self) {
-        use std::sync::atomic::Ordering;
-        self.io_error_count.store(0, Ordering::Relaxed);
-        self.io_error_quarantined.store(false, Ordering::Relaxed);
-        if let Ok(mut guard) = self.last_io_error.lock() {
-            *guard = None;
-        }
+        self.io_errors.mark_quarantined();
     }
 
     // ---- Index operations ----
