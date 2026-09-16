@@ -1574,6 +1574,12 @@ impl Volume {
         size: Size,
     ) -> Result<(), VolumeError> {
         let version = self.version();
+        if let Err(msg) = crate::storage::needle::needle::validate_wire_size(size) {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                msg,
+            )));
+        }
         let actual_size = get_actual_size(size, version);
 
         let mut buf = vec![0u8; actual_size as usize];
@@ -1591,6 +1597,12 @@ impl Volume {
 
     fn read_needle_blob_unlocked(&self, offset: i64, size: Size) -> Result<Vec<u8>, VolumeError> {
         let version = self.version();
+        if let Err(msg) = crate::storage::needle::needle::validate_wire_size(size) {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                msg,
+            )));
+        }
         let actual_size = get_actual_size(size, version);
         let mut buf = vec![0u8; actual_size as usize];
         self.read_exact_at_backend(&mut buf, offset as u64)?;
@@ -3472,6 +3484,12 @@ impl Volume {
         // nm.put on a read-only volume fails only after the blob is appended to .dat.
         if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
+        }
+        if let Err(msg) = crate::storage::needle::needle::validate_wire_size(size) {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                msg,
+            )));
         }
 
         // size indexes the needle and places the v3 append timestamp, so a caller using
@@ -6519,6 +6537,19 @@ mod tests {
 
         v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
             .unwrap();
+    }
+
+    #[test]
+    fn test_read_blob_negative_does_not_panic() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        let res = v.read_needle_blob(0, Size(-100));
+        assert!(res.is_err(), "negative size must return Err, not panic");
+        match res.unwrap_err() {
+            VolumeError::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::InvalidData),
+            e => panic!("expected Io InvalidData, got {e:?}"),
+        }
     }
 
     #[test]

@@ -622,7 +622,7 @@ pub fn validate_wire_size(size: Size) -> Result<(), String> {
     if size.0 <= 0 {
         return Err(format!("invalid needle size {}", size.0));
     }
-    // Keep in sync with canonical `GRPC_MAX_MESSAGE_SIZE in server/grpc_client.rs:10`
+    // Keep in sync with canonical `GRPC_MAX_MESSAGE_SIZE` in server/grpc_client.rs:10
     // (duplicated here to avoid a storage->server import and prevent drift).
     const WIRE_MAX_NEEDLE_SIZE: i32 = 1 << 30;
     if size.0 > WIRE_MAX_NEEDLE_SIZE {
