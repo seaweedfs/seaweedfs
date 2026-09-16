@@ -265,6 +265,12 @@ pub struct VolumeGrpcService {
 }
 
 impl VolumeGrpcService {
+    fn store_read(&self) -> std::sync::RwLockReadGuard<'_, crate::storage::store::Store> {
+        self.state.store.read().unwrap_or_else(|e| e.into_inner())
+    }
+    fn store_write(&self) -> std::sync::RwLockWriteGuard<'_, crate::storage::store::Store> {
+        self.state.store.write().unwrap_or_else(|e| e.into_inner())
+    }
     /// Verifies the gRPC caller is allowed to invoke a destructive admin
     /// operation. Mirrors the Go side's checkGrpcAdminAuth: an empty
     /// whitelist accepts everyone (insecure-by-default for tests and
@@ -2595,8 +2601,11 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let offset = req.offset;
         let size = Size(req.size);
+        if let Err(msg) = crate::storage::needle::needle::validate_wire_size(size) {
+            return Err(Status::invalid_argument(msg));
+        }
 
-        let store = self.state.store.read().unwrap();
+        let store = self.store_read();
         let (_, vol) = store
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
@@ -2659,8 +2668,11 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let needle_id = NeedleId(req.needle_id);
         let size = Size(req.size);
+        if let Err(msg) = crate::storage::needle::needle::validate_wire_size(size) {
+            return Err(Status::invalid_argument(msg));
+        }
 
-        let mut store = self.state.store.write().unwrap();
+        let mut store = self.store_write();
         let (_, vol) = store
             .find_volume_mut(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
@@ -7288,6 +7300,35 @@ mod tests {
         if let Err(err) = result {
             assert_ne!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_read_needle_blob_negative_returns_invalid_argument() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let err = service
+            .read_needle_blob(Request::new(volume_server_pb::ReadNeedleBlobRequest {
+                volume_id: 1,
+                offset: 0,
+                size: -100,
+            }))
+            .await
+            .expect_err("negative size must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn test_write_needle_blob_negative_returns_invalid_argument() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let err = service
+            .write_needle_blob(Request::new(volume_server_pb::WriteNeedleBlobRequest {
+                volume_id: 1,
+                needle_id: 11,
+                size: -100,
+                needle_blob: vec![],
+            }))
+            .await
+            .expect_err("negative size must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 
     // Regression test for comparing the wrong compaction-revision field.
