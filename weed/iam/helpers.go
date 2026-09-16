@@ -137,7 +137,7 @@ var baseS3ActionMap = map[string]string{
 	"GetBucketNotification":            s3_constants.ACTION_READ,
 	"PutBucketNotification":            s3_constants.ACTION_WRITE,
 	"GetBucketObjectLockConfiguration": s3_constants.ACTION_READ,
-	"PutBucketObjectLockConfiguration": s3_constants.ACTION_WRITE,
+	"PutBucketObjectLockConfiguration": s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG,
 	// Multipart upload operations
 	"CreateMultipartUpload":   s3_constants.ACTION_WRITE,
 	"UploadPart":              s3_constants.ACTION_WRITE,
@@ -191,6 +191,8 @@ func MapToIdentitiesAction(action string) string {
 		return StatementActionTagging
 	case s3_constants.ACTION_DELETE_BUCKET:
 		return StatementActionDelete
+	case s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
+		return "PutBucketObjectLockConfiguration"
 	case s3_constants.ACTION_PUT_BUCKET_POLICY:
 		return "PutBucketPolicy"
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
