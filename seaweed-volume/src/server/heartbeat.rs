@@ -973,7 +973,7 @@ fn build_heartbeat_with_ec_status(
                 // whose .dat legitimately lives in cloud storage. Only a present .dat is
                 // cached for 30s; a missing one is re-checked every heartbeat so the volume
                 // stays suppressed until the file returns. See issues/10004
-                if vol.file_count() > 0 && !vol.has_remote_file {
+                if vol.file_count() > 0 && !vol.has_remote_file() {
                     const DISK_CHECK_INTERVAL_NS: i64 = 30 * 1_000_000_000;
                     let now_ns = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -1688,8 +1688,9 @@ mod tests {
         {
             let (_, volume) = store.find_volume_mut(VolumeId(17)).unwrap();
             volume.set_read_only().unwrap();
-            volume.volume_info.files.push(Default::default());
-            volume.refresh_remote_write_mode().unwrap();
+            volume
+                .update_remote_files(|files| files.push(Default::default()))
+                .unwrap();
         }
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
@@ -2054,15 +2055,15 @@ mod tests {
             .unwrap();
         let (_, volume) = store.find_volume_mut(VolumeId(71)).unwrap();
         volume
-            .volume_info
-            .files
-            .push(crate::storage::volume::PbRemoteFile {
-                backend_type: "s3".to_string(),
-                backend_id: "archive".to_string(),
-                key: "volumes/71.dat".to_string(),
-                ..Default::default()
-            });
-        volume.refresh_remote_write_mode().unwrap();
+            .update_remote_files(|files| {
+                files.push(crate::storage::volume::PbRemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: "archive".to_string(),
+                    key: "volumes/71.dat".to_string(),
+                    ..Default::default()
+                })
+            })
+            .unwrap();
 
         let heartbeat = build_heartbeat(&test_config(), &mut store);
 

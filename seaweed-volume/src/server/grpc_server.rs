@@ -1392,7 +1392,7 @@ impl VolumeServer for VolumeGrpcService {
             Local(std::fs::File),
             Remote(crate::storage::volume::RemoteDatFile),
         }
-        let reader = if v.has_remote_file {
+        let reader = if v.has_remote_file() {
             match v.remote_dat_file() {
                 Some(r) => DatReader::Remote(r),
                 None => {
@@ -2207,7 +2207,7 @@ impl VolumeServer for VolumeGrpcService {
                 compaction_revision: vol.super_block.compaction_revision as u32,
                 collection: vol.collection.clone(),
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
-                volume_info: Some(vol.volume_info.clone()),
+                volume_info: Some(vol.volume_info().clone()),
                 version: vol.version().0 as u32,
             },
         ))
@@ -4185,7 +4185,7 @@ impl VolumeServer for VolumeGrpcService {
 
             // Match Go's DiskFile check: if the .dat file is still local, we can
             // keep tiering it even when remote file entries already exist.
-            if volume_is_remote_only(&dat_path, vol.has_remote_file) {
+            if volume_is_remote_only(&dat_path, vol.has_remote_file()) {
                 // Already on remote -- return empty stream (matches Go: returns nil)
                 let stream = tokio_stream::empty();
                 return Ok(Response::new(
@@ -4198,7 +4198,7 @@ impl VolumeServer for VolumeGrpcService {
                 crate::remote_storage::s3_tier::backend_name_to_type_id(
                     &req.destination_backend_name,
                 );
-            for rf in &vol.volume_info.files {
+            for rf in &vol.volume_info().files {
                 if rf.backend_type == backend_type && rf.backend_id == backend_id {
                     return Err(Status::already_exists(format!(
                         "destination {} already exists",
@@ -4307,16 +4307,18 @@ impl VolumeServer for VolumeGrpcService {
                 {
                     let mut store = state.store.write().unwrap();
                     if let Some((_, vol)) = store.find_volume_mut(vid) {
-                        vol.volume_info.files.push(volume_server_pb::RemoteFile {
-                            backend_type: backend_type.clone(),
-                            backend_id: backend_id.clone(),
-                            key,
-                            offset: 0,
-                            file_size: size,
-                            modified_time: dat_modified_secs,
-                            extension: ".dat".to_string(),
-                        });
-                        vol.refresh_remote_write_mode().map_err(|e| {
+                        vol.update_remote_files(|files| {
+                            files.push(volume_server_pb::RemoteFile {
+                                backend_type: backend_type.clone(),
+                                backend_id: backend_id.clone(),
+                                key,
+                                offset: 0,
+                                file_size: size,
+                                modified_time: dat_modified_secs,
+                                extension: ".dat".to_string(),
+                            })
+                        })
+                        .map_err(|e| {
                             Status::internal(format!(
                                 "volume {} failed to refresh write mode: {}",
                                 vid, e
@@ -4414,7 +4416,7 @@ impl VolumeServer for VolumeGrpcService {
             }
 
             let remote_modified_secs = vol
-                .volume_info
+                .volume_info()
                 .files
                 .first()
                 .map(|f| f.modified_time)
@@ -4553,7 +4555,7 @@ impl VolumeServer for VolumeGrpcService {
 
                 // Trim the remote reference, persist the .vif, and swap to the local
                 // .dat on BOTH paths BEFORE deleting the remote object. After this the
-                // volume serves from local disk (has_remote_file = false), so a crash
+                // volume serves from local disk (has_remote_file() is false), so a crash
                 // before the delete only leaks the remote object; the .vif must never
                 // reference an object that has already been deleted.
                 {
@@ -4574,28 +4576,31 @@ impl VolumeServer for VolumeGrpcService {
                     }
 
                     // Snapshot the remote reference before dropping it: the
-                    // refresh below can fail, and a half-applied transition
+                    // refresh it triggers can fail, and a half-applied transition
                     // leaves the volume claiming local while the remote backend
                     // is still attached and the on-disk .vif still says remote
                     // — a state a retry reads as "already on local disk" and
                     // refuses to finish.
-                    let removed_remote = if vol.volume_info.files.is_empty() {
-                        None
-                    } else {
-                        Some(vol.volume_info.files.remove(0))
-                    };
-                    // Swaps the read-only sorted map out before the volume is
-                    // published as writable; without it the first write would
-                    // append to the local .dat and then fail to index.
-                    if let Err(e) = vol.refresh_remote_write_mode() {
-                        if let Some(remote) = removed_remote {
-                            vol.volume_info.files.insert(0, remote);
+                    //
+                    // update_remote_files also swaps the read-only sorted map
+                    // out before the volume is published as writable; without
+                    // it the first write would append to the local .dat and
+                    // then fail to index.
+                    let mut removed_remote = None;
+                    if let Err(e) = vol.update_remote_files(|files| {
+                        if !files.is_empty() {
+                            removed_remote = Some(files.remove(0));
                         }
-                        // Put the derived flags and the needle map back where
-                        // the restored reference says they belong. Best effort:
-                        // if even this fails the volume stays pinned read-only,
-                        // which is the safe end of the transition.
-                        if let Err(restore_err) = vol.refresh_remote_write_mode() {
+                    }) {
+                        // Put the reference, the derived flags and the needle
+                        // map back where they belong. Best effort: if even this
+                        // fails the volume stays pinned read-only, which is the
+                        // safe end of the transition.
+                        if let Err(restore_err) = vol.update_remote_files(|files| {
+                            if let Some(remote) = removed_remote {
+                                files.insert(0, remote);
+                            }
+                        }) {
                             tracing::warn!(
                                 volume_id = vid.0,
                                 error = %restore_err,
@@ -6473,8 +6478,8 @@ mod tests {
         {
             let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
-            assert!(!vol.has_remote_file);
-            assert!(vol.volume_info.files.is_empty());
+            assert!(!vol.has_remote_file());
+            assert!(vol.volume_info().files.is_empty());
             assert!(vol.has_data_backend());
         }
 
@@ -6557,10 +6562,10 @@ mod tests {
             let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
             assert!(
-                vol.has_remote_file,
+                vol.has_remote_file(),
                 "abandoned tier-down published the transition to local"
             );
-            assert!(!vol.volume_info.files.is_empty());
+            assert!(!vol.volume_info().files.is_empty());
         }
         assert_eq!(
             delete_count.load(std::sync::atomic::Ordering::SeqCst),
@@ -6604,8 +6609,8 @@ mod tests {
         {
             let store = service.state.store.read().unwrap();
             let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
-            assert!(!vol.has_remote_file);
-            assert!(vol.volume_info.files.is_empty());
+            assert!(!vol.has_remote_file());
+            assert!(vol.volume_info().files.is_empty());
             assert!(vol.has_data_backend());
         }
 
