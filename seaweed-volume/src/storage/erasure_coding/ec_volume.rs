@@ -1605,16 +1605,28 @@ impl EcVolume {
                         format!("cannot verify cookie: shard {} not local", shard_id),
                     )
                 })?;
+            // Positional reads on regular files return short only at EOF
+            // (or on signal interruption), but loop to a full 4-byte header so
+            // a spurious partial never rejects a valid delete — while EOF or
+            // errors still fail closed with no journal append.
             let mut header_buf = [0u8; 4];
-            let bytes_read = shard
-                .read_at(&mut header_buf, shard_offset as u64)
-                .map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("cannot verify cookie: {}", e),
-                    )
-                })?;
-            if bytes_read != header_buf.len() {
+            let mut filled = 0usize;
+            while filled < header_buf.len() {
+                match shard.read_at(
+                    &mut header_buf[filled..],
+                    shard_offset as u64 + filled as u64,
+                ) {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(e) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("cannot verify cookie: {}", e),
+                        ));
+                    }
+                }
+            }
+            if filled != header_buf.len() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "cannot verify cookie: incomplete header",
