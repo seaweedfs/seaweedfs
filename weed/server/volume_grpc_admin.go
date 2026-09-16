@@ -497,10 +497,13 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, nil, nil)
 	}
 	if err != nil {
+		if errors.Is(err, storage.ErrorNotFound) {
+			return nil, status.Errorf(codes.NotFound, "needle not found %d", n.Id)
+		}
 		return nil, err
 	}
 	if count < 0 {
-		return nil, fmt.Errorf("needle not found %d", n.Id)
+		return nil, status.Errorf(codes.NotFound, "needle not found %d", n.Id)
 	}
 
 	resp.NeedleId = uint64(n.Id)

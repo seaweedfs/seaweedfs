@@ -160,10 +160,11 @@ func (c *commandFsVerify) verifyChunk(volumeServer pb.ServerAddress, fileId *fil
 }
 
 type ItemEntry struct {
-	chunks   []*filer_pb.FileChunk
-	path     util.FullPath
-	mtimeSec int64
-	md5      []byte
+	chunks    []*filer_pb.FileChunk
+	rawChunks []*filer_pb.FileChunk
+	path      util.FullPath
+	mtimeSec  int64
+	md5       []byte
 }
 
 func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup) (fileCount uint64, errCount uint64, prunedCount uint64, err error) {
@@ -198,7 +199,8 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 						pruned, pruneErr := c.pruneEntry(
 							util.NewFullPath(message.NewParentPath, message.NewEntry.Name),
 							message.NewEntry.Attributes.Mtime,
-							message.NewEntry.Attributes.Md5)
+							message.NewEntry.Attributes.Md5,
+							message.NewEntry.Chunks)
 						if pruneErr != nil {
 							fmt.Fprintf(c.writer, "prune %s failed: %v\n", entryPath, pruneErr)
 						} else if pruned {
@@ -235,22 +237,37 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 }
 
 // isNeedleMissingError reports whether a VolumeNeedleStatus error means the
-// needle data is lost at that location: the volume server answered that the
-// needle is absent ("needle not found") or unreadable ("EOF" from a truncated
-// volume file). Both reach the client as gRPC code Unknown — any other code
-// (Unavailable, DeadlineExceeded, ...) is transport level and must never
-// trigger a prune. It must also NOT match "volume not found", which says
-// nothing about the needle itself.
+// needle data is lost at that location. It must NOT match "volume not found",
+// which says nothing about the needle itself.
+//
+// Error contract by server generation:
+//   - Go servers (with this change) and the Rust volume server answer absent
+//     needles with gRPC code NotFound and a "needle not found <id>" message.
+//   - Older Go servers return the raw read error as code Unknown: "needle not
+//     found <id>" or "EOF" (truncated volume file).
+//
+// Anything else (Unavailable, DeadlineExceeded, "volume not found", ...) is
+// transport or routing and must never trigger a prune.
 func isNeedleMissingError(err error) bool {
 	if err == nil {
 		return false
 	}
+	msg := err.Error()
 	if st, ok := status.FromError(err); ok {
-		if st.Code() != codes.Unknown {
+		switch st.Code() {
+		case codes.NotFound:
+			// only the needle shape; "volume not found" keeps flowing here too
+			return strings.Contains(st.Message(), "needle not found")
+		case codes.Unknown:
+			// older servers: prefer the status message, fall back to the
+			// wrapped string
+			if st.Message() != "" {
+				msg = st.Message()
+			}
+		default:
 			return false
 		}
 	}
-	msg := err.Error()
 	return strings.Contains(msg, "needle not found") || strings.Contains(msg, "EOF")
 }
 
@@ -341,10 +358,14 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 }
 
 // pruneEntry deletes an entry whose needles are gone, unless the entry
-// changed since verification (a re-PUT fixed it). IfNotModifiedAfter makes
-// the guard atomic on the filer side.
-func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []byte) (pruned bool, err error) {
+// changed since verification. Three guards protect a concurrent repair:
+// re-lookup with mtime/md5 comparison, an identity check of the chunk set
+// (an append or rewrite in the same second as the original mtime changes the
+// chunks but not the timestamps), and IfNotModifiedAfter on the delete. The
+// entry is only counted as pruned when a follow-up lookup confirms it is gone.
+func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []byte, expectedChunks []*filer_pb.FileChunk) (pruned bool, err error) {
 	dir, name := path.DirAndName()
+	expectedIds := chunkFingerprints(expectedChunks)
 	lookupErr := c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -365,6 +386,10 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
 			return nil
 		}
+		if !chunksEqual(chunkFingerprints(lookupResp.Entry.GetChunks()), expectedIds) {
+			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
+			return nil
+		}
 		deleteResp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory:          dir,
 			Name:               name,
@@ -376,11 +401,46 @@ func (c *commandFsVerify) pruneEntry(path util.FullPath, mtimeSec int64, md5 []b
 		if deleteResp.Error != "" {
 			return fmt.Errorf("delete entry %s: %s", path, deleteResp.Error)
 		}
+		// the filer silently skips the delete when the entry advanced past
+		// IfNotModifiedAfter between our lookup and the delete; confirm
+		confirm, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if err == nil && confirm.Entry != nil {
+			fmt.Fprintf(c.writer, "skip pruning %s: entry changed since verification\n", path)
+			return nil
+		}
 		pruned = true
 		fmt.Fprintf(c.writer, "pruned entry with missing needles: %s\n", path)
 		return nil
 	})
 	return pruned, lookupErr
+}
+
+// chunkFingerprints maps the file id of every chunk to a set, so two chunk
+// lists count as identical when they reference the same needles.
+func chunkFingerprints(chunks []*filer_pb.FileChunk) map[string]struct{} {
+	ids := make(map[string]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil || chunk.Fid == nil {
+			continue
+		}
+		ids[chunk.GetFileIdString()] = struct{}{}
+	}
+	return ids
+}
+
+func chunksEqual(a, b map[string]struct{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id := range a {
+		if _, ok := b[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errCount uint64, prunedCount uint64, err error) {
@@ -400,10 +460,11 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			if len(dataChunks) > 0 {
 				select {
 				case outputChan <- &ItemEntry{
-					chunks:   dataChunks,
-					path:     util.NewFullPath(entry.Dir, entry.Entry.Name),
-					mtimeSec: entry.Entry.GetAttributes().GetMtime(),
-					md5:      entry.Entry.GetAttributes().GetMd5(),
+					chunks:    dataChunks,
+					rawChunks: entry.Entry.GetChunks(),
+					path:      util.NewFullPath(entry.Dir, entry.Entry.Name),
+					mtimeSec:  entry.Entry.GetAttributes().GetMtime(),
+					md5:       entry.Entry.GetAttributes().GetMd5(),
 				}:
 				case <-ctx.Done():
 					return ctx.Err()
@@ -423,7 +484,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 					}
 					fileCount++
 				} else if *c.pruneEntries && hasMissingNeedles {
-					pruned, pruneErr := c.pruneEntry(i.path, i.mtimeSec, i.md5)
+					pruned, pruneErr := c.pruneEntry(i.path, i.mtimeSec, i.md5, i.rawChunks)
 					if pruneErr != nil {
 						fmt.Fprintf(c.writer, "prune %s failed: %v\n", itemPath, pruneErr)
 					} else if pruned {

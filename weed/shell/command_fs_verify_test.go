@@ -48,8 +48,10 @@ func (s *fsVerifyTestFilerServer) LookupDirectoryEntry(_ context.Context, req *f
 
 func (s *fsVerifyTestFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
 	s.deleted = append(s.deleted, req)
+	// mirror the real filer: an entry newer than IfNotModifiedAfter is
+	// silently skipped, no error and no Error field
 	if s.entry != nil && req.IfNotModifiedAfter > 0 && s.entry.Attributes.GetMtime() > req.IfNotModifiedAfter {
-		return &filer_pb.DeleteEntryResponse{Error: "entry modified"}, nil
+		return &filer_pb.DeleteEntryResponse{}, nil
 	}
 	s.entry = nil
 	return &filer_pb.DeleteEntryResponse{}, nil
@@ -138,6 +140,14 @@ func TestFsVerifyIsNeedleMissingError(t *testing.T) {
 	if !isNeedleMissingError(status.Error(codes.Unknown, "EOF")) {
 		t.Error("EOF must classify as missing (truncated needle data)")
 	}
+	// new Go servers and the Rust volume server answer with code NotFound
+	if !isNeedleMissingError(status.Error(codes.NotFound, "needle not found 42")) {
+		t.Error("NotFound needle-not-found must classify as missing")
+	}
+	// a NotFound for the volume itself says nothing about the needle
+	if isNeedleMissingError(status.Error(codes.NotFound, "volume 7 not found")) {
+		t.Error("NotFound volume-not-found must NOT classify as missing")
+	}
 	if isNeedleMissingError(status.Error(codes.Unavailable, "connection refused")) {
 		t.Error("transport errors must NOT classify as missing")
 	}
@@ -212,27 +222,53 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 			Mtime: 100,
 			Md5:   []byte("md5"),
 		},
+		Chunks: []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
 	}}
 	commandEnv, _, cleanup := newFsVerifyTestCommandEnv(t, filer, &fsVerifyTestVolumeServer{})
 	defer cleanup()
 	c := newFsVerifyTestCommand(t, commandEnv, &bytes.Buffer{})
 
+	chunks := []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}}
+
 	// unchanged entry: deleted
-	pruned, err := c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"))
+	pruned, err := c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
 	if err != nil || !pruned {
 		t.Fatalf("expected prune of unchanged entry, got pruned=%v err=%v", pruned, err)
 	}
 
 	// re-uploaded entry (new mtime/md5): must survive
 	filer.entry = &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{Mtime: 200, Md5: []byte("new")}}
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"))
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
 	if err != nil || pruned {
 		t.Fatalf("changed entry must not be pruned, got pruned=%v err=%v", pruned, err)
 	}
 
+	// same-second rewrite: timestamps identical but the chunk set differs —
+	// the new upload must survive
+	filer.entry = &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 100, Md5: []byte("md5")},
+		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 999}}},
+	}
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
+	if err != nil || pruned {
+		t.Fatalf("same-second rewrite must not be pruned, got pruned=%v err=%v", pruned, err)
+	}
+
+	// identical chunk set (order-insensitive): prunes
+	filer.entry = &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 100, Md5: []byte("md5")},
+		Chunks:     []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 42}}},
+	}
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, []byte("md5"), chunks)
+	if err != nil || !pruned {
+		t.Fatalf("expected prune when chunk set matches, got pruned=%v err=%v", pruned, err)
+	}
+
 	// entry already gone: no error, no delete
 	filer.entry = nil
-	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, nil)
+	pruned, err = c.pruneEntry(util.NewFullPath("/buckets/b", "file"), 100, nil, chunks)
 	if err != nil || pruned {
 		t.Fatalf("missing entry must be a no-op, got pruned=%v err=%v", pruned, err)
 	}
