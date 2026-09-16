@@ -1606,7 +1606,7 @@ impl EcVolume {
                     )
                 })?;
             let mut header_buf = [0u8; 4];
-            shard
+            let bytes_read = shard
                 .read_at(&mut header_buf, shard_offset as u64)
                 .map_err(|e| {
                     io::Error::new(
@@ -1614,6 +1614,12 @@ impl EcVolume {
                         format!("cannot verify cookie: {}", e),
                     )
                 })?;
+            if bytes_read != header_buf.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cannot verify cookie: incomplete header",
+                ));
+            }
             let needle_cookie = crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
             if needle_cookie != cookie {
                 return Err(io::Error::new(
@@ -2346,6 +2352,95 @@ mod tests {
 
         // Control: SkipCookieCheck (cookie 0) still journals on the same fixture,
         // proving the Err above came from verification, not a broken fixture.
+        // This is the unit half of the handler's skip_cookie_check mapping
+        // (BatchDelete maps flag -> Cookie(0) at the call site in grpc_server.rs);
+        // the handler half is covered by construction plus that call-site comment.
+        vol.journal_delete_with_cookie(needle, Cookie(0)).unwrap();
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            deleted.contains(&needle),
+            "cookie-0 delete must still journal, got {:?}",
+            deleted
+        );
+    }
+
+    /// P0-3 follow-up (Greptile P1): a truncated shard must fail closed with
+    /// "incomplete header", never forge-match on a zero-filled remainder.
+    /// `read_at` returns the byte count; ignoring it lets a short read leave
+    /// zeros in `header_buf` that could compare equal to a zero cookie region.
+    /// Fixture: same geometry as above, but the located shard is mounted with
+    /// only 2 bytes, so the 4-byte header read is short.
+    #[test]
+    fn test_journal_delete_incomplete_header() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let needle = NeedleId(7);
+        let entries = vec![(needle, Offset::from_actual_offset(8), Size(100))];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            dat_file_size: 14000,
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        // Probe the geometry with no shards mounted to learn which shard
+        // holds the needle's first interval, then mount exactly that shard
+        // truncated to 2 bytes.
+        let probe = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        let (off, size) = probe
+            .find_needle_from_ecx(needle)
+            .unwrap()
+            .expect("fixture needle must be indexed");
+        let intervals = probe.locate_ec_shard_needle_interval(off.to_actual_offset(), size);
+        assert!(
+            !intervals.is_empty(),
+            "fixture must locate to a shard for the test to be meaningful"
+        );
+        let (located, located_offset) = probe.interval_to_shard_id_and_offset(&intervals[0]);
+        drop(probe);
+
+        let mut shard = EcVolumeShard::new(dir, "", VolumeId(1), located);
+        shard.create().unwrap();
+        shard.write_all(&[0x00u8; 2]).unwrap();
+        shard.close();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), located))
+            .unwrap();
+
+        // Sanity: the truncated file really is short of the 4-byte header at
+        // the needle's shard offset.
+        let shard_ref = vol.shards[located as usize]
+            .as_ref()
+            .expect("located shard must be mounted");
+        assert!(
+            (shard_ref.file_size()) < located_offset + 4,
+            "fixture must truncate the header read (file {} bytes, offset {})",
+            shard_ref.file_size(),
+            located_offset
+        );
+
+        let res = vol.journal_delete_with_cookie(needle, Cookie(0x1234));
+        let err = res.expect_err("short header read must Err, not forge-match");
+        assert!(
+            err.to_string().contains("incomplete header"),
+            "short read must report incomplete header, got: {}",
+            err
+        );
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert!(
+            !deleted.contains(&needle),
+            "failed delete must not append to .ecj, got {:?}",
+            deleted
+        );
+
+        // Skip path bypasses the header read entirely, even on the truncated shard.
         vol.journal_delete_with_cookie(needle, Cookie(0)).unwrap();
         let deleted = vol.read_deleted_needles().unwrap();
         assert!(
