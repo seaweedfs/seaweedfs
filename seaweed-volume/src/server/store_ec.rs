@@ -38,12 +38,11 @@ use reed_solomon_erasure::galois_8::ReedSolomon;
 use tokio::sync::Semaphore;
 use tonic::Request;
 
-use crate::pb::master_pb::{self, LookupEcVolumeRequest, seaweed_client::SeaweedClient};
-use crate::pb::volume_server_pb::{
-    CopyFileRequest, VolumeEcShardReadRequest, volume_server_client::VolumeServerClient,
+use crate::pb::master_pb::{self, LookupEcVolumeRequest};
+use crate::pb::volume_server_pb::{CopyFileRequest, VolumeEcShardReadRequest};
+use crate::server::grpc_client::{
+    GrpcDialOptions, connect_channel, master_client, parse_grpc_address, volume_server_client,
 };
-use crate::server::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint, parse_grpc_address};
-use crate::server::request_id::outgoing_request_id_interceptor;
 use crate::server::volume_server::{VolumeServerState, to_http_address};
 use crate::storage::erasure_coding::ec_shard::{ShardId, shard_id_try_from};
 use crate::storage::needle::needle::{Needle, NeedleError, get_actual_size};
@@ -868,18 +867,15 @@ async fn cached_lookup_ec_shard_locations(
 
     let grpc_addr =
         parse_grpc_address(&master).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    let endpoint = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let channel = endpoint
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(10))
-        .connect()
-        .await
-        .map_err(|e| io::Error::other(format!("master connect: {}", e)))?;
+    let channel = connect_channel(
+        &grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::unary(),
+    )
+    .await
+    .map_err(|e| io::Error::other(format!("master connect: {}", e)))?;
 
-    let mut client = SeaweedClient::with_interceptor(channel, outgoing_request_id_interceptor)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = master_client(channel);
 
     let resp = client
         .lookup_ec_volume(Request::new(LookupEcVolumeRequest { volume_id: vid.0 }))
@@ -1060,14 +1056,13 @@ async fn do_read_remote_ec_shard_interval(
     } = iv;
     let grpc_addr =
         parse_grpc_address(source).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    let endpoint = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
-        .map_err(|e| io::Error::other(e.to_string()))?;
-    let channel = endpoint
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
-        .connect()
-        .await
-        .map_err(|e| io::Error::other(format!("connect to {}: {}", source, e)))?;
+    let channel = connect_channel(
+        &grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::long(),
+    )
+    .await
+    .map_err(|e| io::Error::other(format!("connect to {}: {}", source, e)))?;
 
     // TODO(grpc-jwt): clusters with `jwt.signing.key` configured will
     // reject peer-to-peer VolumeEcShardRead calls until the Rust
@@ -1077,9 +1072,7 @@ async fn do_read_remote_ec_shard_interval(
     // here in isolation would split the credential plumbing across
     // call sites. Re-visit when outgoing JWT signing lands as a
     // server-wide helper.
-    let mut client = VolumeServerClient::with_interceptor(channel, outgoing_request_id_interceptor)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = volume_server_client(channel);
 
     let req = VolumeEcShardReadRequest {
         volume_id: vid.0,
@@ -1467,16 +1460,14 @@ async fn fetch_ec_index_from_one_peer(
 ) -> io::Result<()> {
     let grpc_addr =
         parse_grpc_address(peer).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    let channel = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
-        .map_err(|e| io::Error::other(e.to_string()))?
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
-        .connect()
-        .await
-        .map_err(|e| io::Error::other(format!("connect {}: {}", peer, e)))?;
-    let mut client = VolumeServerClient::with_interceptor(channel, outgoing_request_id_interceptor)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let channel = connect_channel(
+        &grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::long(),
+    )
+    .await
+    .map_err(|e| io::Error::other(format!("connect {}: {}", peer, e)))?;
+    let mut client = volume_server_client(channel);
 
     let copy_req = |ext: &str, ignore_not_found: bool| CopyFileRequest {
         volume_id: m.vid.0,
