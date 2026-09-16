@@ -115,6 +115,7 @@ func init() {
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
 	filerOptions.portGrpc = cmdServer.Flag.Int("filer.port.grpc", 0, "filer server grpc listen port")
 	filerOptions.publicPort = cmdServer.Flag.Int("filer.port.public", 0, "filer server public http listen port")
+	filerOptions.disableHttp = cmdServer.Flag.Bool("filer.disableHttp", false, "disable filer HTTP requests, only gRPC operations are allowed")
 	filerOptions.allowedOrigins = cmdServer.Flag.String("filer.allowedOrigins", "*", "comma separated list of allowed origins")
 	filerOptions.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	filerOptions.disableDirListing = cmdServer.Flag.Bool("filer.disableDirListing", false, "turn off directory listing")
@@ -333,7 +334,7 @@ func runServer(cmd *Command, args []string) bool {
 	mqBrokerOptions.rack = serverRack
 	s3Options.dataCenter = serverDataCenter
 	sftpOptions.dataCenter = serverDataCenter
-	filerOptions.disableHttp = serverDisableHttp
+	*filerOptions.disableHttp = *filerOptions.disableHttp || *serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 
 	filerAddress := string(pb.NewServerAddress(*serverIp, *filerOptions.port, *filerOptions.portGrpc))
