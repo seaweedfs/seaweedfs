@@ -216,7 +216,9 @@ mod tests {
     use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::volume::VolumeSpec;
-    use std::os::unix::fs::{FileExt, PermissionsExt};
+    use std::io::{Seek, SeekFrom};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn open_volume(dir: &str) -> Volume {
