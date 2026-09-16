@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
-use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT};
+use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, ShardId};
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
@@ -300,7 +300,7 @@ impl Store {
         collection: &str,
         vid: VolumeId,
         data_shard_count: u32,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
     ) -> Option<usize> {
         const TIER_ANY_DISK: u8 = 1;
         const TIER_HDD: u8 = 2;
@@ -359,7 +359,7 @@ impl Store {
     /// owner (`volume_ec_shards_copy` refuses such a batch instead of
     /// guessing). Mirrors `Store.EcShardOwnerDisks` in
     /// `weed/storage/store_ec.go`.
-    pub fn ec_shard_owner_disks(&self, vid: VolumeId, shard_ids: &[u32]) -> Vec<usize> {
+    pub fn ec_shard_owner_disks(&self, vid: VolumeId, shard_ids: &[ShardId]) -> Vec<usize> {
         self.locations
             .iter()
             .enumerate()
@@ -882,7 +882,7 @@ impl Store {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
     ) -> Result<(), VolumeError> {
         // Find the location where the EC files live
         let loc_idx = self.find_ec_location(vid, collection).ok_or_else(|| {
@@ -903,12 +903,12 @@ impl Store {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_id: u32,
+        shard_id: ShardId,
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         for loc in &mut self.locations {
             // Check if the shard file exists on this location
-            let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id as u8);
+            let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
             if std::path::Path::new(&shard.file_name()).exists() {
                 loc.mount_ec_shards(vid, collection, &[shard_id], source_disk_type)?;
                 return Ok(());
@@ -929,7 +929,7 @@ impl Store {
     /// the same store (#9252). DiskLocation::unmount_ec_shards
     /// already skips shards that aren't mounted, so this is safe to
     /// fan out blindly.
-    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
+    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[ShardId]) {
         for loc in &mut self.locations {
             if loc.has_ec_volume(vid) {
                 loc.unmount_ec_shards(vid, shard_ids);
@@ -942,7 +942,7 @@ impl Store {
     pub fn unmount_ec_shard(
         &mut self,
         vid: VolumeId,
-        shard_id: u32,
+        shard_id: ShardId,
         req_encode_ts_ns: i64,
     ) -> Result<(), VolumeError> {
         // Walk all locations rather than stopping at the first with the
@@ -950,7 +950,7 @@ impl Store {
         // multiple disks, with the target shard on any of them.
         for disk_id in 0..self.locations.len() {
             let ec_vol = self.locations[disk_id].find_ec_volume(vid);
-            let has_shard = ec_vol.is_some_and(|ec_vol| ec_vol.has_shard(shard_id as u8));
+            let has_shard = ec_vol.is_some_and(|ec_vol| ec_vol.has_shard(shard_id));
             if !has_shard {
                 continue;
             }
@@ -1069,10 +1069,10 @@ impl Store {
     /// disks (each holding a disjoint subset of the shards). Without
     /// this, callers using `find_ec_volume(vid)` would only see the
     /// first disk and miss shards that live on a sibling.
-    pub fn find_ec_shard_location(&self, vid: VolumeId, shard_id: u32) -> Option<usize> {
+    pub fn find_ec_shard_location(&self, vid: VolumeId, shard_id: ShardId) -> Option<usize> {
         for (i, loc) in self.locations.iter().enumerate() {
             if let Some(ecv) = loc.find_ec_volume(vid)
-                && ecv.has_shard(shard_id as u8)
+                && ecv.has_shard(shard_id)
             {
                 return Some(i);
             }
@@ -1083,10 +1083,10 @@ impl Store {
     /// Like [`Self::find_ec_shard_location`] but returns the EcVolume
     /// reference directly. Borrows the store immutably for the
     /// EcVolume's lifetime.
-    pub fn find_ec_volume_with_shard(&self, vid: VolumeId, shard_id: u32) -> Option<&EcVolume> {
+    pub fn find_ec_volume_with_shard(&self, vid: VolumeId, shard_id: ShardId) -> Option<&EcVolume> {
         for loc in &self.locations {
             if let Some(ecv) = loc.find_ec_volume(vid)
-                && ecv.has_shard(shard_id as u8)
+                && ecv.has_shard(shard_id)
             {
                 return Some(ecv);
             }
@@ -1118,7 +1118,10 @@ impl Store {
                     found_vol = Some(ecv);
                 }
                 for (shard_id, dir) in dirs.iter_mut().enumerate() {
-                    if dir.is_none() && ecv.has_shard(shard_id as u8) {
+                    let Ok(sid) = ShardId::try_from(shard_id) else {
+                        continue;
+                    };
+                    if dir.is_none() && ecv.has_shard(sid) {
                         *dir = Some(loc.directory.clone());
                     }
                 }
@@ -1214,12 +1217,12 @@ impl Store {
     }
 
     /// Delete EC shard files from disk.
-    pub fn delete_ec_shards(&mut self, vid: VolumeId, collection: &str, shard_ids: &[u32]) {
+    pub fn delete_ec_shards(&mut self, vid: VolumeId, collection: &str, shard_ids: &[ShardId]) {
         // Delete shard files from disk, tracking which locations actually held one.
         let mut deleted_at = vec![false; self.locations.len()];
         for (i, loc) in self.locations.iter().enumerate() {
             for &shard_id in shard_ids {
-                let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id as u8);
+                let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
                 if std::fs::remove_file(shard.file_name()).is_ok() {
                     deleted_at[i] = true;
                 }
@@ -1555,13 +1558,13 @@ fn ec_free_shard_count(loc: &DiskLocation, data_shard_count: u32) -> i64 {
 /// the in-memory registration the read path and heartbeats use.
 ///
 /// Mirrors `ownedEcShardCount` in `weed/storage/store_ec.go`.
-fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[u32]) -> usize {
+fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[ShardId]) -> usize {
     let Some(ecv) = loc.find_ec_volume(vid) else {
         return 0;
     };
     shard_ids
         .iter()
-        .filter(|&&shard_id| ecv.has_shard(shard_id as u8))
+        .filter(|&&shard_id| ecv.has_shard(shard_id))
         .count()
 }
 
@@ -2661,7 +2664,7 @@ mod tests {
         // Fill disk 0 past its shard-slot budget so ec_free_shard_count is 0.
         let filler = VolumeId(10000);
         let filler_base = volume_file_name(&store.locations[0].directory, collection, filler);
-        let filler_shards: Vec<u32> = (0..10).collect();
+        let filler_shards: Vec<ShardId> = (0..10).collect();
         for shard_id in &filler_shards {
             std::fs::write(format!("{}.ec{:02}", filler_base, shard_id), b"x").unwrap();
         }

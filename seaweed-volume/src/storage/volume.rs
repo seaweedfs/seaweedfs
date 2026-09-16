@@ -1574,6 +1574,15 @@ impl Volume {
         size: Size,
     ) -> Result<(), VolumeError> {
         let version = self.version();
+        // Storage guard: negativity-only (Go parity — storage allocates what the
+        // index says). Size(0) and >1GiB map sizes must still read; only
+        // negative wraps/panics. Transport cap lives in RPC handlers only.
+        if size.0 < 0 {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid needle size {}", size.0),
+            )));
+        }
         let actual_size = get_actual_size(size, version);
 
         let mut buf = vec![0u8; actual_size as usize];
@@ -1591,6 +1600,13 @@ impl Volume {
 
     fn read_needle_blob_unlocked(&self, offset: i64, size: Size) -> Result<Vec<u8>, VolumeError> {
         let version = self.version();
+        // Storage guard: negativity-only (Go parity). See read_needle_blob_and_parse.
+        if size.0 < 0 {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid needle size {}", size.0),
+            )));
+        }
         let actual_size = get_actual_size(size, version);
         let mut buf = vec![0u8; actual_size as usize];
         self.read_exact_at_backend(&mut buf, offset as u64)?;
@@ -3473,6 +3489,13 @@ impl Volume {
         if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
         }
+        // Storage guard: negativity-only (Go parity). See read_needle_blob_and_parse.
+        if size.0 < 0 {
+            return Err(VolumeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid needle size {}", size.0),
+            )));
+        }
 
         // size indexes the needle and places the v3 append timestamp, so a caller using
         // the payload-only DataSize corrupts both, silently until the needle is read back.
@@ -4416,6 +4439,18 @@ impl Volume {
     #[cfg(test)]
     pub(crate) fn fail_next_fsync_for_test(&mut self, fail: bool) {
         self.fail_fsync_for_test = fail;
+    }
+
+    /// Test-only read of the redb META `.idx` size through the live handle.
+    /// See `needle_map::test_support::live_meta_idx_size` for why durability
+    /// tests read this live instead of copying the open `.rdb` (Windows
+    /// mandatory file locking rejects reads of the locked file).
+    #[cfg(test)]
+    pub(crate) fn live_meta_idx_size_for_test(&self) -> Option<u64> {
+        match self.nm.as_ref() {
+            Some(NeedleMap::Redb(nm)) => nm.live_meta_idx_size(),
+            _ => None,
+        }
     }
 
     #[cfg(test)]
@@ -6270,8 +6305,6 @@ mod tests {
 
     #[test]
     fn test_redb_volume_checkpoint_flushes_dat_before_index() {
-        use crate::storage::needle_map::test_support::durable_idx_size;
-
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = Volume::new(
@@ -6282,7 +6315,6 @@ mod tests {
             &VolumeSpec::default(),
         )
         .unwrap();
-        let rdb_path = std::path::PathBuf::from(v.file_name(".rdb"));
         let write = |v: &mut Volume, i: u64| {
             let mut n = Needle {
                 id: NeedleId(i),
@@ -6297,7 +6329,10 @@ mod tests {
         for i in 1..1000 {
             write(&mut v, i);
         }
-        assert_eq!(durable_idx_size(&rdb_path), None);
+        // No checkpoint due yet, so META still holds the load-time .idx
+        // size. Read live: copying the open .rdb fails on Windows, where
+        // redb's file lock is mandatory (see live_meta_idx_size).
+        assert_eq!(v.live_meta_idx_size_for_test(), Some(0));
 
         // The 1000th write makes an index checkpoint due. A checkpoint makes
         // the index durable, so the volume has to flush the .dat first, and
@@ -6305,12 +6340,16 @@ mod tests {
         // row pointing past the end of an unflushed .dat loads read-only.
         v.fail_next_fsync_for_test(true);
         write(&mut v, 1000);
-        assert_eq!(durable_idx_size(&rdb_path), None);
+        assert_eq!(
+            v.live_meta_idx_size_for_test(),
+            Some(0),
+            "skipped checkpoint must not record progress"
+        );
 
         v.fail_next_fsync_for_test(false);
         write(&mut v, 1001);
         assert_eq!(
-            durable_idx_size(&rdb_path),
+            v.live_meta_idx_size_for_test(),
             Some(1001 * NEEDLE_MAP_ENTRY_SIZE as u64)
         );
     }
@@ -6519,6 +6558,38 @@ mod tests {
 
         v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
             .unwrap();
+    }
+
+    #[test]
+    fn test_read_blob_negative_does_not_panic() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        let res = v.read_needle_blob(0, Size(-100));
+        assert!(res.is_err(), "negative size must return Err, not panic");
+        match res.unwrap_err() {
+            VolumeError::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::InvalidData),
+            e => panic!("expected Io InvalidData, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_read_blob_zero_size_not_rejected_by_validation() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        // Size(0) must not be rejected by the negativity guard: the read may
+        // Ok or fail on empty-volume IO, but never with our validation message.
+        match v.read_needle_blob(0, Size(0)) {
+            Ok(_) => {}
+            Err(VolumeError::Io(e)) => {
+                assert!(
+                    !e.to_string().contains("invalid needle size"),
+                    "Size(0) must pass validation, got {e}"
+                );
+            }
+            Err(e) => panic!("unexpected error kind for Size(0): {e:?}"),
+        }
     }
 
     #[test]

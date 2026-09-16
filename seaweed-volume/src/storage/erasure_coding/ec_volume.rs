@@ -705,6 +705,17 @@ impl EcVolume {
                 use std::os::unix::fs::FileExt;
                 ecj_file.read_exact_at(&mut buf, off as u64)?;
             }
+            #[cfg(windows)]
+            {
+                // Positional read so concurrent readers of the shared .ecj
+                // handle can't interleave seek/read. Mirrors the
+                // read_exact_at helper at the bottom of this file.
+                read_exact_at(ecj_file, &mut buf, off as u64)?;
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                compile_error!("Platform not supported: only unix and windows are supported");
+            }
             set.insert(NeedleId::from_bytes(&buf));
             off += NEEDLE_ID_SIZE as i64;
         }
@@ -830,11 +841,23 @@ impl EcVolume {
     }
 
     /// Remove and close a shard.
-    pub fn remove_shard(&mut self, shard_id: ShardId) {
-        if let Some(ref mut shard) = self.shards[shard_id as usize] {
+    pub fn remove_shard(&mut self, shard_id: ShardId) -> io::Result<()> {
+        let idx = shard_id as usize;
+        if idx >= self.shards.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "invalid shard id {} (max {})",
+                    shard_id,
+                    self.shards.len().saturating_sub(1)
+                ),
+            ));
+        }
+        if let Some(ref mut shard) = self.shards[idx] {
             shard.close();
         }
-        self.shards[shard_id as usize] = None;
+        self.shards[idx] = None;
+        Ok(())
     }
 
     /// Get a ShardBits bitmap of locally available shards.
@@ -856,7 +879,7 @@ impl EcVolume {
     /// Reports whether `shard_id` is currently registered to this
     /// EcVolume (used by the cross-disk reconcile to skip already-
     /// loaded shards).
-    pub fn has_shard(&self, shard_id: u8) -> bool {
+    pub fn has_shard(&self, shard_id: ShardId) -> bool {
         self.shards
             .get(shard_id as usize)
             .map(|s| s.is_some())
@@ -1276,6 +1299,17 @@ impl EcVolume {
                 use std::os::unix::fs::FileExt;
                 ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
             }
+            #[cfg(windows)]
+            {
+                // Positional read so concurrent readers of the shared .ecx
+                // handle can't interleave seek/read. Mirrors the
+                // read_exact_at helper at the bottom of this file.
+                read_exact_at(ecx_file, &mut entry_buf, file_offset)?;
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                compile_error!("Platform not supported: only unix and windows are supported");
+            }
             let (_key, _offset, size) = idx_entry_from_bytes(&entry_buf);
             // Match Go's Size.Raw(): tombstone (-1) returns 0, other negatives return abs
             if !size.is_tombstone() {
@@ -1379,6 +1413,17 @@ impl EcVolume {
                 use std::os::unix::fs::FileExt;
                 ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
             }
+            #[cfg(windows)]
+            {
+                // Positional read so concurrent readers of the shared .ecx
+                // handle can't interleave seek/read. Mirrors the
+                // read_exact_at helper at the bottom of this file.
+                read_exact_at(ecx_file, &mut entry_buf, file_offset)?;
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                compile_error!("Platform not supported: only unix and windows are supported");
+            }
             let (key, _offset, _old_size) = idx_entry_from_bytes(&entry_buf);
             if key == needle_id {
                 let size_offset = file_offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64;
@@ -1388,6 +1433,31 @@ impl EcVolume {
                 {
                     use std::os::unix::fs::FileExt;
                     ecx_file.write_all_at(&size_buf, size_offset)?;
+                }
+                #[cfg(windows)]
+                {
+                    // Positional write so concurrent readers of the shared
+                    // .ecx handle can't observe a moved cursor. Mirrors the
+                    // read_exact_at helper at the bottom of this file, with
+                    // seek_write in place of seek_read.
+                    use std::os::windows::fs::FileExt;
+                    let mut written = 0;
+                    let mut at = size_offset;
+                    while written < size_buf.len() {
+                        let n = ecx_file.seek_write(&size_buf[written..], at)?;
+                        if n == 0 {
+                            return Err(io::Error::new(
+                                io::ErrorKind::WriteZero,
+                                "seek_write wrote nothing",
+                            ));
+                        }
+                        written += n;
+                        at += n as u64;
+                    }
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    compile_error!("Platform not supported: only unix and windows are supported");
                 }
                 return Ok(true);
             } else if key < needle_id {
@@ -1556,6 +1626,18 @@ impl EcVolume {
             {
                 use std::os::unix::fs::FileExt;
                 ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
+            }
+            #[cfg(windows)]
+            {
+                // Positional read so concurrent find_needle_from_ecx_raw calls
+                // on the shared .ecx handle don't interleave seek/read and
+                // corrupt each other's binary search. Mirrors the
+                // read_exact_at helper at the bottom of this file.
+                read_exact_at(ecx_file, &mut entry_buf, file_offset)?;
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                compile_error!("Platform not supported: only unix and windows are supported");
             }
             let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
             if key == needle_id {

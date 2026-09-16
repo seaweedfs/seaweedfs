@@ -216,7 +216,9 @@ mod tests {
     use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::volume::VolumeSpec;
-    use std::os::unix::fs::{FileExt, PermissionsExt};
+    use std::io::{Seek, SeekFrom};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn open_volume(dir: &str) -> Volume {
@@ -253,7 +255,7 @@ mod tests {
     /// writes (key, offset 0, tombstone) rows over the front of .idx instead of
     /// appending them.
     fn clobber_idx_head(idx_path: &str, keys: &[u64]) {
-        let file = OpenOptions::new().write(true).open(idx_path).unwrap();
+        let mut file = OpenOptions::new().write(true).open(idx_path).unwrap();
         for (i, key) in keys.iter().enumerate() {
             let mut row = Vec::new();
             idx::write_index_entry(
@@ -263,8 +265,13 @@ mod tests {
                 TOMBSTONE_FILE_SIZE,
             )
             .unwrap();
-            file.write_at(&row, (i * NEEDLE_MAP_ENTRY_SIZE) as u64)
+            // Positional write without Unix-only `FileExt::write_at`, so this
+            // helper (and the tests using it) also builds on Windows.
+            // Single-threaded test helper: no concurrent reader can move the
+            // offset between seek and write.
+            file.seek(SeekFrom::Start((i * NEEDLE_MAP_ENTRY_SIZE) as u64))
                 .unwrap();
+            file.write_all(&row).unwrap();
         }
     }
 
@@ -302,6 +309,7 @@ mod tests {
         let size_before = idx_size(&idx_path);
 
         // The rewrite replaces .idx wholesale, so it must not widen the mode.
+        #[cfg(unix)]
         fs::set_permissions(&idx_path, fs::Permissions::from_mode(0o600)).unwrap();
 
         // Deletes against needles 9..12 land on the front of .idx and take the
@@ -321,11 +329,14 @@ mod tests {
         let want = size_before + 4 * NEEDLE_MAP_ENTRY_SIZE as u64;
         assert_eq!(idx_size(&idx_path), want, "idx size after recovery");
 
-        assert_eq!(
-            fs::metadata(&idx_path).unwrap().permissions().mode() & 0o777,
-            0o600,
-            "idx mode after recovery"
-        );
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                fs::metadata(&idx_path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "idx mode after recovery"
+            );
+        }
 
         // The recovered rows go back in front, so .idx is in .dat append order
         // again: the fingerprint is gone and the last row is still the .dat tail.

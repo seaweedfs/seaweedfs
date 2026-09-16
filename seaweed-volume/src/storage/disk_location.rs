@@ -16,7 +16,7 @@ use crate::config::MinFreeSpace;
 use crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars;
 use crate::storage::erasure_coding::ec_shard::{
     DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
-    EcVolumeShard,
+    EcVolumeShard, ShardId,
 };
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle_map::NeedleMapKind;
@@ -817,7 +817,7 @@ impl DiskLocation {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         let idx_dir = self.idx_directory.clone();
@@ -839,7 +839,7 @@ impl DiskLocation {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
         idx_dir: &str,
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
@@ -873,10 +873,10 @@ impl DiskLocation {
             // keep the existing registration (mirrors Go's AddEcVolumeShard
             // added=false) — re-adding would replace a serving fd and bump
             // the ec_shards gauge without growing the mounted count.
-            if ec_vol.has_shard(shard_id as u8) {
+            if ec_vol.has_shard(shard_id) {
                 continue;
             }
-            let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            let mut shard = EcVolumeShard::new(&dir, collection, vid, shard_id);
             shard.disk_type = ec_vol.disk_type.clone();
             if let Err(e) = ec_vol.add_shard(shard) {
                 // The shard was dropped (its descriptors closed) inside the
@@ -904,14 +904,14 @@ impl DiskLocation {
     /// caller passes a shard that lives on a sibling disk
     /// (cross-disk reconcile makes that the common case for the same
     /// `vid` after reconciliation).
-    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
+    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[ShardId]) {
         if let Some(ec_vol) = self.ec_volumes.get_mut(&vid) {
             let collection = ec_vol.collection.clone();
             for &shard_id in shard_ids {
-                if !ec_vol.has_shard(shard_id as u8) {
+                if !ec_vol.has_shard(shard_id) {
                     continue;
                 }
-                ec_vol.remove_shard(shard_id as u8);
+                let _ = ec_vol.remove_shard(shard_id);
                 crate::metrics::VOLUME_GAUGE
                     .with_label_values(&[&collection, "ec_shards"])
                     .dec();
@@ -971,7 +971,7 @@ impl DiskLocation {
         }
         entries.sort();
 
-        let mut same_volume_shards: Vec<(String, u32)> = Vec::new(); // (filename, shard_id)
+        let mut same_volume_shards: Vec<(String, ShardId)> = Vec::new(); // (filename, shard_id)
         let mut prev_vid: Option<VolumeId> = None;
         let mut prev_collection: String = String::new();
 
@@ -1036,7 +1036,12 @@ impl DiskLocation {
     /// Validate + mount a (collection, vid) group when its `.ecx` is
     /// found. Mirrors `handleFoundEcxFile` in
     /// `weed/storage/disk_location_ec.go`.
-    fn handle_found_ecx_file(&mut self, shards: &[(String, u32)], collection: &str, vid: VolumeId) {
+    fn handle_found_ecx_file(
+        &mut self,
+        shards: &[(String, ShardId)],
+        collection: &str,
+        vid: VolumeId,
+    ) {
         let base = volume_file_name(&self.directory, collection, vid);
         let dat_path = format!("{}.dat", base);
         let dat_exists = check_dat_file_exists(&dat_path);
@@ -1050,7 +1055,7 @@ impl DiskLocation {
             return;
         }
 
-        let shard_ids: Vec<u32> = shards.iter().map(|(_, sid)| *sid).collect();
+        let shard_ids: Vec<ShardId> = shards.iter().map(|(_, sid)| *sid).collect();
         if let Err(e) = self.mount_ec_shards(vid, collection, &shard_ids, "") {
             // A mount failure (corrupt/locked .ecx, EMFILE, transient I/O) is
             // not proof the shards are disposable -- validate_ec_volume already
@@ -1072,7 +1077,7 @@ impl DiskLocation {
     /// distributed-EC shards waiting for cross-disk reconciliation.
     fn check_orphaned_shards(
         &self,
-        shards: &[(String, u32)],
+        shards: &[(String, ShardId)],
         collection: &str,
         vid: VolumeId,
     ) -> bool {
@@ -1138,10 +1143,45 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
         }
         (0, 0)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = path;
-        (0, 0)
+        use std::os::windows::ffi::OsStrExt;
+
+        // Canonicalize so symlinks, `.`/`..` segments, and relative paths
+        // resolve to the real location before querying. `\\?\`-prefixed
+        // extended-length paths and UNC (`\\?\UNC\...`) are passed through
+        // untouched: GetDiskFreeSpaceExW accepts them as-is.
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => return (0, 0),
+        };
+        // UTF-16 with trailing NUL for the Win32 wide-string call.
+        let mut wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
+        // UNC directory names must end in a backslash for GetDiskFreeSpaceExW.
+        if !wide.ends_with(&[0x5C]) {
+            wide.push(0x5C);
+        }
+        wide.push(0);
+        // SAFETY: `wide` is NUL-terminated; the out-params are valid u64
+        // writes; the call has no other preconditions.
+        unsafe {
+            let mut free_available: u64 = 0;
+            let mut total: u64 = 0;
+            let ok = windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_available,
+                &mut total,
+                std::ptr::null_mut(),
+            );
+            if ok == 0 {
+                return (0, 0);
+            }
+            return (total, free_available);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        compile_error!("get_disk_stats is implemented for unix and windows only");
     }
 }
 
@@ -1228,7 +1268,7 @@ fn parse_collection_volume_id(base: &str) -> Option<(String, VolumeId)> {
 
 /// `pub(crate)` re-export of [`parse_ec_shard_extension`] for the
 /// cross-disk reconcile in `store_ec_reconcile.rs`.
-pub(crate) fn is_ec_shard_extension(ext: &str) -> Option<u32> {
+pub(crate) fn is_ec_shard_extension(ext: &str) -> Option<ShardId> {
     parse_ec_shard_extension(ext)
 }
 
@@ -1242,7 +1282,7 @@ pub(crate) fn is_ec_shard_extension(ext: &str) -> Option<u32> {
 /// shardId > 255` guard. The 3-digit form (`.ec100`–`.ec255`) is
 /// retained so the parser can still recognise shards from custom
 /// 32+ ratios that fit in a u8 even though OSS only ships 10+4.
-fn parse_ec_shard_extension(ext: &str) -> Option<u32> {
+fn parse_ec_shard_extension(ext: &str) -> Option<ShardId> {
     let rest = ext.strip_prefix(".ec")?;
     if rest.len() < 2 || rest.len() > 3 {
         return None;
@@ -1251,7 +1291,7 @@ fn parse_ec_shard_extension(ext: &str) -> Option<u32> {
     if id > 255 {
         return None;
     }
-    Some(id)
+    ShardId::try_from(id).ok()
 }
 
 /// Robust check that a `.dat` with actual data exists. An empty `.dat`
@@ -1338,6 +1378,17 @@ fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// get_disk_stats must report real capacity for a real path on every
+    /// platform (Windows included) — consumers treat total==0 as "unknown"
+    /// and leave available_space at 0, which breaks volume assignment.
+    #[test]
+    fn test_get_disk_stats_reports_capacity_for_real_path() {
+        let tmp = TempDir::new().unwrap();
+        let (total, free) = get_disk_stats(tmp.path().to_str().unwrap());
+        assert!(total > 0, "expected total>0, got {total}");
+        assert!(free > 0, "expected free>0, got {free}");
+    }
 
     /// When `-dir.idx` is configured the EC `.vif` may live in the idx
     /// directory; the sweep must look there too, not only the data dir.
