@@ -622,9 +622,14 @@ pub fn validate_wire_size(size: Size) -> Result<(), String> {
     if size.0 <= 0 {
         return Err(format!("invalid needle size {}", size.0));
     }
-    const GRPC_MAX: i32 = 1 << 30;
-    if size.0 > GRPC_MAX {
-        return Err(format!("needle size {} exceeds max {}", size.0, GRPC_MAX));
+    // Keep in sync with canonical `GRPC_MAX_MESSAGE_SIZE in server/grpc_client.rs:10`
+    // (duplicated here to avoid a storage->server import and prevent drift).
+    const WIRE_MAX_NEEDLE_SIZE: i32 = 1 << 30;
+    if size.0 > WIRE_MAX_NEEDLE_SIZE {
+        return Err(format!(
+            "needle size {} exceeds max {}",
+            size.0, WIRE_MAX_NEEDLE_SIZE
+        ));
     }
     Ok(())
 }
@@ -996,12 +1001,14 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_wire_size_rejects_negative() {
-        use crate::storage::needle::needle::validate_wire_size;
-        use crate::storage::types::Size;
+    fn test_validate_wire_size_boundaries() {
         assert!(validate_wire_size(Size(-100)).is_err());
         assert!(validate_wire_size(Size(-1)).is_err());
         assert!(validate_wire_size(Size(0)).is_err());
         assert!(validate_wire_size(Size(1024)).is_ok());
+        assert!(validate_wire_size(Size(1)).is_ok());
+        assert!(validate_wire_size(Size(1 << 30)).is_ok());
+        assert!(validate_wire_size(Size((1 << 30) + 1)).is_err());
+        assert!(validate_wire_size(Size(i32::MAX)).is_err());
     }
 }
