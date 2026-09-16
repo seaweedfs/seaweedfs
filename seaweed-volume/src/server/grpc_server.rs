@@ -1063,10 +1063,6 @@ impl VolumeServer for VolumeGrpcService {
                 // EC volume deletion: journal the delete locally (with cookie validation, matching Go)
                 let mut store = self.state.store.write().unwrap();
                 if let Some(ec_vol) = store.find_ec_volume_mut(file_id.volume_id) {
-                    // Orphan cleanup (skip_cookie_check) must bypass the
-                    // fail-closed re-validation inside journal_delete_with_cookie:
-                    // pass Cookie(0) so the callee's `cookie.0 != 0` gate skips
-                    // verification instead of fail-closing on a non-primary holder.
                     let cookie = if req.skip_cookie_check {
                         crate::storage::types::Cookie(0)
                     } else {

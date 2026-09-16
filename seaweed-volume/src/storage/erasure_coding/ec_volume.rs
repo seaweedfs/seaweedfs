@@ -1605,10 +1605,7 @@ impl EcVolume {
                         format!("cannot verify cookie: shard {} not local", shard_id),
                     )
                 })?;
-            // Positional reads on regular files return short only at EOF
-            // (or on signal interruption), but loop to a full 4-byte header so
-            // a spurious partial never rejects a valid delete — while EOF or
-            // errors still fail closed with no journal append.
+            // Retry short reads, but fail closed on EOF.
             let mut header_buf = [0u8; 4];
             let mut filled = 0usize;
             while filled < header_buf.len() {
@@ -1639,9 +1636,6 @@ impl EcVolume {
                     format!("unexpected cookie {:x}", cookie.0),
                 ));
             }
-            // Follow-up out of scope: peer-held shards via distributed reader
-            // (needs async/store context). This P0 makes non-local fail-closed
-            // instead of bypass.
         }
         self.journal_delete(needle_id)
     }
@@ -2293,11 +2287,6 @@ mod tests {
         assert_eq!((fc, dc), (2, 2));
     }
 
-    /// P0-3: wrong-cookie BatchDelete must fail closed, never fall through to
-    /// the journal. The needle lives on a non-local shard (only shard 9 is
-    /// mounted), so there is no local header to compare against: the delete
-    /// must Err and append nothing to .ecj. The old first-local-shard-size
-    /// div + fall-through returned Ok here (bypass).
     #[test]
     fn test_journal_delete_wrong_cookie() {
         let tmp = TempDir::new().unwrap();
@@ -2306,7 +2295,6 @@ mod tests {
         let entries = vec![(needle, Offset::from_actual_offset(8), Size(100))];
         write_ecx_file(dir, "", VolumeId(1), &entries);
 
-        // dat_file_size makes the locate geometry well-defined.
         let vif = crate::storage::volume::VifVolumeInfo {
             dat_file_size: 14000,
             ..Default::default()
@@ -2318,9 +2306,6 @@ mod tests {
         )
         .unwrap();
 
-        // Mount ONLY shard 9 (non-empty so add_shard accepts it beside an
-        // index with entries). The needle at offset 8 locates to a low shard,
-        // never to 9, so verification has no local header to read.
         let mut shard9 = EcVolumeShard::new(dir, "", VolumeId(1), 9);
         shard9.create().unwrap();
         shard9.write_all(&[0xAAu8; 2048]).unwrap();
@@ -2330,7 +2315,6 @@ mod tests {
         vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 9))
             .unwrap();
 
-        // Precondition: the geometry really does map away from the mounted shard.
         let (off, size) = vol
             .find_needle_from_ecx(needle)
             .unwrap()
@@ -2347,7 +2331,6 @@ mod tests {
             located
         );
 
-        // Wrong cookie on a non-local shard must fail closed.
         let res = vol.journal_delete_with_cookie(needle, Cookie(0xDEAD_BEEF));
         let err = res.expect_err("wrong cookie must Err, not bypass to journal");
         assert!(
@@ -2362,11 +2345,6 @@ mod tests {
             deleted
         );
 
-        // Control: SkipCookieCheck (cookie 0) still journals on the same fixture,
-        // proving the Err above came from verification, not a broken fixture.
-        // This is the unit half of the handler's skip_cookie_check mapping
-        // (BatchDelete maps flag -> Cookie(0) at the call site in grpc_server.rs);
-        // the handler half is covered by construction plus that call-site comment.
         vol.journal_delete_with_cookie(needle, Cookie(0)).unwrap();
         let deleted = vol.read_deleted_needles().unwrap();
         assert!(
@@ -2376,12 +2354,6 @@ mod tests {
         );
     }
 
-    /// P0-3 follow-up (Greptile P1): a truncated shard must fail closed with
-    /// "incomplete header", never forge-match on a zero-filled remainder.
-    /// `read_at` returns the byte count; ignoring it lets a short read leave
-    /// zeros in `header_buf` that could compare equal to a zero cookie region.
-    /// Fixture: same geometry as above, but the located shard is mounted with
-    /// only 2 bytes, so the 4-byte header read is short.
     #[test]
     fn test_journal_delete_incomplete_header() {
         let tmp = TempDir::new().unwrap();
@@ -2401,9 +2373,6 @@ mod tests {
         )
         .unwrap();
 
-        // Probe the geometry with no shards mounted to learn which shard
-        // holds the needle's first interval, then mount exactly that shard
-        // truncated to 2 bytes.
         let probe = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
         let (off, size) = probe
             .find_needle_from_ecx(needle)
@@ -2426,8 +2395,6 @@ mod tests {
         vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), located))
             .unwrap();
 
-        // Sanity: the truncated file really is short of the 4-byte header at
-        // the needle's shard offset.
         let shard_ref = vol.shards[located as usize]
             .as_ref()
             .expect("located shard must be mounted");
@@ -2452,7 +2419,6 @@ mod tests {
             deleted
         );
 
-        // Skip path bypasses the header read entirely, even on the truncated shard.
         vol.journal_delete_with_cookie(needle, Cookie(0)).unwrap();
         let deleted = vol.read_deleted_needles().unwrap();
         assert!(
