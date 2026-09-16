@@ -165,6 +165,17 @@ func TestFsVerifyIsNeedleMissingError(t *testing.T) {
 	if isNeedleMissingError(fmt.Errorf("volume not found 7")) {
 		t.Error("volume not found must NOT classify as missing (it says nothing about the needle)")
 	}
+	// EC volumes on older Go servers (without the codes.NotFound
+	// canonicalization): ReadEcShardNeedle wraps erasure_coding.NotFoundError
+	// as "locate in local ec volume: ... needle not found", which crosses gRPC
+	// as code Unknown. The classifier must still recognize it.
+	if !isNeedleMissingError(status.Error(codes.Unknown, "locate in local ec volume: FindNeedleFromEcx: needle not found")) {
+		t.Error("EC wrapped needle-not-found must classify as missing")
+	}
+	// the EC marker alone is not enough: a different EC error must not match
+	if isNeedleMissingError(status.Error(codes.Unknown, "locate in local ec volume: ReadEcShardIntervals: shard 3 missing")) {
+		t.Error("EC errors that do not end in needle not found must NOT classify as missing")
+	}
 	if isNeedleMissingError(nil) {
 		t.Error("nil error must not classify as missing")
 	}
@@ -283,4 +294,62 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 	if err != nil || pruned {
 		t.Fatalf("missing entry must be a no-op, got pruned=%v err=%v", pruned, err)
 	}
+}
+
+// An unresolvable chunk manifest is an entry-level verification failure even
+// when the raw top-level manifest needle is healthy: the file is not fully
+// readable without the manifest. The entry must not count as verified, but
+// the raw chunks are still checked so a missing manifest needle can be pruned.
+func TestFsVerifyManifestResolutionFailure(t *testing.T) {
+	t.Run("healthy raw needle but unresolvable manifest is not verified", func(t *testing.T) {
+		// IsChunkManifest makes ResolveChunkManifest try to read the manifest
+		// needle's children via LookupFn. The test filer does not implement
+		// LookupVolume, so the lookup fails and resolution returns an error.
+		// The manifest needle itself (key 100) is present on the volume
+		// server, so verifyEntry alone would report verified=true — the
+		// manifest failure must override that.
+		manifestChunk := &filer_pb.FileChunk{
+			Fid:             &filer_pb.FileId{VolumeId: 7, FileKey: 100},
+			IsChunkManifest: true,
+			Size:            100,
+		}
+		commandEnv, loc, cleanup := newFsVerifyTestCommandEnv(t,
+			&fsVerifyTestFilerServer{},
+			&fsVerifyTestVolumeServer{}) // needle 100 is present
+		defer cleanup()
+		c := newFsVerifyTestCommand(t, commandEnv, &bytes.Buffer{}, loc)
+
+		verified, hasMissing := c.resolveAndVerify("/buckets/b/file",
+			[]*filer_pb.FileChunk{manifestChunk}, atomic.NewUint64(0), &sync.WaitGroup{})
+		if verified {
+			t.Error("entry with an unresolvable manifest must not count as verified")
+		}
+		if hasMissing {
+			t.Error("healthy raw manifest needle must not be classified as missing")
+		}
+	})
+
+	t.Run("missing manifest needle is prunable", func(t *testing.T) {
+		// The manifest needle itself is gone: resolution fails AND verifyEntry
+		// classifies the raw needle as missing, so the entry is prunable.
+		manifestChunk := &filer_pb.FileChunk{
+			Fid:             &filer_pb.FileId{VolumeId: 7, FileKey: 100},
+			IsChunkManifest: true,
+			Size:            100,
+		}
+		commandEnv, loc, cleanup := newFsVerifyTestCommandEnv(t,
+			&fsVerifyTestFilerServer{},
+			&fsVerifyTestVolumeServer{missingNeedles: map[uint64]bool{100: true}})
+		defer cleanup()
+		c := newFsVerifyTestCommand(t, commandEnv, &bytes.Buffer{}, loc)
+
+		verified, hasMissing := c.resolveAndVerify("/buckets/b/file",
+			[]*filer_pb.FileChunk{manifestChunk}, atomic.NewUint64(0), &sync.WaitGroup{})
+		if verified {
+			t.Error("entry with a missing manifest needle must not count as verified")
+		}
+		if !hasMissing {
+			t.Error("missing manifest needle must be classified as prunable")
+		}
+	})
 }

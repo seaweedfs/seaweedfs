@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -497,7 +498,7 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, nil, nil)
 	}
 	if err != nil {
-		if errors.Is(err, storage.ErrorNotFound) {
+		if errors.Is(err, storage.ErrorNotFound) || errors.Is(err, erasure_coding.NotFoundError) {
 			return nil, status.Errorf(codes.NotFound, "needle not found %d", n.Id)
 		}
 		return nil, err

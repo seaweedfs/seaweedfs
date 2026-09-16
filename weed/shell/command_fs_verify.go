@@ -167,6 +167,35 @@ type ItemEntry struct {
 	md5       []byte
 }
 
+// resolveAndVerify expands chunk manifests and verifies the entry's needles.
+// It returns verified=false when any needle failed OR the chunk manifest
+// could not be resolved: a missing or malformed (nested) manifest means the
+// file is not fully readable even when the raw top-level chunks are healthy,
+// so the entry must never count as verified. Raw chunks are still verified on
+// a resolution failure so a missing top-level manifest needle is classified
+// and can be pruned. hasMissingNeedles is true when at least one needle is
+// missing from every volume location holding its volume.
+func (c *commandFsVerify) resolveAndVerify(entryPath string, chunks []*filer_pb.FileChunk, errorChunksCount *atomic.Uint64, wg *sync.WaitGroup) (verified bool, hasMissingNeedles bool) {
+	dataChunks := chunks
+	manifestResolveFailed := false
+	if resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), chunks, 0, math.MaxInt64, nil); resolveErr == nil {
+		dataChunks = append(resolved, manifestChunks...)
+	} else {
+		manifestResolveFailed = true
+		fmt.Fprintf(c.writer, "file: %s failed to resolve chunk manifest (%v), verifying raw chunks\n", entryPath, resolveErr)
+	}
+	verified, hasMissingNeedles = c.verifyEntry(entryPath, dataChunks, errorChunksCount, wg)
+	if manifestResolveFailed && verified {
+		// the manifest is part of the file: an unreadable manifest is an
+		// entry-level failure even when every raw top-level needle is
+		// present. Keep the error count consistent with verifyEntry's
+		// one-bump-per-entry behavior.
+		verified = false
+		errorChunksCount.CompareAndSwap(0, 1)
+	}
+	return verified, hasMissingNeedles
+}
+
 func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup) (fileCount uint64, errCount uint64, prunedCount uint64, err error) {
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -179,20 +208,8 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 		}
 		entryPath := fmt.Sprintf("%s/%s", message.NewParentPath, message.NewEntry.Name)
 		errorChunksCount := atomic.NewUint64(0)
-		// expand chunk manifests so needles hidden behind a manifest get
-		// verified (and pruned) like in the BFS path. When the manifest
-		// itself is unreadable or gone, fall back to the raw chunks:
-		// verifyEntry then classifies the missing manifest needle itself.
-		// The callback's error must not be returned: FollowMetadata drops
-		// callback errors with DontLogError and moves on, so an error here
-		// would silently skip the entry instead of reporting it.
-		dataChunks := message.NewEntry.Chunks
-		if resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), message.NewEntry.Chunks, 0, math.MaxInt64, nil); resolveErr == nil {
-			dataChunks = append(resolved, manifestChunks...)
-		} else {
-			fmt.Fprintf(c.writer, "file: %s failed to resolve chunk manifest (%v), verifying raw chunks\n", entryPath, resolveErr)
-		}
-		if verified, hasMissingNeedles := c.verifyEntry(entryPath, dataChunks, errorChunksCount, wg); !verified {
+		verified, hasMissingNeedles := c.resolveAndVerify(entryPath, message.NewEntry.Chunks, errorChunksCount, wg)
+		if !verified {
 			if err = c.env.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				entryResp, errReq := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 					Directory: message.NewParentPath,
@@ -256,8 +273,12 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 // Error contract by server generation:
 //   - Go servers (with this change) and the Rust volume server answer absent
 //     needles with gRPC code NotFound and a "needle not found <id>" message.
+//     EC volumes are covered too: ReadEcShardNeedle's erasure_coding.NotFoundError
+//     is canonicalized to codes.NotFound by VolumeNeedleStatus.
 //   - Older Go servers return the raw read error as code Unknown: exactly
 //     "needle not found <id>" or "EOF" (io.EOF from a truncated volume file).
+//     EC volumes on those servers surface as a wrapped
+//     "locate in local ec volume: ... needle not found" message.
 //
 // The legacy shapes are matched anchored/exactly, so unrelated application
 // errors that merely contain these substrings (e.g. "unexpected EOF") do not
@@ -283,7 +304,12 @@ func isNeedleMissingError(err error) bool {
 			return false
 		}
 	}
-	return strings.HasPrefix(msg, "needle not found ") || msg == "EOF"
+	// direct non-EC missing needle, truncated volume EOF, or the EC wrapped
+	// shape from older servers (ReadEcShardNeedle prefixes "locate in local
+	// ec volume:" and the innermost erasure_coding.NotFoundError is "needle
+	// not found")
+	return strings.HasPrefix(msg, "needle not found ") || msg == "EOF" ||
+		strings.Contains(msg, "locate in local ec volume:") && strings.HasSuffix(msg, "needle not found")
 }
 
 // verifyEntry verifies all chunks of an entry. It returns verified=false when
