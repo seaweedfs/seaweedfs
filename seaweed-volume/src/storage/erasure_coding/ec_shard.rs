@@ -16,6 +16,20 @@ pub const ERASURE_CODING_SMALL_BLOCK_SIZE: usize = 1024 * 1024; // 1MB
 
 pub type ShardId = u8;
 
+/// Validate a wire shard id. `ShardId` is `u8` but only 0..MAX_SHARD_COUNT are valid.
+/// Rejects 256 (would truncate to 0 and delete .ec00) and 270 (would alias 14).
+pub fn shard_id_try_from(v: u32) -> Result<ShardId, String> {
+    if v < MAX_SHARD_COUNT as u32 {
+        Ok(v as ShardId)
+    } else {
+        Err(format!(
+            "invalid shard id {} (max {})",
+            v,
+            MAX_SHARD_COUNT - 1
+        ))
+    }
+}
+
 /// A single erasure-coded shard file.
 pub struct EcVolumeShard {
     pub volume_id: VolumeId,
@@ -250,5 +264,18 @@ mod tests {
     fn test_shard_file_name_no_collection() {
         let shard = EcVolumeShard::new("/data", "", VolumeId(7), 13);
         assert_eq!(shard.file_name(), "/data/7.ec13");
+    }
+
+    #[test]
+    fn test_shard_id_try_from_u32_rejects_overflow() {
+        use super::{MAX_SHARD_COUNT, shard_id_try_from};
+        assert_eq!(shard_id_try_from(0).unwrap(), 0u8);
+        assert_eq!(shard_id_try_from(14).unwrap(), 14u8);
+        assert_eq!(shard_id_try_from(31).unwrap(), 31u8);
+        assert!(shard_id_try_from(32).is_err());
+        assert!(shard_id_try_from(256).is_err());
+        assert!(shard_id_try_from(270).is_err());
+        assert!(shard_id_try_from(u32::MAX).is_err());
+        assert_eq!(MAX_SHARD_COUNT, 32);
     }
 }
