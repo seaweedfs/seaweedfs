@@ -76,6 +76,43 @@ jobs:
       - name: Run Rust unit tests (redb experimental cursor)
         run: cd seaweed-volume && cargo test --features redb-experimental-cursor --lib storage::needle_map
 
+  rust-unit-tests-windows:
+    name: Rust Unit Tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # No glibc on Windows: key the cache on the toolchain and OS only.
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=windows-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-windows-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-windows-${{ steps.toolchain.outputs.fingerprint }}-
+
+      - name: Run Rust unit tests
+        run: cd seaweed-volume && cargo test
+
+      - name: Run Rust unit tests (redb experimental cursor)
+        run: cd seaweed-volume && cargo test --features redb-experimental-cursor --lib storage::needle_map
+
   rust-integration-tests:
     name: Rust Integration Tests
     runs-on: ubuntu-22.04
