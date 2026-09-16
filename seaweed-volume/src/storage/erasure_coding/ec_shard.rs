@@ -278,4 +278,29 @@ mod tests {
         assert!(shard_id_try_from(u32::MAX).is_err());
         assert_eq!(MAX_SHARD_COUNT, 32);
     }
+
+    #[test]
+    fn test_shard_batch_validation_is_atomic_rejects_without_partial_prefix() {
+        use super::shard_id_try_from;
+        // The mount/unmount handlers pre-validate the ENTIRE req.shard_ids into
+        // a Vec<ShardId> BEFORE acquiring the write lock or mutating any EC
+        // state. This test pins the validation half of that contract at the
+        // unit level: a batch like [0, 32] must fail as a whole, so by
+        // construction no validated prefix (e.g. shard 0) is ever applied.
+        // The handler-level tests below assert the no-state-change half.
+        let batch = vec![0u32, 32u32];
+        let validated: Result<Vec<_>, _> =
+            batch.iter().map(|&sid| shard_id_try_from(sid)).collect();
+        assert!(
+            validated.is_err(),
+            "batch {:?} must be rejected as a whole",
+            batch
+        );
+        // A fully-valid batch still validates cleanly.
+        let ok: Result<Vec<_>, _> = [0u32, 1u32, 13u32]
+            .iter()
+            .map(|&sid| shard_id_try_from(sid))
+            .collect();
+        assert_eq!(ok.unwrap(), vec![0u8, 1u8, 13u8]);
+    }
 }
