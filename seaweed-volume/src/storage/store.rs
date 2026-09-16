@@ -764,10 +764,9 @@ impl Store {
     // ---- Collection operations ----
 
     /// Delete all volumes in a collection.
-    pub fn delete_collection(&mut self, collection: &str) -> Result<(), String> {
+    pub fn delete_collection(&mut self, collection: &str) -> Result<(), VolumeError> {
         for loc in &mut self.locations {
-            loc.delete_collection(collection)
-                .map_err(|e| format!("delete collection {}: {}", collection, e))?;
+            loc.delete_collection(collection)?;
         }
         crate::metrics::delete_collection_metrics(collection);
         Ok(())
@@ -1362,18 +1361,6 @@ impl Store {
 
     // ---- Vacuum / Compaction ----
 
-    /// Check the garbage level of a volume.
-    pub fn check_compact_volume(&self, vid: VolumeId) -> Result<f64, String> {
-        if let Some((_, v)) = self.find_volume(vid) {
-            Ok(v.garbage_level())
-        } else {
-            Err(format!(
-                "volume id {} is not found during check compact",
-                vid.0
-            ))
-        }
-    }
-
     /// Compact a volume by rewriting only live needles.
     pub fn compact_volume<F>(
         &mut self,
@@ -1381,68 +1368,57 @@ impl Store {
         preallocate: u64,
         max_bytes_per_second: i64,
         progress_fn: F,
-    ) -> Result<(), String>
+    ) -> Result<(), VolumeError>
     where
         F: Fn(i64) -> bool,
     {
-        let loc_idx = self
-            .find_volume(vid)
-            .map(|(i, _)| i)
-            .ok_or_else(|| format!("volume id {} is not found during compact", vid.0))?;
+        // One lookup answers everything the space check needs — which disk the
+        // volume sits on and how big it currently is — so the sizes and the
+        // free-space reading describe the same volume even if the caller races
+        // a mount elsewhere.
+        // Required space matches Go's CompactVolume check: the larger of the
+        // requested preallocation and the estimated volume size.
+        let (loc_idx, space_needed) = {
+            let (loc_idx, v) = self
+                .find_volume(vid)
+                .ok_or(VolumeError::VolumeNotFound(vid))?;
+            let estimated = v.dat_file_size().unwrap_or(0) + v.idx_file_size();
+            (loc_idx, std::cmp::max(preallocate, estimated))
+        };
 
         let dir = self.locations[loc_idx].directory.clone();
         let (_, free) = crate::storage::disk_location::get_disk_stats(&dir);
-
-        // Compute required space: use the larger of preallocate or estimated volume size
-        // matching Go's CompactVolume space check
-        let space_needed = {
-            let (_, v) = self.find_volume(vid).unwrap();
-            let estimated = v.dat_file_size().unwrap_or(0) + v.idx_file_size();
-            std::cmp::max(preallocate, estimated)
-        };
-
         if free < space_needed {
-            return Err(format!(
-                "not enough free space to compact volume {}. Required: {}, Free: {}",
-                vid.0, space_needed, free
-            ));
+            return Err(VolumeError::InsufficientSpace {
+                vid,
+                required: space_needed,
+                free,
+            });
         }
 
-        if let Some((_, v)) = self.find_volume_mut(vid) {
-            v.compact_by_index(preallocate, max_bytes_per_second, progress_fn)
-                .map_err(|e| format!("compact volume {}: {}", vid.0, e))
-        } else {
-            Err(format!("volume id {} is not found during compact", vid.0))
-        }
+        let (_, v) = self
+            .find_volume_mut(vid)
+            .ok_or(VolumeError::VolumeNotFound(vid))?;
+        v.compact_by_index(preallocate, max_bytes_per_second, progress_fn)
     }
 
     /// Commit a completed compaction: swap files and reload.
-    pub fn commit_compact_volume(&mut self, vid: VolumeId) -> Result<(bool, u64), String> {
-        if let Some((_, v)) = self.find_volume_mut(vid) {
-            let is_read_only = v.is_read_only();
-            v.commit_compact()
-                .map_err(|e| format!("commit compact volume {}: {}", vid.0, e))?;
-            let volume_size = v.dat_file_size().unwrap_or(0);
-            Ok((is_read_only, volume_size))
-        } else {
-            Err(format!(
-                "volume id {} is not found during commit compact",
-                vid.0
-            ))
-        }
+    pub fn commit_compact_volume(&mut self, vid: VolumeId) -> Result<(bool, u64), VolumeError> {
+        let (_, v) = self
+            .find_volume_mut(vid)
+            .ok_or(VolumeError::VolumeNotFound(vid))?;
+        let is_read_only = v.is_read_only();
+        v.commit_compact()?;
+        let volume_size = v.dat_file_size().unwrap_or(0);
+        Ok((is_read_only, volume_size))
     }
 
     /// Clean up leftover compaction files.
-    pub fn cleanup_compact_volume(&mut self, vid: VolumeId) -> Result<(), String> {
-        if let Some((_, v)) = self.find_volume_mut(vid) {
-            v.cleanup_compact()
-                .map_err(|e| format!("cleanup volume {}: {}", vid.0, e))
-        } else {
-            Err(format!(
-                "volume id {} is not found during cleaning up",
-                vid.0
-            ))
-        }
+    pub fn cleanup_compact_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
+        let (_, v) = self
+            .find_volume_mut(vid)
+            .ok_or(VolumeError::VolumeNotFound(vid))?;
+        v.cleanup_compact()
     }
 
     /// Close all locations and their volumes.
@@ -2319,6 +2295,98 @@ mod tests {
         };
         let err = store.read_volume_needle(VolumeId(99), &mut n);
         assert!(matches!(err, Err(VolumeError::NotFound)));
+    }
+
+    /// The vacuum entry points used to flatten "no such volume" into a
+    /// formatted `String`, so the gRPC layer could only answer `Internal`.
+    /// They now carry the volume id in a typed variant that the RPC maps to
+    /// `NotFound`.
+    #[test]
+    fn test_compaction_of_missing_volume_is_volume_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+
+        let missing = VolumeId(4242);
+
+        let compact = store.compact_volume(missing, 0, 0, |_| true);
+        assert!(
+            matches!(compact, Err(VolumeError::VolumeNotFound(v)) if v == missing),
+            "{compact:?}"
+        );
+
+        let commit = store.commit_compact_volume(missing);
+        assert!(
+            matches!(commit, Err(VolumeError::VolumeNotFound(v)) if v == missing),
+            "{commit:?}"
+        );
+
+        let cleanup = store.cleanup_compact_volume(missing);
+        assert!(
+            matches!(cleanup, Err(VolumeError::VolumeNotFound(v)) if v == missing),
+            "{cleanup:?}"
+        );
+
+        // The operator-facing wording keeps the volume id, which is what the
+        // vacuum logs and `weed shell` output are read for.
+        assert_eq!(
+            VolumeError::VolumeNotFound(missing).to_string(),
+            "volume id 4242 is not found"
+        );
+    }
+
+    /// Covers what the missing-volume test above cannot reach: the folded
+    /// lookup that computes the space estimate, the free-space check, and the
+    /// mutable re-lookup that actually runs the compaction. A regression in
+    /// any of the three would still leave the not-found test green.
+    #[test]
+    fn test_compact_then_commit_reclaims_a_deleted_needle() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+
+        let vid = VolumeId(1);
+        store
+            .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+
+        for i in 1..=3u64 {
+            let payload = format!("data-{i}").into_bytes();
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data_size: payload.len() as u32,
+                data: payload,
+                ..Needle::default()
+            };
+            store.write_volume_needle(vid, &mut n, true).unwrap();
+        }
+
+        let mut del = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(2),
+            ..Needle::default()
+        };
+        store.delete_volume_needle(vid, &mut del).unwrap();
+
+        let size_before = store.find_volume(vid).unwrap().1.dat_file_size().unwrap();
+
+        // preallocate 0, unthrottled, progress fn that never cancels.
+        store.compact_volume(vid, 0, 0, |_| true).unwrap();
+
+        let (is_read_only, volume_size) = store.commit_compact_volume(vid).unwrap();
+        assert!(!is_read_only);
+        assert!(
+            volume_size < size_before,
+            "compaction must drop the deleted needle: {volume_size} vs {size_before}"
+        );
+
+        let (_, v) = store
+            .find_volume(vid)
+            .expect("the volume stays mounted across a commit");
+        assert_eq!(v.file_count(), 2);
+        assert_eq!(v.deleted_count(), 0);
+        assert_eq!(v.dat_file_size().unwrap(), volume_size);
     }
 
     /// Build a Store with N HDD disk locations under a single TempDir.

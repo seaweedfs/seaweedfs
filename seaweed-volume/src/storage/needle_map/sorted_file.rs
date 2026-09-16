@@ -316,9 +316,15 @@ impl SortedFileNeedleMap {
         Ok(())
     }
 
-    pub fn ascending_visit<F>(&self, mut f: F) -> Result<(), String>
+    /// Visit all live entries in ascending order by needle ID.
+    ///
+    /// `E: From<String>` carries a short or unreadable `.sdx` — the error
+    /// `visit_live_entries` reports, as opposed to one the visitor raised —
+    /// into the caller's error type.
+    pub fn ascending_visit<F, E>(&self, mut f: F) -> Result<(), E>
     where
-        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
+        E: From<String>,
     {
         let mut visit_error = None;
         self.visit_live_entries(|id, nv| {
@@ -328,7 +334,7 @@ impl SortedFileNeedleMap {
             }
             Ok(())
         })
-        .map_err(|e| visit_error.take().unwrap_or_else(|| e.to_string()))
+        .map_err(|e| visit_error.take().unwrap_or_else(|| E::from(e.to_string())))
     }
 
     pub fn iter_entries(&self) -> io::Result<Vec<(NeedleId, NeedleValue)>> {
@@ -1060,7 +1066,7 @@ mod tests {
         let mut visited = Vec::new();
         m.ascending_visit(|id, _| {
             visited.push(id);
-            Ok(())
+            Ok::<(), String>(())
         })
         .unwrap();
         assert_eq!(visited, vec![NeedleId(2)]);
