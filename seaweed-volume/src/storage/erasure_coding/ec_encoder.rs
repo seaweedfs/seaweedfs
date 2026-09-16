@@ -436,7 +436,7 @@ pub(crate) fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::R
     let mut entries: Vec<(NeedleId, Offset, Size)> = last
         .into_iter()
         .filter_map(|(key, (offset, size))| {
-            if size.is_deleted() {
+            if size.is_deleted() || offset.is_zero() {
                 None
             } else {
                 Some((key, offset, size))
@@ -1603,5 +1603,34 @@ mod tests {
             .unwrap();
         }
         assert!(found2, "re-created key must appear live");
+        // Zero offset with non-negative size is also a deletion: Go
+        // readNeedleMap (`if !offset.IsZero() && !size.IsDeleted() { Set }
+        // else { Delete }`) and CompactNeedleMap::load_from_idx both treat
+        // it as deleted. Encode must drop it too, or the .ecx live-map
+        // mismatches replay.
+        let idx3 = format!("{}/t3.idx", dir);
+        let ecx3 = format!("{}/t3.ecx", dir);
+        {
+            let mut f = std::fs::File::create(&idx3).unwrap();
+            idx::write_index_entry(&mut f, key, Offset::from_actual_offset(1024), Size(100))
+                .unwrap();
+            idx::write_index_entry(&mut f, key, Offset::default(), Size(0)).unwrap();
+        }
+        super::write_sorted_ecx_from_idx(&idx3, &ecx3).unwrap();
+        let mut found3 = false;
+        {
+            let mut f = std::fs::File::open(&ecx3).unwrap();
+            idx::walk_index_file(&mut f, 0, |k, _o, _s| {
+                if k == key {
+                    found3 = true;
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        assert!(
+            !found3,
+            "zero-offset row must not appear in .ecx even with non-negative size"
+        );
     }
 }
