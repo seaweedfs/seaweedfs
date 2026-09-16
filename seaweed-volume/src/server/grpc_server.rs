@@ -2620,8 +2620,11 @@ impl VolumeServer for VolumeGrpcService {
         // GetActualSize bytes + protobuf tag/len, so body==1<<30 always exceeds
         // GRPC_MAX_MESSAGE_SIZE on the wire after allocation+disk read.
         // Check actual encoded size post-lock (have vol.version() here).
+        // The 16-byte headroom covers the protobuf bytes-field tag + varint
+        // length prefix, so actual==GRPC_MAX (exact fit pre-framing) is also
+        // rejected before paying for the disk read.
         let actual = crate::storage::needle::needle::get_actual_size(size, vol.version()) as u64;
-        if actual > crate::server::grpc_client::GRPC_MAX_MESSAGE_SIZE as u64 {
+        if actual + 16 > crate::server::grpc_client::GRPC_MAX_MESSAGE_SIZE as u64 {
             return Err(Status::invalid_argument(format!(
                 "needle blob size {} exceeds transport limit",
                 actual
