@@ -309,6 +309,7 @@ mod tests {
         let size_before = idx_size(&idx_path);
 
         // The rewrite replaces .idx wholesale, so it must not widen the mode.
+        #[cfg(unix)]
         fs::set_permissions(&idx_path, fs::Permissions::from_mode(0o600)).unwrap();
 
         // Deletes against needles 9..12 land on the front of .idx and take the
@@ -328,11 +329,14 @@ mod tests {
         let want = size_before + 4 * NEEDLE_MAP_ENTRY_SIZE as u64;
         assert_eq!(idx_size(&idx_path), want, "idx size after recovery");
 
-        assert_eq!(
-            fs::metadata(&idx_path).unwrap().permissions().mode() & 0o777,
-            0o600,
-            "idx mode after recovery"
-        );
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                fs::metadata(&idx_path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "idx mode after recovery"
+            );
+        }
 
         // The recovered rows go back in front, so .idx is in .dat append order
         // again: the fingerprint is gone and the last row is still the .dat tail.
