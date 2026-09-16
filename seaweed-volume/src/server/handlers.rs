@@ -279,31 +279,104 @@ impl Drop for StreamingBody {
 // URL Parsing
 // ============================================================================
 
-/// Parse volume ID and file ID from URL path.
-/// Supports: "vid,fid", "vid/fid", "vid,fid.ext", "vid/fid/filename.ext"
-/// Extract the file_id string (e.g., "3,01637037d6") from a URL path for JWT validation.
-fn extract_file_id(path: &str) -> String {
-    let path = path.trim_start_matches('/');
-    // Strip extension and filename after second slash
-    if let Some(comma) = path.find(',') {
-        let after_comma = &path[comma + 1..];
-        let fid_part = if let Some(slash) = after_comma.find('/') {
-            &after_comma[..slash]
-        } else if let Some(dot) = after_comma.rfind('.') {
-            &after_comma[..dot]
-        } else {
-            after_comma
-        };
-        // Strip "_suffix" from fid (Go does this for filenames appended with underscore)
-        let fid_part = if let Some(underscore) = fid_part.rfind('_') {
-            &fid_part[..underscore]
-        } else {
-            fid_part
-        };
-        format!("{},{}", &path[..comma], fid_part)
-    } else {
-        path.to_string()
+/// The pieces a needle URL carries, as Go's `parseURLPath` splits them
+/// (`weed/server/common.go:218-249`). Borrowed from the path so the callers
+/// that only need one field do not allocate.
+///
+/// `fid` keeps any `_delta` suffix, exactly like Go: applying the delta is
+/// `parse_needle_id_cookie`'s job (Go's `needle.ParsePath`), and the JWT check
+/// strips it separately.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NeedlePath<'a> {
+    pub vid: &'a str,
+    pub fid: &'a str,
+    /// Extension including the dot (`.jpg`), or "" when the URL has none.
+    pub ext: &'a str,
+    /// The trailing display name of the `vid/fid/filename.ext` form only.
+    pub filename: Option<&'a str>,
+}
+
+/// Split a needle URL path into volume id, file id, extension and filename.
+///
+/// Dispatches on the slash count like Go's `parseURLPath`, which is what
+/// decides where the extension is taken from:
+/// - `/vid/fid/filename.ext` (Go case 3): the filename carries the extension
+///   and the fid is left intact.
+/// - `/vid/fid.ext` (Go case 2): the extension is split off the fid.
+/// - `/vid,fid.ext` (Go's default): the last path segment is split on its last
+///   comma, then on its last dot.
+///
+/// The leading slash is optional, so chunk manifest entries ("3,01637037d6")
+/// parse through the same function. Returns `None` for a path with no file id
+/// at all — Go's `isVolumeIdOnly` case — since every caller here needs one.
+pub(crate) fn parse_needle_path(path: &str) -> Option<NeedlePath<'_>> {
+    // Go counts one more slash than this because it keeps the leading one.
+    let trimmed = path.trim_start_matches('/');
+    match trimmed.matches('/').count() {
+        2 => {
+            let mut parts = trimmed.splitn(3, '/');
+            let vid = parts.next()?;
+            let fid = parts.next()?;
+            let filename = parts.next()?;
+            // Go uses filepath.Ext here, which has no "dot at index 0" guard.
+            let ext = filename.rfind('.').map_or("", |dot| &filename[dot..]);
+            Some(NeedlePath {
+                vid,
+                fid,
+                ext,
+                filename: Some(filename),
+            })
+        }
+        1 => {
+            let (vid, fid) = trimmed.split_once('/')?;
+            let (fid, ext) = split_extension(fid);
+            Some(NeedlePath {
+                vid,
+                fid,
+                ext,
+                filename: None,
+            })
+        }
+        _ => {
+            // Go looks only after the last slash, so a deeper path has no
+            // comma to find and falls out as invalid.
+            let segment = trimmed.rsplit_once('/').map_or(trimmed, |(_, last)| last);
+            let comma = segment.rfind(',')?;
+            let (fid, ext) = split_extension(&segment[comma + 1..]);
+            Some(NeedlePath {
+                vid: &segment[..comma],
+                fid,
+                ext,
+                filename: None,
+            })
+        }
     }
+}
+
+/// Split a trailing `.ext` off a file id. Go guards this with `dotIndex > 0`,
+/// so a file id that is nothing but an extension keeps it and fails to parse
+/// later instead of becoming empty here.
+fn split_extension(fid: &str) -> (&str, &str) {
+    match fid.rfind('.') {
+        Some(dot) if dot > 0 => (&fid[..dot], &fid[dot..]),
+        _ => (fid, ""),
+    }
+}
+
+/// Extract the file_id string (e.g., "3,01637037d6") from a URL path for JWT validation.
+///
+/// Go compares the token's `fid` claim against `vid + "," + fid` for every URL
+/// form, after dropping an `_suffix` (`volume_server_handlers.go:361-364`), so
+/// the comma form is emitted here even when the request used slashes.
+fn extract_file_id(path: &str) -> String {
+    let Some(parsed) = parse_needle_path(path) else {
+        return path.trim_start_matches('/').to_string();
+    };
+    let fid = match parsed.fid.rfind('_') {
+        Some(sep) if sep > 0 => &parsed.fid[..sep],
+        _ => parsed.fid,
+    };
+    format!("{},{}", parsed.vid, fid)
 }
 
 fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usize {
@@ -314,32 +387,11 @@ fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usiz
 }
 
 fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
-    let path = path.trim_start_matches('/');
-
-    // Try "vid,fid" or "vid/fid" or "vid/fid/filename" formats
-    let (vid_str, fid_part) = if let Some(pos) = path.find(',') {
-        (&path[..pos], &path[pos + 1..])
-    } else {
-        let pos = path.find('/')?;
-        (&path[..pos], &path[pos + 1..])
-    };
-
-    // For fid part, strip extension from the fid (not from filename)
-    // "vid,fid.ext" -> fid is before dot
-    // "vid/fid/filename.ext" -> fid is the part before the second slash
-    let fid_str = if let Some(slash_pos) = fid_part.find('/') {
-        // "fid/filename.ext" - fid is before the slash
-        &fid_part[..slash_pos]
-    } else if let Some(dot) = fid_part.rfind('.') {
-        // "fid.ext" - strip extension
-        &fid_part[..dot]
-    } else {
-        fid_part
-    };
-
-    let vid = VolumeId::parse(vid_str).ok()?;
+    let parsed = parse_needle_path(path)?;
+    let vid = VolumeId::parse(parsed.vid).ok()?;
+    // parse_needle_id_cookie applies an `_delta` suffix itself (Go ParsePath).
     let (needle_id, cookie) =
-        crate::storage::needle::needle::parse_needle_id_cookie(fid_str).ok()?;
+        crate::storage::needle::needle::parse_needle_id_cookie(parsed.fid).ok()?;
 
     Some((vid, needle_id, cookie))
 }
@@ -673,34 +725,16 @@ fn build_proxy_request_info(
     headers: &HeaderMap,
     query_string: &str,
 ) -> Option<ProxyRequestInfo> {
-    let trimmed = path.trim_start_matches('/');
-    let (vid_str, fid_str) = if let Some(pos) = trimmed.find(',') {
-        let raw_fid = &trimmed[pos + 1..];
-        let fid = if let Some(slash) = raw_fid.find('/') {
-            &raw_fid[..slash]
-        } else if let Some(dot) = raw_fid.rfind('.') {
-            &raw_fid[..dot]
-        } else {
-            raw_fid
-        };
-        (trimmed[..pos].to_string(), fid.to_string())
-    } else {
-        let pos = trimmed.find('/')?;
-        let after = &trimmed[pos + 1..];
-        let fid_part = if let Some(slash) = after.find('/') {
-            &after[..slash]
-        } else {
-            after
-        };
-        (trimmed[..pos].to_string(), fid_part.to_string())
-    };
+    // Go redirects to "vid,fid" built from parseURLPath, so the extension must
+    // already be off the fid here (volume_server_handlers_read.go:128-137).
+    let parsed = parse_needle_path(path)?;
 
     Some(ProxyRequestInfo {
         original_headers: headers.clone(),
         original_query: query_string.to_string(),
         path: path.to_string(),
-        vid_str,
-        fid_str,
+        vid_str: parsed.vid.to_string(),
+        fid_str: parsed.fid.to_string(),
     })
 }
 
@@ -3899,6 +3933,161 @@ mod tests {
         );
     }
 
+    /// Every URL form the volume server accepts, against what Go's
+    /// `parseURLPath` returns for it (`weed/server/common.go:218-249`):
+    /// the `vid/fid/filename` form leaves the fid alone and takes the
+    /// extension off the filename, the other two take it off the fid, and
+    /// none of them touch an `_delta` suffix.
+    #[test]
+    fn test_parse_needle_path_every_form() {
+        let cases: &[(&str, &str, &str, &str, Option<&str>)] = &[
+            // "vid,fid" — Go's default branch.
+            ("/3,01637037d6", "3", "01637037d6", "", None),
+            ("/3,01637037d6.jpg", "3", "01637037d6", ".jpg", None),
+            ("/3,01637037d6_1", "3", "01637037d6_1", "", None),
+            ("/3,01637037d6_1.jpg", "3", "01637037d6_1", ".jpg", None),
+            // "vid/fid" — Go's case 2.
+            ("/3/01637037d6", "3", "01637037d6", "", None),
+            ("/3/01637037d6.jpg", "3", "01637037d6", ".jpg", None),
+            ("/3/01637037d6_1", "3", "01637037d6_1", "", None),
+            ("/3/01637037d6_1.jpg", "3", "01637037d6_1", ".jpg", None),
+            // "vid/fid/filename" — Go's case 3: the fid stays whole.
+            (
+                "/3/01637037d6/report",
+                "3",
+                "01637037d6",
+                "",
+                Some("report"),
+            ),
+            (
+                "/3/01637037d6/report.txt",
+                "3",
+                "01637037d6",
+                ".txt",
+                Some("report.txt"),
+            ),
+            (
+                "/3/01637037d6_1/report",
+                "3",
+                "01637037d6_1",
+                "",
+                Some("report"),
+            ),
+            (
+                "/3/01637037d6_1/report.txt",
+                "3",
+                "01637037d6_1",
+                ".txt",
+                Some("report.txt"),
+            ),
+            // Mixed forms: the slash count decides, so a comma with a trailing
+            // segment is read as "vid/fid" (Go case 2, and the volume id then
+            // fails to parse) and a comma inside a filename is just part of
+            // the filename (Go case 3).
+            (
+                "/3,01637037d6/name.txt",
+                "3,01637037d6",
+                "name",
+                ".txt",
+                None,
+            ),
+            (
+                "/3/01637037d6/my,file.jpg",
+                "3",
+                "01637037d6",
+                ".jpg",
+                Some("my,file.jpg"),
+            ),
+            // Go's case 2 guards the extension split with `dotIndex > 0`, so a
+            // file id that is nothing but an extension keeps it and fails to
+            // parse later; filepath.Ext in case 3 has no such guard.
+            ("/3/.jpg", "3", ".jpg", "", None),
+            (
+                "/3/01637037d6/.jpg",
+                "3",
+                "01637037d6",
+                ".jpg",
+                Some(".jpg"),
+            ),
+        ];
+
+        for &(path, vid, fid, ext, filename) in cases {
+            assert_eq!(
+                parse_needle_path(path),
+                Some(NeedlePath {
+                    vid,
+                    fid,
+                    ext,
+                    filename
+                }),
+                "path {}",
+                path
+            );
+            // Chunk manifest entries arrive without the leading slash.
+            let unrooted = path.trim_start_matches('/');
+            assert_eq!(
+                parse_needle_path(unrooted),
+                parse_needle_path(path),
+                "path {}",
+                unrooted
+            );
+        }
+    }
+
+    /// A path with no file id at all is Go's `isVolumeIdOnly` case; every
+    /// caller here needs a file id, so it has to come back as `None`.
+    #[test]
+    fn test_parse_needle_path_rejects_paths_without_a_file_id() {
+        for path in ["", "/", "/3", "/invalid", "/not/a/valid/volume/path"] {
+            assert_eq!(parse_needle_path(path), None, "path {}", path);
+        }
+    }
+
+    /// Go's `maybeCheckJwtAuthorization` compares the token's `fid` claim
+    /// against `vid + "," + fid` whatever form the URL used
+    /// (volume_server_handlers.go:361-364), so the slash form has to produce
+    /// the comma form too or a JWT-protected read of `/3/01637037d6` can never
+    /// match its own token.
+    #[test]
+    fn test_extract_file_id_normalizes_every_url_form() {
+        for path in [
+            "/3,01637037d6",
+            "/3,01637037d6.jpg",
+            "/3,01637037d6_1",
+            "/3/01637037d6",
+            "/3/01637037d6.jpg",
+            "/3/01637037d6_1.jpg",
+            "/3/01637037d6/report.txt",
+            "/3/01637037d6_1/report.txt",
+        ] {
+            assert_eq!(extract_file_id(path), "3,01637037d6", "path {}", path);
+        }
+    }
+
+    /// Go only drops the `_suffix` when `strings.LastIndex(fid, "_") > 0`
+    /// (volume_server_handlers.go:361-364), so a file id that starts with the
+    /// separator is compared whole rather than becoming empty.
+    #[test]
+    fn test_extract_file_id_keeps_a_leading_underscore() {
+        assert_eq!(extract_file_id("/3,_5"), "3,_5");
+        assert_eq!(extract_file_id("/3/_5"), "3,_5");
+    }
+
+    /// Go checks the JWT before it parses the volume id
+    /// (volume_server_handlers_read.go:142-156), and so does
+    /// get_or_head_handler_inner, which is why an unparsable path still has to
+    /// produce a comparison string: it decides 401 before parse_url_path gets
+    /// to decide 400.
+    #[test]
+    fn test_extract_file_id_falls_back_for_unparsable_paths() {
+        assert_eq!(extract_file_id("/invalid"), "invalid");
+        assert_eq!(extract_file_id("/3"), "3");
+        assert_eq!(
+            extract_file_id("/not/a/valid/volume/path"),
+            "not/a/valid/volume/path"
+        );
+    }
+
     #[test]
     fn test_parse_url_path_comma() {
         let (vid, nid, cookie) = parse_url_path("/3,01637037d6").unwrap();
@@ -3921,16 +4110,42 @@ mod tests {
 
     #[test]
     fn test_parse_url_path_slash_with_filename() {
-        let result = parse_url_path("3/01637037d6/report.txt");
-        assert!(result.is_some());
-        let (vid, _, _) = result.unwrap();
-        assert_eq!(vid, VolumeId(3));
+        // A comma in the filename is part of the filename: the slash count
+        // already decided the form, as in Go's case 3.
+        for path in ["3/01637037d6/report.txt", "3/01637037d6/my,file.jpg"] {
+            let (vid, nid, cookie) = parse_url_path(path).unwrap();
+            assert_eq!(vid, VolumeId(3), "path {}", path);
+            assert_eq!(nid, NeedleId(0x01), "path {}", path);
+            assert_eq!(cookie, Cookie(0x637037d6), "path {}", path);
+        }
+    }
+
+    /// The `_delta` suffix stays on the fid through the path split and is
+    /// applied by parse_needle_id_cookie, as Go's ParsePath does.
+    #[test]
+    fn test_parse_url_path_applies_delta_suffix() {
+        for path in [
+            "/3,01637037d6_1",
+            "/3/01637037d6_1",
+            "/3/01637037d6_1/a.txt",
+        ] {
+            let (vid, nid, cookie) = parse_url_path(path).unwrap();
+            assert_eq!(vid, VolumeId(3), "path {}", path);
+            assert_eq!(nid, NeedleId(0x02), "path {}", path);
+            assert_eq!(cookie, Cookie(0x637037d6), "path {}", path);
+        }
     }
 
     #[test]
     fn test_parse_url_path_invalid() {
         assert!(parse_url_path("/invalid").is_none());
         assert!(parse_url_path("").is_none());
+        // Go reads this as case 2 with vid = "3,01637037d6", which NewVolumeId
+        // rejects, so the comma-with-a-trailing-segment form is a 400 here too.
+        assert!(parse_url_path("/3,01637037d6/name.txt").is_none());
+        // Go's `dotIndex > 0` guard leaves ".jpg" as the file id, which then
+        // fails to parse as a needle id.
+        assert!(parse_url_path("/3/.jpg").is_none());
     }
 
     #[test]
@@ -4204,6 +4419,34 @@ mod tests {
             read_only_can_delete: false,
         };
 
+        let response = redirect_request(&info, &target, "http");
+        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "http://volume.internal:8080/3,01637037d6?proxied=true"
+        );
+    }
+
+    /// Go redirects to `vid,fid` with the extension already stripped: its
+    /// `parseURLPath` case 2 splits `.jpg` off the fid and
+    /// `proxyReqToTargetServer` formats `"%s/%s,%s"` from what is left
+    /// (common.go:224-233, volume_server_handlers_read.go:128-137). Built from
+    /// the real `build_proxy_request_info` so the parse and the Location header
+    /// are covered together.
+    #[test]
+    fn test_redirect_location_drops_extension_for_slash_form() {
+        let info =
+            build_proxy_request_info("/3/01637037d6.jpg", &HeaderMap::new(), "").expect("parses");
+        assert_eq!(info.vid_str, "3");
+        assert_eq!(info.fid_str, "01637037d6");
+
+        let target = VolumeLocation {
+            url: "volume.internal:8080".to_string(),
+            public_url: "volume.public:8080".to_string(),
+            grpc_port: 18080,
+            read_only: false,
+            read_only_can_delete: false,
+        };
         let response = redirect_request(&info, &target, "http");
         assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
         assert_eq!(
