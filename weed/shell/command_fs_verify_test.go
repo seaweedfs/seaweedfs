@@ -165,14 +165,10 @@ func TestFsVerifyIsNeedleMissingError(t *testing.T) {
 	if isNeedleMissingError(fmt.Errorf("volume not found 7")) {
 		t.Error("volume not found must NOT classify as missing (it says nothing about the needle)")
 	}
-	// EC volumes on older Go servers (without the codes.NotFound
-	// canonicalization): ReadEcShardNeedle wraps erasure_coding.NotFoundError
-	// as "locate in local ec volume: ... needle not found", which crosses gRPC
-	// as code Unknown. The classifier must still recognize it.
+	// older Go servers wrap EC's NotFoundError as code Unknown
 	if !isNeedleMissingError(status.Error(codes.Unknown, "locate in local ec volume: FindNeedleFromEcx: needle not found")) {
 		t.Error("EC wrapped needle-not-found must classify as missing")
 	}
-	// the EC marker alone is not enough: a different EC error must not match
 	if isNeedleMissingError(status.Error(codes.Unknown, "locate in local ec volume: ReadEcShardIntervals: shard 3 missing")) {
 		t.Error("EC errors that do not end in needle not found must NOT classify as missing")
 	}
@@ -297,17 +293,14 @@ func TestFsVerifyPruneEntryGuards(t *testing.T) {
 }
 
 // An unresolvable chunk manifest is an entry-level verification failure even
-// when the raw top-level manifest needle is healthy: the file is not fully
-// readable without the manifest. The entry must not count as verified, but
-// the raw chunks are still checked so a missing manifest needle can be pruned.
+// when the raw manifest needle is healthy; raw chunks are still checked so a
+// missing manifest needle can be pruned.
 func TestFsVerifyManifestResolutionFailure(t *testing.T) {
 	t.Run("healthy raw needle but unresolvable manifest is not verified", func(t *testing.T) {
-		// IsChunkManifest makes ResolveChunkManifest try to read the manifest
-		// needle's children via LookupFn. The test filer does not implement
-		// LookupVolume, so the lookup fails and resolution returns an error.
-		// The manifest needle itself (key 100) is present on the volume
-		// server, so verifyEntry alone would report verified=true — the
-		// manifest failure must override that.
+		// IsChunkManifest forces ResolveChunkManifest to read children via
+		// LookupFn; the test filer does not implement LookupVolume, so
+		// resolution fails. Needle 100 is present, so verifyEntry alone
+		// would report verified=true — the manifest failure must override.
 		manifestChunk := &filer_pb.FileChunk{
 			Fid:             &filer_pb.FileId{VolumeId: 7, FileKey: 100},
 			IsChunkManifest: true,
@@ -315,7 +308,7 @@ func TestFsVerifyManifestResolutionFailure(t *testing.T) {
 		}
 		commandEnv, loc, cleanup := newFsVerifyTestCommandEnv(t,
 			&fsVerifyTestFilerServer{},
-			&fsVerifyTestVolumeServer{}) // needle 100 is present
+			&fsVerifyTestVolumeServer{})
 		defer cleanup()
 		c := newFsVerifyTestCommand(t, commandEnv, &bytes.Buffer{}, loc)
 

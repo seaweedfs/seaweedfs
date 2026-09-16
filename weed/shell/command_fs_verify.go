@@ -168,13 +168,8 @@ type ItemEntry struct {
 }
 
 // resolveAndVerify expands chunk manifests and verifies the entry's needles.
-// It returns verified=false when any needle failed OR the chunk manifest
-// could not be resolved: a missing or malformed (nested) manifest means the
-// file is not fully readable even when the raw top-level chunks are healthy,
-// so the entry must never count as verified. Raw chunks are still verified on
-// a resolution failure so a missing top-level manifest needle is classified
-// and can be pruned. hasMissingNeedles is true when at least one needle is
-// missing from every volume location holding its volume.
+// An unresolvable manifest is an entry-level failure even when raw chunks are
+// healthy; raw chunks are still checked so a missing manifest needle can be pruned.
 func (c *commandFsVerify) resolveAndVerify(entryPath string, chunks []*filer_pb.FileChunk, errorChunksCount *atomic.Uint64, wg *sync.WaitGroup) (verified bool, hasMissingNeedles bool) {
 	dataChunks := chunks
 	manifestResolveFailed := false
@@ -186,10 +181,7 @@ func (c *commandFsVerify) resolveAndVerify(entryPath string, chunks []*filer_pb.
 	}
 	verified, hasMissingNeedles = c.verifyEntry(entryPath, dataChunks, errorChunksCount, wg)
 	if manifestResolveFailed && verified {
-		// the manifest is part of the file: an unreadable manifest is an
-		// entry-level failure even when every raw top-level needle is
-		// present. Keep the error count consistent with verifyEntry's
-		// one-bump-per-entry behavior.
+		// an unreadable manifest is an entry-level failure even with healthy raw needles
 		verified = false
 		errorChunksCount.CompareAndSwap(0, 1)
 	}
@@ -267,23 +259,11 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 }
 
 // isNeedleMissingError reports whether a VolumeNeedleStatus error means the
-// needle data is lost at that location. It must NOT match "volume not found",
-// which says nothing about the needle itself.
-//
-// Error contract by server generation:
-//   - Go servers (with this change) and the Rust volume server answer absent
-//     needles with gRPC code NotFound and a "needle not found <id>" message.
-//     EC volumes are covered too: ReadEcShardNeedle's erasure_coding.NotFoundError
-//     is canonicalized to codes.NotFound by VolumeNeedleStatus.
-//   - Older Go servers return the raw read error as code Unknown: exactly
-//     "needle not found <id>" or "EOF" (io.EOF from a truncated volume file).
-//     EC volumes on those servers surface as a wrapped
-//     "locate in local ec volume: ... needle not found" message.
-//
-// The legacy shapes are matched anchored/exactly, so unrelated application
-// errors that merely contain these substrings (e.g. "unexpected EOF") do not
-// classify as missing. Anything else (Unavailable, DeadlineExceeded, "volume
-// not found", ...) is transport or routing and must never trigger a prune.
+// needle data is lost at that location. It must NOT match "volume not found".
+// Newer Go servers and the Rust server return codes.NotFound; older Go
+// servers return codes.Unknown with "needle not found <id>" or "EOF" (and EC
+// volumes wrap it as "locate in local ec volume: ... needle not found").
+// Legacy shapes are matched anchored so unrelated errors don't classify as missing.
 func isNeedleMissingError(err error) bool {
 	if err == nil {
 		return false
@@ -292,11 +272,8 @@ func isNeedleMissingError(err error) bool {
 	if st, ok := status.FromError(err); ok {
 		switch st.Code() {
 		case codes.NotFound:
-			// only the needle shape; "volume not found" keeps flowing here too
 			return strings.HasPrefix(st.Message(), "needle not found ")
 		case codes.Unknown:
-			// older servers: prefer the status message, fall back to the
-			// wrapped string
 			if st.Message() != "" {
 				msg = st.Message()
 			}
@@ -304,10 +281,6 @@ func isNeedleMissingError(err error) bool {
 			return false
 		}
 	}
-	// direct non-EC missing needle, truncated volume EOF, or the EC wrapped
-	// shape from older servers (ReadEcShardNeedle prefixes "locate in local
-	// ec volume:" and the innermost erasure_coding.NotFoundError is "needle
-	// not found")
 	return strings.HasPrefix(msg, "needle not found ") || msg == "EOF" ||
 		strings.Contains(msg, "locate in local ec volume:") && strings.HasSuffix(msg, "needle not found")
 }
