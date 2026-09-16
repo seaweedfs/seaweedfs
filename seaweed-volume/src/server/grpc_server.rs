@@ -266,10 +266,16 @@ pub struct VolumeGrpcService {
 
 impl VolumeGrpcService {
     fn store_read(&self) -> std::sync::RwLockReadGuard<'_, crate::storage::store::Store> {
-        self.state.store.read().unwrap_or_else(|e| e.into_inner())
+        self.state.store.read().unwrap_or_else(|e| {
+            tracing::warn!("recovering poisoned store read lock");
+            e.into_inner()
+        })
     }
     fn store_write(&self) -> std::sync::RwLockWriteGuard<'_, crate::storage::store::Store> {
-        self.state.store.write().unwrap_or_else(|e| e.into_inner())
+        self.state.store.write().unwrap_or_else(|e| {
+            tracing::warn!("recovering poisoned store write lock");
+            e.into_inner()
+        })
     }
     /// Verifies the gRPC caller is allowed to invoke a destructive admin
     /// operation. Mirrors the Go side's checkGrpcAdminAuth: an empty
@@ -2609,6 +2615,18 @@ impl VolumeServer for VolumeGrpcService {
         let (_, vol) = store
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+
+        // Framing: request `size` is body size, but read_needle_blob returns
+        // GetActualSize bytes + protobuf tag/len, so body==1<<30 always exceeds
+        // GRPC_MAX_MESSAGE_SIZE on the wire after allocation+disk read.
+        // Check actual encoded size post-lock (have vol.version() here).
+        let actual = crate::storage::needle::needle::get_actual_size(size, vol.version()) as u64;
+        if actual > crate::server::grpc_client::GRPC_MAX_MESSAGE_SIZE as u64 {
+            return Err(Status::invalid_argument(format!(
+                "needle blob size {} exceeds transport limit",
+                actual
+            )));
+        }
 
         let blob = vol.read_needle_blob(offset, size).map_err(|e| {
             Status::internal(format!(
@@ -7329,6 +7347,24 @@ mod tests {
             .await
             .expect_err("negative size must be rejected");
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn test_read_needle_blob_zero_size_passes_gate() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        // Size(0) must pass the wire-size gate (may 404/Internal downstream,
+        // but must NOT be rejected as InvalidArgument).
+        match service
+            .read_needle_blob(Request::new(volume_server_pb::ReadNeedleBlobRequest {
+                volume_id: 1,
+                offset: 0,
+                size: 0,
+            }))
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => assert_ne!(e.code(), tonic::Code::InvalidArgument, "got {e:?}"),
+        }
     }
 
     // Regression test for comparing the wrong compaction-revision field.
