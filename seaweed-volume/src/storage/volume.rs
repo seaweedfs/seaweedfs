@@ -4646,7 +4646,12 @@ fn preallocate_file(file: &File, size: u64) {
     {
         use std::os::unix::io::AsRawFd;
         let fd = file.as_raw_fd();
-        // FALLOC_FL_KEEP_SIZE = 1: allocate blocks without changing file size
+        // FALLOC_FL_KEEP_SIZE = 1: allocate blocks without changing file size.
+        //
+        // SAFETY: `fd` is borrowed from the live `&File` the caller owns, so
+        // it stays open for the call; the remaining arguments are plain
+        // scalars; and failure is reported in the return value, which is
+        // checked below before `last_os_error()` reads errno.
         let ret = unsafe { libc::fallocate(fd, 1, 0, size as libc::off_t) };
         if ret == 0 {
             tracing::info!(bytes = size, "preallocated disk space");
@@ -7293,6 +7298,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         // root ignores the directory mode, so there is nothing to simulate.
+        // SAFETY: `geteuid` takes no arguments, reads no memory and cannot fail.
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -7352,6 +7358,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         // root ignores the directory mode, so there is nothing to simulate.
+        // SAFETY: `geteuid` takes no arguments, reads no memory and cannot fail.
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
@@ -7499,6 +7506,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         // root ignores the directory mode, so there is nothing to simulate.
+        // SAFETY: `geteuid` takes no arguments, reads no memory and cannot fail.
         if unsafe { libc::geteuid() } == 0 {
             return;
         }
