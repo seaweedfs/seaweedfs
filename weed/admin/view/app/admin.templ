@@ -8,12 +8,12 @@ import (
 templ Admin(data dash.AdminData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
-            <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+            <i class="bi bi-speedometer2 me-2"></i>Dashboard
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
                  				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-primary">
-					<i class="fas fa-cube me-1"></i>Object Store Buckets
+					<i class="bi bi-box me-1"></i>Object Store Buckets
                 </a>
 
             </div>
@@ -37,7 +37,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-database fa-2x text-gray-300"></i>
+                                <i class="bi bi-database icon-2x text-gray-300"></i>
                             </div>
                         </div>
                         @templ.Raw(data.Trends.Volumes)
@@ -58,7 +58,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-cubes fa-2x text-gray-300"></i>
+                                <i class="bi bi-boxes icon-2x text-gray-300"></i>
                             </div>
                         </div>
                         @templ.Raw(data.Trends.Chunks)
@@ -79,7 +79,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                                <i class="bi bi-device-hdd icon-2x text-gray-300"></i>
                             </div>
                         </div>
                         @templ.Raw(data.Trends.DiskUsed)
@@ -100,7 +100,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-cogs fa-2x text-gray-300"></i>
+                                <i class="bi bi-gear-wide-connected icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -123,7 +123,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-layer-group fa-2x text-gray-300"></i>
+                                <i class="bi bi-layers icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -143,7 +143,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-puzzle-piece fa-2x text-gray-300"></i>
+                                <i class="bi bi-puzzle icon-2x text-gray-300"></i>
                             </div>
                         </div>
                         @templ.Raw(data.Trends.EcShards)
@@ -164,7 +164,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-tasks fa-2x text-gray-300"></i>
+                                <i class="bi bi-list-check icon-2x text-gray-300"></i>
                             </div>
                         </div>
                         @templ.Raw(data.Trends.Tasks)
@@ -185,7 +185,7 @@ templ Admin(data dash.AdminData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-users-cog fa-2x text-gray-300"></i>
+                                <i class="bi bi-people-fill icon-2x text-gray-300"></i>
                             </div>
                         </div>
                         @templ.Raw(data.Trends.Workers)
@@ -201,7 +201,7 @@ templ Admin(data dash.AdminData) {
                     <div class="card shadow mb-4">
                         <div class="card-header py-3">
                             <h6 class="m-0 font-weight-bold text-primary">
-                                <i class="fas fa-layer-group me-2"></i>Storage Tiers
+                                <i class="bi bi-layers me-2"></i>Storage Tiers
                             </h6>
                         </div>
                         <div class="card-body">
@@ -223,10 +223,10 @@ templ Admin(data dash.AdminData) {
                                             <tr>
                                                 <td>
                                                     if tier.IsRemote {
-                                                        <i class="fas fa-cloud me-1 text-info"></i>{tier.Name}
+                                                        <i class="bi bi-cloud me-1 text-info"></i>{tier.Name}
                                                         <span class="badge bg-info text-white ms-1">remote</span>
                                                     } else {
-                                                        <i class="fas fa-hdd me-1 text-muted"></i>{tier.Name}
+                                                        <i class="bi bi-device-hdd me-1 text-muted"></i>{tier.Name}
                                                     }
                                                 </td>
                                                 <td>{fmt.Sprintf("%d", tier.VolumeCount)}</td>
@@ -281,15 +281,15 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex justify-content-between align-items-center">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-plug me-2"></i>Mount Clients
+                            <i class="bi bi-plug me-2"></i>Mount Clients
                         </h6>
                         <a href={ dash.PUrl(ctx, "/cluster/mount-clients") } class="btn btn-sm btn-outline-primary">
-                            View Details <i class="fas fa-arrow-right ms-1"></i>
+                            View Details <i class="bi bi-arrow-right ms-1"></i>
                         </a>
                     </div>
                     <div class="card-body">
                         <div class="d-flex align-items-center">
-                            <i class="fas fa-plug fa-2x text-gray-300 me-3"></i>
+                            <i class="bi bi-plug icon-2x text-gray-300 me-3"></i>
                             <div>
                                 <div class="h4 mb-0 font-weight-bold text-gray-800">{fmt.Sprintf("%d", data.TotalMountClients)}</div>
                                 <div class="text-xs text-muted text-uppercase">Connected FUSE/VFS mount clients</div>
@@ -306,7 +306,7 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-server me-2"></i>Master Nodes
+                            <i class="bi bi-server me-2"></i>Master Nodes
                         </h6>
                     </div>
                     <div class="card-body">
@@ -324,7 +324,7 @@ templ Admin(data dash.AdminData) {
                                             <td>
                                                 <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", master.Address))} target="_blank">
                                                     {master.Address}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             </td>
                                             <td>
@@ -348,7 +348,7 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-chart-pie me-2"></i>Cluster
+                            <i class="bi bi-pie-chart me-2"></i>Cluster
                         </h6>
                     </div>
                     <div class="card-body text-center">
@@ -405,11 +405,11 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-database me-2"></i>Volume Servers
+                            <i class="bi bi-database me-2"></i>Volume Servers
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
@@ -439,7 +439,7 @@ templ Admin(data dash.AdminData) {
                                             <td>
                                                 <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", vs.GetDisplayAddress()))} target="_blank">
                                                     {vs.GetDisplayAddress()}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             </td>
                                             <td>{vs.DataCenter}</td>
@@ -466,7 +466,7 @@ templ Admin(data dash.AdminData) {
                                                 {formatBytes(vs.DiskUsage)} / {formatBytes(vs.DiskCapacity)}
                                                 if vs.RemoteSize > 0 {
                                                     <br/>
-                                                    <small class="text-muted"><i class="fas fa-cloud me-1"></i>{formatBytes(vs.RemoteSize)} remote</small>
+                                                    <small class="text-muted"><i class="bi bi-cloud me-1"></i>{formatBytes(vs.RemoteSize)} remote</small>
                                                 }
                                             </td>
                                         </tr>
@@ -474,7 +474,7 @@ templ Admin(data dash.AdminData) {
                                     if len(data.VolumeServers) == 0 {
                                         <tr>
                                             <td colspan="7" class="text-center text-muted py-4">
-                                                <i class="fas fa-info-circle me-2"></i>
+                                                <i class="bi bi-info-circle me-2"></i>
                                                 No volume servers found
                                             </td>
                                         </tr>
@@ -493,11 +493,11 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-folder me-2"></i>Filer Nodes
+                            <i class="bi bi-folder me-2"></i>Filer Nodes
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
@@ -523,7 +523,7 @@ templ Admin(data dash.AdminData) {
                                             <td>
                                                 <a href={templ.SafeURL(fmt.Sprintf("//%s", filer.Address))} target="_blank">
                                                     {filer.Address}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             </td>
                                             <td>{filer.DataCenter}</td>
@@ -534,7 +534,7 @@ templ Admin(data dash.AdminData) {
                                     if len(data.FilerNodes) == 0 {
                                         <tr>
                                             <td colspan="4" class="text-center text-muted py-4">
-                                                <i class="fas fa-info-circle me-2"></i>
+                                                <i class="bi bi-info-circle me-2"></i>
                                                 No filer nodes found
                                             </td>
                                         </tr>
@@ -553,11 +553,11 @@ templ Admin(data dash.AdminData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-cloud me-2"></i>S3 Servers
+                            <i class="bi bi-cloud me-2"></i>S3 Servers
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
@@ -586,7 +586,7 @@ templ Admin(data dash.AdminData) {
                                     if len(data.S3Nodes) == 0 {
                                         <tr>
                                             <td colspan="3" class="text-center text-muted py-4">
-                                                <i class="fas fa-info-circle me-2"></i>
+                                                <i class="bi bi-info-circle me-2"></i>
                                                 No S3 servers found
                                             </td>
                                         </tr>
@@ -603,7 +603,7 @@ templ Admin(data dash.AdminData) {
         <div class="row">
             <div class="col-12">
                 <small class="text-muted">
-                    <i class="fas fa-clock me-1"></i>
+                    <i class="bi bi-clock me-1"></i>
                     Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
                 </small>
             </div>

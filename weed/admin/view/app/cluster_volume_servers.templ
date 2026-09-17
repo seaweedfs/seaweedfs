@@ -8,12 +8,12 @@ import (
 templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
-            <i class="fas fa-server me-2"></i>Volume Servers
+            <i class="bi bi-server me-2"></i>Volume Servers
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportVolumeServers()">
-                    <i class="fas fa-download me-1"></i>Export
+                    <i class="bi bi-download me-1"></i>Export
                 </button>
             </div>
         </div>
@@ -35,7 +35,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-server fa-2x text-gray-300"></i>
+                                <i class="bi bi-server icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -57,7 +57,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-database fa-2x text-gray-300"></i>
+                                <i class="bi bi-database icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -77,7 +77,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                                <i class="bi bi-device-hdd icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -89,7 +89,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
         <div class="card shadow mb-4">
             <div class="card-header py-3">
                 <h6 class="m-0 font-weight-bold text-primary">
-                    <i class="fas fa-server me-2"></i>Volume Servers
+                    <i class="bi bi-server me-2"></i>Volume Servers
                 </h6>
             </div>
             <div class="card-body">
@@ -116,12 +116,12 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                             if host.PublicURL != "" {
                                                 <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", host.PublicURL))} target="_blank" class="text-decoration-none">
                                                     {host.Address}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             } else {
                                                 <a href={templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", host.Address))} target="_blank" class="text-decoration-none">
                                                     {host.Address}
-                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                    <i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
                                                 </a>
                                             }
                                         </td>
@@ -147,7 +147,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                         <td>
                                             if host.EcShards > 0 {
                                                 <div class="d-flex align-items-center">
-                                                    <i class="fas fa-layer-group me-1 text-info"></i>
+                                                    <i class="bi bi-layers me-1 text-info"></i>
                                                     <span class="badge bg-info text-white me-1">{fmt.Sprintf("%d", host.EcShards)}</span>
                                                     <small class="text-muted">shards</small>
                                                 </div>
@@ -172,7 +172,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                             </div>
                                             if host.RemoteSize > 0 {
                                                 <div class="mt-1">
-                                                    <small class="text-muted"><i class="fas fa-cloud me-1"></i>{formatBytes(host.RemoteSize)} remote</small>
+                                                    <small class="text-muted"><i class="bi bi-cloud me-1"></i>{formatBytes(host.RemoteSize)} remote</small>
                                                 </div>
                                             }
                                         </td>
@@ -195,7 +195,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
                                                         data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
-                                                    <i class="fas fa-eye"></i>
+                                                    <i class="bi bi-eye"></i>
                                                 </button>
                                             } else {
                                                 <button type="button" 
@@ -215,7 +215,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
                                                         data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
-                                                    <i class="fas fa-eye"></i>
+                                                    <i class="bi bi-eye"></i>
                                                 </button>
                                             }
                                         </td>
@@ -226,7 +226,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                     </div>
                 } else {
                     <div class="text-center py-5">
-                        <i class="fas fa-server fa-3x text-muted mb-3"></i>
+                        <i class="bi bi-server icon-3x text-muted mb-3"></i>
                         <h5 class="text-muted">No Volume Servers Found</h5>
                         <p class="text-muted">No volume servers are currently available in the cluster.</p>
                     </div>
@@ -238,7 +238,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
         <div class="row">
             <div class="col-12">
                 <small class="text-muted">
-                    <i class="fas fa-clock me-1"></i>
+                    <i class="bi bi-clock me-1"></i>
                     Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
                 </small>
             </div>
@@ -286,13 +286,13 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             '<div class="modal-dialog modal-lg">' +
             '<div class="modal-content">' +
             '<div class="modal-header">' +
-            '<h5 class="modal-title"><i class="fas fa-server me-2"></i>Volume Server Details: ' + server.address + '</h5>' +
+            '<h5 class="modal-title"><i class="bi bi-server me-2"></i>Volume Server Details: ' + server.address + '</h5>' +
             '<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
             '</div>' +
             '<div class="modal-body">' +
             '<div class="row">' +
             '<div class="col-md-6">' +
-            '<h6 class="text-primary"><i class="fas fa-info-circle me-1"></i>Basic Information</h6>' +
+            '<h6 class="text-primary"><i class="bi bi-info-circle me-1"></i>Basic Information</h6>' +
             '<table class="table table-sm">' +
             '<tr><td><strong>Server ID:</strong></td><td><code>' + server.id + '</code></td></tr>' +
             '<tr><td><strong>Address:</strong></td><td>' + server.address + '</td></tr>' +
@@ -303,7 +303,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             '</table>' +
             '</div>' +
             '<div class="col-md-6">' +
-            '<h6 class="text-primary"><i class="fas fa-chart-bar me-1"></i>Usage Statistics</h6>' +
+            '<h6 class="text-primary"><i class="bi bi-bar-chart me-1"></i>Usage Statistics</h6>' +
             '<table class="table table-sm">' +
             '<tr><td><strong>Volumes:</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
@@ -323,7 +323,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             '</td></tr>' +
             '<tr><td><strong>Available Space:</strong></td><td>' + formatBytes(server.diskCapacity - server.diskUsage) + '</td></tr>' +
             (server.remoteSize > 0 ?
-            '<tr><td><strong>Remote Data:</strong></td><td><i class="fas fa-cloud me-1"></i>' + formatBytes(server.remoteSize) + '</td></tr>' : '') +
+            '<tr><td><strong>Remote Data:</strong></td><td><i class="bi bi-cloud me-1"></i>' + formatBytes(server.remoteSize) + '</td></tr>' : '') +
             '</table>' +
             '</div>' +
             '</div>' +
@@ -332,7 +332,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             (server.ecShards > 0 ? 
             '<div class="row mt-3">' +
             '<div class="col-12">' +
-            '<h6 class="text-primary"><i class="fas fa-layer-group me-1"></i>Erasure Coding Information</h6>' +
+            '<h6 class="text-primary"><i class="bi bi-layers me-1"></i>Erasure Coding Information</h6>' +
             '<table class="table table-sm">' +
             '<tr><td><strong>EC Volumes:</strong></td><td><span class="badge bg-info text-white">' + server.ecVolumes + '</span></td></tr>' +
             '<tr><td><strong>EC Shards:</strong></td><td><span class="badge bg-info text-white">' + server.ecShards + '</span></td></tr>' +
@@ -342,13 +342,13 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             
             '<div class="row mt-3">' +
             '<div class="col-12">' +
-            '<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
+            '<h6 class="text-primary"><i class="bi bi-link me-1"></i>Quick Actions</h6>' +
             '<div class="d-grid gap-2 d-md-flex">' +
             '<a href="//' + (server.publicUrl || server.address) + '/ui/index.html" target="_blank" class="btn btn-outline-primary">' +
-            '<i class="fas fa-external-link-alt me-1"></i>Open Volume Server UI' +
+            '<i class="bi bi-box-arrow-up-right me-1"></i>Open Volume Server UI' +
             '</a>' +
             '<a href="' + (window.__BASE_PATH__ || '') + '/storage/volumes?server=' + encodeURIComponent(server.address) + '" class="btn btn-outline-info">' +
-            '<i class="fas fa-database me-1"></i>View Volumes' +
+            '<i class="bi bi-database me-1"></i>View Volumes' +
             '</a>' +
             '</div>' +
             '</div>' +

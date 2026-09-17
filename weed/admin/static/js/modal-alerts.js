@@ -23,7 +23,7 @@
                     <div class="modal-content">
                         <div class="modal-header" id="globalAlertModalHeader">
                             <h5 class="modal-title" id="globalAlertModalLabel">
-                                <i class="fas fa-info-circle me-2" id="globalAlertModalIcon"></i>
+                                <i class="bi bi-info-circle me-2" id="globalAlertModalIcon"></i>
                                 <span id="globalAlertModalTitle">Notice</span>
                             </h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -44,7 +44,7 @@
                     <div class="modal-content">
                         <div class="modal-header bg-warning">
                             <h5 class="modal-title" id="globalConfirmModalLabel">
-                                <i class="fas fa-question-circle me-2"></i><span id="globalConfirmModalTitleText">Confirm Action</span>
+                                <i class="bi bi-question-circle me-2"></i><span id="globalConfirmModalTitleText">Confirm Action</span>
                             </h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
@@ -65,7 +65,7 @@
                     <div class="modal-content">
                         <div class="modal-header bg-danger text-white">
                             <h5 class="modal-title" id="globalDeleteModalLabel">
-                                <i class="fas fa-exclamation-triangle me-2"></i>Confirm Delete
+                                <i class="bi bi-exclamation-triangle me-2"></i>Confirm Delete
                             </h5>
                             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
@@ -77,7 +77,7 @@
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                             <button type="button" class="btn btn-danger" id="globalDeleteConfirmBtn">
-                                <i class="fas fa-trash me-1"></i>Delete
+                                <i class="bi bi-trash me-1"></i>Delete
                             </button>
                         </div>
                     </div>
@@ -119,25 +119,25 @@
         const types = {
             'success': {
                 title: 'Success',
-                icon: 'fa-check-circle',
+                icon: 'bi-check-circle',
                 headerClass: 'bg-success text-white',
                 btnClose: 'btn-close-white'
             },
             'error': {
                 title: 'Error',
-                icon: 'fa-exclamation-triangle',
+                icon: 'bi-exclamation-triangle',
                 headerClass: 'bg-danger text-white',
                 btnClose: 'btn-close-white'
             },
             'warning': {
                 title: 'Warning',
-                icon: 'fa-exclamation-circle',
+                icon: 'bi-exclamation-circle',
                 headerClass: 'bg-warning text-dark',
                 btnClose: ''
             },
             'info': {
                 title: 'Notice',
-                icon: 'fa-info-circle',
+                icon: 'bi-info-circle',
                 headerClass: 'bg-info text-white',
                 btnClose: 'btn-close-white'
             }
@@ -151,7 +151,7 @@
         closeBtn.className = 'btn-close ' + config.btnClose;
 
         // Update icon
-        iconEl.className = 'fas ' + config.icon + ' me-2';
+        iconEl.className = 'bi ' + config.icon + ' me-2';
 
         // Update title
         titleEl.textContent = title || config.title;

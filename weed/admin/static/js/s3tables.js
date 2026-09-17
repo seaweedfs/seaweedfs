@@ -472,7 +472,7 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
             link.className = 'text-decoration-none';
             link.href = s3tBasePath(`/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`);
             const icon = document.createElement('i');
-            icon.className = 'fas fa-table text-primary me-2';
+            icon.className = 'bi bi-table text-primary me-2';
             link.appendChild(icon);
             const nameSpan = document.createElement('span');
             nameSpan.textContent = table.name;

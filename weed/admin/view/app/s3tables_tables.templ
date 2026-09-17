@@ -11,13 +11,13 @@ import (
 templ S3TablesTables(data dash.S3TablesTablesData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			<i class="fas fa-table me-2"></i>S3 Tables
+			<i class="bi bi-table me-2"></i>S3 Tables
 			<span class={ formatBadgeClass(data.BucketFormat), "ms-2 align-middle" } title={ formatBadgeTitle(data.BucketFormat) }>{ formatLabel(data.BucketFormat) }</span>
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 				<button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createS3TablesTableModal">
-					<i class="fas fa-plus me-1"></i>Create Table
+					<i class="bi bi-plus me-1"></i>Create Table
 				</button>
 			</div>
 		</div>
@@ -26,11 +26,11 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 		{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
 		if parseErr == nil {
 			<a href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(bucketName))) } class="btn btn-sm btn-outline-secondary">
-				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
+				<i class="bi bi-arrow-left me-1"></i>Back to Namespaces
 			</a>
 		} else {
 			<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Invalid bucket ARN">
-				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
+				<i class="bi bi-arrow-left me-1"></i>Back to Namespaces
 			</button>
 		}
 		<span class="text-muted ms-2">Bucket ARN: { data.BucketARN }</span>
@@ -54,7 +54,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-table fa-2x text-gray-300"></i>
+								<i class="bi bi-table icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -73,7 +73,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-clock fa-2x text-gray-300"></i>
+								<i class="bi bi-clock icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -85,7 +85,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 				<div class="card shadow mb-4">
 					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
 						<h6 class="m-0 font-weight-bold text-primary">
-							<i class="fas fa-table me-2"></i>Tables
+							<i class="bi bi-table me-2"></i>Tables
 						</h6>
 					</div>
 					<div class="card-body">
@@ -140,21 +140,21 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 												<div class="btn-group btn-group-sm" role="group">
 													if parseErr == nil {
 														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(bucketName), url.PathEscape(data.Namespace), url.PathEscape(tableName))) } title="View Table Details">
-															<i class="fas fa-eye"></i>
+															<i class="bi bi-eye"></i>
 														</a>
 													} else {
 														<button type="button" class="btn btn-outline-primary btn-sm" disabled title="Invalid bucket ARN">
-															<i class="fas fa-eye"></i>
+															<i class="bi bi-eye"></i>
 														</button>
 													}
 													<button type="button" class="btn btn-outline-success btn-sm s3tables-tags-btn" data-resource-arn={ table.TableARN } title="Tags">
-														<i class="fas fa-tags"></i>
+														<i class="bi bi-tags"></i>
 													</button>
 													<button type="button" class="btn btn-outline-info btn-sm s3tables-table-policy-btn" data-table-arn={ table.TableARN } data-table-name={ tableName } title="Table Policy">
-														<i class="fas fa-shield-alt"></i>
+														<i class="bi bi-shield"></i>
 													</button>
 													<button type="button" class="btn btn-outline-danger btn-sm s3tables-delete-table-btn" data-table-name={ tableName } title="Delete">
-														<i class="fas fa-trash"></i>
+														<i class="bi bi-trash"></i>
 													</button>
 												</div>
 											</td>
@@ -163,12 +163,12 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 									if len(data.Tables) == 0 {
 										<tr>
 											<td colspan="9" class="text-center text-muted py-4">
-												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
+												<i class="bi bi-table icon-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No tables found</h5>
 													<p>Create your first table to start storing data.</p>
 													<button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createS3TablesTableModal">
-														<i class="fas fa-plus me-1"></i>Create Table
+														<i class="bi bi-plus me-1"></i>Create Table
 													</button>
 												</div>
 											</td>
@@ -187,7 +187,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="createS3TablesTableModalLabel">
-						<i class="fas fa-plus me-2"></i>Create Table
+						<i class="bi bi-plus me-2"></i>Create Table
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -222,7 +222,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 					<div class="modal-footer">
 						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 						<button type="submit" class="btn btn-primary">
-							<i class="fas fa-plus me-1"></i>Create
+							<i class="bi bi-plus me-1"></i>Create
 						</button>
 					</div>
 				</form>
@@ -234,7 +234,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="deleteS3TablesTableModalLabel">
-						<i class="fas fa-exclamation-triangle me-2 text-warning"></i>Delete Table
+						<i class="bi bi-exclamation-triangle me-2 text-warning"></i>Delete Table
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -248,7 +248,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 				<div class="modal-footer">
 					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 					<button type="button" class="btn btn-danger" onclick="deleteS3TablesTable()">
-						<i class="fas fa-trash me-1"></i>Delete
+						<i class="bi bi-trash me-1"></i>Delete
 					</button>
 				</div>
 			</div>
@@ -261,7 +261,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="s3tablesTablePolicyModalLabel">
-						<i class="fas fa-shield-alt me-2"></i>Table Policy
+						<i class="bi bi-shield me-2"></i>Table Policy
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -282,7 +282,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 							<div class="tab-pane fade show active" id="s3tablesTablePolicyEditorTab" role="tabpanel" aria-labelledby="s3tablesTablePolicyEditorTabBtn">
 								<div id="s3tablesTablePolicyEditorBody"></div>
 								<button type="button" class="btn btn-sm btn-outline-secondary" id="s3tablesTablePolicyAddStatementBtn">
-									<i class="fas fa-plus me-1"></i>Add statement
+									<i class="bi bi-plus me-1"></i>Add statement
 								</button>
 							</div>
 							<div class="tab-pane fade" id="s3tablesTablePolicyJsonTab" role="tabpanel" aria-labelledby="s3tablesTablePolicyJsonTabBtn">
@@ -293,13 +293,13 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 					<div class="modal-footer">
 						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
 						<button type="button" class="btn btn-outline-danger" id="s3tablesTablePolicyDeleteBtn" onclick="deleteS3TablesTablePolicy()">
-							<i class="fas fa-trash me-1"></i>Delete Policy
+							<i class="bi bi-trash me-1"></i>Delete Policy
 						</button>
 						<!-- type="button": a submit button would make Enter in any
 						     single-line editor input implicitly submit a half-built
 						     policy, which the backend stores verbatim. -->
 						<button type="button" class="btn btn-primary" id="s3tablesTablePolicySaveBtn">
-							<i class="fas fa-save me-1"></i>Save Policy
+							<i class="bi bi-floppy me-1"></i>Save Policy
 						</button>
 					</div>
 				</form>
@@ -311,7 +311,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="s3tablesTagsModalLabel">
-						<i class="fas fa-tags me-2"></i>Resource Tags
+						<i class="bi bi-tags me-2"></i>Resource Tags
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -334,10 +334,10 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 					<div class="modal-footer">
 						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
 						<button type="button" class="btn btn-outline-danger" onclick="deleteS3TablesTags()">
-							<i class="fas fa-trash me-1"></i>Remove Tags
+							<i class="bi bi-trash me-1"></i>Remove Tags
 						</button>
 						<button type="submit" class="btn btn-primary">
-							<i class="fas fa-save me-1"></i>Update Tags
+							<i class="bi bi-floppy me-1"></i>Update Tags
 						</button>
 					</div>
 				</form>

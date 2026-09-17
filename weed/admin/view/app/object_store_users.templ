@@ -11,7 +11,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         <div class="d-sm-flex align-items-center justify-content-between mb-4">
             <div>
                 <h1 class="h3 mb-0 text-gray-800">
-                    <i class="fas fa-users me-2"></i>Object Store Users
+                    <i class="bi bi-people me-2"></i>Object Store Users
                 </h1>
                 <p class="mb-0 text-muted">Manage S3 API users and their access credentials</p>
             </div>
@@ -19,7 +19,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 <button type="button" class="btn btn-primary"
                         data-bs-toggle="modal"
                         data-bs-target="#createUserModal">
-                    <i class="fas fa-plus me-1"></i>Create User
+                    <i class="bi bi-plus me-1"></i>Create User
                 </button>
             </div>
         </div>
@@ -39,7 +39,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-users fa-2x text-gray-300"></i>
+                                <i class="bi bi-people icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -59,7 +59,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-user-check fa-2x text-gray-300"></i>
+                                <i class="bi bi-person-check icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -79,7 +79,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-clock fa-2x text-gray-300"></i>
+                                <i class="bi bi-clock icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -93,16 +93,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-users me-2"></i>Object Store Users
+                            <i class="bi bi-people me-2"></i>Object Store Users
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
                                 <a class="dropdown-item" href="#" onclick="exportUsers()">
-                                    <i class="fas fa-download me-2"></i>Export List
+                                    <i class="bi bi-download me-2"></i>Export List
                                 </a>
                             </div>
                         </div>
@@ -123,7 +123,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                         <tr>
                                             <td>
                                                 <div class="d-flex align-items-center">
-                                                    <i class="fas fa-user me-2 text-muted"></i>
+                                                    <i class="bi bi-person me-2 text-muted"></i>
                                                     <strong>{user.Username}</strong>
                                                     if user.IsStatic {
                                                         <span class="badge bg-secondary ms-2" title="Loaded from config file (read-only)">static</span>
@@ -138,24 +138,24 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                                 <div class="btn-group btn-group-sm" role="group">
                                                     <button type="button" class="btn btn-outline-info"
                                                             data-action="show-user-details" data-username={ user.Username }>
-                                                        <i class="fas fa-info-circle"></i>
+                                                        <i class="bi bi-info-circle"></i>
                                                     </button>
                                                     if !user.IsStatic {
                                                         <button type="button" class="btn btn-outline-primary"
                                                                 data-action="edit-user" data-username={ user.Username }>
-                                                            <i class="fas fa-edit"></i>
+                                                            <i class="bi bi-pencil-square"></i>
                                                         </button>
                                                     }
                                                     if user.Username != "anonymous" && !user.IsStatic {
                                                         <button type="button" class="btn btn-outline-secondary"
                                                                 data-action="manage-access-keys" data-username={ user.Username }>
-                                                            <i class="fas fa-key"></i>
+                                                            <i class="bi bi-key"></i>
                                                         </button>
                                                     }
                                                     if !user.IsStatic {
                                                         <button type="button" class="btn btn-outline-danger"
                                                                 data-action="delete-user" data-username={ user.Username }>
-                                                            <i class="fas fa-trash"></i>
+                                                            <i class="bi bi-trash"></i>
                                                         </button>
                                                     }
                                                 </div>
@@ -165,7 +165,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                     if len(data.Users) == 0 {
                                         <tr>
                                             <td colspan="4" class="text-center text-muted py-4">
-                                                <i class="fas fa-users fa-3x mb-3 text-muted"></i>
+                                                <i class="bi bi-people icon-3x mb-3 text-muted"></i>
                                                 <div>
                                                     <h5>No users found</h5>
                                                     <p>Create your first object store user to get started.</p>
@@ -185,7 +185,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         <div class="row">
             <div class="col-12">
                 <small class="text-muted">
-                    <i class="fas fa-clock me-1"></i>
+                    <i class="bi bi-clock me-1"></i>
                     Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
                 </small>
             </div>
@@ -198,7 +198,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-user-plus me-2"></i>Create New User
+                        <i class="bi bi-person-plus me-2"></i>Create New User
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -323,7 +323,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-user-edit me-2"></i>Edit User
+                        <i class="bi bi-person-gear me-2"></i>Edit User
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -422,7 +422,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 </select>
                                 <button class="btn btn-outline-primary" type="button" onclick="addUserToGroupFromEdit()"
                                         aria-label="Add user to group" title="Add user to group">
-                                    <i class="fas fa-plus"></i>
+                                    <i class="bi bi-plus"></i>
                                 </button>
                             </div>
                         </div>
@@ -442,7 +442,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-user me-2"></i>User Details
+                        <i class="bi bi-person me-2"></i>User Details
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -462,7 +462,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-key me-2"></i>Manage Access Keys
+                        <i class="bi bi-key me-2"></i>Manage Access Keys
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
@@ -470,7 +470,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6>Access Keys for <span id="accessKeysUsername"></span></h6>
                         <button type="button" class="btn btn-primary btn-sm" onclick="toggleCreateKeyForm()">
-                            <i class="fas fa-plus me-1"></i>Create New Key
+                            <i class="bi bi-plus me-1"></i>Create New Key
                         </button>
                     </div>
                     <div id="createKeyForm" class="card mb-3" style="display: none;">
@@ -485,7 +485,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <div class="input-group input-group-sm">
                                     <input type="password" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty" minlength="8" maxlength="128">
                                     <button class="btn btn-outline-secondary" type="button" onclick="toggleSecretKeyVisibility()" aria-label="Toggle secret key visibility">
-                                        <i class="fas fa-eye" id="secretKeyToggleIcon"></i>
+                                        <i class="bi bi-eye" id="secretKeyToggleIcon"></i>
                                     </button>
                                 </div>
                             </div>
@@ -1145,7 +1145,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         badge.className = 'badge bg-primary me-1 mb-1';
                         badge.textContent = group + ' ';
                         const removeIcon = document.createElement('i');
-                        removeIcon.className = 'fas fa-times ms-1';
+                        removeIcon.className = 'bi bi-x ms-1';
                         removeIcon.style.cursor = 'pointer';
                         removeIcon.setAttribute('aria-label', 'Remove from group ' + group);
                         removeIcon.setAttribute('title', 'Remove from group');
@@ -1351,11 +1351,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 keysHtml += '<td>';
                 // Add "View Secret" button with data attributes
                 keysHtml += '<button class="btn btn-outline-secondary btn-sm me-2 view-secret-btn" data-access-key="' + escapeHtml(key.access_key) + '" data-secret-key="' + escapeHtml(key.secret_key) + '">';
-                keysHtml += '<i class="fas fa-eye"></i> View Secret';
+                keysHtml += '<i class="bi bi-eye"></i> View Secret';
                 keysHtml += '</button>';
                 // Delete button
                 keysHtml += '<button class="btn btn-outline-danger btn-sm delete-access-key-btn" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '">';
-                keysHtml += '<i class="fas fa-trash"></i> Delete';
+                keysHtml += '<i class="bi bi-trash"></i> Delete';
                 keysHtml += '</button>';
                 keysHtml += '</td>';
                 keysHtml += '</tr>';
@@ -1426,7 +1426,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             document.getElementById('newAccessKeyInput').value = '';
             document.getElementById('newSecretKeyInput').value = '';
             document.getElementById('newSecretKeyInput').type = 'password';
-            document.getElementById('secretKeyToggleIcon').className = 'fas fa-eye';
+            document.getElementById('secretKeyToggleIcon').className = 'bi bi-eye';
         }
 
         // Toggle create key form visibility
@@ -1445,10 +1445,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const icon = document.getElementById('secretKeyToggleIcon');
             if (input.type === 'password') {
                 input.type = 'text';
-                icon.className = 'fas fa-eye-slash';
+                icon.className = 'bi bi-eye-slash';
             } else {
                 input.type = 'password';
-                icon.className = 'fas fa-eye';
+                icon.className = 'bi bi-eye';
             }
         }
 

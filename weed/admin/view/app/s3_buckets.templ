@@ -8,7 +8,7 @@ import (
 templ S3Buckets(data dash.S3BucketsData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
-            <i class="fas fa-cube me-2"></i>Object Store Buckets
+            <i class="bi bi-box me-2"></i>Object Store Buckets
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
@@ -21,7 +21,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 <button type="button" class="btn btn-sm btn-primary"
                         data-bs-toggle="modal"
                         data-bs-target="#createBucketModal">
-                    <i class="fas fa-plus me-1"></i>Create Bucket
+                    <i class="bi bi-plus me-1"></i>Create Bucket
                 </button>
             </div>
         </div>
@@ -43,7 +43,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-cube fa-2x text-gray-300"></i>
+                                <i class="bi bi-box icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -63,7 +63,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                                <i class="bi bi-device-hdd icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -84,7 +84,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-clock fa-2x text-gray-300"></i>
+                                <i class="bi bi-clock icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -98,16 +98,16 @@ templ S3Buckets(data dash.S3BucketsData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-cube me-2"></i>Object Store Buckets
+                            <i class="bi bi-box me-2"></i>Object Store Buckets
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
                                 <a class="dropdown-item" href="#" onclick="exportBucketList()">
-                                    <i class="fas fa-download me-2"></i>Export List
+                                    <i class="bi bi-download me-2"></i>Export List
                                 </a>
                             </div>
                         </div>
@@ -161,19 +161,19 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             <td>
                                                 <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                    class="text-decoration-none">
-                                                    <i class="fas fa-cube me-2"></i>
+                                                    <i class="bi bi-box me-2"></i>
                                                     {bucket.Name}
                                                 </a>
                                                 if bucket.ReadOnly {
                                                     <span class="badge bg-danger ms-2" title="Bucket is read-only (quota enforcement or manual lock); writes are rejected">
-                                                        <i class="fas fa-lock me-1"></i>Read-only
+                                                        <i class="bi bi-lock me-1"></i>Read-only
                                                     </span>
                                                 }
                                             </td>
                                             <td>
                                                 if bucket.Owner != "" {
                                                     <span class="badge bg-info">
-                                                        <i class="fas fa-user me-1"></i>{bucket.Owner}
+                                                        <i class="bi bi-person me-1"></i>{bucket.Owner}
                                                     </span>
                                                 } else {
                                                     <span class="text-muted small">No owner</span>
@@ -210,11 +210,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             <td>
                                                 if bucket.VersioningStatus == "Enabled" {
                                                     <span class="badge bg-success">
-                                                        <i class="fas fa-check me-1"></i>Enabled
+                                                        <i class="bi bi-check me-1"></i>Enabled
                                                     </span>
                                                 } else if bucket.VersioningStatus == "Suspended" {
                                                     <span class="badge bg-warning">
-                                                        <i class="fas fa-pause me-1"></i>Suspended
+                                                        <i class="bi bi-pause me-1"></i>Suspended
                                                     </span>
                                                 } else {
                                                     <span class="text-muted">Not configured</span>
@@ -224,7 +224,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 if bucket.ObjectLockEnabled {
                                                     <div>
                                                         <span class="badge bg-warning">
-                                                            <i class="fas fa-lock me-1"></i>Enabled
+                                                            <i class="bi bi-lock me-1"></i>Enabled
                                                         </span>
                                                         <div class="small text-muted">
                                                             {bucket.ObjectLockMode} • {fmt.Sprintf("%d days", bucket.ObjectLockDuration)}
@@ -276,32 +276,32 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                     <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                        class="btn btn-outline-success btn-sm"
                                                        title="Browse Files">
-                                                        <i class="fas fa-folder-open"></i>
+                                                        <i class="bi bi-folder2-open"></i>
                                                     </a>
                                                     <button type="button"
                                                             class="btn btn-outline-primary btn-sm view-details-btn"
                                                             data-bucket-name={bucket.Name}
                                                             title="View Details">
-                                                        <i class="fas fa-eye"></i>
+                                                        <i class="bi bi-eye"></i>
                                                     </button>
                                                     <button type="button"
                                                             class="btn btn-outline-secondary btn-sm lifecycle-btn"
                                                             data-bucket-name={bucket.Name}
                                                             title="Lifecycle Rules">
-                                                        <i class="fas fa-recycle"></i>
+                                                        <i class="bi bi-recycle"></i>
                                                     </button>
                                                     <button type="button"
                                                             class="btn btn-outline-info btn-sm policy-btn"
                                                             data-bucket-name={bucket.Name}
                                                             title="Bucket Policy">
-                                                        <i class="fas fa-shield-alt"></i>
+                                                        <i class="bi bi-shield"></i>
                                                     </button>
                                                     <button type="button"
                                                             class="btn btn-outline-info btn-sm owner-btn"
                                                             data-bucket-name={bucket.Name}
                                                             data-current-owner={bucket.Owner}
                                                             title="Manage Owner">
-                                                        <i class="fas fa-user-edit"></i>
+                                                        <i class="bi bi-person-gear"></i>
                                                     </button>
                                                     <button type="button" 
                                                             class="btn btn-outline-warning btn-sm quota-btn"
@@ -309,13 +309,13 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                             data-current-quota={fmt.Sprintf("%d", getQuotaInMB(bucket.Quota))}
                                                             data-quota-enabled={fmt.Sprintf("%t", bucket.QuotaEnabled)}
                                                             title="Manage Quota">
-                                                        <i class="fas fa-tachometer-alt"></i>
+                                                        <i class="bi bi-speedometer2"></i>
                                                     </button>
                                                     <button type="button" 
                                                             class="btn btn-outline-danger btn-sm delete-bucket-btn"
                                                             data-bucket-name={bucket.Name}
                                                             title="Delete Bucket">
-                                                        <i class="fas fa-trash"></i>
+                                                        <i class="bi bi-trash"></i>
                                                     </button>
                                                 </div>
                                             </td>
@@ -324,14 +324,14 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     if len(data.Buckets) == 0 {
                                         <tr>
                                             <td colspan="11" class="text-center text-muted py-4">
-                                                <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
+                                                <i class="bi bi-box icon-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
                                                     <p>Create your first bucket to get started with S3 storage.</p>
                                                     <button type="button" class="btn btn-primary" 
                                                             data-bs-toggle="modal" 
                                                             data-bs-target="#createBucketModal">
-                                                        <i class="fas fa-plus me-1"></i>Create Bucket
+                                                        <i class="bi bi-plus me-1"></i>Create Bucket
                                                     </button>
                                                 </div>
                                             </td>
@@ -353,13 +353,13 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         if data.CurrentPage > 1 {
                                             <li class="page-item">
                                                 <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage-1)}>
-                                                    <i class="fas fa-chevron-left"></i>
+                                                    <i class="bi bi-chevron-left"></i>
                                                 </a>
                                             </li>
                                         } else {
                                             <li class="page-item disabled">
                                                 <span class="page-link">
-                                                    <i class="fas fa-chevron-left"></i>
+                                                    <i class="bi bi-chevron-left"></i>
                                                 </span>
                                             </li>
                                         }
@@ -381,13 +381,13 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         if data.CurrentPage < data.TotalPages {
                                             <li class="page-item">
                                                 <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage+1)}>
-                                                    <i class="fas fa-chevron-right"></i>
+                                                    <i class="bi bi-chevron-right"></i>
                                                 </a>
                                             </li>
                                         } else {
                                             <li class="page-item disabled">
                                                 <span class="page-link">
-                                                    <i class="fas fa-chevron-right"></i>
+                                                    <i class="bi bi-chevron-right"></i>
                                                 </span>
                                             </li>
                                         }
@@ -404,7 +404,7 @@ templ S3Buckets(data dash.S3BucketsData) {
         <div class="row">
             <div class="col-12">
                 <small class="text-muted">
-                    <i class="fas fa-clock me-1"></i>
+                    <i class="bi bi-clock me-1"></i>
                     Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
                 </small>
             </div>
@@ -417,7 +417,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="createBucketModalLabel">
-                        <i class="fas fa-plus me-2"></i>Create New S3 Bucket
+                        <i class="bi bi-plus me-2"></i>Create New S3 Bucket
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -537,7 +537,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-plus me-1"></i>Create Bucket
+                            <i class="bi bi-plus me-1"></i>Create Bucket
                         </button>
                     </div>
                 </form>
@@ -551,21 +551,21 @@ templ S3Buckets(data dash.S3BucketsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="deleteBucketModalLabel">
-                        <i class="fas fa-exclamation-triangle me-2 text-warning"></i>Delete Bucket
+                        <i class="bi bi-exclamation-triangle me-2 text-warning"></i>Delete Bucket
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <p>Are you sure you want to delete the bucket <strong id="deleteBucketName"></strong>?</p>
                     <div class="alert alert-warning">
-                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <i class="bi bi-exclamation-triangle me-2"></i>
                         <strong>Warning:</strong> This action cannot be undone. All objects in the bucket will be permanently deleted.
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-danger" onclick="deleteBucket()">
-                        <i class="fas fa-trash me-1"></i>Delete Bucket
+                        <i class="bi bi-trash me-1"></i>Delete Bucket
                     </button>
                 </div>
             </div>
@@ -578,7 +578,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="manageQuotaModalLabel">
-                        <i class="fas fa-tachometer-alt me-2"></i>Manage Bucket Quota
+                        <i class="bi bi-speedometer2 me-2"></i>Manage Bucket Quota
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -622,7 +622,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="submit" class="btn btn-warning">
-                            <i class="fas fa-save me-1"></i>Update Quota
+                            <i class="bi bi-floppy me-1"></i>Update Quota
                         </button>
                     </div>
                 </form>
@@ -636,7 +636,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="bucketDetailsModalLabel">
-                        <i class="fas fa-cube me-2"></i>Bucket Details
+                        <i class="bi bi-box me-2"></i>Bucket Details
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -663,7 +663,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="bucketLifecycleModalLabel">
-                        <i class="fas fa-recycle me-2"></i>Lifecycle
+                        <i class="bi bi-recycle me-2"></i>Lifecycle
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -672,11 +672,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-danger me-auto" id="lifecycleDeleteAllBtn">
-                        <i class="fas fa-trash me-1"></i>Delete all rules
+                        <i class="bi bi-trash me-1"></i>Delete all rules
                     </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" id="lifecycleSaveAllBtn">
-                        <i class="fas fa-save me-1"></i>Save
+                        <i class="bi bi-floppy me-1"></i>Save
                     </button>
                 </div>
             </div>
@@ -691,7 +691,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="bucketPolicyModalLabel">
-                        <i class="fas fa-file-shield me-2"></i>Bucket Policy
+                        <i class="bi bi-file-earmark-lock me-2"></i>Bucket Policy
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -720,7 +720,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                             <div class="tab-pane fade show active" id="bucketPolicyEditorTab" role="tabpanel" aria-labelledby="bucketPolicyEditorTabBtn">
                                 <div id="bucketPolicyEditorBody"></div>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" id="bucketPolicyAddStatementBtn">
-                                    <i class="fas fa-plus me-1"></i>Add statement
+                                    <i class="bi bi-plus me-1"></i>Add statement
                                 </button>
                             </div>
                             <div class="tab-pane fade" id="bucketPolicyJsonTab" role="tabpanel" aria-labelledby="bucketPolicyJsonTabBtn">
@@ -732,18 +732,18 @@ templ S3Buckets(data dash.S3BucketsData) {
                         </div>
                         <div class="mb-3">
                             <button type="button" class="btn btn-outline-info btn-sm" id="bucketPolicyInsertSampleBtn">
-                                <i class="fas fa-file-alt me-1"></i>Use Sample Policy
+                                <i class="bi bi-file-earmark-text me-1"></i>Use Sample Policy
                             </button>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-danger me-auto" id="bucketPolicyDeleteBtn">
-                        <i class="fas fa-trash me-1"></i>Delete
+                        <i class="bi bi-trash me-1"></i>Delete
                     </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" id="bucketPolicySaveBtn">
-                        <i class="fas fa-save me-1"></i>Save
+                        <i class="bi bi-floppy me-1"></i>Save
                     </button>
                 </div>
             </div>
@@ -756,7 +756,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="manageOwnerModalLabel">
-                        <i class="fas fa-user-edit me-2"></i>Manage Bucket Owner
+                        <i class="bi bi-person-gear me-2"></i>Manage Bucket Owner
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -788,7 +788,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="submit" class="btn btn-info">
-                            <i class="fas fa-save me-1"></i>Update Owner
+                            <i class="bi bi-floppy me-1"></i>Update Owner
                         </button>
                     </div>
                 </form>
@@ -1214,7 +1214,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 
                 // Update modal title
                 document.getElementById('bucketDetailsModalLabel').innerHTML = 
-                    '<i class="fas fa-cube me-2"></i>Bucket Details - ' + bucketName;
+                    '<i class="bi bi-box me-2"></i>Bucket Details - ' + bucketName;
                 
                 // Show loading spinner
                 document.getElementById('bucketDetailsContent').innerHTML = 
@@ -1234,7 +1234,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         if (data.error) {
                             document.getElementById('bucketDetailsContent').innerHTML = 
                                 '<div class="alert alert-danger">' +
-                                '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                                '<i class="bi bi-exclamation-triangle me-2"></i>' +
                                 'Error loading bucket details: ' + data.error +
                                 '<\\/div>';
                         } else {
@@ -1245,7 +1245,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         console.error('Error fetching bucket details:', error);
                         document.getElementById('bucketDetailsContent').innerHTML = 
                             '<div class="alert alert-danger">' +
-                            '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                            '<i class="bi bi-exclamation-triangle me-2"></i>' +
                             'Error loading bucket details: ' + error.message +
                             '<\\/div>';
                     });
@@ -1262,7 +1262,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 lifecycleEditor = { bucket: null, rules: [], editingIndex: null, editingRule: null, rawXml: '', hasTransition: false };
 
                 document.getElementById('bucketLifecycleModalLabel').innerHTML =
-                    '<i class="fas fa-recycle me-2"></i>Lifecycle - ' + bucketName;
+                    '<i class="bi bi-recycle me-2"></i>Lifecycle - ' + bucketName;
 
                 document.getElementById('bucketLifecycleContent').innerHTML =
                     '<div class="text-center py-4">' +
@@ -1283,7 +1283,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         if (!ok || data.error) {
                             document.getElementById('bucketLifecycleContent').innerHTML =
                                 '<div class="alert alert-danger">' +
-                                '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                                '<i class="bi bi-exclamation-triangle me-2"></i>' +
                                 'Error loading lifecycle rules: ' + (data.error || 'unknown error') +
                                 '<\/div>';
                         } else {
@@ -1295,7 +1295,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                         console.error('Error fetching bucket lifecycle:', error);
                         document.getElementById('bucketLifecycleContent').innerHTML =
                             '<div class="alert alert-danger">' +
-                            '<i class="fas fa-exclamation-triangle me-2"></i>' +
+                            '<i class="bi bi-exclamation-triangle me-2"></i>' +
                             'Error loading lifecycle rules: ' + error.message +
                             '<\/div>';
                     });
@@ -1401,7 +1401,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 }
 
                 document.getElementById('bucketPolicyModalLabel').innerHTML =
-                    '<i class="fas fa-file-shield me-2"></i>Bucket Policy - ' + escapeHtml(bucketName);
+                    '<i class="bi bi-file-earmark-lock me-2"></i>Bucket Policy - ' + escapeHtml(bucketName);
                 document.getElementById('bucketPolicyLoading').style.display = '';
                 document.getElementById('bucketPolicyError').style.display = 'none';
                 document.getElementById('bucketPolicyEditorWrapper').style.display = 'none';
@@ -1600,7 +1600,7 @@ function displayBucketDetails(data) {
 
     let ownerHtml = '<span class="text-muted">No owner (admin-only)</span>';
     if (bucket.owner) {
-        ownerHtml = '<span class="badge bg-info"><i class="fas fa-user me-1"></i>' + escapeHtml(bucket.owner) + '</span>';
+        ownerHtml = '<span class="badge bg-info"><i class="bi bi-person me-1"></i>' + escapeHtml(bucket.owner) + '</span>';
     }
 
     let usageHtml = '';
@@ -1616,14 +1616,14 @@ function displayBucketDetails(data) {
 
     let versioningHtml = '<span class="text-muted">Not configured</span>';
     if (bucket.versioning_status === 'Enabled') {
-        versioningHtml = '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Enabled</span>';
+        versioningHtml = '<span class="badge bg-success"><i class="bi bi-check me-1"></i>Enabled</span>';
     } else if (bucket.versioning_status === 'Suspended') {
-        versioningHtml = '<span class="badge bg-warning"><i class="fas fa-pause me-1"></i>Suspended</span>';
+        versioningHtml = '<span class="badge bg-warning"><i class="bi bi-pause me-1"></i>Suspended</span>';
     }
 
     let statusHtml = '<span class="badge bg-success">Writable</span>';
     if (bucket.read_only) {
-        statusHtml = '<span class="badge bg-danger"><i class="fas fa-lock me-1"></i>Read-only</span>';
+        statusHtml = '<span class="badge bg-danger"><i class="bi bi-lock me-1"></i>Read-only</span>';
     }
 
     let objectLockHtml = '<span class="text-muted">Not configured</span>';
@@ -1632,7 +1632,7 @@ function displayBucketDetails(data) {
         if (bucket.object_lock_mode && bucket.object_lock_duration > 0) {
             details = '<br><small class="text-muted">' + escapeHtml(bucket.object_lock_mode) + ' • ' + bucket.object_lock_duration + ' days<\/small>';
         }
-        objectLockHtml = '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' + details;
+        objectLockHtml = '<span class="badge bg-warning"><i class="bi bi-lock me-1"></i>Enabled</span>' + details;
     }
 
     let policyHtml = '<span class="text-muted">Not configured</span>';
@@ -1644,7 +1644,7 @@ function displayBucketDetails(data) {
     const rows = [
         '<div class="row">',
         '<div class="col-md-6">',
-        '<h6><i class="fas fa-info-circle me-2"></i>Bucket Information</h6>',
+        '<h6><i class="bi bi-info-circle me-2"></i>Bucket Information</h6>',
         '<table class="table table-sm">',
         '<tr><td><strong>Name:</strong></td><td>' + escapeHtml(bucket.name) + '<\/td><\/tr>',
         '<tr><td><strong>Owner:</strong></td><td>' + ownerHtml + '<\/td><\/tr>',
@@ -1655,7 +1655,7 @@ function displayBucketDetails(data) {
         '<\/table>',
         '<\/div>',
         '<div class="col-md-6">',
-        '<h6><i class="fas fa-cogs me-2"></i>Configuration</h6>',
+        '<h6><i class="bi bi-gear-wide-connected me-2"></i>Configuration</h6>',
         '<table class="table table-sm">',
         '<tr><td><strong>Status:</strong></td><td>' + statusHtml + '<\/td><\/tr>',
         '<tr><td><strong>Quota:</strong></td><td>' + quotaHtml + '<\/td><\/tr>',
@@ -1784,8 +1784,8 @@ function lifecycleRuleRowHtml(rule, idx) {
         '<td>' + describeLifecycleScope(rule) + '<\/td>' +
         '<td>' + describeLifecycleActions(rule) + '<\/td>' +
         '<td class="text-end text-nowrap">' +
-        '<button type="button" class="btn btn-sm btn-outline-secondary lifecycle-edit-rule-btn" data-index="' + idx + '" title="Edit rule"><i class="fas fa-pen"><\/i><\/button> ' +
-        '<button type="button" class="btn btn-sm btn-outline-danger lifecycle-delete-rule-btn" data-index="' + idx + '" title="Delete rule"><i class="fas fa-trash"><\/i><\/button>' +
+        '<button type="button" class="btn btn-sm btn-outline-secondary lifecycle-edit-rule-btn" data-index="' + idx + '" title="Edit rule"><i class="bi bi-pen"><\/i><\/button> ' +
+        '<button type="button" class="btn btn-sm btn-outline-danger lifecycle-delete-rule-btn" data-index="' + idx + '" title="Delete rule"><i class="bi bi-trash"><\/i><\/button>' +
         '<\/td>' +
         '<\/tr>';
 }
@@ -1796,7 +1796,7 @@ function lifecycleRuleFormHtml() {
         '<div class="input-group input-group-sm mb-1 lifecycle-tag-row">' +
         '<input type="text" class="form-control lifecycle-tag-key" placeholder="Key" value="' + escapeHtml(k) + '">' +
         '<input type="text" class="form-control lifecycle-tag-value" placeholder="Value" value="' + escapeHtml(v) + '">' +
-        '<button type="button" class="btn btn-outline-danger lifecycle-remove-tag-btn"><i class="fas fa-times"><\/i><\/button>' +
+        '<button type="button" class="btn btn-outline-danger lifecycle-remove-tag-btn"><i class="bi bi-x"><\/i><\/button>' +
         '<\/div>';
     const tagRows = Object.entries(rule.tags || {}).map(([k, v]) => tagRowHtml(k, v)).join('');
 
@@ -1831,7 +1831,7 @@ function lifecycleRuleFormHtml() {
         '<div class="mb-2">' +
         '<label class="form-label small d-block">Tags<\/label>' +
         '<div id="lifecycleTagRows">' + tagRows + '<\/div>' +
-        '<button type="button" class="btn btn-sm btn-outline-secondary" id="lifecycleAddTagBtn"><i class="fas fa-plus me-1"><\/i>Add tag<\/button>' +
+        '<button type="button" class="btn btn-sm btn-outline-secondary" id="lifecycleAddTagBtn"><i class="bi bi-plus me-1"><\/i>Add tag<\/button>' +
         '<\/div>' +
 
         '<div class="row g-2 mb-3">' +
@@ -1924,7 +1924,7 @@ function renderLifecycleEditor() {
     let html = '';
     if (lifecycleEditor.hasTransition) {
         html += '<div class="alert alert-warning small">' +
-            '<i class="fas fa-triangle-exclamation me-1"><\/i>' +
+            '<i class="bi bi-exclamation-triangle me-1"><\/i>' +
             'This bucket has a Transition rule set outside the admin (SeaweedFS does not support storage class transitions). Saving from here will drop it.' +
             '<\/div>';
     }
@@ -1936,7 +1936,7 @@ function renderLifecycleEditor() {
         '<\/table>' +
         '<\/div>' +
         '<button type="button" class="btn btn-sm btn-outline-primary mb-3" id="lifecycleAddRuleBtn">' +
-        '<i class="fas fa-plus me-1"><\/i>Add rule' +
+        '<i class="bi bi-plus me-1"><\/i>Add rule' +
         '<\/button>';
 
     if (lifecycleEditor.editingIndex !== null) {
@@ -2037,7 +2037,7 @@ function bindLifecycleEditorEvents() {
             row.innerHTML =
                 '<input type="text" class="form-control lifecycle-tag-key" placeholder="Key">' +
                 '<input type="text" class="form-control lifecycle-tag-value" placeholder="Value">' +
-                '<button type="button" class="btn btn-outline-danger lifecycle-remove-tag-btn"><i class="fas fa-times"><\/i><\/button>';
+                '<button type="button" class="btn btn-outline-danger lifecycle-remove-tag-btn"><i class="bi bi-x"><\/i><\/button>';
             rows.appendChild(row);
             row.querySelector('.lifecycle-remove-tag-btn').addEventListener('click', function() {
                 row.remove();

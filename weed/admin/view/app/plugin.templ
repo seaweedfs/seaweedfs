@@ -18,12 +18,12 @@ templ Plugin(page string, initialJob string, lane string) {
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
-                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>{ laneTitle }</h2>
+                        <h2 class="mb-0"><i class="bi bi-plug me-2"></i>{ laneTitle }</h2>
                         <p class="text-muted mb-0">{ laneDescription }</p>
                     </div>
                     <div class="btn-group">
                         <button type="button" class="btn btn-outline-secondary" id="plugin-refresh-all-btn">
-                            <i class="fas fa-sync-alt me-1"></i>Refresh
+                            <i class="bi bi-arrow-repeat me-1"></i>Refresh
                         </button>
                     </div>
                 </div>
@@ -35,7 +35,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <ul class="nav nav-tabs" id="plugin-top-tabs">
                     <li class="nav-item">
                         <button type="button" class="nav-link active" data-plugin-top-tab="overview">
-                            <i class="fas fa-chart-line me-1"></i>Overview
+                            <i class="bi bi-graph-up-arrow me-1"></i>Overview
                         </button>
                     </li>
                 </ul>
@@ -47,22 +47,22 @@ templ Plugin(page string, initialJob string, lane string) {
                 <ul class="nav nav-pills gap-2" id="plugin-subtabs">
                     <li class="nav-item">
                         <button type="button" class="nav-link active" data-plugin-subtab="configuration">
-                            <i class="fas fa-sliders-h me-1"></i>Configuration
+                            <i class="bi bi-sliders me-1"></i>Configuration
                         </button>
                     </li>
                     <li class="nav-item">
                         <button type="button" class="nav-link" data-plugin-subtab="detection">
-                            <i class="fas fa-search me-1"></i>Job Detection
+                            <i class="bi bi-search me-1"></i>Job Detection
                         </button>
                     </li>
                     <li class="nav-item">
                         <button type="button" class="nav-link" data-plugin-subtab="queue">
-                            <i class="fas fa-list me-1"></i>Job Queue
+                            <i class="bi bi-list me-1"></i>Job Queue
                         </button>
                     </li>
                     <li class="nav-item">
                         <button type="button" class="nav-link" data-plugin-subtab="execution">
-                            <i class="fas fa-tasks me-1"></i>Job Execution
+                            <i class="bi bi-list-check me-1"></i>Job Execution
                         </button>
                     </li>
                 </ul>
@@ -109,7 +109,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header">
-                            <h5 class="mb-0"><i class="fas fa-chart-bar me-2"></i>Per Job Type Summary</h5>
+                            <h5 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Per Job Type Summary</h5>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive">
@@ -134,7 +134,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler State</h5>
+                            <h5 class="mb-0"><i class="bi bi-clock me-2"></i>Scheduler State</h5>
                             <small class="text-muted">Sequential scheduler with per-job runtime limits</small>
                         </div>
                         <div class="card-body p-0">
@@ -167,7 +167,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header">
-                            <h5 class="mb-0"><i class="fas fa-users me-2"></i>Workers</h5>
+                            <h5 class="mb-0"><i class="bi bi-people me-2"></i>Workers</h5>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive" style="max-height: 560px; overflow-y: auto;">
@@ -196,7 +196,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-lg-8 mb-3">
                     <div class="card shadow-sm h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Job Type Configuration</h5>
+                            <h5 class="mb-0"><i class="bi bi-sliders me-2"></i>Job Type Configuration</h5>
                             <small class="text-muted" id="plugin-config-updated-at">Not loaded</small>
                         </div>
                         <div class="card-body">
@@ -209,7 +209,7 @@ templ Plugin(page string, initialJob string, lane string) {
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <h6 class="mb-0">Descriptor</h6>
                                     <button type="button" class="btn btn-sm btn-outline-secondary" id="plugin-refresh-schema-btn">
-                                        <i class="fas fa-cloud-download-alt me-1"></i>Refresh Schema
+                                        <i class="bi bi-cloud-download me-1"></i>Refresh Schema
                                     </button>
                                 </div>
                                 <div class="alert alert-light border" id="plugin-descriptor-summary">Select a job type to load schema and config.</div>
@@ -231,13 +231,13 @@ templ Plugin(page string, initialJob string, lane string) {
 
                             <div class="d-flex flex-wrap gap-2">
                                 <button type="button" class="btn btn-primary" id="plugin-save-config-btn">
-                                    <i class="fas fa-save me-1"></i>Save Config
+                                    <i class="bi bi-floppy me-1"></i>Save Config
                                 </button>
                                 <button type="button" class="btn btn-outline-primary" id="plugin-trigger-detection-btn">
-                                    <i class="fas fa-search me-1"></i>Run Detection
+                                    <i class="bi bi-search me-1"></i>Run Detection
                                 </button>
                                 <button type="button" class="btn btn-outline-success" id="plugin-run-workflow-btn">
-                                    <i class="fas fa-play me-1"></i>Run Detect + Execute
+                                    <i class="bi bi-play me-1"></i>Run Detect + Execute
                                 </button>
                             </div>
                         </div>
@@ -247,7 +247,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-lg-4 mb-3">
                     <div class="card shadow-sm">
                         <div class="card-header">
-                            <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>Job Scheduling Settings</h5>
+                            <h5 class="mb-0"><i class="bi bi-gear-wide-connected me-2"></i>Job Scheduling Settings</h5>
                         </div>
                         <div class="card-body">
                             <div class="row g-2" id="plugin-admin-settings-form">
@@ -301,7 +301,7 @@ templ Plugin(page string, initialJob string, lane string) {
 
                     <div class="card shadow-sm mt-3">
                         <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Next Run</h5>
+                            <h5 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Next Run</h5>
                             <small class="text-muted">Scheduler</small>
                         </div>
                         <div class="card-body">
@@ -316,7 +316,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-lg-6 mb-3">
                     <div class="card shadow-sm h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>Run History</h5>
+                            <h5 class="mb-0"><i class="bi bi-clipboard-check me-2"></i>Run History</h5>
                             <small class="text-muted">Keep last 10 success + last 10 errors</small>
                         </div>
                         <div class="card-body">
@@ -365,7 +365,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-lg-6 mb-3">
                     <div class="card shadow-sm h-100">
                         <div class="card-header">
-                            <h5 class="mb-0"><i class="fas fa-lightbulb me-2"></i>Detection Results</h5>
+                            <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i>Detection Results</h5>
                         </div>
                         <div class="card-body" id="plugin-detection-results">
                             <div class="text-muted">Run detection to see proposals.</div>
@@ -380,7 +380,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0"><i class="fas fa-list me-2"></i>Job Queue</h5>
+                            <h5 class="mb-0"><i class="bi bi-list me-2"></i>Job Queue</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
                                 <small class="text-muted">States: pending/assigned/running</small>
                             </div>
@@ -415,7 +415,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0"><i class="fas fa-search me-2"></i>Detection Jobs</h5>
+                            <h5 class="mb-0"><i class="bi bi-search me-2"></i>Detection Jobs</h5>
                             <div class="small text-muted">Detection activities for selected job type</div>
                         </div>
                         <div class="card-body p-0">
@@ -448,7 +448,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Execution Jobs</h5>
+                            <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Execution Jobs</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
                                 <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
                                     <option value="">All States</option>
@@ -488,7 +488,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0"><i class="fas fa-stream me-2"></i>Execution Activities</h5>
+                            <h5 class="mb-0"><i class="bi bi-list-nested me-2"></i>Execution Activities</h5>
                             <small class="text-muted">Non-detection events only</small>
                         </div>
                         <div class="card-body p-0">
@@ -520,10 +520,10 @@ templ Plugin(page string, initialJob string, lane string) {
         <div class="modal-dialog modal-xl modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="plugin-job-detail-modal-label"><i class="fas fa-file-alt me-2"></i>Job Detail</h5>
+                    <h5 class="modal-title" id="plugin-job-detail-modal-label"><i class="bi bi-file-earmark-text me-2"></i>Job Detail</h5>
                     <div class="ms-auto me-2">
                         <button type="button" class="btn btn-outline-danger btn-sm" id="plugin-expire-job-btn" disabled>
-                            <i class="fas fa-stop-circle me-1"></i>Expire Job
+                            <i class="bi bi-stop-circle me-1"></i>Expire Job
                         </button>
                     </div>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -889,7 +889,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 var html = '' +
                     '<li class="nav-item">' +
                     '<button type="button" class="nav-link" data-plugin-top-tab="overview">' +
-                    '<i class="fas fa-chart-line me-1"></i>Overview' +
+                    '<i class="bi bi-graph-up-arrow me-1"></i>Overview' +
                     '</button>' +
                     '</li>';
 

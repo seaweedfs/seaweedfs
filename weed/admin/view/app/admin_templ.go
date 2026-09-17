@@ -34,33 +34,33 @@ func Admin(data dash.AdminData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"fas fa-tachometer-alt me-2\"></i>Dashboard</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><a href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"bi bi-speedometer2 me-2\"></i>Dashboard</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><a href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 templ.SafeURL
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/object-store/buckets"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 15, Col: 70}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 15, Col: 70}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" class=\"btn btn-sm btn-primary\"><i class=\"fas fa-cube me-1\"></i>Object Store Buckets</a></div></div></div><div id=\"dashboard-content\"><!-- Summary Cards — each carries an inline sparkline of recent history\n             from the admin's own snapshots (no Prometheus required). --><div class=\"row mb-4\"><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-success shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-success text-uppercase mb-1\">Total Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" class=\"btn btn-sm btn-primary\"><i class=\"bi bi-box me-1\"></i>Object Store Buckets</a></div></div></div><div id=\"dashboard-content\"><!-- Summary Cards — each carries an inline sparkline of recent history\n             from the admin's own snapshots (no Prometheus required). --><div class=\"row mb-4\"><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-success shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-success text-uppercase mb-1\">Total Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 36, Col: 73}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 36, Col: 73}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</div></div><div class=\"col-auto\"><i class=\"fas fa-database fa-2x text-gray-300\"></i></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</div></div><div class=\"col-auto\"><i class=\"bi bi-database icon-2x text-gray-300\"></i></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -75,13 +75,13 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(formatNumber(data.TotalChunks))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 57, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 57, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div><div class=\"col-auto\"><i class=\"fas fa-cubes fa-2x text-gray-300\"></i></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div><div class=\"col-auto\"><i class=\"bi bi-boxes icon-2x text-gray-300\"></i></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -96,13 +96,13 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(data.TotalSize))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 78, Col: 64}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 78, Col: 64}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</div></div><div class=\"col-auto\"><i class=\"fas fa-hdd fa-2x text-gray-300\"></i></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</div></div><div class=\"col-auto\"><i class=\"bi bi-device-hdd icon-2x text-gray-300\"></i></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -117,39 +117,39 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d MB", data.VolumeSizeLimitMB))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 99, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 99, Col: 81}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div></div><div class=\"col-auto\"><i class=\"fas fa-cogs fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Second Row for EC Shards Information --><div class=\"row mb-4\"><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-secondary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-secondary text-uppercase mb-1\">EC Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</div></div><div class=\"col-auto\"><i class=\"bi bi-gear-wide-connected icon-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Second Row for EC Shards Information --><div class=\"row mb-4\"><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-secondary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-secondary text-uppercase mb-1\">EC Volumes</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalEcVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 122, Col: 75}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 122, Col: 75}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</div></div><div class=\"col-auto\"><i class=\"fas fa-layer-group fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-dark shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-dark text-uppercase mb-1\">EC Shards</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</div></div><div class=\"col-auto\"><i class=\"bi bi-layers icon-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-3 col-md-6 mb-4\"><div class=\"card border-left-dark shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-dark text-uppercase mb-1\">EC Shards</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalEcShards))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 142, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 142, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</div></div><div class=\"col-auto\"><i class=\"fas fa-puzzle-piece fa-2x text-gray-300\"></i></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</div></div><div class=\"col-auto\"><i class=\"bi bi-puzzle icon-2x text-gray-300\"></i></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -164,13 +164,13 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.Trends.TasksValue)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 163, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 163, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</div></div><div class=\"col-auto\"><i class=\"fas fa-tasks fa-2x text-gray-300\"></i></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</div></div><div class=\"col-auto\"><i class=\"bi bi-list-check icon-2x text-gray-300\"></i></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -185,13 +185,13 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.Trends.WorkersValue)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 184, Col: 62}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 184, Col: 62}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</div></div><div class=\"col-auto\"><i class=\"fas fa-users-cog fa-2x text-gray-300\"></i></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</div></div><div class=\"col-auto\"><i class=\"bi bi-people-fill icon-2x text-gray-300\"></i></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -204,7 +204,7 @@ func Admin(data dash.AdminData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if len(data.TierStats) > 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-layer-group me-2\"></i>Storage Tiers</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Tier</th><th>Volumes</th><th>EC Shards</th><th>Data Size</th><th>Disk Used</th><th>Capacity</th><th>Usage</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-layers me-2\"></i>Storage Tiers</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Tier</th><th>Volumes</th><th>EC Shards</th><th>Data Size</th><th>Disk Used</th><th>Capacity</th><th>Usage</th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -214,14 +214,14 @@ func Admin(data dash.AdminData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				if tier.IsRemote {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<i class=\"fas fa-cloud me-1 text-info\"></i>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<i class=\"bi bi-cloud me-1 text-info\"></i>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var11 string
 					templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(tier.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 226, Col: 109}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 226, Col: 108}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 					if templ_7745c5c3_Err != nil {
@@ -232,14 +232,14 @@ func Admin(data dash.AdminData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<i class=\"fas fa-hdd me-1 text-muted\"></i>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<i class=\"bi bi-device-hdd me-1 text-muted\"></i>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var12 string
 					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(tier.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 229, Col: 108}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 229, Col: 114}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {
@@ -253,7 +253,7 @@ func Admin(data dash.AdminData) templ.Component {
 				var templ_7745c5c3_Var13 string
 				templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", tier.VolumeCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 232, Col: 88}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 232, Col: 88}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 				if templ_7745c5c3_Err != nil {
@@ -272,7 +272,7 @@ func Admin(data dash.AdminData) templ.Component {
 					var templ_7745c5c3_Var14 string
 					templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", tier.EcShardCount))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 237, Col: 93}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 237, Col: 93}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 					if templ_7745c5c3_Err != nil {
@@ -286,7 +286,7 @@ func Admin(data dash.AdminData) templ.Component {
 				var templ_7745c5c3_Var15 string
 				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(tier.DataSize))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 240, Col: 79}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 240, Col: 79}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
@@ -305,7 +305,7 @@ func Admin(data dash.AdminData) templ.Component {
 					var templ_7745c5c3_Var16 string
 					templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(tier.DiskUsed))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 245, Col: 83}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 245, Col: 83}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 					if templ_7745c5c3_Err != nil {
@@ -325,7 +325,7 @@ func Admin(data dash.AdminData) templ.Component {
 					var templ_7745c5c3_Var17 string
 					templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(tier.DiskCapacity))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 252, Col: 87}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 252, Col: 87}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 					if templ_7745c5c3_Err != nil {
@@ -349,7 +349,7 @@ func Admin(data dash.AdminData) templ.Component {
 					var templ_7745c5c3_Var18 string
 					templ_7745c5c3_Var18, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %d%%", tier.UsagePercent()))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 261, Col: 119}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 261, Col: 119}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 					if templ_7745c5c3_Err != nil {
@@ -362,7 +362,7 @@ func Admin(data dash.AdminData) templ.Component {
 					var templ_7745c5c3_Var19 string
 					templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d%%", tier.UsagePercent()))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 262, Col: 105}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 262, Col: 105}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 					if templ_7745c5c3_Err != nil {
@@ -383,33 +383,33 @@ func Admin(data dash.AdminData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "<!-- Mount Clients --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex justify-content-between align-items-center\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-plug me-2\"></i>Mount Clients</h6><a href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "<!-- Mount Clients --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex justify-content-between align-items-center\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-plug me-2\"></i>Mount Clients</h6><a href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var20 templ.SafeURL
 		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/cluster/mount-clients"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 286, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 286, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "\" class=\"btn btn-sm btn-outline-primary\">View Details <i class=\"fas fa-arrow-right ms-1\"></i></a></div><div class=\"card-body\"><div class=\"d-flex align-items-center\"><i class=\"fas fa-plug fa-2x text-gray-300 me-3\"></i><div><div class=\"h4 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "\" class=\"btn btn-sm btn-outline-primary\">View Details <i class=\"bi bi-arrow-right ms-1\"></i></a></div><div class=\"card-body\"><div class=\"d-flex align-items-center\"><i class=\"bi bi-plug icon-2x text-gray-300 me-3\"></i><div><div class=\"h4 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var21 string
 		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalMountClients))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 294, Col: 126}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 294, Col: 126}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</div><div class=\"text-xs text-muted text-uppercase\">Connected FUSE/VFS mount clients</div></div></div></div></div></div></div><!-- Master Nodes Status --><div class=\"row mb-4\"><div class=\"col-lg-4\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-server me-2\"></i>Master Nodes</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-bordered\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Address</th><th>Role</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</div><div class=\"text-xs text-muted text-uppercase\">Connected FUSE/VFS mount clients</div></div></div></div></div></div></div><!-- Master Nodes Status --><div class=\"row mb-4\"><div class=\"col-lg-4\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-server me-2\"></i>Master Nodes</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-bordered\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Address</th><th>Role</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -421,7 +421,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var22 templ.SafeURL
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", master.Address)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 325, Col: 121}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 325, Col: 121}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 			if templ_7745c5c3_Err != nil {
@@ -434,13 +434,13 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(master.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 326, Col: 67}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 326, Col: 67}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -460,14 +460,14 @@ func Admin(data dash.AdminData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "</tbody></table></div></div></div></div><!-- System Health --><div class=\"col-lg-8\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-chart-pie me-2\"></i>Cluster</h6></div><div class=\"card-body text-center\"><div class=\"row\"><div class=\"col\"><div class=\"card bg-light\"><div class=\"card-body\"><h5>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "</tbody></table></div></div></div></div><!-- System Health --><div class=\"col-lg-8\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-pie-chart me-2\"></i>Cluster</h6></div><div class=\"card-body text-center\"><div class=\"row\"><div class=\"col\"><div class=\"card bg-light\"><div class=\"card-body\"><h5>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var24 string
 		templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.MasterNodes)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 359, Col: 85}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 359, Col: 85}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 		if templ_7745c5c3_Err != nil {
@@ -480,7 +480,7 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var25 string
 		templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.VolumeServers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 367, Col: 87}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 367, Col: 87}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 		if templ_7745c5c3_Err != nil {
@@ -493,7 +493,7 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var26 string
 		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.FilerNodes)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 375, Col: 84}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 375, Col: 84}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 		if templ_7745c5c3_Err != nil {
@@ -506,7 +506,7 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.S3Nodes)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 383, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 383, Col: 81}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {
@@ -519,20 +519,20 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var28 string
 		templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.MessageBrokers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 391, Col: 88}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 391, Col: 88}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "</h5><small class=\"text-muted\">Message Brokers</small></div></div></div></div></div></div></div></div><!-- Volume Servers --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-database me-2\"></i>Volume Servers</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "</h5><small class=\"text-muted\">Message Brokers</small></div></div></div></div></div></div></div></div><!-- Volume Servers --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-database me-2\"></i>Volume Servers</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var29 templ.SafeURL
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/volumes"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 416, Col: 90}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 416, Col: 90}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 		if templ_7745c5c3_Err != nil {
@@ -545,7 +545,7 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var30 templ.SafeURL
 		templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/cluster"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 417, Col: 90}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 417, Col: 90}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 		if templ_7745c5c3_Err != nil {
@@ -563,7 +563,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var31 string
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(vs.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 438, Col: 54}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 438, Col: 54}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 			if templ_7745c5c3_Err != nil {
@@ -576,7 +576,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var32 templ.SafeURL
 			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("//%s/ui/index.html", vs.GetDisplayAddress())))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 440, Col: 129}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 440, Col: 129}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 			if templ_7745c5c3_Err != nil {
@@ -589,20 +589,20 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var33 string
 			templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(vs.GetDisplayAddress())
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 441, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 441, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var34 string
 			templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(vs.DataCenter)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 445, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 445, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 			if templ_7745c5c3_Err != nil {
@@ -615,7 +615,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var35 string
 			templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(vs.Rack)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 446, Col: 56}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 446, Col: 56}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 			if templ_7745c5c3_Err != nil {
@@ -628,7 +628,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var36 string
 			templ_7745c5c3_Var36, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %d%%", calculatePercent(vs.Volumes, vs.MaxVolumes)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 450, Col: 135}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 450, Col: 135}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 			if templ_7745c5c3_Err != nil {
@@ -641,7 +641,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var37 string
 			templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", vs.Volumes, vs.MaxVolumes))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 451, Col: 104}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 451, Col: 104}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 			if templ_7745c5c3_Err != nil {
@@ -659,7 +659,7 @@ func Admin(data dash.AdminData) templ.Component {
 				var templ_7745c5c3_Var38 string
 				templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", vs.EcShards))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 457, Col: 127}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 457, Col: 127}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 				if templ_7745c5c3_Err != nil {
@@ -677,7 +677,7 @@ func Admin(data dash.AdminData) templ.Component {
 					var templ_7745c5c3_Var39 string
 					templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d vol", vs.EcVolumes))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 459, Col: 119}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 459, Col: 119}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 					if templ_7745c5c3_Err != nil {
@@ -701,7 +701,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var40 string
 			templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(vs.DiskUsage))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 466, Col: 74}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 466, Col: 74}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 			if templ_7745c5c3_Err != nil {
@@ -714,7 +714,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(vs.DiskCapacity))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 466, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 466, Col: 107}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 			if templ_7745c5c3_Err != nil {
@@ -725,14 +725,14 @@ func Admin(data dash.AdminData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if vs.RemoteSize > 0 {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "<br><small class=\"text-muted\"><i class=\"fas fa-cloud me-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "<br><small class=\"text-muted\"><i class=\"bi bi-cloud me-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var42 string
 				templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(vs.RemoteSize))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 469, Col: 138}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 469, Col: 137}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 				if templ_7745c5c3_Err != nil {
@@ -749,19 +749,19 @@ func Admin(data dash.AdminData) templ.Component {
 			}
 		}
 		if len(data.VolumeServers) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<tr><td colspan=\"7\" class=\"text-center text-muted py-4\"><i class=\"fas fa-info-circle me-2\"></i> No volume servers found</td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<tr><td colspan=\"7\" class=\"text-center text-muted py-4\"><i class=\"bi bi-info-circle me-2\"></i> No volume servers found</td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "</tbody></table></div></div></div></div></div><!-- Filer Nodes --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-folder me-2\"></i>Filer Nodes</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "</tbody></table></div></div></div></div></div><!-- Filer Nodes --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-folder me-2\"></i>Filer Nodes</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var43 templ.SafeURL
 		templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/filer"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 504, Col: 88}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 504, Col: 88}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 		if templ_7745c5c3_Err != nil {
@@ -774,7 +774,7 @@ func Admin(data dash.AdminData) templ.Component {
 		var templ_7745c5c3_Var44 templ.SafeURL
 		templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/cluster"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 505, Col: 90}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 505, Col: 90}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 		if templ_7745c5c3_Err != nil {
@@ -792,7 +792,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var45 templ.SafeURL
 			templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("//%s", filer.Address)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 524, Col: 106}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 524, Col: 106}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 			if templ_7745c5c3_Err != nil {
@@ -805,20 +805,20 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var46 string
 			templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(filer.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 525, Col: 66}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 525, Col: 66}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var47 string
 			templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.JoinStringErrs(filer.DataCenter)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 529, Col: 65}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 529, Col: 65}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var47))
 			if templ_7745c5c3_Err != nil {
@@ -831,7 +831,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var48 string
 			templ_7745c5c3_Var48, templ_7745c5c3_Err = templ.JoinStringErrs(filer.Rack)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 530, Col: 59}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 530, Col: 59}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var48))
 			if templ_7745c5c3_Err != nil {
@@ -844,7 +844,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var49 string
 			templ_7745c5c3_Var49, templ_7745c5c3_Err = templ.JoinStringErrs(filer.LastUpdated.Format("2006-01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 531, Col: 96}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 531, Col: 96}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var49))
 			if templ_7745c5c3_Err != nil {
@@ -856,19 +856,19 @@ func Admin(data dash.AdminData) templ.Component {
 			}
 		}
 		if len(data.FilerNodes) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "<tr><td colspan=\"4\" class=\"text-center text-muted py-4\"><i class=\"fas fa-info-circle me-2\"></i> No filer nodes found</td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "<tr><td colspan=\"4\" class=\"text-center text-muted py-4\"><i class=\"bi bi-info-circle me-2\"></i> No filer nodes found</td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 84, "</tbody></table></div></div></div></div></div><!-- S3 Servers --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-cloud me-2\"></i>S3 Servers</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 84, "</tbody></table></div></div></div></div></div><!-- S3 Servers --><div class=\"row mb-4\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-cloud me-2\"></i>S3 Servers</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var50 templ.SafeURL
 		templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/cluster/s3"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 564, Col: 93}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 564, Col: 93}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
 		if templ_7745c5c3_Err != nil {
@@ -886,7 +886,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var51 string
 			templ_7745c5c3_Var51, templ_7745c5c3_Err = templ.JoinStringErrs(s3Node.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 581, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 581, Col: 63}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var51))
 			if templ_7745c5c3_Err != nil {
@@ -899,7 +899,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var52 string
 			templ_7745c5c3_Var52, templ_7745c5c3_Err = templ.JoinStringErrs(s3Node.DataCenter)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 582, Col: 66}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 582, Col: 66}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var52))
 			if templ_7745c5c3_Err != nil {
@@ -912,7 +912,7 @@ func Admin(data dash.AdminData) templ.Component {
 			var templ_7745c5c3_Var53 string
 			templ_7745c5c3_Var53, templ_7745c5c3_Err = templ.JoinStringErrs(s3Node.LastUpdated.Format("2006-01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 583, Col: 97}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 583, Col: 97}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var53))
 			if templ_7745c5c3_Err != nil {
@@ -924,19 +924,19 @@ func Admin(data dash.AdminData) templ.Component {
 			}
 		}
 		if len(data.S3Nodes) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "<tr><td colspan=\"3\" class=\"text-center text-muted py-4\"><i class=\"fas fa-info-circle me-2\"></i> No S3 servers found</td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "<tr><td colspan=\"3\" class=\"text-center text-muted py-4\"><i class=\"bi bi-info-circle me-2\"></i> No S3 servers found</td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, "</tbody></table></div></div></div></div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"bi bi-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var54 string
 		templ_7745c5c3_Var54, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/admin.templ`, Line: 607, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/admin.templ`, Line: 607, Col: 81}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var54))
 		if templ_7745c5c3_Err != nil {

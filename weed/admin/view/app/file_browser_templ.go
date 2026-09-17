@@ -55,35 +55,35 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if data.IsTableBucketPath && data.TableBucketName != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<i class=\"fas fa-table me-2\"></i>Table Bucket: ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<i class=\"bi bi-table me-2\"></i>Table Bucket: ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.TableBucketName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 22, Col: 71}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 22, Col: 70}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else if data.IsBucketPath && data.BucketName != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<i class=\"fas fa-cube me-2\"></i>S3 Bucket: ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<i class=\"bi bi-box me-2\"></i>S3 Bucket: ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 24, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 24, Col: 60}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<i class=\"fas fa-folder-open me-2\"></i>File Browser")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<i class=\"bi bi-folder2-open me-2\"></i>File Browser")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -106,7 +106,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"fas fa-arrow-left me-1\"></i>Back to Table Buckets</a> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"bi bi-arrow-left me-1\"></i>Back to Table Buckets</a> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -124,12 +124,12 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"fas fa-arrow-left me-1\"></i>Back to Buckets</a> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"bi bi-arrow-left me-1\"></i>Back to Buckets</a> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"createFolder()\"><i class=\"fas fa-folder-plus me-1\"></i>New Folder</button> <button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"uploadFile()\"><i class=\"fas fa-upload me-1\"></i>Upload</button> <button type=\"button\" class=\"btn btn-sm btn-outline-danger\" id=\"deleteSelectedBtn\" onclick=\"confirmDeleteSelected()\" style=\"display: none;\"><i class=\"fas fa-trash me-1\"></i>Delete Selected</button> <button type=\"button\" class=\"btn btn-sm btn-outline-info\" onclick=\"exportFileList()\"><i class=\"fas fa-download me-1\"></i>Export</button></div></div></div><!-- Breadcrumb Navigation --><nav aria-label=\"breadcrumb\" class=\"mb-3\"><ol class=\"breadcrumb\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"createFolder()\"><i class=\"bi bi-folder-plus me-1\"></i>New Folder</button> <button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"uploadFile()\"><i class=\"bi bi-upload me-1\"></i>Upload</button> <button type=\"button\" class=\"btn btn-sm btn-outline-danger\" id=\"deleteSelectedBtn\" onclick=\"confirmDeleteSelected()\" style=\"display: none;\"><i class=\"bi bi-trash me-1\"></i>Delete Selected</button> <button type=\"button\" class=\"btn btn-sm btn-outline-info\" onclick=\"exportFileList()\"><i class=\"bi bi-download me-1\"></i>Export</button></div></div></div><!-- Breadcrumb Navigation --><nav aria-label=\"breadcrumb\" class=\"mb-3\"><ol class=\"breadcrumb\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -184,7 +184,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				if crumb.Name == "Root" {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<i class=\"fas fa-home me-1\"></i> ")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<i class=\"bi bi-house me-1\"></i> ")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -204,7 +204,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				}
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</ol></nav><!-- File Listing --><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex justify-content-between align-items-center flex-wrap\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-folder-open me-2\"></i> ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</ol></nav><!-- File Listing --><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex justify-content-between align-items-center flex-wrap\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-folder2-open me-2\"></i> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -253,7 +253,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\" class=\"btn btn-sm btn-outline-primary ms-2\"><i class=\"fas fa-cube me-1\"></i>Manage Buckets</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\" class=\"btn btn-sm btn-outline-primary ms-2\"><i class=\"bi bi-box me-1\"></i>Manage Buckets</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -364,12 +364,12 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "\" class=\"btn btn-outline-primary\" title=\"Next page\">Next <i class=\"fas fa-angle-right\"></i></a> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "\" class=\"btn btn-outline-primary\" title=\"Next page\">Next <i class=\"bi bi-chevron-right\"></i></a> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<button class=\"btn btn-outline-secondary\" disabled title=\"Next page\">Next <i class=\"fas fa-angle-right\"></i></button> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<button class=\"btn btn-outline-secondary\" disabled title=\"Next page\">Next <i class=\"bi bi-chevron-right\"></i></button> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -388,7 +388,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "\" class=\"btn btn-outline-secondary\" title=\"Go up one directory\"><i class=\"fas fa-arrow-up\"></i> Up</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "\" class=\"btn btn-outline-secondary\" title=\"Go up one directory\"><i class=\"bi bi-arrow-up\"></i> Up</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -421,7 +421,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				if entry.IsDirectory {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "<i class=\"fas fa-folder text-warning me-2\"></i> <a href=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "<i class=\"bi bi-folder text-warning me-2\"></i> <a href=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -452,7 +452,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					var templ_7745c5c3_Var21 = []any{fmt.Sprintf("fas %s text-muted me-2", getFileIcon(entry.Mime))}
+					var templ_7745c5c3_Var21 = []any{fmt.Sprintf("bi %s text-muted me-2", getFileIcon(entry.Mime))}
 					templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var21...)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
@@ -605,7 +605,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "\"><i class=\"fas fa-download\"></i></button> <button type=\"button\" class=\"btn btn-outline-info btn-sm\" title=\"View\" data-action=\"view\" data-path=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "\"><i class=\"bi bi-download\"></i></button> <button type=\"button\" class=\"btn btn-outline-info btn-sm\" title=\"View\" data-action=\"view\" data-path=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -618,7 +618,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "\"><i class=\"fas fa-eye\"></i></button> ")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "\"><i class=\"bi bi-eye\"></i></button> ")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -636,7 +636,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
-						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, "\"><i class=\"fas fa-link\"></i></button> ")
+						templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, "\"><i class=\"bi bi-link\"></i></button> ")
 						if templ_7745c5c3_Err != nil {
 							return templ_7745c5c3_Err
 						}
@@ -655,7 +655,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 69, "\"><i class=\"fas fa-info-circle\"></i></button> <button type=\"button\" class=\"btn btn-outline-success btn-sm\" title=\"Export metadata\" data-action=\"export-metadata\" data-path=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 69, "\"><i class=\"bi bi-info-circle\"></i></button> <button type=\"button\" class=\"btn btn-outline-success btn-sm\" title=\"Export metadata\" data-action=\"export-metadata\" data-path=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -668,7 +668,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "\"><i class=\"fas fa-file-export\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger btn-sm\" title=\"Delete\" data-action=\"delete\" data-path=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "\"><i class=\"bi bi-file-earmark-arrow-up\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger btn-sm\" title=\"Delete\" data-action=\"delete\" data-path=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -681,7 +681,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "\"><i class=\"bi bi-trash\"></i></button></div></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -691,7 +691,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<div class=\"text-center py-5\"><i class=\"fas fa-folder-open fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">Empty Directory</h5><p class=\"text-muted\">This directory contains no files or subdirectories.</p></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<div class=\"text-center py-5\"><i class=\"bi bi-folder2-open icon-3x text-muted mb-3\"></i><h5 class=\"text-muted\">Empty Directory</h5><p class=\"text-muted\">This directory contains no files or subdirectories.</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -771,17 +771,17 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 86, "\" class=\"btn btn-outline-primary\">Next <i class=\"fas fa-angle-right ms-1\"></i></a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 86, "\" class=\"btn btn-outline-primary\">Next <i class=\"bi bi-chevron-right ms-1\"></i></a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 87, "<button class=\"btn btn-outline-secondary\" disabled>Next <i class=\"fas fa-angle-right ms-1\"></i></button>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 87, "<button class=\"btn btn-outline-secondary\" disabled>Next <i class=\"bi bi-chevron-right ms-1\"></i></button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "</div></div></div><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "</div></div></div><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"bi bi-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -794,7 +794,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "</small></div></div><!-- Create Folder Modal --><div class=\"modal fade\" id=\"createFolderModal\" tabindex=\"-1\" aria-labelledby=\"createFolderModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createFolderModalLabel\"><i class=\"fas fa-folder-plus me-2\"></i>Create New Folder</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"createFolderForm\"><div class=\"mb-3\"><label for=\"folderName\" class=\"form-label\">Folder Name</label> <input type=\"text\" class=\"form-control\" id=\"folderName\" name=\"folderName\" required placeholder=\"Enter folder name\" maxlength=\"255\"><div class=\"form-text\">Folder names cannot contain / or \\ characters.</div></div><input type=\"hidden\" id=\"currentPath\" name=\"currentPath\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "</small></div></div><!-- Create Folder Modal --><div class=\"modal fade\" id=\"createFolderModal\" tabindex=\"-1\" aria-labelledby=\"createFolderModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createFolderModalLabel\"><i class=\"bi bi-folder-plus me-2\"></i>Create New Folder</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"createFolderForm\"><div class=\"mb-3\"><label for=\"folderName\" class=\"form-label\">Folder Name</label> <input type=\"text\" class=\"form-control\" id=\"folderName\" name=\"folderName\" required placeholder=\"Enter folder name\" maxlength=\"255\"><div class=\"form-text\">Folder names cannot contain / or \\ characters.</div></div><input type=\"hidden\" id=\"currentPath\" name=\"currentPath\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -807,7 +807,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "\"></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"submitCreateFolder()\"><i class=\"fas fa-folder-plus me-1\"></i>Create Folder</button></div></div></div></div><!-- Upload File Modal --><div class=\"modal fade\" id=\"uploadFileModal\" tabindex=\"-1\" aria-labelledby=\"uploadFileModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"uploadFileModalLabel\"><i class=\"fas fa-upload me-2\"></i>Upload Files</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"uploadFileForm\" enctype=\"multipart/form-data\"><div class=\"mb-3\"><label for=\"fileInput\" class=\"form-label\">Select Files</label> <input type=\"file\" class=\"form-control\" id=\"fileInput\" name=\"files\" multiple required><div class=\"form-text\">Choose one or more files to upload to the current directory. You can select multiple files by holding Ctrl (Cmd on Mac) while clicking.</div></div><input type=\"hidden\" id=\"uploadPath\" name=\"path\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "\"></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"submitCreateFolder()\"><i class=\"bi bi-folder-plus me-1\"></i>Create Folder</button></div></div></div></div><!-- Upload File Modal --><div class=\"modal fade\" id=\"uploadFileModal\" tabindex=\"-1\" aria-labelledby=\"uploadFileModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"uploadFileModalLabel\"><i class=\"bi bi-upload me-2\"></i>Upload Files</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"uploadFileForm\" enctype=\"multipart/form-data\"><div class=\"mb-3\"><label for=\"fileInput\" class=\"form-label\">Select Files</label> <input type=\"file\" class=\"form-control\" id=\"fileInput\" name=\"files\" multiple required><div class=\"form-text\">Choose one or more files to upload to the current directory. You can select multiple files by holding Ctrl (Cmd on Mac) while clicking.</div></div><input type=\"hidden\" id=\"uploadPath\" name=\"path\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -820,7 +820,7 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, "\"><!-- File List Preview --><div id=\"fileListPreview\" class=\"mb-3\" style=\"display: none;\"><label class=\"form-label\">Selected Files:</label><div id=\"selectedFilesList\" class=\"border rounded p-2 bg-light\"><!-- Files will be listed here --></div></div><!-- Upload Progress --><div class=\"mb-3\" id=\"uploadProgress\" style=\"display: none;\"><label class=\"form-label\">Upload Progress:</label><div class=\"progress mb-2\"><div class=\"progress-bar progress-bar-striped progress-bar-animated\" role=\"progressbar\" style=\"width: 0%\" aria-valuenow=\"0\" aria-valuemin=\"0\" aria-valuemax=\"100\">0%</div></div><div id=\"uploadStatus\" class=\"small text-muted\">Preparing upload...</div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"submitUploadFile()\"><i class=\"fas fa-upload me-1\"></i>Upload Files</button></div></div></div></div><!-- JavaScript for file browser functionality --><script>\n\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t// Format permissions in the main table\n\t\tdocument.querySelectorAll('.permissions-display').forEach(element => {\n\t\t\tconst mode = element.getAttribute('data-mode');\n\t\t\tconst isDirectory = element.getAttribute('data-is-directory') === 'true';\n\t\t\tif (mode) {\n\t\t\t\telement.textContent = formatPermissions(mode, isDirectory);\n\t\t\t}\n\t\t});\n\t\t\n\t\t// Handle file browser action buttons (download, view, properties, export-metadata, delete)\n\t\tdocument.addEventListener('click', function(e) {\n\t\t\tconst button = e.target.closest('[data-action]');\n\t\t\tif (!button) return;\n\t\t\t\n\t\t\tconst action = button.getAttribute('data-action');\n\t\t\tif (action === 'copy-url') {\n\t\t\t\tconst url = button.getAttribute('data-url');\n\t\t\t\tif (url) adminCopyToClipboard(url);\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tconst path = button.getAttribute('data-path');\n\n\t\t\tif (!path) return;\n\t\t\t\n\t\t\tswitch(action) {\n\t\t\t\tcase 'download':\n\t\t\t\t\tdownloadFile(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'view':\n\t\t\t\t\tviewFile(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'properties':\n\t\t\t\t\tshowFileProperties(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'export-metadata':\n\t\t\t\t\texportMetadata(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'delete':\n\t\t\t\t\tconst fileName = path.split('/').pop();\n\t\t\t\t\tshowDeleteConfirm(fileName, function() {\n\t\t\t\t\t\tdeleteFile(path);\n\t\t\t\t\t}, `Are you sure you want to delete \"${fileName}\"? This action cannot be undone.`);\n\t\t\t\t\tbreak;\n\t\t\t}\n\t\t});\n\t\t\n\t\t// Initialize file manager event handlers from admin.js\n\t\tif (typeof setupFileManagerEventHandlers === 'function') {\n\t\t\tsetupFileManagerEventHandlers();\n\t\t}\n\t});\n\t\n\t// File browser specific functions\n\tfunction downloadFile(path) {\n\t\t// Open download URL in new tab\n\t\twindow.open((window.__BASE_PATH__ || '') + '/api/files/download?path=' + encodeURIComponent(path), '_blank');\n\t}\n\n\tfunction viewFile(path) {\n\t\t// Open file viewer in new tab\n\t\twindow.open((window.__BASE_PATH__ || '') + '/api/files/view?path=' + encodeURIComponent(path), '_blank');\n\t}\n\n\tfunction exportMetadata(path) {\n\t\t// Download metadata as an fs.meta.load-compatible .meta.gz\n\t\twindow.open((window.__BASE_PATH__ || '') + '/api/files/metadata?path=' + encodeURIComponent(path), '_blank');\n\t}\n\n\tfunction showFileProperties(path) {\n\t\t// Fetch file properties and show in modal\n\t\tfetch((window.__BASE_PATH__ || '') + '/api/files/properties?path=' + encodeURIComponent(path))\n\t\t\t.then(response => response.json())\n\t\t\t.then(data => {\n\t\t\t\tif (data.error) {\n\t\t\t\t\tshowAlert('Error loading file properties: ' + data.error, 'error');\n\t\t\t\t} else {\n\t\t\t\t\tdisplayFileProperties(data);\n\t\t\t\t}\n\t\t\t})\n\t\t\t.catch(error => {\n\t\t\t\tconsole.error('Error fetching file properties:', error);\n\t\t\t\tshowAlert('Error loading file properties: ' + error.message, 'error');\n\t\t\t});\n\t}\n\t\n\tfunction displayFileProperties(data) {\n\t\t// Create a comprehensive modal for file properties\n\t\tconst modalHtml = '<div class=\"modal fade\" id=\"filePropertiesModal\" tabindex=\"-1\">' +\n\t\t\t'<div class=\"modal-dialog modal-lg\">' +\n\t\t\t'<div class=\"modal-content\">' +\n\t\t\t'<div class=\"modal-header\">' +\n\t\t\t'<h5 class=\"modal-title\"><i class=\"fas fa-info-circle me-2\"></i>Properties: ' + (data.name || 'Unknown') + '</h5>' +\n\t\t\t'<button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"modal-body\">' +\n\t\t\tcreateFilePropertiesContent(data) +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"modal-footer\">' +\n\t\t\t'<button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>';\n\t\t\n\t\t// Remove existing modal if present\n\t\tconst existingModal = document.getElementById('filePropertiesModal');\n\t\tif (existingModal) {\n\t\t\texistingModal.remove();\n\t\t}\n\t\t\n\t\t// Add modal to body and show\n\t\tdocument.body.insertAdjacentHTML('beforeend', modalHtml);\n\t\tconst modal = new bootstrap.Modal(document.getElementById('filePropertiesModal'));\n\t\tmodal.show();\n\t\t\n\t\t// Remove modal when hidden\n\t\tdocument.getElementById('filePropertiesModal').addEventListener('hidden.bs.modal', function() {\n\t\t\tthis.remove();\n\t\t});\n\t}\n\t\n\tfunction createFilePropertiesContent(data) {\n\t\tlet html = '<div class=\"row\">' +\n\t\t\t'<div class=\"col-12\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-file me-1\"></i>Basic Information</h6>' +\n\t\t\t'<table class=\"table table-sm\">' +\n\t\t\t'<tr><td style=\"width: 120px;\"><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +\n\t\t\t'<tr><td><strong>Full Path:</strong></td><td><code class=\"text-break\">' + (data.full_path || 'N/A') + '</code></td></tr>' +\n\t\t\t'<tr><td><strong>Type:</strong></td><td>' + (data.is_directory ? 'Directory' : 'File') + '</td></tr>';\n\t\t\n\t\tif (!data.is_directory) {\n\t\t\thtml += '<tr><td><strong>Size:</strong></td><td>' + (data.size_formatted || (data.size ? formatBytes(data.size) : 'N/A')) + '</td></tr>' +\n\t\t\t\t'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';\n\t\t\tif (data.object_url) {\n\t\t\t\thtml += '<tr><td><strong>Object URL:</strong></td><td><code class=\"text-break\">' + data.object_url + '</code>' +\n\t\t\t\t\t' <button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" title=\"Copy S3 URL\" data-action=\"copy-url\" data-url=\"' + data.object_url + '\"><i class=\"fas fa-copy\"></i></button></td></tr>';\n\t\t\t}\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"row\">' +\n\t\t\t'<div class=\"col-md-6\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-clock me-1\"></i>Timestamps</h6>' +\n\t\t\t'<table class=\"table table-sm\">';\n\t\t\n\t\tif (data.modified_time) {\n\t\t\thtml += '<tr><td><strong>Modified:</strong></td><td>' + data.modified_time + '</td></tr>';\n\t\t}\n\t\tif (data.created_time) {\n\t\t\thtml += '<tr><td><strong>Created:</strong></td><td>' + data.created_time + '</td></tr>';\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"col-md-6\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-shield-alt me-1\"></i>Permissions</h6>' +\n\t\t\t'<table class=\"table table-sm\">';\n\t\t\n\t\tif (data.file_mode) {\n\t\t\tconst rwxPermissions = formatPermissions(data.file_mode, data.is_directory);\n\t\t\thtml += '<tr><td><strong>Permissions:</strong></td><td><code>' + rwxPermissions + '</code></td></tr>';\n\t\t}\n\t\tif (data.uid !== undefined) {\n\t\t\thtml += '<tr><td><strong>User ID:</strong></td><td>' + data.uid + '</td></tr>';\n\t\t}\n\t\tif (data.gid !== undefined) {\n\t\t\thtml += '<tr><td><strong>Group ID:</strong></td><td>' + data.gid + '</td></tr>';\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'</div>';\n\t\t\n\t\t// Add advanced info\n\t\thtml += '<div class=\"row\">' +\n\t\t\t'<div class=\"col-12\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-cog me-1\"></i>Advanced</h6>' +\n\t\t\t'<table class=\"table table-sm\">';\n\t\t\n\t\tif (data.chunk_count) {\n\t\t\thtml += '<tr><td style=\"width: 120px;\"><strong>Chunks:</strong></td><td>' + data.chunk_count + '</td></tr>';\n\t\t}\n\t\tif (data.ttl_formatted) {\n\t\t\thtml += '<tr><td><strong>TTL:</strong></td><td>' + data.ttl_formatted + '</td></tr>';\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'</div>';\n\t\t\n\t\t// Add chunk details if available (show top 5)\n\t\tif (data.chunks && data.chunks.length > 0) {\n\t\t\tconst chunksToShow = data.chunks.slice(0, 5);\n\t\t\thtml += '<div class=\"row mt-3\">' +\n\t\t\t\t'<div class=\"col-12\">' +\n\t\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-puzzle-piece me-1\"></i>Chunk Details' +\n\t\t\t\t(data.chunk_count > 5 ? ' (Top 5 of ' + data.chunk_count + ')' : ' (' + data.chunk_count + ')') +\n\t\t\t\t'</h6>' +\n\t\t\t\t'<div class=\"table-responsive\" style=\"max-height: 200px; overflow-y: auto;\">' +\n\t\t\t\t'<table class=\"table table-sm table-striped\">' +\n\t\t\t\t'<thead>' +\n\t\t\t\t'<tr>' +\n\t\t\t\t'<th>File ID</th>' +\n\t\t\t\t'<th>Offset</th>' +\n\t\t\t\t'<th>Size</th>' +\n\t\t\t\t'<th>ETag</th>' +\n\t\t\t\t'</tr>' +\n\t\t\t\t'</thead>' +\n\t\t\t\t'<tbody>';\n\t\t\t\n\t\t\tchunksToShow.forEach(chunk => {\n\t\t\t\thtml += '<tr>' +\n\t\t\t\t\t'<td><code class=\"small\">' + (chunk.file_id || 'N/A') + '</code></td>' +\n\t\t\t\t\t'<td>' + formatBytes(chunk.offset || 0) + '</td>' +\n\t\t\t\t\t'<td>' + formatBytes(chunk.size || 0) + '</td>' +\n\t\t\t\t\t'<td><code class=\"small\">' + (chunk.e_tag || 'N/A') + '</code></td>' +\n\t\t\t\t\t'</tr>';\n\t\t\t});\n\t\t\t\n\t\t\thtml += '</tbody>' +\n\t\t\t\t'</table>' +\n\t\t\t\t'</div>' +\n\t\t\t\t'</div>' +\n\t\t\t\t'</div>';\n\t\t}\n\t\t\n\t\t// Add extended attributes if present\n\t\tif (data.extended && Object.keys(data.extended).length > 0) {\n\t\t\thtml += '<div class=\"row\">' +\n\t\t\t\t'<div class=\"col-12\">' +\n\t\t\t\t'<h6 class=\"text-primary\"><i class=\"fas fa-tags me-1\"></i>Extended Attributes</h6>' +\n\t\t\t\t'<table class=\"table table-sm\">';\n\t\t\t\n\t\t\tfor (const [key, value] of Object.entries(data.extended)) {\n\t\t\t\thtml += '<tr><td><strong>' + key + ':</strong></td><td>' + value + '</td></tr>';\n\t\t\t}\n\t\t\t\n\t\t\thtml += '</table>' +\n\t\t\t\t'</div>' +\n\t\t\t\t'</div>';\n\t\t}\n\t\t\n\t\treturn html;\n\t}\n\t\n\tfunction uploadFile() {\n\t\tconst modal = new bootstrap.Modal(document.getElementById('uploadFileModal'));\n\t\tmodal.show();\n\t}\n\t\n\tfunction toggleSelectAll() {\n\t\tconst selectAllCheckbox = document.getElementById('selectAll');\n\t\tconst checkboxes = document.querySelectorAll('.file-checkbox');\n\t\t\n\t\tcheckboxes.forEach(checkbox => {\n\t\t\tcheckbox.checked = selectAllCheckbox.checked;\n\t\t});\n\t\t\n\t\tupdateDeleteSelectedButton();\n\t}\n\t\n\tfunction updateDeleteSelectedButton() {\n\t\tconst checkboxes = document.querySelectorAll('.file-checkbox:checked');\n\t\tconst deleteBtn = document.getElementById('deleteSelectedBtn');\n\t\t\n\t\tif (checkboxes.length > 0) {\n\t\t\tdeleteBtn.style.display = 'inline-block';\n\t\t} else {\n\t\t\tdeleteBtn.style.display = 'none';\n\t\t}\n\t}\n\t\n\t// Helper function to format bytes\n\tfunction formatBytes(bytes) {\n\t\tif (bytes === 0) return '0 Bytes';\n\t\tconst k = 1024;\n\t\tconst sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];\n\t\tconst i = Math.floor(Math.log(bytes) / Math.log(k));\n\t\treturn parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];\n\t}\n\t\n\t// Helper function to format permissions in rwxrwxrwx format\n\tfunction formatPermissions(mode, isDirectory) {\n\t\t// Check if mode is already in rwxrwxrwx format (e.g., \"drwxr-xr-x\" or \"-rw-r--r--\")\n\t\tif (mode && (mode.startsWith('d') || mode.startsWith('-') || mode.startsWith('l')) && mode.length === 10) {\n\t\t\treturn mode; // Already formatted\n\t\t}\n\t\t\n\t\t// Convert to number - could be octal string or decimal\n\t\tlet permissions;\n\t\tif (typeof mode === 'string') {\n\t\t\t// Try parsing as octal first, then decimal\n\t\t\tif (mode.startsWith('0') && mode.length <= 4) {\n\t\t\t\tpermissions = parseInt(mode, 8);\n\t\t\t} else {\n\t\t\t\tpermissions = parseInt(mode, 10);\n\t\t\t}\n\t\t} else {\n\t\t\tpermissions = parseInt(mode, 10);\n\t\t}\n\t\t\n\t\tif (isNaN(permissions)) {\n\t\t\treturn isDirectory ? 'drwxr-xr-x' : '-rw-r--r--'; // Default fallback\n\t\t}\n\t\t\n\t\t// Handle Go's os.ModeDir conversion\n\t\t// Go's os.ModeDir is 0x80000000 (2147483648), but Unix S_IFDIR is 0o40000 (16384)\n\t\tlet fileType = '-';\n\t\t\n\t\t// Check for Go's os.ModeDir flag\n\t\tif (permissions & 0x80000000) {\n\t\t\tfileType = 'd';\n\t\t}\n\t\t// Check for standard Unix file type bits\n\t\telse if ((permissions & 0xF000) === 0x4000) { // S_IFDIR (0o40000)\n\t\t\tfileType = 'd';\n\t\t} else if ((permissions & 0xF000) === 0x8000) { // S_IFREG (0o100000)\n\t\t\tfileType = '-';\n\t\t} else if ((permissions & 0xF000) === 0xA000) { // S_IFLNK (0o120000)\n\t\t\tfileType = 'l';\n\t\t} else if ((permissions & 0xF000) === 0x2000) { // S_IFCHR (0o020000)\n\t\t\tfileType = 'c';\n\t\t} else if ((permissions & 0xF000) === 0x6000) { // S_IFBLK (0o060000)\n\t\t\tfileType = 'b';\n\t\t} else if ((permissions & 0xF000) === 0x1000) { // S_IFIFO (0o010000)\n\t\t\tfileType = 'p';\n\t\t} else if ((permissions & 0xF000) === 0xC000) { // S_IFSOCK (0o140000)\n\t\t\tfileType = 's';\n\t\t}\n\t\t// Fallback to isDirectory parameter if file type detection fails\n\t\telse if (isDirectory) {\n\t\t\tfileType = 'd';\n\t\t}\n\t\t\n\t\t// Permission bits (always use the lower 12 bits for permissions)\n\t\tconst owner = (permissions >> 6) & 7;\n\t\tconst group = (permissions >> 3) & 7;\n\t\tconst others = permissions & 7;\n\t\t\n\t\t// Convert number to rwx format\n\t\tfunction numToRwx(num) {\n\t\t\tconst r = (num & 4) ? 'r' : '-';\n\t\t\tconst w = (num & 2) ? 'w' : '-';\n\t\t\tconst x = (num & 1) ? 'x' : '-';\n\t\t\treturn r + w + x;\n\t\t}\n\t\t\n\t\treturn fileType + numToRwx(owner) + numToRwx(group) + numToRwx(others);\n\t}\n\t\n\tfunction exportFileList() {\n\t\t// Simple CSV export of file list\n\t\tconst rows = Array.from(document.querySelectorAll('#fileTable tbody tr')).map(row => {\n\t\t\tconst cells = row.querySelectorAll('td');\n\t\t\tif (cells.length > 1) {\n\t\t\t\treturn {\n\t\t\t\t\tname: cells[1].textContent.trim(),\n\t\t\t\t\tsize: cells[2].textContent.trim(),\n\t\t\t\t\ttype: cells[3].textContent.trim(),\n\t\t\t\t\tmodified: cells[4].textContent.trim(),\n\t\t\t\t\tpermissions: cells[5].textContent.trim()\n\t\t\t\t};\n\t\t\t}\n\t\t\treturn null;\n\t\t}).filter(row => row !== null);\n\t\t\n\t\tconst csvContent = \"data:text/csv;charset=utf-8,\" + \n\t\t\t\"Name,Size,Type,Modified,Permissions\\n\" +\n\t\t\trows.map(r => '\"' + r.name + '\",\"' + r.size + '\",\"' + r.type + '\",\"' + r.modified + '\",\"' + r.permissions + '\"').join(\"\\n\");\n\t\t\n\t\tconst encodedUri = encodeURI(csvContent);\n\t\tconst link = document.createElement(\"a\");\n\t\tlink.setAttribute(\"href\", encodedUri);\n\t\tlink.setAttribute(\"download\", \"files.csv\");\n\t\tdocument.body.appendChild(link);\n\t\tlink.click();\n\t\tdocument.body.removeChild(link);\n\t}\n\t\n\t// Handle file checkbox changes\n\tdocument.addEventListener('change', function(e) {\n\t\tif (e.target.classList.contains('file-checkbox')) {\n\t\t\tupdateDeleteSelectedButton();\n\t\t}\n\t});\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, "\"><!-- File List Preview --><div id=\"fileListPreview\" class=\"mb-3\" style=\"display: none;\"><label class=\"form-label\">Selected Files:</label><div id=\"selectedFilesList\" class=\"border rounded p-2 bg-light\"><!-- Files will be listed here --></div></div><!-- Upload Progress --><div class=\"mb-3\" id=\"uploadProgress\" style=\"display: none;\"><label class=\"form-label\">Upload Progress:</label><div class=\"progress mb-2\"><div class=\"progress-bar progress-bar-striped progress-bar-animated\" role=\"progressbar\" style=\"width: 0%\" aria-valuenow=\"0\" aria-valuemin=\"0\" aria-valuemax=\"100\">0%</div></div><div id=\"uploadStatus\" class=\"small text-muted\">Preparing upload...</div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"submitUploadFile()\"><i class=\"bi bi-upload me-1\"></i>Upload Files</button></div></div></div></div><!-- JavaScript for file browser functionality --><script>\n\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t// Format permissions in the main table\n\t\tdocument.querySelectorAll('.permissions-display').forEach(element => {\n\t\t\tconst mode = element.getAttribute('data-mode');\n\t\t\tconst isDirectory = element.getAttribute('data-is-directory') === 'true';\n\t\t\tif (mode) {\n\t\t\t\telement.textContent = formatPermissions(mode, isDirectory);\n\t\t\t}\n\t\t});\n\t\t\n\t\t// Handle file browser action buttons (download, view, properties, export-metadata, delete)\n\t\tdocument.addEventListener('click', function(e) {\n\t\t\tconst button = e.target.closest('[data-action]');\n\t\t\tif (!button) return;\n\t\t\t\n\t\t\tconst action = button.getAttribute('data-action');\n\t\t\tif (action === 'copy-url') {\n\t\t\t\tconst url = button.getAttribute('data-url');\n\t\t\t\tif (url) adminCopyToClipboard(url);\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tconst path = button.getAttribute('data-path');\n\n\t\t\tif (!path) return;\n\t\t\t\n\t\t\tswitch(action) {\n\t\t\t\tcase 'download':\n\t\t\t\t\tdownloadFile(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'view':\n\t\t\t\t\tviewFile(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'properties':\n\t\t\t\t\tshowFileProperties(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'export-metadata':\n\t\t\t\t\texportMetadata(path);\n\t\t\t\t\tbreak;\n\t\t\t\tcase 'delete':\n\t\t\t\t\tconst fileName = path.split('/').pop();\n\t\t\t\t\tshowDeleteConfirm(fileName, function() {\n\t\t\t\t\t\tdeleteFile(path);\n\t\t\t\t\t}, `Are you sure you want to delete \"${fileName}\"? This action cannot be undone.`);\n\t\t\t\t\tbreak;\n\t\t\t}\n\t\t});\n\t\t\n\t\t// Initialize file manager event handlers from admin.js\n\t\tif (typeof setupFileManagerEventHandlers === 'function') {\n\t\t\tsetupFileManagerEventHandlers();\n\t\t}\n\t});\n\t\n\t// File browser specific functions\n\tfunction downloadFile(path) {\n\t\t// Open download URL in new tab\n\t\twindow.open((window.__BASE_PATH__ || '') + '/api/files/download?path=' + encodeURIComponent(path), '_blank');\n\t}\n\n\tfunction viewFile(path) {\n\t\t// Open file viewer in new tab\n\t\twindow.open((window.__BASE_PATH__ || '') + '/api/files/view?path=' + encodeURIComponent(path), '_blank');\n\t}\n\n\tfunction exportMetadata(path) {\n\t\t// Download metadata as an fs.meta.load-compatible .meta.gz\n\t\twindow.open((window.__BASE_PATH__ || '') + '/api/files/metadata?path=' + encodeURIComponent(path), '_blank');\n\t}\n\n\tfunction showFileProperties(path) {\n\t\t// Fetch file properties and show in modal\n\t\tfetch((window.__BASE_PATH__ || '') + '/api/files/properties?path=' + encodeURIComponent(path))\n\t\t\t.then(response => response.json())\n\t\t\t.then(data => {\n\t\t\t\tif (data.error) {\n\t\t\t\t\tshowAlert('Error loading file properties: ' + data.error, 'error');\n\t\t\t\t} else {\n\t\t\t\t\tdisplayFileProperties(data);\n\t\t\t\t}\n\t\t\t})\n\t\t\t.catch(error => {\n\t\t\t\tconsole.error('Error fetching file properties:', error);\n\t\t\t\tshowAlert('Error loading file properties: ' + error.message, 'error');\n\t\t\t});\n\t}\n\t\n\tfunction displayFileProperties(data) {\n\t\t// Create a comprehensive modal for file properties\n\t\tconst modalHtml = '<div class=\"modal fade\" id=\"filePropertiesModal\" tabindex=\"-1\">' +\n\t\t\t'<div class=\"modal-dialog modal-lg\">' +\n\t\t\t'<div class=\"modal-content\">' +\n\t\t\t'<div class=\"modal-header\">' +\n\t\t\t'<h5 class=\"modal-title\"><i class=\"bi bi-info-circle me-2\"></i>Properties: ' + (data.name || 'Unknown') + '</h5>' +\n\t\t\t'<button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\"></button>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"modal-body\">' +\n\t\t\tcreateFilePropertiesContent(data) +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"modal-footer\">' +\n\t\t\t'<button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'</div>';\n\t\t\n\t\t// Remove existing modal if present\n\t\tconst existingModal = document.getElementById('filePropertiesModal');\n\t\tif (existingModal) {\n\t\t\texistingModal.remove();\n\t\t}\n\t\t\n\t\t// Add modal to body and show\n\t\tdocument.body.insertAdjacentHTML('beforeend', modalHtml);\n\t\tconst modal = new bootstrap.Modal(document.getElementById('filePropertiesModal'));\n\t\tmodal.show();\n\t\t\n\t\t// Remove modal when hidden\n\t\tdocument.getElementById('filePropertiesModal').addEventListener('hidden.bs.modal', function() {\n\t\t\tthis.remove();\n\t\t});\n\t}\n\t\n\tfunction createFilePropertiesContent(data) {\n\t\tlet html = '<div class=\"row\">' +\n\t\t\t'<div class=\"col-12\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"bi bi-file-earmark me-1\"></i>Basic Information</h6>' +\n\t\t\t'<table class=\"table table-sm\">' +\n\t\t\t'<tr><td style=\"width: 120px;\"><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +\n\t\t\t'<tr><td><strong>Full Path:</strong></td><td><code class=\"text-break\">' + (data.full_path || 'N/A') + '</code></td></tr>' +\n\t\t\t'<tr><td><strong>Type:</strong></td><td>' + (data.is_directory ? 'Directory' : 'File') + '</td></tr>';\n\t\t\n\t\tif (!data.is_directory) {\n\t\t\thtml += '<tr><td><strong>Size:</strong></td><td>' + (data.size_formatted || (data.size ? formatBytes(data.size) : 'N/A')) + '</td></tr>' +\n\t\t\t\t'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';\n\t\t\tif (data.object_url) {\n\t\t\t\thtml += '<tr><td><strong>Object URL:</strong></td><td><code class=\"text-break\">' + data.object_url + '</code>' +\n\t\t\t\t\t' <button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" title=\"Copy S3 URL\" data-action=\"copy-url\" data-url=\"' + data.object_url + '\"><i class=\"bi bi-copy\"></i></button></td></tr>';\n\t\t\t}\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"row\">' +\n\t\t\t'<div class=\"col-md-6\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"bi bi-clock me-1\"></i>Timestamps</h6>' +\n\t\t\t'<table class=\"table table-sm\">';\n\t\t\n\t\tif (data.modified_time) {\n\t\t\thtml += '<tr><td><strong>Modified:</strong></td><td>' + data.modified_time + '</td></tr>';\n\t\t}\n\t\tif (data.created_time) {\n\t\t\thtml += '<tr><td><strong>Created:</strong></td><td>' + data.created_time + '</td></tr>';\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'<div class=\"col-md-6\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"bi bi-shield me-1\"></i>Permissions</h6>' +\n\t\t\t'<table class=\"table table-sm\">';\n\t\t\n\t\tif (data.file_mode) {\n\t\t\tconst rwxPermissions = formatPermissions(data.file_mode, data.is_directory);\n\t\t\thtml += '<tr><td><strong>Permissions:</strong></td><td><code>' + rwxPermissions + '</code></td></tr>';\n\t\t}\n\t\tif (data.uid !== undefined) {\n\t\t\thtml += '<tr><td><strong>User ID:</strong></td><td>' + data.uid + '</td></tr>';\n\t\t}\n\t\tif (data.gid !== undefined) {\n\t\t\thtml += '<tr><td><strong>Group ID:</strong></td><td>' + data.gid + '</td></tr>';\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'</div>';\n\t\t\n\t\t// Add advanced info\n\t\thtml += '<div class=\"row\">' +\n\t\t\t'<div class=\"col-12\">' +\n\t\t\t'<h6 class=\"text-primary\"><i class=\"bi bi-gear me-1\"></i>Advanced</h6>' +\n\t\t\t'<table class=\"table table-sm\">';\n\t\t\n\t\tif (data.chunk_count) {\n\t\t\thtml += '<tr><td style=\"width: 120px;\"><strong>Chunks:</strong></td><td>' + data.chunk_count + '</td></tr>';\n\t\t}\n\t\tif (data.ttl_formatted) {\n\t\t\thtml += '<tr><td><strong>TTL:</strong></td><td>' + data.ttl_formatted + '</td></tr>';\n\t\t}\n\t\t\n\t\thtml += '</table>' +\n\t\t\t'</div>' +\n\t\t\t'</div>';\n\t\t\n\t\t// Add chunk details if available (show top 5)\n\t\tif (data.chunks && data.chunks.length > 0) {\n\t\t\tconst chunksToShow = data.chunks.slice(0, 5);\n\t\t\thtml += '<div class=\"row mt-3\">' +\n\t\t\t\t'<div class=\"col-12\">' +\n\t\t\t\t'<h6 class=\"text-primary\"><i class=\"bi bi-puzzle me-1\"></i>Chunk Details' +\n\t\t\t\t(data.chunk_count > 5 ? ' (Top 5 of ' + data.chunk_count + ')' : ' (' + data.chunk_count + ')') +\n\t\t\t\t'</h6>' +\n\t\t\t\t'<div class=\"table-responsive\" style=\"max-height: 200px; overflow-y: auto;\">' +\n\t\t\t\t'<table class=\"table table-sm table-striped\">' +\n\t\t\t\t'<thead>' +\n\t\t\t\t'<tr>' +\n\t\t\t\t'<th>File ID</th>' +\n\t\t\t\t'<th>Offset</th>' +\n\t\t\t\t'<th>Size</th>' +\n\t\t\t\t'<th>ETag</th>' +\n\t\t\t\t'</tr>' +\n\t\t\t\t'</thead>' +\n\t\t\t\t'<tbody>';\n\t\t\t\n\t\t\tchunksToShow.forEach(chunk => {\n\t\t\t\thtml += '<tr>' +\n\t\t\t\t\t'<td><code class=\"small\">' + (chunk.file_id || 'N/A') + '</code></td>' +\n\t\t\t\t\t'<td>' + formatBytes(chunk.offset || 0) + '</td>' +\n\t\t\t\t\t'<td>' + formatBytes(chunk.size || 0) + '</td>' +\n\t\t\t\t\t'<td><code class=\"small\">' + (chunk.e_tag || 'N/A') + '</code></td>' +\n\t\t\t\t\t'</tr>';\n\t\t\t});\n\t\t\t\n\t\t\thtml += '</tbody>' +\n\t\t\t\t'</table>' +\n\t\t\t\t'</div>' +\n\t\t\t\t'</div>' +\n\t\t\t\t'</div>';\n\t\t}\n\t\t\n\t\t// Add extended attributes if present\n\t\tif (data.extended && Object.keys(data.extended).length > 0) {\n\t\t\thtml += '<div class=\"row\">' +\n\t\t\t\t'<div class=\"col-12\">' +\n\t\t\t\t'<h6 class=\"text-primary\"><i class=\"bi bi-tags me-1\"></i>Extended Attributes</h6>' +\n\t\t\t\t'<table class=\"table table-sm\">';\n\t\t\t\n\t\t\tfor (const [key, value] of Object.entries(data.extended)) {\n\t\t\t\thtml += '<tr><td><strong>' + key + ':</strong></td><td>' + value + '</td></tr>';\n\t\t\t}\n\t\t\t\n\t\t\thtml += '</table>' +\n\t\t\t\t'</div>' +\n\t\t\t\t'</div>';\n\t\t}\n\t\t\n\t\treturn html;\n\t}\n\t\n\tfunction uploadFile() {\n\t\tconst modal = new bootstrap.Modal(document.getElementById('uploadFileModal'));\n\t\tmodal.show();\n\t}\n\t\n\tfunction toggleSelectAll() {\n\t\tconst selectAllCheckbox = document.getElementById('selectAll');\n\t\tconst checkboxes = document.querySelectorAll('.file-checkbox');\n\t\t\n\t\tcheckboxes.forEach(checkbox => {\n\t\t\tcheckbox.checked = selectAllCheckbox.checked;\n\t\t});\n\t\t\n\t\tupdateDeleteSelectedButton();\n\t}\n\t\n\tfunction updateDeleteSelectedButton() {\n\t\tconst checkboxes = document.querySelectorAll('.file-checkbox:checked');\n\t\tconst deleteBtn = document.getElementById('deleteSelectedBtn');\n\t\t\n\t\tif (checkboxes.length > 0) {\n\t\t\tdeleteBtn.style.display = 'inline-block';\n\t\t} else {\n\t\t\tdeleteBtn.style.display = 'none';\n\t\t}\n\t}\n\t\n\t// Helper function to format bytes\n\tfunction formatBytes(bytes) {\n\t\tif (bytes === 0) return '0 Bytes';\n\t\tconst k = 1024;\n\t\tconst sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];\n\t\tconst i = Math.floor(Math.log(bytes) / Math.log(k));\n\t\treturn parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];\n\t}\n\t\n\t// Helper function to format permissions in rwxrwxrwx format\n\tfunction formatPermissions(mode, isDirectory) {\n\t\t// Check if mode is already in rwxrwxrwx format (e.g., \"drwxr-xr-x\" or \"-rw-r--r--\")\n\t\tif (mode && (mode.startsWith('d') || mode.startsWith('-') || mode.startsWith('l')) && mode.length === 10) {\n\t\t\treturn mode; // Already formatted\n\t\t}\n\t\t\n\t\t// Convert to number - could be octal string or decimal\n\t\tlet permissions;\n\t\tif (typeof mode === 'string') {\n\t\t\t// Try parsing as octal first, then decimal\n\t\t\tif (mode.startsWith('0') && mode.length <= 4) {\n\t\t\t\tpermissions = parseInt(mode, 8);\n\t\t\t} else {\n\t\t\t\tpermissions = parseInt(mode, 10);\n\t\t\t}\n\t\t} else {\n\t\t\tpermissions = parseInt(mode, 10);\n\t\t}\n\t\t\n\t\tif (isNaN(permissions)) {\n\t\t\treturn isDirectory ? 'drwxr-xr-x' : '-rw-r--r--'; // Default fallback\n\t\t}\n\t\t\n\t\t// Handle Go's os.ModeDir conversion\n\t\t// Go's os.ModeDir is 0x80000000 (2147483648), but Unix S_IFDIR is 0o40000 (16384)\n\t\tlet fileType = '-';\n\t\t\n\t\t// Check for Go's os.ModeDir flag\n\t\tif (permissions & 0x80000000) {\n\t\t\tfileType = 'd';\n\t\t}\n\t\t// Check for standard Unix file type bits\n\t\telse if ((permissions & 0xF000) === 0x4000) { // S_IFDIR (0o40000)\n\t\t\tfileType = 'd';\n\t\t} else if ((permissions & 0xF000) === 0x8000) { // S_IFREG (0o100000)\n\t\t\tfileType = '-';\n\t\t} else if ((permissions & 0xF000) === 0xA000) { // S_IFLNK (0o120000)\n\t\t\tfileType = 'l';\n\t\t} else if ((permissions & 0xF000) === 0x2000) { // S_IFCHR (0o020000)\n\t\t\tfileType = 'c';\n\t\t} else if ((permissions & 0xF000) === 0x6000) { // S_IFBLK (0o060000)\n\t\t\tfileType = 'b';\n\t\t} else if ((permissions & 0xF000) === 0x1000) { // S_IFIFO (0o010000)\n\t\t\tfileType = 'p';\n\t\t} else if ((permissions & 0xF000) === 0xC000) { // S_IFSOCK (0o140000)\n\t\t\tfileType = 's';\n\t\t}\n\t\t// Fallback to isDirectory parameter if file type detection fails\n\t\telse if (isDirectory) {\n\t\t\tfileType = 'd';\n\t\t}\n\t\t\n\t\t// Permission bits (always use the lower 12 bits for permissions)\n\t\tconst owner = (permissions >> 6) & 7;\n\t\tconst group = (permissions >> 3) & 7;\n\t\tconst others = permissions & 7;\n\t\t\n\t\t// Convert number to rwx format\n\t\tfunction numToRwx(num) {\n\t\t\tconst r = (num & 4) ? 'r' : '-';\n\t\t\tconst w = (num & 2) ? 'w' : '-';\n\t\t\tconst x = (num & 1) ? 'x' : '-';\n\t\t\treturn r + w + x;\n\t\t}\n\t\t\n\t\treturn fileType + numToRwx(owner) + numToRwx(group) + numToRwx(others);\n\t}\n\t\n\tfunction exportFileList() {\n\t\t// Simple CSV export of file list\n\t\tconst rows = Array.from(document.querySelectorAll('#fileTable tbody tr')).map(row => {\n\t\t\tconst cells = row.querySelectorAll('td');\n\t\t\tif (cells.length > 1) {\n\t\t\t\treturn {\n\t\t\t\t\tname: cells[1].textContent.trim(),\n\t\t\t\t\tsize: cells[2].textContent.trim(),\n\t\t\t\t\ttype: cells[3].textContent.trim(),\n\t\t\t\t\tmodified: cells[4].textContent.trim(),\n\t\t\t\t\tpermissions: cells[5].textContent.trim()\n\t\t\t\t};\n\t\t\t}\n\t\t\treturn null;\n\t\t}).filter(row => row !== null);\n\t\t\n\t\tconst csvContent = \"data:text/csv;charset=utf-8,\" + \n\t\t\t\"Name,Size,Type,Modified,Permissions\\n\" +\n\t\t\trows.map(r => '\"' + r.name + '\",\"' + r.size + '\",\"' + r.type + '\",\"' + r.modified + '\",\"' + r.permissions + '\"').join(\"\\n\");\n\t\t\n\t\tconst encodedUri = encodeURI(csvContent);\n\t\tconst link = document.createElement(\"a\");\n\t\tlink.setAttribute(\"href\", encodedUri);\n\t\tlink.setAttribute(\"download\", \"files.csv\");\n\t\tdocument.body.appendChild(link);\n\t\tlink.click();\n\t\tdocument.body.removeChild(link);\n\t}\n\t\n\t// Handle file checkbox changes\n\tdocument.addEventListener('change', function(e) {\n\t\tif (e.target.classList.contains('file-checkbox')) {\n\t\t\tupdateDeleteSelectedButton();\n\t\t}\n\t});\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -831,23 +831,23 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 func getFileIcon(mime string) string {
 	switch {
 	case strings.HasPrefix(mime, "image/"):
-		return "fa-image"
+		return "bi-image"
 	case strings.HasPrefix(mime, "video/"):
-		return "fa-video"
+		return "bi-camera-video"
 	case strings.HasPrefix(mime, "audio/"):
-		return "fa-music"
+		return "bi-music-note"
 	case strings.HasPrefix(mime, "text/"):
-		return "fa-file-text"
+		return "bi-file-earmark-text"
 	case mime == "application/pdf":
-		return "fa-file-pdf"
+		return "bi-file-earmark-pdf"
 	case mime == "application/zip" || strings.Contains(mime, "archive"):
-		return "fa-file-archive"
+		return "bi-file-earmark-zip"
 	case mime == "application/json":
-		return "fa-file-code"
+		return "bi-file-earmark-code"
 	case strings.Contains(mime, "script") || strings.Contains(mime, "javascript"):
-		return "fa-file-code"
+		return "bi-file-earmark-code"
 	default:
-		return "fa-file"
+		return "bi-file-earmark"
 	}
 }
 

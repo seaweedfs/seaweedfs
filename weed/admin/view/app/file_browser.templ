@@ -19,35 +19,35 @@ templ FileBrowser(data dash.FileBrowserData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
 		if data.IsTableBucketPath && data.TableBucketName != "" {
-			<i class="fas fa-table me-2"></i>Table Bucket: {data.TableBucketName}
+			<i class="bi bi-table me-2"></i>Table Bucket: {data.TableBucketName}
 		} else if data.IsBucketPath && data.BucketName != "" {
-			<i class="fas fa-cube me-2"></i>S3 Bucket: {data.BucketName}
+			<i class="bi bi-box me-2"></i>S3 Bucket: {data.BucketName}
 		} else {
-			<i class="fas fa-folder-open me-2"></i>File Browser
+			<i class="bi bi-folder2-open me-2"></i>File Browser
 		}
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 			if data.IsTableBucketPath && data.TableBucketName != "" {
 				<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") } class="btn btn-sm btn-outline-secondary">
-					<i class="fas fa-arrow-left me-1"></i>Back to Table Buckets
+					<i class="bi bi-arrow-left me-1"></i>Back to Table Buckets
 				</a>
 			} else if data.IsBucketPath && data.BucketName != "" {
 				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-outline-secondary">
-					<i class="fas fa-arrow-left me-1"></i>Back to Buckets
+					<i class="bi bi-arrow-left me-1"></i>Back to Buckets
 				</a>
 			}
 				<button type="button" class="btn btn-sm btn-outline-primary" onclick="createFolder()">
-					<i class="fas fa-folder-plus me-1"></i>New Folder
+					<i class="bi bi-folder-plus me-1"></i>New Folder
 				</button>
 				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="uploadFile()">
-					<i class="fas fa-upload me-1"></i>Upload
+					<i class="bi bi-upload me-1"></i>Upload
 				</button>
 				<button type="button" class="btn btn-sm btn-outline-danger" id="deleteSelectedBtn" onclick="confirmDeleteSelected()" style="display: none;">
-					<i class="fas fa-trash me-1"></i>Delete Selected
+					<i class="bi bi-trash me-1"></i>Delete Selected
 				</button>
 				<button type="button" class="btn btn-sm btn-outline-info" onclick="exportFileList()">
-					<i class="fas fa-download me-1"></i>Export
+					<i class="bi bi-download me-1"></i>Export
 				</button>
 			</div>
 		</div>
@@ -67,7 +67,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 					<li class="breadcrumb-item">
 						<a href={ dash.PUrl(ctx, fileBrowserPathURL(crumb.Path)) } class="text-decoration-none">
 							if crumb.Name == "Root" {
-								<i class="fas fa-home me-1"></i>
+								<i class="bi bi-house me-1"></i>
 							}
 							{ crumb.Name }
 						</a>
@@ -81,13 +81,13 @@ templ FileBrowser(data dash.FileBrowserData) {
 	<div class="card shadow mb-4">
 		<div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap">
 			<h6 class="m-0 font-weight-bold text-primary">
-				<i class="fas fa-folder-open me-2"></i>
+				<i class="bi bi-folder2-open me-2"></i>
 			if data.CurrentPath == "/" {
 				<a href={ dash.PUrl(ctx, fileBrowserPathURL("/")) } class="text-decoration-none text-primary">Root Directory</a>
 			} else if data.CurrentPath == "/buckets" {
 										<a href={ dash.PUrl(ctx, fileBrowserPathURL("/buckets")) } class="text-decoration-none text-primary">Object Store Buckets Directory</a>
 				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-outline-primary ms-2">
-					<i class="fas fa-cube me-1"></i>Manage Buckets
+					<i class="bi bi-box me-1"></i>Manage Buckets
 				</a>
 		} else {
 				<a href={ dash.PUrl(ctx, fileBrowserPathURL(data.CurrentPath)) } class="text-decoration-none text-primary">{ filepath.Base(data.CurrentPath) }</a>
@@ -108,16 +108,16 @@ templ FileBrowser(data dash.FileBrowserData) {
 				<div class="btn-group btn-group-sm" role="group">
 					if data.HasNextPage {
 						<a href={ dash.PUrl(ctx, fileBrowserPageURL(data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary" title="Next page">
-							Next <i class="fas fa-angle-right"></i>
+							Next <i class="bi bi-chevron-right"></i>
 						</a>
 					} else {
 						<button class="btn btn-outline-secondary" disabled title="Next page">
-							Next <i class="fas fa-angle-right"></i>
+							Next <i class="bi bi-chevron-right"></i>
 						</button>
 					}
 					if data.ParentPath != data.CurrentPath {
 						<a href={ dash.PUrl(ctx, fileBrowserPathURL(data.ParentPath)) } class="btn btn-outline-secondary" title="Go up one directory">
-							<i class="fas fa-arrow-up"></i> Up
+							<i class="bi bi-arrow-up"></i> Up
 						</a>
 					}
 				</div>
@@ -149,12 +149,12 @@ templ FileBrowser(data dash.FileBrowserData) {
 									<td>
 										<div class="d-flex align-items-center">
 											if entry.IsDirectory {
-												<i class="fas fa-folder text-warning me-2"></i>
+												<i class="bi bi-folder text-warning me-2"></i>
 												<a href={ dash.PUrl(ctx, fileBrowserPathURL(entry.FullPath)) } class="text-decoration-none">
 													{ entry.Name }
 												</a>
 											} else {
-												<i class={ fmt.Sprintf("fas %s text-muted me-2", getFileIcon(entry.Mime)) }></i>
+												<i class={ fmt.Sprintf("bi %s text-muted me-2", getFileIcon(entry.Mime)) }></i>
 												<span>{ entry.Name }</span>
 											}
 										</div>
@@ -189,25 +189,25 @@ templ FileBrowser(data dash.FileBrowserData) {
 										<div class="btn-group btn-group-sm" role="group">
 											if !entry.IsDirectory {
 												<button type="button" class="btn btn-outline-primary btn-sm" title="Download" data-action="download" data-path={ entry.FullPath }>
-													<i class="fas fa-download"></i>
+													<i class="bi bi-download"></i>
 												</button>
 												<button type="button" class="btn btn-outline-info btn-sm" title="View" data-action="view" data-path={ entry.FullPath }>
-													<i class="fas fa-eye"></i>
+													<i class="bi bi-eye"></i>
 												</button>
 												if data.S3Endpoint != "" {
 													<button type="button" class="btn btn-outline-secondary btn-sm" title="Copy S3 URL" data-action="copy-url" data-url={ dash.S3ObjectURL(data.S3Endpoint, entry.FullPath) }>
-														<i class="fas fa-link"></i>
+														<i class="bi bi-link"></i>
 													</button>
 												}
 											}
 											<button type="button" class="btn btn-outline-secondary btn-sm" title="Properties" data-action="properties" data-path={ entry.FullPath }>
-												<i class="fas fa-info-circle"></i>
+												<i class="bi bi-info-circle"></i>
 											</button>
 											<button type="button" class="btn btn-outline-success btn-sm" title="Export metadata" data-action="export-metadata" data-path={ entry.FullPath }>
-												<i class="fas fa-file-export"></i>
+												<i class="bi bi-file-earmark-arrow-up"></i>
 											</button>
 											<button type="button" class="btn btn-outline-danger btn-sm" title="Delete" data-action="delete" data-path={ entry.FullPath }>
-												<i class="fas fa-trash"></i>
+												<i class="bi bi-trash"></i>
 											</button>
 										</div>
 									</td>
@@ -218,7 +218,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				</div>
 			} else {
 				<div class="text-center py-5">
-					<i class="fas fa-folder-open fa-3x text-muted mb-3"></i>
+					<i class="bi bi-folder2-open icon-3x text-muted mb-3"></i>
 					<h5 class="text-muted">Empty Directory</h5>
 					<p class="text-muted">This directory contains no files or subdirectories.</p>
 				</div>
@@ -247,11 +247,11 @@ templ FileBrowser(data dash.FileBrowserData) {
 
 					if data.HasNextPage {
 						<a href={ dash.PUrl(ctx, fileBrowserPageURL(data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary">
-							Next <i class="fas fa-angle-right ms-1"></i>
+							Next <i class="bi bi-chevron-right ms-1"></i>
 						</a>
 					} else {
 						<button class="btn btn-outline-secondary" disabled>
-							Next <i class="fas fa-angle-right ms-1"></i>
+							Next <i class="bi bi-chevron-right ms-1"></i>
 						</button>
 					}
 				</div>
@@ -260,7 +260,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 	<div class="row">
 		<div class="col-12">
 			<small class="text-muted">
-				<i class="fas fa-clock me-1"></i>
+				<i class="bi bi-clock me-1"></i>
 				Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
 			</small>
 		</div>
@@ -272,7 +272,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="createFolderModalLabel">
-						<i class="fas fa-folder-plus me-2"></i>Create New Folder
+						<i class="bi bi-folder-plus me-2"></i>Create New Folder
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -292,7 +292,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				<div class="modal-footer">
 					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 					<button type="button" class="btn btn-primary" onclick="submitCreateFolder()">
-						<i class="fas fa-folder-plus me-1"></i>Create Folder
+						<i class="bi bi-folder-plus me-1"></i>Create Folder
 					</button>
 				</div>
 			</div>
@@ -305,7 +305,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="uploadFileModalLabel">
-						<i class="fas fa-upload me-2"></i>Upload Files
+						<i class="bi bi-upload me-2"></i>Upload Files
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -343,7 +343,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				<div class="modal-footer">
 					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 					<button type="button" class="btn btn-primary" onclick="submitUploadFile()">
-						<i class="fas fa-upload me-1"></i>Upload Files
+						<i class="bi bi-upload me-1"></i>Upload Files
 					</button>
 				</div>
 			</div>
@@ -444,7 +444,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			'<div class="modal-dialog modal-lg">' +
 			'<div class="modal-content">' +
 			'<div class="modal-header">' +
-			'<h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>Properties: ' + (data.name || 'Unknown') + '</h5>' +
+			'<h5 class="modal-title"><i class="bi bi-info-circle me-2"></i>Properties: ' + (data.name || 'Unknown') + '</h5>' +
 			'<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
 			'</div>' +
 			'<div class="modal-body">' +
@@ -477,7 +477,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 	function createFilePropertiesContent(data) {
 		let html = '<div class="row">' +
 			'<div class="col-12">' +
-			'<h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>' +
+			'<h6 class="text-primary"><i class="bi bi-file-earmark me-1"></i>Basic Information</h6>' +
 			'<table class="table table-sm">' +
 			'<tr><td style="width: 120px;"><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +
 			'<tr><td><strong>Full Path:</strong></td><td><code class="text-break">' + (data.full_path || 'N/A') + '</code></td></tr>' +
@@ -488,7 +488,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';
 			if (data.object_url) {
 				html += '<tr><td><strong>Object URL:</strong></td><td><code class="text-break">' + data.object_url + '</code>' +
-					' <button type="button" class="btn btn-outline-secondary btn-sm" title="Copy S3 URL" data-action="copy-url" data-url="' + data.object_url + '"><i class="fas fa-copy"></i></button></td></tr>';
+					' <button type="button" class="btn btn-outline-secondary btn-sm" title="Copy S3 URL" data-action="copy-url" data-url="' + data.object_url + '"><i class="bi bi-copy"></i></button></td></tr>';
 			}
 		}
 		
@@ -497,7 +497,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			'</div>' +
 			'<div class="row">' +
 			'<div class="col-md-6">' +
-			'<h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>' +
+			'<h6 class="text-primary"><i class="bi bi-clock me-1"></i>Timestamps</h6>' +
 			'<table class="table table-sm">';
 		
 		if (data.modified_time) {
@@ -510,7 +510,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 		html += '</table>' +
 			'</div>' +
 			'<div class="col-md-6">' +
-			'<h6 class="text-primary"><i class="fas fa-shield-alt me-1"></i>Permissions</h6>' +
+			'<h6 class="text-primary"><i class="bi bi-shield me-1"></i>Permissions</h6>' +
 			'<table class="table table-sm">';
 		
 		if (data.file_mode) {
@@ -531,7 +531,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 		// Add advanced info
 		html += '<div class="row">' +
 			'<div class="col-12">' +
-			'<h6 class="text-primary"><i class="fas fa-cog me-1"></i>Advanced</h6>' +
+			'<h6 class="text-primary"><i class="bi bi-gear me-1"></i>Advanced</h6>' +
 			'<table class="table table-sm">';
 		
 		if (data.chunk_count) {
@@ -550,7 +550,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			const chunksToShow = data.chunks.slice(0, 5);
 			html += '<div class="row mt-3">' +
 				'<div class="col-12">' +
-				'<h6 class="text-primary"><i class="fas fa-puzzle-piece me-1"></i>Chunk Details' +
+				'<h6 class="text-primary"><i class="bi bi-puzzle me-1"></i>Chunk Details' +
 				(data.chunk_count > 5 ? ' (Top 5 of ' + data.chunk_count + ')' : ' (' + data.chunk_count + ')') +
 				'</h6>' +
 				'<div class="table-responsive" style="max-height: 200px; overflow-y: auto;">' +
@@ -585,7 +585,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 		if (data.extended && Object.keys(data.extended).length > 0) {
 			html += '<div class="row">' +
 				'<div class="col-12">' +
-				'<h6 class="text-primary"><i class="fas fa-tags me-1"></i>Extended Attributes</h6>' +
+				'<h6 class="text-primary"><i class="bi bi-tags me-1"></i>Extended Attributes</h6>' +
 				'<table class="table table-sm">';
 			
 			for (const [key, value] of Object.entries(data.extended)) {
@@ -748,23 +748,23 @@ templ FileBrowser(data dash.FileBrowserData) {
 func getFileIcon(mime string) string {
 	switch {
 	case strings.HasPrefix(mime, "image/"):
-		return "fa-image"
+		return "bi-image"
 	case strings.HasPrefix(mime, "video/"):
-		return "fa-video"
+		return "bi-camera-video"
 	case strings.HasPrefix(mime, "audio/"):
-		return "fa-music"
+		return "bi-music-note"
 	case strings.HasPrefix(mime, "text/"):
-		return "fa-file-text"
+		return "bi-file-earmark-text"
 	case mime == "application/pdf":
-		return "fa-file-pdf"
+		return "bi-file-earmark-pdf"
 	case mime == "application/zip" || strings.Contains(mime, "archive"):
-		return "fa-file-archive"
+		return "bi-file-earmark-zip"
 	case mime == "application/json":
-		return "fa-file-code"
+		return "bi-file-earmark-code"
 	case strings.Contains(mime, "script") || strings.Contains(mime, "javascript"):
-		return "fa-file-code"
+		return "bi-file-earmark-code"
 	default:
-		return "fa-file"
+		return "bi-file-earmark"
 	}
 }
 

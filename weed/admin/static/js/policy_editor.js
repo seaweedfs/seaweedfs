@@ -391,7 +391,7 @@ function policyEditorConfig(which) {
                 '<div class="card-body">' +
                 '<div class="d-flex justify-content-between align-items-start mb-2">' +
                 '<h6 class="card-title mb-0">Statement ' + (idx + 1) + '</h6>' +
-                '<button type="button" class="btn btn-sm btn-outline-danger policy-remove-statement-btn" data-which="' + which + '" data-index="' + idx + '"><i class="fas fa-trash"></i></button>' +
+                '<button type="button" class="btn btn-sm btn-outline-danger policy-remove-statement-btn" data-which="' + which + '" data-index="' + idx + '"><i class="bi bi-trash"></i></button>' +
                 '</div>' +
                 '<div class="row mb-2">' +
                 '<div class="col-md-6">' +
@@ -411,7 +411,7 @@ function policyEditorConfig(which) {
                 '<fieldset class="policy-stmt-fieldset">' +
                 '<legend class="policy-stmt-legend border rounded">Actions</legend>' +
                 '<div class="policy-action-rows" data-which="' + which + '" data-index="' + idx + '">' + actionRows + '</div>' +
-                '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="action"><i class="fas fa-plus me-1"></i>Add action</button>' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="action"><i class="bi bi-plus me-1"></i>Add action</button>' +
                 '</fieldset>' +
                 '<fieldset class="policy-stmt-fieldset">' +
                 '<legend class="policy-stmt-legend' + (policyEditorConfig(which).allowNegation ? '' : ' border rounded') + '">' +
@@ -424,7 +424,7 @@ function policyEditorConfig(which) {
                 '</legend>' +
                 (stmt.resourceMode === 'NotResource' ? '<div class="form-text mt-0 mb-1">The statement applies to every resource except the ones listed.</div>' : '') +
                 '<div class="policy-resource-rows" data-which="' + which + '" data-index="' + idx + '">' + resourceRows + '</div>' +
-                '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="resource"><i class="fas fa-plus me-1"></i>Add resource</button>' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="resource"><i class="bi bi-plus me-1"></i>Add resource</button>' +
                 '</fieldset>' +
                 '<fieldset class="policy-stmt-fieldset">' +
                 '<legend class="policy-stmt-legend' + (policyEditorOffersNotPrincipal(which) ? '' : ' border rounded') + '">' +
@@ -436,9 +436,9 @@ function policyEditorConfig(which) {
                     : 'Principal') +
                 '</legend>' +
                 '<div class="form-text mt-0 mb-1">' + (policyEditorOffersNotPrincipal(which) ? 'Principal / NotPrincipal' : 'Principal') + ' (AWS account/user ARN, or "*" for everyone). Only the AWS type and "*" are supported here; other forms stay editable via Advanced fields.</div>' +
-                (stmt.hasComplexPrincipal ? '<div class="form-text text-warning mt-0 mb-1"><i class="fas fa-triangle-exclamation me-1"></i>This statement\'s Principal/NotPrincipal uses a form not supported by this field &mdash; see Advanced fields below.</div>' : '') +
+                (stmt.hasComplexPrincipal ? '<div class="form-text text-warning mt-0 mb-1"><i class="bi bi-exclamation-triangle me-1"></i>This statement\'s Principal/NotPrincipal uses a form not supported by this field &mdash; see Advanced fields below.</div>' : '') +
                 '<div class="policy-principal-rows" data-which="' + which + '" data-index="' + idx + '">' + principalRows + '</div>' +
-                '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="principal"><i class="fas fa-plus me-1"></i>Add principal</button>' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary policy-add-list-item-btn" data-which="' + which + '" data-index="' + idx + '" data-field="principal"><i class="bi bi-plus me-1"></i>Add principal</button>' +
                 '</fieldset>' +
                 '<details class="mt-3"' + (stmt.extras ? ' open' : '') + '>' +
                 '<summary class="text-muted">Advanced fields (Principal, NotPrincipal, Condition, raw JSON)</summary>' +
@@ -458,7 +458,7 @@ function policyEditorConfig(which) {
         else if (field === 'principal') listAttr = ' list="' + cfg.principalDatalistId + '"';
         return '<div class="input-group input-group-sm mb-1">' +
             '<input type="text" class="form-control policy-list-item" ' + listAttr + ' data-which="' + which + '" data-index="' + stmtIdx + '" data-field="' + field + '" data-item-index="' + itemIdx + '" value="' + escapeHtml(value) + '">' +
-            '<button type="button" class="btn btn-outline-danger policy-remove-list-item-btn" data-which="' + which + '" data-index="' + stmtIdx + '" data-field="' + field + '" data-item-index="' + itemIdx + '"><i class="fas fa-times"></i></button>' +
+            '<button type="button" class="btn btn-outline-danger policy-remove-list-item-btn" data-which="' + which + '" data-index="' + stmtIdx + '" data-field="' + field + '" data-item-index="' + itemIdx + '"><i class="bi bi-x"></i></button>' +
             '</div>';
     }
 

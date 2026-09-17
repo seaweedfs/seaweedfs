@@ -34,7 +34,7 @@ func ClusterFilers(data dash.ClusterFilersData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"fas fa-folder-open me-2\"></i>Filers</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportFilers()\"><i class=\"fas fa-download me-1\"></i>Export</button></div></div></div><div id=\"filers-content\"><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-xl-12 col-md-12 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Filers</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"bi bi-folder2-open me-2\"></i>Filers</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"exportFilers()\"><i class=\"bi bi-download me-1\"></i>Export</button></div></div></div><div id=\"filers-content\"><!-- Summary Cards --><div class=\"row mb-4\"><div class=\"col-xl-12 col-md-12 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Filers</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -47,7 +47,7 @@ func ClusterFilers(data dash.ClusterFilersData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"fas fa-folder-open fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Filers Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-folder-open me-2\"></i>Filers</h6></div><div class=\"card-body\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"bi bi-folder2-open icon-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Filers Table --><div class=\"card shadow mb-4\"><div class=\"card-header py-3\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"bi bi-folder2-open me-2\"></i>Filers</h6></div><div class=\"card-body\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -83,7 +83,7 @@ func ClusterFilers(data dash.ClusterFilersData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, " <i class=\"fas fa-external-link-alt ms-1 text-muted\"></i></a></td><td><span class=\"badge bg-light text-dark\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, " <i class=\"bi bi-box-arrow-up-right ms-1 text-muted\"></i></a></td><td><span class=\"badge bg-light text-dark\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -155,7 +155,7 @@ func ClusterFilers(data dash.ClusterFilersData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\"><i class=\"fas fa-folder-open\"></i></button></div></td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\"><i class=\"bi bi-folder2-open\"></i></button></div></td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -165,12 +165,12 @@ func ClusterFilers(data dash.ClusterFilersData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<div class=\"text-center py-5\"><i class=\"fas fa-folder-open fa-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Filers Found</h5><p class=\"text-muted\">No filer servers are currently available in the cluster.</p></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<div class=\"text-center py-5\"><i class=\"bi bi-folder2-open icon-3x text-muted mb-3\"></i><h5 class=\"text-muted\">No Filers Found</h5><p class=\"text-muted\">No filer servers are currently available in the cluster.</p></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"fas fa-clock me-1\"></i> Last updated: ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</div></div><!-- Last Updated --><div class=\"row\"><div class=\"col-12\"><small class=\"text-muted\"><i class=\"bi bi-clock me-1\"></i> Last updated: ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

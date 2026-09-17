@@ -57,8 +57,8 @@ templ Layout(view ViewContext, content templ.Component) {
 
     <!-- Bootstrap CSS -->
     <link href={ string(view.P("/static/css/bootstrap.min.css")) } rel="stylesheet">
-    <!-- Font Awesome CSS -->
-    <link href={ string(view.P("/static/css/fontawesome.min.css")) } rel="stylesheet">
+    <!-- Bootstrap Icons CSS -->
+    <link href={ string(view.P("/static/css/bootstrap-icons.min.css")) } rel="stylesheet">
     <!-- HTMX -->
     <script src={ string(view.P("/static/js/htmx.min.js")) }></script>
     <!-- Custom CSS -->
@@ -72,7 +72,7 @@ templ Layout(view ViewContext, content templ.Component) {
         <header class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
             <div class="container-fluid">
                 <a class="navbar-brand fw-bold" href={ view.P("/admin") }>
-                    <i class="fas fa-server me-2"></i>
+                    <i class="bi bi-server me-2"></i>
                     SeaweedFS Admin
                 </a>
 
@@ -80,18 +80,18 @@ templ Layout(view ViewContext, content templ.Component) {
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="User menu">
-                    <i class="fas fa-user"></i>
+                    <i class="bi bi-person"></i>
                 </button>
 
                 <div class="collapse navbar-collapse" id="navbarNav">
                     <ul class="navbar-nav ms-auto">
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-user me-1"></i>{username}
+                                <i class="bi bi-person me-1"></i>{username}
                             </a>
                             <ul class="dropdown-menu">
                                 <li><a class="dropdown-item" href={ view.P("/logout") }>
-                                    <i class="fas fa-sign-out-alt me-2"></i>Logout
+                                    <i class="bi bi-box-arrow-right me-2"></i>Logout
                                 </a></li>
                             </ul>
                         </li>
@@ -110,39 +110,39 @@ templ Layout(view ViewContext, content templ.Component) {
                     <ul class="nav flex-column">
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/admin") }>
-                                <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                                <i class="bi bi-speedometer2 me-2"></i>Dashboard
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class={ "nav-link", templ.KV("collapsed", !isClusterPage) } href="#" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded={ fmt.Sprintf("%t", isClusterPage) } aria-controls="clusterSubmenu">
-                                <i class="fas fa-sitemap me-2"></i>Cluster
-                                <i class="fas fa-chevron-down ms-auto"></i>
+                                <i class="bi bi-diagram-3 me-2"></i>Cluster
+                                <i class="bi bi-chevron-down ms-auto"></i>
                             </a>
                             <div class={ "collapse", templ.KV("show", isClusterPage) } id="clusterSubmenu">
                                 <ul class="nav flex-column ms-3">
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/cluster/masters") }>
-                                            <i class="fas fa-crown me-2"></i>Masters
+                                            <i class="bi bi-award me-2"></i>Masters
                                         </a>
                                     </li>
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/cluster/volume-servers") }>
-                                            <i class="fas fa-server me-2"></i>Volume Servers
+                                            <i class="bi bi-server me-2"></i>Volume Servers
                                         </a>
                                     </li>
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/cluster/filers") }>
-                                            <i class="fas fa-folder-open me-2"></i>Filers
+                                            <i class="bi bi-folder2-open me-2"></i>Filers
                                         </a>
                                     </li>
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/cluster/s3") }>
-                                            <i class="fas fa-cloud me-2"></i>S3 Servers
+                                            <i class="bi bi-cloud me-2"></i>S3 Servers
                                         </a>
                                     </li>
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/cluster/mount-clients") }>
-                                            <i class="fas fa-plug me-2"></i>Mount Clients
+                                            <i class="bi bi-plug me-2"></i>Mount Clients
                                         </a>
                                     </li>
                                 </ul>
@@ -150,24 +150,24 @@ templ Layout(view ViewContext, content templ.Component) {
                         </li>
                         <li class="nav-item">
                             <a class={ "nav-link", templ.KV("collapsed", !isStoragePage) } href="#" data-bs-toggle="collapse" data-bs-target="#storageSubmenu" aria-expanded={ fmt.Sprintf("%t", isStoragePage) } aria-controls="storageSubmenu">
-                                <i class="fas fa-hdd me-2"></i>Storage
-                                <i class="fas fa-chevron-down ms-auto"></i>
+                                <i class="bi bi-device-hdd me-2"></i>Storage
+                                <i class="bi bi-chevron-down ms-auto"></i>
                             </a>
                             <div class={ "collapse", templ.KV("show", isStoragePage) } id="storageSubmenu">
                                 <ul class="nav flex-column ms-3">
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/storage/volumes") }>
-                                            <i class="fas fa-database me-2"></i>Volumes
+                                            <i class="bi bi-database me-2"></i>Volumes
                                         </a>
                                     </li>
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/storage/ec-shards") }>
-                                            <i class="fas fa-th-large me-2"></i>EC Volumes
+                                            <i class="bi bi-grid me-2"></i>EC Volumes
                                         </a>
                                     </li>
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href={ view.P("/storage/collections") }>
-                                            <i class="fas fa-layer-group me-2"></i>Collections
+                                            <i class="bi bi-layers me-2"></i>Collections
                                         </a>
                                     </li>
                                 </ul>
@@ -181,32 +181,32 @@ templ Layout(view ViewContext, content templ.Component) {
                     <ul class="nav flex-column">
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/object-store/buckets") }>
-                                <i class="fas fa-cube me-2"></i>Buckets
+                                <i class="bi bi-box me-2"></i>Buckets
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/object-store/s3tables/buckets") }>
-                                <i class="fas fa-table me-2"></i>Table Buckets
+                                <i class="bi bi-table me-2"></i>Table Buckets
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/object-store/users") }>
-                                <i class="fas fa-users me-2"></i>Users
+                                <i class="bi bi-people me-2"></i>Users
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/object-store/groups") }>
-                                <i class="fas fa-users-cog me-2"></i>Groups
+                                <i class="bi bi-people-fill me-2"></i>Groups
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/object-store/service-accounts") }>
-                                <i class="fas fa-robot me-2"></i>Service Accounts
+                                <i class="bi bi-robot me-2"></i>Service Accounts
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/object-store/policies") }>
-                                <i class="fas fa-shield-alt me-2"></i>Policies
+                                <i class="bi bi-shield me-2"></i>Policies
                             </a>
                         </li>
                     </ul>
@@ -217,19 +217,19 @@ templ Layout(view ViewContext, content templ.Component) {
                     <ul class="nav flex-column">
                         <li class="nav-item">
                             <a class="nav-link" href={ view.P("/files") }>
-                                <i class="fas fa-folder me-2"></i>File Browser
+                                <i class="bi bi-folder me-2"></i>File Browser
                             </a>
                         </li>
                         <li class="nav-item">
                             if isMQPage {
                                 <a class="nav-link" href="#" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="true" aria-controls="messageQueueSubmenu">
-                                    <i class="fas fa-comments me-2"></i>Message Queue
-                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                    <i class="bi bi-chat-dots me-2"></i>Message Queue
+                                    <i class="bi bi-chevron-down ms-auto"></i>
                                 </a>
                             } else {
                                 <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="false" aria-controls="messageQueueSubmenu">
-                                    <i class="fas fa-comments me-2"></i>Message Queue
-                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                    <i class="bi bi-chat-dots me-2"></i>Message Queue
+                                    <i class="bi bi-chevron-down ms-auto"></i>
                                 </a>
                             }
                             if isMQPage {
@@ -238,22 +238,22 @@ templ Layout(view ViewContext, content templ.Component) {
                                         <li class="nav-item">
                                             if currentPath == "/mq/brokers" {
                                                 <a class="nav-link py-2 active" href={ view.P("/mq/brokers") }>
-                                                    <i class="fas fa-server me-2"></i>Brokers
+                                                    <i class="bi bi-server me-2"></i>Brokers
                                                 </a>
                                             } else {
                                                 <a class="nav-link py-2" href={ view.P("/mq/brokers") }>
-                                                    <i class="fas fa-server me-2"></i>Brokers
+                                                    <i class="bi bi-server me-2"></i>Brokers
                                                 </a>
                                             }
                                         </li>
                                         <li class="nav-item">
                                             if currentPath == "/mq/topics" {
                                                 <a class="nav-link py-2 active" href={ view.P("/mq/topics") }>
-                                                    <i class="fas fa-list-alt me-2"></i>Topics
+                                                    <i class="bi bi-card-list me-2"></i>Topics
                                                 </a>
                                             } else {
                                                 <a class="nav-link py-2" href={ view.P("/mq/topics") }>
-                                                    <i class="fas fa-list-alt me-2"></i>Topics
+                                                    <i class="bi bi-card-list me-2"></i>Topics
                                                 </a>
                                             }
                                         </li>
@@ -265,12 +265,12 @@ templ Layout(view ViewContext, content templ.Component) {
                                     <ul class="nav flex-column ms-3">
                                         <li class="nav-item">
                                             <a class="nav-link py-2" href={ view.P("/mq/brokers") }>
-                                                <i class="fas fa-server me-2"></i>Brokers
+                                                <i class="bi bi-server me-2"></i>Brokers
                                             </a>
                                         </li>
                                         <li class="nav-item">
                                             <a class="nav-link py-2" href={ view.P("/mq/topics") }>
-                                                <i class="fas fa-list-alt me-2"></i>Topics
+                                                <i class="bi bi-card-list me-2"></i>Topics
                                             </a>
                                         </li>
 
@@ -287,44 +287,44 @@ templ Layout(view ViewContext, content templ.Component) {
                         <li class="nav-item">
                             if isDefaultWorkerPage {
                                 <a class="nav-link active" href={ view.P("/plugin/lanes/default") }>
-                                    <i class="fas fa-server me-2"></i>Default
+                                    <i class="bi bi-server me-2"></i>Default
                                 </a>
                             } else {
                                 <a class="nav-link" href={ view.P("/plugin/lanes/default") }>
-                                    <i class="fas fa-server me-2"></i>Default
+                                    <i class="bi bi-server me-2"></i>Default
                                 </a>
                             }
                         </li>
                         <li class="nav-item">
                             if isLifecycleWorkerPage {
                                 <a class="nav-link active" href={ view.P("/plugin/lanes/lifecycle") }>
-                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
+                                    <i class="bi bi-hourglass-split me-2"></i>Lifecycle
                                 </a>
                             } else {
                                 <a class="nav-link" href={ view.P("/plugin/lanes/lifecycle") }>
-                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
+                                    <i class="bi bi-hourglass-split me-2"></i>Lifecycle
                                 </a>
                             }
                         </li>
                         <li class="nav-item">
                             if isIcebergWorkerPage {
                                 <a class="nav-link active" href={ view.P("/plugin/lanes/iceberg") }>
-                                    <i class="fas fa-snowflake me-2"></i>Iceberg
+                                    <i class="bi bi-snow me-2"></i>Iceberg
                                 </a>
                             } else {
                                 <a class="nav-link" href={ view.P("/plugin/lanes/iceberg") }>
-                                    <i class="fas fa-snowflake me-2"></i>Iceberg
+                                    <i class="bi bi-snow me-2"></i>Iceberg
                                 </a>
                             }
                         </li>
                         <li class="nav-item">
                             if isLanceWorkerPage {
                                 <a class="nav-link active" href={ view.P("/plugin/lanes/lance") }>
-                                    <i class="fas fa-vector-square me-2"></i>Lance
+                                    <i class="bi bi-bounding-box me-2"></i>Lance
                                 </a>
                             } else {
                                 <a class="nav-link" href={ view.P("/plugin/lanes/lance") }>
-                                    <i class="fas fa-vector-square me-2"></i>Lance
+                                    <i class="bi bi-bounding-box me-2"></i>Lance
                                 </a>
                             }
                         </li>
@@ -355,7 +355,7 @@ templ Layout(view ViewContext, content templ.Component) {
                 if !strings.Contains(version.VERSION, "enterprise") {
                     <span class="mx-2">•</span>
                     <a href="https://seaweedfs.com" target="_blank" class="text-decoration-none">
-                        <i class="fas fa-star me-1"></i>Enterprise Version Available
+                        <i class="bi bi-star me-1"></i>Enterprise Version Available
                     </a>
                 }
             </small>
@@ -387,7 +387,7 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
     <link rel="icon" href={ prefix + "/static/favicon.ico" } type="image/x-icon">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href={ prefix + "/static/css/bootstrap.min.css" } rel="stylesheet">
-    <link href={ prefix + "/static/css/fontawesome.min.css" } rel="stylesheet">
+        <link href={ prefix + "/static/css/bootstrap-icons.min.css" } rel="stylesheet">
 </head>
 <body class="bg-light">
     <div class="container">
@@ -396,14 +396,14 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
                 <div class="card shadow">
                     <div class="card-body p-5">
                         <div class="text-center mb-4">
-                            <i class="fas fa-server fa-3x text-primary mb-3"></i>
+                            <i class="bi bi-server icon-3x text-primary mb-3"></i>
                             <h4 class="card-title">{title}</h4>
                             <p class="text-muted">Please sign in to continue</p>
                         </div>
 
                         if errorMessage != "" {
                             <div class="alert alert-danger" role="alert">
-                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                <i class="bi bi-exclamation-triangle me-2"></i>
                                 {errorMessage}
                             </div>
                         }
@@ -414,7 +414,7 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
                                 <label for="username" class="form-label">Username</label>
                                 <div class="input-group">
                                     <span class="input-group-text">
-                                        <i class="fas fa-user"></i>
+                                        <i class="bi bi-person"></i>
                                     </span>
                                     <input type="text" class="form-control" id="username" name="username" required>
                                 </div>
@@ -424,14 +424,14 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
                                 <label for="password" class="form-label">Password</label>
                                 <div class="input-group">
                                     <span class="input-group-text">
-                                        <i class="fas fa-lock"></i>
+                                        <i class="bi bi-lock"></i>
                                     </span>
                                     <input type="password" class="form-control" id="password" name="password" required>
                                 </div>
                             </div>
 
                             <button type="submit" class="btn btn-primary w-100">
-                                <i class="fas fa-sign-in-alt me-2"></i>Sign In
+                                <i class="bi bi-box-arrow-in-right me-2"></i>Sign In
                             </button>
                         </form>
                     </div>

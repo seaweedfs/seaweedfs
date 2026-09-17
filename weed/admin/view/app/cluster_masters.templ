@@ -8,12 +8,12 @@ import (
 templ ClusterMasters(data dash.ClusterMastersData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			<i class="fas fa-crown me-2"></i>Masters
+			<i class="bi bi-award me-2"></i>Masters
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 				<button type="button" class="btn btn-sm btn-outline-primary" onclick="exportMasters()">
-					<i class="fas fa-download me-1"></i>Export
+					<i class="bi bi-download me-1"></i>Export
 				</button>
 			</div>
 		</div>
@@ -35,7 +35,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-crown fa-2x text-gray-300"></i>
+								<i class="bi bi-award icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -55,7 +55,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-star fa-2x text-gray-300"></i>
+								<i class="bi bi-star icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -79,7 +79,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-heartbeat fa-2x text-gray-300"></i>
+								<i class="bi bi-activity icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -91,7 +91,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 		<div class="card shadow mb-4">
 			<div class="card-header py-3">
 				<h6 class="m-0 font-weight-bold text-primary">
-					<i class="fas fa-crown me-2"></i>Masters
+					<i class="bi bi-award me-2"></i>Masters
 				</h6>
 			</div>
 			<div class="card-body">
@@ -112,17 +112,17 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 										<td>
 											<a href={ templ.SafeURL(fmt.Sprintf("//%s", master.Address)) } target="_blank" class="text-decoration-none">
 												{ master.Address }
-												<i class="fas fa-external-link-alt ms-1 text-muted"></i>
+												<i class="bi bi-box-arrow-up-right ms-1 text-muted"></i>
 											</a>
 										</td>
 										<td>
 											if master.IsLeader {
 												<span class="badge bg-warning text-dark">
-													<i class="fas fa-star me-1"></i>Leader
+													<i class="bi bi-star me-1"></i>Leader
 												</span>
 											} else {
 												<span class="badge bg-secondary">
-													<i class="fas fa-circle me-1"></i>Follower
+													<i class="bi bi-circle-fill me-1"></i>Follower
 												</span>
 											}
 										</td>
@@ -143,7 +143,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 													data-address={master.Address}
 													data-leader={fmt.Sprintf("%t", master.IsLeader)}
 													data-suffrage={master.Suffrage}>
-												<i class="fas fa-eye"></i>
+												<i class="bi bi-eye"></i>
 											</button>
 										</td>
 									</tr>
@@ -153,7 +153,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 					</div>
 				} else {
 					<div class="text-center py-5">
-						<i class="fas fa-crown fa-3x text-muted mb-3"></i>
+						<i class="bi bi-award icon-3x text-muted mb-3"></i>
 						<h5 class="text-muted">No Masters Found</h5>
 						<p class="text-muted">No master servers are currently available in the cluster.</p>
 					</div>
@@ -165,7 +165,7 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 		<div class="row">
 			<div class="col-12">
 				<small class="text-muted">
-					<i class="fas fa-clock me-1"></i>
+					<i class="bi bi-clock me-1"></i>
 					Last updated: { data.LastUpdated.Format("2006-01-02 15:04:05") }
 				</small>
 			</div>
@@ -200,27 +200,27 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 			'<div class="modal-dialog modal-lg">' +
 			'<div class="modal-content">' +
 			'<div class="modal-header">' +
-			'<h5 class="modal-title"><i class="fas fa-crown me-2"></i>Master Details: ' + address + '</h5>' +
+			'<h5 class="modal-title"><i class="bi bi-award me-2"></i>Master Details: ' + address + '</h5>' +
 			'<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
 			'</div>' +
 			'<div class="modal-body">' +
 			'<div class="row">' +
 			'<div class="col-md-6">' +
-			'<h6 class="text-primary"><i class="fas fa-info-circle me-1"></i>Basic Information</h6>' +
+			'<h6 class="text-primary"><i class="bi bi-info-circle me-1"></i>Basic Information</h6>' +
 			'<table class="table table-sm">' +
 			'<tr><td><strong>Address:</strong></td><td>' + address + '</td></tr>' +
 			'<tr><td><strong>Role:</strong></td><td>' + 
-			(isLeader ? '<span class="badge bg-warning text-dark"><i class="fas fa-star me-1"></i>Leader</span>' : 
+			(isLeader ? '<span class="badge bg-warning text-dark"><i class="bi bi-star me-1"></i>Leader</span>' :
 			'<span class="badge bg-secondary">Follower</span>') + '</td></tr>' +
 			'<tr><td><strong>Suffrage:</strong></td><td>' + (suffrage || 'N/A') + '</td></tr>' +
 			'<tr><td><strong>Status:</strong></td><td><span class="badge bg-success">Active</span></td></tr>' +
 			'</table>' +
 			'</div>' +
 			'<div class="col-md-6">' +
-			'<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
+			'<h6 class="text-primary"><i class="bi bi-link me-1"></i>Quick Actions</h6>' +
 			'<div class="d-grid gap-2">' +
 			'<a href="//' + address + '" target="_blank" class="btn btn-outline-primary">' +
-			'<i class="fas fa-external-link-alt me-1"></i>Open Master UI' +
+			'<i class="bi bi-box-arrow-up-right me-1"></i>Open Master UI' +
 			'</a>' +
 			'</div>' +
 			'</div>' +
@@ -278,5 +278,3 @@ templ ClusterMasters(data dash.ClusterMastersData) {
 	}
 	</script>
 }
-
- 
