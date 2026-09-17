@@ -5,8 +5,6 @@
 
 use std::fs::File;
 use std::io;
-#[cfg(not(unix))]
-use std::io::{Read, Seek, SeekFrom};
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 
@@ -840,17 +838,7 @@ impl EncodeRun<'_> {
 fn read_at_most(dat_file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     let mut n = 0;
     while n < buf.len() {
-        #[cfg(unix)]
-        let r = {
-            use std::os::unix::fs::FileExt;
-            dat_file.read_at(&mut buf[n..], offset + n as u64)?
-        };
-        #[cfg(not(unix))]
-        let r = {
-            let mut f = dat_file.try_clone()?;
-            f.seek(SeekFrom::Start(offset + n as u64))?;
-            f.read(&mut buf[n..])?
-        };
+        let r = crate::storage::io::read_at(dat_file, &mut buf[n..], offset + n as u64)?;
         if r == 0 {
             break;
         }

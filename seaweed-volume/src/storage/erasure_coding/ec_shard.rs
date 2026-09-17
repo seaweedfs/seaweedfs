@@ -94,21 +94,7 @@ impl EcVolumeShard {
             .as_ref()
             .ok_or_else(|| io::Error::other("shard file not open"))?;
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            file.read_at(buf, offset)
-        }
-
-        #[cfg(not(unix))]
-        {
-            use std::io::{Read, Seek, SeekFrom};
-            // File::read_at is unix-only; fall back to seek + read.
-            // We need a mutable reference for seek/read, so clone the handle.
-            let mut f = file.try_clone()?;
-            f.seek(SeekFrom::Start(offset))?;
-            f.read(buf)
-        }
+        crate::storage::io::read_at(file, buf, offset)
     }
 
     /// Write data to the shard file (appends).

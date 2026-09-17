@@ -30,6 +30,7 @@ use crate::pb::volume_server_pb::{
     ChecksumAlgorithm, EcBitrotProtection, EcShardChecksums, EcShardConfig,
 };
 use crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
+use crate::storage::io::read_exact_at;
 use crate::storage::needle::crc::CRC;
 
 /// Canonical extension for the checksum sidecar. Generation 0 (legacy/fresh
@@ -537,40 +538,13 @@ pub fn verify_shard_blocks(
             break;
         }
         let to_read = to_read as usize;
-        read_full_at(f, &mut buf[..to_read], offset as u64)?;
+        read_exact_at(f, &mut buf[..to_read], offset as u64)?;
         if CRC::new(&buf[..to_read]).0 != *want_crc {
             mismatched.push(i);
         }
         offset += to_read as i64;
     }
     Ok(mismatched)
-}
-
-/// Reads exactly `buf.len()` bytes from `f` at `offset`, erroring on early EOF.
-fn read_full_at(f: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
-    let mut total = 0usize;
-    while total < buf.len() {
-        #[cfg(unix)]
-        let n = {
-            use std::os::unix::fs::FileExt;
-            f.read_at(&mut buf[total..], offset + total as u64)?
-        };
-        #[cfg(not(unix))]
-        let n = {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut fc = f.try_clone()?;
-            fc.seek(SeekFrom::Start(offset + total as u64))?;
-            fc.read(&mut buf[total..])?
-        };
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "short read on shard block",
-            ));
-        }
-        total += n;
-    }
-    Ok(())
 }
 
 /// Builds the `EcShardConfig` proto for the given layout. The bitrot sidecar
