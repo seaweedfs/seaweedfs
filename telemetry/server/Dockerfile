@@ -12,7 +12,8 @@ WORKDIR /app/telemetry/server
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o telemetry-server .
 
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates \
+RUN apk upgrade --no-cache \
+    && apk --no-cache add ca-certificates libcrypto3 libssl3 \
     && addgroup -S appgroup \
     && adduser -S appuser -G appgroup
 

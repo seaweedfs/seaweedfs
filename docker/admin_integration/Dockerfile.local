@@ -1,11 +1,14 @@
 FROM alpine:latest
 
 # Install required packages
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
     ca-certificates \
     fuse \
     curl \
-    jq
+    jq \
+    libcrypto3 \
+    libssl3
 
 # Copy our locally built binary
 COPY weed-local /usr/bin/weed
