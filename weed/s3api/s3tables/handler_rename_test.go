@@ -169,7 +169,9 @@ func TestRenameTableDestNamespaceMissing(t *testing.T) {
 }
 
 // A principal allowed to rename the source must still be denied when it cannot
-// create a table in the destination namespace.
+// create a table in the destination namespace. The denial reports the same
+// not-found as a missing destination namespace so the caller cannot probe for
+// namespaces it may not touch.
 func TestRenameTableDestNamespaceUnauthorized(t *testing.T) {
 	fs, m := startRenameManager(t)
 	m.SetTrusted(false)
@@ -204,7 +206,7 @@ func TestRenameTableDestNamespaceUnauthorized(t *testing.T) {
 	require.Error(t, err)
 	var s3Err *S3TablesError
 	require.ErrorAs(t, err, &s3Err)
-	assert.Equal(t, ErrCodeAccessDenied, s3Err.Type)
+	assert.Equal(t, ErrCodeNoSuchNamespace, s3Err.Type)
 
 	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"), "source must be untouched")
 	assert.Nil(t, fs.Get(GetNamespacePath(renameTestBucket, "dest"), "t2"), "destination must not be written")

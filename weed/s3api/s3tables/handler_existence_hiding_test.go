@@ -65,11 +65,14 @@ func TestNamespaceAuthorizationDenialMatchesMissing(t *testing.T) {
 	manager.SetTrusted(false)
 	manager.SetDefaultAllow(false)
 
-	for _, operation := range []string{"GetNamespace", "UpdateNamespace"} {
+	for _, operation := range []string{"GetNamespace", "UpdateNamespace", "DeleteNamespace"} {
 		t.Run(operation, func(t *testing.T) {
 			var request interface{} = &GetNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}}
-			if operation == "UpdateNamespace" {
+			switch operation {
+			case "UpdateNamespace":
 				request = &UpdateNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}}
+			case "DeleteNamespace":
+				request = &DeleteNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}}
 			}
 
 			want := runUnauthorizedRequest(t, manager, missing, operation, request)
@@ -87,7 +90,7 @@ func TestTableAuthorizationDenialMatchesMissing(t *testing.T) {
 	manager.SetTrusted(false)
 	manager.SetDefaultAllow(false)
 
-	for _, operation := range []string{"GetTable", "UpdateTable", "DeleteTable"} {
+	for _, operation := range []string{"GetTable", "UpdateTable", "DeleteTable", "RenameTable"} {
 		t.Run(operation, func(t *testing.T) {
 			var request interface{} = &GetTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t"}
 			switch operation {
@@ -95,6 +98,8 @@ func TestTableAuthorizationDenialMatchesMissing(t *testing.T) {
 				request = &UpdateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t", VersionToken: "wrong"}
 			case "DeleteTable":
 				request = &DeleteTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t", VersionToken: "wrong"}
+			case "RenameTable":
+				request = &RenameTableRequest{TableBucketARN: mustBucketARN(t), SourceNamespace: []string{"ns"}, SourceName: "t", DestNamespace: []string{"ns"}, DestName: "t2"}
 			}
 
 			want := runUnauthorizedRequest(t, manager, missing, operation, request)
