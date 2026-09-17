@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -994,17 +995,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 		// If the entry was never created, the uploaded chunks are orphaned and must be deleted.
 		if !entryCreated {
-			// A failed create can still have landed: a transport error leaves the
-			// outcome ambiguous, and deleting chunks a live entry references turns a
-			// retryable failure into a dangling pointer (issue #11366).
-			existing, lookupErr := s3a.getEntry(path.Dir(filePath), path.Base(filePath))
-			switch {
-			case lookupErr != nil && !errors.Is(lookupErr, filer_pb.ErrNotFound):
-				glog.Warningf("putToFiler: cannot confirm entry %s after failed create (%v), keeping %d uploaded chunks", filePath, lookupErr, len(chunkResult.FileChunks))
-			case existing != nil && !existing.IsDirectory && sameFileChunks(existing.GetChunks(), entry.GetChunks()):
-				glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
+			// A transport failure is ambiguous: the filer may have committed the
+			// entry anyway (issue #11366), so a retryable error never deletes the
+			// uploaded chunks — it is only upgraded to success when the write owner
+			// proves the entry landed with these chunks.
+			ambiguous := createErr != nil && filerErrorToS3Error(createErr) == s3err.ErrServiceUnavailable
+			if ambiguous && len(chunkResult.FileChunks) > 0 && s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize) {
 				createCode = s3err.ErrNone
-			default:
+			}
+			if createCode != s3err.ErrNone && !ambiguous {
 				orphaned := chunkResult.FileChunks
 				if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
 					orphaned = append(manifestChunks, orphaned...)
@@ -1043,6 +1042,36 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	return etag, s3err.ErrNone, responseMetadata
+}
+
+// confirmCreateLanded checks whether a create that failed ambiguously still
+// committed: the stored entry's resolved chunks must be exactly the uploaded
+// ones. On a match the finalization the error skipped runs under the object
+// write lock, and true reports the write as successful.
+func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) bool {
+	dir, name := path.Dir(filePath), path.Base(filePath)
+	existing, lookupErr := s3a.lookupEntryPreferringOwner(s3a.routableWriteOwner(bucket, object), dir, name)
+	if lookupErr != nil || existing == nil {
+		return false
+	}
+	resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+	if resolveErr != nil || len(manifestChunks) > 0 || !sameFileChunks(resolved, uploaded) {
+		return false
+	}
+	glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
+	if finalize == nil || finalize.afterCreate == nil {
+		return true
+	}
+	if code := s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
+		return finalize.afterCreate(entry)
+	}); code == s3err.ErrNone {
+		return true
+	}
+	// Same undo the create path applies when post-create finalization fails.
+	if rbErr := s3a.rmObject(context.Background(), dir, name, true, false); rbErr != nil {
+		glog.Errorf("putToFiler: failed to rollback recovered entry for %s: %v", filePath, rbErr)
+	}
+	return false
 }
 
 // sameFileChunks reports whether two chunk lists reference the same needles,
