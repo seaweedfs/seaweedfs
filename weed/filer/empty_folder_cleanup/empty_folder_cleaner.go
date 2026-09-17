@@ -18,12 +18,13 @@ import (
 )
 
 const (
-	DefaultMaxCountCheck  = 1000
-	DefaultCacheExpiry    = 5 * time.Minute
-	DefaultQueueMaxSize   = 1000
-	DefaultQueueMaxAge    = 2 * time.Minute
-	DefaultProcessorSleep = 30 * time.Second // How often to check queue
-	DefaultMaxDeletedKept = 10000            // Deleted folders remembered for the restore check
+	DefaultMaxCountCheck     = 1000
+	DefaultCacheExpiry       = 5 * time.Minute
+	DefaultQueueMaxSize      = 1000
+	DefaultQueueMaxAge       = 2 * time.Minute
+	DefaultProcessorSleep    = 30 * time.Second // How often to check queue
+	DefaultMaxDeletedKept    = 10000            // Deleted folders remembered for the restore check
+	DefaultMaxPolicyFailures = 3                // Consecutive policy-load failures before a folder is dropped
 	// How long a deleted folder is kept so that a create event arriving for it can
 	// still put it back. It bounds how far behind the event stream may run, not how
 	// long the race window is.
@@ -60,10 +61,11 @@ type FilerOperations interface {
 
 // folderState tracks the state of a folder for empty folder cleanup
 type folderState struct {
-	roughCount  int       // Cached rough count (up to maxCountCheck)
-	lastAddTime time.Time // Last time an item was added
-	lastDelTime time.Time // Last time an item was deleted
-	lastCheck   time.Time // Last time we checked the actual count
+	roughCount     int       // Cached rough count (up to maxCountCheck)
+	lastAddTime    time.Time // Last time an item was added
+	lastDelTime    time.Time // Last time an item was deleted
+	lastCheck      time.Time // Last time we checked the actual count
+	policyFailures int       // Consecutive bucket policy load failures
 }
 
 type bucketPolicyGen struct {
@@ -526,13 +528,27 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 			return
 		}
 		glog.V(2).Infof("EmptyFolderCleaner: failed to load bucket cleanup policy for folder %s (triggered by %s): %v", folder, triggeredBy, err)
-		efc.mu.RLock()
+		efc.mu.Lock()
 		if efc.enabled {
-			efc.cleanupQueue.Add(folder, triggeredBy, time.Now())
+			state, exists := efc.folderCounts[folder]
+			if !exists {
+				state = &folderState{}
+				efc.folderCounts[folder] = state
+			}
+			state.policyFailures++
+			if state.policyFailures <= DefaultMaxPolicyFailures {
+				efc.cleanupQueue.Add(folder, triggeredBy, time.Now())
+			}
 		}
-		efc.mu.RUnlock()
+		efc.mu.Unlock()
 		return
 	}
+
+	efc.mu.Lock()
+	if state, exists := efc.folderCounts[folder]; exists {
+		state.policyFailures = 0
+	}
+	efc.mu.Unlock()
 
 	if !autoRemove {
 		glog.V(3).Infof("EmptyFolderCleaner: skipping folder %s (triggered by %s), bucket %s auto-remove-empty-folders disabled (source=%s attr=%s)",
