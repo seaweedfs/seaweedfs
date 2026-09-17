@@ -5,12 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -75,40 +78,60 @@ func (c *commandS3BucketAllowEmptyFolders) Do(args []string, commandEnv *Command
 		return fmt.Errorf("read buckets: %w", err)
 	}
 
-	entry, _, _, err := filer_pb.GetEntry(context.Background(), commandEnv, util.NewFullPath(filerBucketsPath, *bucketName))
-	if err != nil {
-		return fmt.Errorf("lookup bucket %s: %w", *bucketName, err)
-	}
-
-	if !*enable && !*disable {
-		state := "disabled"
-		if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
-			state = "enabled"
-		}
-		fmt.Fprintf(writer, "Bucket: %s\n", *bucketName)
-		fmt.Fprintf(writer, "Allow empty folders: %s\n", state)
-		return nil
-	}
-
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-	state := "disabled"
-	if *enable {
-		entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
-		state = "enabled"
-	} else {
-		entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("false")
-	}
-
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
-			Directory: filerBucketsPath,
-			Entry:     entry,
-		}); err != nil {
-			return fmt.Errorf("failed to update bucket: %w", err)
+		for attempt := 0; attempt < 5; attempt++ {
+			lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+				Directory: filerBucketsPath,
+				Name:      *bucketName,
+			})
+			if err != nil {
+				return fmt.Errorf("lookup bucket %s: %w", *bucketName, err)
+			}
+			entry := lookupResp.Entry
+
+			if !*enable && !*disable {
+				state := "disabled"
+				if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
+					state = "enabled"
+				}
+				fmt.Fprintf(writer, "Bucket: %s\n", *bucketName)
+				fmt.Fprintf(writer, "Allow empty folders: %s\n", state)
+				return nil
+			}
+
+			expected := maps.Clone(entry.Extended)
+			if _, ok := expected[s3_constants.ExtAllowEmptyFolders]; !ok {
+				if expected == nil {
+					expected = make(map[string][]byte)
+				}
+				expected[s3_constants.ExtAllowEmptyFolders] = nil
+			}
+
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			state := "disabled"
+			if *enable {
+				entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
+				state = "enabled"
+			} else {
+				entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("false")
+			}
+
+			if _, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+				Directory:        filerBucketsPath,
+				Entry:            entry,
+				ExpectedExtended: expected,
+			}); err != nil {
+				if status.Code(err) == codes.FailedPrecondition {
+					continue
+				}
+				return fmt.Errorf("failed to update bucket: %w", err)
+			}
+
+			fmt.Fprintf(writer, "Bucket %s allow empty folders %s\n", *bucketName, state)
+			return nil
 		}
-		fmt.Fprintf(writer, "Bucket %s allow empty folders %s\n", *bucketName, state)
-		return nil
+		return fmt.Errorf("bucket %s changed concurrently; please retry", *bucketName)
 	})
 }
