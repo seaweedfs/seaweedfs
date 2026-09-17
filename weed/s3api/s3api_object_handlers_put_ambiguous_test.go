@@ -193,14 +193,14 @@ func TestPutToFilerAmbiguousCreateKeepsChunks(t *testing.T) {
 	}
 }
 
-// A create that definitely did not land still cleans up the uploaded chunks.
+// A create the filer definitively refused still cleans up the uploaded chunks.
 func TestPutToFilerConfirmedFailureDeletesOrphans(t *testing.T) {
 	volume := startFakeVolumeServer(t)
 	filerImpl := &ambiguousPutFiler{
 		volume:    volume,
 		entries:   map[string]*filer_pb.Entry{},
 		apply:     false,
-		createErr: status.Error(codes.Unavailable, "connect: connection refused"),
+		createErr: status.Error(codes.Unknown, "create refused"),
 	}
 	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
 
@@ -210,6 +210,32 @@ func TestPutToFilerConfirmedFailureDeletesOrphans(t *testing.T) {
 	}
 	if deleted := volume.deleted(); len(deleted) == 0 {
 		t.Fatal("orphaned chunks were not deleted")
+	}
+}
+
+// A stale entry from an earlier object does not prove this PUT landed: the
+// outcome stays unknown, so the new chunks are kept and an error returned.
+func TestPutToFilerAmbiguousCreateWithStaleEntryKeepsChunks(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	stale := &filer_pb.Entry{
+		Name:       "o",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,000000000000009900000099", Size: 5}},
+	}
+	filerImpl := &ambiguousPutFiler{
+		volume:    volume,
+		entries:   map[string]*filer_pb.Entry{"/buckets/b/o": stale},
+		apply:     false,
+		createErr: status.Error(codes.Unavailable, "connect: connection refused"),
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	_, code := putTestObject(t, s3a)
+	if code == s3err.ErrNone {
+		t.Fatal("expected an error when the create outcome is unknown")
+	}
+	if deleted := volume.deleted(); len(deleted) != 0 {
+		t.Fatalf("chunks were deleted while the create outcome was unverifiable: %v", deleted)
 	}
 }
 
