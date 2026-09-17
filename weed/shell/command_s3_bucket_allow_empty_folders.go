@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"maps"
 	"strings"
 
 	"google.golang.org/grpc/codes"
@@ -99,13 +98,7 @@ func (c *commandS3BucketAllowEmptyFolders) Do(args []string, commandEnv *Command
 				return nil
 			}
 
-			expected := maps.Clone(entry.Extended)
-			if _, ok := expected[s3_constants.ExtAllowEmptyFolders]; !ok {
-				if expected == nil {
-					expected = make(map[string][]byte)
-				}
-				expected[s3_constants.ExtAllowEmptyFolders] = nil
-			}
+			expected := filer_pb.SnapshotExtended(entry.Extended, s3_constants.ExtAllowEmptyFolders)
 
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)

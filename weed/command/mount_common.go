@@ -85,7 +85,7 @@ func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.Fil
 			return nil
 		}
 
-		expected := map[string][]byte{s3_constants.ExtAllowEmptyFolders: entry.Extended[s3_constants.ExtAllowEmptyFolders]}
+		expected := filer_pb.SnapshotExtended(entry.Extended, s3_constants.ExtAllowEmptyFolders)
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
