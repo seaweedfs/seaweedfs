@@ -1133,6 +1133,41 @@ func TestEmptyFolderCleaner_getBucketCleanupPolicy_concurrentUpdate(t *testing.T
 	}
 }
 
+func TestEmptyFolderCleaner_executeCleanup_policyFailureRequeues(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
+
+	mock := &mockFilerOps{
+		attrsFn: func(_ util.FullPath) (map[string][]byte, error) {
+			return nil, errors.New("attrs unavailable")
+		},
+	}
+
+	cleaner := &EmptyFolderCleaner{
+		filer:                 mock,
+		lockRing:              lockRing,
+		host:                  "filer1:8888",
+		bucketPath:            "/buckets",
+		enabled:               true,
+		folderCounts:          make(map[string]*folderState),
+		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+		cleanupQueue:          NewCleanupQueue(1000, time.Millisecond),
+		stopCh:                make(chan struct{}),
+	}
+
+	folder := "/buckets/test/folder"
+	for i := 0; i < DefaultMaxPolicyFailures+2; i++ {
+		cleaner.executeCleanup(folder, "triggered_item")
+	}
+
+	if got := cleaner.folderCounts[folder].policyFailures; got != DefaultMaxPolicyFailures+2 {
+		t.Fatalf("policyFailures = %d, want %d", got, DefaultMaxPolicyFailures+2)
+	}
+	if got := cleaner.cleanupQueue.Len(); got != 1 {
+		t.Fatalf("expected the folder to remain requeued, got %d items", got)
+	}
+}
+
 func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
 	testCases := []struct {
 		name           string
