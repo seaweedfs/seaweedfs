@@ -898,12 +898,6 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
 		}
 
-		if req.VersionToken != "" {
-			if metadata.VersionToken != req.VersionToken {
-				return ErrVersionTokenMismatch
-			}
-		}
-
 		// Fetch table policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 		if err != nil {
@@ -980,8 +974,12 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
+	}
+	if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+		return ErrVersionTokenMismatch
 	}
 
 	// Delete the table
@@ -1538,7 +1536,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	})
 
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update table")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
 		return NewAuthError("UpdateTable", principal, "not authorized to update table")
 	}
 

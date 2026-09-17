@@ -80,3 +80,44 @@ func TestNamespaceAuthorizationDenialMatchesMissing(t *testing.T) {
 		})
 	}
 }
+
+func TestTableAuthorizationDenialMatchesMissing(t *testing.T) {
+	existing, manager := startRenameManager(t)
+	missing := s3tablestest.Start(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+
+	for _, operation := range []string{"GetTable", "UpdateTable", "DeleteTable"} {
+		t.Run(operation, func(t *testing.T) {
+			var request interface{} = &GetTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t"}
+			switch operation {
+			case "UpdateTable":
+				request = &UpdateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t", VersionToken: "wrong"}
+			case "DeleteTable":
+				request = &DeleteTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t", VersionToken: "wrong"}
+			}
+
+			want := runUnauthorizedRequest(t, manager, missing, operation, request)
+			got := runUnauthorizedRequest(t, manager, existing, operation, request)
+			assert.Equal(t, want, got)
+			assert.Equal(t, 404, got.status)
+			assert.Equal(t, ErrCodeNoSuchTable, got.body.Type)
+		})
+	}
+}
+
+func TestDeleteTableAuthorizedVersionMismatchStillConflicts(t *testing.T) {
+	fs, manager := startRenameManager(t)
+	err := manager.Execute(context.Background(), NewManagerClient(fs.Client), "DeleteTable", &DeleteTableRequest{
+		TableBucketARN: mustBucketARN(t),
+		Namespace:      []string{"ns"},
+		Name:           "t",
+		VersionToken:   "wrong",
+	}, nil, "")
+
+	require.Error(t, err)
+	var s3Err *S3TablesError
+	require.ErrorAs(t, err, &s3Err)
+	assert.Equal(t, ErrCodeConflict, s3Err.Type)
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "ns"), "t"))
+}
