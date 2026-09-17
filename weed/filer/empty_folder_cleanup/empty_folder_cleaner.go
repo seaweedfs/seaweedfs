@@ -66,6 +66,11 @@ type folderState struct {
 	lastCheck   time.Time // Last time we checked the actual count
 }
 
+type bucketPolicyGen struct {
+	gen      uint64
+	lastBump time.Time
+}
+
 type bucketCleanupPolicyState struct {
 	autoRemove bool
 	attrValue  string
@@ -83,7 +88,7 @@ type EmptyFolderCleaner struct {
 	mu                    sync.RWMutex
 	folderCounts          map[string]*folderState              // Rough count cache
 	bucketCleanupPolicies map[string]*bucketCleanupPolicyState // bucket path -> cleanup policy cache
-	policyGen             map[string]uint64                    // bucket path -> generation, bumped on bucket entry updates to invalidate in-flight policy loads
+	policyGen             map[string]*bucketPolicyGen          // bucket path -> generation, bumped on bucket entry updates to invalidate in-flight policy loads
 
 	// Folders deleted recently, kept so that a create event arriving for one of them
 	// can put it back
@@ -117,7 +122,7 @@ func NewEmptyFolderCleaner(filer FilerOperations, lockRing *lock_manager.LockRin
 		host:                  host,
 		folderCounts:          make(map[string]*folderState),
 		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
-		policyGen:             make(map[string]uint64),
+		policyGen:             make(map[string]*bucketPolicyGen),
 		deleted:               make(map[string]*deletedFolder),
 		cleanupQueue:          NewCleanupQueue(DefaultQueueMaxSize, cleanupDelay),
 		maxCountCheck:         DefaultMaxCountCheck,
@@ -268,10 +273,16 @@ func (efc *EmptyFolderCleaner) InvalidateBucketPolicy(directory string, entryNam
 	}
 
 	if efc.policyGen == nil {
-		efc.policyGen = make(map[string]uint64)
+		efc.policyGen = make(map[string]*bucketPolicyGen)
 	}
 	path := string(util.NewFullPath(directory, entryName))
-	efc.policyGen[path]++
+	gen := efc.policyGen[path]
+	if gen == nil {
+		gen = &bucketPolicyGen{}
+		efc.policyGen[path] = gen
+	}
+	gen.gen++
+	gen.lastBump = time.Now()
 	delete(efc.bucketCleanupPolicies, path)
 }
 
@@ -644,7 +655,10 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 
 	for attempt := 0; attempt < 3; attempt++ {
 		efc.mu.RLock()
-		gen := efc.policyGen[bucketPath]
+		var gen uint64
+		if g := efc.policyGen[bucketPath]; g != nil {
+			gen = g.gen
+		}
 		efc.mu.RUnlock()
 
 		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
@@ -655,7 +669,11 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 		autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
 
 		efc.mu.Lock()
-		if gen != efc.policyGen[bucketPath] {
+		var genNow uint64
+		if g := efc.policyGen[bucketPath]; g != nil {
+			genNow = g.gen
+		}
+		if gen != genNow {
 			efc.mu.Unlock()
 			continue
 		}
@@ -812,6 +830,14 @@ func (efc *EmptyFolderCleaner) evictStaleCacheEntries() {
 		}
 	}
 
+	// Generations outlive their policy entries so in-flight reads stay
+	// protected; once quiet beyond the expiry a read cannot still be running.
+	for bucketPath, gen := range efc.policyGen {
+		if now.Sub(gen.lastBump) > efc.cacheExpiry {
+			delete(efc.policyGen, bucketPath)
+		}
+	}
+
 	if expiredCount > 0 {
 		glog.V(3).Infof("EmptyFolderCleaner: evicted %d stale cache entries", expiredCount)
 	}
@@ -828,6 +854,7 @@ func (efc *EmptyFolderCleaner) Stop() {
 	efc.cleanupQueue.Clear()
 	efc.folderCounts = make(map[string]*folderState) // Clear cache on stop
 	efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
+	efc.policyGen = make(map[string]*bucketPolicyGen)
 	efc.deleted, efc.deletedDropped = make(map[string]*deletedFolder), 0
 }
 
