@@ -863,7 +863,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 				// The transaction may have committed the object before failing on
 				// the upload removal; a surviving entry references the manifests.
-				if exists, _ := s3a.exists(dirName, entryName, false); exists {
+				if exists, err := s3a.exists(dirName, entryName, false); err != nil || exists {
 					completionState.manifestsReferenced = true
 				}
 				glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
@@ -956,7 +956,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 			// The transaction may have committed the object before failing on
 			// the upload removal; a surviving entry references the manifests.
-			if exists, _ := s3a.exists(dirName, entryName, false); exists {
+			if exists, err := s3a.exists(dirName, entryName, false); err != nil || exists {
 				completionState.manifestsReferenced = true
 			}
 			glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
