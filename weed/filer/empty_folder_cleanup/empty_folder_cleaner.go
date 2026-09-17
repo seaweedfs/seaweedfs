@@ -83,7 +83,7 @@ type EmptyFolderCleaner struct {
 	mu                    sync.RWMutex
 	folderCounts          map[string]*folderState              // Rough count cache
 	bucketCleanupPolicies map[string]*bucketCleanupPolicyState // bucket path -> cleanup policy cache
-	policyGen             uint64                               // bumped on bucket entry updates to invalidate in-flight policy loads
+	policyGen             map[string]uint64                    // bucket path -> generation, bumped on bucket entry updates to invalidate in-flight policy loads
 
 	// Folders deleted recently, kept so that a create event arriving for one of them
 	// can put it back
@@ -117,6 +117,7 @@ func NewEmptyFolderCleaner(filer FilerOperations, lockRing *lock_manager.LockRin
 		host:                  host,
 		folderCounts:          make(map[string]*folderState),
 		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+		policyGen:             make(map[string]uint64),
 		deleted:               make(map[string]*deletedFolder),
 		cleanupQueue:          NewCleanupQueue(DefaultQueueMaxSize, cleanupDelay),
 		maxCountCheck:         DefaultMaxCountCheck,
@@ -266,8 +267,12 @@ func (efc *EmptyFolderCleaner) InvalidateBucketPolicy(directory string, entryNam
 		return
 	}
 
-	efc.policyGen++
-	delete(efc.bucketCleanupPolicies, string(util.NewFullPath(directory, entryName)))
+	if efc.policyGen == nil {
+		efc.policyGen = make(map[string]uint64)
+	}
+	path := string(util.NewFullPath(directory, entryName))
+	efc.policyGen[path]++
+	delete(efc.bucketCleanupPolicies, path)
 }
 
 // cleanupProcessor runs in background and processes the cleanup queue
@@ -638,7 +643,7 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 
 	for attempt := 0; attempt < 3; attempt++ {
 		efc.mu.RLock()
-		gen := efc.policyGen
+		gen := efc.policyGen[bucketPath]
 		efc.mu.RUnlock()
 
 		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
@@ -649,7 +654,7 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 		autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
 
 		efc.mu.Lock()
-		if gen != efc.policyGen {
+		if gen != efc.policyGen[bucketPath] {
 			efc.mu.Unlock()
 			continue
 		}
