@@ -3,12 +3,16 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func Test_volumeName(t *testing.T) {
@@ -112,17 +116,30 @@ func Test_volumeName(t *testing.T) {
 
 type allowEmptyFoldersInnerClient struct {
 	filer_pb.SeaweedFilerClient
-	entry   *filer_pb.Entry
-	lookups int
-	updates []*filer_pb.Entry
+	entry          *filer_pb.Entry
+	beforeUpdate   func()
+	lookups        int
+	updateAttempts int
+	updates        []*filer_pb.Entry
 }
 
 func (c *allowEmptyFoldersInnerClient) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	c.lookups++
-	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(c.entry).(*filer_pb.Entry)}, nil
 }
 
 func (c *allowEmptyFoldersInnerClient) UpdateEntry(_ context.Context, in *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+	c.updateAttempts++
+	if c.beforeUpdate != nil {
+		c.beforeUpdate()
+	}
+	for key, expected := range in.ExpectedExtended {
+		actual, found := c.entry.Extended[key]
+		if found && !bytes.Equal(actual, expected) || !found && len(expected) > 0 {
+			return nil, status.Error(codes.FailedPrecondition, "extended attribute changed")
+		}
+	}
+	c.entry = proto.Clone(in.Entry).(*filer_pb.Entry)
 	c.updates = append(c.updates, in.Entry)
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
@@ -150,6 +167,7 @@ func Test_ensureBucketAllowEmptyFolders(t *testing.T) {
 		name          string
 		mountRoot     string
 		attrValue     string
+		beforeUpdate  func(inner *allowEmptyFoldersInnerClient)
 		wantLookups   int
 		wantUpdates   int
 		wantAttrValue string
@@ -158,10 +176,23 @@ func Test_ensureBucketAllowEmptyFolders(t *testing.T) {
 		{name: "explicit true is kept", mountRoot: "/buckets/b1", attrValue: "true", wantLookups: 1, wantUpdates: 0},
 		{name: "explicit false is kept", mountRoot: "/buckets/b1", attrValue: "false", wantLookups: 1, wantUpdates: 0},
 		{name: "subdirectory mount leaves the bucket alone", mountRoot: "/buckets/b1/sub", wantLookups: 0, wantUpdates: 0},
+		{
+			name:      "a concurrent false wins over the mount default",
+			mountRoot: "/buckets/b1",
+			beforeUpdate: func(inner *allowEmptyFoldersInnerClient) {
+				inner.entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("false")
+			},
+			wantLookups:   2,
+			wantUpdates:   0,
+			wantAttrValue: "false",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			inner := &allowEmptyFoldersInnerClient{entry: bucketEntry(tt.attrValue)}
+			if tt.beforeUpdate != nil {
+				inner.beforeUpdate = func() { tt.beforeUpdate(inner) }
+			}
 			filerClient := &allowEmptyFoldersFilerClient{inner: inner}
 
 			if err := ensureBucketAllowEmptyFolders(context.Background(), filerClient, tt.mountRoot, "/buckets"); err != nil {
@@ -173,8 +204,8 @@ func Test_ensureBucketAllowEmptyFolders(t *testing.T) {
 			if len(inner.updates) != tt.wantUpdates {
 				t.Fatalf("updates = %d, want %d", len(inner.updates), tt.wantUpdates)
 			}
-			if tt.wantUpdates > 0 {
-				got := string(inner.updates[0].Extended[s3_constants.ExtAllowEmptyFolders])
+			if tt.wantAttrValue != "" {
+				got := string(inner.entry.Extended[s3_constants.ExtAllowEmptyFolders])
 				if got != tt.wantAttrValue {
 					t.Errorf("%s = %q, want %q", s3_constants.ExtAllowEmptyFolders, got, tt.wantAttrValue)
 				}
