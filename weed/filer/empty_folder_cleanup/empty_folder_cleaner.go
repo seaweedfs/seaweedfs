@@ -515,6 +515,7 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 			return
 		}
 		glog.V(2).Infof("EmptyFolderCleaner: failed to load bucket cleanup policy for folder %s (triggered by %s): %v", folder, triggeredBy, err)
+		efc.cleanupQueue.Add(folder, triggeredBy, time.Now())
 		return
 	}
 
