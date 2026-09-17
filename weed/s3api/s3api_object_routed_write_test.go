@@ -490,10 +490,13 @@ func TestWriteMultipartObjectRemovesUploadDir(t *testing.T) {
 		},
 	}
 
-	if finalize := s3a.routedUploadRemoval(context.Background(), "", "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{}); finalize != nil {
-		t.Fatalf("unrouted write should not carry the removal, got %+v", finalize)
+	if finalize, err := s3a.routedUploadRemoval(context.Background(), "", "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{}); finalize != nil || err != nil {
+		t.Fatalf("unrouted write should not carry the removal, got %+v, %v", finalize, err)
 	}
-	finalize := s3a.routedUploadRemoval(context.Background(), owner, "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{})
+	finalize, err := s3a.routedUploadRemoval(context.Background(), owner, "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{})
+	if err != nil {
+		t.Fatalf("routedUploadRemoval: %v", err)
+	}
 	if err := s3a.writeMultipartObject(owner, "s3.object.write:/buckets/b/o", "/buckets/b", "o", nil, nil, finalize); err != nil {
 		t.Fatalf("writeMultipartObject: %v", err)
 	}

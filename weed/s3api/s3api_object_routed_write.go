@@ -243,12 +243,14 @@ func (s3a *S3ApiServer) writeMultipartObject(owner pb.ServerAddress, routeKey, d
 // directory inside the object's commit transaction, after freeing the part
 // entries the object does not reference. It is nil when the write is not routed
 // and the upload directory still needs post-commit cleanup.
-func (s3a *S3ApiServer) routedUploadRemoval(ctx context.Context, owner pb.ServerAddress, uploadDirectory, bucket, uploadId string, completionState *multipartCompletionState) []*filer_pb.ObjectMutation {
+func (s3a *S3ApiServer) routedUploadRemoval(ctx context.Context, owner pb.ServerAddress, uploadDirectory, bucket, uploadId string, completionState *multipartCompletionState) ([]*filer_pb.ObjectMutation, error) {
 	if owner == "" {
-		return nil
+		return nil, nil
 	}
-	s3a.deleteUnusedPartEntries(ctx, uploadDirectory, bucket, uploadId, completionState)
-	return []*filer_pb.ObjectMutation{s3a.removeUploadDirMutation(bucket, uploadId)}
+	if err := s3a.deleteUnusedPartEntries(ctx, uploadDirectory, bucket, uploadId, completionState); err != nil {
+		return nil, err
+	}
+	return []*filer_pb.ObjectMutation{s3a.removeUploadDirMutation(bucket, uploadId)}, nil
 }
 
 func (s3a *S3ApiServer) routedDelete(owner pb.ServerAddress, bucket, object string, cond *filer_pb.WriteCondition) (*filer_pb.ObjectTransactionResponse, error) {
