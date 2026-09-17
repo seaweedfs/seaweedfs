@@ -756,6 +756,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					return s3err.ErrInternalError
 				}
 				if code := s3a.routedMultipartFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat, versionDir, versionFileName, completionState.finalParts, decorateVersionEntry, *input.UploadId); code != s3err.ErrNone {
+					if code == s3err.ErrNoSuchUpload {
+						return code
+					}
 					// Roll back only while the upload directory survives: once the
 					// transaction removed it, the version file is the only record
 					// left and deleting it would make a retry impossible.
