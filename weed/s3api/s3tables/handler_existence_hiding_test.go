@@ -58,3 +58,25 @@ func TestTableBucketAuthorizationDenialMatchesMissing(t *testing.T) {
 		})
 	}
 }
+
+func TestNamespaceAuthorizationDenialMatchesMissing(t *testing.T) {
+	existing, manager := startRenameManager(t)
+	missing := s3tablestest.Start(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+
+	for _, operation := range []string{"GetNamespace", "UpdateNamespace"} {
+		t.Run(operation, func(t *testing.T) {
+			var request interface{} = &GetNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}}
+			if operation == "UpdateNamespace" {
+				request = &UpdateNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}}
+			}
+
+			want := runUnauthorizedRequest(t, manager, missing, operation, request)
+			got := runUnauthorizedRequest(t, manager, existing, operation, request)
+			assert.Equal(t, want, got)
+			assert.Equal(t, 404, got.status)
+			assert.Equal(t, ErrCodeNoSuchNamespace, got.body.Type)
+		})
+	}
+}
