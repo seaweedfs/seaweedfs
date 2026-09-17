@@ -478,6 +478,50 @@ func TestRoutedMultipartFinalize(t *testing.T) {
 	}
 }
 
+// A non-versioned multipart completion removes .uploads/<id> metadata-only in
+// the same transaction as the object's PUT.
+func TestWriteMultipartObjectRemovesUploadDir(t *testing.T) {
+	filer := &fakeTxnFiler{}
+	owner := startFakeFiler(t, filer)
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath:    "/buckets",
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		},
+	}
+
+	if finalize := s3a.routedUploadRemoval(context.Background(), "", "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{}); finalize != nil {
+		t.Fatalf("unrouted write should not carry the removal, got %+v", finalize)
+	}
+	finalize := s3a.routedUploadRemoval(context.Background(), owner, "/buckets/b/.uploads/up1", "b", "up1", &multipartCompletionState{})
+	if err := s3a.writeMultipartObject(owner, "s3.object.write:/buckets/b/o", "/buckets/b", "o", nil, nil, finalize); err != nil {
+		t.Fatalf("writeMultipartObject: %v", err)
+	}
+
+	req := filer.lastReq
+	if req == nil {
+		t.Fatal("expected an ObjectTransaction request")
+	}
+	if req.LockKey != "/buckets/b/o" {
+		t.Fatalf("LockKey = %q", req.LockKey)
+	}
+	if len(req.Mutations) != 2 {
+		t.Fatalf("mutations = %d, want 2", len(req.Mutations))
+	}
+	put := req.Mutations[0]
+	if put.Type != filer_pb.ObjectMutation_PUT || put.Directory != "/buckets/b" || put.Entry == nil || put.Entry.Name != "o" {
+		t.Fatalf("put mutation = %+v", put)
+	}
+	removeUpload := req.Mutations[1]
+	if removeUpload.Type != filer_pb.ObjectMutation_DELETE ||
+		removeUpload.Directory != "/buckets/b/.uploads" ||
+		removeUpload.Name != "up1" ||
+		!removeUpload.IsRecursive ||
+		removeUpload.IsDeleteData {
+		t.Fatalf("remove upload mutation = %+v", removeUpload)
+	}
+}
+
 func TestRouteWriteCondition(t *testing.T) {
 	// Unconditional routes either way.
 	if c, ok := routeWriteCondition(reqWith(nil), false); !ok || c != nil {

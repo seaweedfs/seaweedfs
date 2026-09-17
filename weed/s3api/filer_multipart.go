@@ -791,6 +791,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		if versioningState == s3_constants.VersioningSuspended {
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
+			finalize := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
 			if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
 					entry.Extended = make(map[string][]byte)
@@ -839,10 +840,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					entry.Attributes.Mime = completionState.mime
 				}
 				entry.Attributes.FileSize = uint64(completionState.offset)
-			}); err != nil {
+			}, finalize); err != nil {
 				glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
 				return s3err.ErrInternalError
 			}
+			completionState.uploadDirRemoved = finalize != nil
 
 			// A failed finalize leaves the key reading as deleted, so fail rather than
 			// return 200 — a non-ErrNone finalize keeps the upload directory, so the
@@ -866,6 +868,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		// For non-versioned buckets, create main object file
+		finalize := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
 		if err := s3a.writeMultipartObject(owner, routeKey, dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
@@ -917,10 +920,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			if completionState.entityWithTtl {
 				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			}
-		}); err != nil {
+		}, finalize); err != nil {
 			glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
 			return s3err.ErrInternalError
 		}
+		completionState.uploadDirRemoved = finalize != nil
 
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
