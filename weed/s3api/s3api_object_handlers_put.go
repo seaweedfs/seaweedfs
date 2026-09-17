@@ -1050,29 +1050,35 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 // write lock, and true reports the write as successful.
 func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) bool {
 	dir, name := path.Dir(filePath), path.Base(filePath)
-	existing, lookupErr := s3a.lookupEntryPreferringOwner(s3a.routableWriteOwner(bucket, object), dir, name)
-	if lookupErr != nil || existing == nil {
-		return false
-	}
-	resolved, _, resolveErr := filer.ResolveChunkManifest(context.Background(), s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
-	if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
-		return false
-	}
-	glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
-	if finalize == nil || finalize.afterCreate == nil {
-		return true
-	}
-	code := s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
+	owner := s3a.routableWriteOwner(bucket, object)
+	confirmed := false
+	// Verify, finalize, and roll back inside one critical section: a concurrent
+	// write to the same key must not slip in between them.
+	s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
+		existing, lookupErr := s3a.lookupEntryPreferringOwner(owner, dir, name)
+		if lookupErr != nil || existing == nil {
+			return s3err.ErrNone
+		}
+		resolved, _, resolveErr := filer.ResolveChunkManifest(context.Background(), s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+		if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
+			return s3err.ErrNone
+		}
+		glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
+		if finalize == nil || finalize.afterCreate == nil {
+			confirmed = true
+			return s3err.ErrNone
+		}
 		if code := finalize.afterCreate(entry); code != s3err.ErrNone {
 			// Same undo the create path applies when post-create finalization fails.
 			if rbErr := s3a.rmObject(context.Background(), dir, name, true, false); rbErr != nil {
 				glog.Errorf("putToFiler: failed to rollback recovered entry for %s: %v", filePath, rbErr)
 			}
-			return code
+			return s3err.ErrNone
 		}
+		confirmed = true
 		return s3err.ErrNone
 	})
-	return code == s3err.ErrNone
+	return confirmed
 }
 
 // sameFileChunks reports whether two chunk lists reference the same needles,
