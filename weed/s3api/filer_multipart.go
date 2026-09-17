@@ -756,8 +756,15 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					return s3err.ErrInternalError
 				}
 				if code := s3a.routedMultipartFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat, versionDir, versionFileName, completionState.finalParts, decorateVersionEntry, *input.UploadId); code != s3err.ErrNone {
-					if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
-						glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
+					// Roll back only while the upload directory survives: once the
+					// transaction removed it, the version file is the only record
+					// left and deleting it would make a retry impossible.
+					if exists, _ := s3a.exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true); exists {
+						if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
+							glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
+							completionState.manifestsReferenced = true
+						}
+					} else {
 						completionState.manifestsReferenced = true
 					}
 					return code
