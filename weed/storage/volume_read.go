@@ -35,6 +35,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	if readSize.IsDeleted() {
 		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
 			glog.V(3).Infof("reading deleted %s", n.String())
+			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ReadDeletedNeedle).Inc()
 			readSize = -readSize
 		} else {
 			return -1, ErrorDeleted
@@ -132,6 +133,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	if readSize.IsDeleted() {
 		if readOption != nil && readOption.ReadDeleted && readSize != TombstoneFileSize {
 			glog.V(3).Infof("reading deleted %s", n.String())
+			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ReadDeletedNeedle).Inc()
 			readSize = -readSize
 		} else {
 			return ErrorDeleted

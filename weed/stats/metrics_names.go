@@ -10,6 +10,7 @@ const (
 	UploadLimitCond    = "uploadLimitCondition"
 	ReadProxyReq       = "readProxyRequest"
 	ReadRedirectReq    = "readRedirectRequest"
+	ReadDeletedNeedle  = "readDeletedNeedle"
 	EmptyReadProxyLoc  = "emptyReadProxyLocaction"
 	FailedReadProxyReq = "failedReadProxyRequest"
 

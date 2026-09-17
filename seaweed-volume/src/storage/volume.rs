@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::storage::idx;
 use crate::storage::io::read_exact_at;
@@ -1445,6 +1445,10 @@ impl Volume {
         let mut read_size = nv.size;
         if read_size.is_deleted() {
             if read_option.read_deleted && !read_size.is_tombstone() {
+                debug!("reading deleted {}", n.id);
+                crate::metrics::HANDLER_COUNTER
+                    .with_label_values(&[crate::metrics::READ_DELETED_NEEDLE])
+                    .inc();
                 // Negate to get original size
                 read_size = Size(-read_size.0);
             } else {
@@ -1705,6 +1709,10 @@ impl Volume {
         let mut read_size = nv.size;
         if read_size.is_deleted() {
             if read_deleted && !read_size.is_tombstone() {
+                debug!("reading deleted {}", n.id);
+                crate::metrics::HANDLER_COUNTER
+                    .with_label_values(&[crate::metrics::READ_DELETED_NEEDLE])
+                    .inc();
                 read_size = Size(-read_size.0);
             } else {
                 return Err(VolumeError::Deleted);

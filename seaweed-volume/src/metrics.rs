@@ -349,6 +349,7 @@ pub const DOWNLOAD_LIMIT_COND: &str = "downloadLimitCondition";
 pub const UPLOAD_LIMIT_COND: &str = "uploadLimitCondition";
 pub const READ_PROXY_REQ: &str = "readProxyRequest";
 pub const READ_REDIRECT_REQ: &str = "readRedirectRequest";
+pub const READ_DELETED_NEEDLE: &str = "readDeletedNeedle";
 pub const EMPTY_READ_PROXY_LOC: &str = "emptyReadProxyLocaction";
 pub const FAILED_READ_PROXY_REQ: &str = "failedReadProxyRequest";
 
