@@ -870,16 +870,16 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// PutObjectACL
 		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
 		// PutObjectRetention
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectRetentionHandler, ACTION_WRITE)), "PUT")).Queries("retention", "")
+		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectRetentionHandler, ACTION_PUT_OBJECT_RETENTION)), "PUT")).Queries("retention", "")
 		// PutObjectLegalHold
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectLegalHoldHandler, ACTION_WRITE)), "PUT")).Queries("legal-hold", "")
+		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectLegalHoldHandler, ACTION_PUT_OBJECT_LEGAL_HOLD)), "PUT")).Queries("legal-hold", "")
 
 		// GetObjectACL
 		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
 		// GetObjectRetention
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectRetentionHandler, ACTION_READ)), "GET")).Queries("retention", "")
+		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectRetentionHandler, ACTION_GET_OBJECT_RETENTION)), "GET")).Queries("retention", "")
 		// GetObjectLegalHold
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectLegalHoldHandler, ACTION_READ)), "GET")).Queries("legal-hold", "")
+		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectLegalHoldHandler, ACTION_GET_OBJECT_LEGAL_HOLD)), "GET")).Queries("legal-hold", "")
 
 		// objects with query
 
@@ -964,7 +964,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketVersioningHandler, ACTION_WRITE)), "PUT")).Queries("versioning", "")
 
 		// GetObjectLockConfiguration / PutObjectLockConfiguration (bucket-level operations)
-		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectLockConfigurationHandler, ACTION_READ)), "GET")).Queries("object-lock", "")
+		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectLockConfigurationHandler, ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG)), "GET")).Queries("object-lock", "")
 		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectLockConfigurationHandler, ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG)), "PUT")).Queries("object-lock", "")
 
 		// GetBucketTagging
