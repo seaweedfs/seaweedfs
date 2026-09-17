@@ -994,17 +994,31 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 		// If the entry was never created, the uploaded chunks are orphaned and must be deleted.
 		if !entryCreated {
-			orphaned := chunkResult.FileChunks
-			if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
-				orphaned = append(manifestChunks, orphaned...)
-			}
-			if len(orphaned) > 0 {
-				glog.Warningf("putToFiler: finalization failed, attempting to cleanup %d orphaned chunks", len(orphaned))
-				s3a.deleteOrphanedChunks(orphaned)
+			// A failed create can still have landed: a transport error leaves the
+			// outcome ambiguous, and deleting chunks a live entry references turns a
+			// retryable failure into a dangling pointer (issue #11366).
+			existing, lookupErr := s3a.getEntry(path.Dir(filePath), path.Base(filePath))
+			switch {
+			case lookupErr != nil && !errors.Is(lookupErr, filer_pb.ErrNotFound):
+				glog.Warningf("putToFiler: cannot confirm entry %s after failed create (%v), keeping %d uploaded chunks", filePath, lookupErr, len(chunkResult.FileChunks))
+			case existing != nil && !existing.IsDirectory && sameFileChunks(existing.GetChunks(), entry.GetChunks()):
+				glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
+				createCode = s3err.ErrNone
+			default:
+				orphaned := chunkResult.FileChunks
+				if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
+					orphaned = append(manifestChunks, orphaned...)
+				}
+				if len(orphaned) > 0 {
+					glog.Warningf("putToFiler: finalization failed, attempting to cleanup %d orphaned chunks", len(orphaned))
+					s3a.deleteOrphanedChunks(orphaned)
+				}
 			}
 		}
 
-		return "", createCode, SSEResponseMetadata{}
+		if createCode != s3err.ErrNone {
+			return "", createCode, SSEResponseMetadata{}
+		}
 	}
 	glog.V(3).Infof("putToFiler: CreateEntry SUCCESS for %s", filePath)
 
@@ -1029,6 +1043,37 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	return etag, s3err.ErrNone, responseMetadata
+}
+
+// sameFileChunks reports whether two chunk lists reference the same needles,
+// regardless of order. File id strings are normalized through the parsed Fid so
+// a non-canonical representation cannot masquerade as a different chunk.
+func sameFileChunks(a, b []*filer_pb.FileChunk) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	key := func(c *filer_pb.FileChunk) string {
+		fid := c.GetFid()
+		if fid == nil {
+			fid, _ = filer_pb.ToFileIdObject(c.GetFileIdString())
+		}
+		if fid == nil {
+			return c.GetFileIdString()
+		}
+		return fmt.Sprintf("%d,%x,%x", fid.VolumeId, fid.FileKey, fid.Cookie)
+	}
+	counts := make(map[string]int, len(a))
+	for _, c := range a {
+		counts[key(c)]++
+	}
+	for _, c := range b {
+		k := key(c)
+		if counts[k] == 0 {
+			return false
+		}
+		counts[k]--
+	}
+	return true
 }
 
 // checksumAlgorithmMapping maps algorithm name strings to their enum and header name.
