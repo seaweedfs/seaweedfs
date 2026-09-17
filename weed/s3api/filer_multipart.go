@@ -1001,8 +1001,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// cleanup below runs on its own context but spends one allowance between
 			// all of it rather than a retry backoff per unused entry.
 			cleanupCtx := withFilerRetryBudget(context.Background(), filerRetryRequestBudget)
-			_ = s3a.deleteUnusedPartEntries(cleanupCtx, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
-			if err := s3a.rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
+			// Keep the directory when an entry delete failed so its metadata
+			// still references the chunks; removing it metadata-only orphans them.
+			if err := s3a.deleteUnusedPartEntries(cleanupCtx, uploadDirectory, *input.Bucket, *input.UploadId, completionState); err != nil {
+				glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
+			} else if err := s3a.rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
 				glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 			}
 		}
