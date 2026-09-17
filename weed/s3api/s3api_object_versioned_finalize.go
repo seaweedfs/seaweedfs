@@ -99,6 +99,16 @@ func (s3a *S3ApiServer) removeUploadDirMutation(bucket, uploadID string) *filer_
 	}
 }
 
+// uploadExistsCondition requires the upload directory to still exist when the
+// commit transaction runs, so a delete that does not take the object lock
+// (abort, lifecycle, s3.clean.uploads) fails the commit instead of letting it
+// publish the object over freed chunks.
+func uploadExistsCondition(uploadDirectory string) (string, *filer_pb.WriteCondition) {
+	return uploadDirectory, &filer_pb.WriteCondition{
+		Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_EXISTS}},
+	}
+}
+
 // routedMultipartFinalize commits a completed multipart upload in one
 // ObjectTransaction on the owner filer: PUT the version file, remove the upload
 // directory, recompute the latest pointer. The transaction applies mutations in
@@ -128,7 +138,8 @@ func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, 
 	if owner != "" {
 		routeKey = s3a.objectRouteKey(bucket, object)
 	}
-	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, nil, []*filer_pb.ObjectMutation{
+	conditionKey, condition := uploadExistsCondition(s3a.genUploadsFolder(bucket) + "/" + uploadID)
+	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, condition, conditionKey, []*filer_pb.ObjectMutation{
 		s3a.removeUploadDirMutation(bucket, uploadID),
 		s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true),
 	})
@@ -136,6 +147,8 @@ func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, 
 	case err != nil:
 		glog.Errorf("routedMultipartFinalize: %s/%s upload %s on %s: %v", bucket, object, uploadID, owner, err)
 		return s3err.ErrInternalError
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+		return s3err.ErrNoSuchUpload
 	case resp.Error != "":
 		glog.Errorf("routedMultipartFinalize: %s/%s upload %s: %s", bucket, object, uploadID, resp.Error)
 		return s3err.ErrInternalError

@@ -963,7 +963,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			if finalize != nil && len(finalize.mutations) > 0 {
 				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
 			}
-			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, finalizeMutations)
+			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, "", finalizeMutations)
 			switch {
 			case err != nil:
 				glog.Warningf("putToFiler: routed PUT to %s failed for %s, falling back to lock: %v", owner, filePath, err)

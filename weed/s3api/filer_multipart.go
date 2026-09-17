@@ -794,7 +794,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		if versioningState == s3_constants.VersioningSuspended {
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
-			finalize, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
+			removal, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
 			if err != nil {
 				glog.Errorf("completeMultipartUpload %s upload %s unused part cleanup: %v", *input.Bucket, *input.UploadId, err)
 				return s3err.ErrInternalError
@@ -847,11 +847,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					entry.Attributes.Mime = completionState.mime
 				}
 				entry.Attributes.FileSize = uint64(completionState.offset)
-			}, finalize); err != nil {
+			}, removal); err != nil {
+				if errors.Is(err, errUploadRemoved) {
+					return s3err.ErrNoSuchUpload
+				}
 				glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
 				return s3err.ErrInternalError
 			}
-			completionState.uploadDirRemoved = finalize != nil
+			completionState.uploadDirRemoved = removal != nil
 
 			// A failed finalize leaves the key reading as deleted, so fail rather than
 			// return 200 — a non-ErrNone finalize keeps the upload directory, so the
@@ -875,7 +878,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		// For non-versioned buckets, create main object file
-		finalize, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
+		removal, err := s3a.routedUploadRemoval(r.Context(), owner, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
 		if err != nil {
 			glog.Errorf("completeMultipartUpload %s upload %s unused part cleanup: %v", *input.Bucket, *input.UploadId, err)
 			return s3err.ErrInternalError
@@ -931,11 +934,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			if completionState.entityWithTtl {
 				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			}
-		}, finalize); err != nil {
+		}, removal); err != nil {
+			if errors.Is(err, errUploadRemoved) {
+				return s3err.ErrNoSuchUpload
+			}
 			glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
 			return s3err.ErrInternalError
 		}
-		completionState.uploadDirRemoved = finalize != nil
+		completionState.uploadDirRemoved = removal != nil
 
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
