@@ -858,6 +858,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				if errors.Is(err, errUploadRemoved) {
 					return s3err.ErrNoSuchUpload
 				}
+				// The transaction may have committed the object before failing on
+				// the upload removal; a surviving entry references the manifests.
+				if exists, _ := s3a.exists(dirName, entryName, false); exists {
+					completionState.manifestsReferenced = true
+				}
 				glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
 				return s3err.ErrInternalError
 			}
@@ -867,6 +872,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// return 200 — a non-ErrNone finalize keeps the upload directory, so the
 			// caller's retry replays.
 			if err := s3a.finalizeSuspendedNullWrite(owner, *input.Bucket, normalizedKey, s3_constants.SeaweedFSUploadId, *input.UploadId); err != nil {
+				completionState.manifestsReferenced = true
 				glog.Errorf("completeMultipartUpload: failed to retire the null delete marker for %s/%s: %v", *input.Bucket, normalizedKey, err)
 				return s3err.ErrInternalError
 			}
@@ -944,6 +950,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}, removal); err != nil {
 			if errors.Is(err, errUploadRemoved) {
 				return s3err.ErrNoSuchUpload
+			}
+			// The transaction may have committed the object before failing on
+			// the upload removal; a surviving entry references the manifests.
+			if exists, _ := s3a.exists(dirName, entryName, false); exists {
+				completionState.manifestsReferenced = true
 			}
 			glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
 			return s3err.ErrInternalError
