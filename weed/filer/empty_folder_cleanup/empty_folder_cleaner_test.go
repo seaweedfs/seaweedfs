@@ -1074,7 +1074,7 @@ func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.
 	}
 }
 
-func TestEmptyFolderCleaner_OnUpdateEvent(t *testing.T) {
+func TestEmptyFolderCleaner_InvalidateBucketPolicy(t *testing.T) {
 	cleaner := &EmptyFolderCleaner{
 		bucketPath: "/buckets",
 		enabled:    true,
@@ -1083,14 +1083,14 @@ func TestEmptyFolderCleaner_OnUpdateEvent(t *testing.T) {
 		},
 	}
 
-	cleaner.OnUpdateEvent("/buckets", "test", true)
+	cleaner.InvalidateBucketPolicy("/buckets", "test", true)
 	if _, found := cleaner.bucketCleanupPolicies["/buckets/test"]; found {
 		t.Fatal("expected cached bucket policy to be evicted")
 	}
 
 	cleaner.bucketCleanupPolicies["/buckets/test"] = &bucketCleanupPolicyState{}
-	cleaner.OnUpdateEvent("/buckets/test", "dir", true)
-	cleaner.OnUpdateEvent("/buckets", "test", false)
+	cleaner.InvalidateBucketPolicy("/buckets/test", "dir", true)
+	cleaner.InvalidateBucketPolicy("/buckets", "test", false)
 	if _, found := cleaner.bucketCleanupPolicies["/buckets/test"]; !found {
 		t.Fatal("expected unrelated updates to keep the cached policy")
 	}
@@ -1104,7 +1104,7 @@ func TestEmptyFolderCleaner_getBucketCleanupPolicy_concurrentUpdate(t *testing.T
 			calls++
 			if calls == 1 {
 				// a toggle lands while the stale read is in flight
-				cleaner.OnUpdateEvent("/buckets", "test", true)
+				cleaner.InvalidateBucketPolicy("/buckets", "test", true)
 				return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("true")}, nil
 			}
 			return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("false")}, nil

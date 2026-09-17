@@ -2,6 +2,7 @@ package empty_folder_cleanup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -252,8 +253,8 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 	}
 }
 
-// OnUpdateEvent drops the cached cleanup policy when a bucket entry changes
-func (efc *EmptyFolderCleaner) OnUpdateEvent(directory string, entryName string, isDirectory bool) {
+// InvalidateBucketPolicy drops the cached cleanup policy when a bucket entry changes
+func (efc *EmptyFolderCleaner) InvalidateBucketPolicy(directory string, entryName string, isDirectory bool) {
 	if !isDirectory || directory != efc.bucketPath {
 		return
 	}
@@ -665,7 +666,7 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 		return bucketPath, autoRemove, "filer", attrValue, nil
 	}
 
-	return bucketPath, autoRemove, "filer", attrValue, nil
+	return "", false, "", "", fmt.Errorf("bucket cleanup policy changed during read: %s", bucketPath)
 }
 
 // isCatalogEntry reports whether the directory is an s3tables catalog record.
