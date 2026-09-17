@@ -241,6 +241,7 @@ type multipartCompletionState struct {
 	manifestsReferenced     bool                  // failed rollback left an entry holding newManifestChunks
 	supersededPartManifests []*filer_pb.FileChunk // part-entry blobs replaced by flattening; deleted after commit
 	metadataOnlyCleanup     bool                  // deleteEntries share chunks with the live object; keep their data
+	uploadDirRemoved        bool                  // the finalize transaction already removed .uploads/<uploadId>
 }
 
 func completeMultipartResult(r *http.Request, input *s3.CompleteMultipartUploadInput, etag string, entry *filer_pb.Entry) *CompleteMultipartUploadResult {
@@ -674,8 +675,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			versionMtime := time.Now().Unix()
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 
-			// Create the version file in the .versions directory
-			if err := s3a.mkFile(versionDir, versionFileName, completionState.finalParts, func(versionEntry *filer_pb.Entry) {
+			// Fills in the version entry; on the routed path this runs inside the
+			// finalize transaction, on the fallback inside mkFile.
+			decorateVersionEntry := func(versionEntry *filer_pb.Entry) {
 				if versionEntry.Extended == nil {
 					versionEntry.Extended = make(map[string][]byte)
 				}
@@ -724,9 +726,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 				versionEntry.Attributes.FileSize = uint64(completionState.offset)
 				versionEntry.Attributes.Mtime = versionMtime
-			}); err != nil {
-				glog.Errorf("completeMultipartUpload: failed to create version %s: %v", versionId, err)
-				return s3err.ErrInternalError
 			}
 
 			// Construct entry with metadata for caching in .versions directory
@@ -745,25 +744,35 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				versionEntryForCache.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
 			}
 
-			// Update the .versions directory metadata to indicate this is the latest version
-			// Pass entry to cache its metadata for single-scan list efficiency
-			// Route the pointer flip to the owner (off the lock) via
-			// RECOMPUTE_LATEST; the just-written version file is the newest.
-			if owner != "" {
-				if code := s3a.routedVersionedFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat); code != s3err.ErrNone {
+			// objectTxnOnFiler needs an owner to route to or a filerClient to
+			// pick a filer from; only the bootstrap fallback keeps the
+			// mkFile + pointer-update sequence.
+			if owner != "" || s3a.filerClient != nil {
+				// The transaction removes the upload directory metadata-only,
+				// so the part entries the object does not reference are freed
+				// first or their chunks leak.
+				s3a.deleteUnusedPartEntries(r.Context(), uploadDirectory, *input.Bucket, *input.UploadId, completionState)
+				if code := s3a.routedMultipartFinalize(owner, *input.Bucket, *input.Key, useInvertedFormat, versionDir, versionFileName, completionState.finalParts, decorateVersionEntry, *input.UploadId); code != s3err.ErrNone {
 					if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
 						glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after routed finalize error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
 						completionState.manifestsReferenced = true
 					}
 					return code
 				}
-			} else if err := s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache); err != nil {
-				if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
-					glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
-					completionState.manifestsReferenced = true
+				completionState.uploadDirRemoved = true
+			} else {
+				if err := s3a.mkFile(versionDir, versionFileName, completionState.finalParts, decorateVersionEntry); err != nil {
+					glog.Errorf("completeMultipartUpload: failed to create version %s: %v", versionId, err)
+					return s3err.ErrInternalError
 				}
-				glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
-				return s3err.ErrInternalError
+				if err := s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache); err != nil {
+					if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
+						glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
+						completionState.manifestsReferenced = true
+					}
+					glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
+					return s3err.ErrInternalError
+				}
 			}
 
 			// For versioned buckets, all content is stored in .versions directory
@@ -945,17 +954,15 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	}
 
 	if completionState != nil {
-		// The object is already committed and the client is still waiting, so the
-		// cleanup below runs on its own context but spends one allowance between
-		// all of it rather than a retry backoff per unused entry.
-		cleanupCtx := withFilerRetryBudget(context.Background(), filerRetryRequestBudget)
-		for _, deleteEntry := range completionState.deleteEntries {
-			if err := s3a.rm(cleanupCtx, uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
-				glog.Warningf("completeMultipartUpload cleanup %s upload %s unused %s : %v", *input.Bucket, *input.UploadId, deleteEntry.Name, err)
+		if !completionState.uploadDirRemoved {
+			// The object is already committed and the client is still waiting, so the
+			// cleanup below runs on its own context but spends one allowance between
+			// all of it rather than a retry backoff per unused entry.
+			cleanupCtx := withFilerRetryBudget(context.Background(), filerRetryRequestBudget)
+			s3a.deleteUnusedPartEntries(cleanupCtx, uploadDirectory, *input.Bucket, *input.UploadId, completionState)
+			if err := s3a.rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
+				glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 			}
-		}
-		if err := s3a.rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
-			glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
 		}
 		if len(completionState.supersededPartManifests) > 0 {
 			s3a.deleteOrphanedChunks(completionState.supersededPartManifests)
@@ -963,6 +970,17 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	}
 
 	return
+}
+
+// deleteUnusedPartEntries frees the part entries the completed object does not
+// reference. A finalize that removes the whole upload directory metadata-only
+// frees them first, or their chunks leak.
+func (s3a *S3ApiServer) deleteUnusedPartEntries(ctx context.Context, uploadDirectory, bucket, uploadId string, completionState *multipartCompletionState) {
+	for _, deleteEntry := range completionState.deleteEntries {
+		if err := s3a.rm(ctx, uploadDirectory, deleteEntry.Name, !completionState.metadataOnlyCleanup, true); err != nil {
+			glog.Warningf("completeMultipartUpload cleanup %s upload %s unused %s : %v", bucket, uploadId, deleteEntry.Name, err)
+		}
+	}
 }
 
 // Metadata-only: the version file's chunks are the still-registered parts'
