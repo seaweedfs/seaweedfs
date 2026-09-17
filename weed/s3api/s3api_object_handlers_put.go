@@ -29,6 +29,8 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Object lock validation errors
@@ -1293,13 +1295,23 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrAccessDenied
 	}
 
+	// A transport failure leaves the outcome ambiguous — the write may have
+	// been applied anyway — so it must stay retryable, not a permanent 4xx.
+	switch status.Code(err) {
+	case codes.Canceled, codes.DeadlineExceeded, codes.Unavailable:
+		return s3err.ErrServiceUnavailable
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return s3err.ErrServiceUnavailable
+	}
+
 	// Non-filer errors that don't go through CreateEntryResponse — string matching required
 	errString := err.Error()
 	switch {
 	case errString == constants.ErrMsgBadDigest:
 		return s3err.ErrBadDigest
 	case strings.Contains(errString, "context canceled") || strings.Contains(errString, "code = Canceled"):
-		return s3err.ErrInvalidRequest
+		return s3err.ErrServiceUnavailable
 	default:
 		return s3err.ErrInternalError
 	}
