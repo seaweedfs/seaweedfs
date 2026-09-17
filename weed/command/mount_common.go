@@ -78,7 +78,7 @@ func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.Fil
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
-	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
+	if value := strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])); value != "" {
 		return nil
 	}
 
