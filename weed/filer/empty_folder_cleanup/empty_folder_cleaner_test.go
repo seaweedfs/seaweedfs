@@ -1096,6 +1096,43 @@ func TestEmptyFolderCleaner_OnUpdateEvent(t *testing.T) {
 	}
 }
 
+func TestEmptyFolderCleaner_getBucketCleanupPolicy_concurrentUpdate(t *testing.T) {
+	var cleaner *EmptyFolderCleaner
+	calls := 0
+	mock := &mockFilerOps{
+		attrsFn: func(_ util.FullPath) (map[string][]byte, error) {
+			calls++
+			if calls == 1 {
+				// a toggle lands while the stale read is in flight
+				cleaner.OnUpdateEvent("/buckets", "test", true)
+				return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("true")}, nil
+			}
+			return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("false")}, nil
+		},
+	}
+
+	cleaner = &EmptyFolderCleaner{
+		filer:                 mock,
+		bucketPath:            "/buckets",
+		enabled:               true,
+		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+	}
+
+	_, autoRemove, _, attrValue, err := cleaner.getBucketCleanupPolicy(context.Background(), "/buckets/test/folder")
+	if err != nil {
+		t.Fatalf("getBucketCleanupPolicy: %v", err)
+	}
+	if !autoRemove || attrValue != "false" {
+		t.Fatalf("expected the post-update policy autoRemove=true attr=false, got autoRemove=%v attr=%q", autoRemove, attrValue)
+	}
+	if calls < 2 {
+		t.Fatalf("expected the stale load to be retried, got %d attribute reads", calls)
+	}
+	if cached := cleaner.bucketCleanupPolicies["/buckets/test"]; cached == nil || cached.attrValue != "false" {
+		t.Fatalf("expected the fresh policy to be cached, got %+v", cached)
+	}
+}
+
 func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
 	testCases := []struct {
 		name           string

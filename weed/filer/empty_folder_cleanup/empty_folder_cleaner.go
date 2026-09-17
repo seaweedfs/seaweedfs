@@ -82,6 +82,7 @@ type EmptyFolderCleaner struct {
 	mu                    sync.RWMutex
 	folderCounts          map[string]*folderState              // Rough count cache
 	bucketCleanupPolicies map[string]*bucketCleanupPolicyState // bucket path -> cleanup policy cache
+	policyGen             uint64                               // bumped on bucket entry updates to invalidate in-flight policy loads
 
 	// Folders deleted recently, kept so that a create event arriving for one of them
 	// can put it back
@@ -264,6 +265,7 @@ func (efc *EmptyFolderCleaner) OnUpdateEvent(directory string, entryName string,
 		return
 	}
 
+	efc.policyGen++
 	delete(efc.bucketCleanupPolicies, string(util.NewFullPath(directory, entryName)))
 }
 
@@ -633,23 +635,35 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 	}
 	efc.mu.RUnlock()
 
-	attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
-	if err != nil {
-		return "", true, "", "", err
-	}
+	for attempt := 0; attempt < 3; attempt++ {
+		efc.mu.RLock()
+		gen := efc.policyGen
+		efc.mu.RUnlock()
 
-	autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
+		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
+		if err != nil {
+			return "", true, "", "", err
+		}
 
-	efc.mu.Lock()
-	if efc.bucketCleanupPolicies == nil {
-		efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
+		autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
+
+		efc.mu.Lock()
+		if gen != efc.policyGen {
+			efc.mu.Unlock()
+			continue
+		}
+		if efc.bucketCleanupPolicies == nil {
+			efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
+		}
+		efc.bucketCleanupPolicies[bucketPath] = &bucketCleanupPolicyState{
+			autoRemove: autoRemove,
+			attrValue:  attrValue,
+			lastCheck:  now,
+		}
+		efc.mu.Unlock()
+
+		return bucketPath, autoRemove, "filer", attrValue, nil
 	}
-	efc.bucketCleanupPolicies[bucketPath] = &bucketCleanupPolicyState{
-		autoRemove: autoRemove,
-		attrValue:  attrValue,
-		lastCheck:  now,
-	}
-	efc.mu.Unlock()
 
 	return bucketPath, autoRemove, "filer", attrValue, nil
 }
