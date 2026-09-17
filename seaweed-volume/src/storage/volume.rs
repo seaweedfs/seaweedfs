@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
 use crate::storage::idx;
+use crate::storage::io_error::IoErrorTracker;
 use crate::storage::needle::needle::{self, Needle, NeedleError, get_actual_size};
 use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
@@ -99,26 +100,6 @@ fn is_skippable_needle_read_error(e: &VolumeError) -> bool {
 /// pre-compaction index snapshot expected.
 fn exceeds_expected_compacted_size(expected_live_bytes: u64, dst_dat_size: u64) -> bool {
     expected_live_bytes > dst_dat_size
-}
-
-/// Returns true for I/O errors that indicate faulty storage media, not
-/// transient/network failures. On Unix this is EIO; on Windows it covers
-/// ERROR_CRC and ERROR_IO_DEVICE, which the kernel returns for failing disks.
-pub fn is_storage_io_error(e: &io::Error) -> bool {
-    #[cfg(unix)]
-    {
-        e.raw_os_error() == Some(libc::EIO)
-    }
-    #[cfg(windows)]
-    {
-        const ERROR_CRC: i32 = 23;
-        const ERROR_IO_DEVICE: i32 = 1117;
-        return e.raw_os_error() == Some(ERROR_CRC) || e.raw_os_error() == Some(ERROR_IO_DEVICE);
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        false
-    }
 }
 
 // ============================================================================
@@ -706,14 +687,9 @@ pub struct Volume {
     /// Compaction speed limit in bytes per second (0 = unlimited).
     pub compaction_byte_per_second: i64,
 
-    /// Tracks the last I/O error (EIO) for volume health monitoring.
-    /// Uses Mutex for interior mutability so reads (&self) can clear/set it.
-    last_io_error: Mutex<Option<String>>,
-    /// Consecutive EIO count; reset on success or non-EIO errors.
-    io_error_count: std::sync::atomic::AtomicI32,
-    /// Sticky quarantine flag set after sustained EIO; cleared only by
-    /// explicit recovery (mirrors Go's markIoQuarantined).
-    io_error_quarantined: std::sync::atomic::AtomicBool,
+    /// Consecutive storage-media errors and the quarantine they lead to,
+    /// for volume health monitoring.
+    io_errors: IoErrorTracker,
 
     /// Protobuf VolumeInfo for tiered storage (.vif file).
     pub volume_info: PbVolumeInfo,
@@ -812,9 +788,7 @@ impl Volume {
             last_compact_revision: 0,
             is_compacting: false,
             compaction_byte_per_second: 0,
-            last_io_error: Mutex::new(None),
-            io_error_count: std::sync::atomic::AtomicI32::new(0),
-            io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
+            io_errors: IoErrorTracker::default(),
             volume_info: PbVolumeInfo::default(),
             has_remote_file: false,
         };
@@ -852,9 +826,7 @@ impl Volume {
             last_compact_revision: 0,
             is_compacting: false,
             compaction_byte_per_second: 0,
-            last_io_error: Mutex::new(None),
-            io_error_count: std::sync::atomic::AtomicI32::new(0),
-            io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
+            io_errors: IoErrorTracker::default(),
             volume_info: PbVolumeInfo::default(),
             has_remote_file: false,
         }
@@ -4373,67 +4345,33 @@ impl Volume {
 
     /// Check if an I/O error is a storage-media failure and record it for
     /// health monitoring. On success (None), clears any previously recorded
-    /// EIO error. Matches Go's `checkReadWriteError` in volume_write.go.
+    /// EIO error. Matches Go's `checkReadWriteError` in
+    /// `weed/storage/io_error.go`.
     fn check_read_write_error(&self, err: Option<&io::Error>) {
-        use std::sync::atomic::Ordering;
-        if let Some(e) = err
-            && is_storage_io_error(e)
-        {
-            self.io_error_count.fetch_add(1, Ordering::Relaxed);
-            if let Ok(mut guard) = self.last_io_error.lock() {
-                *guard = Some(e.to_string());
-            }
-            crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
-            return;
-        }
-        self.io_error_count.store(0, Ordering::Relaxed);
-        if let Ok(mut guard) = self.last_io_error.lock()
-            && guard.is_some()
-        {
-            *guard = None;
-        }
-    }
-
-    /// Returns the last recorded I/O error string, if any.
-    pub fn last_io_error(&self) -> Option<String> {
-        self.last_io_error.lock().ok()?.clone()
+        self.io_errors.record(err);
     }
 
     pub fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
-        use std::sync::atomic::Ordering;
-        let err = self.last_io_error.lock().ok().and_then(|g| g.clone());
-        let count = self.io_error_count.load(Ordering::Relaxed);
-        let quarantined = self.io_error_quarantined.load(Ordering::Relaxed);
-        (err, count, quarantined)
+        self.io_errors.state()
+    }
+
+    /// Whether sustained storage-media errors mean the volume has to be
+    /// quarantined and stop being reported to the master.
+    pub fn should_quarantine(&self) -> bool {
+        self.io_errors.should_quarantine()
     }
 
     pub fn mark_io_quarantined(&self) {
-        self.io_error_quarantined
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.io_errors.mark_quarantined();
     }
 
     pub fn reset_io_error_state(&self) {
-        use std::sync::atomic::Ordering;
-        self.io_error_count.store(0, Ordering::Relaxed);
-        self.io_error_quarantined.store(false, Ordering::Relaxed);
-        if let Ok(mut guard) = self.last_io_error.lock() {
-            *guard = None;
-        }
+        self.io_errors.reset();
     }
 
     #[cfg(test)]
     pub(crate) fn set_last_io_error_for_test(&self, err: Option<&str>) {
-        use std::sync::atomic::Ordering;
-        if let Ok(mut guard) = self.last_io_error.lock() {
-            *guard = err.map(|value| value.to_string());
-        }
-        // Set count at/above the heartbeat tolerance (3) so the test
-        // helper reflects a sustained error, not a single transient one.
-        if err.is_some() {
-            self.io_error_count.store(3, Ordering::Relaxed);
-        } else {
-            self.io_error_count.store(0, Ordering::Relaxed);
-        }
+        self.io_errors.set_last_io_error_for_test(err);
     }
 
     #[cfg(test)]

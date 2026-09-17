@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
+use super::absolute_display_path;
 use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
 use super::volume_server::{VolumeServerState, normalize_outgoing_http_url, to_http_address};
 use crate::config::ReadMode;
@@ -3620,16 +3621,6 @@ async fn read_remote_chunk_needle(
 // ============================================================================
 // Helpers
 // ============================================================================
-
-fn absolute_display_path(path: &str) -> String {
-    let p = std::path::Path::new(path);
-    if p.is_absolute() {
-        return path.to_string();
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(p).to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string())
-}
 
 fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::Value> {
     let mut disk_statuses = Vec::new();

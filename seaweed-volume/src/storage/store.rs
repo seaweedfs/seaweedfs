@@ -1145,16 +1145,11 @@ impl Store {
             for (vid, ec_vol) in loc.ec_volumes() {
                 if ec_vol.is_time_to_destroy() {
                     expired_vids.push(*vid);
+                } else if ec_vol.should_quarantine() {
+                    io_quarantined_vids.push(*vid);
                 } else {
-                    let (_, io_count, quarantined) = ec_vol.get_io_error_state();
-                    if quarantined
-                        || io_count >= crate::storage::erasure_coding::ec_volume::IO_ERROR_TOLERANCE
-                    {
-                        io_quarantined_vids.push(*vid);
-                    } else {
-                        ec_shards
-                            .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
-                    }
+                    ec_shards
+                        .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
                 }
             }
 
