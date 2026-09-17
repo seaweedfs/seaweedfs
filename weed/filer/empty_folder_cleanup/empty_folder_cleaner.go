@@ -251,6 +251,22 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 	}
 }
 
+// OnUpdateEvent drops the cached cleanup policy when a bucket entry changes
+func (efc *EmptyFolderCleaner) OnUpdateEvent(directory string, entryName string, isDirectory bool) {
+	if !isDirectory || directory != efc.bucketPath {
+		return
+	}
+
+	efc.mu.Lock()
+	defer efc.mu.Unlock()
+
+	if !efc.enabled {
+		return
+	}
+
+	delete(efc.bucketCleanupPolicies, string(util.NewFullPath(directory, entryName)))
+}
+
 // cleanupProcessor runs in background and processes the cleanup queue
 func (efc *EmptyFolderCleaner) cleanupProcessor() {
 	ticker := time.NewTicker(efc.processorSleep)

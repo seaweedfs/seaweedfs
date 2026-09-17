@@ -62,6 +62,11 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 		f.EmptyFolderCleaner.OnCreateEvent(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
 	}
 
+	// Handle update events - drop the cached bucket cleanup policy
+	if filer_pb.IsUpdate(event) && message.NewEntry != nil {
+		f.EmptyFolderCleaner.OnUpdateEvent(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
+	}
+
 	// Handle rename/move events
 	if filer_pb.IsRename(event) {
 		// Treat the old location as a delete

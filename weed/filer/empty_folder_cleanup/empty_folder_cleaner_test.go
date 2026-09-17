@@ -1074,6 +1074,28 @@ func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.
 	}
 }
 
+func TestEmptyFolderCleaner_OnUpdateEvent(t *testing.T) {
+	cleaner := &EmptyFolderCleaner{
+		bucketPath: "/buckets",
+		enabled:    true,
+		bucketCleanupPolicies: map[string]*bucketCleanupPolicyState{
+			"/buckets/test": {},
+		},
+	}
+
+	cleaner.OnUpdateEvent("/buckets", "test", true)
+	if _, found := cleaner.bucketCleanupPolicies["/buckets/test"]; found {
+		t.Fatal("expected cached bucket policy to be evicted")
+	}
+
+	cleaner.bucketCleanupPolicies["/buckets/test"] = &bucketCleanupPolicyState{}
+	cleaner.OnUpdateEvent("/buckets/test", "dir", true)
+	cleaner.OnUpdateEvent("/buckets", "test", false)
+	if _, found := cleaner.bucketCleanupPolicies["/buckets/test"]; !found {
+		t.Fatal("expected unrelated updates to keep the cached policy")
+	}
+}
+
 func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
 	testCases := []struct {
 		name           string
