@@ -898,12 +898,6 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
 		}
 
-		if req.VersionToken != "" {
-			if metadata.VersionToken != req.VersionToken {
-				return ErrVersionTokenMismatch
-			}
-		}
-
 		// Fetch table policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 		if err != nil {
@@ -980,8 +974,12 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
+	}
+	if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, "version token mismatch")
+		return ErrVersionTokenMismatch
 	}
 
 	// Delete the table
@@ -1268,14 +1266,17 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to rename "+kind.noun)
+		h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
 		return NewAuthError(kind.renameOp, principal, "not authorized to rename "+kind.noun)
 	}
 
-	// Require the destination namespace to exist and the destination table to be free.
+	// Require the destination namespace to exist. Whether the destination name
+	// is taken is only recorded here; reporting the conflict before the
+	// destination authorization check would disclose it to denied callers.
 	destNamespacePath := GetNamespacePath(bucketName, destNamespace)
 	var destNamespaceMetadata namespaceMetadata
 	var destNamespacePolicy string
+	var destExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, destNamespacePath, ExtendedKeyMetadata)
 		if err != nil {
@@ -1291,7 +1292,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			return fmt.Errorf("failed to fetch destination namespace policy: %w", err)
 		}
 		if _, err := h.getExtendedAttribute(r.Context(), client, destPath, ExtendedKeyMetadata); err == nil {
-			return ErrTableAlreadyExists
+			destExists = true
 		} else if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 			return err
 		}
@@ -1299,9 +1300,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	})
 
 	if err != nil {
-		if errors.Is(err, ErrTableAlreadyExists) {
-			h.writeError(w, http.StatusConflict, kind.existsCode, fmt.Sprintf("%s %s already exists", kind.noun, destName))
-		} else if errors.Is(err, filer_pb.ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", destNamespace))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check destination: %v", err))
@@ -1311,7 +1310,8 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 
 	// Renaming places the table into the destination namespace, so the principal
 	// must also be allowed to create a table there (the source check alone lets a
-	// caller move tables into namespaces they don't control).
+	// caller move tables into namespaces they don't control). Denials report the
+	// same not-found as a missing destination namespace.
 	destNamespaceAllowed := CheckPermissionWithContext(kind.createOp, principal, destNamespaceMetadata.OwnerAccountID, destNamespacePolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       destNamespace,
@@ -1329,8 +1329,13 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	if !destNamespaceAllowed && !destBucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create "+kind.noun+" in the destination namespace")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", destNamespace))
 		return NewAuthError(kind.renameOp, principal, "not authorized to create "+kind.noun+" in the destination namespace")
+	}
+
+	if destExists {
+		h.writeError(w, http.StatusConflict, kind.existsCode, fmt.Sprintf("%s %s already exists", kind.noun, destName))
+		return ErrTableAlreadyExists
 	}
 
 	metadata.Name = destName
@@ -1538,7 +1543,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	})
 
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update table")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
 		return NewAuthError("UpdateTable", principal, "not authorized to update table")
 	}
 
