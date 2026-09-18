@@ -1160,8 +1160,11 @@ func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s
 		}
 		return s3err.ErrNone
 	}
+	if object == "" {
+		return rmUploadDir(true)
+	}
 	owner := s3a.objectWriteOwner(bucket, object)
-	if object == "" || owner == "" {
+	if owner == "" {
 		return rmUploadDir(true)
 	}
 	objectPath := s3a.toFilerPath(bucket, object)
