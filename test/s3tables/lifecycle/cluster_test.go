@@ -157,6 +157,12 @@ func newEnvironment() (*environment, error) {
 }
 
 func (env *environment) start() error {
+	// The catalog clients here do not sign, so anonymous access is configured explicitly.
+	iamConfigPath, err := testutil.WriteIAMConfig(env.dataDir, accessKey, secretKey)
+	if err != nil {
+		return fmt.Errorf("write IAM config: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
@@ -171,6 +177,7 @@ func (env *environment) start() error {
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
 		"-s3.port.lance", fmt.Sprintf("%d", env.lancePort),
+		"-s3.config", iamConfigPath,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	)
