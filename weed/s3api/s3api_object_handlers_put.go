@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -995,15 +996,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 		// If the entry was never created, the uploaded chunks are orphaned and must be deleted.
 		if !entryCreated {
-			// A transport failure is ambiguous: the filer may have committed the
-			// entry anyway (issue #11366), so a retryable error never deletes the
-			// uploaded chunks — it is only upgraded to success when the write owner
-			// proves the entry landed with these chunks.
-			ambiguous := createErr != nil && filerErrorToS3Error(createErr) == s3err.ErrServiceUnavailable
-			if ambiguous && len(chunkResult.FileChunks) > 0 && s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize) {
+			// A failed create does not prove the entry is absent: a lost response
+			// can hide a commit (issue #11366) and the filer can fail after
+			// inserting the entry (issue #11387), so the entry's presence — not
+			// the error class — decides the chunks' fate.
+			landed, absent := s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize)
+			if landed {
 				createCode = s3err.ErrNone
 			}
-			if createCode != s3err.ErrNone && !ambiguous {
+			if createCode != s3err.ErrNone && absent {
 				orphaned := chunkResult.FileChunks
 				if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
 					orphaned = append(manifestChunks, orphaned...)
@@ -1044,28 +1045,51 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	return etag, s3err.ErrNone, responseMetadata
 }
 
-// confirmCreateLanded checks whether a create that failed ambiguously still
-// committed: the stored entry's resolved chunks must be exactly the uploaded
-// ones. On a match the finalization the error skipped runs under the object
-// write lock, and true reports the write as successful.
-func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) bool {
+// createLookupTimeout bounds the entry lookups confirmCreateLanded runs under
+// the object write lock, so a hung filer cannot stall the write path.
+const createLookupTimeout = 10 * time.Second
+
+// confirmCreateLanded resolves a create whose outcome is uncertain: a stored
+// entry resolving to the uploaded chunks confirms the write landed — the
+// finalization the error skipped then runs under the object write lock, and
+// landed reports success — while absent requires every filer the create could
+// have committed on to lack the entry, the only outcome where the uploaded
+// chunks are orphaned.
+func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) (landed, absent bool) {
 	dir, name := path.Dir(filePath), path.Base(filePath)
 	owner := s3a.routableWriteOwner(bucket, object)
-	confirmed := false
+	lookupCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
+	defer cancel()
 	// Verify, finalize, and roll back inside one critical section: a concurrent
 	// write to the same key must not slip in between them.
 	s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
-		existing, lookupErr := s3a.lookupEntryPreferringOwner(owner, dir, name)
-		if lookupErr != nil || existing == nil {
+		var existing *filer_pb.Entry
+		uncertain, queried := false, false
+		for _, target := range s3a.createTargetFilers(owner, bucket, object) {
+			e, lookupErr := s3a.lookupEntryOnFiler(lookupCtx, target, dir, name)
+			queried = true
+			if e != nil {
+				existing = e
+				break
+			}
+			if lookupErr != nil && !errors.Is(lookupErr, filer_pb.ErrNotFound) {
+				uncertain = true
+			}
+		}
+		if existing == nil {
+			absent = queried && !uncertain
 			return s3err.ErrNone
 		}
-		resolved, _, resolveErr := filer.ResolveChunkManifest(context.Background(), s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+		if len(uploaded) == 0 {
+			return s3err.ErrNone
+		}
+		resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
 		if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
 			return s3err.ErrNone
 		}
 		glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
 		if finalize == nil || finalize.afterCreate == nil {
-			confirmed = true
+			landed = true
 			return s3err.ErrNone
 		}
 		if code := finalize.afterCreate(entry); code != s3err.ErrNone {
@@ -1075,10 +1099,36 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, ent
 			}
 			return s3err.ErrNone
 		}
-		confirmed = true
+		landed = true
 		return s3err.ErrNone
 	})
-	return confirmed
+	return landed, absent
+}
+
+// createTargetFilers lists the filers a failed create could have committed on:
+// the routed owner and the prior one mid-rebalance first, then the failover
+// set the lock path dials. Deduped, empty addresses skipped.
+func (s3a *S3ApiServer) createTargetFilers(owner pb.ServerAddress, bucket, object string) []pb.ServerAddress {
+	var filers []pb.ServerAddress
+	seen := map[pb.ServerAddress]bool{}
+	add := func(f pb.ServerAddress) {
+		if f != "" && !seen[f] {
+			seen[f] = true
+			filers = append(filers, f)
+		}
+	}
+	add(owner)
+	add(s3a.priorWriteOwner(bucket, object))
+	if s3a.filerClient != nil {
+		add(s3a.filerClient.GetCurrentFiler())
+		for _, f := range s3a.filerClient.GetAllFilers() {
+			add(f)
+		}
+	}
+	for _, f := range s3a.option.Filers {
+		add(f)
+	}
+	return filers
 }
 
 // sameFileChunks reports whether two chunk lists reference the same needles,
