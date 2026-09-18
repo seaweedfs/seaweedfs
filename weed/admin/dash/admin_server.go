@@ -1341,11 +1341,13 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 	}
 
 	// Then, get additional master information from Raft cluster
+	raftReturnedEmpty := false
 	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.RaftListClusterServers(context.Background(), &master_pb.RaftListClusterServersRequest{})
 		if err != nil {
 			return err
 		}
+		raftReturnedEmpty = len(resp.ClusterServers) == 0
 
 		// Process each raft server
 		for _, server := range resp.ClusterServers {
@@ -1401,10 +1403,12 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		if currentMaster != "" {
 			masters = append(masters, MasterInfo{
 				Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
-				IsLeader: true,
+				IsLeader: raftReturnedEmpty,
 				Suffrage: "Voter",
 			})
-			leaderCount = 1
+			if raftReturnedEmpty {
+				leaderCount = 1
+			}
 		}
 	}
 
