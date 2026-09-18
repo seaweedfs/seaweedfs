@@ -220,9 +220,7 @@ func groupsRolesJWT(t *testing.T, subject string, groups, roles []string) string
 }
 
 func authenticateSessionToken(t *testing.T, s3iam *S3IAMIntegration, sessionToken string) (*IAMIdentity, s3err.ErrorCode) {
-	req := httptest.NewRequest("GET", "/", http.NoBody)
-	req.Header.Set("Authorization", "Bearer "+sessionToken)
-	return s3iam.AuthenticateJWT(context.Background(), req)
+	return testIdentityFromSessionToken(t, s3iam, sessionToken), s3err.ErrNone
 }
 
 func authorizeGet(ctx context.Context, s3iam *S3IAMIntegration, identity *IAMIdentity, bucket string) bool {

@@ -114,13 +114,12 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 			})
 			require.NoError(t, err, "Failed to assume role %s", tt.roleArn)
 
-			jwtToken := response.Credentials.SessionToken
-			require.NotEmpty(t, jwtToken, "JWT token should not be empty")
+			require.NotEmpty(t, response.Credentials.SessionToken, "session token should not be empty")
 
 			// Execute S3 operations
 			for i, operation := range tt.s3Operations {
 				t.Run(fmt.Sprintf("%s_%s", tt.name, operation.Operation), func(t *testing.T) {
-					allowed := executeS3OperationWithJWT(t, s3Server, operation, jwtToken)
+					allowed := executeS3OperationWithJWT(t, s3Server, operation, response.Credentials)
 					expected := tt.expectedResults[i]
 
 					if expected {
@@ -152,8 +151,6 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 		RoleSessionName:  "multipart-test-session",
 	})
 	require.NoError(t, err)
-
-	jwtToken := response.Credentials.SessionToken
 
 	// Test multipart upload workflow
 	tests := []struct {
@@ -205,7 +202,7 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			allowed := executeS3OperationWithJWT(t, s3Server, tt.operation, jwtToken)
+			allowed := executeS3OperationWithJWT(t, s3Server, tt.operation, response.Credentials)
 			if tt.expected {
 				assert.True(t, allowed, "Multipart operation %s should be allowed", tt.operation.Operation)
 			} else {
@@ -304,10 +301,7 @@ func TestS3ListObjectsV2PrefixCondition(t *testing.T) {
 	require.NotEmpty(t, sessionToken)
 
 	// Authenticate to get IAM identity
-	authReq := httptest.NewRequest("GET", "/examples", http.NoBody)
-	authReq.Header.Set("Authorization", "Bearer "+sessionToken)
-	identity, errCode := s3IAMIntegration.AuthenticateJWT(ctx, authReq)
-	require.Equal(t, s3err.ErrNone, errCode, "Authentication should succeed")
+	identity := testIdentityFromSessionToken(t, s3IAMIntegration, sessionToken)
 
 	tests := []struct {
 		name     string
@@ -434,10 +428,7 @@ func TestS3CreateBucketWithAttachedPolicy(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	authReq := httptest.NewRequest("PUT", "/ml-models", http.NoBody)
-	authReq.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
-	identity, errCode := s3IAMIntegration.AuthenticateJWT(ctx, authReq)
-	require.Equal(t, s3err.ErrNone, errCode)
+	identity := testIdentityFromSessionToken(t, s3IAMIntegration, response.Credentials.SessionToken)
 
 	tests := []struct {
 		name     string
@@ -538,8 +529,6 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	jwtToken := response.Credentials.SessionToken
-
 	// Benchmark multiple GET requests
 	numRequests := 100
 	start := time.Now()
@@ -552,7 +541,7 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 			Operation: "GetObject",
 		}
 
-		executeS3OperationWithJWT(t, s3Server, operation, jwtToken)
+		executeS3OperationWithJWT(t, s3Server, operation, response.Credentials)
 	}
 
 	duration := time.Since(start)
@@ -629,11 +618,13 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		t.Skip("Could not create S3 IAM integration")
 	}
 
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
+	iam.SetIAMIntegration(s3IAMIntegration)
+
 	// Add a simple test endpoint that we can use to verify IAM functionality
 	router.HandleFunc("/test-auth", func(w http.ResponseWriter, r *http.Request) {
-		// Test JWT authentication
-		identity, errCode := s3IAMIntegration.AuthenticateJWT(r.Context(), r)
-		if errCode != s3err.ErrNone {
+		identity, errCode, _ := iam.authenticateRequestInternal(r)
+		if errCode != s3err.ErrNone || identity == nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("Authentication failed"))
 			return
@@ -655,7 +646,7 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 		}
 
 		// Test authorization with appropriate action
-		authErrCode := s3IAMIntegration.AuthorizeAction(r.Context(), identity, action, "test-bucket", "test-object", r)
+		authErrCode := iam.authorizeWithIAM(r, identity, action, "test-bucket", "test-object")
 		if authErrCode != s3err.ErrNone {
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte("Authorization failed"))
@@ -900,10 +891,11 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 	})
 }
 
-func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3Operation, jwtToken string) bool {
+func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3Operation, creds *sts.Credentials) bool {
 	// Use our simplified test endpoint for IAM validation with the correct HTTP method
-	req := httptest.NewRequest(operation.Method, "/test-auth", nil)
-	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req, err := newTestRequest(operation.Method, "http://example.com/test-auth", 0, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Amz-Security-Token", creds.SessionToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	// Set source IP if specified
@@ -911,6 +903,8 @@ func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3
 		req.Header.Set("X-Forwarded-For", operation.SourceIP)
 		req.RemoteAddr = operation.SourceIP + ":12345"
 	}
+
+	require.NoError(t, signRequestV4(req, creds.AccessKeyId, creds.SecretAccessKey))
 
 	// Execute request
 	recorder := httptest.NewRecorder()

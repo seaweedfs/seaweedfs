@@ -66,7 +66,7 @@ func TestSessionClaimsRoundTripParentUser(t *testing.T) {
 		WithRoleInfo("arn:aws:iam::123:role/r", "arn:aws:sts::123:assumed-role/r/s", "arn:aws:sts::123:assumed-role/r/s").
 		WithParentUser(parent)
 
-	info := claims.ToSessionInfo()
+	info := claims.ToSessionInfo(testCredGen)
 	if info.ParentUser != parent {
 		t.Fatalf("ParentUser lost on round-trip: got %q want %q", info.ParentUser, parent)
 	}

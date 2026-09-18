@@ -46,6 +46,9 @@ func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
 	if err != nil || parsed == nil || !parsed.Valid {
 		return status.Error(codes.Unauthenticated, "invalid admin token")
 	}
+	if claims, ok := parsed.Claims.(*security.SeaweedFilerAdminClaims); !ok || claims.SessionId != "" {
+		return status.Error(codes.Unauthenticated, "invalid admin token")
+	}
 	return nil
 }
 

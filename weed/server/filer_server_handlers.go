@@ -265,6 +265,10 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 		glog.V(1).Infof("jwt claims not of type *SeaweedFilerClaims from %s", r.RemoteAddr)
 		return nil, false
 	}
+	if claims.SessionId != "" {
+		glog.V(1).Infof("jwt is an STS session token, not a filer credential, from %s", r.RemoteAddr)
+		return nil, false
+	}
 
 	if len(claims.AllowedMethods) > 0 {
 		hasMethod := false
