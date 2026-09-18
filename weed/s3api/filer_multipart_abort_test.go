@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/codes"
@@ -26,6 +27,7 @@ type fakeAbortFiler struct {
 	objectErr   error
 	versionsDir string
 	versions    []*filer_pb.Entry
+	listErr     error
 	deleteReq   *filer_pb.DeleteEntryRequest
 }
 
@@ -51,6 +53,9 @@ func (f *fakeAbortFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb
 func (f *fakeAbortFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
 	if req.Directory != f.versionsDir {
 		return status.Errorf(codes.Internal, "unexpected listing of %s", req.Directory)
+	}
+	if f.listErr != nil {
+		return f.listErr
 	}
 	for _, entry := range f.versions {
 		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
@@ -173,5 +178,65 @@ func TestAbortGoneUploadAnswersSuccess(t *testing.T) {
 
 	if code != s3err.ErrNone {
 		t.Fatalf("code = %v, want ErrNone", code)
+	}
+}
+
+// A failed .versions listing is undecidable the same way a failed object
+// lookup is: refuse instead of guessing.
+func TestAbortVersionsListErrorRefuses(t *testing.T) {
+	f := &fakeAbortFiler{
+		uploadEntry: uploadRecordEntry("up1"),
+		listErr:     status.Error(codes.Internal, "store down"),
+	}
+	s3a := newAbortTestServer(t, f)
+
+	_, code := s3a.abortMultipartUpload(abortInput("up1"))
+
+	if code != s3err.ErrInternalError {
+		t.Fatalf("code = %v, want ErrInternalError", code)
+	}
+	if f.deleteReq != nil {
+		t.Fatalf("delete issued despite undecidable check: %+v", f.deleteReq)
+	}
+}
+
+func lifecycleAbortRequest(uploadId string) *s3_lifecycle_pb.LifecycleDeleteRequest {
+	return &s3_lifecycle_pb.LifecycleDeleteRequest{
+		Bucket:     "b",
+		ObjectPath: s3_constants.MultipartUploadsFolder + "/" + uploadId,
+	}
+}
+
+func TestLifecycleAbortCompletedUploadDeletesMetadataOnly(t *testing.T) {
+	f := &fakeAbortFiler{
+		uploadEntry: uploadRecordEntry("up1"),
+		objectEntry: versionEntry("a.bin", "up1"),
+	}
+	s3a := newAbortTestServer(t, f)
+
+	resp, err := s3a.lifecycleAbortMPU(context.Background(), lifecycleAbortRequest("up1"))
+
+	if err != nil || resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_DONE {
+		t.Fatalf("resp = %v, err = %v, want DONE", resp, err)
+	}
+	if f.deleteReq == nil || f.deleteReq.IsDeleteData {
+		t.Fatalf("deleteReq = %+v, want IsDeleteData=false", f.deleteReq)
+	}
+}
+
+func TestLifecycleAbortUndecidableCheckRetriesLater(t *testing.T) {
+	f := &fakeAbortFiler{
+		uploadEntry: uploadRecordEntry("up1"),
+		objectErr:   status.Error(codes.Unavailable, "store down"),
+	}
+	s3a := newAbortTestServer(t, f)
+
+	resp, err := s3a.lifecycleAbortMPU(context.Background(), lifecycleAbortRequest("up1"))
+
+	if err != nil || resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_RETRY_LATER {
+		t.Fatalf("resp = %v, err = %v, want RETRY_LATER", resp, err)
+	}
+	if f.deleteReq != nil {
+		t.Fatalf("delete issued despite undecidable check: %+v", f.deleteReq)
 	}
 }

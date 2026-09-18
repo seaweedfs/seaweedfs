@@ -1117,22 +1117,83 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 		return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
 	}
 
-	// A leftover upload directory can outlive the object it completed into;
-	// its part entries then share chunks with that object.
-	deleteData := true
-	completed, err := s3a.uploadCompleted(s3a.bucketDir(*input.Bucket), uploadEntry)
+	object := string(uploadEntry.Extended[s3_constants.ExtMultipartObjectKey])
+	if object == "" && input.Key != nil {
+		object = *input.Key
+	}
+	return &s3.AbortMultipartUploadOutput{}, s3a.withObjectWriteLock(*input.Bucket, object, nil, func() s3err.ErrorCode {
+		return s3a.removeUploadDir(*input.Bucket, *input.UploadId, object, uploadEntry)
+	})
+}
+
+// removeUploadDir removes a leftover upload directory under the object write
+// lock: a directory that outlived the object it completed into shares chunks
+// with it and goes metadata-only; anything else frees the parts' chunks.
+func (s3a *S3ApiServer) removeUploadDir(bucket, uploadId, object string, uploadEntry *filer_pb.Entry) s3err.ErrorCode {
+	completed, err := s3a.uploadCompleted(s3a.bucketDir(bucket), uploadEntry)
 	if err != nil {
-		glog.Errorf("bucket %s abort upload %s completed check: %v", *input.Bucket, *input.UploadId, err)
-		return nil, s3err.ErrInternalError
+		glog.Errorf("bucket %s remove upload %s completed check: %v", bucket, uploadId, err)
+		return s3err.ErrInternalError
 	}
-	deleteData = !completed
-
-	if err := s3a.rm(context.Background(), uploadsFolder, *input.UploadId, deleteData, true); err != nil {
-		glog.V(1).Infof("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)
-		return nil, s3err.ErrInternalError
+	if completed {
+		if err := s3a.rm(context.Background(), s3a.genUploadsFolder(bucket), uploadId, false, true); err != nil {
+			glog.V(1).Infof("bucket %s remove upload %s: %v", bucket, uploadId, err)
+			return s3err.ErrInternalError
+		}
+		return s3err.ErrNone
 	}
+	return s3a.routedUploadDirDelete(bucket, uploadId, object)
+}
 
-	return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
+// routedUploadDirDelete frees an open upload's chunks. The delete rides an
+// ObjectTransaction on the object's lock key, so a racing routed commit either
+// fails its upload-exists precondition afterwards or has already stamped the
+// object — the condition then rejects the data delete and it falls back to
+// metadata-only. With no owner there is no routed commit to exclude, and the
+// caller's object write lock already serializes the mkFile fallback.
+func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s3err.ErrorCode {
+	uploadsFolder := s3a.genUploadsFolder(bucket)
+	rmUploadDir := func(isDeleteData bool) s3err.ErrorCode {
+		if err := s3a.rm(context.Background(), uploadsFolder, uploadId, isDeleteData, true); err != nil {
+			glog.V(1).Infof("bucket %s remove upload %s: %v", bucket, uploadId, err)
+			return s3err.ErrInternalError
+		}
+		return s3err.ErrNone
+	}
+	owner := s3a.objectWriteOwner(bucket, object)
+	if object == "" || owner == "" {
+		return rmUploadDir(true)
+	}
+	objectPath := s3a.toFilerPath(bucket, object)
+	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
+		LockKey:      objectPath,
+		RouteKey:     s3a.objectRouteKey(bucket, object),
+		ConditionKey: objectPath,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:     filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL,
+			ExtKey:   s3_constants.SeaweedFSUploadId,
+			ExtValue: uploadId,
+		}}},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:         filer_pb.ObjectMutation_DELETE,
+			Directory:    uploadsFolder,
+			Name:         uploadId,
+			IsDeleteData: true,
+			IsRecursive:  true,
+		}},
+	})
+	if err != nil {
+		glog.Errorf("bucket %s abort upload %s transaction: %v", bucket, uploadId, err)
+		return s3err.ErrInternalError
+	}
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		return rmUploadDir(false)
+	}
+	if resp.Error != "" {
+		glog.Errorf("bucket %s abort upload %s transaction: %s", bucket, uploadId, resp.Error)
+		return s3err.ErrInternalError
+	}
+	return s3err.ErrNone
 }
 
 // uploadCompleted reports whether the upload assembled into an object: the

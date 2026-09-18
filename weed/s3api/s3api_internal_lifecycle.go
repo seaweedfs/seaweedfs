@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
@@ -182,20 +183,14 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 	if uploadEntry == nil {
 		return noopResolved("NOT_FOUND"), nil
 	}
-	// A leftover upload directory can outlive the object it completed into;
-	// its part entries then share chunks with that object.
-	completed, checkErr := s3a.uploadCompleted(s3a.bucketDir(req.Bucket), uploadEntry)
-	if checkErr != nil {
-		return retryLater("TRANSPORT_ERROR: uploadCompleted: " + checkErr.Error()), nil
+	object := string(uploadEntry.Extended[s3_constants.ExtMultipartObjectKey])
+	code := s3a.withObjectWriteLock(req.Bucket, object, nil, func() s3err.ErrorCode {
+		return s3a.removeUploadDir(req.Bucket, uploadID, object, uploadEntry)
+	})
+	if code == s3err.ErrNone {
+		return done(), nil
 	}
-	if err := s3a.rm(ctx, uploadsFolder, uploadID, !completed, true); err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return noopResolved("NOT_FOUND_AT_DELETE"), nil
-		}
-		glog.V(1).Infof("lifecycle abort_mpu %s/%s: %v", req.Bucket, req.ObjectPath, err)
-		return retryLater("TRANSPORT_ERROR: rm: " + err.Error()), nil
-	}
-	return done(), nil
+	return retryLater("TRANSPORT_ERROR: removeUploadDir: " + s3err.GetAPIError(code).Code), nil
 }
 
 // checkSoleSurvivorMarker returns nil to proceed with the delete, or a
