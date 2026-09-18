@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -137,9 +139,10 @@ func checkBlockedIPPolicy(endpoint string, ip net.IP, allowPrivate bool) error {
 	return nil
 }
 
-// validateReplicaTarget rejects a replica upload target that could redirect the
-// forwarded write away from a peer volume server. The target must be a bare
-// host:port -- a scheme, userinfo, path, query or fragment can smuggle a
+// validateReplicaTarget rejects a peer volume server address that could
+// redirect a dial away from the cluster: replica upload targets and the
+// copy/tail source addresses are all caller-supplied. The target must be a
+// bare host:port -- a scheme, userinfo, path, query or fragment can smuggle a
 // different destination through fmt.Sprintf -- whose host is not loopback,
 // link-local (IMDS) or unspecified. Cluster peers legitimately sit on private
 // networks, so RFC 1918 / CGNAT are allowed.
@@ -226,7 +229,6 @@ func guardedDialer(endpoint string) func(ctx context.Context, network, addr stri
 // peers while still refusing loopback / link-local / unspecified at connect
 // time (closing the rebinding window for replica hostnames too).
 func guardedDialerPolicy(endpoint string, allowPrivate bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, splitErr := net.SplitHostPort(addr)
 		if splitErr != nil {
@@ -237,7 +239,7 @@ func guardedDialerPolicy(endpoint string, allowPrivate bool) func(ctx context.Co
 			if err := checkBlockedIPPolicy(endpoint, ip, allowPrivate); err != nil {
 				return nil, err
 			}
-			return dialer.DialContext(ctx, network, addr)
+			return util.OutboundDialContext(ctx, network, addr)
 		}
 		// Otherwise resolve, validate every answer, and dial the first IP
 		// that passes the deny list. Using a literal-IP target prevents the
@@ -255,13 +257,27 @@ func guardedDialerPolicy(endpoint string, allowPrivate bool) func(ctx context.Co
 				}
 				continue
 			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
+			return util.OutboundDialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
 		}
 		if firstBlockErr != nil {
 			return nil, firstBlockErr
 		}
 		return nil, fmt.Errorf("resolve remote endpoint host %q: no addresses", host)
 	}
+}
+
+// guardedGrpcDialOption returns a grpc.DialOption that re-applies the replica
+// deny list to every resolved address at connect time, pinning a validated
+// copy/tail source against DNS rebinding. It is nil when the operator opted
+// out with AllowUntrustedRemoteEndpoints; pb skips nil dial options.
+func (vs *VolumeServer) guardedGrpcDialOption(endpoint string) grpc.DialOption {
+	if vs.AllowUntrustedRemoteEndpoints {
+		return nil
+	}
+	dial := guardedDialerPolicy(endpoint, true)
+	return grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+		return dial(ctx, "tcp", addr)
+	})
 }
 
 // newGuardedHTTPClient returns an *http.Client whose transport refuses to

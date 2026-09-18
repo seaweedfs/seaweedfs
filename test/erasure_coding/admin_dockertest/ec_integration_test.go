@@ -129,7 +129,7 @@ func ensureEnvironment(t *testing.T) {
 			port := 8080 + i - 1
 			dir := filepath.Join("tmp", volName)
 			os.MkdirAll(dir, 0755)
-			startWeed(t, volName, "volume", "-dir="+dir, "-mserver=localhost:9333", fmt.Sprintf("-port=%d", port), "-ip=localhost")
+			startWeed(t, volName, "volume", "-dir="+dir, "-mserver=localhost:9333", fmt.Sprintf("-port=%d", port), "-ip=localhost", "-volume.allowUntrustedRemoteEndpoints")
 		}(i)
 	}
 	volWg.Wait()

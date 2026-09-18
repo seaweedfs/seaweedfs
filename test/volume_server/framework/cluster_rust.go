@@ -201,6 +201,7 @@ func rustVolumeArgs(
 		"--dir", dataDir,
 		"--max", "16",
 		"--master", "127.0.0.1:" + strconv.Itoa(masterPort),
+		"--volume.allowUntrustedRemoteEndpoints",
 		"--securityFile", filepath.Join(configDir, "security.toml"),
 		"--readMode", profile.ReadMode,
 		"--concurrentUploadLimitMB", strconv.Itoa(profile.ConcurrentUploadLimitMB),

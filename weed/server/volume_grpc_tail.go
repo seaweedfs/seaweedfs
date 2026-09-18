@@ -87,6 +87,12 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VolumeTailReceiverResponse{}
 
+	if !vs.AllowUntrustedRemoteEndpoints {
+		if err := validateReplicaTarget(ctx, req.SourceVolumeServer); err != nil {
+			return resp, fmt.Errorf("invalid source volume server %s: %w", req.SourceVolumeServer, err)
+		}
+	}
+
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return resp, fmt.Errorf("receiver not found volume id %d", req.VolumeId)
@@ -94,10 +100,10 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 
 	defer glog.V(1).Infof("receive tailing volume %d finished", v.Id)
 
-	return resp, operation.TailVolumeFromSource(pb.ServerAddress(req.SourceVolumeServer), vs.grpcDialOption, v.Id, req.SinceNs, int(req.IdleTimeoutSeconds), func(n *needle.Needle) error {
+	return resp, operation.TailVolumeFromSource(pb.ServerAddress(req.SourceVolumeServer), v.Id, req.SinceNs, int(req.IdleTimeoutSeconds), func(n *needle.Needle) error {
 		_, err := vs.store.WriteVolumeNeedle(v.Id, n, false, false)
 		return err
-	})
+	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceVolumeServer))
 
 }
 

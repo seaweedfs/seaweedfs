@@ -316,6 +316,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
+	if !vs.AllowUntrustedRemoteEndpoints {
+		if err := validateReplicaTarget(ctx, req.SourceDataNode); err != nil {
+			return nil, fmt.Errorf("invalid source data node %s: %w", req.SourceDataNode, err)
+		}
+	}
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
@@ -387,7 +392,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}
 	throttler := util.NewWriteThrottler(ioBytePerSecond)
 
-	err := operation.WithVolumeServerClient(true, pb.ServerAddress(req.SourceDataNode), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
 
 		// copy ec data slices
 		for _, shardId := range req.ShardIds {
@@ -455,7 +460,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 		}
 		return nil
-	})
+	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceDataNode))
 	if err != nil {
 		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %v", req.VolumeId, err)
 	}
