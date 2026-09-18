@@ -40,27 +40,11 @@ jobs:
           ls -la telemetry-server
           echo "Build completed successfully"
 
-      - name: First-time Server Setup
-        if: github.event_name == 'workflow_dispatch' && inputs.setup
+      - name: Generate Service Configuration
+        if: github.event_name == 'workflow_dispatch' && (inputs.setup || inputs.deploy)
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.TELEMETRY_SSH_PRIVATE_KEY }}
-          REMOTE_HOST: ${{ secrets.TELEMETRY_HOST }}
           REMOTE_USER: ${{ secrets.TELEMETRY_USER }}
         run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          echo "Host *" > ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-
-          # Create all required directories with proper permissions
-          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
-            mkdir -p ~/seaweedfs-telemetry/bin ~/seaweedfs-telemetry/logs ~/seaweedfs-telemetry/data ~/seaweedfs-telemetry/tmp && \
-            chmod 755 ~/seaweedfs-telemetry/logs && \
-            chmod 755 ~/seaweedfs-telemetry/data && \
-            touch ~/seaweedfs-telemetry/logs/telemetry.log ~/seaweedfs-telemetry/logs/telemetry.error.log && \
-            chmod 644 ~/seaweedfs-telemetry/logs/*.log"
-
           # Create systemd service file
           echo "
           [Unit]
@@ -92,6 +76,27 @@ jobs:
                   systemctl restart telemetry.service
               endscript
           }" > telemetry_logrotate
+
+      - name: First-time Server Setup
+        if: github.event_name == 'workflow_dispatch' && inputs.setup
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TELEMETRY_SSH_PRIVATE_KEY }}
+          REMOTE_HOST: ${{ secrets.TELEMETRY_HOST }}
+          REMOTE_USER: ${{ secrets.TELEMETRY_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+
+          # Create all required directories with proper permissions
+          ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
+            mkdir -p ~/seaweedfs-telemetry/bin ~/seaweedfs-telemetry/logs ~/seaweedfs-telemetry/data ~/seaweedfs-telemetry/tmp && \
+            chmod 755 ~/seaweedfs-telemetry/logs && \
+            chmod 755 ~/seaweedfs-telemetry/data && \
+            touch ~/seaweedfs-telemetry/logs/telemetry.log ~/seaweedfs-telemetry/logs/telemetry.error.log && \
+            chmod 644 ~/seaweedfs-telemetry/logs/*.log"
 
           # Copy configuration files
           scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
@@ -135,11 +140,17 @@ jobs:
           scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
           scp -i ~/.ssh/deploy_key telemetry/prometheus.yml $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
 
+          # Copy updated service and logrotate files
+          scp -i ~/.ssh/deploy_key telemetry.service telemetry_logrotate $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
+
           # Check if service exists and deploy accordingly
           ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
             if systemctl list-unit-files telemetry.service >/dev/null 2>&1; then
               echo 'Service exists, performing update...'
               sudo systemctl stop telemetry.service
+              sudo mv ~/seaweedfs-telemetry/telemetry.service /etc/systemd/system/
+              sudo mv ~/seaweedfs-telemetry/telemetry_logrotate /etc/logrotate.d/seaweedfs-telemetry
+              sudo systemctl daemon-reload
               mkdir -p ~/seaweedfs-telemetry/bin
               mv ~/seaweedfs-telemetry/tmp/telemetry-server ~/seaweedfs-telemetry/bin/
               chmod +x ~/seaweedfs-telemetry/bin/telemetry-server
