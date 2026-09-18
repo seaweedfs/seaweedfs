@@ -1811,6 +1811,17 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
+        if !self.state.allow_untrusted_remote_endpoints {
+            crate::remote_storage::validate_replica_target(&req.source_data_node)
+                .await
+                .map_err(|e| {
+                    Status::invalid_argument(format!(
+                        "invalid source data node {}: {}",
+                        req.source_data_node, e
+                    ))
+                })?;
+        }
+
         // A pre-existing local replica is NOT deleted up front. Deleting before
         // the source is confirmed reachable destroys a healthy copy on a
         // transient source outage (and, on retry, can lose the volume
@@ -2890,6 +2901,17 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
+        if !self.state.allow_untrusted_remote_endpoints {
+            crate::remote_storage::validate_replica_target(&req.source_volume_server)
+                .await
+                .map_err(|e| {
+                    Status::invalid_argument(format!(
+                        "invalid source volume server {}: {}",
+                        req.source_volume_server, e
+                    ))
+                })?;
+        }
+
         // Check volume exists
         {
             let store = self.state.store.read().unwrap();
@@ -3326,6 +3348,17 @@ impl VolumeServer for VolumeGrpcService {
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
+
+        if !self.state.allow_untrusted_remote_endpoints {
+            crate::remote_storage::validate_replica_target(&req.source_data_node)
+                .await
+                .map_err(|e| {
+                    Status::invalid_argument(format!(
+                        "invalid source data node {}: {}",
+                        req.source_data_node, e
+                    ))
+                })?;
+        }
 
         // Validate wire shard ids at the boundary: ShardId is u8 but only
         // 0..MAX_SHARD_COUNT are valid. Rejects 256 (would truncate to 0)
@@ -6439,7 +6472,7 @@ mod tests {
                 crate::remote_storage::s3_tier::S3TierRegistry::new(),
             ),
             read_mode: crate::config::ReadMode::Local,
-            allow_untrusted_remote_endpoints: false,
+            allow_untrusted_remote_endpoints: true,
             master_url: String::new(),
             master_urls: Vec::new(),
             seed_master_set: std::collections::HashSet::new(),
