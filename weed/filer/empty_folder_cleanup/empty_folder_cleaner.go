@@ -71,6 +71,7 @@ type folderState struct {
 type bucketPolicyGen struct {
 	gen      uint64
 	lastBump time.Time
+	inflight int
 }
 
 type bucketCleanupPolicyState struct {
@@ -674,26 +675,29 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 	efc.mu.RUnlock()
 
 	for attempt := 0; attempt < 3; attempt++ {
-		efc.mu.RLock()
-		var gen uint64
-		if g := efc.policyGen[bucketPath]; g != nil {
-			gen = g.gen
+		efc.mu.Lock()
+		if efc.policyGen == nil {
+			efc.policyGen = make(map[string]*bucketPolicyGen)
 		}
-		efc.mu.RUnlock()
+		state := efc.policyGen[bucketPath]
+		if state == nil {
+			state = &bucketPolicyGen{}
+			efc.policyGen[bucketPath] = state
+		}
+		state.inflight++
+		gen := state.gen
+		efc.mu.Unlock()
 
 		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
-		if err != nil {
-			return "", true, "", "", err
-		}
-
-		autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
 
 		efc.mu.Lock()
-		var genNow uint64
-		if g := efc.policyGen[bucketPath]; g != nil {
-			genNow = g.gen
+		state.inflight--
+		if err != nil {
+			efc.mu.Unlock()
+			return "", true, "", "", err
 		}
-		if gen != genNow {
+		autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
+		if gen != state.gen {
 			efc.mu.Unlock()
 			continue
 		}
@@ -850,10 +854,10 @@ func (efc *EmptyFolderCleaner) evictStaleCacheEntries() {
 		}
 	}
 
-	// Generations outlive their policy entries so in-flight reads stay
-	// protected; once quiet beyond the expiry a read cannot still be running.
+	// A generation stays while a read that captured it can still return; an idle
+	// one drops after the expiry so bucket churn cannot grow the map forever.
 	for bucketPath, gen := range efc.policyGen {
-		if now.Sub(gen.lastBump) > efc.cacheExpiry {
+		if gen.inflight == 0 && now.Sub(gen.lastBump) > efc.cacheExpiry {
 			delete(efc.policyGen, bucketPath)
 		}
 	}

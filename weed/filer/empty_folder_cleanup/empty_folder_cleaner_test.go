@@ -1133,6 +1133,56 @@ func TestEmptyFolderCleaner_getBucketCleanupPolicy_concurrentUpdate(t *testing.T
 	}
 }
 
+func TestEmptyFolderCleaner_getBucketCleanupPolicy_evictionKeepsInflightRead(t *testing.T) {
+	var cleaner *EmptyFolderCleaner
+	started := make(chan struct{})
+	release := make(chan struct{})
+	calls := 0
+	mock := &mockFilerOps{
+		attrsFn: func(_ util.FullPath) (map[string][]byte, error) {
+			calls++
+			if calls == 1 {
+				close(started)
+				<-release
+				return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("true")}, nil
+			}
+			return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("false")}, nil
+		},
+	}
+
+	cleaner = &EmptyFolderCleaner{
+		filer:                 mock,
+		bucketPath:            "/buckets",
+		enabled:               true,
+		cacheExpiry:           time.Minute,
+		folderCounts:          make(map[string]*folderState),
+		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+		policyGen:             make(map[string]*bucketPolicyGen),
+		cleanupQueue:          NewCleanupQueue(1000, time.Minute),
+	}
+
+	go func() {
+		<-started
+		cleaner.InvalidateBucketPolicy("/buckets", "test", true)
+		cleaner.mu.Lock()
+		cleaner.policyGen["/buckets/test"].lastBump = time.Now().Add(-time.Hour)
+		cleaner.mu.Unlock()
+		cleaner.evictStaleCacheEntries()
+		close(release)
+	}()
+
+	_, autoRemove, _, attrValue, err := cleaner.getBucketCleanupPolicy(context.Background(), "/buckets/test/folder")
+	if err != nil {
+		t.Fatalf("getBucketCleanupPolicy: %v", err)
+	}
+	if !autoRemove || attrValue != "false" {
+		t.Fatalf("expected the stalled read to be discarded, got autoRemove=%v attr=%q", autoRemove, attrValue)
+	}
+	if calls < 2 {
+		t.Fatalf("expected the stale load to be retried, got %d attribute reads", calls)
+	}
+}
+
 func TestEmptyFolderCleaner_executeCleanup_policyFailureRequeues(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
