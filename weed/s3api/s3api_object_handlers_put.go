@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -1044,26 +1045,33 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	return etag, s3err.ErrNone, responseMetadata
 }
 
-// confirmCreateLanded resolves a create whose outcome is uncertain: the stored
-// entry's resolved chunks matching the uploaded ones confirms the write
-// landed — the finalization the error skipped then runs under the object write
-// lock, and landed reports success — while a confirmed-missing entry reports
-// absent, the only outcome where the uploaded chunks are orphaned.
+// confirmCreateLanded resolves a create whose outcome is uncertain: a stored
+// entry resolving to the uploaded chunks confirms the write landed — the
+// finalization the error skipped then runs under the object write lock, and
+// landed reports success — while absent requires every filer the create could
+// have committed on to lack the entry, the only outcome where the uploaded
+// chunks are orphaned.
 func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) (landed, absent bool) {
 	dir, name := path.Dir(filePath), path.Base(filePath)
 	owner := s3a.routableWriteOwner(bucket, object)
 	// Verify, finalize, and roll back inside one critical section: a concurrent
 	// write to the same key must not slip in between them.
 	s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
-		existing, lookupErr := s3a.lookupEntryPreferringOwner(owner, dir, name)
-		if lookupErr != nil {
-			if errors.Is(lookupErr, filer_pb.ErrNotFound) {
-				absent = true
+		var existing *filer_pb.Entry
+		uncertain, queried := false, false
+		for _, target := range s3a.createTargetFilers(owner, bucket, object) {
+			e, lookupErr := s3a.lookupEntryOnFiler(target, dir, name)
+			queried = true
+			if e != nil {
+				existing = e
+				break
 			}
-			return s3err.ErrNone
+			if lookupErr != nil && !errors.Is(lookupErr, filer_pb.ErrNotFound) {
+				uncertain = true
+			}
 		}
 		if existing == nil {
-			absent = true
+			absent = queried && !uncertain
 			return s3err.ErrNone
 		}
 		if len(uploaded) == 0 {
@@ -1089,6 +1097,32 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, ent
 		return s3err.ErrNone
 	})
 	return landed, absent
+}
+
+// createTargetFilers lists the filers a failed create could have committed on:
+// the routed owner and the prior one mid-rebalance first, then the failover
+// set the lock path dials. Deduped, empty addresses skipped.
+func (s3a *S3ApiServer) createTargetFilers(owner pb.ServerAddress, bucket, object string) []pb.ServerAddress {
+	var filers []pb.ServerAddress
+	seen := map[pb.ServerAddress]bool{}
+	add := func(f pb.ServerAddress) {
+		if f != "" && !seen[f] {
+			seen[f] = true
+			filers = append(filers, f)
+		}
+	}
+	add(owner)
+	add(s3a.priorWriteOwner(bucket, object))
+	if s3a.filerClient != nil {
+		add(s3a.filerClient.GetCurrentFiler())
+		for _, f := range s3a.filerClient.GetAllFilers() {
+			add(f)
+		}
+	}
+	for _, f := range s3a.option.Filers {
+		add(f)
+	}
+	return filers
 }
 
 // sameFileChunks reports whether two chunk lists reference the same needles,

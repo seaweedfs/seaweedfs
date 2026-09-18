@@ -149,16 +149,16 @@ func (f *ambiguousPutFiler) LookupVolume(_ context.Context, req *filer_pb.Lookup
 	return resp, nil
 }
 
-func newPutTestServer(t *testing.T, filerAddr pb.ServerAddress) *S3ApiServer {
+func newPutTestServer(t *testing.T, filerAddrs ...pb.ServerAddress) *S3ApiServer {
 	t.Helper()
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	return &S3ApiServer{
 		option: &S3ApiServerOption{
-			Filers:         []pb.ServerAddress{filerAddr},
+			Filers:         filerAddrs,
 			GrpcDialOption: dialOption,
 			BucketsPath:    "/buckets",
 		},
-		filerClient: wdclient.NewFilerClient([]pb.ServerAddress{filerAddr}, dialOption, ""),
+		filerClient: wdclient.NewFilerClient(filerAddrs, dialOption, ""),
 	}
 }
 
@@ -208,6 +208,37 @@ func TestPutToFilerPostCommitErrorKeepsChunks(t *testing.T) {
 		respError: "create parent directories of /buckets/b: i/o timeout",
 	}
 	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	etag, code := putTestObject(t, s3a)
+	if code != s3err.ErrNone {
+		t.Fatalf("putToFiler returned %v, want success once the entry is confirmed on the filer", code)
+	}
+	if etag == "" {
+		t.Fatal("expected an etag")
+	}
+	if deleted := volume.deleted(); len(deleted) != 0 {
+		t.Fatalf("chunks under a live entry were deleted: %v", deleted)
+	}
+}
+
+// Issue 11387, multi-filer: a create that fails over mid-flight can commit on
+// a filer the confirmation does not ask first. A not-found from one replica
+// does not authorize deleting chunks an entry on another filer references.
+func TestPutToFilerPostCommitErrorOnFailoverFilerKeepsChunks(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerA := &ambiguousPutFiler{
+		volume:    volume,
+		entries:   map[string]*filer_pb.Entry{},
+		apply:     false,
+		createErr: status.Error(codes.Unavailable, "connect: connection refused"),
+	}
+	filerB := &ambiguousPutFiler{
+		volume:    volume,
+		entries:   map[string]*filer_pb.Entry{},
+		apply:     true,
+		respError: "create parent directories of /buckets/b: i/o timeout",
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerA), startFakeFiler(t, filerB))
 
 	etag, code := putTestObject(t, s3a)
 	if code != s3err.ErrNone {
