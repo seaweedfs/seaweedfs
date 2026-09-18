@@ -25,11 +25,11 @@ func TailVolume(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid needle
 
 	volumeServer := lookup.Locations[0].ServerAddress()
 
-	return TailVolumeFromSource(volumeServer, vid, sinceNs, timeoutSeconds, fn, grpcDialOption)
+	return TailVolumeFromSource(volumeServer, vid, sinceNs, timeoutSeconds, grpcDialOption, fn)
 }
 
-func TailVolumeFromSource(volumeServer pb.ServerAddress, vid needle.VolumeId, sinceNs uint64, idleTimeoutSeconds int, fn func(n *needle.Needle) error, grpcDialOptions ...grpc.DialOption) error {
-	return WithVolumeServerClientOptions(true, volumeServer, func(client volume_server_pb.VolumeServerClient) error {
+func TailVolumeFromSource(volumeServer pb.ServerAddress, vid needle.VolumeId, sinceNs uint64, idleTimeoutSeconds int, grpcDialOption grpc.DialOption, fn func(n *needle.Needle) error, extraDialOptions ...grpc.DialOption) error {
+	return WithVolumeServerClient(true, volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -90,5 +90,5 @@ func TailVolumeFromSource(volumeServer pb.ServerAddress, vid needle.VolumeId, si
 
 		}
 		return nil
-	}, grpcDialOptions...)
+	}, extraDialOptions...)
 }

@@ -10,19 +10,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
-func WithVolumeServerClient(streamingMode bool, volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, fn func(volume_server_pb.VolumeServerClient) error) error {
-	return WithVolumeServerClientOptions(streamingMode, volumeServer, fn, grpcDialOption)
-}
-
-// WithVolumeServerClientOptions is WithVolumeServerClient with extra dial
-// options appended after the TLS option, so a caller dialing an untrusted
-// source address can pin the validated endpoint at connect time.
-func WithVolumeServerClientOptions(streamingMode bool, volumeServer pb.ServerAddress, fn func(volume_server_pb.VolumeServerClient) error, grpcDialOptions ...grpc.DialOption) error {
+// WithVolumeServerClient dials with the TLS option plus any extra dial options
+// appended after it, so a caller dialing an untrusted source address can pin
+// the validated endpoint at connect time.
+func WithVolumeServerClient(streamingMode bool, volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, fn func(volume_server_pb.VolumeServerClient) error, extraDialOptions ...grpc.DialOption) error {
 
 	return pb.WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
 		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 		return fn(client)
-	}, volumeServer.ToGrpcAddress(), false, grpcDialOptions...)
+	}, volumeServer.ToGrpcAddress(), false, append([]grpc.DialOption{grpcDialOption}, extraDialOptions...)...)
 
 }
 
