@@ -995,17 +995,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 		// If the entry was never created, the uploaded chunks are orphaned and must be deleted.
 		if !entryCreated {
-			// A transport failure is ambiguous: the filer may have committed the
-			// entry anyway (issue #11366), so a retryable error never deletes the
-			// uploaded chunks — it is only upgraded to success when the write owner
-			// proves the entry landed with these chunks.
-			ambiguous := createErr != nil && filerErrorToS3Error(createErr) == s3err.ErrServiceUnavailable
-			if ambiguous && len(chunkResult.FileChunks) > 0 {
-				if landed, _ := s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize); landed {
-					createCode = s3err.ErrNone
-				}
+			// A failed create does not prove the entry is absent: a lost response
+			// can hide a commit (issue #11366) and the filer can fail after
+			// inserting the entry (issue #11387), so the entry's presence — not
+			// the error class — decides the chunks' fate.
+			landed, absent := s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize)
+			if landed {
+				createCode = s3err.ErrNone
 			}
-			if createCode != s3err.ErrNone && !ambiguous {
+			if createCode != s3err.ErrNone && absent {
 				orphaned := chunkResult.FileChunks
 				if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
 					orphaned = append(manifestChunks, orphaned...)
