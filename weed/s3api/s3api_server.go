@@ -284,7 +284,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	//     assumed chunk size (s3ChunkCacheChunkSizeMB), clamped to a small
 	//     floor so tiny caches still function.
 	//
-	// Downloader slots: each slot holds one in-flight / recently-completed
+	// Downloader slots: each slot holds one in-flight or not-yet-consumed
 	// chunk buffer (~4 MiB by default), so this caps both peak memory for
 	// in-flight chunks (s3ReaderCacheDownloaderLimit × chunkSize) and the
 	// global fetch concurrency across all S3 GET requests. WebDAV uses 32
