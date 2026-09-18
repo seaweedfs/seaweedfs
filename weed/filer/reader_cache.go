@@ -34,6 +34,7 @@ type ReaderCache struct {
 type SingleChunkCacher struct {
 	completedTimeNew int64
 	readers          int32
+	consumed         int32
 	sync.Mutex
 	parent         *ReaderCache
 	chunkFileId    string
@@ -191,11 +192,32 @@ func (rc *ReaderCache) UnCache(fileId string) {
 
 func (rc *ReaderCache) remove(downloader *SingleChunkCacher) {
 	rc.Lock()
-	if rc.downloaders[downloader.chunkFileId] == downloader {
+	removed := rc.downloaders[downloader.chunkFileId] == downloader
+	if removed {
 		delete(rc.downloaders, downloader.chunkFileId)
 	}
 	rc.Unlock()
-	downloader.destroy()
+	if removed {
+		downloader.destroy()
+	}
+}
+
+// removeConsumed drops a cacher once its buffer was fully read and no
+// readers remain attached. The checks run under the ReaderCache lock so a
+// reader attaching at the same time either wins (the cacher stays and that
+// reader's detach retries the removal) or misses the map and refetches.
+func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
+	rc.Lock()
+	removed := rc.downloaders[downloader.chunkFileId] == downloader &&
+		atomic.LoadInt32(&downloader.readers) == 0 &&
+		atomic.LoadInt32(&downloader.consumed) != 0
+	if removed {
+		delete(rc.downloaders, downloader.chunkFileId)
+	}
+	rc.Unlock()
+	if removed {
+		downloader.destroy()
+	}
 }
 
 func (rc *ReaderCache) destroy() {
@@ -334,12 +356,10 @@ func (s *SingleChunkCacher) destroy() {
 // for other readers - see comment in startCaching about shared resource semantics).
 // The caller must s.wg.Add(1) under the ReaderCache lock before calling; this only releases it.
 func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset int64) (n int, err error) {
-	var reachedEnd bool
 	defer func() {
 		s.wg.Done()
-		if atomic.AddInt32(&s.readers, -1) == 0 && reachedEnd {
-			s.parent.remove(s)
-		}
+		atomic.AddInt32(&s.readers, -1)
+		s.parent.removeConsumed(s)
 	}()
 
 	// Wait for download to complete, but allow reader cancellation.
@@ -371,6 +391,8 @@ func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset 
 	}
 
 	n = copy(buf, s.data[offset:])
-	reachedEnd = offset+int64(n) == int64(len(s.data))
+	if offset+int64(n) == int64(len(s.data)) {
+		atomic.StoreInt32(&s.consumed, 1)
+	}
 	return n, nil
 }

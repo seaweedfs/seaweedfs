@@ -303,7 +303,7 @@ func TestReaderCachePrefetchBufferDroppedAfterRead(t *testing.T) {
 }
 
 // A consumed chunk survives while another reader is still attached; it is
-// dropped only when the last reader detaches after reaching the end.
+// dropped once no readers remain, regardless of which reader reached the end.
 func TestReaderCacheConsumedBufferSurvivesAttachedReader(t *testing.T) {
 	var fetchCount int32
 	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
@@ -339,20 +339,11 @@ func TestReaderCacheConsumedBufferSurvivesAttachedReader(t *testing.T) {
 		t.Fatal("consumed chunk dropped while a reader was still attached")
 	}
 
-	// The attached reader finishes without reaching the end: nothing drops yet.
+	// The attached reader detaches without reading: since the buffer was
+	// already consumed, the last detach drops it.
 	downloader.wg.Done()
 	atomic.AddInt32(&downloader.readers, -1)
-	rc.Lock()
-	_, retained = rc.downloaders["chunk"]
-	rc.Unlock()
-	if !retained {
-		t.Fatal("chunk dropped when a non-consuming reader detached")
-	}
-
-	// A later full read attaches, consumes to the end, and drops the buffer.
-	if _, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false); err != nil {
-		t.Fatal(err)
-	}
+	rc.removeConsumed(downloader)
 	rc.Lock()
 	_, retained = rc.downloaders["chunk"]
 	rc.Unlock()
