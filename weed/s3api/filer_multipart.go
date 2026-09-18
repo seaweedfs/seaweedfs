@@ -398,6 +398,9 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		if isFilerNotFound(err) {
+			if output, code := s3a.resumeCommittedObject(r, input, dirName, entryName); code != s3err.ErrNoSuchUpload {
+				return &multipartCompletionState{metadataOnlyCleanup: true}, output, code
+			}
 			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
 			return nil, nil, s3err.ErrNoSuchUpload
 		}
@@ -405,6 +408,9 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		return nil, nil, s3err.ErrInternalError
 	}
 	if len(entries) == 0 {
+		if output, code := s3a.resumeCommittedObject(r, input, dirName, entryName); code != s3err.ErrNoSuchUpload {
+			return &multipartCompletionState{metadataOnlyCleanup: true}, output, code
+		}
 		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
 		return nil, nil, s3err.ErrNoSuchUpload
 	}
@@ -1030,6 +1036,31 @@ func (s3a *S3ApiServer) deleteUnusedPartEntries(ctx context.Context, uploadDirec
 		}
 	}
 	return lastErr
+}
+
+// resumeCommittedObject finds an entry this upload already committed at the
+// regular path when the upload directory is gone. Suspended versioning can
+// leave such an entry hidden behind a delete marker the finalize failed to
+// retire, so re-running it repairs the key and lets the retry succeed. Any
+// other versioning state means a newer write owns the key and the marker must
+// not be demoted.
+func (s3a *S3ApiServer) resumeCommittedObject(r *http.Request, input *s3.CompleteMultipartUploadInput, dirName, entryName string) (*CompleteMultipartUploadResult, s3err.ErrorCode) {
+	entry, err := s3a.getEntry(dirName, entryName)
+	if err != nil || entry == nil || string(entry.Extended[s3_constants.SeaweedFSUploadId]) != *input.UploadId {
+		return nil, s3err.ErrNoSuchUpload
+	}
+	state, err := s3a.getVersioningState(*input.Bucket)
+	if err != nil {
+		return nil, s3err.ErrInternalError
+	}
+	if state != s3_constants.VersioningSuspended {
+		return nil, s3err.ErrNoSuchUpload
+	}
+	if err := s3a.finalizeSuspendedNullWrite(s3a.objectWriteOwner(*input.Bucket, *input.Key), *input.Bucket, s3_constants.NormalizeObjectKey(*input.Key), s3_constants.SeaweedFSUploadId, *input.UploadId); err != nil {
+		glog.Errorf("completeMultipartUpload: failed to retire the null delete marker for %s/%s: %v", *input.Bucket, *input.Key, err)
+		return nil, s3err.ErrInternalError
+	}
+	return completeMultipartResult(r, input, getEtagFromEntry(entry), entry), s3err.ErrNone
 }
 
 // Metadata-only: the version file's chunks are the still-registered parts'
