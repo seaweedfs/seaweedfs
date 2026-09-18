@@ -155,21 +155,18 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 
 		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
 		if errCode != s3err.ErrNone {
-			if !s.authenticator.DefaultAllow() {
-				apiErr := s3err.GetAPIError(errCode)
-				code := codeInternal
-				switch apiErr.HTTPStatusCode {
-				case http.StatusForbidden:
-					code = codePermissionDenied
-				case http.StatusUnauthorized:
-					code = codeUnauthenticated
-				case http.StatusBadRequest:
-					code = codeInvalidInput
-				}
-				writeError(w, r, apiErr.HTTPStatusCode, code, apiErr.Description)
-				return
+			apiErr := s3err.GetAPIError(errCode)
+			code := codeInternal
+			switch apiErr.HTTPStatusCode {
+			case http.StatusForbidden:
+				code = codePermissionDenied
+			case http.StatusUnauthorized:
+				code = codeUnauthenticated
+			case http.StatusBadRequest:
+				code = codeInvalidInput
 			}
-			glog.V(2).Infof("lance: authentication failed (%v) but the gateway is open, proceeding", errCode)
+			writeError(w, r, apiErr.HTTPStatusCode, code, apiErr.Description)
+			return
 		}
 
 		if identityName != "" || identity != nil {
