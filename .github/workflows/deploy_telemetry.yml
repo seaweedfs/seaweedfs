@@ -35,7 +35,7 @@ jobs:
           cd telemetry/server
           go mod tidy
           echo "Building telemetry server..."
-          GOOS=linux GOARCH=amd64 go build -o ../../telemetry-server .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../telemetry-server .
           cd ../..
           ls -la telemetry-server
           echo "Build completed successfully"
@@ -71,11 +71,9 @@ jobs:
           Type=simple
           User=$REMOTE_USER
           WorkingDirectory=/home/$REMOTE_USER/seaweedfs-telemetry
-          ExecStart=/home/$REMOTE_USER/seaweedfs-telemetry/bin/telemetry-server -port=8353
+          ExecStart=/bin/sh -c 'exec /home/$REMOTE_USER/seaweedfs-telemetry/bin/telemetry-server -port=8353 >>/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.log 2>>/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.error.log'
           Restart=always
           RestartSec=5
-          StandardOutput=append:/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.log
-          StandardError=append:/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.error.log
 
           [Install]
           WantedBy=multi-user.target" > telemetry.service
