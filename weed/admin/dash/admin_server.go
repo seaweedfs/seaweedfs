@@ -1351,6 +1351,9 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		for _, server := range resp.ClusterServers {
 			// Raft stores gRPC addresses, convert to HTTP address
 			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
+			if httpAddress == "" {
+				continue
+			}
 
 			// Update existing master info or create new one
 			if masterInfo, exists := masterMap[httpAddress]; exists {

@@ -564,7 +564,7 @@ func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
 	host, grpcPort, parseErr := hostAndPort(grpcAddress)
 	if parseErr != nil {
 		glog.Errorf("server grpc address %s parse error: %v", grpcAddress, parseErr)
-		return grpcAddress
+		return ""
 	}
 
 	port := int(grpcPort) - 10000

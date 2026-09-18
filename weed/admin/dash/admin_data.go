@@ -293,14 +293,17 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		}
 		raftCallSucceeded = true
 		for _, server := range resp.ClusterServers {
-			// pb.GrpcAddressToServerAddress calls glog.Fatalf on a parse
-			// error, so pre-validate the raft address with net.SplitHostPort
-			// and skip malformed entries instead of taking the process down.
+			// Skip malformed raft addresses instead of letting an
+			// unconvertible value into masterMap.
 			if _, _, splitErr := net.SplitHostPort(server.Address); splitErr != nil {
 				glog.Warningf("skip master with invalid raft address %q: %v", server.Address, splitErr)
 				continue
 			}
 			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
+			if httpAddress == "" {
+				glog.Warningf("skip master with invalid raft address %q", server.Address)
+				continue
+			}
 			masterMap[httpAddress] = MasterNode{
 				Address:  httpAddress,
 				IsLeader: server.IsLeader,
