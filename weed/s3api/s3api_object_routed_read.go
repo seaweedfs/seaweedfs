@@ -54,7 +54,7 @@ func (s3a *S3ApiServer) getObjectEntryRoutedByKey(bucket, object string) (*filer
 	// prior owner once while the ring change is within the cooling-off window.
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		if prior := s3a.priorWriteOwner(bucket, object); prior != "" && prior != owner {
-			if priorEntry, priorErr := s3a.lookupEntryOnFiler(prior, dir, name); priorErr == nil {
+			if priorEntry, priorErr := s3a.lookupEntryOnFiler(context.Background(), prior, dir, name); priorErr == nil {
 				return priorEntry, nil
 			}
 		}
@@ -87,14 +87,14 @@ func (s3a *S3ApiServer) lookupEntryPreferringOwner(owner pb.ServerAddress, dir, 
 	if owner == "" {
 		return s3a.getEntry(dir, name)
 	}
-	return s3a.lookupEntryOnFiler(owner, dir, name)
+	return s3a.lookupEntryOnFiler(context.Background(), owner, dir, name)
 }
 
 // lookupEntryOnFiler resolves dir/name against a single filer, without failover.
-func (s3a *S3ApiServer) lookupEntryOnFiler(filer pb.ServerAddress, dir, name string) (*filer_pb.Entry, error) {
+func (s3a *S3ApiServer) lookupEntryOnFiler(ctx context.Context, filer pb.ServerAddress, dir, name string) (*filer_pb.Entry, error) {
 	var entry *filer_pb.Entry
 	err := pb.WithFilerClient(false, 0, filer, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,
 		})
