@@ -185,7 +185,7 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 	}
 	object := string(uploadEntry.Extended[s3_constants.ExtMultipartObjectKey])
 	code := s3a.withObjectWriteLock(req.Bucket, object, nil, func() s3err.ErrorCode {
-		return s3a.removeUploadDir(req.Bucket, uploadID, object, uploadEntry)
+		return s3a.removeUploadDir(req.Bucket, uploadID, object)
 	})
 	if code == s3err.ErrNone {
 		return done(), nil

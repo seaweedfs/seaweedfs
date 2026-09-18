@@ -1122,15 +1122,15 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 		object = *input.Key
 	}
 	return &s3.AbortMultipartUploadOutput{}, s3a.withObjectWriteLock(*input.Bucket, object, nil, func() s3err.ErrorCode {
-		return s3a.removeUploadDir(*input.Bucket, *input.UploadId, object, uploadEntry)
+		return s3a.removeUploadDir(*input.Bucket, *input.UploadId, object)
 	})
 }
 
 // removeUploadDir removes a leftover upload directory under the object write
 // lock: a directory that outlived the object it completed into shares chunks
 // with it and goes metadata-only; anything else frees the parts' chunks.
-func (s3a *S3ApiServer) removeUploadDir(bucket, uploadId, object string, uploadEntry *filer_pb.Entry) s3err.ErrorCode {
-	completed, err := s3a.uploadCompleted(s3a.bucketDir(bucket), uploadEntry)
+func (s3a *S3ApiServer) removeUploadDir(bucket, uploadId, object string) s3err.ErrorCode {
+	completed, err := s3a.uploadCompleted(s3a.bucketDir(bucket), uploadId, object)
 	if err != nil {
 		glog.Errorf("bucket %s remove upload %s completed check: %v", bucket, uploadId, err)
 		return s3err.ErrInternalError
@@ -1202,8 +1202,7 @@ func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s
 // uploadCompleted reports whether the upload assembled into an object: the
 // object entry, or any version file under <key>.versions, still carries the
 // upload id completion stamps on it.
-func (s3a *S3ApiServer) uploadCompleted(bucketDir string, upload *filer_pb.Entry) (bool, error) {
-	objectKey := string(upload.Extended[s3_constants.ExtMultipartObjectKey])
+func (s3a *S3ApiServer) uploadCompleted(bucketDir, uploadId, objectKey string) (bool, error) {
 	if objectKey == "" {
 		return false, nil
 	}
@@ -1218,7 +1217,7 @@ func (s3a *S3ApiServer) uploadCompleted(bucketDir string, upload *filer_pb.Entry
 	if err != nil && !isFilerNotFound(err) {
 		return false, err
 	}
-	if entry != nil && string(entry.Extended[s3_constants.SeaweedFSUploadId]) == upload.Name {
+	if entry != nil && string(entry.Extended[s3_constants.SeaweedFSUploadId]) == uploadId {
 		return true, nil
 	}
 
@@ -1230,7 +1229,7 @@ func (s3a *S3ApiServer) uploadCompleted(bucketDir string, upload *filer_pb.Entry
 		return false, err
 	}
 	for _, version := range versions {
-		if string(version.Extended[s3_constants.SeaweedFSUploadId]) == upload.Name {
+		if string(version.Extended[s3_constants.SeaweedFSUploadId]) == uploadId {
 			return true, nil
 		}
 	}

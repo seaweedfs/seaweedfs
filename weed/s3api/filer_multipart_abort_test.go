@@ -133,6 +133,25 @@ func TestAbortCompletedVersionDeletesMetadataOnly(t *testing.T) {
 	}
 }
 
+// An upload record missing its object-key stamp can still have completed;
+// the abort's Key is the fallback lookup path.
+func TestAbortCompletedUploadWithoutRecordedKey(t *testing.T) {
+	f := &fakeAbortFiler{
+		uploadEntry: &filer_pb.Entry{Name: "up1", IsDirectory: true},
+		objectEntry: versionEntry("a.bin", "up1"),
+	}
+	s3a := newAbortTestServer(t, f)
+
+	_, code := s3a.abortMultipartUpload(abortInput("up1"))
+
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if f.deleteReq == nil || f.deleteReq.IsDeleteData {
+		t.Fatalf("deleteReq = %+v, want IsDeleteData=false", f.deleteReq)
+	}
+}
+
 // An upload that never completed owns its part chunks; abort frees them.
 func TestAbortOpenUploadDeletesData(t *testing.T) {
 	f := &fakeAbortFiler{
