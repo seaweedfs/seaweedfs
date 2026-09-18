@@ -12,10 +12,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
+use super::grpc_client::{GrpcDialOptions, connect_channel, master_client};
 use super::volume_server::VolumeServerState;
 use crate::pb::master_pb;
-use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
 use crate::storage::store::Store;
@@ -246,17 +245,8 @@ pub async fn try_get_master_configuration(
     grpc_addr: &str,
     tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
 ) -> Result<master_pb::GetMasterConfigurationResponse, Box<dyn std::error::Error>> {
-    let channel = build_grpc_endpoint(grpc_addr, tls)?
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(10))
-        .connect()
-        .await?;
-    let mut client = SeaweedClient::with_interceptor(
-        channel,
-        super::request_id::outgoing_request_id_interceptor,
-    )
-    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let channel = connect_channel(grpc_addr, tls, GrpcDialOptions::unary()).await?;
+    let mut client = master_client(channel);
     let resp = client
         .get_master_configuration(master_pb::GetMasterConfigurationRequest {})
         .await?;
@@ -391,18 +381,14 @@ async fn do_heartbeat(
     pulse: Duration,
     shutdown_rx: &mut broadcast::Receiver<()>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let channel = build_grpc_endpoint(grpc_addr, state.outgoing_grpc_tls.as_ref())?
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30))
-        .connect()
-        .await?;
-
-    let mut client = SeaweedClient::with_interceptor(
-        channel,
-        super::request_id::outgoing_request_id_interceptor,
+    let channel = connect_channel(
+        grpc_addr,
+        state.outgoing_grpc_tls.as_ref(),
+        GrpcDialOptions::long(),
     )
-    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    .await?;
+
+    let mut client = master_client(channel);
 
     let (tx, rx) = tokio::sync::mpsc::channel::<master_pb::Heartbeat>(32);
 

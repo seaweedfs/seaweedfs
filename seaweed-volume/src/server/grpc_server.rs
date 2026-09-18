@@ -14,7 +14,6 @@ use tonic::{Request, Response, Status, Streaming};
 
 use crate::pb::filer_pb;
 use crate::pb::master_pb;
-use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
 use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
 use crate::storage::erasure_coding::ec_shard::{DATA_SHARDS_COUNT, ShardId, shard_id_try_from};
@@ -22,7 +21,9 @@ use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 use crate::storage::volume::VolumeSpec;
 
-use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
+use super::grpc_client::{
+    GrpcDialOptions, connect_channel, filer_client, master_client, volume_server_client,
+};
 use super::volume_server::VolumeServerState;
 
 type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
@@ -337,20 +338,14 @@ impl VolumeGrpcService {
         let grpc_addr = parse_grpc_address(&master_url).map_err(|e| {
             Status::internal(format!("invalid master address {}: {}", master_url, e))
         })?;
-        let endpoint = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
-            .map_err(|e| Status::internal(format!("master address {}: {}", master_url, e)))?
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(30));
-        let channel = endpoint
-            .connect()
-            .await
-            .map_err(|e| Status::internal(format!("connect to master {}: {}", master_url, e)))?;
-        let mut client = SeaweedClient::with_interceptor(
-            channel,
-            super::request_id::outgoing_request_id_interceptor,
+        let channel = connect_channel(
+            &grpc_addr,
+            self.state.outgoing_grpc_tls.as_ref(),
+            GrpcDialOptions::long(),
         )
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        .await
+        .map_err(|e| Status::internal(format!("connect to master {}: {}", master_url, e)))?;
+        let mut client = master_client(channel);
         client
             .volume_mark_readonly(master_pb::VolumeMarkReadonlyRequest {
                 ip: info.ip.clone(),
@@ -1830,26 +1825,20 @@ impl VolumeServer for VolumeGrpcService {
             ))
         })?;
 
-        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
-            .map_err(|e| {
-                Status::internal(format!("VolumeCopy volume {} parse source: {}", vid, e))
-            })?
-            .connect()
-            .await
-            .map_err(|e| {
-                Status::internal(format!(
-                    "VolumeCopy volume {} connect to {}: {}",
-                    vid, grpc_addr, e
-                ))
-            })?;
+        let channel = connect_channel(
+            &grpc_addr,
+            self.state.outgoing_grpc_tls.as_ref(),
+            GrpcDialOptions::stream(),
+        )
+        .await
+        .map_err(|e| {
+            Status::internal(format!(
+                "VolumeCopy volume {} connect to {}: {}",
+                vid, grpc_addr, e
+            ))
+        })?;
 
-        let mut client =
-            volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-                channel,
-                super::request_id::outgoing_request_id_interceptor,
-            )
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client = volume_server_client(channel);
 
         // Get file status from source
         let vol_info = client
@@ -2903,19 +2892,15 @@ impl VolumeServer for VolumeGrpcService {
         let grpc_addr = parse_grpc_address(source)
             .map_err(|e| Status::internal(format!("invalid source address {}: {}", source, e)))?;
 
-        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
-            .map_err(|e| Status::internal(format!("parse source: {}", e)))?
-            .connect()
-            .await
-            .map_err(|e| Status::internal(format!("connect to {}: {}", grpc_addr, e)))?;
+        let channel = connect_channel(
+            &grpc_addr,
+            self.state.outgoing_grpc_tls.as_ref(),
+            GrpcDialOptions::stream(),
+        )
+        .await
+        .map_err(|e| Status::internal(format!("connect to {}: {}", grpc_addr, e)))?;
 
-        let mut client =
-            volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-                channel,
-                super::request_id::outgoing_request_id_interceptor,
-            )
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client = volume_server_client(channel);
 
         // Call VolumeTailSender on source
         let mut stream = client
@@ -3405,29 +3390,20 @@ impl VolumeServer for VolumeGrpcService {
             ))
         })?;
 
-        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
-            .map_err(|e| {
-                Status::internal(format!(
-                    "VolumeEcShardsCopy volume {} parse source: {}",
-                    vid, e
-                ))
-            })?
-            .connect()
-            .await
-            .map_err(|e| {
-                Status::internal(format!(
-                    "VolumeEcShardsCopy volume {} connect to {}: {}",
-                    vid, grpc_addr, e
-                ))
-            })?;
+        let channel = connect_channel(
+            &grpc_addr,
+            self.state.outgoing_grpc_tls.as_ref(),
+            GrpcDialOptions::stream(),
+        )
+        .await
+        .map_err(|e| {
+            Status::internal(format!(
+                "VolumeEcShardsCopy volume {} connect to {}: {}",
+                vid, grpc_addr, e
+            ))
+        })?;
 
-        let mut client =
-            volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-                channel,
-                super::request_id::outgoing_request_id_interceptor,
-            )
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client = volume_server_client(channel);
 
         // Copy each shard
         for &shard_id in &shard_ids {
@@ -5357,13 +5333,26 @@ impl VolumeServer for VolumeGrpcService {
     }
 }
 
-/// Build a gRPC endpoint from a SeaweedFS server address.
-fn to_grpc_endpoint(
+/// Dial a ping target, bounding the whole connect at 5s.
+///
+/// The outer timeout is not redundant with `GrpcDialOptions`' connect timeout:
+/// tonic hands that one to the HTTP connector, so it bounds the TCP dial only.
+/// A ping to a TLS peer that accepts the connection and then stalls in the
+/// handshake needs this wrapper to come back at all.
+async fn connect_ping_target(
     target: &str,
     tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
-) -> Result<tonic::transport::Endpoint, String> {
+) -> Result<tonic::transport::Channel, String> {
     let grpc_host_port = parse_grpc_address(target)?;
-    build_grpc_endpoint(&grpc_host_port, tls).map_err(|e| e.to_string())
+    // Ping is unary, but `stream()` is still right: these three have no
+    // per-request deadline today, and `unary()` would add a 10 s one.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        connect_channel(&grpc_host_port, tls, GrpcDialOptions::stream()),
+    )
+    .await
+    .map_err(|_| "connection timeout".to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// Ping a remote volume server target by actually calling its Ping RPC (matches Go behavior).
@@ -5371,18 +5360,7 @@ async fn ping_volume_server_target(
     target: &str,
     tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
 ) -> Result<i64, String> {
-    let endpoint = to_grpc_endpoint(target, tls)?;
-    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.connect())
-        .await
-        .map_err(|_| "connection timeout".to_string())?
-        .map_err(|e| e.to_string())?;
-
-    let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-        channel,
-        super::request_id::outgoing_request_id_interceptor,
-    )
-    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = volume_server_client(connect_ping_target(target, tls).await?);
     let resp = client
         .ping(volume_server_pb::PingRequest {
             target: String::new(),
@@ -5398,18 +5376,7 @@ async fn ping_master_target(
     target: &str,
     tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
 ) -> Result<i64, String> {
-    let endpoint = to_grpc_endpoint(target, tls)?;
-    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.connect())
-        .await
-        .map_err(|_| "connection timeout".to_string())?
-        .map_err(|e| e.to_string())?;
-
-    let mut client = master_pb::seaweed_client::SeaweedClient::with_interceptor(
-        channel,
-        super::request_id::outgoing_request_id_interceptor,
-    )
-    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = master_client(connect_ping_target(target, tls).await?);
     let resp = client
         .ping(master_pb::PingRequest {
             target: String::new(),
@@ -5425,18 +5392,7 @@ async fn ping_filer_target(
     target: &str,
     tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
 ) -> Result<i64, String> {
-    let endpoint = to_grpc_endpoint(target, tls)?;
-    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.connect())
-        .await
-        .map_err(|_| "connection timeout".to_string())?
-        .map_err(|e| e.to_string())?;
-
-    let mut client = filer_pb::seaweed_filer_client::SeaweedFilerClient::with_interceptor(
-        channel,
-        super::request_id::outgoing_request_id_interceptor,
-    )
-    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = filer_client(connect_ping_target(target, tls).await?);
     let resp = client
         .ping(filer_pb::PingRequest::default())
         .await
@@ -5940,6 +5896,7 @@ mod tests {
     use crate::config::MinFreeSpace;
     use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig, global_s3_tier_registry};
     use crate::security::{Guard, SigningKey};
+    use crate::server::grpc_client::GRPC_MAX_MESSAGE_SIZE;
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::store::Store;
     use std::sync::RwLock;

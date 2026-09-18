@@ -15,7 +15,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
+use super::grpc_client::{GrpcDialOptions, connect_channel, volume_server_client};
 use super::volume_server::{VolumeServerState, normalize_outgoing_http_url, to_http_address};
 use crate::config::ReadMode;
 use crate::metrics;
@@ -540,19 +540,16 @@ async fn batch_delete_file_ids(
     }
 
     for (grpc_addr, batch) in server_to_file_ids {
-        let endpoint = build_grpc_endpoint(&grpc_addr, state.outgoing_grpc_tls.as_ref())
-            .map_err(|e| format!("batch delete {}: {}", grpc_addr, e))?;
-        let channel = endpoint
-            .connect()
-            .await
-            .map_err(|e| format!("batch delete {}: {}", grpc_addr, e))?;
-        let mut client =
-            volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-                channel,
-                super::request_id::outgoing_request_id_interceptor,
-            )
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        // BatchDelete is unary, but `stream()` is still right: this fan-out has
+        // no per-request deadline today, and `unary()` would add a 10 s one.
+        let channel = connect_channel(
+            &grpc_addr,
+            state.outgoing_grpc_tls.as_ref(),
+            GrpcDialOptions::stream(),
+        )
+        .await
+        .map_err(|e| format!("batch delete {}: {}", grpc_addr, e))?;
+        let mut client = volume_server_client(channel);
 
         let response = client
             .batch_delete(volume_server_pb::BatchDeleteRequest {
