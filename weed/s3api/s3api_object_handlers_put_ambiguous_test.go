@@ -88,6 +88,7 @@ type ambiguousPutFiler struct {
 	entries       map[string]*filer_pb.Entry
 	apply         bool
 	createErr     error
+	respError     string
 	lookupErr     error
 	lookupFailKey string
 	nextKey       uint64
@@ -119,7 +120,7 @@ func (f *ambiguousPutFiler) CreateEntry(_ context.Context, req *filer_pb.CreateE
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
-	return &filer_pb.CreateEntryResponse{}, nil
+	return &filer_pb.CreateEntryResponse{Error: f.respError}, nil
 }
 
 func (f *ambiguousPutFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -178,6 +179,33 @@ func TestPutToFilerAmbiguousCreateKeepsChunks(t *testing.T) {
 		entries:   map[string]*filer_pb.Entry{},
 		apply:     true,
 		createErr: status.Error(codes.Unavailable, "connect: connection refused"),
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	etag, code := putTestObject(t, s3a)
+	if code != s3err.ErrNone {
+		t.Fatalf("putToFiler returned %v, want success once the entry is confirmed on the filer", code)
+	}
+	if etag == "" {
+		t.Fatal("expected an etag")
+	}
+	if deleted := volume.deleted(); len(deleted) != 0 {
+		t.Fatalf("chunks under a live entry were deleted: %v", deleted)
+	}
+}
+
+// Issue 11387: the filer can report a create failure after inserting the entry
+// (e.g. a parent-directory creation failing post-insert). The failure arrives
+// in the response rather than as a transport status, so it maps to a
+// definitive error — but the entry exists and deleting its chunks would
+// tombstone live needles.
+func TestPutToFilerPostCommitErrorKeepsChunks(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume:    volume,
+		entries:   map[string]*filer_pb.Entry{},
+		apply:     true,
+		respError: "create parent directories of /buckets/b: i/o timeout",
 	}
 	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
 
