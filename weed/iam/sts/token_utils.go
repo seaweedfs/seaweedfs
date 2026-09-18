@@ -1,6 +1,7 @@
 package sts
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -163,11 +164,15 @@ type SessionTokenClaims struct {
 }
 
 // CredentialGenerator generates AWS-compatible temporary credentials
-type CredentialGenerator struct{}
+type CredentialGenerator struct {
+	signingKey []byte
+}
 
-// NewCredentialGenerator creates a new credential generator
-func NewCredentialGenerator() *CredentialGenerator {
-	return &CredentialGenerator{}
+// NewCredentialGenerator creates a new credential generator. The signing key
+// keys the secret access key derivation so it cannot be recomputed from the
+// session id embedded in the session token.
+func NewCredentialGenerator(signingKey []byte) *CredentialGenerator {
+	return &CredentialGenerator{signingKey: signingKey}
 }
 
 // GenerateTemporaryCredentials creates temporary AWS credentials
@@ -203,16 +208,13 @@ func (c *CredentialGenerator) generateTemporaryAccessKeyId(sessionId string) (st
 	return "ASIA" + hex.EncodeToString(hash[:8]), nil // AWS format: ASIA + 16 chars
 }
 
-// generateSecretAccessKey generates a deterministic secret access key based on sessionId
-// This ensures the same secret key is regenerated from the JWT claims during signature verification
+// generateSecretAccessKey derives the secret access key from the session id
+// keyed on the STS signing key. Issuance and the regeneration in ToSessionInfo
+// agree on the value, but it cannot be recomputed from the token alone.
 func (c *CredentialGenerator) generateSecretAccessKey(sessionId string) (string, error) {
-	// Create deterministic secret key based on session ID (not random!)
-	// This is critical for STS because:
-	// 1. AssumeRoleWithWebIdentity generates the secret key once
-	// 2. During signature verification, ToSessionInfo() regenerates credentials from JWT
-	// 3. Both must generate the same secret key for signature verification to succeed
-	hash := sha256.Sum256([]byte("secret-key:" + sessionId))
-	return base64.StdEncoding.EncodeToString(hash[:]), nil
+	mac := hmac.New(sha256.New, c.signingKey)
+	mac.Write([]byte("secret-key:" + sessionId))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
 // generateSessionTokenId generates a session token identifier

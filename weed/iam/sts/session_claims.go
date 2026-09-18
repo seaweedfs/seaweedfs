@@ -3,7 +3,6 @@ package sts
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"fmt"
 	"strings"
 	"time"
 
@@ -53,11 +52,6 @@ func ResolveIdentityClaim(ctx map[string]interface{}) string {
 	}
 	return ""
 }
-
-// defaultCredentialGenerator is a reusable instance for generating temporary credentials
-// Reusing a single instance across all calls to ToSessionInfo() reduces allocation overhead
-// since this method may be called frequently during signature verification
-var defaultCredentialGenerator = NewCredentialGenerator()
 
 // STSSessionClaims represents comprehensive session information embedded in JWT tokens
 // This eliminates the need for separate session storage by embedding all session
@@ -122,21 +116,20 @@ func NewSTSSessionClaims(sessionId, issuer string, expiresAt time.Time) *STSSess
 
 // ToSessionInfo converts JWT claims back to SessionInfo structure
 // This enables seamless integration with existing code expecting SessionInfo
-func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
+func (c *STSSessionClaims) ToSessionInfo(credGen *CredentialGenerator) *SessionInfo {
 	var expiresAt time.Time
 	if c.ExpiresAt != nil {
 		expiresAt = c.ExpiresAt.Time
 	}
 
-	// Generate temporary credentials from the session ID
-	// This is deterministic based on the session ID, so the same credentials are regenerated
-	credentials, err := defaultCredentialGenerator.GenerateTemporaryCredentials(c.SessionId, expiresAt)
-	if err != nil {
-		// Log the error with context - credential generation failure is important for debugging
-		errMsg := fmt.Errorf("generate temporary credentials for session %s: %w", c.SessionId, err)
-		glog.Warningf("Failed to generate credentials for STS session: %v", errMsg)
-		// Return session info without credentials - validation will catch this as invalid
-		credentials = nil
+	var credentials *Credentials
+	if credGen != nil {
+		creds, err := credGen.GenerateTemporaryCredentials(c.SessionId, expiresAt)
+		if err != nil {
+			glog.Warningf("Failed to generate credentials for STS session %s: %v", c.SessionId, err)
+		} else {
+			credentials = creds
+		}
 	}
 
 	return &SessionInfo{

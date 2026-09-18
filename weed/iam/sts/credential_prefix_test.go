@@ -17,7 +17,7 @@ func TestTemporaryCredentialPrefix(t *testing.T) {
 	sessionId := "test-session-for-prefix"
 	expiration := time.Now().Add(time.Hour)
 
-	credGen := NewCredentialGenerator()
+	credGen := testCredGen
 	cred, err := credGen.GenerateTemporaryCredentials(sessionId, expiration)
 
 	assert.NoError(t, err)
@@ -37,7 +37,7 @@ func TestTemporaryCredentialFormat(t *testing.T) {
 	sessionId := "format-test-session"
 	expiration := time.Now().Add(time.Hour)
 
-	credGen := NewCredentialGenerator()
+	credGen := testCredGen
 	cred, err := credGen.GenerateTemporaryCredentials(sessionId, expiration)
 
 	assert.NoError(t, err)
