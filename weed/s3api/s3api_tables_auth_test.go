@@ -107,6 +107,26 @@ func TestS3TablesAuthSignedRequestPassess(t *testing.T) {
 	assert.True(t, reached, "properly signed request must still pass; got %d %s", rr.Code, rr.Body.String())
 }
 
+func TestSignedAccountHeaderDoesNotReachHandler(t *testing.T) {
+	s3a := setupDefaultAllowAuthServer(t)
+
+	req, err := http.NewRequest(http.MethodGet, "http://localhost/buckets", nil)
+	require.NoError(t, err)
+	req.Header.Set(s3_constants.AmzAccountId, "admin")
+	signRoutingTestRequest(t, req, "", "s3tables")
+	require.Contains(t, req.Header.Get("Authorization"), "s3-account-id", "the header must be covered by the signature")
+
+	reached := false
+	rr := httptest.NewRecorder()
+	s3a.authenticateS3Tables(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})(rr, req)
+
+	assert.True(t, reached, "a signature covering s3-account-id must still verify; got %d %s", rr.Code, rr.Body.String())
+	assert.Empty(t, req.Header.Get(s3_constants.AmzAccountId), "the signed-in header value must not survive authentication")
+}
+
 func TestIcebergAuthRejectsFailedSignature(t *testing.T) {
 	s3a := setupDefaultAllowAuthServer(t)
 	server := iceberg.NewServer(nil, s3a)
