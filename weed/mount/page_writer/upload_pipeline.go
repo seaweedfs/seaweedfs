@@ -198,6 +198,28 @@ func (up *UploadPipeline) FlushAll() {
 	up.waitForCurrentWritersToComplete()
 }
 
+// MaxDirtyOffset returns the exclusive upper bound of data that has not been
+// committed to storage: bytes still in writable chunks or in sealed chunks
+// whose upload is still in flight. 0 means every written byte is committed
+// (or nothing was written).
+func (up *UploadPipeline) MaxDirtyOffset() int64 {
+	up.chunksLock.Lock()
+	defer up.chunksLock.Unlock()
+
+	var maxOff int64
+	for lci, chunk := range up.writableChunks {
+		if off := int64(lci)*up.ChunkSize + chunk.MaxWrittenOffset(); off > maxOff {
+			maxOff = off
+		}
+	}
+	for lci, sealedChunk := range up.sealedChunks {
+		if off := int64(lci)*up.ChunkSize + sealedChunk.chunk.MaxWrittenOffset(); off > maxOff {
+			maxOff = off
+		}
+	}
+	return maxOff
+}
+
 func (up *UploadPipeline) flushChunks() {
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()

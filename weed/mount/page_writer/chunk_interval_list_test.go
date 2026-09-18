@@ -49,6 +49,20 @@ func Test_PageChunkWrittenIntervalList(t *testing.T) {
 
 }
 
+func Test_PageChunkMaxWrittenOffset(t *testing.T) {
+	list := newChunkWrittenIntervalList()
+	assert.Equal(t, int64(0), list.MaxWrittenOffset(), "empty list")
+
+	list.MarkWritten(5, 50, 1)
+	assert.Equal(t, int64(50), list.MaxWrittenOffset(), "single interval")
+
+	list.MarkWritten(95, 100, 2)
+	assert.Equal(t, int64(100), list.MaxWrittenOffset(), "rightmost interval wins")
+
+	list.MarkWritten(0, 10, 3)
+	assert.Equal(t, int64(100), list.MaxWrittenOffset(), "earlier interval does not move the bound")
+}
+
 type interval struct {
 	start    int64
 	stop     int64

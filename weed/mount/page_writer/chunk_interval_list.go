@@ -156,6 +156,16 @@ func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval
 
 }
 
+// MaxWrittenOffset returns the exclusive upper bound of written data within
+// this chunk's buffer, or 0 when nothing has been written.
+func (list *ChunkWrittenIntervalList) MaxWrittenOffset() int64 {
+	stop := list.tail.prev.stopOffset
+	if stop < 0 {
+		return 0
+	}
+	return stop
+}
+
 func (list *ChunkWrittenIntervalList) size() int {
 	var count int
 	for t := list.head; t != nil; t = t.next {

@@ -99,6 +99,13 @@ func (mc *MemChunk) WrittenSize() int64 {
 	return mc.usage.WrittenSize()
 }
 
+func (mc *MemChunk) MaxWrittenOffset() int64 {
+	mc.RLock()
+	defer mc.RUnlock()
+
+	return mc.usage.MaxWrittenOffset()
+}
+
 func (mc *MemChunk) LastWriteTsNs() int64 {
 	return mc.lastWriteTsNs.Load()
 }

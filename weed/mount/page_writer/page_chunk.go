@@ -14,6 +14,9 @@ type PageChunk interface {
 	IsContiguouslyWritten() bool
 	ActivityScore() int64
 	WrittenSize() int64
+	// MaxWrittenOffset is the exclusive upper bound of written data within
+	// the chunk's buffer; 0 when nothing has been written.
+	MaxWrittenOffset() int64
 	LastWriteTsNs() int64
 	SaveContent(saveFn SaveToStorageFunc)
 }

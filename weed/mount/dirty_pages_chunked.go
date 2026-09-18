@@ -59,6 +59,13 @@ func (pages *ChunkedDirtyPages) HasWrites() bool {
 	return pages.hasWrites
 }
 
+// MaxDirtyOffset reports the exclusive upper bound of written data that has
+// not been committed to storage yet, including sealed chunks whose upload is
+// still in flight.
+func (pages *ChunkedDirtyPages) MaxDirtyOffset() int64 {
+	return pages.uploadPipeline.MaxDirtyOffset()
+}
+
 func (pages *ChunkedDirtyPages) FlushData() error {
 	if !pages.hasWrites {
 		return nil

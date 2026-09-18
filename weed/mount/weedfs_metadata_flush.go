@@ -162,6 +162,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		}
 		e.Chunks = append(processedPrefix, tail...)
 		requestEntry = proto.Clone(e).(*filer_pb.Entry)
+		clampCommittedFileSize(fh, requestEntry, filer.TotalSize(requestEntry.GetChunks()))
 	})
 	request := &filer_pb.CreateEntryRequest{
 		Directory:                string(dir),
@@ -202,4 +203,32 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	// 3. dirtyMetadata will be cleared on the final flush when the file is closed
 
 	return nil
+}
+
+// clampCommittedFileSize caps the file size a periodic metadata flush persists
+// at the offset the uploaded chunks actually cover, when write-back pages hold
+// written data beyond that offset.
+//
+// Write() stamps entry.Attributes.FileSize eagerly, ahead of any upload, so
+// without the cap this flush can persist a size the stored chunks do not back:
+// readers past the covered offset get zero-fill, and if the mount dies before
+// the close-time flush, the promised-but-missing bytes stay committed-but-lost
+// forever. Capping keeps the persisted size equal to what is actually stored;
+// the close-time flush (which flushes data first) persists the full size.
+//
+// Sparse extensions via ftruncate/SetAttr are preserved: they produce no dirty
+// pages, so the dirty extent stays within committed coverage.
+func clampCommittedFileSize(fh *FileHandle, requestEntry *filer_pb.Entry, committedCoverage uint64) {
+	if requestEntry.Attributes == nil || requestEntry.RemoteEntry != nil {
+		return
+	}
+	if requestEntry.Attributes.FileSize <= committedCoverage {
+		return
+	}
+	if fh.dirtyPages == nil || fh.dirtyPages.MaxDirtyOffset() <= int64(committedCoverage) {
+		return
+	}
+	glog.V(1).Infof("flushFileMetadata %s fh %d: cap committed size %d to uploaded chunk coverage %d (dirty extent %d)",
+		fh.FullPath(), fh.fh, requestEntry.Attributes.FileSize, committedCoverage, fh.dirtyPages.MaxDirtyOffset())
+	requestEntry.Attributes.FileSize = committedCoverage
 }

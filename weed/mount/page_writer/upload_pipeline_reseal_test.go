@@ -31,6 +31,7 @@ func (c *gatedChunk) IsComplete() bool                      { return false }
 func (c *gatedChunk) IsContiguouslyWritten() bool           { return true }
 func (c *gatedChunk) ActivityScore() int64                  { return 0 }
 func (c *gatedChunk) WrittenSize() int64                    { return 0 }
+func (c *gatedChunk) MaxWrittenOffset() int64               { return 0 }
 func (c *gatedChunk) LastWriteTsNs() int64                  { return 0 }
 func (c *gatedChunk) SaveContent(saveFn SaveToStorageFunc) {
 	<-c.gate

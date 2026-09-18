@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestUploadPipeline(t *testing.T) {
@@ -45,6 +46,32 @@ func confirmRange(t *testing.T, uploadPipeline *UploadPipeline, startOff, stopOf
 			t.Errorf("expecting %d found %d at offset [%d,%d)", i, x, i, i+4)
 		}
 	}
+}
+
+func TestUploadPipelineMaxDirtyOffset(t *testing.T) {
+	const cs int64 = 2 * 1024 * 1024
+	up := NewUploadPipeline(nil, cs, nil, 16, "", nil)
+
+	assert.Equal(t, int64(0), up.MaxDirtyOffset(), "no writes")
+
+	save := func(off int64, data []byte, tsNs int64) {
+		if _, err := up.SaveDataAt(data, off, true, tsNs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(cs/2, make([]byte, 100), 1)
+	assert.Equal(t, cs/2+100, up.MaxDirtyOffset(), "writable chunk extent")
+
+	save(cs+10, make([]byte, 10), 2)
+	assert.Equal(t, cs+20, up.MaxDirtyOffset(), "highest extent across chunks")
+
+	save(cs, make([]byte, 5), 3)
+	assert.Equal(t, cs+20, up.MaxDirtyOffset(), "lower write does not move the bound back")
+
+	// The bound tracks the rightmost written byte even across unwritten gaps:
+	// holes read back as zeros, but the written tail is uncommitted dirty data.
+	save(3*cs/2, make([]byte, 1), 4)
+	assert.Equal(t, 3*cs/2+1, up.MaxDirtyOffset(), "gappy tail write extends the bound")
 }
 
 // Pressure-driven eviction must not seal a chunk with a leading or

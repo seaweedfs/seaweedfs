@@ -5,6 +5,9 @@ type DirtyPages interface {
 	FlushData() error
 	HasWrites() bool
 	ReadDirtyDataAt(data []byte, startOffset int64, tsNs int64) (maxStop int64)
+	// MaxDirtyOffset is the exclusive upper bound of written data not yet
+	// committed to storage; 0 when everything written is committed.
+	MaxDirtyOffset() int64
 	Destroy()
 	LockForRead(startOffset, stopOffset int64)
 	UnlockForRead(startOffset, stopOffset int64)

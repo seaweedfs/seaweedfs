@@ -188,6 +188,12 @@ func (sc *SwapFileChunk) WrittenSize() int64 {
 	return sc.usage.WrittenSize()
 }
 
+func (sc *SwapFileChunk) MaxWrittenOffset() int64 {
+	sc.RLock()
+	defer sc.RUnlock()
+	return sc.usage.MaxWrittenOffset()
+}
+
 func (sc *SwapFileChunk) LastWriteTsNs() int64 {
 	return sc.lastWriteTsNs.Load()
 }
