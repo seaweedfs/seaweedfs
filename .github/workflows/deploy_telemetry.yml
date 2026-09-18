@@ -35,10 +35,47 @@ jobs:
           cd telemetry/server
           go mod tidy
           echo "Building telemetry server..."
-          GOOS=linux GOARCH=amd64 go build -o ../../telemetry-server .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../telemetry-server .
           cd ../..
           ls -la telemetry-server
           echo "Build completed successfully"
+
+      - name: Generate Service Configuration
+        if: github.event_name == 'workflow_dispatch' && (inputs.setup || inputs.deploy)
+        env:
+          REMOTE_USER: ${{ secrets.TELEMETRY_USER }}
+        run: |
+          # Create systemd service file
+          echo "
+          [Unit]
+          Description=SeaweedFS Telemetry Server
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=$REMOTE_USER
+          WorkingDirectory=/home/$REMOTE_USER/seaweedfs-telemetry
+          ExecStart=/bin/sh -c 'exec /home/$REMOTE_USER/seaweedfs-telemetry/bin/telemetry-server -port=8353 >>/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.log 2>>/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.error.log'
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target" > telemetry.service
+
+          # Setup logrotate configuration
+          echo "# SeaweedFS Telemetry service log rotation
+          /home/$REMOTE_USER/seaweedfs-telemetry/logs/*.log {
+              daily
+              rotate 30
+              compress
+              delaycompress
+              missingok
+              notifempty
+              create 644 $REMOTE_USER $REMOTE_USER
+              postrotate
+                  systemctl restart telemetry.service
+              endscript
+          }" > telemetry_logrotate
 
       - name: First-time Server Setup
         if: github.event_name == 'workflow_dispatch' && inputs.setup
@@ -60,40 +97,6 @@ jobs:
             chmod 755 ~/seaweedfs-telemetry/data && \
             touch ~/seaweedfs-telemetry/logs/telemetry.log ~/seaweedfs-telemetry/logs/telemetry.error.log && \
             chmod 644 ~/seaweedfs-telemetry/logs/*.log"
-
-          # Create systemd service file
-          echo "
-          [Unit]
-          Description=SeaweedFS Telemetry Server
-          After=network.target
-
-          [Service]
-          Type=simple
-          User=$REMOTE_USER
-          WorkingDirectory=/home/$REMOTE_USER/seaweedfs-telemetry
-          ExecStart=/home/$REMOTE_USER/seaweedfs-telemetry/bin/telemetry-server -port=8353
-          Restart=always
-          RestartSec=5
-          StandardOutput=append:/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.log
-          StandardError=append:/home/$REMOTE_USER/seaweedfs-telemetry/logs/telemetry.error.log
-
-          [Install]
-          WantedBy=multi-user.target" > telemetry.service
-
-          # Setup logrotate configuration
-          echo "# SeaweedFS Telemetry service log rotation
-          /home/$REMOTE_USER/seaweedfs-telemetry/logs/*.log {
-              daily
-              rotate 30
-              compress
-              delaycompress
-              missingok
-              notifempty
-              create 644 $REMOTE_USER $REMOTE_USER
-              postrotate
-                  systemctl restart telemetry.service
-              endscript
-          }" > telemetry_logrotate
 
           # Copy configuration files
           scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
@@ -137,11 +140,18 @@ jobs:
           scp -i ~/.ssh/deploy_key telemetry/grafana-dashboard.json $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
           scp -i ~/.ssh/deploy_key telemetry/prometheus.yml $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
 
+          # Copy updated service and logrotate files
+          scp -i ~/.ssh/deploy_key telemetry.service telemetry_logrotate $REMOTE_USER@$REMOTE_HOST:~/seaweedfs-telemetry/
+
           # Check if service exists and deploy accordingly
           ssh -i ~/.ssh/deploy_key $REMOTE_USER@$REMOTE_HOST "
             if systemctl list-unit-files telemetry.service >/dev/null 2>&1; then
               echo 'Service exists, performing update...'
+              set -e
               sudo systemctl stop telemetry.service
+              sudo mv ~/seaweedfs-telemetry/telemetry.service /etc/systemd/system/
+              sudo mv ~/seaweedfs-telemetry/telemetry_logrotate /etc/logrotate.d/seaweedfs-telemetry
+              sudo systemctl daemon-reload
               mkdir -p ~/seaweedfs-telemetry/bin
               mv ~/seaweedfs-telemetry/tmp/telemetry-server ~/seaweedfs-telemetry/bin/
               chmod +x ~/seaweedfs-telemetry/bin/telemetry-server
