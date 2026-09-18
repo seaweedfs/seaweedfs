@@ -1000,8 +1000,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			// uploaded chunks — it is only upgraded to success when the write owner
 			// proves the entry landed with these chunks.
 			ambiguous := createErr != nil && filerErrorToS3Error(createErr) == s3err.ErrServiceUnavailable
-			if ambiguous && len(chunkResult.FileChunks) > 0 && s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize) {
-				createCode = s3err.ErrNone
+			if ambiguous && len(chunkResult.FileChunks) > 0 {
+				if landed, _ := s3a.confirmCreateLanded(filePath, bucket, object, entry, chunkResult.FileChunks, finalize); landed {
+					createCode = s3err.ErrNone
+				}
 			}
 			if createCode != s3err.ErrNone && !ambiguous {
 				orphaned := chunkResult.FileChunks
@@ -1044,19 +1046,29 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	return etag, s3err.ErrNone, responseMetadata
 }
 
-// confirmCreateLanded checks whether a create that failed ambiguously still
-// committed: the stored entry's resolved chunks must be exactly the uploaded
-// ones. On a match the finalization the error skipped runs under the object
-// write lock, and true reports the write as successful.
-func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) bool {
+// confirmCreateLanded resolves a create whose outcome is uncertain: the stored
+// entry's resolved chunks matching the uploaded ones confirms the write
+// landed — the finalization the error skipped then runs under the object write
+// lock, and landed reports success — while a confirmed-missing entry reports
+// absent, the only outcome where the uploaded chunks are orphaned.
+func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) (landed, absent bool) {
 	dir, name := path.Dir(filePath), path.Base(filePath)
 	owner := s3a.routableWriteOwner(bucket, object)
-	confirmed := false
 	// Verify, finalize, and roll back inside one critical section: a concurrent
 	// write to the same key must not slip in between them.
 	s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
 		existing, lookupErr := s3a.lookupEntryPreferringOwner(owner, dir, name)
-		if lookupErr != nil || existing == nil {
+		if lookupErr != nil {
+			if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+				absent = true
+			}
+			return s3err.ErrNone
+		}
+		if existing == nil {
+			absent = true
+			return s3err.ErrNone
+		}
+		if len(uploaded) == 0 {
 			return s3err.ErrNone
 		}
 		resolved, _, resolveErr := filer.ResolveChunkManifest(context.Background(), s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
@@ -1065,7 +1077,7 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, ent
 		}
 		glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
 		if finalize == nil || finalize.afterCreate == nil {
-			confirmed = true
+			landed = true
 			return s3err.ErrNone
 		}
 		if code := finalize.afterCreate(entry); code != s3err.ErrNone {
@@ -1075,10 +1087,10 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, ent
 			}
 			return s3err.ErrNone
 		}
-		confirmed = true
+		landed = true
 		return s3err.ErrNone
 	})
-	return confirmed
+	return landed, absent
 }
 
 // sameFileChunks reports whether two chunk lists reference the same needles,
