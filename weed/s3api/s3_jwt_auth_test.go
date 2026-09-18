@@ -100,9 +100,9 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 			// Test each operation
 			for _, op := range tt.testOperations {
 				t.Run(string(op.Action), func(t *testing.T) {
-					// Test JWT authentication
-					identity, errCode := testJWTAuthentication(t, iamServer, jwtToken)
-					require.Equal(t, s3err.ErrNone, errCode, "JWT authentication should succeed")
+					// Test session authentication via SigV4 proof of possession
+					identity, errCode := testSessionAuthentication(t, iamServer, response.Credentials)
+					require.Equal(t, s3err.ErrNone, errCode, "Session authentication should succeed")
 					require.NotNil(t, identity)
 
 					// Test authorization with appropriate role based on test case
@@ -535,6 +535,16 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 		},
 		AttachedPolicies: []string{"S3IPRestrictedPolicy"},
 	})
+}
+
+// testSessionAuthentication authenticates STS temporary credentials the way a
+// real client does: a SigV4-signed request carrying the session token.
+func testSessionAuthentication(t *testing.T, iam *IdentityAccessManagement, creds *sts.Credentials) (*Identity, s3err.ErrorCode) {
+	req, err := newTestRequest("GET", "https://example.com/test-bucket/test-object", 0, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Amz-Security-Token", creds.SessionToken)
+	require.NoError(t, signRequestV4(req, creds.AccessKeyId, creds.SecretAccessKey))
+	return iam.reqSignatureV4Verify(req)
 }
 
 func testJWTAuthentication(t *testing.T, iam *IdentityAccessManagement, token string) (*Identity, s3err.ErrorCode) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -304,10 +305,7 @@ func TestS3ListObjectsV2PrefixCondition(t *testing.T) {
 	require.NotEmpty(t, sessionToken)
 
 	// Authenticate to get IAM identity
-	authReq := httptest.NewRequest("GET", "/examples", http.NoBody)
-	authReq.Header.Set("Authorization", "Bearer "+sessionToken)
-	identity, errCode := s3IAMIntegration.AuthenticateJWT(ctx, authReq)
-	require.Equal(t, s3err.ErrNone, errCode, "Authentication should succeed")
+	identity := testIdentityFromSessionToken(t, s3IAMIntegration, sessionToken)
 
 	tests := []struct {
 		name     string
@@ -434,10 +432,7 @@ func TestS3CreateBucketWithAttachedPolicy(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	authReq := httptest.NewRequest("PUT", "/ml-models", http.NoBody)
-	authReq.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
-	identity, errCode := s3IAMIntegration.AuthenticateJWT(ctx, authReq)
-	require.Equal(t, s3err.ErrNone, errCode)
+	identity := testIdentityFromSessionToken(t, s3IAMIntegration, response.Credentials.SessionToken)
 
 	tests := []struct {
 		name     string
@@ -631,8 +626,16 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 
 	// Add a simple test endpoint that we can use to verify IAM functionality
 	router.HandleFunc("/test-auth", func(w http.ResponseWriter, r *http.Request) {
-		// Test JWT authentication
-		identity, errCode := s3IAMIntegration.AuthenticateJWT(r.Context(), r)
+		// Test JWT authentication. STS session tokens are not bearer tokens;
+		// they validate through the STS service directly.
+		var identity *IAMIdentity
+		var errCode s3err.ErrorCode
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if claims, err := ParseUnverifiedJWTToken(token); err == nil && s3IAMIntegration.isSTSIssuer(claims["iss"].(string)) {
+			identity = testIdentityFromSessionToken(t, s3IAMIntegration, token)
+		} else {
+			identity, errCode = s3IAMIntegration.AuthenticateJWT(r.Context(), r)
+		}
 		if errCode != s3err.ErrNone {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("Authentication failed"))

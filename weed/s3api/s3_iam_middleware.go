@@ -189,51 +189,12 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		}, s3err.ErrNone
 	}
 
-	// This is an STS-issued token - validate with STS service
-	// ValidateSessionToken performs cryptographic verification and extraction of trusted claims
-	sessionInfo, err := s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
-	if err != nil {
-		glog.V(3).Infof("STS session validation failed: %v", err)
-		return nil, s3err.ErrAccessDenied
-	}
-
-	// Create claims map starting with request context (which holds custom claims)
-	claims := make(map[string]interface{})
-	if sessionInfo.RequestContext != nil {
-		for k, v := range sessionInfo.RequestContext {
-			claims[k] = v
-		}
-	}
-
-	// Add standard claims
-	claims["sub"] = sessionInfo.Subject
-	claims["role"] = sessionInfo.RoleArn
-	claims["principal"] = sessionInfo.Principal
-	claims["snam"] = sessionInfo.SessionName
-
-	// Create IAM identity from VALIDATED session info
-	// We use the trusted data returned by the STS service, not the unverified token claims
-	identity := &IAMIdentity{
-		Name:         sessionInfo.Subject,
-		Principal:    sessionInfo.Principal,
-		SessionToken: sessionToken,
-		Account: &Account{
-			DisplayName:  sessionInfo.SessionName,
-			EmailAddress: sessionInfo.Subject + "@seaweedfs.local",
-			Id:           sessionInfo.Subject,
-		},
-		Claims: claims,
-	}
-	// ParentUser is set only for OIDC-federated sessions. Resolve the audit
-	// identity claim from the original request context (not the local claims
-	// map, whose sub was overwritten with the opaque session subject above) so
-	// the bearer path surfaces the same authoritative OIDC identity as SigV4.
-	if sessionInfo.ParentUser != "" {
-		identity.IdentityClaim = sts.ResolveIdentityClaim(sessionInfo.RequestContext)
-	}
-
-	glog.V(3).Infof("JWT authentication successful for principal: %s", identity.Principal)
-	return identity, s3err.ErrNone
+	// STS session tokens authenticate SigV4 requests via proof of possession
+	// (signature with the derived secret). As bearer tokens they would turn
+	// every presigned URL, which carries the token in X-Amz-Security-Token,
+	// into a standalone credential.
+	glog.V(3).Infof("Rejected STS session token presented as bearer token")
+	return nil, s3err.ErrAccessDenied
 }
 
 // ValidateSessionToken checks the validity of an STS session token
