@@ -30,13 +30,17 @@ type stubFilerSvc struct {
 	lookupErr  error
 	listResp   []*filer_pb.Entry
 	listErr    error
+	lookupReq  *filer_pb.LookupDirectoryEntryRequest
+	listReq    *filer_pb.ListEntriesRequest
 }
 
 func (s *stubFilerSvc) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	s.lookupReq = req
 	return s.lookupResp, s.lookupErr
 }
 
 func (s *stubFilerSvc) ListEntries(ctx context.Context, req *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (filer_pb.SeaweedFiler_ListEntriesClient, error) {
+	s.listReq = req
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -149,6 +153,19 @@ func TestUploadCompleted(t *testing.T) {
 		completed, err := c.uploadCompleted(fc, "/buckets/b", uploadEntry("up1", "obj"))
 		if err != nil || completed {
 			t.Fatalf("got (%v, %v), want (false, nil)", completed, err)
+		}
+	})
+
+	t.Run("trailing slash key resolves inside its directory", func(t *testing.T) {
+		svc := &stubFilerSvc{
+			lookupResp: &filer_pb.LookupDirectoryEntryResponse{Entry: completedEntry("up1")},
+		}
+		completed, err := c.uploadCompleted(stubFilerClient{client: svc}, "/buckets/b", uploadEntry("up1", "dir/"))
+		if err != nil || !completed {
+			t.Fatalf("got (%v, %v), want (true, nil)", completed, err)
+		}
+		if svc.lookupReq.Directory != "/buckets/b/dir" || svc.lookupReq.Name != "dir" {
+			t.Fatalf("lookup = %s/%s, want /buckets/b/dir/dir", svc.lookupReq.Directory, svc.lookupReq.Name)
 		}
 	})
 }

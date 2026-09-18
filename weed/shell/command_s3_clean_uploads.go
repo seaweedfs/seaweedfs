@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path"
 	"strings"
 	"time"
 
@@ -128,12 +129,19 @@ func (c *commandS3CleanUploads) uploadCompleted(filerClient filer_pb.FilerClient
 	if objectKey == "" {
 		return false, nil
 	}
-	objectPath := util.FullPath(bucketDir + "/" + s3_constants.NormalizeObjectKey(objectKey))
-	dir, name := objectPath.DirAndName()
+	// Derive the object location the same way completion's getEntryNameAndDir
+	// does: a trailing-slash key stores the object inside the directory it
+	// names, so FullPath+DirAndName would look one level too high.
+	name := path.Base(objectKey)
+	dir := path.Dir(objectKey)
+	if dir == "." {
+		dir = ""
+	}
+	objectDir := util.FullPath(bucketDir + "/" + dir)
 
 	completed := false
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{Directory: string(objectDir), Name: name})
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil
 		}
@@ -149,7 +157,7 @@ func (c *commandS3CleanUploads) uploadCompleted(filerClient filer_pb.FilerClient
 		return completed, err
 	}
 
-	err = filer_pb.List(context.Background(), filerClient, string(objectPath)+s3_constants.VersionsFolder, "", func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.List(context.Background(), filerClient, string(objectDir)+"/"+name+s3_constants.VersionsFolder, "", func(entry *filer_pb.Entry, isLast bool) error {
 		if string(entry.Extended[s3_constants.SeaweedFSUploadId]) == upload.Name {
 			completed = true
 		}
