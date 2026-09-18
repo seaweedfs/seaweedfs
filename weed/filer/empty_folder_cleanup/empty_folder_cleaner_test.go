@@ -1206,15 +1206,21 @@ func TestEmptyFolderCleaner_executeCleanup_policyFailureRequeues(t *testing.T) {
 	}
 
 	folder := "/buckets/test/folder"
-	for i := 0; i < DefaultMaxPolicyFailures+2; i++ {
+	for i := 0; i < DefaultMaxPolicyFailures; i++ {
 		cleaner.executeCleanup(folder, "triggered_item")
+		popped, _, ok := cleaner.cleanupQueue.Pop()
+		if !ok || popped != folder {
+			t.Fatalf("failure %d of %d should requeue the folder", i+1, DefaultMaxPolicyFailures)
+		}
 	}
 
-	if got := cleaner.folderCounts[folder].policyFailures; got != DefaultMaxPolicyFailures+2 {
-		t.Fatalf("policyFailures = %d, want %d", got, DefaultMaxPolicyFailures+2)
+	cleaner.executeCleanup(folder, "triggered_item")
+
+	if got := cleaner.folderCounts[folder].policyFailures; got != DefaultMaxPolicyFailures+1 {
+		t.Fatalf("policyFailures = %d, want %d", got, DefaultMaxPolicyFailures+1)
 	}
-	if got := cleaner.cleanupQueue.Len(); got != 1 {
-		t.Fatalf("expected the folder to remain requeued, got %d items", got)
+	if got := cleaner.cleanupQueue.Len(); got != 0 {
+		t.Fatalf("expected retries to stop after %d failures, got %d queued", DefaultMaxPolicyFailures, got)
 	}
 }
 
