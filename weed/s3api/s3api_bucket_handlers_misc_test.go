@@ -162,6 +162,11 @@ func TestGetBucketOwnershipControlsDefaultsToBucketOwnerEnforced(t *testing.T) {
 	})
 	req := newBucketRequest(http.MethodGet, "b", "ownershipControls=", "")
 	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), &Identity{
+		Name:    "admin",
+		Account: &AccountAdmin,
+		Actions: []Action{s3_constants.ACTION_ADMIN},
+	}))
 	rec := httptest.NewRecorder()
 
 	s3a.GetBucketOwnershipControls(rec, req)
