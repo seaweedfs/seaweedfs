@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path"
@@ -180,7 +181,7 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 // object path plus a RECOMPUTE_LATEST finalize, so the version's PUT and its
 // .versions pointer flip commit atomically (the recompute scans .versions/ after
 // the PUT and sees the new version).
-func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, filePath string, entry *filer_pb.Entry, cond *filer_pb.WriteCondition, finalize []*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
+func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, filePath string, entry *filer_pb.Entry, cond *filer_pb.WriteCondition, conditionKey string, finalize []*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
 	mutations := make([]*filer_pb.ObjectMutation, 0, 1+len(finalize))
 	mutations = append(mutations, &filer_pb.ObjectMutation{
 		Type:      filer_pb.ObjectMutation_PUT,
@@ -189,17 +190,18 @@ func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, fil
 	})
 	mutations = append(mutations, finalize...)
 	return s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
-		LockKey:   lockKey,
-		RouteKey:  routeKey,
-		Condition: cond,
-		Mutations: mutations,
+		LockKey:      lockKey,
+		RouteKey:     routeKey,
+		Condition:    cond,
+		ConditionKey: conditionKey,
+		Mutations:    mutations,
 	})
 }
 
 // routedMkFile builds an entry like filer_pb.MkFile and writes it through a
 // routed PUT on the owner filer, for callers that would otherwise mkFile to the
 // default filer (e.g. multipart completion of a non-versioned object).
-func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
+func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry), removal *uploadRemovalTxn) error {
 	now := time.Now().Unix()
 	entry := &filer_pb.Entry{
 		Name: name,
@@ -216,9 +218,19 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir
 		fn(entry)
 	}
 	filePath := parentDir + "/" + name
-	resp, err := s3a.routedPut(owner, routeKey, filePath, filePath, entry, nil, nil)
+	var cond *filer_pb.WriteCondition
+	var conditionKey string
+	var finalize []*filer_pb.ObjectMutation
+	if removal != nil {
+		cond, conditionKey = removal.condition, removal.conditionKey
+		finalize = []*filer_pb.ObjectMutation{removal.mutation}
+	}
+	resp, err := s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, conditionKey, finalize)
 	if err != nil {
 		return err
+	}
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		return errUploadRemoved
 	}
 	if resp.Error != "" {
 		return fmt.Errorf("routed mkfile %s/%s: %s", parentDir, name, resp.Error)
@@ -226,15 +238,51 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir
 	return nil
 }
 
+// errUploadRemoved is a routed commit rejected because its precondition found
+// the upload directory already deleted, mapped to NoSuchUpload by callers.
+var errUploadRemoved = errors.New("upload directory already removed")
+
 // writeMultipartObject writes a completed multipart object entry, routed to the
 // owner when known (so it serializes with concurrent writes to the same key)
-// and falling back to a plain mkFile otherwise. routeKey must be the same key the
-// caller used to resolve owner, so owner selection and forwarding stay consistent.
-func (s3a *S3ApiServer) writeMultipartObject(owner pb.ServerAddress, routeKey, dir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry)) error {
+// and falling back to a plain mkFile otherwise. removal carries the upload
+// precondition and deletion applied in the same transaction as the routed PUT.
+// routeKey must be the same key the caller used to resolve owner, so owner
+// selection and forwarding stay consistent.
+func (s3a *S3ApiServer) writeMultipartObject(owner pb.ServerAddress, routeKey, dir, name string, chunks []*filer_pb.FileChunk, fn func(*filer_pb.Entry), removal *uploadRemovalTxn) error {
 	if owner != "" {
-		return s3a.routedMkFile(owner, routeKey, dir, name, chunks, fn)
+		return s3a.routedMkFile(owner, routeKey, dir, name, chunks, fn, removal)
 	}
 	return s3a.mkFile(dir, name, chunks, fn)
+}
+
+// uploadRemovalTxn carries the precondition and mutation that drop a completed
+// upload's directory inside the object's commit transaction. The precondition
+// fails the commit when a delete that does not take the object lock (abort,
+// lifecycle, s3.clean.uploads) removed the directory first, instead of
+// publishing the object over freed chunks.
+type uploadRemovalTxn struct {
+	condition    *filer_pb.WriteCondition
+	conditionKey string
+	mutation     *filer_pb.ObjectMutation
+}
+
+// routedUploadRemoval returns the transaction parts that remove a completed
+// upload's directory inside the object's commit, after freeing the part
+// entries the object does not reference. It is nil when the write is not
+// routed and the upload directory still needs post-commit cleanup.
+func (s3a *S3ApiServer) routedUploadRemoval(ctx context.Context, owner pb.ServerAddress, uploadDirectory, bucket, uploadId string, completionState *multipartCompletionState) (*uploadRemovalTxn, error) {
+	if owner == "" {
+		return nil, nil
+	}
+	if err := s3a.deleteUnusedPartEntries(ctx, uploadDirectory, bucket, uploadId, completionState); err != nil {
+		return nil, err
+	}
+	conditionKey, condition := uploadExistsCondition(uploadDirectory)
+	return &uploadRemovalTxn{
+		condition:    condition,
+		conditionKey: conditionKey,
+		mutation:     s3a.removeUploadDirMutation(bucket, uploadId),
+	}, nil
 }
 
 func (s3a *S3ApiServer) routedDelete(owner pb.ServerAddress, bucket, object string, cond *filer_pb.WriteCondition) (*filer_pb.ObjectTransactionResponse, error) {

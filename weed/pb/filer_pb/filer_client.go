@@ -202,7 +202,7 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 		}
 		prevEntry = resp.Entry
 		count++
-		if count > int(limit) && limit != 0 {
+		if limit != 0 && uint64(count) > uint64(limit) {
 			prevEntry = nil
 		}
 	}
