@@ -34,6 +34,11 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return err
 	}
+	if !vs.AllowUntrustedRemoteEndpoints {
+		if err := validateReplicaTarget(stream.Context(), req.SourceDataNode); err != nil {
+			return fmt.Errorf("invalid source data node %s: %w", req.SourceDataNode, err)
+		}
+	}
 
 	// A pre-existing local replica is NOT deleted up front. Deleting before the
 	// source is confirmed reachable destroys a healthy copy on a transient

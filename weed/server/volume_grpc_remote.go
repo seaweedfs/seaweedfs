@@ -137,9 +137,10 @@ func checkBlockedIPPolicy(endpoint string, ip net.IP, allowPrivate bool) error {
 	return nil
 }
 
-// validateReplicaTarget rejects a replica upload target that could redirect the
-// forwarded write away from a peer volume server. The target must be a bare
-// host:port -- a scheme, userinfo, path, query or fragment can smuggle a
+// validateReplicaTarget rejects a peer volume server address that could
+// redirect a dial away from the cluster: replica upload targets and the
+// copy/tail source addresses are all caller-supplied. The target must be a
+// bare host:port -- a scheme, userinfo, path, query or fragment can smuggle a
 // different destination through fmt.Sprintf -- whose host is not loopback,
 // link-local (IMDS) or unspecified. Cluster peers legitimately sit on private
 // networks, so RFC 1918 / CGNAT are allowed.

@@ -316,6 +316,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return nil, err
 	}
+	if !vs.AllowUntrustedRemoteEndpoints {
+		if err := validateReplicaTarget(ctx, req.SourceDataNode); err != nil {
+			return nil, fmt.Errorf("invalid source data node %s: %w", req.SourceDataNode, err)
+		}
+	}
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
