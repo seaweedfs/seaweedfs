@@ -1046,7 +1046,13 @@ func (s3a *S3ApiServer) deleteUnusedPartEntries(ctx context.Context, uploadDirec
 // not be demoted.
 func (s3a *S3ApiServer) resumeCommittedObject(r *http.Request, input *s3.CompleteMultipartUploadInput, dirName, entryName string) (*CompleteMultipartUploadResult, s3err.ErrorCode) {
 	entry, err := s3a.getEntry(dirName, entryName)
-	if err != nil || entry == nil || string(entry.Extended[s3_constants.SeaweedFSUploadId]) != *input.UploadId {
+	if err != nil {
+		if isFilerNotFound(err) {
+			return nil, s3err.ErrNoSuchUpload
+		}
+		return nil, s3err.ErrInternalError
+	}
+	if entry == nil || string(entry.Extended[s3_constants.SeaweedFSUploadId]) != *input.UploadId {
 		return nil, s3err.ErrNoSuchUpload
 	}
 	state, err := s3a.getVersioningState(*input.Bucket)
