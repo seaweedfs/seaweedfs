@@ -1104,22 +1104,73 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 
 	glog.V(2).Infof("abortMultipartUpload input %v", input)
 
-	exists, err := s3a.exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true)
+	uploadsFolder := s3a.genUploadsFolder(*input.Bucket)
+	uploadEntry, err := s3a.getEntry(uploadsFolder, *input.UploadId)
 	if err != nil {
-		// filer_pb.Exists reports not-found as (false, nil), so an error here is
-		// always a store failure; answering NoSuchUpload would leak the parts.
+		if isFilerNotFound(err) {
+			return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
+		}
 		glog.Errorf("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrInternalError
 	}
-	if exists {
-		err = s3a.rm(context.Background(), s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
+	if uploadEntry == nil {
+		return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
 	}
+
+	// A leftover upload directory can outlive the object it completed into;
+	// its part entries then share chunks with that object.
+	deleteData := true
+	completed, err := s3a.uploadCompleted(s3a.bucketDir(*input.Bucket), uploadEntry)
 	if err != nil {
+		glog.Errorf("bucket %s abort upload %s completed check: %v", *input.Bucket, *input.UploadId, err)
+		return nil, s3err.ErrInternalError
+	}
+	deleteData = !completed
+
+	if err := s3a.rm(context.Background(), uploadsFolder, *input.UploadId, deleteData, true); err != nil {
 		glog.V(1).Infof("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrInternalError
 	}
 
 	return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
+}
+
+// uploadCompleted reports whether the upload assembled into an object: the
+// object entry, or any version file under <key>.versions, still carries the
+// upload id completion stamps on it.
+func (s3a *S3ApiServer) uploadCompleted(bucketDir string, upload *filer_pb.Entry) (bool, error) {
+	objectKey := string(upload.Extended[s3_constants.ExtMultipartObjectKey])
+	if objectKey == "" {
+		return false, nil
+	}
+	name := path.Base(objectKey)
+	dir := path.Dir(objectKey)
+	if dir == "." {
+		dir = ""
+	}
+	objectDir := path.Join(bucketDir, dir)
+
+	entry, err := s3a.getEntry(objectDir, name)
+	if err != nil && !isFilerNotFound(err) {
+		return false, err
+	}
+	if entry != nil && string(entry.Extended[s3_constants.SeaweedFSUploadId]) == upload.Name {
+		return true, nil
+	}
+
+	versions, _, err := s3a.list(objectDir+"/"+name+s3_constants.VersionsFolder, "", "", false, math.MaxInt32)
+	if err != nil {
+		if isFilerNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, version := range versions {
+		if string(version.Extended[s3_constants.SeaweedFSUploadId]) == upload.Name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type ListMultipartUploadsResult struct {
