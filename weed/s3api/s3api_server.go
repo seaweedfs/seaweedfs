@@ -315,7 +315,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		chunkCache = (*chunk_cache.TieredChunkCache)(nil)
 	}
 	if option.ReaderCacheSizeMB < 0 || option.ReaderCacheSizeMB > math.MaxInt64>>20 {
-		return nil, fmt.Errorf("invalid -s3.readerCacheSizeMB %d: must be non-negative and fit in an int64 byte budget", option.ReaderCacheSizeMB)
+		return nil, fmt.Errorf("invalid readerCacheSizeMB %d: must be non-negative and fit in an int64 byte budget", option.ReaderCacheSizeMB)
 	}
 	var readerCacheBudget *filer.ReaderCacheBudget
 	if option.ReaderCacheSizeMB > 0 {

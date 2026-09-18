@@ -33,11 +33,11 @@ func NewReaderCacheBudget(limit int64) *ReaderCacheBudget {
 }
 
 func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
-	if b == nil {
-		return nil
-	}
 	if s.chunkSize < 0 {
 		return fmt.Errorf("invalid chunk size %d", s.chunkSize)
+	}
+	if b == nil {
+		return nil
 	}
 	size := int64(mem.AllocationSize(s.chunkSize))
 	if size > b.limit {
