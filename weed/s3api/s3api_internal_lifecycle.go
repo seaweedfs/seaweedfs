@@ -172,17 +172,23 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 	// Pre-check existence: filer.DeleteEntry suppresses ErrNotFound and
 	// returns success, so without this check an already-aborted upload
 	// would report DONE instead of the correct NOOP_RESOLVED.
-	exists, err := s3a.exists(uploadsFolder, uploadID, true)
+	uploadEntry, err := s3a.getEntry(uploadsFolder, uploadID)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return noopResolved("NOT_FOUND"), nil
 		}
-		return retryLater("TRANSPORT_ERROR: exists: " + err.Error()), nil
+		return retryLater("TRANSPORT_ERROR: getEntry: " + err.Error()), nil
 	}
-	if !exists {
+	if uploadEntry == nil {
 		return noopResolved("NOT_FOUND"), nil
 	}
-	if err := s3a.rm(ctx, uploadsFolder, uploadID, true, true); err != nil {
+	// A leftover upload directory can outlive the object it completed into;
+	// its part entries then share chunks with that object.
+	completed, checkErr := s3a.uploadCompleted(s3a.bucketDir(req.Bucket), uploadEntry)
+	if checkErr != nil {
+		return retryLater("TRANSPORT_ERROR: uploadCompleted: " + checkErr.Error()), nil
+	}
+	if err := s3a.rm(ctx, uploadsFolder, uploadID, !completed, true); err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return noopResolved("NOT_FOUND_AT_DELETE"), nil
 		}
