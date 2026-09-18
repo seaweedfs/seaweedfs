@@ -201,6 +201,41 @@ func TestReaderCacheFailedPrefetchReleasesBudget(t *testing.T) {
 	}
 }
 
+func TestReaderCacheUnboundedWithoutBudget(t *testing.T) {
+	const readers = 96 // more than 256MiB / 4MiB = 64 buffers
+	started := make(chan struct{}, readers)
+	gate := make(chan struct{})
+	rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		started <- struct{}{}
+		<-gate
+		buffer[0] = 42
+		return len(buffer), nil
+	}
+	var readersWg sync.WaitGroup
+	for i := 0; i < readers; i++ {
+		readersWg.Add(1)
+		go func(i int) {
+			defer readersWg.Done()
+			rc.ReadChunkAt(context.Background(), make([]byte, 1), fmt.Sprint(i), nil, false, 0, 4<<20, false)
+		}(i)
+	}
+	for i := 0; i < readers; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			close(gate)
+			readersWg.Wait()
+			t.Fatalf("only %d of %d downloads started; an implicit memory budget throttled the reader cache", i, readers)
+		}
+	}
+	close(gate)
+	readersWg.Wait()
+}
+
 // TestReaderCacheReReadAfterEviction verifies that a chunk evicted by budget
 // pressure is transparently re-downloaded on the next read and returns the
 // correct data. This is the core correctness property of eviction: a reader

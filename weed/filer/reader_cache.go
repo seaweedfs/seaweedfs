@@ -52,9 +52,6 @@ func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn
 	if len(budgets) > 0 {
 		budget = budgets[0]
 	}
-	if budget == nil {
-		budget = NewReaderCacheBudget(DefaultReaderCacheMemoryLimit)
-	}
 	return &ReaderCache{
 		limit:            limit,
 		budget:           budget,
