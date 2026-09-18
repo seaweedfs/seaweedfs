@@ -33,6 +33,8 @@ type ReaderCache struct {
 
 type SingleChunkCacher struct {
 	completedTimeNew int64
+	readers          int32
+	consumed         int32
 	sync.Mutex
 	parent         *ReaderCache
 	chunkFileId    string
@@ -51,9 +53,6 @@ func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn
 	var budget *ReaderCacheBudget
 	if len(budgets) > 0 {
 		budget = budgets[0]
-	}
-	if budget == nil {
-		budget = NewReaderCacheBudget(DefaultReaderCacheMemoryLimit)
 	}
 	return &ReaderCache{
 		limit:            limit,
@@ -130,6 +129,7 @@ retry:
 			// concurrent destroy() (error eviction here, LRU, or UnCache) cannot
 			// start wg.Wait() on a zero counter while this read is about to register.
 			cacher.wg.Add(1)
+			atomic.AddInt32(&cacher.readers, 1)
 			rc.Unlock()
 			n, err := cacher.readChunkAt(ctx, buffer, offset)
 			if n > 0 || err != nil {
@@ -174,6 +174,7 @@ retry:
 	<-cacher.cacheStartedCh
 	rc.downloaders[fileId] = cacher
 	cacher.wg.Add(1)
+	atomic.AddInt32(&cacher.readers, 1)
 	rc.Unlock()
 
 	return cacher.readChunkAt(ctx, buffer, offset)
@@ -191,11 +192,32 @@ func (rc *ReaderCache) UnCache(fileId string) {
 
 func (rc *ReaderCache) remove(downloader *SingleChunkCacher) {
 	rc.Lock()
-	if rc.downloaders[downloader.chunkFileId] == downloader {
+	removed := rc.downloaders[downloader.chunkFileId] == downloader
+	if removed {
 		delete(rc.downloaders, downloader.chunkFileId)
 	}
 	rc.Unlock()
-	downloader.destroy()
+	if removed {
+		downloader.destroy()
+	}
+}
+
+// removeConsumed drops a cacher once its buffer was fully read and no
+// readers remain attached. The checks run under the ReaderCache lock so a
+// reader attaching at the same time either wins (the cacher stays and that
+// reader's detach retries the removal) or misses the map and refetches.
+func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
+	rc.Lock()
+	removed := rc.downloaders[downloader.chunkFileId] == downloader &&
+		atomic.LoadInt32(&downloader.readers) == 0 &&
+		atomic.LoadInt32(&downloader.consumed) != 0
+	if removed {
+		delete(rc.downloaders, downloader.chunkFileId)
+	}
+	rc.Unlock()
+	if removed {
+		downloader.destroy()
+	}
 }
 
 func (rc *ReaderCache) destroy() {
@@ -333,8 +355,12 @@ func (s *SingleChunkCacher) destroy() {
 // The ctx parameter allows the reader to cancel its wait (but the download continues
 // for other readers - see comment in startCaching about shared resource semantics).
 // The caller must s.wg.Add(1) under the ReaderCache lock before calling; this only releases it.
-func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset int64) (int, error) {
-	defer s.wg.Done()
+func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset int64) (n int, err error) {
+	defer func() {
+		s.wg.Done()
+		atomic.AddInt32(&s.readers, -1)
+		s.parent.removeConsumed(s)
+	}()
 
 	// Wait for download to complete, but allow reader cancellation.
 	// Prioritize checking done first - if data is already available,
@@ -364,5 +390,9 @@ func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset 
 		return 0, nil
 	}
 
-	return copy(buf, s.data[offset:]), nil
+	n = copy(buf, s.data[offset:])
+	if offset+int64(n) == int64(len(s.data)) {
+		atomic.StoreInt32(&s.consumed, 1)
+	}
+	return n, nil
 }

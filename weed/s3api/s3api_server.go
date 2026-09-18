@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -68,6 +69,7 @@ type S3ApiServerOption struct {
 	ExternalUrl               string // external URL clients use, tried first during signature verification behind a reverse proxy
 	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
 	CacheSizeMB               int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
+	ReaderCacheSizeMB         int64  // memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs; 0 means unlimited
 	MaxMB                     int32  // filer's -maxMB, read from the filer configuration at startup
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only object dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
@@ -282,7 +284,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	//     assumed chunk size (s3ChunkCacheChunkSizeMB), clamped to a small
 	//     floor so tiny caches still function.
 	//
-	// Downloader slots: each slot holds one in-flight / recently-completed
+	// Downloader slots: each slot holds one in-flight or not-yet-consumed
 	// chunk buffer (~4 MiB by default), so this caps both peak memory for
 	// in-flight chunks (s3ReaderCacheDownloaderLimit × chunkSize) and the
 	// global fetch concurrency across all S3 GET requests. WebDAV uses 32
@@ -312,7 +314,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	} else {
 		chunkCache = (*chunk_cache.TieredChunkCache)(nil)
 	}
-	readerCache := filer.NewReaderCache(s3ReaderCacheDownloaderLimit, chunkCache, filerClient.GetLookupFileIdFunction(), filerClient)
+	if option.ReaderCacheSizeMB < 0 || option.ReaderCacheSizeMB > math.MaxInt64>>20 {
+		return nil, fmt.Errorf("invalid readerCacheSizeMB %d: must be non-negative and fit in an int64 byte budget", option.ReaderCacheSizeMB)
+	}
+	var readerCacheBudget *filer.ReaderCacheBudget
+	if option.ReaderCacheSizeMB > 0 {
+		readerCacheBudget = filer.NewReaderCacheBudget(option.ReaderCacheSizeMB << 20)
+	}
+	readerCache := filer.NewReaderCache(s3ReaderCacheDownloaderLimit, chunkCache, filerClient.GetLookupFileIdFunction(), filerClient, readerCacheBudget)
 
 	s3ApiServer = &S3ApiServer{
 		option:                option,

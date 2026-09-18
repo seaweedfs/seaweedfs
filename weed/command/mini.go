@@ -531,6 +531,7 @@ func initMiniS3Flags() {
 	miniS3Options.externalUrl = cmdMini.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	miniS3Options.defaultFileMode = cmdMini.Flag.String("s3.defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	miniS3Options.cacheSizeMB = cmdMini.Flag.Int64("s3.cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
+	miniS3Options.readerCacheSizeMB = cmdMini.Flag.Int64("s3.readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	miniS3Options.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
 	miniS3Options.debug = new(bool) // explicitly false

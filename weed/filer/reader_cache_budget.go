@@ -36,9 +36,12 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 	if s.chunkSize < 0 {
 		return fmt.Errorf("invalid chunk size %d", s.chunkSize)
 	}
+	if b == nil {
+		return nil
+	}
 	size := int64(mem.AllocationSize(s.chunkSize))
 	if size > b.limit {
-		return fmt.Errorf("chunk buffer needs %d bytes, exceeding reader cache budget %d; increase -readerCacheSizeMB", size, b.limit)
+		return fmt.Errorf("chunk buffer needs %d bytes, exceeding reader cache budget %d; increase the readerCacheSizeMB budget", size, b.limit)
 	}
 	for {
 		b.Lock()
@@ -63,6 +66,9 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 }
 
 func (b *ReaderCacheBudget) complete(s *SingleChunkCacher) {
+	if b == nil {
+		return
+	}
 	b.Lock()
 	defer b.Unlock()
 	if _, found := b.reservations[s]; found && b.idleEntries[s] == nil {
@@ -73,6 +79,9 @@ func (b *ReaderCacheBudget) complete(s *SingleChunkCacher) {
 }
 
 func (b *ReaderCacheBudget) release(s *SingleChunkCacher) {
+	if b == nil {
+		return
+	}
 	b.Lock()
 	defer b.Unlock()
 	if size, found := b.reservations[s]; found {

@@ -201,6 +201,180 @@ func TestReaderCacheFailedPrefetchReleasesBudget(t *testing.T) {
 	}
 }
 
+func TestReaderCacheUnboundedWithoutBudget(t *testing.T) {
+	const readers = 96 // more than 256MiB / 4MiB = 64 buffers
+	started := make(chan struct{}, readers)
+	gate := make(chan struct{})
+	rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		started <- struct{}{}
+		<-gate
+		buffer[0] = 42
+		return len(buffer), nil
+	}
+	var readersWg sync.WaitGroup
+	for i := 0; i < readers; i++ {
+		readersWg.Add(1)
+		go func(i int) {
+			defer readersWg.Done()
+			rc.ReadChunkAt(context.Background(), make([]byte, 1), fmt.Sprint(i), nil, false, 0, 4<<20, false)
+		}(i)
+	}
+	for i := 0; i < readers; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			close(gate)
+			readersWg.Wait()
+			t.Fatalf("only %d of %d downloads started; an implicit memory budget throttled the reader cache", i, readers)
+		}
+	}
+	close(gate)
+	readersWg.Wait()
+}
+
+func TestReaderCacheDropsConsumedChunks(t *testing.T) {
+	var fetchCount int32
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		atomic.AddInt32(&fetchCount, 1)
+		return len(buffer), nil
+	}
+	buf := make([]byte, 4<<10)
+	if _, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false); err != nil {
+		t.Fatal(err)
+	}
+	rc.Lock()
+	_, retained := rc.downloaders["chunk"]
+	rc.Unlock()
+	if retained {
+		t.Fatal("fully consumed chunk buffer still retained")
+	}
+	if _, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&fetchCount); got != 2 {
+		t.Fatalf("consumed chunk was not refetched, fetchCount=%d", got)
+	}
+}
+
+// A prefetched chunk must survive until its reader arrives, then be dropped
+// once consumed: the read hits the prefetched buffer (no second fetch) and a
+// later read fetches again.
+func TestReaderCachePrefetchBufferDroppedAfterRead(t *testing.T) {
+	var fetchCount int32
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		atomic.AddInt32(&fetchCount, 1)
+		buffer[0] = 42
+		return len(buffer), nil
+	}
+	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ChunkSize: 4 << 10}}, 1)
+
+	buf := make([]byte, 4<<10)
+	n, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false)
+	if err != nil || n != len(buf) || buf[0] != 42 {
+		t.Fatalf("read of prefetched chunk: n=%d data=%d err=%v", n, buf[0], err)
+	}
+	if got := atomic.LoadInt32(&fetchCount); got != 1 {
+		t.Fatalf("read did not hit the prefetched buffer, fetchCount=%d", got)
+	}
+	rc.Lock()
+	_, retained := rc.downloaders["chunk"]
+	rc.Unlock()
+	if retained {
+		t.Fatal("consumed prefetch buffer still retained")
+	}
+	if _, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&fetchCount); got != 2 {
+		t.Fatalf("consumed chunk was not refetched, fetchCount=%d", got)
+	}
+}
+
+// A consumed chunk survives while another reader is still attached; it is
+// dropped once no readers remain, regardless of which reader reached the end.
+func TestReaderCacheConsumedBufferSurvivesAttachedReader(t *testing.T) {
+	var fetchCount int32
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		atomic.AddInt32(&fetchCount, 1)
+		buffer[0] = 42
+		return len(buffer), nil
+	}
+
+	// A partial read primes the cacher, then a second reader attaches.
+	rc.ReadChunkAt(context.Background(), make([]byte, 1), "chunk", nil, false, 0, 4<<10, false)
+	rc.Lock()
+	downloader := rc.downloaders["chunk"]
+	if downloader == nil {
+		rc.Unlock()
+		t.Fatal("cacher missing before attach")
+	}
+	downloader.wg.Add(1)
+	atomic.AddInt32(&downloader.readers, 1)
+	rc.Unlock()
+
+	buf := make([]byte, 4<<10)
+	if n, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false); err != nil || n != len(buf) {
+		t.Fatalf("full read: n=%d err=%v", n, err)
+	}
+	rc.Lock()
+	_, retained := rc.downloaders["chunk"]
+	rc.Unlock()
+	if !retained {
+		t.Fatal("consumed chunk dropped while a reader was still attached")
+	}
+
+	// The attached reader detaches without reading: since the buffer was
+	// already consumed, the last detach drops it.
+	downloader.wg.Done()
+	atomic.AddInt32(&downloader.readers, -1)
+	rc.removeConsumed(downloader)
+	rc.Lock()
+	_, retained = rc.downloaders["chunk"]
+	rc.Unlock()
+	if retained {
+		t.Fatal("consumed chunk retained after last reader detached")
+	}
+	if got := atomic.LoadInt32(&fetchCount); got != 1 {
+		t.Fatalf("attached readers fetched more than once, fetchCount=%d", got)
+	}
+}
+
+func TestReaderCacheConsumedChunkReleasesBudget(t *testing.T) {
+	budget := NewReaderCacheBudget(4 << 10)
+	rc := NewReaderCache(10, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil, budget)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		return len(buffer), nil
+	}
+	if _, err := rc.ReadChunkAt(context.Background(), make([]byte, 4<<10), "chunk", nil, false, 0, 4<<10, false); err != nil {
+		t.Fatal(err)
+	}
+	budget.Lock()
+	used := budget.used
+	budget.Unlock()
+	if used != 0 {
+		t.Fatalf("consumed chunk still reserves %d bytes", used)
+	}
+}
+
 // TestReaderCacheReReadAfterEviction verifies that a chunk evicted by budget
 // pressure is transparently re-downloaded on the next read and returns the
 // correct data. This is the core correctness property of eviction: a reader
