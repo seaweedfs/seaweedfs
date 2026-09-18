@@ -1679,6 +1679,7 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 	// for every auth path — prevents privilege escalation via header injection.
 	r.Header.Del(s3_constants.SeaweedFSPrincipalHeader)
 	r.Header.Del(s3_constants.SeaweedFSSessionTokenHeader)
+	r.Header.Del(s3_constants.AmzAccountId)
 
 	reqAuthType := getRequestAuthType(r)
 
