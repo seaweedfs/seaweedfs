@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
@@ -172,24 +173,24 @@ func (s3a *S3ApiServer) lifecycleAbortMPU(ctx context.Context, req *s3_lifecycle
 	// Pre-check existence: filer.DeleteEntry suppresses ErrNotFound and
 	// returns success, so without this check an already-aborted upload
 	// would report DONE instead of the correct NOOP_RESOLVED.
-	exists, err := s3a.exists(uploadsFolder, uploadID, true)
+	uploadEntry, err := s3a.getEntry(uploadsFolder, uploadID)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return noopResolved("NOT_FOUND"), nil
 		}
-		return retryLater("TRANSPORT_ERROR: exists: " + err.Error()), nil
+		return retryLater("TRANSPORT_ERROR: getEntry: " + err.Error()), nil
 	}
-	if !exists {
+	if uploadEntry == nil {
 		return noopResolved("NOT_FOUND"), nil
 	}
-	if err := s3a.rm(ctx, uploadsFolder, uploadID, true, true); err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return noopResolved("NOT_FOUND_AT_DELETE"), nil
-		}
-		glog.V(1).Infof("lifecycle abort_mpu %s/%s: %v", req.Bucket, req.ObjectPath, err)
-		return retryLater("TRANSPORT_ERROR: rm: " + err.Error()), nil
+	object := string(uploadEntry.Extended[s3_constants.ExtMultipartObjectKey])
+	code := s3a.withObjectWriteLock(req.Bucket, object, nil, func() s3err.ErrorCode {
+		return s3a.removeUploadDir(req.Bucket, uploadID, object)
+	})
+	if code == s3err.ErrNone {
+		return done(), nil
 	}
-	return done(), nil
+	return retryLater("TRANSPORT_ERROR: removeUploadDir: " + s3err.GetAPIError(code).Code), nil
 }
 
 // checkSoleSurvivorMarker returns nil to proceed with the delete, or a

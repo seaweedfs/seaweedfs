@@ -1104,22 +1104,136 @@ func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput
 
 	glog.V(2).Infof("abortMultipartUpload input %v", input)
 
-	exists, err := s3a.exists(s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true)
+	uploadsFolder := s3a.genUploadsFolder(*input.Bucket)
+	uploadEntry, err := s3a.getEntry(uploadsFolder, *input.UploadId)
 	if err != nil {
-		// filer_pb.Exists reports not-found as (false, nil), so an error here is
-		// always a store failure; answering NoSuchUpload would leak the parts.
+		if isFilerNotFound(err) {
+			return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
+		}
 		glog.Errorf("bucket %s abort upload %s: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrInternalError
 	}
-	if exists {
-		err = s3a.rm(context.Background(), s3a.genUploadsFolder(*input.Bucket), *input.UploadId, true, true)
-	}
-	if err != nil {
-		glog.V(1).Infof("bucket %s remove upload %s: %v", *input.Bucket, *input.UploadId, err)
-		return nil, s3err.ErrInternalError
+	if uploadEntry == nil {
+		return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
 	}
 
-	return &s3.AbortMultipartUploadOutput{}, s3err.ErrNone
+	object := string(uploadEntry.Extended[s3_constants.ExtMultipartObjectKey])
+	if object == "" && input.Key != nil {
+		object = *input.Key
+	}
+	return &s3.AbortMultipartUploadOutput{}, s3a.withObjectWriteLock(*input.Bucket, object, nil, func() s3err.ErrorCode {
+		return s3a.removeUploadDir(*input.Bucket, *input.UploadId, object)
+	})
+}
+
+// removeUploadDir removes a leftover upload directory under the object write
+// lock: a directory that outlived the object it completed into shares chunks
+// with it and goes metadata-only; anything else frees the parts' chunks.
+func (s3a *S3ApiServer) removeUploadDir(bucket, uploadId, object string) s3err.ErrorCode {
+	completed, err := s3a.uploadCompleted(s3a.bucketDir(bucket), uploadId, object)
+	if err != nil {
+		glog.Errorf("bucket %s remove upload %s completed check: %v", bucket, uploadId, err)
+		return s3err.ErrInternalError
+	}
+	if completed {
+		if err := s3a.rm(context.Background(), s3a.genUploadsFolder(bucket), uploadId, false, true); err != nil {
+			glog.V(1).Infof("bucket %s remove upload %s: %v", bucket, uploadId, err)
+			return s3err.ErrInternalError
+		}
+		return s3err.ErrNone
+	}
+	return s3a.routedUploadDirDelete(bucket, uploadId, object)
+}
+
+// routedUploadDirDelete frees an open upload's chunks. The delete rides an
+// ObjectTransaction on the object's lock key, so a racing routed commit either
+// fails its upload-exists precondition afterwards or has already stamped the
+// object — the condition then rejects the data delete and it falls back to
+// metadata-only. With no owner there is no routed commit to exclude, and the
+// caller's object write lock already serializes the mkFile fallback.
+func (s3a *S3ApiServer) routedUploadDirDelete(bucket, uploadId, object string) s3err.ErrorCode {
+	uploadsFolder := s3a.genUploadsFolder(bucket)
+	rmUploadDir := func(isDeleteData bool) s3err.ErrorCode {
+		if err := s3a.rm(context.Background(), uploadsFolder, uploadId, isDeleteData, true); err != nil {
+			glog.V(1).Infof("bucket %s remove upload %s: %v", bucket, uploadId, err)
+			return s3err.ErrInternalError
+		}
+		return s3err.ErrNone
+	}
+	if object == "" {
+		return rmUploadDir(true)
+	}
+	owner := s3a.objectWriteOwner(bucket, object)
+	if owner == "" {
+		return rmUploadDir(true)
+	}
+	objectPath := s3a.toFilerPath(bucket, object)
+	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
+		LockKey:      objectPath,
+		RouteKey:     s3a.objectRouteKey(bucket, object),
+		ConditionKey: objectPath,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:     filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL,
+			ExtKey:   s3_constants.SeaweedFSUploadId,
+			ExtValue: uploadId,
+		}}},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:         filer_pb.ObjectMutation_DELETE,
+			Directory:    uploadsFolder,
+			Name:         uploadId,
+			IsDeleteData: true,
+			IsRecursive:  true,
+		}},
+	})
+	if err != nil {
+		glog.Errorf("bucket %s abort upload %s transaction: %v", bucket, uploadId, err)
+		return s3err.ErrInternalError
+	}
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		return rmUploadDir(false)
+	}
+	if resp.Error != "" {
+		glog.Errorf("bucket %s abort upload %s transaction: %s", bucket, uploadId, resp.Error)
+		return s3err.ErrInternalError
+	}
+	return s3err.ErrNone
+}
+
+// uploadCompleted reports whether the upload assembled into an object: the
+// object entry, or any version file under <key>.versions, still carries the
+// upload id completion stamps on it.
+func (s3a *S3ApiServer) uploadCompleted(bucketDir, uploadId, objectKey string) (bool, error) {
+	if objectKey == "" {
+		return false, nil
+	}
+	name := path.Base(objectKey)
+	dir := path.Dir(objectKey)
+	if dir == "." {
+		dir = ""
+	}
+	objectDir := path.Join(bucketDir, dir)
+
+	entry, err := s3a.getEntry(objectDir, name)
+	if err != nil && !isFilerNotFound(err) {
+		return false, err
+	}
+	if entry != nil && string(entry.Extended[s3_constants.SeaweedFSUploadId]) == uploadId {
+		return true, nil
+	}
+
+	versions, _, err := s3a.list(objectDir+"/"+name+s3_constants.VersionsFolder, "", "", false, math.MaxInt32)
+	if err != nil {
+		if isFilerNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, version := range versions {
+		if string(version.Extended[s3_constants.SeaweedFSUploadId]) == uploadId {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type ListMultipartUploadsResult struct {
