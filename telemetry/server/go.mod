@@ -1,6 +1,6 @@
 module github.com/seaweedfs/seaweedfs/telemetry/server
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/prometheus/client_golang v1.24.1
