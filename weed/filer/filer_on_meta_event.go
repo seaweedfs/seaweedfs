@@ -55,11 +55,18 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 	// Handle delete events - trigger folder cleanup check
 	if filer_pb.IsDelete(event) && message.OldEntry != nil {
 		f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
+		f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
 	}
 
 	// Handle create events - cancel pending cleanup for the folder
 	if filer_pb.IsCreate(event) && message.NewEntry != nil {
 		f.EmptyFolderCleaner.OnCreateEvent(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
+		f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
+	}
+
+	// Handle update events - drop the cached bucket cleanup policy
+	if filer_pb.IsUpdate(event) && message.NewEntry != nil {
+		f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
 	}
 
 	// Handle rename/move events
@@ -67,6 +74,7 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 		// Treat the old location as a delete
 		if message.OldEntry != nil {
 			f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
+			f.EmptyFolderCleaner.InvalidateBucketPolicy(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
 		}
 		// Treat the new location as a create
 		if message.NewEntry != nil {
@@ -75,6 +83,7 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 				newDir = directory
 			}
 			f.EmptyFolderCleaner.OnCreateEvent(newDir, message.NewEntry.Name, message.NewEntry.IsDirectory)
+			f.EmptyFolderCleaner.InvalidateBucketPolicy(newDir, message.NewEntry.Name, message.NewEntry.IsDirectory)
 		}
 	}
 }

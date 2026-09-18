@@ -2,6 +2,7 @@ package empty_folder_cleanup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -17,12 +18,13 @@ import (
 )
 
 const (
-	DefaultMaxCountCheck  = 1000
-	DefaultCacheExpiry    = 5 * time.Minute
-	DefaultQueueMaxSize   = 1000
-	DefaultQueueMaxAge    = 2 * time.Minute
-	DefaultProcessorSleep = 30 * time.Second // How often to check queue
-	DefaultMaxDeletedKept = 10000            // Deleted folders remembered for the restore check
+	DefaultMaxCountCheck     = 1000
+	DefaultCacheExpiry       = 5 * time.Minute
+	DefaultQueueMaxSize      = 1000
+	DefaultQueueMaxAge       = 2 * time.Minute
+	DefaultProcessorSleep    = 30 * time.Second // How often to check queue
+	DefaultMaxDeletedKept    = 10000            // Deleted folders remembered for the restore check
+	DefaultMaxPolicyFailures = 3                // Consecutive policy-load failures before a folder is dropped
 	// How long a deleted folder is kept so that a create event arriving for it can
 	// still put it back. It bounds how far behind the event stream may run, not how
 	// long the race window is.
@@ -59,10 +61,17 @@ type FilerOperations interface {
 
 // folderState tracks the state of a folder for empty folder cleanup
 type folderState struct {
-	roughCount  int       // Cached rough count (up to maxCountCheck)
-	lastAddTime time.Time // Last time an item was added
-	lastDelTime time.Time // Last time an item was deleted
-	lastCheck   time.Time // Last time we checked the actual count
+	roughCount     int       // Cached rough count (up to maxCountCheck)
+	lastAddTime    time.Time // Last time an item was added
+	lastDelTime    time.Time // Last time an item was deleted
+	lastCheck      time.Time // Last time we checked the actual count
+	policyFailures int       // Consecutive bucket policy load failures
+}
+
+type bucketPolicyGen struct {
+	gen      uint64
+	lastBump time.Time
+	inflight int
 }
 
 type bucketCleanupPolicyState struct {
@@ -82,6 +91,7 @@ type EmptyFolderCleaner struct {
 	mu                    sync.RWMutex
 	folderCounts          map[string]*folderState              // Rough count cache
 	bucketCleanupPolicies map[string]*bucketCleanupPolicyState // bucket path -> cleanup policy cache
+	policyGen             map[string]*bucketPolicyGen          // bucket path -> generation, bumped on bucket entry updates to invalidate in-flight policy loads
 
 	// Folders deleted recently, kept so that a create event arriving for one of them
 	// can put it back
@@ -115,6 +125,7 @@ func NewEmptyFolderCleaner(filer FilerOperations, lockRing *lock_manager.LockRin
 		host:                  host,
 		folderCounts:          make(map[string]*folderState),
 		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+		policyGen:             make(map[string]*bucketPolicyGen),
 		deleted:               make(map[string]*deletedFolder),
 		cleanupQueue:          NewCleanupQueue(DefaultQueueMaxSize, cleanupDelay),
 		maxCountCheck:         DefaultMaxCountCheck,
@@ -249,6 +260,33 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 			glog.V(3).Infof("EmptyFolderCleaner: cancelled cleanup for %s, recreated", recreated)
 		}
 	}
+}
+
+// InvalidateBucketPolicy drops the cached cleanup policy when a bucket entry changes
+func (efc *EmptyFolderCleaner) InvalidateBucketPolicy(directory string, entryName string, isDirectory bool) {
+	if !isDirectory || directory != efc.bucketPath {
+		return
+	}
+
+	efc.mu.Lock()
+	defer efc.mu.Unlock()
+
+	if !efc.enabled {
+		return
+	}
+
+	if efc.policyGen == nil {
+		efc.policyGen = make(map[string]*bucketPolicyGen)
+	}
+	path := string(util.NewFullPath(directory, entryName))
+	gen := efc.policyGen[path]
+	if gen == nil {
+		gen = &bucketPolicyGen{}
+		efc.policyGen[path] = gen
+	}
+	gen.gen++
+	gen.lastBump = time.Now()
+	delete(efc.bucketCleanupPolicies, path)
 }
 
 // cleanupProcessor runs in background and processes the cleanup queue
@@ -491,8 +529,27 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 			return
 		}
 		glog.V(2).Infof("EmptyFolderCleaner: failed to load bucket cleanup policy for folder %s (triggered by %s): %v", folder, triggeredBy, err)
+		efc.mu.Lock()
+		if efc.enabled {
+			state, exists := efc.folderCounts[folder]
+			if !exists {
+				state = &folderState{}
+				efc.folderCounts[folder] = state
+			}
+			state.policyFailures++
+			if state.policyFailures <= DefaultMaxPolicyFailures {
+				efc.cleanupQueue.Add(folder, triggeredBy, time.Now())
+			}
+		}
+		efc.mu.Unlock()
 		return
 	}
+
+	efc.mu.Lock()
+	if state, exists := efc.folderCounts[folder]; exists {
+		state.policyFailures = 0
+	}
+	efc.mu.Unlock()
 
 	if !autoRemove {
 		glog.V(3).Infof("EmptyFolderCleaner: skipping folder %s (triggered by %s), bucket %s auto-remove-empty-folders disabled (source=%s attr=%s)",
@@ -617,25 +674,47 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 	}
 	efc.mu.RUnlock()
 
-	attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
-	if err != nil {
-		return "", true, "", "", err
+	for attempt := 0; attempt < 3; attempt++ {
+		efc.mu.Lock()
+		if efc.policyGen == nil {
+			efc.policyGen = make(map[string]*bucketPolicyGen)
+		}
+		state := efc.policyGen[bucketPath]
+		if state == nil {
+			state = &bucketPolicyGen{}
+			efc.policyGen[bucketPath] = state
+		}
+		state.inflight++
+		gen := state.gen
+		efc.mu.Unlock()
+
+		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
+
+		efc.mu.Lock()
+		state.inflight--
+		if err != nil {
+			efc.mu.Unlock()
+			return "", true, "", "", err
+		}
+		autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
+		if gen != state.gen {
+			efc.mu.Unlock()
+			continue
+		}
+		if efc.bucketCleanupPolicies == nil {
+			efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
+		}
+		efc.bucketCleanupPolicies[bucketPath] = &bucketCleanupPolicyState{
+			autoRemove: autoRemove,
+			attrValue:  attrValue,
+			lastCheck:  now,
+		}
+		efc.mu.Unlock()
+
+		return bucketPath, autoRemove, "filer", attrValue, nil
 	}
 
-	autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
-
-	efc.mu.Lock()
-	if efc.bucketCleanupPolicies == nil {
-		efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
-	}
-	efc.bucketCleanupPolicies[bucketPath] = &bucketCleanupPolicyState{
-		autoRemove: autoRemove,
-		attrValue:  attrValue,
-		lastCheck:  now,
-	}
-	efc.mu.Unlock()
-
-	return bucketPath, autoRemove, "filer", attrValue, nil
+	return "", false, "", "", fmt.Errorf("bucket cleanup policy changed during read: %s", bucketPath)
 }
 
 // isCatalogEntry reports whether the directory is an s3tables catalog record.
@@ -775,6 +854,14 @@ func (efc *EmptyFolderCleaner) evictStaleCacheEntries() {
 		}
 	}
 
+	// A generation stays while a read that captured it can still return; an idle
+	// one drops after the expiry so bucket churn cannot grow the map forever.
+	for bucketPath, gen := range efc.policyGen {
+		if gen.inflight == 0 && now.Sub(gen.lastBump) > efc.cacheExpiry {
+			delete(efc.policyGen, bucketPath)
+		}
+	}
+
 	if expiredCount > 0 {
 		glog.V(3).Infof("EmptyFolderCleaner: evicted %d stale cache entries", expiredCount)
 	}
@@ -791,6 +878,7 @@ func (efc *EmptyFolderCleaner) Stop() {
 	efc.cleanupQueue.Clear()
 	efc.folderCounts = make(map[string]*folderState) // Clear cache on stop
 	efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
+	efc.policyGen = make(map[string]*bucketPolicyGen)
 	efc.deleted, efc.deletedDropped = make(map[string]*deletedFolder), 0
 }
 

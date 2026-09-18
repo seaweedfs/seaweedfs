@@ -177,6 +177,22 @@ func CreateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, req
 	return resp, nil
 }
 
+// SnapshotExtended clones extended attributes for use as an UpdateEntry
+// ExpectedExtended precondition. Listed keys are asserted even when absent,
+// so a concurrent add still fails the precondition.
+func SnapshotExtended(extended map[string][]byte, keys ...string) map[string][]byte {
+	expected := make(map[string][]byte, len(extended)+len(keys))
+	for k, v := range extended {
+		expected[k] = v
+	}
+	for _, k := range keys {
+		if _, ok := expected[k]; !ok {
+			expected[k] = nil
+		}
+	}
+	return expected
+}
+
 func UpdateEntry(ctx context.Context, client SeaweedFilerClient, request *UpdateEntryRequest) error {
 	_, err := UpdateEntryWithResponse(ctx, client, request)
 	return err

@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
@@ -67,36 +69,46 @@ func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.Fil
 		return nil
 	}
 
-	entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
-	if err != nil {
-		return err
-	}
-	if entry == nil {
-		return fmt.Errorf("bucket %s not found", bucketPath)
-	}
-
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
-		return nil
-	}
-
-	entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
-
 	bucketFullPath := util.FullPath(bucketPath)
 	parent, _ := bucketFullPath.DirAndName()
-	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
-			Directory: parent,
-			Entry:     entry,
+
+	for attempt := 0; attempt < 5; attempt++ {
+		entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
+		if err != nil {
+			return err
+		}
+		if entry == nil {
+			return fmt.Errorf("bucket %s not found", bucketPath)
+		}
+
+		if value := strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])); value != "" {
+			return nil
+		}
+
+		expected := filer_pb.SnapshotExtended(entry.Extended, s3_constants.ExtAllowEmptyFolders)
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
+
+		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+				Directory:        parent,
+				Entry:            entry,
+				ExpectedExtended: expected,
+			})
+			return err
 		})
-	}); err != nil {
-		return err
+		if err == nil {
+			glog.V(3).Infof("RunMount: set bucket %s %s=true", bucketPath, s3_constants.ExtAllowEmptyFolders)
+			return nil
+		}
+		if status.Code(err) != codes.FailedPrecondition {
+			return err
+		}
 	}
 
-	glog.V(3).Infof("RunMount: set bucket %s %s=true", bucketPath, s3_constants.ExtAllowEmptyFolders)
-	return nil
+	return fmt.Errorf("bucket %s attributes keep changing", bucketPath)
 }
 
 func bucketPathForMountRoot(mountRoot, bucketRootPath string) (string, bool) {
