@@ -637,7 +637,7 @@ func TestReaderCacheDownloaderDedup(t *testing.T) {
 	for i := 0; i < numReaders; i++ {
 		go func() {
 			defer wg.Done()
-			buffer := make([]byte, 100)
+			buffer := make([]byte, 50)
 			rc.ReadChunkAt(context.Background(), buffer, "dedup-file", nil, false, 0, 100, false)
 		}()
 	}

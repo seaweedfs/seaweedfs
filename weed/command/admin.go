@@ -68,6 +68,13 @@ type AdminOptions struct {
 	// binds it only after every other service is up.
 	workerGrpcListener net.Listener
 
+	// workerGrpcBindIp, when non-empty, is the address the worker gRPC
+	// listener binds to. It is separate from ip because the worker gRPC has
+	// no password auth (its mTLS comes from grpc.admin, not https.admin), so
+	// it must not follow ip's auto-upgrade to 0.0.0.0 based on adminPassword.
+	// `weed mini` leaves it empty to fall back to ip.
+	workerGrpcBindIp string
+
 	// defaultS3PublicEndpoint, when set, is used for object URLs when
 	// s3.public_endpoint is not configured. `weed mini` sets it to its own
 	// S3 address.
@@ -78,7 +85,7 @@ func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
 	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
-	a.ip = cmdAdmin.Flag.String("ip", "127.0.0.1", "ip address to listen on. Default is loopback; set to 0.0.0.0 to listen on all interfaces (requires -adminPassword or [https.admin] mTLS in security.toml).")
+	a.ip = cmdAdmin.Flag.String("ip", "127.0.0.1", "ip address to listen on. Defaults to loopback when auth is disabled, or 0.0.0.0 when -adminPassword or [https.admin] mTLS is configured. Set explicitly to override.")
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
 	a.filerGroup = cmdAdmin.Flag.String("filerGroup", "", "filerGroup for the filers, brokers, and S3 servers")
@@ -143,13 +150,15 @@ var cmdAdmin = &Command{
     - Precedence: CLI flag > env var / security.toml > default value
 
   Network Binding:
-    - By default the admin server binds to 127.0.0.1 (loopback only).
-    - Use -ip=0.0.0.0 to listen on all interfaces.
-    - When binding to a non-loopback address, authentication MUST be enabled
-      (-adminPassword) or mTLS configured ([https.admin] key and ca in security.toml).
-      Otherwise the server refuses to start.
-    - Use -allowInsecureBind to start anyway with an unauthenticated admin API
-      exposed on the network. INSECURE; only for trusted isolated networks.
+    - When authentication is disabled, the admin server binds to 127.0.0.1
+      (loopback only) so the unauthenticated API is never exposed on the network.
+    - When -adminPassword or [https.admin] mTLS is configured, the default
+      upgrades to 0.0.0.0 (all interfaces) so authenticated deployments stay
+      reachable from the network without an explicit -ip flag.
+    - Set -ip explicitly to override either default.
+    - Binding a non-loopback address with authentication disabled (no
+      -adminPassword and no mTLS) is refused unless -allowInsecureBind is set
+      (INSECURE; only for trusted isolated networks).
 
   Security Configuration:
     - The admin server reads TLS configuration from security.toml
@@ -287,6 +296,25 @@ func runAdmin(cmd *Command, args []string) bool {
 		*a.grpcPort = *a.port + 10000
 	}
 
+	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
+
+	// The worker gRPC control plane has no password auth (its mTLS comes from
+	// grpc.admin, separate from https.admin), so its bind address must not
+	// follow the HTTP auto-upgrade below. Capture the raw -ip value first;
+	// the worker gRPC stays on loopback unless the operator sets -ip
+	// explicitly, matching the pre-existing behavior.
+	a.workerGrpcBindIp = *a.ip
+
+	// -ip defaults to loopback so an unauthenticated admin API is never
+	// exposed on the network by accident. An authenticated deployment
+	// (adminPassword or mTLS) is safe to reach from the network, so upgrade
+	// the default to 0.0.0.0 and keep existing deployments reachable after
+	// upgrade without forcing a -ip=0.0.0.0 config change. An operator who
+	// explicitly set -ip is left alone.
+	if !isFlagExplicitlySet(cmd, "ip") && (*a.adminPassword != "" || hasMTLS) {
+		*a.ip = "0.0.0.0"
+	}
+
 	// Security validation: refuse to bind a non-loopback address without
 	// authentication or mTLS. This prevents accidental exposure of the
 	// unauthenticated admin REST API on the network. Server-only TLS
@@ -295,7 +323,6 @@ func runAdmin(cmd *Command, args []string) bool {
 	// or configure mTLS (both key and ca).
 	// -allowInsecureBind opts out of this check for operators who knowingly
 	// keep the pre-existing unauthenticated setup.
-	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
 	insecureAllowed := a.allowInsecureBind != nil && *a.allowInsecureBind
 	if !isLoopbackIp(*a.ip) && *a.adminPassword == "" && !hasMTLS {
 		if !insecureAllowed {
@@ -320,6 +347,9 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Println("         Set -adminPassword for production use")
 	}
 	fmt.Printf("Starting SeaweedFS Admin Interface on %s\n", util.JoinHostPort(*a.ip, *a.port))
+	if isLoopbackIp(*a.ip) {
+		fmt.Printf("  (loopback only; not reachable from other hosts. Set -ip=0.0.0.0 with -adminPassword or mTLS to expose.)\n")
+	}
 	fmt.Printf("Worker gRPC server will run on port %d\n", *a.grpcPort)
 	fmt.Printf("Masters: %s\n", *a.master)
 	fmt.Printf("Filers will be discovered automatically from masters\n")
@@ -460,11 +490,19 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		glog.Infof("No filers discovered from masters")
 	}
 
-	// Start worker gRPC server for worker connections
-	err = adminServer.StartWorkerGrpcServer(*options.grpcPort, options.workerGrpcListener)
+	// Start worker gRPC server for worker connections. The worker gRPC binds
+	// to its own address (workerGrpcBindIp) which, unlike the HTTP ip, does
+	// not auto-upgrade to 0.0.0.0 based on adminPassword, since the worker
+	// gRPC has no password auth.
+	workerGrpcIp := options.workerGrpcBindIp
+	if workerGrpcIp == "" {
+		workerGrpcIp = *options.ip
+	}
+	err = adminServer.StartWorkerGrpcServer(workerGrpcIp, *options.grpcPort, options.workerGrpcListener)
 	if err != nil {
 		return fmt.Errorf("failed to start worker gRPC server: %w", err)
 	}
+	warnInsecureWorkerGrpcBind(workerGrpcIp, *options.grpcPort, adminServer.WorkerGrpcMTLSEnabled())
 
 	// Set up cleanup for gRPC server
 	defer func() {
@@ -728,19 +766,26 @@ func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 	return key[:keyLen], key[keyLen:], nil
 }
 
+// isFlagExplicitlySet reports whether the named flag was passed on the
+// command line (as opposed to left at its default).
+func isFlagExplicitlySet(cmd *Command, flagName string) bool {
+	set := false
+	cmd.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == flagName {
+			set = true
+		}
+	})
+	return set
+}
+
 // applyViperFallback sets a flag's value from viper (security.toml / env var)
 // when the flag was not explicitly set on the command line.
 func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string) {
-	explicitlySet := false
-	cmd.Flag.Visit(func(f *flag.Flag) {
-		if f.Name == flagName {
-			explicitlySet = true
-		}
-	})
-	if !explicitlySet {
-		if v := util.GetViper().GetString(viperKey); v != "" {
-			*flagPtr = v
-		}
+	if isFlagExplicitlySet(cmd, flagName) {
+		return
+	}
+	if v := util.GetViper().GetString(viperKey); v != "" {
+		*flagPtr = v
 	}
 }
 
@@ -757,4 +802,20 @@ func isLoopbackIp(ip string) bool {
 		return false
 	}
 	return parsed.IsLoopback()
+}
+
+// warnInsecureWorkerGrpcBind warns when the worker gRPC control plane is
+// reachable off loopback without grpc.admin mTLS, its only auth once exposed.
+// mtlsEnabled reflects whether the worker gRPC actually loaded mTLS, so a
+// misconfigured cert/key that fails to load still triggers the warning.
+func warnInsecureWorkerGrpcBind(ip string, grpcPort int, mtlsEnabled bool) {
+	if isLoopbackIp(ip) {
+		return
+	}
+	if mtlsEnabled {
+		return
+	}
+	glog.Warningf("Worker gRPC control plane is bound to %s (non-loopback) without grpc.admin mTLS.", ip)
+	glog.Warningf("Anyone who can reach port %d can register a maintenance worker unauthenticated.", grpcPort)
+	glog.Warningf("Enable [grpc.admin] cert/key and [grpc.ca] in security.toml, or bind to loopback.")
 }

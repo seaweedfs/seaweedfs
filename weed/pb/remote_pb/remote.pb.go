@@ -71,6 +71,8 @@ type RemoteConf struct {
 	ContaboSecretKey                string                 `protobuf:"bytes,69,opt,name=contabo_secret_key,json=contaboSecretKey,proto3" json:"contabo_secret_key,omitempty"`
 	ContaboEndpoint                 string                 `protobuf:"bytes,70,opt,name=contabo_endpoint,json=contaboEndpoint,proto3" json:"contabo_endpoint,omitempty"`
 	ContaboRegion                   string                 `protobuf:"bytes,71,opt,name=contabo_region,json=contaboRegion,proto3" json:"contabo_region,omitempty"`
+	UploadConcurrency               uint32                 `protobuf:"varint,72,opt,name=upload_concurrency,json=uploadConcurrency,proto3" json:"upload_concurrency,omitempty"`       // multipart upload concurrency per file, 0 = client default (1 for S3, 16 for Azure)
+	DownloadConcurrency             uint32                 `protobuf:"varint,73,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // multipart download concurrency per read, 0 = client default (5 for S3, 16 for Azure)
 	unknownFields                   protoimpl.UnknownFields
 	sizeCache                       protoimpl.SizeCache
 }
@@ -420,6 +422,20 @@ func (x *RemoteConf) GetContaboRegion() string {
 	return ""
 }
 
+func (x *RemoteConf) GetUploadConcurrency() uint32 {
+	if x != nil {
+		return x.UploadConcurrency
+	}
+	return 0
+}
+
+func (x *RemoteConf) GetDownloadConcurrency() uint32 {
+	if x != nil {
+		return x.DownloadConcurrency
+	}
+	return 0
+}
+
 type RemoteStorageMapping struct {
 	state                    protoimpl.MessageState            `protogen:"open.v1"`
 	Mappings                 map[string]*RemoteStorageLocation `protobuf:"bytes,1,rep,name=mappings,proto3" json:"mappings,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -552,7 +568,7 @@ var File_remote_proto protoreflect.FileDescriptor
 
 const file_remote_proto_rawDesc = "" +
 	"\n" +
-	"\fremote.proto\x12\tremote_pb\"\xea\x0e\n" +
+	"\fremote.proto\x12\tremote_pb\"\xcc\x0f\n" +
 	"\n" +
 	"RemoteConf\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
@@ -601,7 +617,9 @@ const file_remote_proto_rawDesc = "" +
 	"\x12contabo_access_key\x18D \x01(\tR\x10contaboAccessKey\x12,\n" +
 	"\x12contabo_secret_key\x18E \x01(\tR\x10contaboSecretKey\x12)\n" +
 	"\x10contabo_endpoint\x18F \x01(\tR\x0fcontaboEndpoint\x12%\n" +
-	"\x0econtabo_region\x18G \x01(\tR\rcontaboRegion\"\xff\x01\n" +
+	"\x0econtabo_region\x18G \x01(\tR\rcontaboRegion\x12-\n" +
+	"\x12upload_concurrency\x18H \x01(\rR\x11uploadConcurrency\x121\n" +
+	"\x14download_concurrency\x18I \x01(\rR\x13downloadConcurrency\"\xff\x01\n" +
 	"\x14RemoteStorageMapping\x12I\n" +
 	"\bmappings\x18\x01 \x03(\v2-.remote_pb.RemoteStorageMapping.MappingsEntryR\bmappings\x12=\n" +
 	"\x1bprimary_bucket_storage_name\x18\x02 \x01(\tR\x18primaryBucketStorageName\x1a]\n" +

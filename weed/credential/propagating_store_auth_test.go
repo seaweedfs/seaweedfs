@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-func TestWithIamCacheAdminAuth_NoKey_NoOp(t *testing.T) {
+func TestWithS3InternalAdminAuth_NoKey_NoOp(t *testing.T) {
 	util.GetViper().Set("jwt.filer_signing.key", "")
-	ctx, ttl := withIamCacheAdminAuth(context.Background())
+	ctx, ttl := WithS3InternalAdminAuth(context.Background())
 	if ttl != 0 {
 		t.Fatalf("expected zero TTL without key, got %v", ttl)
 	}
@@ -23,13 +23,13 @@ func TestWithIamCacheAdminAuth_NoKey_NoOp(t *testing.T) {
 	}
 }
 
-func TestWithIamCacheAdminAuth_WithKey_AttachesBearer(t *testing.T) {
+func TestWithS3InternalAdminAuth_WithKey_AttachesBearer(t *testing.T) {
 	const k = "propagation-test-signing-key"
 	util.GetViper().Set("jwt.filer_signing.key", k)
 	defer util.GetViper().Set("jwt.filer_signing.key", "")
 	util.GetViper().Set("jwt.filer_signing.expires_after_seconds", 60)
 
-	ctx, ttl := withIamCacheAdminAuth(context.Background())
+	ctx, ttl := WithS3InternalAdminAuth(context.Background())
 	if ttl != 60*time.Second {
 		t.Fatalf("expected 60s TTL, got %v", ttl)
 	}
@@ -51,13 +51,13 @@ func TestWithIamCacheAdminAuth_WithKey_AttachesBearer(t *testing.T) {
 	}
 }
 
-func TestWithIamCacheAdminAuth_ZeroExpiry_ZeroTTL(t *testing.T) {
+func TestWithS3InternalAdminAuth_ZeroExpiry_ZeroTTL(t *testing.T) {
 	const k = "propagation-test-signing-key"
 	util.GetViper().Set("jwt.filer_signing.key", k)
 	defer util.GetViper().Set("jwt.filer_signing.key", "")
 	util.GetViper().Set("jwt.filer_signing.expires_after_seconds", 0)
 
-	_, ttl := withIamCacheAdminAuth(context.Background())
+	_, ttl := WithS3InternalAdminAuth(context.Background())
 	if ttl != 0 {
 		t.Fatalf("expected zero TTL for no-expiry token, got %v", ttl)
 	}

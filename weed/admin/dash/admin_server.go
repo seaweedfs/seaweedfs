@@ -1616,14 +1616,21 @@ func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// StartWorkerGrpcServer starts the worker gRPC server
-func (s *AdminServer) StartWorkerGrpcServer(grpcPort int, listener net.Listener) error {
+// StartWorkerGrpcServer starts the worker gRPC server. bindIp is honored when no
+// listener is supplied so the worker gRPC does not wildcard-bind past -ip.
+func (s *AdminServer) StartWorkerGrpcServer(bindIp string, grpcPort int, listener net.Listener) error {
 	if s.workerGrpcServer != nil {
 		return fmt.Errorf("worker gRPC server is already running")
 	}
 
 	s.workerGrpcServer = NewWorkerGrpcServer(s)
-	return s.workerGrpcServer.StartWithTLS(grpcPort, listener)
+	return s.workerGrpcServer.StartWithTLS(bindIp, grpcPort, listener)
+}
+
+// WorkerGrpcMTLSEnabled reports whether the worker gRPC server actually loaded
+// grpc.admin mTLS credentials, not just whether they were configured.
+func (s *AdminServer) WorkerGrpcMTLSEnabled() bool {
+	return s.workerGrpcServer != nil && s.workerGrpcServer.mtlsEnabled
 }
 
 // StopWorkerGrpcServer stops the worker gRPC server

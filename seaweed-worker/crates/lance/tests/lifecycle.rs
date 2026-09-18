@@ -12,13 +12,13 @@
 
 use std::collections::HashMap;
 
-use seaweed_worker_core::pb::{ConfigValue, ExecuteJobRequest, JobSpec, RunDetectionRequest};
 use seaweed_worker_core::JobHandler;
+use seaweed_worker_core::pb::{ConfigValue, ExecuteJobRequest, JobSpec, RunDetectionRequest};
 use weed_lance_worker::jobs::cleanup::{self, CleanupVersionsHandler};
 use weed_lance_worker::jobs::compact::{CompactHandler, JOB_TYPE as COMPACT_JOB_TYPE};
 
 mod common;
-use common::{fallback, int_config, namespace_url, Recorder};
+use common::{Recorder, fallback, int_config, namespace_url};
 
 fn table() -> Option<String> {
     std::env::var("WEED_LANCE_TABLE")

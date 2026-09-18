@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use crate::pb::{
-    config_value::Kind, ConfigField, ConfigFieldType, ConfigForm, ConfigSection, ConfigValue,
+    ConfigField, ConfigFieldType, ConfigForm, ConfigSection, ConfigValue, config_value::Kind,
 };
 
 pub fn int_value(value: i64) -> ConfigValue {

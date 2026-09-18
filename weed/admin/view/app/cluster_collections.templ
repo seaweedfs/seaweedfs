@@ -8,12 +8,12 @@ import (
 templ ClusterCollections(data dash.ClusterCollectionsData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
-            <i class="fas fa-layer-group me-2"></i>Cluster Collections
+            <i class="bi bi-layers me-2"></i>Cluster Collections
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="exportCollections()">
-                    <i class="fas fa-download me-1"></i>Export
+                    <i class="bi bi-download me-1"></i>Export
                 </button>
             </div>
         </div>
@@ -35,7 +35,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-layer-group fa-2x text-gray-300"></i>
+                                <i class="bi bi-layers icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -55,7 +55,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-database fa-2x text-gray-300"></i>
+                                <i class="bi bi-database icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -75,7 +75,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-th-large fa-2x text-gray-300"></i>
+                                <i class="bi bi-grid icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -95,7 +95,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-cubes fa-2x text-gray-300"></i>
+                                <i class="bi bi-boxes icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -115,7 +115,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-hdd fa-2x text-gray-300"></i>
+                                <i class="bi bi-device-hdd icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -127,7 +127,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
         <div class="card shadow mb-4">
             <div class="card-header py-3">
                 <h6 class="m-0 font-weight-bold text-primary">
-                    <i class="fas fa-layer-group me-2"></i>Collection Details
+                    <i class="bi bi-layers me-2"></i>Collection Details
                 </h6>
             </div>
             <div class="card-body">
@@ -156,7 +156,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                         <td>
                                             <a href={ dash.PUrl(ctx, fmt.Sprintf("/storage/volumes?collection=%s", collection.Name)) } class="text-decoration-none">
                                             <div class="d-flex align-items-center">
-                                                <i class="fas fa-database me-2 text-muted"></i>
+                                                <i class="bi bi-database me-2 text-muted"></i>
                                                 if collection.VolumeCount > 0 {
                                                     {fmt.Sprintf("%d", collection.VolumeCount)}
                                                 } else {
@@ -168,7 +168,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                         <td>
                                             <a href={ dash.PUrl(ctx, fmt.Sprintf("/storage/ec-shards?collection=%s", collection.Name)) } class="text-decoration-none">
                                             <div class="d-flex align-items-center">
-                                                <i class="fas fa-th-large me-2 text-muted"></i>
+                                                <i class="bi bi-grid me-2 text-muted"></i>
                                                 if collection.EcVolumeCount > 0 {
                                                     {fmt.Sprintf("%d", collection.EcVolumeCount)}
                                                 } else {
@@ -179,13 +179,13 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                         </td>
                                         <td>
                                             <div class="d-flex align-items-center">
-                                                <i class="fas fa-cubes me-2 text-muted"></i>
+                                                <i class="bi bi-boxes me-2 text-muted"></i>
                                                 {fmt.Sprintf("%d", collection.ChunkCount)}
                                             </div>
                                         </td>
                                         <td>
                                             <div class="d-flex align-items-center">
-                                                <i class="fas fa-hdd me-2 text-muted"></i>
+                                                <i class="bi bi-device-hdd me-2 text-muted"></i>
                                                 {formatBytes(collection.TotalSize)}
                                             </div>
                                         </td>
@@ -212,7 +212,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                                     data-chunk-count={fmt.Sprintf("%d", collection.ChunkCount)}
                                                     data-total-size={fmt.Sprintf("%d", collection.TotalSize)}
                                                     data-disk-types={formatDiskTypes(collection.DiskTypes)}>
-                                                <i class="fas fa-eye"></i>
+                                                <i class="bi bi-eye"></i>
                                             </button>
                                         </td>
                                     </tr>
@@ -222,7 +222,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                     </div>
                 } else {
                     <div class="text-center py-5">
-                        <i class="fas fa-layer-group fa-3x text-muted mb-3"></i>
+                        <i class="bi bi-layers icon-3x text-muted mb-3"></i>
                         <h5 class="text-muted">No Collections Found</h5>
                         <p class="text-muted">No collections are currently configured in the cluster.</p>
                     </div>
@@ -234,7 +234,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
         <div class="row">
             <div class="col-12">
                 <small class="text-muted">
-                    <i class="fas fa-clock me-1"></i>
+                    <i class="bi bi-clock me-1"></i>
                     Last updated: {data.LastUpdated.Format("2006-01-02 15:04:05")}
                 </small>
             </div>
@@ -277,13 +277,13 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '<div class="modal-dialog modal-lg">' +
             '<div class="modal-content">' +
             '<div class="modal-header">' +
-            '<h5 class="modal-title"><i class="fas fa-layer-group me-2"></i>Collection Details: ' + collection.name + '</h5>' +
+            '<h5 class="modal-title"><i class="bi bi-layers me-2"></i>Collection Details: ' + collection.name + '</h5>' +
             '<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
             '</div>' +
             '<div class="modal-body">' +
             '<div class="row">' +
             '<div class="col-md-6">' +
-            '<h6 class="text-primary"><i class="fas fa-info-circle me-1"></i>Basic Information</h6>' +
+            '<h6 class="text-primary"><i class="bi bi-info-circle me-1"></i>Basic Information</h6>' +
             '<table class="table table-sm">' +
             '<tr><td><strong>Collection Name:</strong></td><td><code>' + collection.name + '</code></td></tr>' +
             '<tr><td><strong>Data Center:</strong></td><td>' +
@@ -297,29 +297,29 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '</table>' +
             '</div>' +
             '<div class="col-md-6">' +
-            '<h6 class="text-primary"><i class="fas fa-chart-bar me-1"></i>Storage Statistics</h6>' +
+            '<h6 class="text-primary"><i class="bi bi-bar-chart me-1"></i>Storage Statistics</h6>' +
             '<table class="table table-sm">' +
             '<tr><td><strong>Regular Volumes:</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
-            '<i class="fas fa-database me-2 text-muted"></i>' +
+            '<i class="bi bi-database me-2 text-muted"></i>' +
             '<span>' + collection.volumeCount.toLocaleString() + '</span>' +
             '</div>' +
             '</td></tr>' +
             '<tr><td><strong>EC Volumes:</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
-            '<i class="fas fa-th-large me-2 text-muted"></i>' +
+            '<i class="bi bi-grid me-2 text-muted"></i>' +
             '<span>' + collection.ecVolumeCount.toLocaleString() + '</span>' +
             '</div>' +
             '</td></tr>' +
             '<tr><td><strong>Total Chunks:</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
-            '<i class="fas fa-cubes me-2 text-muted"></i>' +
+            '<i class="bi bi-boxes me-2 text-muted"></i>' +
             '<span>' + collection.chunkCount.toLocaleString() + '</span>' +
             '</div>' +
             '</td></tr>' +
             '<tr><td><strong>Total Size (Logical):</strong></td><td>' +
             '<div class="d-flex align-items-center">' +
-            '<i class="fas fa-hdd me-2 text-muted"></i>' +
+            '<i class="bi bi-device-hdd me-2 text-muted"></i>' +
             '<span>' + formatBytes(collection.totalSize) + '</span>' +
             '</div>' +
             '</td></tr>' +
@@ -328,16 +328,16 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '</div>' +
             '<div class="row mt-3">' +
             '<div class="col-12">' +
-            '<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
+            '<h6 class="text-primary"><i class="bi bi-link me-1"></i>Quick Actions</h6>' +
             '<div class="d-grid gap-2 d-md-flex">' +
             '<a href="' + (window.__BASE_PATH__ || '') + '/storage/volumes?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-primary">' +
-            '<i class="fas fa-database me-1"></i>View Volumes' +
+            '<i class="bi bi-database me-1"></i>View Volumes' +
             '</a>' +
             '<a href="' + (window.__BASE_PATH__ || '') + '/storage/ec-shards?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-secondary">' +
-            '<i class="fas fa-th-large me-1"></i>View EC Volumes' +
+            '<i class="bi bi-grid me-1"></i>View EC Volumes' +
             '</a>' +
             '<a href="' + (window.__BASE_PATH__ || '') + '/files?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-info">' +
-            '<i class="fas fa-folder me-1"></i>Browse Files' +
+            '<i class="bi bi-folder me-1"></i>Browse Files' +
             '</a>' +
             '</div>' +
             '</div>' +

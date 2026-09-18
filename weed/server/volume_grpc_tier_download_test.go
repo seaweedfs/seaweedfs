@@ -32,6 +32,9 @@ type tierTestBackend struct {
 
 	mu      sync.Mutex
 	deletes []string
+
+	lastUploadConcurrency   int
+	lastDownloadConcurrency int
 }
 
 func (b *tierTestBackend) ToProperties() map[string]string { return map[string]string{"root": b.root} }
@@ -40,7 +43,10 @@ func (b *tierTestBackend) NewStorageFile(key string, tierInfo *volume_server_pb.
 	return &tierTestBackendFile{backend: b, key: key, tierInfo: tierInfo}
 }
 
-func (b *tierTestBackend) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (b *tierTestBackend) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error, concurrency int) (key string, size int64, err error) {
+	b.mu.Lock()
+	b.lastUploadConcurrency = concurrency
+	b.mu.Unlock()
 	key = fmt.Sprintf("obj-%d", time.Now().UnixNano())
 	dst := filepath.Join(b.root, key)
 	out, err := os.Create(dst)
@@ -58,7 +64,10 @@ func (b *tierTestBackend) CopyFile(f *os.File, fn func(progressed int64, percent
 	return key, written, nil
 }
 
-func (b *tierTestBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+func (b *tierTestBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error, concurrency int) (size int64, err error) {
+	b.mu.Lock()
+	b.lastDownloadConcurrency = concurrency
+	b.mu.Unlock()
 	in, err := os.Open(filepath.Join(b.root, key))
 	if err != nil {
 		return 0, err
@@ -103,6 +112,12 @@ func (b *tierTestBackend) deleteHistory() []string {
 func (b *tierTestBackend) objectExists(key string) bool {
 	_, err := os.Stat(filepath.Join(b.root, key))
 	return err == nil
+}
+
+func (b *tierTestBackend) concurrencySeen() (upload, download int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.lastUploadConcurrency, b.lastDownloadConcurrency
 }
 
 type tierTestBackendFile struct {
@@ -201,7 +216,7 @@ func tierUpVolumeOnDisk(t *testing.T, dir string, vid needle.VolumeId, b *tierTe
 		t.Fatalf("expected on-disk backend before tier-up, got %T", v.DataBackend)
 	}
 	datPath := v.FileName(".dat")
-	key, size, err := b.CopyFile(diskFile.File, nil)
+	key, size, err := b.CopyFile(diskFile.File, nil, 0)
 	if err != nil {
 		t.Fatalf("upload to fake backend: %v", err)
 	}
@@ -324,5 +339,46 @@ func TestTierMoveDatFromRemote_KeepRemote_LeavesReplicaLocal(t *testing.T) {
 	}
 	if !bytes.Equal(gotDat, localDat) {
 		t.Fatalf("local .dat content mismatch: got %d bytes, want %d", len(gotDat), len(localDat))
+	}
+}
+
+// TestTierMoveConcurrencyPlumbing verifies the -concurrency value travels the
+// whole tier-move path to CopyFile and DownloadFile.
+func TestTierMoveConcurrencyPlumbing(t *testing.T) {
+	b := &tierTestBackend{root: t.TempDir()}
+	backend.BackendStorages[tierTestBackendName] = b
+	t.Cleanup(func() { delete(backend.BackendStorages, tierTestBackendName) })
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(72)
+	tierUpVolumeOnDisk(t, dir, vid, b)
+
+	// download path: request concurrency must reach DownloadFile
+	store := newTierTestStore(t, dir)
+	v := store.GetVolume(vid)
+	if v == nil {
+		t.Fatal("tiered volume not loaded by store")
+	}
+	vs := &VolumeServer{store: store}
+	if err := vs.VolumeTierMoveDatFromRemote(&volume_server_pb.VolumeTierMoveDatFromRemoteRequest{
+		VolumeId:    uint32(vid),
+		Concurrency: 4,
+	}, &fakeTierStream{}); err != nil {
+		t.Fatalf("VolumeTierMoveDatFromRemote: %v", err)
+	}
+	if up, down := b.concurrencySeen(); down != 4 {
+		t.Fatalf("DownloadFile concurrency = %d (upload=%d), want 4", down, up)
+	}
+
+	// upload path: the volume is local again after the download
+	if err := vs.VolumeTierMoveDatToRemote(&volume_server_pb.VolumeTierMoveDatToRemoteRequest{
+		VolumeId:               uint32(vid),
+		DestinationBackendName: tierTestBackendName,
+		Concurrency:            3,
+	}, &discardServerStream[volume_server_pb.VolumeTierMoveDatToRemoteResponse]{}); err != nil {
+		t.Fatalf("VolumeTierMoveDatToRemote: %v", err)
+	}
+	if up, down := b.concurrencySeen(); up != 3 || down != 4 {
+		t.Fatalf("CopyFile concurrency = %d (download=%d), want 3/4", up, down)
 	}
 }

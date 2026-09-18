@@ -8,12 +8,12 @@ import (
 templ Policies(data dash.PoliciesData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <h1 class="h2">
-            <i class="fas fa-shield-alt me-2"></i>IAM Policies
+            <i class="bi bi-shield me-2"></i>IAM Policies
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
                 <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createPolicyModal">
-                    <i class="fas fa-plus me-1"></i>Create Policy
+                    <i class="bi bi-plus me-1"></i>Create Policy
                 </button>
             </div>
         </div>
@@ -35,7 +35,7 @@ templ Policies(data dash.PoliciesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-shield-alt fa-2x text-gray-300"></i>
+                                <i class="bi bi-shield icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -55,7 +55,7 @@ templ Policies(data dash.PoliciesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                                <i class="bi bi-check-circle icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -75,7 +75,7 @@ templ Policies(data dash.PoliciesData) {
                                 </div>
                             </div>
                             <div class="col-auto">
-                                <i class="fas fa-clock fa-2x text-gray-300"></i>
+                                <i class="bi bi-clock icon-2x text-gray-300"></i>
                             </div>
                         </div>
                     </div>
@@ -89,16 +89,16 @@ templ Policies(data dash.PoliciesData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-shield-alt me-2"></i>IAM Policies
+                            <i class="bi bi-shield me-2"></i>IAM Policies
                         </h6>
                         <div class="dropdown no-arrow">
                             <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
+                                <i class="bi bi-three-dots-vertical icon-sm icon-fixed-width text-gray-400"></i>
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
                                 <a class="dropdown-item" href="#">
-                                    <i class="fas fa-download me-2"></i>Export List
+                                    <i class="bi bi-download me-2"></i>Export List
                                 </a>
                             </div>
                         </div>
@@ -137,13 +137,13 @@ templ Policies(data dash.PoliciesData) {
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
                                                     <button type="button" class="btn btn-outline-info view-policy-btn" title="View Policy" data-policy-name={policy.Name}>
-                                                        <i class="fas fa-eye"></i>
+                                                        <i class="bi bi-eye"></i>
                                                     </button>
                                                     <button type="button" class="btn btn-outline-primary edit-policy-btn" title="Edit Policy" data-policy-name={policy.Name}>
-                                                        <i class="fas fa-edit"></i>
+                                                        <i class="bi bi-pencil-square"></i>
                                                     </button>
                                                     <button type="button" class="btn btn-outline-danger delete-policy-btn" title="Delete Policy" data-policy-name={policy.Name}>
-                                                        <i class="fas fa-trash"></i>
+                                                        <i class="bi bi-trash"></i>
                                                     </button>
                                                 </div>
                                             </td>
@@ -152,12 +152,12 @@ templ Policies(data dash.PoliciesData) {
                                     if len(data.Policies) == 0 {
                                         <tr>
                                             <td colspan="6" class="text-center text-muted py-4">
-                                                <i class="fas fa-shield-alt fa-3x mb-3 text-muted"></i>
+                                                <i class="bi bi-shield icon-3x mb-3 text-muted"></i>
                                                 <div>
                                                     <h5>No IAM policies found</h5>
                                                     <p>Create your first policy to manage access permissions.</p>
                                                     <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createPolicyModal">
-                                                        <i class="fas fa-plus me-1"></i>Create Policy
+                                                        <i class="bi bi-plus me-1"></i>Create Policy
                                                     </button>
                                                 </div>
                                             </td>
@@ -180,7 +180,7 @@ templ Policies(data dash.PoliciesData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="createPolicyModalLabel">
-                        <i class="fas fa-shield-alt me-2"></i>Create IAM Policy
+                        <i class="bi bi-shield me-2"></i>Create IAM Policy
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -204,7 +204,7 @@ templ Policies(data dash.PoliciesData) {
                             <div class="tab-pane fade show active" id="createPolicyEditorTab">
                                 <div id="createPolicyEditorBody"></div>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" id="createPolicyAddStatementBtn">
-                                    <i class="fas fa-plus me-1"></i>Add statement
+                                    <i class="bi bi-plus me-1"></i>Add statement
                                 </button>
                             </div>
                             <div class="tab-pane fade" id="createPolicyJsonTab">
@@ -215,10 +215,10 @@ templ Policies(data dash.PoliciesData) {
 
                         <div class="mb-3 d-flex justify-content-between">
                             <button type="button" class="btn btn-outline-info btn-sm" onclick="insertSamplePolicy('create')">
-                                <i class="fas fa-file-alt me-1"></i>Use Sample Policy
+                                <i class="bi bi-file-earmark-text me-1"></i>Use Sample Policy
                             </button>
                             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="validatePolicyDocument('create')">
-                                <i class="fas fa-check me-1"></i>Validate
+                                <i class="bi bi-check me-1"></i>Validate
                             </button>
                         </div>
                     </form>
@@ -226,7 +226,7 @@ templ Policies(data dash.PoliciesData) {
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" onclick="createPolicy()">
-                        <i class="fas fa-plus me-1"></i>Create Policy
+                        <i class="bi bi-plus me-1"></i>Create Policy
                     </button>
                 </div>
             </div>
@@ -239,7 +239,7 @@ templ Policies(data dash.PoliciesData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="viewPolicyModalLabel">
-                        <i class="fas fa-eye me-2"></i>View IAM Policy
+                        <i class="bi bi-eye me-2"></i>View IAM Policy
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -256,7 +256,7 @@ templ Policies(data dash.PoliciesData) {
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     <button type="button" class="btn btn-primary" id="editFromViewBtn">
-                        <i class="fas fa-edit me-1"></i>Edit Policy
+                        <i class="bi bi-pencil-square me-1"></i>Edit Policy
                     </button>
                 </div>
             </div>
@@ -269,7 +269,7 @@ templ Policies(data dash.PoliciesData) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="editPolicyModalLabel">
-                        <i class="fas fa-edit me-2"></i>Edit IAM Policy
+                        <i class="bi bi-pencil-square me-2"></i>Edit IAM Policy
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -293,7 +293,7 @@ templ Policies(data dash.PoliciesData) {
                             <div class="tab-pane fade show active" id="editPolicyEditorTab">
                                 <div id="editPolicyEditorBody"></div>
                                 <button type="button" class="btn btn-sm btn-outline-secondary" id="editPolicyAddStatementBtn">
-                                    <i class="fas fa-plus me-1"></i>Add statement
+                                    <i class="bi bi-plus me-1"></i>Add statement
                                 </button>
                             </div>
                             <div class="tab-pane fade" id="editPolicyJsonTab">
@@ -304,10 +304,10 @@ templ Policies(data dash.PoliciesData) {
 
                         <div class="mb-3 d-flex justify-content-between">
                             <button type="button" class="btn btn-outline-info btn-sm" onclick="insertSamplePolicy('edit')">
-                                <i class="fas fa-file-alt me-1"></i>Reset to Sample
+                                <i class="bi bi-file-earmark-text me-1"></i>Reset to Sample
                             </button>
                             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="validatePolicyDocument('edit')">
-                                <i class="fas fa-check me-1"></i>Validate
+                                <i class="bi bi-check me-1"></i>Validate
                             </button>
                         </div>
                     </form>
@@ -315,7 +315,7 @@ templ Policies(data dash.PoliciesData) {
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" onclick="updatePolicy()">
-                        <i class="fas fa-save me-1"></i>Save Changes
+                        <i class="bi bi-floppy me-1"></i>Save Changes
                     </button>
                 </div>
             </div>
@@ -475,7 +475,7 @@ templ Policies(data dash.PoliciesData) {
             console.error('Error:', error);
             document.getElementById('viewPolicyContent').innerHTML = `
                 <div class="alert alert-danger" role="alert">
-                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <i class="bi bi-exclamation-triangle me-2"></i>
                     Error loading policy: ${error.message}
                 </div>
             `;

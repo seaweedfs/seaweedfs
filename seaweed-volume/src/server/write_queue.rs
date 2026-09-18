@@ -178,8 +178,8 @@ mod tests {
         use crate::server::volume_server::RuntimeMetricsConfig;
         use crate::storage::needle_map::NeedleMapKind;
         use crate::storage::store::Store;
-        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
         use std::sync::RwLock;
+        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
 
         let store = Store::new(NeedleMapKind::InMemory);
         let guard = Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0);

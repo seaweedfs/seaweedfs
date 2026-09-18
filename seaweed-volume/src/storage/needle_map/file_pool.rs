@@ -205,6 +205,18 @@ mod tests {
             use std::os::unix::fs::FileExt;
             borrowed.read_exact_at(&mut buf, 0).unwrap();
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+            let mut filled = 0;
+            let mut at = 0;
+            while filled < buf.len() {
+                let n = borrowed.seek_read(&mut buf[filled..], at).unwrap();
+                assert!(n != 0, "unexpected EOF in seek_read");
+                filled += n;
+                at += n as u64;
+            }
+        }
         assert_eq!(&buf, b"first");
     }
 

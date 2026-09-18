@@ -87,12 +87,79 @@ func (s3a *S3ApiServer) routedVersionedFinalize(owner pb.ServerAddress, bucket, 
 	}
 }
 
+// removeUploadDirMutation deletes a completed upload's directory metadata-only:
+// the finished object's chunks are the part chunks, so freeing their data would
+// destroy the object.
+func (s3a *S3ApiServer) removeUploadDirMutation(bucket, uploadID string) *filer_pb.ObjectMutation {
+	return &filer_pb.ObjectMutation{
+		Type:        filer_pb.ObjectMutation_DELETE,
+		Directory:   s3a.genUploadsFolder(bucket),
+		Name:        uploadID,
+		IsRecursive: true,
+	}
+}
+
+// uploadExistsCondition requires the upload directory to still exist when the
+// commit transaction runs, so a delete that does not take the object lock
+// (abort, lifecycle, s3.clean.uploads) fails the commit instead of letting it
+// publish the object over freed chunks.
+func uploadExistsCondition(uploadDirectory string) (string, *filer_pb.WriteCondition) {
+	return uploadDirectory, &filer_pb.WriteCondition{
+		Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_EXISTS}},
+	}
+}
+
+// routedMultipartFinalize commits a completed multipart upload in one
+// ObjectTransaction on the owner filer: PUT the version file, remove the upload
+// directory, recompute the latest pointer. The transaction applies mutations in
+// order with no rollback, so the order picks which partial states are
+// reachable: PUT first keeps the chunks referenced at all times, and removing
+// the upload directory before the recompute means a published object never
+// coexists with a leftover .uploads directory that s3.clean.uploads would purge
+// with data.
+func (s3a *S3ApiServer) routedMultipartFinalize(owner pb.ServerAddress, bucket, object string, useInvertedFormat bool, versionDir, versionFileName string, chunks []*filer_pb.FileChunk, decorate func(*filer_pb.Entry), uploadID string) s3err.ErrorCode {
+	now := time.Now().Unix()
+	versionEntry := &filer_pb.Entry{
+		Name: versionFileName,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    now,
+			Crtime:   now,
+			FileMode: uint32(0770),
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
+		},
+		Chunks: chunks,
+	}
+	if decorate != nil {
+		decorate(versionEntry)
+	}
+
+	routeKey := ""
+	if owner != "" {
+		routeKey = s3a.objectRouteKey(bucket, object)
+	}
+	conditionKey, condition := uploadExistsCondition(s3a.genUploadsFolder(bucket) + "/" + uploadID)
+	resp, err := s3a.routedPut(owner, routeKey, s3a.toFilerPath(bucket, object), versionDir+"/"+versionFileName, versionEntry, condition, conditionKey, []*filer_pb.ObjectMutation{
+		s3a.removeUploadDirMutation(bucket, uploadID),
+		s3a.latestPointerRecompute(bucket, object, useInvertedFormat, "", true),
+	})
+	switch {
+	case err != nil:
+		glog.Errorf("routedMultipartFinalize: %s/%s upload %s on %s: %v", bucket, object, uploadID, owner, err)
+		return s3err.ErrInternalError
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+		return s3err.ErrNoSuchUpload
+	case resp.Error != "":
+		glog.Errorf("routedMultipartFinalize: %s/%s upload %s: %s", bucket, object, uploadID, resp.Error)
+		return s3err.ErrInternalError
+	default:
+		return s3err.ErrNone
+	}
+}
+
 // wormDeleteCondition returns the object-lock guards for a delete, or nil when
-// the bucket has no object lock. Legal hold always blocks. Retention blocks
-// while not elapsed; with governance bypass the retention guard is gated to
-// COMPLIANCE mode, so a governance-mode version becomes deletable while a
-// compliance-mode one stays protected — the filer decides from the version's
-// mode under the lock, so the gateway never has to read it.
+// the bucket has no object lock. Governance bypass gates the retention check to
+// COMPLIANCE mode so the filer still protects compliance versions under lock.
 func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 	if !worm {
 		return nil
@@ -111,15 +178,8 @@ func wormDeleteCondition(worm, bypass bool) *filer_pb.WriteCondition {
 	}}
 }
 
-// routedDeleteSpecificVersion deletes one version off the distributed lock: in a
-// single transaction on the owner it recomputes the .versions pointer excluding
-// the version (repoint-before-delete, so a crash leaves a recoverable orphan
-// rather than a dangling pointer) and deletes the version file. lock_key is the
-// object (serializing the pointer recompute); for object-lock buckets the
-// condition gates the delete on the version's WORM guards evaluated on the owner.
-// Deleting the last version also removes the emptied .versions/ directory —
-// leaving it behind would keep re-triggering the read path's self-heal rescans
-// on every GET of the key (Veeam probes its deleted lock objects forever).
+// routedDeleteSpecificVersion removes one version under the owner filer's object
+// lock, first repointing .versions while excluding the deleted version.
 func (s3a *S3ApiServer) routedDeleteSpecificVersion(owner pb.ServerAddress, bucket, object, versionId string, worm, bypass bool) s3err.ErrorCode {
 	if !isValidVersionID(versionId) {
 		return s3err.ErrInvalidRequest

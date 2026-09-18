@@ -283,7 +283,9 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
 		if principal := normalizePrincipalID(accountID); principal != "" {
-			return principal
+			if principal != s3_constants.AccountAdminId || hasAdminAction(getIdentityActions(r)) {
+				return principal
+			}
 		}
 	}
 	return h.accountID

@@ -6,17 +6,17 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, Method, Request, StatusCode};
+use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
-use super::volume_server::{normalize_outgoing_http_url, to_http_address, VolumeServerState};
+use super::grpc_client::{GRPC_MAX_MESSAGE_SIZE, build_grpc_endpoint};
+use super::volume_server::{VolumeServerState, normalize_outgoing_http_url, to_http_address};
 use crate::config::ReadMode;
 use crate::metrics;
 use crate::pb::volume_server_pb;
@@ -193,10 +193,7 @@ impl http_body::Body for StreamingBody {
                             }
                             Ok(Err(e)) => return std::task::Poll::Ready(Some(Err(e))),
                             Err(e) => {
-                                return std::task::Poll::Ready(Some(Err(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    e,
-                                ))))
+                                return std::task::Poll::Ready(Some(Err(std::io::Error::other(e))));
                             }
                         }
                     }
@@ -282,31 +279,104 @@ impl Drop for StreamingBody {
 // URL Parsing
 // ============================================================================
 
-/// Parse volume ID and file ID from URL path.
-/// Supports: "vid,fid", "vid/fid", "vid,fid.ext", "vid/fid/filename.ext"
-/// Extract the file_id string (e.g., "3,01637037d6") from a URL path for JWT validation.
-fn extract_file_id(path: &str) -> String {
-    let path = path.trim_start_matches('/');
-    // Strip extension and filename after second slash
-    if let Some(comma) = path.find(',') {
-        let after_comma = &path[comma + 1..];
-        let fid_part = if let Some(slash) = after_comma.find('/') {
-            &after_comma[..slash]
-        } else if let Some(dot) = after_comma.rfind('.') {
-            &after_comma[..dot]
-        } else {
-            after_comma
-        };
-        // Strip "_suffix" from fid (Go does this for filenames appended with underscore)
-        let fid_part = if let Some(underscore) = fid_part.rfind('_') {
-            &fid_part[..underscore]
-        } else {
-            fid_part
-        };
-        format!("{},{}", &path[..comma], fid_part)
-    } else {
-        path.to_string()
+/// The pieces a needle URL carries, as Go's `parseURLPath` splits them
+/// (`weed/server/common.go:218-249`). Borrowed from the path so the callers
+/// that only need one field do not allocate.
+///
+/// `fid` keeps any `_delta` suffix, exactly like Go: applying the delta is
+/// `parse_needle_id_cookie`'s job (Go's `needle.ParsePath`), and the JWT check
+/// strips it separately.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NeedlePath<'a> {
+    pub vid: &'a str,
+    pub fid: &'a str,
+    /// Extension including the dot (`.jpg`), or "" when the URL has none.
+    pub ext: &'a str,
+    /// The trailing display name of the `vid/fid/filename.ext` form only.
+    pub filename: Option<&'a str>,
+}
+
+/// Split a needle URL path into volume id, file id, extension and filename.
+///
+/// Dispatches on the slash count like Go's `parseURLPath`, which is what
+/// decides where the extension is taken from:
+/// - `/vid/fid/filename.ext` (Go case 3): the filename carries the extension
+///   and the fid is left intact.
+/// - `/vid/fid.ext` (Go case 2): the extension is split off the fid.
+/// - `/vid,fid.ext` (Go's default): the last path segment is split on its last
+///   comma, then on its last dot.
+///
+/// The leading slash is optional, so chunk manifest entries ("3,01637037d6")
+/// parse through the same function. Returns `None` for a path with no file id
+/// at all — Go's `isVolumeIdOnly` case — since every caller here needs one.
+pub(crate) fn parse_needle_path(path: &str) -> Option<NeedlePath<'_>> {
+    // Go counts one more slash than this because it keeps the leading one.
+    let trimmed = path.trim_start_matches('/');
+    match trimmed.matches('/').count() {
+        2 => {
+            let mut parts = trimmed.splitn(3, '/');
+            let vid = parts.next()?;
+            let fid = parts.next()?;
+            let filename = parts.next()?;
+            // Go uses filepath.Ext here, which has no "dot at index 0" guard.
+            let ext = filename.rfind('.').map_or("", |dot| &filename[dot..]);
+            Some(NeedlePath {
+                vid,
+                fid,
+                ext,
+                filename: Some(filename),
+            })
+        }
+        1 => {
+            let (vid, fid) = trimmed.split_once('/')?;
+            let (fid, ext) = split_extension(fid);
+            Some(NeedlePath {
+                vid,
+                fid,
+                ext,
+                filename: None,
+            })
+        }
+        _ => {
+            // Go looks only after the last slash, so a deeper path has no
+            // comma to find and falls out as invalid.
+            let segment = trimmed.rsplit_once('/').map_or(trimmed, |(_, last)| last);
+            let comma = segment.rfind(',')?;
+            let (fid, ext) = split_extension(&segment[comma + 1..]);
+            Some(NeedlePath {
+                vid: &segment[..comma],
+                fid,
+                ext,
+                filename: None,
+            })
+        }
     }
+}
+
+/// Split a trailing `.ext` off a file id. Go guards this with `dotIndex > 0`,
+/// so a file id that is nothing but an extension keeps it and fails to parse
+/// later instead of becoming empty here.
+fn split_extension(fid: &str) -> (&str, &str) {
+    match fid.rfind('.') {
+        Some(dot) if dot > 0 => (&fid[..dot], &fid[dot..]),
+        _ => (fid, ""),
+    }
+}
+
+/// Extract the file_id string (e.g., "3,01637037d6") from a URL path for JWT validation.
+///
+/// Go compares the token's `fid` claim against `vid + "," + fid` for every URL
+/// form, after dropping an `_suffix` (`volume_server_handlers.go:361-364`), so
+/// the comma form is emitted here even when the request used slashes.
+fn extract_file_id(path: &str) -> String {
+    let Some(parsed) = parse_needle_path(path) else {
+        return path.trim_start_matches('/').to_string();
+    };
+    let fid = match parsed.fid.rfind('_') {
+        Some(sep) if sep > 0 => &parsed.fid[..sep],
+        _ => parsed.fid,
+    };
+    format!("{},{}", parsed.vid, fid)
 }
 
 fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usize {
@@ -317,33 +387,11 @@ fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usiz
 }
 
 fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
-    let path = path.trim_start_matches('/');
-
-    // Try "vid,fid" or "vid/fid" or "vid/fid/filename" formats
-    let (vid_str, fid_part) = if let Some(pos) = path.find(',') {
-        (&path[..pos], &path[pos + 1..])
-    } else if let Some(pos) = path.find('/') {
-        (&path[..pos], &path[pos + 1..])
-    } else {
-        return None;
-    };
-
-    // For fid part, strip extension from the fid (not from filename)
-    // "vid,fid.ext" -> fid is before dot
-    // "vid/fid/filename.ext" -> fid is the part before the second slash
-    let fid_str = if let Some(slash_pos) = fid_part.find('/') {
-        // "fid/filename.ext" - fid is before the slash
-        &fid_part[..slash_pos]
-    } else if let Some(dot) = fid_part.rfind('.') {
-        // "fid.ext" - strip extension
-        &fid_part[..dot]
-    } else {
-        fid_part
-    };
-
-    let vid = VolumeId::parse(vid_str).ok()?;
+    let parsed = parse_needle_path(path)?;
+    let vid = VolumeId::parse(parsed.vid).ok()?;
+    // parse_needle_id_cookie applies an `_delta` suffix itself (Go ParsePath).
     let (needle_id, cookie) =
-        crate::storage::needle::needle::parse_needle_id_cookie(fid_str).ok()?;
+        crate::storage::needle::needle::parse_needle_id_cookie(parsed.fid).ok()?;
 
     Some((vid, needle_id, cookie))
 }
@@ -409,10 +457,10 @@ async fn lookup_volume(
         .json()
         .await
         .map_err(|e| format!("lookup parse failed: {}", e))?;
-    if let Some(err) = result.error {
-        if !err.is_empty() {
-            return Err(err);
-        }
+    if let Some(err) = result.error
+        && !err.is_empty()
+    {
+        return Err(err);
     }
     Ok(result.locations.unwrap_or_default())
 }
@@ -677,35 +725,16 @@ fn build_proxy_request_info(
     headers: &HeaderMap,
     query_string: &str,
 ) -> Option<ProxyRequestInfo> {
-    let trimmed = path.trim_start_matches('/');
-    let (vid_str, fid_str) = if let Some(pos) = trimmed.find(',') {
-        let raw_fid = &trimmed[pos + 1..];
-        let fid = if let Some(slash) = raw_fid.find('/') {
-            &raw_fid[..slash]
-        } else if let Some(dot) = raw_fid.rfind('.') {
-            &raw_fid[..dot]
-        } else {
-            raw_fid
-        };
-        (trimmed[..pos].to_string(), fid.to_string())
-    } else if let Some(pos) = trimmed.find('/') {
-        let after = &trimmed[pos + 1..];
-        let fid_part = if let Some(slash) = after.find('/') {
-            &after[..slash]
-        } else {
-            after
-        };
-        (trimmed[..pos].to_string(), fid_part.to_string())
-    } else {
-        return None;
-    };
+    // Go redirects to "vid,fid" built from parseURLPath, so the extension must
+    // already be off the fid here (volume_server_handlers_read.go:128-137).
+    let parsed = parse_needle_path(path)?;
 
     Some(ProxyRequestInfo {
         original_headers: headers.clone(),
         original_query: query_string.to_string(),
         path: path.to_string(),
-        vid_str,
-        fid_str,
+        vid_str: parsed.vid.to_string(),
+        fid_str: parsed.fid.to_string(),
     })
 }
 
@@ -837,12 +866,12 @@ fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &s
     let mut query_params = Vec::new();
     if !info.original_query.is_empty() {
         for param in info.original_query.split('&') {
-            if let Some((key, value)) = param.split_once('=') {
-                if key == "collection" {
-                    query_params.push(format!("collection={}", value));
-                }
-                // Intentionally drop readDeleted and other params (Go parity)
+            if let Some((key, value)) = param.split_once('=')
+                && key == "collection"
+            {
+                query_params.push(format!("collection={}", value));
             }
+            // Intentionally drop readDeleted and other params (Go parity)
         }
     }
     query_params.push("proxied=true".to_string());
@@ -852,7 +881,7 @@ fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &s
     let target_http = to_http_address(&target.url);
     let raw_target = format!(
         "{}/{},{}?{}",
-        target_http, &info.vid_str, &info.fid_str, query
+        target_http, info.vid_str, info.fid_str, query
     );
     let location = match normalize_outgoing_http_url(scheme, &raw_target) {
         Ok(url) => url,
@@ -954,12 +983,12 @@ async fn get_or_head_handler_inner(
     // so invalid paths with JWT enabled return 401, not 400.
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) =
-        state
-            .guard
-            .read()
-            .unwrap()
-            .check_jwt_for_file(token.as_deref(), &file_id, false)
+    if state
+        .guard
+        .read()
+        .unwrap()
+        .check_jwt_for_file(token.as_deref(), &file_id, false)
+        .is_err()
     {
         let body = serde_json::json!({"error": "wrong jwt"});
         return Response::builder()
@@ -1015,16 +1044,15 @@ async fn get_or_head_handler_inner(
             let should_try_replica =
                 !query_string.contains("proxied=true") && !state.master_url.is_empty() && {
                     let store = state.store.read().unwrap();
-                    store.find_volume(vid).map_or(false, |(_, vol)| {
+                    store.find_volume(vid).is_some_and(|(_, vol)| {
                         vol.super_block.replica_placement.get_copy_count() > 1
                     })
                 };
-            if should_try_replica {
-                if let Some(info) =
+            if should_try_replica
+                && let Some(info) =
                     build_proxy_request_info(&path, request.headers(), &query_string)
-                {
-                    return proxy_or_redirect_to_target(&state, info, vid, true).await;
-                }
+            {
+                return proxy_or_redirect_to_target(&state, info, vid, true).await;
             }
 
             // Blocking wait loop (Go's waitForDownloadSlot)
@@ -1231,60 +1259,55 @@ async fn get_or_head_handler_inner(
     // Build Last-Modified header (RFC 1123 format) — must be done before conditional checks
     let last_modified_str = if n.last_modified > 0 {
         use chrono::{TimeZone, Utc};
-        if let Some(dt) = Utc.timestamp_opt(n.last_modified as i64, 0).single() {
-            Some(dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
-        } else {
-            None
-        }
+        Utc.timestamp_opt(n.last_modified as i64, 0)
+            .single()
+            .map(|dt| dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
     } else {
         None
     };
 
     // Check If-Modified-Since FIRST (Go checks this before If-None-Match)
-    if n.last_modified > 0 {
-        if let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE) {
-            if let Ok(ims_str) = ims_header.to_str() {
-                // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
-                if let Ok(ims_time) =
-                    chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
-                {
-                    if (n.last_modified as i64) <= ims_time.and_utc().timestamp() {
-                        let mut resp = StatusCode::NOT_MODIFIED.into_response();
-                        if let Some(ref lm) = last_modified_str {
-                            resp.headers_mut()
-                                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-                        }
-                        // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
-                        return resp;
-                    }
-                }
+    if n.last_modified > 0
+        && let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE)
+        && let Ok(ims_str) = ims_header.to_str()
+    {
+        // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
+        if let Ok(ims_time) =
+            chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
+            && (n.last_modified as i64) <= ims_time.and_utc().timestamp()
+        {
+            let mut resp = StatusCode::NOT_MODIFIED.into_response();
+            if let Some(ref lm) = last_modified_str {
+                resp.headers_mut()
+                    .insert(header::LAST_MODIFIED, lm.parse().unwrap());
             }
+            // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
+            return resp;
         }
     }
 
     // Check If-None-Match SECOND
-    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
-        if let Ok(inm) = if_none_match.to_str() {
-            if inm == etag {
-                let mut resp = StatusCode::NOT_MODIFIED.into_response();
-                if let Some(ref lm) = last_modified_str {
-                    resp.headers_mut()
-                        .insert(header::LAST_MODIFIED, lm.parse().unwrap());
-                }
-                // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
-                return resp;
-            }
+    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
+        && let Ok(inm) = if_none_match.to_str()
+        && inm == etag
+    {
+        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+        if let Some(ref lm) = last_modified_str {
+            resp.headers_mut()
+                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
         }
+        // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
+        return resp;
     }
 
     // Chunk manifest expansion (needs full data) — after conditional checks, before response
     // Pass ETag so chunk manifest responses include it (matches Go: ETag is set on the
     // response writer before tryHandleChunkedFile runs).
-    if n.is_chunk_manifest() && !bypass_cm {
-        if let Some(resp) = try_expand_chunk_manifest(
+    if n.is_chunk_manifest()
+        && !bypass_cm
+        && let Some(resp) = try_expand_chunk_manifest(
             &state,
             &n,
-            &headers,
             &method,
             &path,
             &query,
@@ -1292,27 +1315,26 @@ async fn get_or_head_handler_inner(
             &last_modified_str,
         )
         .await
-        {
-            return resp;
-        }
-        // If manifest expansion fails (invalid JSON etc.), fall through to raw data
+    {
+        return resp;
     }
+    // If manifest expansion fails (invalid JSON etc.), fall through to raw data
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::ETAG, etag.parse().unwrap());
 
     // H1: Emit pairs as response headers
-    if n.has_pairs() && !n.pairs.is_empty() {
-        if let Ok(pair_map) =
+    if n.has_pairs()
+        && !n.pairs.is_empty()
+        && let Ok(pair_map) =
             serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
-        {
-            for (k, v) in &pair_map {
-                if let (Ok(hname), Ok(hval)) = (
-                    axum::http::HeaderName::from_bytes(k.as_bytes()),
-                    axum::http::HeaderValue::from_str(v),
-                ) {
-                    response_headers.insert(hname, hval);
-                }
+    {
+        for (k, v) in &pair_map {
+            if let (Ok(hname), Ok(hval)) = (
+                axum::http::HeaderName::from_bytes(k.as_bytes()),
+                axum::http::HeaderValue::from_str(v),
+            ) {
+                response_headers.insert(hname, hval);
             }
         }
     }
@@ -1322,10 +1344,10 @@ async fn get_or_head_handler_inner(
     let mut ext = ext;
     if n.name_size > 0 && filename.is_empty() {
         filename = String::from_utf8_lossy(&n.name).to_string();
-        if ext.is_empty() {
-            if let Some(dot_pos) = filename.rfind('.') {
-                ext = filename[dot_pos..].to_lowercase();
-            }
+        if ext.is_empty()
+            && let Some(dot_pos) = filename.rfind('.')
+        {
+            ext = filename[dot_pos..].to_lowercase();
         }
     }
 
@@ -1429,80 +1451,72 @@ async fn get_or_head_handler_inner(
     }
 
     // ---- Streaming path: large uncompressed files ----
-    if can_stream {
-        if let Some(info) = stream_info {
-            response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-            response_headers.insert(
-                header::CONTENT_LENGTH,
-                info.data_size.to_string().parse().unwrap(),
-            );
+    if can_stream && let Some(info) = stream_info {
+        response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            info.data_size.to_string().parse().unwrap(),
+        );
 
-            let tracked_bytes = info.data_size as i64;
-            let tracking_state = if download_guard.is_some() {
-                let new_val = state
-                    .inflight_download_bytes
-                    .fetch_add(tracked_bytes, Ordering::Relaxed)
-                    + tracked_bytes;
-                metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
-                Some(state.clone())
-            } else {
+        let tracked_bytes = info.data_size as i64;
+        let tracking_state = if download_guard.is_some() {
+            let new_val = state
+                .inflight_download_bytes
+                .fetch_add(tracked_bytes, Ordering::Relaxed)
+                + tracked_bytes;
+            metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
+            Some(state.clone())
+        } else {
+            None
+        };
+
+        let streaming = StreamingBody {
+            source: info.source,
+            data_offset: info.data_file_offset,
+            data_size: info.data_size,
+            pos: 0,
+            chunk_size: streaming_chunk_size(state.read_buffer_size_bytes, info.data_size as usize),
+            _held_read_lease: if state.has_slow_read {
                 None
-            };
+            } else {
+                Some(info.data_file_access_control.read_lock())
+            },
+            data_file_access_control: info.data_file_access_control,
+            hold_read_lock_for_stream: !state.has_slow_read,
+            pending: None,
+            state: tracking_state,
+            tracked_bytes,
+            server_state: state.clone(),
+            volume_id: info.volume_id,
+            needle_id: info.needle_id,
+            compaction_revision: info.compaction_revision,
+        };
 
-            let streaming = StreamingBody {
-                source: info.source,
-                data_offset: info.data_file_offset,
-                data_size: info.data_size,
-                pos: 0,
-                chunk_size: streaming_chunk_size(
-                    state.read_buffer_size_bytes,
-                    info.data_size as usize,
-                ),
-                _held_read_lease: if state.has_slow_read {
-                    None
-                } else {
-                    Some(info.data_file_access_control.read_lock())
-                },
-                data_file_access_control: info.data_file_access_control,
-                hold_read_lock_for_stream: !state.has_slow_read,
-                pending: None,
-                state: tracking_state,
-                tracked_bytes,
-                server_state: state.clone(),
-                volume_id: info.volume_id,
-                needle_id: info.needle_id,
-                compaction_revision: info.compaction_revision,
-            };
-
-            let body = Body::new(streaming);
-            let mut resp = Response::new(body);
-            *resp.status_mut() = StatusCode::OK;
-            *resp.headers_mut() = response_headers;
-            return resp;
-        }
+        let body = Body::new(streaming);
+        let mut resp = Response::new(body);
+        *resp.status_mut() = StatusCode::OK;
+        *resp.headers_mut() = response_headers;
+        return resp;
     }
 
-    if can_handle_head_from_meta {
-        if let Some(info) = stream_info {
-            response_headers.insert(
-                header::CONTENT_LENGTH,
-                info.data_size.to_string().parse().unwrap(),
-            );
-            return (StatusCode::OK, response_headers).into_response();
-        }
+    if can_handle_head_from_meta && let Some(info) = stream_info {
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            info.data_size.to_string().parse().unwrap(),
+        );
+        return (StatusCode::OK, response_headers).into_response();
     }
 
-    if can_handle_range_from_source {
-        if let (Some(range_header), Some(info)) = (headers.get(header::RANGE), stream_info) {
-            if let Ok(range_str) = range_header.to_str() {
-                return handle_range_request_from_source(
-                    range_str,
-                    info,
-                    response_headers,
-                    track_download.then(|| state.clone()),
-                );
-            }
-        }
+    if can_handle_range_from_source
+        && let (Some(range_header), Some(info)) = (headers.get(header::RANGE), stream_info)
+        && let Ok(range_str) = range_header.to_str()
+    {
+        return handle_range_request_from_source(
+            range_str,
+            info,
+            response_headers,
+            track_download.then(|| state.clone()),
+        );
     }
 
     // ---- Buffered path: small files, compressed, images, range requests ----
@@ -1525,7 +1539,7 @@ async fn get_or_head_handler_inner(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         "compressed object exceeds decompression limit",
                     )
-                        .into_response()
+                        .into_response();
                 }
                 Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
             }
@@ -1551,7 +1565,7 @@ async fn get_or_head_handler_inner(
                             StatusCode::PAYLOAD_TOO_LARGE,
                             "compressed object exceeds decompression limit",
                         )
-                            .into_response()
+                            .into_response();
                     }
                     Err(GunzipError::Decode) => {} // not valid gzip; keep raw bytes
                 }
@@ -1572,15 +1586,15 @@ async fn get_or_head_handler_inner(
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
     // Check Range header
-    if let Some(range_header) = headers.get(header::RANGE) {
-        if let Ok(range_str) = range_header.to_str() {
-            return handle_range_request(
-                range_str,
-                &data,
-                response_headers,
-                track_download.then(|| state.clone()),
-            );
-        }
+    if let Some(range_header) = headers.get(header::RANGE)
+        && let Ok(range_str) = range_header.to_str()
+    {
+        return handle_range_request(
+            range_str,
+            &data,
+            response_headers,
+            track_download.then(|| state.clone()),
+        );
     }
 
     if method == Method::HEAD {
@@ -1830,7 +1844,7 @@ fn handle_range_request_from_source(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("range read error: {}", err),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
         headers.insert(
@@ -1860,7 +1874,7 @@ fn handle_range_request_from_source(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("range read error: {}", err),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
         if i == 0 {
@@ -2006,7 +2020,7 @@ fn extract_extension_from_path(path: &str) -> String {
         if let Some(dot_pos) = filename.rfind('.') {
             return filename[dot_pos..].to_lowercase();
         }
-    } else if parts.len() >= 1 {
+    } else if !parts.is_empty() {
         // 2-segment path: /vid,fid.ext or /vid/fid.ext
         // Go's parseURLPath extracts ext from the full path for all formats
         let last = parts[parts.len() - 1];
@@ -2129,7 +2143,7 @@ pub async fn post_handler(
             // Go's r.ParseForm() returns 400 on malformed query strings
             return json_error_with_query(
                 StatusCode::BAD_REQUEST,
-                &format!("form parse error: {}", e),
+                format!("form parse error: {}", e),
                 Some(&query),
             );
         }
@@ -2138,18 +2152,23 @@ pub async fn post_handler(
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
         None => {
-            return json_error_with_query(StatusCode::BAD_REQUEST, "invalid URL path", Some(&query))
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                "invalid URL path",
+                Some(&query),
+            );
         }
     };
 
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) = state
+    if state
         .guard
         .read()
         .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
     {
         return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
     }
@@ -2279,11 +2298,8 @@ pub async fn post_handler(
             .split(';')
             .find_map(|part| {
                 let part = part.trim();
-                if let Some(val) = part.strip_prefix("boundary=") {
-                    Some(val.trim_matches('"').to_string())
-                } else {
-                    None
-                }
+                part.strip_prefix("boundary=")
+                    .map(|val| val.trim_matches('"').to_string())
             })
             .unwrap_or_default();
 
@@ -2425,17 +2441,17 @@ pub async fn post_handler(
     } else {
         None
     };
-    if let (Some(expected_md5), Some(actual_md5)) = (&content_md5, &original_content_md5) {
-        if expected_md5 != actual_md5 {
-            return json_error_with_query(
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "Content-MD5 did not match md5 of file data expected [{}] received [{}] size {}",
-                    expected_md5, actual_md5, original_data_size
-                ),
-                Some(&query),
-            );
-        }
+    if let (Some(expected_md5), Some(actual_md5)) = (&content_md5, &original_content_md5)
+        && expected_md5 != actual_md5
+    {
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Content-MD5 did not match md5 of file data expected [{}] received [{}] size {}",
+                expected_md5, actual_md5, original_data_size
+            ),
+            Some(&query),
+        );
     }
 
     let now = std::time::SystemTime::now()
@@ -2577,7 +2593,7 @@ pub async fn post_handler(
         cookie,
         data_size: final_data.len() as u32,
         data: final_data,
-        last_modified: last_modified,
+        last_modified,
         ..Needle::default()
     };
     n.set_has_last_modified_date();
@@ -2595,22 +2611,21 @@ pub async fn post_handler(
     }
 
     // Set TTL on needle
-    if let Some(ref t) = ttl {
-        if !t.is_empty() {
-            n.ttl = Some(*t);
-            n.set_has_ttl();
-        }
+    if let Some(ref t) = ttl
+        && !t.is_empty()
+    {
+        n.ttl = Some(*t);
+        n.set_has_ttl();
     }
 
     // Set pairs on needle
-    if !pair_map.is_empty() {
-        if let Ok(pairs_json) = serde_json::to_vec(&pair_map) {
-            if pairs_json.len() < 65536 {
-                n.pairs_size = pairs_json.len() as u16;
-                n.pairs = pairs_json;
-                n.set_has_pairs();
-            }
-        }
+    if !pair_map.is_empty()
+        && let Ok(pairs_json) = serde_json::to_vec(&pair_map)
+        && pairs_json.len() < 65536
+    {
+        n.pairs_size = pairs_json.len() as u16;
+        n.pairs = pairs_json;
+        n.set_has_pairs();
     }
 
     // Set filename on needle (matches Go: if len(pu.FileName) < 256)
@@ -2639,9 +2654,9 @@ pub async fn post_handler(
     if !is_replicate && write_result.is_ok() && !state.master_url.is_empty() {
         let needs_replication = {
             let store = state.store.read().unwrap();
-            store.find_volume(vid).map_or(false, |(_, v)| {
-                v.super_block.replica_placement.get_copy_count() > 1
-            })
+            store
+                .find_volume(vid)
+                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
         };
         if needs_replication {
             let state_clone = state.clone();
@@ -2664,7 +2679,7 @@ pub async fn post_handler(
             let replication_result = replication
                 .await
                 .map_err(|e| format!("replication task failed: {}", e))
-                .and_then(|result| result);
+                .flatten();
             if let Err(e) = replication_result {
                 tracing::error!("replicated write failed: {}", e);
                 return json_error_with_query(
@@ -2751,18 +2766,19 @@ pub async fn delete_handler(
                 StatusCode::BAD_REQUEST,
                 "invalid URL path",
                 Some(&del_query),
-            )
+            );
         }
     };
 
     // JWT check for writes (deletes use write key)
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(_) = state
+    if state
         .guard
         .read()
         .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
+        .is_err()
     {
         return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&del_query));
     }
@@ -2793,14 +2809,14 @@ pub async fn delete_handler(
                     let count = ec_needle.data_size as i64;
                     // Step 3: Journal the delete
                     let mut store = state.store.write().unwrap();
-                    if let Some(ecv) = store.find_ec_volume_mut(vid) {
-                        if let Err(e) = ecv.journal_delete(needle_id) {
-                            return json_error_with_query(
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Deletion Failed: {}", e),
-                                Some(&del_query),
-                            );
-                        }
+                    if let Some(ecv) = store.find_ec_volume_mut(vid)
+                        && let Err(e) = ecv.journal_delete(needle_id)
+                    {
+                        return json_error_with_query(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Deletion Failed: {}", e),
+                            Some(&del_query),
+                        );
                     }
                     let result = DeleteResult { size: count };
                     return json_response_with_params(
@@ -2946,12 +2962,12 @@ pub async fn delete_handler(
     if !is_replicate && delete_result.is_ok() && !state.master_url.is_empty() {
         let needs_replication = {
             let store = state.store.read().unwrap();
-            store.find_volume(vid).map_or(false, |(_, v)| {
-                v.super_block.replica_placement.get_copy_count() > 1
-            })
+            store
+                .find_volume(vid)
+                .is_some_and(|(_, v)| v.super_block.replica_placement.get_copy_count() > 1)
         };
-        if needs_replication {
-            if let Err(e) = do_replicated_request(
+        if needs_replication
+            && let Err(e) = do_replicated_request(
                 &state,
                 vid.0,
                 Method::DELETE,
@@ -2961,14 +2977,13 @@ pub async fn delete_handler(
                 None,
             )
             .await
-            {
-                tracing::error!("replicated delete failed: {}", e);
-                return json_error_with_query(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("replication failed: {}", e),
-                    Some(&del_query),
-                );
-            }
+        {
+            tracing::error!("replicated delete failed: {}", e);
+            return json_error_with_query(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("replication failed: {}", e),
+                Some(&del_query),
+            );
         }
     }
 
@@ -3234,7 +3249,6 @@ pub async fn ui_handler(State(state): State<Arc<VolumeServerState>>) -> Response
 // ============================================================================
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct ChunkManifest {
     #[serde(default)]
     name: String,
@@ -3257,7 +3271,6 @@ struct ChunkInfo {
 async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
-    _headers: &HeaderMap,
     method: &Method,
     path: &str,
     query: &ReadQueryParams,
@@ -3274,7 +3287,7 @@ async fn try_expand_chunk_manifest(
                         "compressed manifest exceeds decompression limit",
                     )
                         .into_response(),
-                )
+                );
             }
             Err(GunzipError::Decode) => return None,
         }
@@ -3321,7 +3334,7 @@ async fn try_expand_chunk_manifest(
                         format!("read chunk {}: {}", chunk.fid, e),
                     )
                         .into_response(),
-                )
+                );
             }
         };
         let offset = chunk.offset as usize;
@@ -3382,53 +3395,53 @@ async fn try_expand_chunk_manifest(
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
     // Last-Modified — Go sets this on the response writer before tryHandleChunkedFile
-    if let Some(lm) = last_modified_str {
-        if let Ok(hval) = lm.parse() {
-            response_headers.insert(header::LAST_MODIFIED, hval);
-        }
+    if let Some(lm) = last_modified_str
+        && let Ok(hval) = lm.parse()
+    {
+        response_headers.insert(header::LAST_MODIFIED, hval);
     }
 
     // Pairs — Go sets needle pairs on the response writer before tryHandleChunkedFile
-    if n.has_pairs() && !n.pairs.is_empty() {
-        if let Ok(pair_map) =
+    if n.has_pairs()
+        && !n.pairs.is_empty()
+        && let Ok(pair_map) =
             serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
-        {
-            for (k, v) in &pair_map {
-                if let (Ok(hname), Ok(hval)) = (
-                    axum::http::HeaderName::from_bytes(k.as_bytes()),
-                    axum::http::HeaderValue::from_str(v),
-                ) {
-                    response_headers.insert(hname, hval);
-                }
+    {
+        for (k, v) in &pair_map {
+            if let (Ok(hname), Ok(hval)) = (
+                axum::http::HeaderName::from_bytes(k.as_bytes()),
+                axum::http::HeaderValue::from_str(v),
+            ) {
+                response_headers.insert(hname, hval);
             }
         }
     }
 
     // S3 response passthrough headers — Go sets these via AdjustPassthroughHeaders
-    if let Some(ref cc) = query.response_cache_control {
-        if let Ok(hval) = cc.parse() {
-            response_headers.insert(header::CACHE_CONTROL, hval);
-        }
+    if let Some(ref cc) = query.response_cache_control
+        && let Ok(hval) = cc.parse()
+    {
+        response_headers.insert(header::CACHE_CONTROL, hval);
     }
-    if let Some(ref ce) = query.response_content_encoding {
-        if let Ok(hval) = ce.parse() {
-            response_headers.insert(header::CONTENT_ENCODING, hval);
-        }
+    if let Some(ref ce) = query.response_content_encoding
+        && let Ok(hval) = ce.parse()
+    {
+        response_headers.insert(header::CONTENT_ENCODING, hval);
     }
-    if let Some(ref exp) = query.response_expires {
-        if let Ok(hval) = exp.parse() {
-            response_headers.insert(header::EXPIRES, hval);
-        }
+    if let Some(ref exp) = query.response_expires
+        && let Ok(hval) = exp.parse()
+    {
+        response_headers.insert(header::EXPIRES, hval);
     }
-    if let Some(ref cl) = query.response_content_language {
-        if let Ok(hval) = cl.parse() {
-            response_headers.insert("Content-Language", hval);
-        }
+    if let Some(ref cl) = query.response_content_language
+        && let Ok(hval) = cl.parse()
+    {
+        response_headers.insert("Content-Language", hval);
     }
-    if let Some(ref cd) = query.response_content_disposition {
-        if let Ok(hval) = cd.parse() {
-            response_headers.insert(header::CONTENT_DISPOSITION, hval);
-        }
+    if let Some(ref cd) = query.response_content_disposition
+        && let Ok(hval) = cd.parse()
+    {
+        response_headers.insert(header::CONTENT_DISPOSITION, hval);
     }
 
     // Content-Disposition
@@ -3459,7 +3472,6 @@ async fn try_expand_chunk_manifest(
     } else {
         String::new()
     };
-    let mut result = result;
     if is_image_crop_ext(&cm_ext) {
         result = maybe_crop_image(&result, &cm_ext, query);
     }
@@ -3735,33 +3747,33 @@ fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
     // 1. Check ?jwt= query parameter
     if let Some(query) = uri.query() {
         for pair in query.split('&') {
-            if let Some(value) = pair.strip_prefix("jwt=") {
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+            if let Some(value) = pair.strip_prefix("jwt=")
+                && !value.is_empty()
+            {
+                return Some(value.to_string());
             }
         }
     }
 
     // 2. Check Authorization: Bearer <token> (case-insensitive prefix)
-    if let Some(auth) = headers.get(header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth.to_str() {
-            if auth_str.len() > 7 && auth_str[..7].eq_ignore_ascii_case("bearer ") {
-                return Some(auth_str[7..].to_string());
-            }
-        }
+    if let Some(auth) = headers.get(header::AUTHORIZATION)
+        && let Ok(auth_str) = auth.to_str()
+        && auth_str.len() > 7
+        && auth_str[..7].eq_ignore_ascii_case("bearer ")
+    {
+        return Some(auth_str[7..].to_string());
     }
 
     // 3. Check Cookie
-    if let Some(cookie_header) = headers.get(header::COOKIE) {
-        if let Ok(cookie_str) = cookie_header.to_str() {
-            for cookie in cookie_str.split(';') {
-                let cookie = cookie.trim();
-                if let Some(value) = cookie.strip_prefix("AT=") {
-                    if !value.is_empty() {
-                        return Some(value.to_string());
-                    }
-                }
+    if let Some(cookie_header) = headers.get(header::COOKIE)
+        && let Ok(cookie_str) = cookie_header.to_str()
+    {
+        for cookie in cookie_str.split(';') {
+            let cookie = cookie.trim();
+            if let Some(value) = cookie.strip_prefix("AT=")
+                && !value.is_empty()
+            {
+                return Some(value.to_string());
             }
         }
     }
@@ -3823,8 +3835,8 @@ fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
 
 /// Try to gzip data. Returns None on error.
 fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::io::Write;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(data).ok()?;
@@ -3921,6 +3933,161 @@ mod tests {
         );
     }
 
+    /// Every URL form the volume server accepts, against what Go's
+    /// `parseURLPath` returns for it (`weed/server/common.go:218-249`):
+    /// the `vid/fid/filename` form leaves the fid alone and takes the
+    /// extension off the filename, the other two take it off the fid, and
+    /// none of them touch an `_delta` suffix.
+    #[test]
+    fn test_parse_needle_path_every_form() {
+        let cases: &[(&str, &str, &str, &str, Option<&str>)] = &[
+            // "vid,fid" — Go's default branch.
+            ("/3,01637037d6", "3", "01637037d6", "", None),
+            ("/3,01637037d6.jpg", "3", "01637037d6", ".jpg", None),
+            ("/3,01637037d6_1", "3", "01637037d6_1", "", None),
+            ("/3,01637037d6_1.jpg", "3", "01637037d6_1", ".jpg", None),
+            // "vid/fid" — Go's case 2.
+            ("/3/01637037d6", "3", "01637037d6", "", None),
+            ("/3/01637037d6.jpg", "3", "01637037d6", ".jpg", None),
+            ("/3/01637037d6_1", "3", "01637037d6_1", "", None),
+            ("/3/01637037d6_1.jpg", "3", "01637037d6_1", ".jpg", None),
+            // "vid/fid/filename" — Go's case 3: the fid stays whole.
+            (
+                "/3/01637037d6/report",
+                "3",
+                "01637037d6",
+                "",
+                Some("report"),
+            ),
+            (
+                "/3/01637037d6/report.txt",
+                "3",
+                "01637037d6",
+                ".txt",
+                Some("report.txt"),
+            ),
+            (
+                "/3/01637037d6_1/report",
+                "3",
+                "01637037d6_1",
+                "",
+                Some("report"),
+            ),
+            (
+                "/3/01637037d6_1/report.txt",
+                "3",
+                "01637037d6_1",
+                ".txt",
+                Some("report.txt"),
+            ),
+            // Mixed forms: the slash count decides, so a comma with a trailing
+            // segment is read as "vid/fid" (Go case 2, and the volume id then
+            // fails to parse) and a comma inside a filename is just part of
+            // the filename (Go case 3).
+            (
+                "/3,01637037d6/name.txt",
+                "3,01637037d6",
+                "name",
+                ".txt",
+                None,
+            ),
+            (
+                "/3/01637037d6/my,file.jpg",
+                "3",
+                "01637037d6",
+                ".jpg",
+                Some("my,file.jpg"),
+            ),
+            // Go's case 2 guards the extension split with `dotIndex > 0`, so a
+            // file id that is nothing but an extension keeps it and fails to
+            // parse later; filepath.Ext in case 3 has no such guard.
+            ("/3/.jpg", "3", ".jpg", "", None),
+            (
+                "/3/01637037d6/.jpg",
+                "3",
+                "01637037d6",
+                ".jpg",
+                Some(".jpg"),
+            ),
+        ];
+
+        for &(path, vid, fid, ext, filename) in cases {
+            assert_eq!(
+                parse_needle_path(path),
+                Some(NeedlePath {
+                    vid,
+                    fid,
+                    ext,
+                    filename
+                }),
+                "path {}",
+                path
+            );
+            // Chunk manifest entries arrive without the leading slash.
+            let unrooted = path.trim_start_matches('/');
+            assert_eq!(
+                parse_needle_path(unrooted),
+                parse_needle_path(path),
+                "path {}",
+                unrooted
+            );
+        }
+    }
+
+    /// A path with no file id at all is Go's `isVolumeIdOnly` case; every
+    /// caller here needs a file id, so it has to come back as `None`.
+    #[test]
+    fn test_parse_needle_path_rejects_paths_without_a_file_id() {
+        for path in ["", "/", "/3", "/invalid", "/not/a/valid/volume/path"] {
+            assert_eq!(parse_needle_path(path), None, "path {}", path);
+        }
+    }
+
+    /// Go's `maybeCheckJwtAuthorization` compares the token's `fid` claim
+    /// against `vid + "," + fid` whatever form the URL used
+    /// (volume_server_handlers.go:361-364), so the slash form has to produce
+    /// the comma form too or a JWT-protected read of `/3/01637037d6` can never
+    /// match its own token.
+    #[test]
+    fn test_extract_file_id_normalizes_every_url_form() {
+        for path in [
+            "/3,01637037d6",
+            "/3,01637037d6.jpg",
+            "/3,01637037d6_1",
+            "/3/01637037d6",
+            "/3/01637037d6.jpg",
+            "/3/01637037d6_1.jpg",
+            "/3/01637037d6/report.txt",
+            "/3/01637037d6_1/report.txt",
+        ] {
+            assert_eq!(extract_file_id(path), "3,01637037d6", "path {}", path);
+        }
+    }
+
+    /// Go only drops the `_suffix` when `strings.LastIndex(fid, "_") > 0`
+    /// (volume_server_handlers.go:361-364), so a file id that starts with the
+    /// separator is compared whole rather than becoming empty.
+    #[test]
+    fn test_extract_file_id_keeps_a_leading_underscore() {
+        assert_eq!(extract_file_id("/3,_5"), "3,_5");
+        assert_eq!(extract_file_id("/3/_5"), "3,_5");
+    }
+
+    /// Go checks the JWT before it parses the volume id
+    /// (volume_server_handlers_read.go:142-156), and so does
+    /// get_or_head_handler_inner, which is why an unparsable path still has to
+    /// produce a comparison string: it decides 401 before parse_url_path gets
+    /// to decide 400.
+    #[test]
+    fn test_extract_file_id_falls_back_for_unparsable_paths() {
+        assert_eq!(extract_file_id("/invalid"), "invalid");
+        assert_eq!(extract_file_id("/3"), "3");
+        assert_eq!(
+            extract_file_id("/not/a/valid/volume/path"),
+            "not/a/valid/volume/path"
+        );
+    }
+
     #[test]
     fn test_parse_url_path_comma() {
         let (vid, nid, cookie) = parse_url_path("/3,01637037d6").unwrap();
@@ -3943,16 +4110,42 @@ mod tests {
 
     #[test]
     fn test_parse_url_path_slash_with_filename() {
-        let result = parse_url_path("3/01637037d6/report.txt");
-        assert!(result.is_some());
-        let (vid, _, _) = result.unwrap();
-        assert_eq!(vid, VolumeId(3));
+        // A comma in the filename is part of the filename: the slash count
+        // already decided the form, as in Go's case 3.
+        for path in ["3/01637037d6/report.txt", "3/01637037d6/my,file.jpg"] {
+            let (vid, nid, cookie) = parse_url_path(path).unwrap();
+            assert_eq!(vid, VolumeId(3), "path {}", path);
+            assert_eq!(nid, NeedleId(0x01), "path {}", path);
+            assert_eq!(cookie, Cookie(0x637037d6), "path {}", path);
+        }
+    }
+
+    /// The `_delta` suffix stays on the fid through the path split and is
+    /// applied by parse_needle_id_cookie, as Go's ParsePath does.
+    #[test]
+    fn test_parse_url_path_applies_delta_suffix() {
+        for path in [
+            "/3,01637037d6_1",
+            "/3/01637037d6_1",
+            "/3/01637037d6_1/a.txt",
+        ] {
+            let (vid, nid, cookie) = parse_url_path(path).unwrap();
+            assert_eq!(vid, VolumeId(3), "path {}", path);
+            assert_eq!(nid, NeedleId(0x02), "path {}", path);
+            assert_eq!(cookie, Cookie(0x637037d6), "path {}", path);
+        }
     }
 
     #[test]
     fn test_parse_url_path_invalid() {
         assert!(parse_url_path("/invalid").is_none());
         assert!(parse_url_path("").is_none());
+        // Go reads this as case 2 with vid = "3,01637037d6", which NewVolumeId
+        // rejects, so the comma-with-a-trailing-segment form is a 400 here too.
+        assert!(parse_url_path("/3,01637037d6/name.txt").is_none());
+        // Go's `dotIndex > 0` guard leaves ".jpg" as the file id, which then
+        // fails to parse as a needle id.
+        assert!(parse_url_path("/3/.jpg").is_none());
     }
 
     #[test]
@@ -4234,6 +4427,34 @@ mod tests {
         );
     }
 
+    /// Go redirects to `vid,fid` with the extension already stripped: its
+    /// `parseURLPath` case 2 splits `.jpg` off the fid and
+    /// `proxyReqToTargetServer` formats `"%s/%s,%s"` from what is left
+    /// (common.go:224-233, volume_server_handlers_read.go:128-137). Built from
+    /// the real `build_proxy_request_info` so the parse and the Location header
+    /// are covered together.
+    #[test]
+    fn test_redirect_location_drops_extension_for_slash_form() {
+        let info =
+            build_proxy_request_info("/3/01637037d6.jpg", &HeaderMap::new(), "").expect("parses");
+        assert_eq!(info.vid_str, "3");
+        assert_eq!(info.fid_str, "01637037d6");
+
+        let target = VolumeLocation {
+            url: "volume.internal:8080".to_string(),
+            public_url: "volume.public:8080".to_string(),
+            grpc_port: 18080,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+        let response = redirect_request(&info, &target, "http");
+        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "http://volume.internal:8080/3,01637037d6?proxied=true"
+        );
+    }
+
     /// Master /dir/lookup often omits publicUrl when empty (Go `json:"publicUrl,omitempty"`).
     /// Replication must still parse locations or every cross-DC write fails.
     #[test]
@@ -4266,7 +4487,7 @@ mod tests {
     /// replicated write to fail.
     #[tokio::test]
     async fn test_lookup_volume_strips_grpc_port_from_master_url() {
-        use axum::{routing::get, Router};
+        use axum::{Router, routing::get};
 
         let app = Router::new().route(
             "/dir/lookup",

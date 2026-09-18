@@ -198,8 +198,8 @@ impl Needle {
     /// the data payload from disk at all, matching Go's `ReadNeedleMeta`.
     pub fn read_paged_meta(
         &mut self,
-        header_bytes: &[u8],   // first 20 bytes: NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE
-        meta_bytes: &[u8],     // tail: non-data body metadata + checksum + timestamp + padding
+        header_bytes: &[u8], // first 20 bytes: NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE
+        meta_bytes: &[u8],   // tail: non-data body metadata + checksum + timestamp + padding
         offset: i64,
         expected_size: Size,
         version: Version,
@@ -560,7 +560,7 @@ impl Needle {
 
         // Padding to 8-byte alignment
         let padding = padding_length(self.size, version).0 as usize;
-        buf.extend(std::iter::repeat(0u8).take(padding));
+        buf.extend(std::iter::repeat_n(0u8, padding));
 
         buf
     }
@@ -581,23 +581,19 @@ impl Needle {
 // ============================================================================
 
 /// Compute padding to align needle to NEEDLE_PADDING_SIZE (8 bytes).
+///
+/// The sum is formed in i64: a size read from a corrupt header can sit near
+/// `i32::MAX`, and adding the header, checksum and timestamp widths to it in
+/// i32 would overflow (a panic with overflow checks, a wrapped padding
+/// without). The result is at most NEEDLE_PADDING_SIZE, so it fits `Size`.
 pub fn padding_length(needle_size: Size, version: Version) -> Size {
-    if version == VERSION_3 {
-        Size(
-            NEEDLE_PADDING_SIZE as i32
-                - ((NEEDLE_HEADER_SIZE as i32
-                    + needle_size.0
-                    + NEEDLE_CHECKSUM_SIZE as i32
-                    + TIMESTAMP_SIZE as i32)
-                    % NEEDLE_PADDING_SIZE as i32),
-        )
+    let fixed = if version == VERSION_3 {
+        NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE + TIMESTAMP_SIZE
     } else {
-        Size(
-            NEEDLE_PADDING_SIZE as i32
-                - ((NEEDLE_HEADER_SIZE as i32 + needle_size.0 + NEEDLE_CHECKSUM_SIZE as i32)
-                    % NEEDLE_PADDING_SIZE as i32),
-        )
-    }
+        NEEDLE_HEADER_SIZE + NEEDLE_CHECKSUM_SIZE
+    };
+    let unpadded = fixed as i64 + needle_size.0 as i64;
+    Size((NEEDLE_PADDING_SIZE as i64 - unpadded % NEEDLE_PADDING_SIZE as i64) as i32)
 }
 
 /// Body length = Size + Checksum + [Timestamp] + Padding.
@@ -617,6 +613,30 @@ pub fn needle_body_length(needle_size: Size, version: Version) -> i64 {
 /// Total actual size on disk: Header + Body.
 pub fn get_actual_size(size: Size, version: Version) -> i64 {
     NEEDLE_HEADER_SIZE as i64 + needle_body_length(size, version)
+}
+
+/// Validate a wire-supplied needle body size before any `as usize` cast.
+/// Rejects negative/deleted sizes and bodies larger than the gRPC max message.
+/// Size(0) is allowed: empty/anomalous entries and tombstones read as size 0
+/// (actual_size = header+checksum+pad > 0, safe alloc, no wrap).
+/// Transport cap only: storage paths must NOT use this cap — see volume.rs
+/// guards (a >1GiB stored needle from a high-limit cluster must remain
+/// readable/compaction-safe). Keep `get_actual_size` unchanged (it
+/// intentionally returns negative for deleted index entries).
+pub fn validate_wire_size(size: Size) -> Result<(), String> {
+    if size.0 < 0 {
+        return Err(format!("invalid needle size {}", size.0));
+    }
+    // Keep in sync with canonical `GRPC_MAX_MESSAGE_SIZE` in server/grpc_client.rs:10
+    // (duplicated here to avoid a storage->server import and prevent drift).
+    const WIRE_MAX_NEEDLE_SIZE: i32 = 1 << 30;
+    if size.0 > WIRE_MAX_NEEDLE_SIZE {
+        return Err(format!(
+            "needle size {} exceeds max {}",
+            size.0, WIRE_MAX_NEEDLE_SIZE
+        ));
+    }
+    Ok(())
 }
 
 /// Read 5 bytes as a u64 (big-endian, zero-padded high bytes).
@@ -770,7 +790,9 @@ pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NeedleError {
-    #[error("size mismatch at offset {offset}: found id={id} size={found:?}, expected size={expected:?}")]
+    #[error(
+        "size mismatch at offset {offset}: found id={id} size={found:?}, expected size={expected:?}"
+    )]
     SizeMismatch {
         offset: i64,
         id: NeedleId,
@@ -824,11 +846,13 @@ mod tests {
 
     #[test]
     fn test_needle_write_read_round_trip_v3() {
-        let mut n = Needle::default();
-        n.cookie = Cookie(42);
-        n.id = NeedleId(100);
-        n.data = b"hello world".to_vec();
-        n.flags = 0;
+        let mut n = Needle {
+            cookie: Cookie(42),
+            id: NeedleId(100),
+            data: b"hello world".to_vec(),
+            flags: 0,
+            ..Needle::default()
+        };
         n.set_has_name();
         n.name = b"test.txt".to_vec();
         n.name_size = 8;
@@ -867,11 +891,13 @@ mod tests {
 
     #[test]
     fn test_needle_write_read_round_trip_v2() {
-        let mut n = Needle::default();
-        n.cookie = Cookie(77);
-        n.id = NeedleId(200);
-        n.data = b"data v2".to_vec();
-        n.flags = 0;
+        let mut n = Needle {
+            cookie: Cookie(77),
+            id: NeedleId(200),
+            data: b"data v2".to_vec(),
+            flags: 0,
+            ..Needle::default()
+        };
 
         let bytes = n.write_bytes(VERSION_2);
         let expected_size = get_actual_size(n.size, VERSION_2);
@@ -886,10 +912,12 @@ mod tests {
 
     #[test]
     fn test_read_bytes_meta_only_handles_tombstone_v3() {
-        let mut tombstone = Needle::default();
-        tombstone.cookie = Cookie(0x1234abcd);
-        tombstone.id = NeedleId(300);
-        tombstone.append_at_ns = 999_999;
+        let mut tombstone = Needle {
+            cookie: Cookie(0x1234abcd),
+            id: NeedleId(300),
+            append_at_ns: 999_999,
+            ..Needle::default()
+        };
 
         let bytes = tombstone.write_bytes(VERSION_3);
 
@@ -914,6 +942,21 @@ mod tests {
             let actual_v3 = get_actual_size(s, VERSION_3);
             assert_eq!(actual_v2 % 8, 0, "V2 size {} not aligned", size_val);
             assert_eq!(actual_v3 % 8, 0, "V3 size {} not aligned", size_val);
+        }
+    }
+
+    #[test]
+    fn padding_length_does_not_overflow_on_a_corrupt_size() {
+        // A header read from a corrupt or truncated file can carry any i32
+        // size. The scanners bound it against the bytes left before sizing a
+        // buffer, but on a volume with more than 2 GiB left a size near
+        // i32::MAX passes that bound, so the padding arithmetic itself must
+        // not overflow. Overflow checks are on in test builds, so an i32 sum
+        // here would panic rather than wrap.
+        for version in [VERSION_2, VERSION_3] {
+            let padding = padding_length(Size(i32::MAX), version).0 as i64;
+            assert!((1..=NEEDLE_PADDING_SIZE as i64).contains(&padding));
+            assert_eq!(get_actual_size(Size(i32::MAX), version) % 8, 0);
         }
     }
 
@@ -960,5 +1003,17 @@ mod tests {
         assert_eq!(fid.volume_id, VolumeId(3));
         assert_eq!(fid.key, NeedleId(0x123));
         assert_eq!(fid.cookie, Cookie(0));
+    }
+
+    #[test]
+    fn test_validate_wire_size_boundaries() {
+        assert!(validate_wire_size(Size(-100)).is_err());
+        assert!(validate_wire_size(Size(-1)).is_err());
+        assert!(validate_wire_size(Size(0)).is_ok());
+        assert!(validate_wire_size(Size(1024)).is_ok());
+        assert!(validate_wire_size(Size(1)).is_ok());
+        assert!(validate_wire_size(Size(1 << 30)).is_ok());
+        assert!(validate_wire_size(Size((1 << 30) + 1)).is_err());
+        assert!(validate_wire_size(Size(i32::MAX)).is_err());
     }
 }

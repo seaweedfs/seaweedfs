@@ -261,7 +261,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
 		return ErrAccessDenied
 	}
 
@@ -351,7 +351,7 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update namespace")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
 		return ErrAccessDenied
 	}
 
@@ -637,7 +637,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
 	}) {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
 		return ErrAccessDenied
 	}
 

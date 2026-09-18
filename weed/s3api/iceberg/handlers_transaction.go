@@ -207,6 +207,9 @@ func (s *Server) prepareTableCommit(ctx context.Context, bucketName, bucketARN, 
 	if err != nil {
 		return nil, &icebergRequestError{http.StatusInternalServerError, "InternalServerError", "Invalid table location: " + err.Error()}
 	}
+	if err := confineMetadataLocation(metadataBucket, metadataPath, bucketName); err != nil {
+		return nil, &icebergRequestError{http.StatusBadRequest, "BadRequestException", err.Error()}
+	}
 
 	return &preparedTableCommit{
 		namespace:           namespace,

@@ -31,6 +31,9 @@ type SeaweedFileIdClaims struct {
 type SeaweedFilerClaims struct {
 	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
 	AllowedMethods  []string `json:"allowed_methods,omitempty"`
+	// SessionId is present only on STS session tokens; a token carrying it is
+	// an S3 session credential, not a filer API credential.
+	SessionId string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -44,6 +47,9 @@ type SeaweedFilerClaims struct {
 // RegisteredClaims. Extra JSON fields in the payload are silently ignored by
 // encoding/json, which is the desired behaviour here (forward-compat).
 type SeaweedFilerAdminClaims struct {
+	// SessionId is present only on STS session tokens; a token carrying it is
+	// an S3 session credential, not a filer admin credential.
+	SessionId string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 

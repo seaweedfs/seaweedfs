@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use seaweed_worker_core::config_form::{number_field, text_field};
 use seaweed_worker_core::pb::ConfigField;
 
@@ -152,10 +152,10 @@ fn parse_field(entry: &str) -> Result<SortField> {
 /// back: sorting by the worker's default order instead of the one the table
 /// asked for would silently rewrite the table the wrong way.
 pub fn resolve(declared: Option<&str>, configured: &str) -> Result<Option<SortSpec>> {
-    if let Some(declared) = declared {
-        if let Some(spec) = SortSpec::parse(declared).context("read the table's declared order")? {
-            return Ok(Some(spec));
-        }
+    if let Some(declared) = declared
+        && let Some(spec) = SortSpec::parse(declared).context("read the table's declared order")?
+    {
+        return Ok(Some(spec));
     }
     SortSpec::parse(configured).context("read the configured sort order")
 }

@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use lance::dataset::builder::DatasetBuilder;
 use lance::dataset::Dataset;
+use lance::dataset::builder::DatasetBuilder;
 
 use crate::catalog::{NamespaceClient, TableDescription};
 

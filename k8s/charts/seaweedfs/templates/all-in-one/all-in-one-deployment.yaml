@@ -37,13 +37,17 @@ spec:
         {{- with .Values.allInOne.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.allInOne.podAnnotations | default dict) }}
+      {{- $existingS3ConfigSecret := or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
+      {{- if $existingS3ConfigSecret }}
+      {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace $existingS3ConfigSecret) | default dict }}
+      {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
+      {{- else }}
+      {{- $_ := set $podAnnotations "checksum/s3config" (include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum) }}
+      {{- end }}
+      {{- $_ := set $podAnnotations "checksum/master-config" (include (print .Template.BasePath "/master/master-configmap.yaml") . | sha256sum) }}
       annotations:
-        {{- with .Values.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
-        {{- with .Values.allInOne.podAnnotations }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
+        {{- toYaml $podAnnotations | nindent 8 }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.allInOne.restartPolicy }}
       {{- if .Values.allInOne.affinity }}

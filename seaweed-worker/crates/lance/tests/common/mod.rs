@@ -10,8 +10,8 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use seaweed_worker_core::pb::{
-    config_value::Kind, ActivityEvent, ConfigValue, DetectionComplete, DetectionProposals,
-    JobCompleted, JobProgressUpdate, JobProposal, ObjectObservation, WorkerObservations,
+    ActivityEvent, ConfigValue, DetectionComplete, DetectionProposals, JobCompleted,
+    JobProgressUpdate, JobProposal, ObjectObservation, WorkerObservations, config_value::Kind,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender};
 

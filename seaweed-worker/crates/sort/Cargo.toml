@@ -11,3 +11,6 @@ name = "seaweed_worker_sort"
 [dependencies]
 seaweed-worker-core = { path = "../core" }
 anyhow.workspace = true
+
+[lints]
+workspace = true

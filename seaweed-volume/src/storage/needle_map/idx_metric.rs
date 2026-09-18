@@ -132,9 +132,7 @@ mod tests {
         let mut seen = SeenKeys::new(10_000, FALSE_POSITIVE_RATE);
         // Fresh keys may occasionally collide (that is the false-positive
         // rate), but only rarely.
-        let fresh_reported_seen = (0..10_000u64)
-            .filter(|&key| seen.test_and_add(key))
-            .count();
+        let fresh_reported_seen = (0..10_000u64).filter(|&key| seen.test_and_add(key)).count();
         assert!(
             fresh_reported_seen < 50,
             "fresh keys reported seen: {fresh_reported_seen}"

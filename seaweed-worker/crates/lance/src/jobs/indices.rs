@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use lance::index::DatasetIndexExt;
 use lance_index::optimize::OptimizeOptions;
@@ -13,7 +13,7 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::catalog::{parse_id, NamespaceClient};
+use crate::catalog::{NamespaceClient, parse_id};
 use crate::dataset::{self, OpenTable};
 use crate::jobs::{clamp, string_list, table_id};
 

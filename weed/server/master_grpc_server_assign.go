@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -106,11 +107,12 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	vl.SetLastGrowCount(req.WritableVolumeCount)
 
 	var (
-		lastErr           error
-		maxTimeout        = time.Second * 10
-		startTime         = time.Now()
-		initiatedGrow     bool
-		repickedAfterGrow bool
+		lastErr              error
+		maxTimeout           = time.Second * 10
+		startTime            = time.Now()
+		initiatedGrow        bool
+		repickedAfterGrow    bool
+		unservedLayoutLogged bool
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
@@ -150,7 +152,12 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 							// wrap above, so followers and growth-disabled
 							// masters name the unserved medium too — the
 							// initiator block is skipped for both.
-							lastErr = fmt.Errorf("%s and no volume server carries disk type %q for %s", err.Error(), option.DiskType.ReadableString(), option.String())
+							// The empty disk type is the legacy unlabeled
+							// layout; naming it "hdd" here sends operators
+							// looking for servers that were never labeled.
+							lastErr = fmt.Errorf("%s and no volume server carries the %s disk layout for %s", err.Error(), describeDiskLayout(req.DiskType), option.String())
+							assignUnservedLayoutWarning.Do(option.String(), lastErr)
+							unservedLayoutLogged = true
 						}
 						break // surface the real error, not a retryable shed
 					}
@@ -213,8 +220,68 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if initiatedGrow && vl.HasGrowRequest() && ms.Topo.AvailableSpaceFor(option) > 0 {
 		return nil, status.Errorf(codes.ResourceExhausted, "no writable volumes for %s, volume growth in progress", option.String())
 	}
-	if lastErr != nil {
+	if lastErr != nil && !unservedLayoutLogged {
+		// The unserved-layout branch already logged this once per option via
+		// assignUnservedLayoutWarning; repeating it here would flood the log
+		// on every retry of a state a retry cannot change.
 		glog.V(0).Infof("assign %v %v: %v", req, option.String(), lastErr)
 	}
 	return nil, lastErr
+}
+
+// describeDiskLayout names the disk layout an assign targets. The empty disk
+// type is the legacy unlabeled layout on servers that were never started with
+// -disk; naming it "hdd" sends operators looking for servers that were never
+// labeled.
+//
+// Pass the original request disk type, not the canonicalized option.DiskType:
+// ToDiskType folds both "" and "hdd" into HardDriveType, so only the request
+// string can tell an unlabeled request from an explicit hdd one.
+func describeDiskLayout(reqDiskType string) string {
+	if reqDiskType == "" {
+		return "default (unlabeled)"
+	}
+	return fmt.Sprintf("%q", strings.ToLower(reqDiskType))
+}
+
+// assignUnservedLayoutWarning logs a repeated assign failure at most once per
+// option per interval instead of once per write attempt: a layout no volume
+// server serves is a state a retry cannot change, so repeating it only buries
+// the actionable first warning.
+//
+// The remembered set is bounded and expires: option keys embed
+// request-derived fields (collection, disk type), so an unbounded, permanent
+// dedupe map would let a client grow master memory at will and would also
+// suppress the warning if the same option goes unserved again after the
+// topology recovers.
+const (
+	unservedLayoutWarnInterval = time.Hour
+	unservedLayoutWarnMaxKeys  = 1024
+)
+
+type unservedLayoutWarning struct {
+	mu   sync.Mutex
+	now  func() time.Time
+	last map[string]time.Time
+}
+
+var assignUnservedLayoutWarning = &unservedLayoutWarning{
+	now:  time.Now,
+	last: make(map[string]time.Time),
+}
+
+func (w *unservedLayoutWarning) Do(optionKey string, lastErr error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := w.now()
+	if t, ok := w.last[optionKey]; ok && now.Sub(t) < unservedLayoutWarnInterval {
+		return
+	}
+	if len(w.last) >= unservedLayoutWarnMaxKeys {
+		// Client-driven keys must never grow the map without bound; a full
+		// reset trades a burst of repeated warnings for bounded memory.
+		w.last = make(map[string]time.Time)
+	}
+	w.last[optionKey] = now
+	glog.Warningf("assign requests for %s will keep failing until a volume server registers that disk layout or clients change their assignment disk type: %v", optionKey, lastErr)
 }

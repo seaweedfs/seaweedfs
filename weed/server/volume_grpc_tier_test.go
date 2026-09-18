@@ -52,7 +52,7 @@ func (b *tierTimestampTestBackend) NewStorageFile(key string, volumeInfo *volume
 	}
 }
 
-func (b *tierTimestampTestBackend) CopyFile(file *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (b *tierTimestampTestBackend) CopyFile(file *os.File, fn func(progressed int64, percentage float32) error, concurrency int) (key string, size int64, err error) {
 	key = "remote.dat"
 	fileInfo, err := file.Stat()
 	if err != nil {
@@ -72,7 +72,7 @@ func (b *tierTimestampTestBackend) CopyFile(file *os.File, fn func(progressed in
 	return key, size, err
 }
 
-func (b *tierTimestampTestBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+func (b *tierTimestampTestBackend) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error, concurrency int) (size int64, err error) {
 	input, err := os.Open(filepath.Join(b.root, key))
 	if err != nil {
 		return 0, err

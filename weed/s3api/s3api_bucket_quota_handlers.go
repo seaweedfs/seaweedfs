@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,11 +58,16 @@ func (s3a *S3ApiServer) PutBucketQuotaHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, putBucketQuotaMaxBodyBytes)
 	defer r.Body.Close()
 
+	body, err := readRequestBody(r, putBucketQuotaMaxBodyBytes)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+
 	var req bucketQuotaRequest
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(bytes.NewReader(body))
 	if err := dec.Decode(&req); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return

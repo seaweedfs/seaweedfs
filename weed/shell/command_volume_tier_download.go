@@ -32,7 +32,7 @@ func (c *commandVolumeTierDownload) Help() string {
 	return `download the dat file of a volume from a remote tier
 
 	volume.tier.download [-collection=""]
-	volume.tier.download [-collection=""] -volumeId=<volume_id>
+	volume.tier.download [-collection=""] -volumeId=<volume_id> [-concurrency=<n>]
 
 	The -collection parameter supports regular expressions for pattern matching:
 	  - Use exact match: volume.tier.download -collection="^mybucket$"
@@ -41,6 +41,7 @@ func (c *commandVolumeTierDownload) Help() string {
 
 	e.g.:
 	volume.tier.download -volumeId=7
+	volume.tier.download -volumeId=7 -concurrency=1
 
 	This command will download the dat file of a volume from a remote tier to a volume server in local cluster.
 
@@ -56,8 +57,13 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
 	collection := tierCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
+	concurrency := tierCommand.Int("concurrency", 0, "multipart download concurrency (0 = backend default)")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = validateTierConcurrency(*concurrency); err != nil {
+		return err
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
@@ -74,7 +80,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doVolumeTierDownload(commandEnv, writer, *collection, vid)
+		return doVolumeTierDownload(commandEnv, writer, *collection, vid, *concurrency)
 	}
 
 	// apply to all volumes in the collection
@@ -85,7 +91,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 	}
 	fmt.Printf("tier download volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doVolumeTierDownload(commandEnv, writer, *collection, vid); err != nil {
+		if err = doVolumeTierDownload(commandEnv, writer, *collection, vid, *concurrency); err != nil {
 			return err
 		}
 	}
@@ -118,7 +124,7 @@ func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, collectionPattern st
 	return
 }
 
-func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId) (err error) {
+func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, concurrency int) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
@@ -131,7 +137,7 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 	for i, loc := range locations {
 		keepRemote := i < len(locations)-1
 		// copy the .dat file from remote tier to local
-		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress(), keepRemote)
+		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress(), keepRemote, concurrency)
 		if err != nil {
 			// A replica already made local by a prior interrupted run is not a
 			// failure; skip it so the remaining remote replicas still download.
@@ -146,13 +152,14 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 	return nil
 }
 
-func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer pb.ServerAddress, keepRemote bool) error {
+func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer pb.ServerAddress, keepRemote bool, concurrency int) error {
 
 	err := operation.WithVolumeServerClient(true, targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		stream, downloadErr := volumeServerClient.VolumeTierMoveDatFromRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatFromRemoteRequest{
 			VolumeId:          uint32(volumeId),
 			Collection:        collection,
 			KeepRemoteDatFile: keepRemote,
+			Concurrency:       int32(concurrency),
 		})
 
 		var lastProcessed int64

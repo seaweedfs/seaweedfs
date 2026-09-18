@@ -155,7 +155,7 @@ impl Size {
             return 0;
         }
         if self.0 < 0 {
-            return (self.0 * -1) as u32;
+            return -self.0 as u32;
         }
         self.0 as u32
     }
@@ -284,8 +284,9 @@ impl fmt::Display for Offset {
 // DiskType
 // ============================================================================
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum DiskType {
+    #[default]
     HardDrive,
     Ssd,
     Custom(String),
@@ -316,12 +317,6 @@ impl fmt::Display for DiskType {
             DiskType::Ssd => write!(f, "ssd"),
             DiskType::Custom(s) => write!(f, "{}", s),
         }
-    }
-}
-
-impl Default for DiskType {
-    fn default() -> Self {
-        DiskType::HardDrive
     }
 }
 
@@ -397,7 +392,7 @@ impl From<u8> for Version {
 ///
 /// Fields are split into request-side options (set by the caller) and response-side
 /// flags (set during the read to communicate status back).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ReadOption {
     // -- request --
     /// If true, allow reading needles that have been soft-deleted.
@@ -421,21 +416,6 @@ pub struct ReadOption {
     pub has_slow_read: bool,
     /// Buffer size for chunked streaming reads (used with `has_slow_read`).
     pub read_buffer_size: i32,
-}
-
-impl Default for ReadOption {
-    fn default() -> Self {
-        ReadOption {
-            read_deleted: false,
-            attempt_meta_only: false,
-            must_meta_only: false,
-            is_meta_only: false,
-            volume_revision: 0,
-            is_out_of_range: false,
-            has_slow_read: false,
-            read_buffer_size: 0,
-        }
-    }
 }
 
 // ============================================================================

@@ -12,12 +12,13 @@ use tower::ServiceExt; // for `oneshot`
 
 use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::volume_server::{
-    build_admin_router, build_admin_router_with_ui, build_metrics_router, build_public_router,
-    VolumeServerState,
+    VolumeServerState, build_admin_router, build_admin_router_with_ui, build_metrics_router,
+    build_public_router,
 };
 use seaweed_volume::storage::needle_map::NeedleMapKind;
 use seaweed_volume::storage::store::Store;
-use seaweed_volume::storage::types::{DiskType, Version, VolumeId};
+use seaweed_volume::storage::types::{DiskType, VolumeId};
+use seaweed_volume::storage::volume::VolumeSpec;
 
 use tempfile::TempDir;
 
@@ -73,12 +74,11 @@ fn build_test_state(
     store
         .add_volume(
             VolumeId(1),
-            "",
-            replica_placement,
-            None,
-            0,
             DiskType::HardDrive,
-            Version::current(),
+            &VolumeSpec {
+                replica_placement,
+                ..Default::default()
+            },
         )
         .expect("failed to create volume");
 
@@ -957,9 +957,10 @@ async fn replicate_write_does_not_re_replicate() {
 #[tokio::test]
 async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
+    use seaweed_volume::storage::erasure_coding::ec_shard::ShardId;
     use seaweed_volume::storage::needle::needle::{FileId, Needle};
     use seaweed_volume::storage::types::{Cookie, NeedleId};
-    use seaweed_volume::storage::volume::Volume;
+    use seaweed_volume::storage::volume::{Volume, VolumeSpec};
 
     let (state, tmp) = test_state();
     let dir = tmp.path().to_str().unwrap();
@@ -976,13 +977,9 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(2),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         let mut n = Needle {
@@ -1002,7 +999,7 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     // after ec.encode retired the regular volume.
     {
         let mut store = state.store.write().unwrap();
-        let shard_ids: Vec<u32> = (0..14).collect();
+        let shard_ids: Vec<ShardId> = (0..14).collect();
         store.mount_ec_shards(VolumeId(2), "", &shard_ids).unwrap();
     }
 

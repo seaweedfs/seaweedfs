@@ -10,6 +10,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
+// clampTierConcurrency bounds a per-request transfer concurrency so a direct
+// gRPC caller cannot spawn an unbounded number of network workers.
+const maxTierConcurrency = 1024
+
+func clampTierConcurrency(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxTierConcurrency {
+		return maxTierConcurrency
+	}
+	return n
+}
+
 // VolumeTierMoveDatToRemote copy dat file to a remote tier
 func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTierMoveDatToRemoteRequest, stream volume_server_pb.VolumeServer_VolumeTierMoveDatToRemoteServer) error {
 	if err := vs.checkGrpcAdminAuth(stream.Context()); err != nil {
@@ -73,7 +87,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	}
 
 	// copy the data file
-	key, size, err := backendStorage.CopyFile(diskFile.File, fn)
+	key, size, err := backendStorage.CopyFile(diskFile.File, fn, clampTierConcurrency(int(req.Concurrency)))
 	if err != nil {
 		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.Name(), err)
 	}

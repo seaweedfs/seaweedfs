@@ -6,19 +6,19 @@
 
 use std::collections::HashSet;
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
-use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT};
+use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, ShardId};
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
 use crate::storage::types::*;
-use crate::storage::volume::{VifVolumeInfo, VolumeError};
+use crate::storage::volume::{VifVolumeInfo, VolumeError, VolumeSpec};
 
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
@@ -300,7 +300,7 @@ impl Store {
         collection: &str,
         vid: VolumeId,
         data_shard_count: u32,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
     ) -> Option<usize> {
         const TIER_ANY_DISK: u8 = 1;
         const TIER_HDD: u8 = 2;
@@ -359,7 +359,7 @@ impl Store {
     /// owner (`volume_ec_shards_copy` refuses such a batch instead of
     /// guessing). Mirrors `Store.EcShardOwnerDisks` in
     /// `weed/storage/store_ec.go`.
-    pub fn ec_shard_owner_disks(&self, vid: VolumeId, shard_ids: &[u32]) -> Vec<usize> {
+    pub fn ec_shard_owner_disks(&self, vid: VolumeId, shard_ids: &[ShardId]) -> Vec<usize> {
         self.locations
             .iter()
             .enumerate()
@@ -372,32 +372,20 @@ impl Store {
     pub fn add_volume(
         &mut self,
         vid: VolumeId,
-        collection: &str,
-        replica_placement: Option<ReplicaPlacement>,
-        ttl: Option<crate::storage::needle::ttl::TTL>,
-        preallocate: u64,
         disk_type: DiskType,
-        version: Version,
+        spec: &VolumeSpec<'_>,
     ) -> Result<(), VolumeError> {
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
         }
         let loc_idx = self.find_free_location(&disk_type).ok_or_else(|| {
-            VolumeError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                format!("no free location for disk type {:?}", disk_type),
-            ))
+            VolumeError::Io(io::Error::other(format!(
+                "no free location for disk type {:?}",
+                disk_type
+            )))
         })?;
 
-        self.locations[loc_idx].create_volume(
-            vid,
-            collection,
-            self.needle_map_kind,
-            replica_placement,
-            ttl,
-            preallocate,
-            version,
-        )
+        self.locations[loc_idx].create_volume(vid, self.needle_map_kind, spec)
     }
 
     /// Delete a volume from any location. When keep_remote_data is true the
@@ -459,7 +447,7 @@ impl Store {
         }
         // Find the location where the .dat file exists
         for loc in &mut self.locations {
-            if &loc.disk_type != &disk_type {
+            if loc.disk_type != disk_type {
                 continue;
             }
             let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
@@ -472,19 +460,18 @@ impl Store {
                 // Fail the mount so the caller (VolumeCopy) treats it as an error.
                 let note_path = format!("{}.note", base);
                 if std::path::Path::new(&note_path).exists() {
-                    return Err(VolumeError::Io(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("volume {} copy incomplete: .note still present", vid),
-                    )));
+                    return Err(VolumeError::Io(io::Error::other(format!(
+                        "volume {} copy incomplete: .note still present",
+                        vid
+                    ))));
                 }
                 return loc.create_volume(
                     vid,
-                    collection,
                     self.needle_map_kind,
-                    None,
-                    None,
-                    0,
-                    Version::current(),
+                    &VolumeSpec {
+                        collection,
+                        ..Default::default()
+                    },
                 );
             }
         }
@@ -524,11 +511,8 @@ impl Store {
                 && collection != "..";
             if hint_safe {
                 for loc in &mut self.locations {
-                    let base = crate::storage::volume::volume_file_name(
-                        &loc.directory,
-                        collection,
-                        vid,
-                    );
+                    let base =
+                        crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                     // Confirm a collection-named sidecar exists before using the
                     // hint. A lone .vif/.idx (e.g. an EC sidecar whose .ecx is on
                     // a sibling disk) must NOT mount here: create_volume would
@@ -572,12 +556,11 @@ impl Store {
                         // keep scanning (matches open_volumes / Go mountVolume).
                         match loc.create_volume(
                             vid,
-                            collection,
                             self.needle_map_kind,
-                            None,
-                            None,
-                            0,
-                            Version::current(),
+                            &VolumeSpec {
+                                collection,
+                                ..Default::default()
+                            },
                         ) {
                             Ok(()) => return Ok(()),
                             Err(e) => {
@@ -600,7 +583,7 @@ impl Store {
             // register a phantom normal volume that shadows the real EC volume.
             // Match the guard in load_existing_volumes: only mount when a real
             // .dat is present, or the .vif points at a remote-tiered file.
-            let dat_exists = std::fs::metadata(&format!("{}.dat", base_path))
+            let dat_exists = std::fs::metadata(format!("{}.dat", base_path))
                 .map(|m| !m.is_dir())
                 .unwrap_or(false);
             let idx_base = crate::storage::volume::volume_file_name(
@@ -608,9 +591,10 @@ impl Store {
                 &collection,
                 vid,
             );
-            let has_remote = crate::storage::disk_location::vif_references_remote_file(
-                &format!("{}.vif", base_path),
-            ) || crate::storage::disk_location::vif_references_remote_file(
+            let has_remote = crate::storage::disk_location::vif_references_remote_file(&format!(
+                "{}.vif",
+                base_path
+            )) || crate::storage::disk_location::vif_references_remote_file(
                 &format!("{}.vif", idx_base),
             );
             if dat_exists || has_remote {
@@ -628,12 +612,11 @@ impl Store {
                 let loc = &mut self.locations[loc_idx];
                 match loc.create_volume(
                     vid,
-                    &collection,
                     self.needle_map_kind,
-                    None,
-                    None,
-                    0,
-                    Version::current(),
+                    &VolumeSpec {
+                        collection: &collection,
+                        ..Default::default()
+                    },
                 ) {
                     Ok(()) => return Ok(()),
                     Err(e) => {
@@ -643,10 +626,12 @@ impl Store {
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| VolumeError::Io(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("volume {} not found on disk", vid),
-        ))))
+        Err(last_err.unwrap_or_else(|| {
+            VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("volume {} not found on disk", vid),
+            ))
+        }))
     }
 
     fn find_volume_file_base(&self, vid: VolumeId) -> Option<(usize, String, String)> {
@@ -664,13 +649,12 @@ impl Store {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name = name.to_string_lossy();
-                    if let Some((collection, file_vid)) = parse_volume_filename(&name) {
-                        if file_vid == vid {
-                            if let Some(base) = strip_volume_suffix(&name) {
-                                let base_path = format!("{}/{}", loc.directory, base);
-                                results.push((loc_idx, base_path, collection));
-                            }
-                        }
+                    if let Some((collection, file_vid)) = parse_volume_filename(&name)
+                        && file_vid == vid
+                        && let Some(base) = strip_volume_suffix(&name)
+                    {
+                        let base_path = format!("{}/{}", loc.directory, base);
+                        results.push((loc_idx, base_path, collection));
                     }
                 }
             }
@@ -842,10 +826,8 @@ impl Store {
 
                 let vol_count = loc.volumes_len() as i32;
                 let loc_ec_shards = loc.ec_shard_count();
-                let ec_equivalent = ((loc_ec_shards
-                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT
-                    - 1)
-                    / crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                let ec_equivalent = loc_ec_shards
+                    .div_ceil(crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
                     as i32;
                 let mut max_count = vol_count + ec_equivalent;
 
@@ -900,7 +882,7 @@ impl Store {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_ids: &[u32],
+        shard_ids: &[ShardId],
     ) -> Result<(), VolumeError> {
         // Find the location where the EC files live
         let loc_idx = self.find_ec_location(vid, collection).ok_or_else(|| {
@@ -921,12 +903,12 @@ impl Store {
         &mut self,
         vid: VolumeId,
         collection: &str,
-        shard_id: u32,
+        shard_id: ShardId,
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
         for loc in &mut self.locations {
             // Check if the shard file exists on this location
-            let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id as u8);
+            let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
             if std::path::Path::new(&shard.file_name()).exists() {
                 loc.mount_ec_shards(vid, collection, &[shard_id], source_disk_type)?;
                 return Ok(());
@@ -947,7 +929,7 @@ impl Store {
     /// the same store (#9252). DiskLocation::unmount_ec_shards
     /// already skips shards that aren't mounted, so this is safe to
     /// fan out blindly.
-    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
+    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[ShardId]) {
         for loc in &mut self.locations {
             if loc.has_ec_volume(vid) {
                 loc.unmount_ec_shards(vid, shard_ids);
@@ -960,7 +942,7 @@ impl Store {
     pub fn unmount_ec_shard(
         &mut self,
         vid: VolumeId,
-        shard_id: u32,
+        shard_id: ShardId,
         req_encode_ts_ns: i64,
     ) -> Result<(), VolumeError> {
         // Walk all locations rather than stopping at the first with the
@@ -968,7 +950,7 @@ impl Store {
         // multiple disks, with the target shard on any of them.
         for disk_id in 0..self.locations.len() {
             let ec_vol = self.locations[disk_id].find_ec_volume(vid);
-            let has_shard = ec_vol.is_some_and(|ec_vol| ec_vol.has_shard(shard_id as u8));
+            let has_shard = ec_vol.is_some_and(|ec_vol| ec_vol.has_shard(shard_id));
             if !has_shard {
                 continue;
             }
@@ -988,12 +970,7 @@ impl Store {
                 );
                 continue;
             }
-            tracing::info!(
-                volume_id = vid.0,
-                shard_id,
-                disk_id,
-                "UnmountEcShards"
-            );
+            tracing::info!(volume_id = vid.0, shard_id, disk_id, "UnmountEcShards");
             self.locations[disk_id].unmount_ec_shards(vid, &[shard_id]);
         }
         // Go returns nil if shard not found (no error)
@@ -1033,6 +1010,20 @@ impl Store {
             }
         }
         dirs
+    }
+
+    /// Every per-disk `EcVolume` this store maps for `vid`, in location order.
+    /// Immutable twin of [`Self::find_all_ec_volumes_mut`].
+    ///
+    /// Reconciliation can mount one vid as N runtimes holding disjoint shard
+    /// subsets, and the first-match `find_ec_volume` hides the siblings. Anything
+    /// that has to reach the whole volume, rather than any one runtime of it,
+    /// uses this.
+    pub fn find_all_ec_volumes(&self, vid: VolumeId) -> Vec<&EcVolume> {
+        self.locations
+            .iter()
+            .filter_map(|loc| loc.find_ec_volume(vid))
+            .collect()
     }
 
     pub fn find_all_ec_volumes_mut(&mut self, vid: VolumeId) -> Vec<&mut EcVolume> {
@@ -1078,12 +1069,12 @@ impl Store {
     /// disks (each holding a disjoint subset of the shards). Without
     /// this, callers using `find_ec_volume(vid)` would only see the
     /// first disk and miss shards that live on a sibling.
-    pub fn find_ec_shard_location(&self, vid: VolumeId, shard_id: u32) -> Option<usize> {
+    pub fn find_ec_shard_location(&self, vid: VolumeId, shard_id: ShardId) -> Option<usize> {
         for (i, loc) in self.locations.iter().enumerate() {
-            if let Some(ecv) = loc.find_ec_volume(vid) {
-                if ecv.has_shard(shard_id as u8) {
-                    return Some(i);
-                }
+            if let Some(ecv) = loc.find_ec_volume(vid)
+                && ecv.has_shard(shard_id)
+            {
+                return Some(i);
             }
         }
         None
@@ -1092,16 +1083,12 @@ impl Store {
     /// Like [`Self::find_ec_shard_location`] but returns the EcVolume
     /// reference directly. Borrows the store immutably for the
     /// EcVolume's lifetime.
-    pub fn find_ec_volume_with_shard(
-        &self,
-        vid: VolumeId,
-        shard_id: u32,
-    ) -> Option<&EcVolume> {
+    pub fn find_ec_volume_with_shard(&self, vid: VolumeId, shard_id: ShardId) -> Option<&EcVolume> {
         for loc in &self.locations {
-            if let Some(ecv) = loc.find_ec_volume(vid) {
-                if ecv.has_shard(shard_id as u8) {
-                    return Some(ecv);
-                }
+            if let Some(ecv) = loc.find_ec_volume(vid)
+                && ecv.has_shard(shard_id)
+            {
+                return Some(ecv);
             }
         }
         None
@@ -1130,9 +1117,12 @@ impl Store {
                 if found_vol.is_none() {
                     found_vol = Some(ecv);
                 }
-                for shard_id in 0..max_shard_count {
-                    if dirs[shard_id].is_none() && ecv.has_shard(shard_id as u8) {
-                        dirs[shard_id] = Some(loc.directory.clone());
+                for (shard_id, dir) in dirs.iter_mut().enumerate() {
+                    let Ok(sid) = ShardId::try_from(shard_id) else {
+                        continue;
+                    };
+                    if dir.is_none() && ecv.has_shard(sid) {
+                        *dir = Some(loc.directory.clone());
                     }
                 }
             }
@@ -1157,7 +1147,8 @@ impl Store {
                     expired_vids.push(*vid);
                 } else {
                     let (_, io_count, quarantined) = ec_vol.get_io_error_state();
-                    if quarantined || io_count >= crate::storage::erasure_coding::ec_volume::IO_ERROR_TOLERANCE
+                    if quarantined
+                        || io_count >= crate::storage::erasure_coding::ec_volume::IO_ERROR_TOLERANCE
                     {
                         io_quarantined_vids.push(*vid);
                     } else {
@@ -1226,12 +1217,12 @@ impl Store {
     }
 
     /// Delete EC shard files from disk.
-    pub fn delete_ec_shards(&mut self, vid: VolumeId, collection: &str, shard_ids: &[u32]) {
+    pub fn delete_ec_shards(&mut self, vid: VolumeId, collection: &str, shard_ids: &[ShardId]) {
         // Delete shard files from disk, tracking which locations actually held one.
         let mut deleted_at = vec![false; self.locations.len()];
         for (i, loc) in self.locations.iter().enumerate() {
             for &shard_id in shard_ids {
-                let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id as u8);
+                let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
                 if std::fs::remove_file(shard.file_name()).is_ok() {
                     deleted_at[i] = true;
                 }
@@ -1267,8 +1258,9 @@ impl Store {
                         collection,
                         vid,
                     );
-                    let _ =
-                        crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
+                    let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(
+                        &idx_base,
+                    );
                 }
             }
         }
@@ -1502,9 +1494,10 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
         read_only: bool,
     }
     if let Ok(legacy) = serde_json::from_str::<LegacyVolumeInfo>(&content) {
-        let mut vif = VifVolumeInfo::default();
-        vif.read_only = legacy.read_only;
-        return Ok(vif);
+        return Ok(VifVolumeInfo {
+            read_only: legacy.read_only,
+            ..VifVolumeInfo::default()
+        });
     }
     Err(VolumeError::Io(io::Error::new(
         io::ErrorKind::InvalidData,
@@ -1514,7 +1507,7 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
 
 fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeError> {
     let content = serde_json::to_string_pretty(info)
-        .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| VolumeError::Io(io::Error::other(e.to_string())))?;
     std::fs::write(path, content)?;
     Ok(())
 }
@@ -1565,13 +1558,13 @@ fn ec_free_shard_count(loc: &DiskLocation, data_shard_count: u32) -> i64 {
 /// the in-memory registration the read path and heartbeats use.
 ///
 /// Mirrors `ownedEcShardCount` in `weed/storage/store_ec.go`.
-fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[u32]) -> usize {
+fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[ShardId]) -> usize {
     let Some(ecv) = loc.find_ec_volume(vid) else {
         return 0;
     };
     shard_ids
         .iter()
-        .filter(|&&shard_id| ecv.has_shard(shard_id as u8))
+        .filter(|&&shard_id| ecv.has_shard(shard_id))
         .count()
 }
 
@@ -1630,15 +1623,7 @@ mod tests {
         let mut store = make_test_store(&[dir]);
 
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
@@ -1677,10 +1662,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let mut store = make_test_store(&[dir]);
 
-        let escaped = format!(
-            "{}/../evil_5.dat",
-            dir
-        );
+        let escaped = format!("{}/../evil_5.dat", dir);
         let err = store
             .mount_volume_by_id(VolumeId(5), Some("../evil"))
             .unwrap_err();
@@ -1700,12 +1682,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(7),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         // Write a needle so the volume has real data, then unmount it so the
@@ -1722,9 +1703,7 @@ mod tests {
             .unwrap();
         assert!(store.unmount_volume(VolumeId(7)));
 
-        store
-            .mount_volume_by_id(VolumeId(7), Some("coll"))
-            .unwrap();
+        store.mount_volume_by_id(VolumeId(7), Some("coll")).unwrap();
         assert!(store.find_volume(VolumeId(7)).is_some());
 
         let mut got = Needle {
@@ -1747,12 +1726,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(9),
-                "foo..bar",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "foo..bar",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1762,7 +1740,9 @@ mod tests {
             data_size: 4,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(9), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(9), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(9)));
 
         // The hint is accepted and mounts the volume.
@@ -1791,12 +1771,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(11),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1806,7 +1785,9 @@ mod tests {
             data_size: 7,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(11), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(11), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(11)));
 
         // Simulate an interrupted copy: drop a .note marker.
@@ -1847,12 +1828,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(13),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1862,7 +1842,9 @@ mod tests {
             data_size: 4,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(13), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(13), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(13)));
 
         // No hint: the fallback scan finds the sidecar on disk 0 first (skip,
@@ -1895,16 +1877,17 @@ mod tests {
         let mut store = make_test_store(&[dir0, dir1]);
 
         // Force add_volume onto disk 1 by marking disk 0 as low on space.
-        store.locations[0].is_disk_space_low.store(true, Ordering::Relaxed);
+        store.locations[0]
+            .is_disk_space_low
+            .store(true, Ordering::Relaxed);
         store
             .add_volume(
                 VolumeId(15),
-                "coll",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "coll",
+                    ..Default::default()
+                },
             )
             .unwrap();
         let mut n = Needle {
@@ -1914,10 +1897,14 @@ mod tests {
             data_size: 5,
             ..Needle::default()
         };
-        store.write_volume_needle(VolumeId(15), &mut n, false).unwrap();
+        store
+            .write_volume_needle(VolumeId(15), &mut n, false)
+            .unwrap();
         assert!(store.unmount_volume(VolumeId(15)));
         // Clear the low-space flag so mount_volume_by_id considers disk 0.
-        store.locations[0].is_disk_space_low.store(false, Ordering::Relaxed);
+        store.locations[0]
+            .is_disk_space_low
+            .store(false, Ordering::Relaxed);
 
         // disk 0: a .dat that exists but is unreadable (chmod 000). The guard
         // sees dat_exists=true (metadata succeeds, not a dir), but
@@ -1956,15 +1943,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let mut store = make_test_store(&[dir]);
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
 
         // Write
@@ -2030,15 +2009,7 @@ mod tests {
             )
             .unwrap();
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         let mut n = Needle {
             id: NeedleId(1),
@@ -2101,26 +2072,10 @@ mod tests {
 
         // Add volumes — should go to location with fewest volumes
         store
-            .add_volume(
-                VolumeId(1),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         store
-            .add_volume(
-                VolumeId(2),
-                "",
-                None,
-                None,
-                0,
-                DiskType::HardDrive,
-                Version::current(),
-            )
+            .add_volume(VolumeId(2), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
 
         assert_eq!(store.total_volume_count(), 2);
@@ -2138,34 +2093,31 @@ mod tests {
         store
             .add_volume(
                 VolumeId(1),
-                "pics",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
             )
             .unwrap();
         store
             .add_volume(
                 VolumeId(2),
-                "pics",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "pics",
+                    ..Default::default()
+                },
             )
             .unwrap();
         store
             .add_volume(
                 VolumeId(3),
-                "docs",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "docs",
+                    ..Default::default()
+                },
             )
             .unwrap();
         assert_eq!(store.total_volume_count(), 3);
@@ -2201,23 +2153,21 @@ mod tests {
         store
             .add_volume(
                 VolumeId(61),
-                "preallocate_case",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "preallocate_case",
+                    ..Default::default()
+                },
             )
             .unwrap();
         store
             .add_volume(
                 VolumeId(62),
-                "preallocate_case",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "preallocate_case",
+                    ..Default::default()
+                },
             )
             .unwrap();
         for vid in [VolumeId(61), VolumeId(62)] {
@@ -2318,12 +2268,11 @@ mod tests {
         store
             .add_volume(
                 VolumeId(71),
-                "find_free_location_case",
-                None,
-                None,
-                0,
                 DiskType::HardDrive,
-                Version::current(),
+                &VolumeSpec {
+                    collection: "find_free_location_case",
+                    ..Default::default()
+                },
             )
             .unwrap();
 
@@ -2548,7 +2497,10 @@ mod tests {
 
         // Mount an EC shard on disk 1 so has_ec_volume returns true.
         std::fs::write(
-            format!("{}/{}_{}.ec00", store.locations[1].directory, collection, vid.0),
+            format!(
+                "{}/{}_{}.ec00",
+                store.locations[1].directory, collection, vid.0
+            ),
             b"shard data",
         )
         .unwrap();
@@ -2561,7 +2513,12 @@ mod tests {
         std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
 
         let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
-        assert_eq!(got, Some(1), "expected the mounted disk to win; got {:?}", got);
+        assert_eq!(
+            got,
+            Some(1),
+            "expected the mounted disk to win; got {:?}",
+            got
+        );
     }
 
     /// Cold-volume case: no mount, no `.ecx` anywhere on this server.
@@ -2615,7 +2572,10 @@ mod tests {
         // free shard slots remaining; the old formula would have
         // rounded that to 0.
         std::fs::write(
-            format!("{}/{}_{}.ec00", store.locations[1].directory, collection, vid.0),
+            format!(
+                "{}/{}_{}.ec00",
+                store.locations[1].directory, collection, vid.0
+            ),
             b"shard data",
         )
         .unwrap();
@@ -2704,7 +2664,7 @@ mod tests {
         // Fill disk 0 past its shard-slot budget so ec_free_shard_count is 0.
         let filler = VolumeId(10000);
         let filler_base = volume_file_name(&store.locations[0].directory, collection, filler);
-        let filler_shards: Vec<u32> = (0..10).collect();
+        let filler_shards: Vec<ShardId> = (0..10).collect();
         for shard_id in &filler_shards {
             std::fs::write(format!("{}.ec{:02}", filler_base, shard_id), b"x").unwrap();
         }

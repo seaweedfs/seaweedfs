@@ -2,8 +2,8 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 
 use crate::pb::{
-    worker_to_admin_message::Body, ActivityEvent, DetectionComplete, DetectionProposals,
-    JobCompleted, JobProgressUpdate, WorkerObservations, WorkerToAdminMessage,
+    ActivityEvent, DetectionComplete, DetectionProposals, JobCompleted, JobProgressUpdate,
+    WorkerObservations, WorkerToAdminMessage, worker_to_admin_message::Body,
 };
 
 /// Replies to one detection request.

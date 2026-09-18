@@ -2,10 +2,12 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // lookupIPAddrFunc resolves a host to one or more IP addresses. It is a
@@ -301,6 +304,9 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 		return "", nil, false
 	}
 	if ep, isS3 := s3remote.S3CompatibleEndpoint(remoteConf); isS3 {
+		if ep == "" && remoteConf.Type == "s3" {
+			return "", nil, false
+		}
 		return ep, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 			return s3remote.MakeWithHTTPClient(remoteConf, httpClient)
 		}, true
@@ -313,10 +319,12 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 	// gcs reaches a fixed object host, but the token exchange goes wherever the
 	// supplied credentials say, so guard that endpoint instead.
 	if remoteConf.Type == "gcs" && remoteConf.GcsGoogleApplicationCredentials != "" {
-		if _, tokenURL, err := gcsremote.ParseInlineCredentials(remoteConf.GcsGoogleApplicationCredentials); err == nil {
-			return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
-				return gcsremote.MakeWithHTTPClient(remoteConf, httpClient, gcsremote.StaticKeyCredentialTypes...)
-			}, true
+		if data, err := loadGcsCredentialsContent(remoteConf.GcsGoogleApplicationCredentials); err == nil {
+			if _, tokenURL, parseErr := gcsremote.ParseInlineCredentials(string(data)); parseErr == nil {
+				return tokenURL, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+					return gcsremote.MakeWithHTTPClient(remoteConf, httpClient, gcsremote.StaticKeyCredentialTypes...)
+				}, true
+			}
 		}
 	}
 	return "", nil, false
@@ -328,6 +336,27 @@ func gcsCredentialsArePath(creds string) bool {
 	return creds != "" && !strings.HasPrefix(creds, "{")
 }
 
+var errGcsCredentialsUnreadable = errors.New("gcs credentials file is not readable or does not contain valid credentials")
+
+// loadGcsCredentialsContent returns the credential JSON for a gcs credentials
+// value, reading from disk when it is a filesystem path (as written by
+// remote.configure -gcs.appCredentialsFile). This mirrors what the gcs client
+// itself does in MakeWithHTTPClient, so the guard validates the same content
+// the client will eventually load.
+func loadGcsCredentialsContent(creds string) ([]byte, error) {
+	if creds == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(creds, "{") {
+		return []byte(creds), nil
+	}
+	data, err := os.ReadFile(util.ResolvePath(creds))
+	if err != nil {
+		return nil, errGcsCredentialsUnreadable
+	}
+	return data, nil
+}
+
 // checkGcsCredentials rejects a caller-supplied gcs credentials value that
 // would make the SDK read from somewhere other than the credentials themselves,
 // so the request fails before any client is built.
@@ -335,12 +364,11 @@ func checkGcsCredentials(creds string) error {
 	if creds == "" {
 		return nil
 	}
-	// A filesystem path is read from disk by the SDK. Accept only inline JSON
-	// on the request; the server env var still supplies a path.
-	if gcsCredentialsArePath(creds) {
-		return fmt.Errorf("gcs credentials must be inline JSON")
+	data, err := loadGcsCredentialsContent(creds)
+	if err != nil {
+		return err
 	}
-	credType, _, parseErr := gcsremote.ParseInlineCredentials(creds)
+	credType, _, parseErr := gcsremote.ParseInlineCredentials(string(data))
 	if parseErr != nil {
 		return parseErr
 	}
@@ -384,6 +412,64 @@ func BuildGuardedRemoteStorageClient(ctx context.Context, remoteConf *remote_pb.
 		return nil, fmt.Errorf("get remote client: %w", err)
 	}
 	return client, nil
+}
+
+// ValidateRemoteConfForLoad applies the same SSRF deny-list and gcs credential
+// checks BuildGuardedRemoteStorageClient enforces at dial time, but without
+// building a client. It is injected into the filer's FilerRemoteStorage so a
+// RemoteConf planted under /etc/remote is rejected at load — before the
+// lazy-fetch / lazy-list / remote-delete paths can resolve and dial it. A conf
+// whose type does not steer a caller-supplied endpoint (and so dials a fixed
+// provider host) passes; allowUntrusted skips the check to mirror the volume
+// server opt-out.
+func ValidateRemoteConfForLoad(ctx context.Context, remoteConf *remote_pb.RemoteConf, allowUntrusted bool) error {
+	if remoteConf == nil {
+		return nil
+	}
+	if allowUntrusted {
+		return nil
+	}
+	if remoteConf.GetType() == "gcs" {
+		if credsErr := checkGcsCredentials(remoteConf.GetGcsGoogleApplicationCredentials()); credsErr != nil {
+			return fmt.Errorf("reject remote credentials: %w", credsErr)
+		}
+	}
+	if endpoint, _, ok := guardedRemoteClient(remoteConf); ok {
+		if validateErr := validateRemoteEndpointForLoad(endpoint); validateErr != nil {
+			return fmt.Errorf("reject remote endpoint: %w", validateErr)
+		}
+	}
+	return nil
+}
+
+// validateRemoteEndpointForLoad applies the static parts of the SSRF deny-list
+// (scheme, IMDS hostnames, IP-literal blocked addresses) without resolving
+// hostnames. DNS resolution is left to BuildGuardedRemoteStorageClient at dial
+// time, so a transient DNS failure during /etc/remote reload cannot drop a
+// working mount from the live map.
+func validateRemoteEndpointForLoad(endpoint string) error {
+	if strings.TrimSpace(endpoint) == "" {
+		return fmt.Errorf("remote endpoint is empty")
+	}
+	u, parseErr := url.Parse(endpoint)
+	if parseErr != nil {
+		return fmt.Errorf("parse remote endpoint %q: %w", endpoint, parseErr)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("remote endpoint %q must use http or https, got %q", endpoint, u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("remote endpoint %q has no host", endpoint)
+	}
+	if _, ok := blockedIMDSHosts[strings.ToLower(host)]; ok {
+		return fmt.Errorf("remote endpoint %q targets instance metadata service", endpoint)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return checkBlockedIP(endpoint, ip)
+	}
+	return nil
 }
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {

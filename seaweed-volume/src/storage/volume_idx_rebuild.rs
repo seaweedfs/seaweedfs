@@ -10,7 +10,7 @@ use crate::storage::needle::Needle;
 use crate::storage::super_block::SuperBlock;
 use crate::storage::types::*;
 use crate::storage::volume::{
-    fsync_dir, needle_disk_end, scan_volume_file, Volume, VolumeError, VolumeFileVisitor,
+    Volume, VolumeError, VolumeFileVisitor, fsync_dir, needle_disk_end, scan_volume_file,
 };
 
 /// Writes one .idx row per .dat record, in .dat append order, which is the
@@ -105,11 +105,11 @@ impl Volume {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::needle::crc::CRC;
     use crate::storage::needle::Needle;
+    use crate::storage::needle::crc::CRC;
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::types::*;
-    use crate::storage::volume::Volume;
+    use crate::storage::volume::{Volume, VolumeSpec};
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
@@ -145,13 +145,9 @@ mod tests {
         let mut v = Volume::new(
             data,
             old_idx,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         for id in 1..=3 {
@@ -167,13 +163,9 @@ mod tests {
         let reopened = Volume::new(
             data,
             new_idx,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
 
@@ -207,13 +199,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         v.write_needle(&mut needle(1), true, false).unwrap();
@@ -233,13 +221,9 @@ mod tests {
         let reopened = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         drop(reopened);
@@ -261,13 +245,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         v.write_needle(&mut needle(1), true, false).unwrap();
@@ -290,13 +270,9 @@ mod tests {
         let reopened = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         drop(reopened);
@@ -318,13 +294,9 @@ mod tests {
         let mut v = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         v.write_needle(&mut needle(1), true, false).unwrap();
@@ -356,13 +328,9 @@ mod tests {
         let reopened = Volume::new(
             dir,
             dir,
-            "",
             VolumeId(1),
             NeedleMapKind::InMemory,
-            None,
-            None,
-            0,
-            Version::current(),
+            &VolumeSpec::default(),
         )
         .unwrap();
         drop(reopened);

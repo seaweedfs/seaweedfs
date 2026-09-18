@@ -25,7 +25,50 @@ func (s *Store) ScrubEcVolume(vid needle.VolumeId, mode volume_server_pb.VolumeS
 	if err := s.cachedLookupEcShardLocations(ecv); err != nil {
 		return 0, nil, []error{fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterAddress, err)}
 	}
+	return s.scrubEcVolumeWalk(ecv, mode, forceDeletedNeedlesCheck)
+}
 
+// ScrubEcVolumeMerged is the merged-runtime entry point for FULL/READS. It
+// resolves the runtime matching the anchor's encode generation rather than
+// the first disk's, so the needle walk and the parity phase inspect the same
+// encode run. Skipped runtimes are reported alongside any scrub errors.
+func (s *Store) ScrubEcVolumeMerged(merged *erasure_coding.MergedEcRuntimes, mode volume_server_pb.VolumeScrubMode, forceDeletedNeedlesCheck bool) (int64, []*volume_server_pb.EcShardInfo, []error) {
+	anchor := merged.Anchor
+	expectedEncodeTs := anchor.EncodeTsNs
+
+	// Resolve the runtime matching the anchor's encode generation, not the
+	// first-match FindEcVolume — otherwise the needle walk can scan an older
+	// run while the merged view anchored on the newest.
+	var ecv *erasure_coding.EcVolume
+	if expectedEncodeTs != 0 {
+		for _, v := range s.FindAllEcVolumes(anchor.VolumeId) {
+			if v.EncodeTsNs == expectedEncodeTs {
+				ecv = v
+				break
+			}
+		}
+	}
+	if ecv == nil {
+		var found bool
+		ecv, found = s.FindEcVolume(anchor.VolumeId)
+		if !found {
+			return 0, nil, []error{fmt.Errorf("EC volume id %d not found", anchor.VolumeId)}
+		}
+	}
+	if err := s.cachedLookupEcShardLocations(ecv); err != nil {
+		return 0, nil, []error{fmt.Errorf("failed to locate shard via master grpc %s: %v", s.MasterAddress, err)}
+	}
+
+	files, shardInfos, errs := s.scrubEcVolumeWalk(ecv, mode, forceDeletedNeedlesCheck)
+	for _, sk := range merged.Skipped {
+		errs = append(errs, fmt.Errorf("%s", sk))
+	}
+	return files, shardInfos, errs
+}
+
+// scrubEcVolumeWalk is the per-needle local+remote walk shared by ScrubEcVolume
+// and ScrubEcVolumeMerged.
+func (s *Store) scrubEcVolumeWalk(ecv *erasure_coding.EcVolume, mode volume_server_pb.VolumeScrubMode, forceDeletedNeedlesCheck bool) (int64, []*volume_server_pb.EcShardInfo, []error) {
 	// full scan means verifying indexes as well
 	_, errs := ecv.ScrubIndex()
 

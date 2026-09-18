@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -666,8 +668,114 @@ func TestBuildGuardedRemoteStorageClient(t *testing.T) {
 		GcsGoogleApplicationCredentials: "/etc/hostname",
 	}
 	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsPathCreds, false); err == nil {
-		t.Error("expected a gcs credentials path to be rejected")
+		t.Error("expected a non-credentials file path to be rejected")
 	} else if !strings.Contains(err.Error(), "reject remote credentials") {
 		t.Errorf("error = %v, want reject remote credentials", err)
+	} else if strings.Contains(err.Error(), "/etc/hostname") {
+		t.Errorf("error must not leak the file path: %v", err)
+	}
+
+	// A file path that points to valid GCS credentials should be accepted.
+	credsFile := filepath.Join(t.TempDir(), "service-account.json")
+	validCreds := `{"type":"service_account","token_uri":"https://oauth2.googleapis.com/token","client_email":"sa@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\nMIIBVwIBADANBgkqhkiG9w0BAQEFAASCAUEwggE9AgEAAkEAxY\n-----END PRIVATE KEY-----\n","private_key_id":"key1"}`
+	if err := os.WriteFile(credsFile, []byte(validCreds), 0600); err != nil {
+		t.Fatalf("write creds file: %v", err)
+	}
+	gcsFileCreds := &remote_pb.RemoteConf{
+		Name:                            "good",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: credsFile,
+	}
+	if err := checkGcsCredentials(credsFile); err != nil {
+		t.Errorf("valid gcs credentials file should pass: %v", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsFileCreds, false); err != nil {
+		t.Errorf("valid gcs credentials file should build: %v", err)
+	}
+
+	// A nonexistent path must be rejected without leaking the path in the error.
+	gcsMissingCreds := &remote_pb.RemoteConf{
+		Name:                            "missing",
+		Type:                            "gcs",
+		GcsGoogleApplicationCredentials: filepath.Join(t.TempDir(), "does-not-exist.json"),
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), gcsMissingCreds, false); err == nil {
+		t.Error("expected a nonexistent credentials file to be rejected")
+	} else if strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error must not leak the file path: %v", err)
+	}
+}
+
+// TestValidateRemoteConfForLoad confirms the load-time validator (injected into
+// the filer's FilerRemoteStorage) rejects a RemoteConf whose endpoint resolves
+// to a blocked address, while allowUntrusted skips the check. A conf whose type
+// dials a fixed provider host (no caller-supplied endpoint) passes.
+func TestValidateRemoteConfForLoad(t *testing.T) {
+	loopbackS3 := &remote_pb.RemoteConf{
+		Name:       "poc",
+		Type:       "s3",
+		S3Endpoint: "http://127.0.0.1:8000",
+		S3Region:   "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), loopbackS3, false); err == nil {
+		t.Error("expected a loopback s3 endpoint to be rejected at load")
+	} else if !strings.Contains(err.Error(), "reject remote endpoint") {
+		t.Errorf("error = %v, want reject remote endpoint", err)
+	}
+	// allowUntrusted mirrors the volume server opt-out.
+	if err := ValidateRemoteConfForLoad(context.Background(), loopbackS3, true); err != nil {
+		t.Errorf("allowUntrusted should accept the conf: %v", err)
+	}
+	// A non-S3-compatible type with no caller-supplied endpoint dials a fixed
+	// provider host, so there is nothing caller-influenced to deny.
+	fixedHost := &remote_pb.RemoteConf{Name: "fixed", Type: "gcs"}
+	if err := ValidateRemoteConfForLoad(context.Background(), fixedHost, false); err != nil {
+		t.Errorf("fixed-host provider should pass: %v", err)
+	}
+	// nil conf is a no-op.
+	if err := ValidateRemoteConfForLoad(context.Background(), nil, false); err != nil {
+		t.Errorf("nil conf should be a no-op: %v", err)
+	}
+	// A hostname endpoint is not resolved at load time (DNS is left to the
+	// build-time guard at dial), so it must pass even if it would resolve to a
+	// blocked address. This prevents transient DNS failures from disabling
+	// working mounts during /etc/remote reload.
+	hostnameS3 := &remote_pb.RemoteConf{
+		Name:       "host",
+		Type:       "s3",
+		S3Endpoint: "http://internal.example.com",
+		S3Region:   "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), hostnameS3, false); err != nil {
+		t.Errorf("hostname endpoint should pass at load (DNS deferred to dial): %v", err)
+	}
+	// A standard AWS S3 config with no custom endpoint (empty S3Endpoint) has
+	// no caller-supplied endpoint to guard — the AWS SDK derives the regional
+	// endpoint. Both the load-time validator and the build-time guard must
+	// accept it so standard AWS S3 mounts keep working.
+	standardS3 := &remote_pb.RemoteConf{
+		Name:     "aws",
+		Type:     "s3",
+		S3Region: "us-east-1",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), standardS3, false); err != nil {
+		t.Errorf("standard AWS S3 (empty endpoint) should pass: %v", err)
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), standardS3, false); err != nil {
+		t.Errorf("standard AWS S3 (empty endpoint) should build: %v", err)
+	}
+	// A non-s3 S3-compatible type with an empty endpoint is a misconfiguration
+	// (the AWS SDK would derive an AWS endpoint). The guard must reject it
+	// rather than fall through to the unguarded cache.
+	aliyunNoEndpoint := &remote_pb.RemoteConf{
+		Name:         "aliyun",
+		Type:         "aliyun",
+		AliyunRegion: "cn-hangzhou",
+	}
+	if err := ValidateRemoteConfForLoad(context.Background(), aliyunNoEndpoint, false); err == nil {
+		t.Error("aliyun with empty endpoint should be rejected at load")
+	}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), aliyunNoEndpoint, false); err == nil {
+		t.Error("aliyun with empty endpoint should be rejected by the guard")
 	}
 }

@@ -802,7 +802,7 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 	}
 
 	// Generate temporary credentials
-	stsCredGen := sts.NewCredentialGenerator()
+	stsCredGen := h.stsService.GetCredentialGenerator()
 	stsCredsDet, err := stsCredGen.GenerateTemporaryCredentials(sessionId, expiration)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError,
@@ -921,7 +921,7 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 	}
 
 	// Generate temporary credentials (deterministic based on sessionId)
-	stsCredGen := sts.NewCredentialGenerator()
+	stsCredGen := h.stsService.GetCredentialGenerator()
 	stsCredsDet, err := stsCredGen.GenerateTemporaryCredentials(sessionId, expiration)
 	if err != nil {
 		return STSCredentials{}, nil, fmt.Errorf("failed to generate temporary credentials: %w", err)

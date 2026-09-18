@@ -12,6 +12,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
+type testProperties map[string]string
+
+func (m testProperties) GetString(key string) string {
+	return m[key]
+}
+
 type stubS3Client struct {
 	s3iface.S3API
 	getObject func(*s3.GetObjectInput) (*s3.GetObjectOutput, error)
@@ -99,5 +105,52 @@ func TestReadAtRejectsInvalidRequestsLocally(t *testing.T) {
 				t.Fatal("ReadAt() called S3 for an invalid request")
 			}
 		})
+	}
+}
+
+func TestParseConcurrency(t *testing.T) {
+	cases := []struct {
+		value    string
+		def      int
+		expected int
+	}{
+		{"", 5, 5},    // unset -> default
+		{"0", 5, 5},   // explicit zero means default
+		{"-3", 5, 5},  // invalid -> default
+		{"abc", 5, 5}, // invalid -> default
+		{"1", 5, 1},   // override
+		{"64", 5, 64}, // override
+	}
+	for _, tt := range cases {
+		if got := parseConcurrency(tt.value, tt.def); got != tt.expected {
+			t.Errorf("parseConcurrency(%q, %d) = %d, want %d", tt.value, tt.def, got, tt.expected)
+		}
+	}
+}
+
+func TestS3BackendStorageConcurrencyConfigRoundTrip(t *testing.T) {
+	s, err := newS3BackendStorage(testProperties{}, "", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.uploadConcurrency != defaultUploadConcurrency || s.downloadConcurrency != defaultDownloadConcurrency {
+		t.Fatalf("defaults: upload=%d download=%d, want %d/%d",
+			s.uploadConcurrency, s.downloadConcurrency, defaultUploadConcurrency, defaultDownloadConcurrency)
+	}
+
+	s, err = newS3BackendStorage(testProperties{
+		"upload_concurrency":   "1",
+		"download_concurrency": "17",
+	}, "", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.uploadConcurrency != 1 || s.downloadConcurrency != 17 {
+		t.Fatalf("configured: upload=%d download=%d, want 1/17", s.uploadConcurrency, s.downloadConcurrency)
+	}
+
+	props := s.ToProperties()
+	if props["upload_concurrency"] != "1" || props["download_concurrency"] != "17" {
+		t.Fatalf("ToProperties: %v", props)
 	}
 }

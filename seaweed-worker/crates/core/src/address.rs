@@ -14,10 +14,10 @@ pub fn server_to_grpc_address(server: &str) -> Option<String> {
     let (host, port_part) = server.rsplit_once(':')?;
 
     // "port.grpcPort" states the gRPC port outright.
-    if let Some((_, grpc_port)) = port_part.split_once('.') {
-        if let Ok(port) = grpc_port.parse::<u16>() {
-            return Some(join_host_port(host, port));
-        }
+    if let Some((_, grpc_port)) = port_part.split_once('.')
+        && let Ok(port) = grpc_port.parse::<u16>()
+    {
+        return Some(join_host_port(host, port));
     }
 
     let port: u16 = port_part.parse().ok()?;

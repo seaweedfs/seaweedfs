@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -21,6 +22,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
+// maxTierConcurrency caps per-request multipart transfer concurrency.
+const maxTierConcurrency = 1024
+
+// validateTierConcurrency rejects values that would wrap when narrowed to the
+// int32 proto field or exhaust volume-server resources. 0 means backend default.
+func validateTierConcurrency(n int) error {
+	if n < 0 || n > math.MaxInt32 {
+		return fmt.Errorf("concurrency must be between 0 and %d, got %d", math.MaxInt32, n)
+	}
+	if n > maxTierConcurrency {
+		return fmt.Errorf("concurrency must be at most %d, got %d", maxTierConcurrency, n)
+	}
+	return nil
+}
+
 func init() {
 	Commands = append(Commands, &commandVolumeTierUpload{})
 }
@@ -36,11 +52,12 @@ func (c *commandVolumeTierUpload) Help() string {
 	return `upload the dat file of a volume to a remote tier
 
 	volume.tier.upload [-collection=""] [-fullPercent=95] [-quietFor=1h]
-	volume.tier.upload [-collection=""] -volumeId=<volume_id> -dest=<storage_backend> [-keepLocalDatFile]
+	volume.tier.upload [-collection=""] -volumeId=<volume_id> -dest=<storage_backend> [-keepLocalDatFile] [-concurrency=<n>]
 
 	e.g.:
 	volume.tier.upload -volumeId=7 -dest=s3
 	volume.tier.upload -volumeId=7 -dest=s3.default
+	volume.tier.upload -volumeId=7 -dest=s3.telegram -concurrency=1
 
 	The <storage_backend> is defined in master.toml.
 	For example, "s3.default" in [storage.backend.s3.default]
@@ -78,8 +95,13 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	dest := tierCommand.String("dest", "", "the target tier name")
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
 	disk := tierCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	concurrency := tierCommand.Int("concurrency", 0, "multipart upload concurrency (0 = backend default)")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = validateTierConcurrency(*concurrency); err != nil {
+		return err
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
@@ -90,7 +112,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 
 	// volumeId is provided
 	if vid != 0 {
-		return doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
+		return doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile, *concurrency)
 	}
 
 	var diskType *types.DiskType
@@ -107,7 +129,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	}
 	fmt.Printf("tier upload volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
+		if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile, *concurrency); err != nil {
 			return err
 		}
 	}
@@ -115,7 +137,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	return nil
 }
 
-func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
+func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool, concurrency int) (err error) {
 	// find volume location
 	topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
@@ -137,7 +159,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 	}
 
 	// copy the .dat file to remote tier
-	err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, vid, collection, existingLocations[0].ServerAddress(), dest, keepLocalDatFile)
+	err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, vid, collection, existingLocations[0].ServerAddress(), dest, keepLocalDatFile, concurrency)
 	if err != nil {
 		return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, existingLocations[0].Url, dest, err)
 	}
@@ -190,7 +212,7 @@ func collectVolumeTierUploadLocations(topoInfo *master_pb.TopologyInfo, vid need
 	return append(tiered, local...)
 }
 
-func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress, dest string, keepLocalDatFile bool) error {
+func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress, dest string, keepLocalDatFile bool, concurrency int) error {
 
 	err := operation.WithVolumeServerClient(true, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		stream, copyErr := volumeServerClient.VolumeTierMoveDatToRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatToRemoteRequest{
@@ -198,6 +220,7 @@ func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, vol
 			Collection:             collection,
 			DestinationBackendName: dest,
 			KeepLocalDatFile:       keepLocalDatFile,
+			Concurrency:            int32(concurrency),
 		})
 
 		if stream == nil {

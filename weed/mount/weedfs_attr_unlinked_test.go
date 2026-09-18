@@ -33,7 +33,7 @@ func newUnlinkedOpenFile(t *testing.T) (*WFS, uint64, *FileHandle) {
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
 	}
-	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1, nil)
+	chunkGroup, err := filer.NewChunkGroup(nil, nil, nil, 1, nil, nil)
 	if err != nil {
 		t.Fatalf("NewChunkGroup: %v", err)
 	}

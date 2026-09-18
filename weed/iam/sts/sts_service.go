@@ -94,6 +94,7 @@ type STSService struct {
 	providers            map[string]providers.IdentityProvider
 	issuerToProvider     map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
 	tokenGenerator       *TokenGenerator
+	credGenerator        *CredentialGenerator
 	trustPolicyValidator TrustPolicyValidator // Interface for trust policy validation
 
 	// iamManagedOIDCMu guards iamManagedOIDCByIssuer. The map is the live view
@@ -126,6 +127,11 @@ type ScopedOIDCProvider struct {
 // This keeps the underlying field unexported while still allowing read-only access.
 func (s *STSService) GetTokenGenerator() *TokenGenerator {
 	return s.tokenGenerator
+}
+
+// GetCredentialGenerator returns the credential generator used by the STS service.
+func (s *STSService) GetCredentialGenerator() *CredentialGenerator {
+	return s.credGenerator
 }
 
 // STSConfig holds STS service configuration
@@ -325,6 +331,7 @@ func (s *STSService) Initialize(config *STSConfig) error {
 
 	// Initialize token generator for stateless JWT operations
 	s.tokenGenerator = NewTokenGenerator(config.SigningKey, config.Issuer)
+	s.credGenerator = NewCredentialGenerator(config.SigningKey)
 
 	// Load identity providers from configuration
 	if err := s.loadProvidersFromConfig(config); err != nil {
@@ -606,8 +613,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
 	}
 
-	credGenerator := NewCredentialGenerator()
-	credentials, err := credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
+	credentials, err := s.credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
@@ -771,8 +777,7 @@ func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
 	}
 
-	credGenerator := NewCredentialGenerator()
-	tempCredentials, err := credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
+	tempCredentials, err := s.credGenerator.GenerateTemporaryCredentials(sessionId, expiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate credentials: %w", err)
 	}
@@ -909,7 +914,7 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 
 	// Convert JWT claims back to SessionInfo
 	// All session information is embedded in the JWT token itself
-	return claims.ToSessionInfo(), nil
+	return claims.ToSessionInfo(s.credGenerator), nil
 }
 
 // NOTE: Session revocation is not supported in the stateless JWT design.

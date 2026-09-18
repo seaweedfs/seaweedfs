@@ -58,6 +58,9 @@ func WriteIAMConfig(dir, accessKey, secretKey string) (string, error) {
         "Tagging",
         "Write"
       ]
+    },
+    {
+      "name": "anonymous"
     }
   ]
 }`, accessKey, secretKey)

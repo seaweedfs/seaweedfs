@@ -14,7 +14,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 				<ol class="breadcrumb mb-0">
 					<li class="breadcrumb-item">
 						<a href={ dash.PUrl(ctx, "/object-store/iceberg") }>
-							<i class="fas fa-snowflake me-1"></i>Iceberg Catalog
+							<i class="bi bi-snow me-1"></i>Iceberg Catalog
 						</a>
 					</li>
 					<li class="breadcrumb-item">
@@ -29,7 +29,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 				<button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createIcebergTableModal">
-					<i class="fas fa-plus me-1"></i>Create Table
+					<i class="bi bi-plus me-1"></i>Create Table
 				</button>
 			</div>
 		</div>
@@ -54,7 +54,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-folder fa-2x text-gray-300"></i>
+								<i class="bi bi-folder icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -73,7 +73,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 								</div>
 							</div>
 							<div class="col-auto">
-								<i class="fas fa-table fa-2x text-gray-300"></i>
+								<i class="bi bi-table icon-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -87,7 +87,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 				<div class="card shadow mb-4">
 					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
 						<h6 class="m-0 font-weight-bold text-primary">
-							<i class="fas fa-table me-2"></i>Tables
+							<i class="bi bi-table me-2"></i>Tables
 						</h6>
 					</div>
 					<div class="card-body">
@@ -106,7 +106,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 									for _, table := range data.Tables {
 										<tr>
 											<td>
-												<i class="fas fa-table text-primary me-2"></i>
+												<i class="bi bi-table text-primary me-2"></i>
 												<strong>{ table.Name }</strong>
 											</td>
 											<td>
@@ -125,10 +125,10 @@ templ IcebergTables(data dash.IcebergTablesData) {
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables/%s", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName), url.PathEscape(table.Name))) } title="View Details">
-														<i class="fas fa-eye"></i>
+														<i class="bi bi-eye"></i>
 													</a>
 													<button type="button" class="btn btn-outline-danger btn-sm iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ table.Name } data-catalog-name={ data.CatalogName } title="Drop Table">
-														<i class="fas fa-trash"></i>
+														<i class="bi bi-trash"></i>
 													</button>
 												</div>
 											</td>
@@ -137,7 +137,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 									if len(data.Tables) == 0 {
 										<tr>
 											<td colspan="5" class="text-center text-muted py-4">
-												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
+												<i class="bi bi-table icon-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No tables found</h5>
 													<p>Create tables via the Iceberg REST API.</p>
@@ -158,7 +158,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="createIcebergTableModalLabel">
-						<i class="fas fa-plus me-2"></i>Create Table
+						<i class="bi bi-plus me-2"></i>Create Table
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -187,7 +187,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 					<div class="modal-footer">
 						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 						<button type="submit" class="btn btn-primary">
-							<i class="fas fa-plus me-1"></i>Create
+							<i class="bi bi-plus me-1"></i>Create
 						</button>
 					</div>
 				</form>
@@ -199,7 +199,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 			<div class="modal-content">
 				<div class="modal-header">
 					<h5 class="modal-title" id="deleteIcebergTableModalLabel">
-						<i class="fas fa-exclamation-triangle me-2 text-warning"></i>Drop Table
+						<i class="bi bi-exclamation-triangle me-2 text-warning"></i>Drop Table
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
@@ -213,7 +213,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 				<div class="modal-footer">
 					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 					<button type="button" class="btn btn-danger" onclick="deleteIcebergTable()">
-						<i class="fas fa-trash me-1"></i>Drop Table
+						<i class="bi bi-trash me-1"></i>Drop Table
 					</button>
 				</div>
 			</div>

@@ -136,8 +136,8 @@ var baseS3ActionMap = map[string]string{
 	"DeleteBucketCors":                 s3_constants.ACTION_WRITE,
 	"GetBucketNotification":            s3_constants.ACTION_READ,
 	"PutBucketNotification":            s3_constants.ACTION_WRITE,
-	"GetBucketObjectLockConfiguration": s3_constants.ACTION_READ,
-	"PutBucketObjectLockConfiguration": s3_constants.ACTION_WRITE,
+	"GetBucketObjectLockConfiguration": s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG,
+	"PutBucketObjectLockConfiguration": s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG,
 	// Multipart upload operations
 	"CreateMultipartUpload":   s3_constants.ACTION_WRITE,
 	"UploadPart":              s3_constants.ACTION_WRITE,
@@ -146,11 +146,11 @@ var baseS3ActionMap = map[string]string{
 	"ListMultipartUploads":    s3_constants.ACTION_WRITE,
 	"ListParts":               s3_constants.ACTION_WRITE,
 	// Retention and legal hold operations
-	"GetObjectRetention":        s3_constants.ACTION_READ,
-	"PutObjectRetention":        s3_constants.ACTION_WRITE,
-	"GetObjectLegalHold":        s3_constants.ACTION_READ,
-	"PutObjectLegalHold":        s3_constants.ACTION_WRITE,
-	"BypassGovernanceRetention": s3_constants.ACTION_WRITE,
+	"GetObjectRetention":        s3_constants.ACTION_GET_OBJECT_RETENTION,
+	"PutObjectRetention":        s3_constants.ACTION_PUT_OBJECT_RETENTION,
+	"GetObjectLegalHold":        s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD,
+	"PutObjectLegalHold":        s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD,
+	"BypassGovernanceRetention": s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION,
 }
 
 func init() {
@@ -191,6 +191,20 @@ func MapToIdentitiesAction(action string) string {
 		return StatementActionTagging
 	case s3_constants.ACTION_DELETE_BUCKET:
 		return StatementActionDelete
+	case s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION:
+		return "BypassGovernanceRetention"
+	case s3_constants.ACTION_GET_OBJECT_RETENTION:
+		return "GetObjectRetention"
+	case s3_constants.ACTION_PUT_OBJECT_RETENTION:
+		return "PutObjectRetention"
+	case s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD:
+		return "GetObjectLegalHold"
+	case s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD:
+		return "PutObjectLegalHold"
+	case s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG:
+		return "GetBucketObjectLockConfiguration"
+	case s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
+		return "PutBucketObjectLockConfiguration"
 	case s3_constants.ACTION_PUT_BUCKET_POLICY:
 		return "PutBucketPolicy"
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:

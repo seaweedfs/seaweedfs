@@ -2,10 +2,13 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"math"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -74,12 +77,12 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 
 func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration, signingKey string) error {
 	uploadsDir := filerBucketsPath + "/" + bucket + "/" + s3_constants.MultipartUploadsFolder
-	var staleUploads []string
+	var staleUploads []*filer_pb.Entry
 	now := time.Now()
 	err := filer_pb.List(context.Background(), commandEnv, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 		ctime := time.Unix(entry.Attributes.Crtime, 0)
 		if ctime.Add(timeAgo).Before(now) {
-			staleUploads = append(staleUploads, entry.Name)
+			staleUploads = append(staleUploads, entry)
 		}
 		return nil
 	}, "", false, math.MaxUint32)
@@ -93,14 +96,75 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 	}
 
 	for _, staleUpload := range staleUploads {
-		deleteUrl := fmt.Sprintf("http://%s%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.option.FilerAddress.ToHttpAddress(), uploadsDir, staleUpload)
+		// A completed upload's part entries share chunks with the finished
+		// object, so purging their data corrupts it. Completion normally
+		// removes this directory itself; a survivor means that cleanup failed
+		// and only the metadata should go. An undecidable lookup is left for
+		// the next run rather than risk live chunks.
+		completed, checkErr := c.uploadCompleted(commandEnv, filerBucketsPath+"/"+bucket, staleUpload)
+		if checkErr != nil {
+			fmt.Fprintf(writer, "skip %s: %v\n", staleUpload.Name, checkErr)
+			continue
+		}
+		deleteUrl := fmt.Sprintf("http://%s%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.option.FilerAddress.ToHttpAddress(), uploadsDir, staleUpload.Name)
+		if completed {
+			deleteUrl += "&skipChunkDeletion=true"
+		}
 		fmt.Fprintf(writer, "purge %s\n", deleteUrl)
 
 		err = util_http.Delete(deleteUrl, string(encodedJwt))
 		if err != nil && err.Error() != "" {
-			return fmt.Errorf("purge %s/%s: %v", uploadsDir, staleUpload, err)
+			return fmt.Errorf("purge %s/%s: %v", uploadsDir, staleUpload.Name, err)
 		}
 	}
 
 	return nil
+}
+
+// uploadCompleted reports whether the upload assembled into an object: the
+// object entry, or any version file under <key>.versions, still carries the
+// upload id completion stamps on it.
+func (c *commandS3CleanUploads) uploadCompleted(filerClient filer_pb.FilerClient, bucketDir string, upload *filer_pb.Entry) (bool, error) {
+	objectKey := string(upload.Extended[s3_constants.ExtMultipartObjectKey])
+	if objectKey == "" {
+		return false, nil
+	}
+	// Derive the object location the same way completion's getEntryNameAndDir
+	// does: a trailing-slash key stores the object inside the directory it
+	// names, so FullPath+DirAndName would look one level too high.
+	name := path.Base(objectKey)
+	dir := path.Dir(objectKey)
+	if dir == "." {
+		dir = ""
+	}
+	objectDir := util.FullPath(bucketDir + "/" + dir)
+
+	completed := false
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{Directory: string(objectDir), Name: name})
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if resp.Entry != nil && string(resp.Entry.Extended[s3_constants.SeaweedFSUploadId]) == upload.Name {
+			completed = true
+		}
+		return nil
+	})
+	if err != nil || completed {
+		return completed, err
+	}
+
+	err = filer_pb.List(context.Background(), filerClient, string(objectDir)+"/"+name+s3_constants.VersionsFolder, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if string(entry.Extended[s3_constants.SeaweedFSUploadId]) == upload.Name {
+			completed = true
+		}
+		return nil
+	}, "", false, math.MaxUint32)
+	if err != nil && (errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())) {
+		return false, nil
+	}
+	return completed, err
 }

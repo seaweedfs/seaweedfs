@@ -70,7 +70,11 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	}()
 
 	// search chunks for the offset
-	found, offset := fh.entryChunkGroup.SearchChunks(ctx, offset, fileSize, in.Whence)
+	found, offset, err := fh.entryChunkGroup.SearchChunks(ctx, offset, fileSize, in.Whence)
+	if err != nil {
+		glog.Errorf("Lseek %s: %v", fh.FullPath(), err)
+		return fuse.EIO
+	}
 	if found {
 		out.Offset = uint64(offset)
 		return fuse.OK

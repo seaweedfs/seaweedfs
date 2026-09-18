@@ -18,6 +18,7 @@ use std::sync::{Mutex, RwLock};
 
 use super::file_pool::pooled_index_files;
 use crate::storage::idx;
+use crate::storage::io::read_exact_at;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMapMetric, NeedleValue};
 use crate::storage::types::*;
 
@@ -133,9 +134,7 @@ impl SortedFileNeedleMap {
         }
         let file = pooled_index_files()
             .borrow(&self.db_file_name, false)
-            .map_err(|e| {
-                io::Error::new(e.kind(), format!("open {}: {}", self.db_file_name, e))
-            })?;
+            .map_err(|e| io::Error::new(e.kind(), format!("open {}: {}", self.db_file_name, e)))?;
         match search_sorted_index(&file, self.db_file_size, key)? {
             Some((_, offset, size)) => Ok(Some(NeedleValue { offset, size })),
             None => Ok(None),
@@ -226,10 +225,7 @@ impl SortedFileNeedleMap {
             .fail_sdx_mark
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "injected .sdx mark failure",
-            ));
+            return Err(io::Error::other("injected .sdx mark failure"));
         }
         let mut buf = [0u8; SIZE_SIZE];
         TOMBSTONE_FILE_SIZE.to_bytes(&mut buf);
@@ -309,7 +305,7 @@ impl SortedFileNeedleMap {
             let rows = rows_per_read.min(entry_count - done) as usize;
             let bytes = &mut block[..rows * NEEDLE_MAP_ENTRY_SIZE];
             read_exact_at(&file, bytes, done * NEEDLE_MAP_ENTRY_SIZE as u64)?;
-            for entry in bytes.chunks_exact(NEEDLE_MAP_ENTRY_SIZE) {
+            for entry in bytes.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>().0 {
                 let (key, offset, size) = idx_entry_from_bytes(entry);
                 if !size.is_valid() || pending.contains_key(&key) {
                     continue; // deleted in place, or still awaiting that mark
@@ -525,32 +521,6 @@ fn search_sorted_index(
     Ok(None)
 }
 
-fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileExt;
-        file.read_exact_at(buf, offset)
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::FileExt;
-        let mut filled = 0;
-        let mut at = offset;
-        while filled < buf.len() {
-            let n = file.seek_read(&mut buf[filled..], at)?;
-            if n == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "unexpected EOF in seek_read",
-                ));
-            }
-            filled += n;
-            at += n as u64;
-        }
-        Ok(())
-    }
-}
-
 fn write_at(file: &File, buf: &[u8], offset: u64) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -703,10 +673,11 @@ mod tests {
         // without a reload — the same contract Go's Get has, where callers
         // check size.is_deleted().
         assert!(m.get(NeedleId(2)).unwrap().unwrap().size.is_deleted());
-        assert!(m
-            .delete(NeedleId(2), Offset::from_actual_offset(16))
-            .unwrap()
-            .is_none());
+        assert!(
+            m.delete(NeedleId(2), Offset::from_actual_offset(16))
+                .unwrap()
+                .is_none()
+        );
         assert!(!m.get(NeedleId(1)).unwrap().unwrap().size.is_deleted());
     }
 
@@ -1002,7 +973,8 @@ mod tests {
 
         // The retry is a no-op: no second tombstone, no double counting.
         assert_eq!(
-            m.delete(NeedleId(1), Offset::from_actual_offset(8)).unwrap(),
+            m.delete(NeedleId(1), Offset::from_actual_offset(8))
+                .unwrap(),
             None
         );
         assert_eq!(m.deleted_count(), deleted_before + 2);
@@ -1032,7 +1004,8 @@ mod tests {
         );
         // And a retry must not append a second tombstone for it.
         assert_eq!(
-            m.delete(NeedleId(1), Offset::from_actual_offset(8)).unwrap(),
+            m.delete(NeedleId(1), Offset::from_actual_offset(8))
+                .unwrap(),
             None
         );
     }

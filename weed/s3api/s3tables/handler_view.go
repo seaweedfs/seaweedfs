@@ -121,6 +121,11 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		return err
 	}
 
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
 	now := time.Now()
 	versionToken := generateVersionToken()
 	metadata := &tableMetadataInternal{
@@ -401,6 +406,11 @@ func (h *S3TablesHandler) handleUpdateView(w http.ResponseWriter, r *http.Reques
 
 	bucketName, namespaceName, viewName, err := h.parseViewRef(req.TableBucketARN, req.Namespace, req.Name)
 	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}

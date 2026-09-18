@@ -14,12 +14,12 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 
 use axum::{
-    extract::{connect_info::ConnectInfo, Request, State},
-    http::{header, HeaderValue, Method, StatusCode},
+    Router,
+    extract::{Request, State, connect_info::ConnectInfo},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{any, get},
-    Router,
 };
 
 use crate::config::ReadMode;
@@ -200,9 +200,7 @@ pub fn to_http_address(addr: &str) -> std::borrow::Cow<'_, str> {
         // rather than being silently rewritten. Mirrors the validation already
         // done in `to_grpc_address` for the inverse direction.
         if let (Ok(_), Ok(_)) = (http_port.parse::<u16>(), grpc_port.parse::<u16>()) {
-            return std::borrow::Cow::Owned(
-                addr[..ports_sep_index + 1 + dot_idx].to_string(),
-            );
+            return std::borrow::Cow::Owned(addr[..ports_sep_index + 1 + dot_idx].to_string());
         }
     }
     std::borrow::Cow::Borrowed(addr)
@@ -312,16 +310,15 @@ async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Requ
             )
         }
     };
-    if method == Method::GET {
-        if let Some(response_bytes) = response
+    if method == Method::GET
+        && let Some(response_bytes) = response
             .headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value > 0)
-        {
-            super::server_stats::record_bytes_out(response_bytes);
-        }
+    {
+        super::server_stats::record_bytes_out(response_bytes);
     }
     super::server_stats::record_request_close();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
@@ -358,16 +355,15 @@ async fn public_store_handler(state: State<Arc<VolumeServerState>>, request: Req
         }
         _ => StatusCode::OK.into_response(),
     };
-    if method == Method::GET {
-        if let Some(response_bytes) = response
+    if method == Method::GET
+        && let Some(response_bytes) = response
             .headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value > 0)
-        {
-            super::server_stats::record_bytes_out(response_bytes);
-        }
+    {
+        super::server_stats::record_bytes_out(response_bytes);
     }
     super::server_stats::record_request_close();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
@@ -432,13 +428,13 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
         .route("/healthz", get(handlers::healthz_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
-            "/seaweedfsstatic/*path",
+            "/seaweedfsstatic/{*path}",
             get(handlers::static_asset_handler),
         )
         .route("/", any(admin_store_handler))
-        .route("/:path", any(admin_store_handler))
-        .route("/:vid/:fid", any(admin_store_handler))
-        .route("/:vid/:fid/:filename", any(admin_store_handler))
+        .route("/{path}", any(admin_store_handler))
+        .route("/{vid}/{fid}", any(admin_store_handler))
+        .route("/{vid}/{fid}/{filename}", any(admin_store_handler))
         .fallback(admin_store_handler);
     if ui_enabled {
         // Note: /stats/* endpoints are commented out in Go's volume_server.go (L130-134).
@@ -455,13 +451,13 @@ pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
     Router::new()
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
-            "/seaweedfsstatic/*path",
+            "/seaweedfsstatic/{*path}",
             get(handlers::static_asset_handler),
         )
         .route("/", any(public_store_handler))
-        .route("/:path", any(public_store_handler))
-        .route("/:vid/:fid", any(public_store_handler))
-        .route("/:vid/:fid/:filename", any(public_store_handler))
+        .route("/{path}", any(public_store_handler))
+        .route("/{vid}/{fid}", any(public_store_handler))
+        .route("/{vid}/{fid}/{filename}", any(public_store_handler))
         .fallback(public_store_handler)
         .layer(middleware::from_fn(common_headers_middleware))
         .with_state(state)
@@ -516,7 +512,10 @@ mod tests {
         // "host:abc.def"), and silently rewriting it would just hide the bug.
         assert_eq!(to_http_address("host:abc.def"), "host:abc.def");
         assert_eq!(to_http_address("host:9333.notaport"), "host:9333.notaport");
-        assert_eq!(to_http_address("host:notaport.19333"), "host:notaport.19333");
+        assert_eq!(
+            to_http_address("host:notaport.19333"),
+            "host:notaport.19333"
+        );
         // Out-of-range ports must not be silently truncated either.
         assert_eq!(to_http_address("host:99999.19333"), "host:99999.19333");
     }

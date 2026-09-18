@@ -66,7 +66,7 @@ fn parse_go_version_number() -> Option<String> {
         }
     }
     match (major, minor) {
-        (Some(maj), Some(min)) => Some(format!("{}.{}", maj, format!("{:02}", min))),
+        (Some(maj), Some(min)) => Some(format!("{}.{:02}", maj, min)),
         _ => None,
     }
 }

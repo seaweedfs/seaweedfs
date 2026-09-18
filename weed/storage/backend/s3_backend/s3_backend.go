@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,8 @@ type S3BackendStorage struct {
 	endpoint              string
 	storageClass          string
 	forcePathStyle        bool
+	uploadConcurrency     int
+	downloadConcurrency   int
 	conn                  s3iface.S3API
 }
 
@@ -54,6 +57,8 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.endpoint = configuration.GetString(configPrefix + "endpoint")
 	s.storageClass = configuration.GetString(configPrefix + "storage_class")
 	s.forcePathStyle = util.ParseBool(configuration.GetString(configPrefix+"force_path_style"), true)
+	s.uploadConcurrency = parseConcurrency(configuration.GetString(configPrefix+"upload_concurrency"), defaultUploadConcurrency)
+	s.downloadConcurrency = parseConcurrency(configuration.GetString(configPrefix+"download_concurrency"), defaultDownloadConcurrency)
 	if s.storageClass == "" {
 		s.storageClass = "STANDARD_IA"
 	}
@@ -73,7 +78,25 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	m["endpoint"] = s.endpoint
 	m["storage_class"] = s.storageClass
 	m["force_path_style"] = util.BoolToString(s.forcePathStyle)
+	m["upload_concurrency"] = strconv.Itoa(s.uploadConcurrency)
+	m["download_concurrency"] = strconv.Itoa(s.downloadConcurrency)
 	return m
+}
+
+const (
+	defaultUploadConcurrency   = 5
+	defaultDownloadConcurrency = 5
+)
+
+func parseConcurrency(value string, def int) int {
+	if value == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(value); err == nil && n > 0 {
+		return n
+	}
+	glog.Warningf("invalid concurrency value %q, using default %d", value, def)
+	return def
 }
 
 func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
@@ -90,25 +113,32 @@ func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb
 	return f
 }
 
-func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error, concurrency int) (key string, size int64, err error) {
 	randomUuid, _ := uuid.NewRandom()
 	key = randomUuid.String()
+
+	if concurrency <= 0 {
+		concurrency = s.uploadConcurrency
+	}
 
 	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
 	util.Retry("upload to S3", func() error {
-		size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, s.storageClass, fn)
+		size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, s.storageClass, fn, concurrency)
 		return err
 	})
 
 	return
 }
 
-func (s *S3BackendStorage) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+func (s *S3BackendStorage) DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error, concurrency int) (size int64, err error) {
+	if concurrency <= 0 {
+		concurrency = s.downloadConcurrency
+	}
 
 	glog.V(1).Infof("download dat file of %s from remote s3.%s as %s", fileName, s.id, key)
 
-	size, err = downloadFromS3(s.conn, fileName, s.bucket, key, fn)
+	size, err = downloadFromS3(s.conn, fileName, s.bucket, key, fn, concurrency)
 
 	return
 }

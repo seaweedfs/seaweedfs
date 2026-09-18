@@ -81,7 +81,7 @@ impl TTL {
             return Ok(TTL::EMPTY);
         }
         let last_byte = s.as_bytes()[s.len() - 1];
-        let (num_str, unit_byte) = if last_byte >= b'0' && last_byte <= b'9' {
+        let (num_str, unit_byte) = if last_byte.is_ascii_digit() {
             // All digits — default to minutes (matching Go)
             (s, b'm')
         } else {
@@ -144,40 +144,73 @@ fn fit_ttl_count(count: u32, unit: u8) -> TTL {
     const MINUTE_SECS: u64 = 60;
 
     // First pass: try exact fits from largest to smallest
-    if seconds % YEAR_SECS == 0 && seconds / YEAR_SECS < 256 {
-        return TTL { count: (seconds / YEAR_SECS) as u8, unit: TTL_UNIT_YEAR };
+    if seconds.is_multiple_of(YEAR_SECS) && seconds / YEAR_SECS < 256 {
+        return TTL {
+            count: (seconds / YEAR_SECS) as u8,
+            unit: TTL_UNIT_YEAR,
+        };
     }
-    if seconds % MONTH_SECS == 0 && seconds / MONTH_SECS < 256 {
-        return TTL { count: (seconds / MONTH_SECS) as u8, unit: TTL_UNIT_MONTH };
+    if seconds.is_multiple_of(MONTH_SECS) && seconds / MONTH_SECS < 256 {
+        return TTL {
+            count: (seconds / MONTH_SECS) as u8,
+            unit: TTL_UNIT_MONTH,
+        };
     }
-    if seconds % WEEK_SECS == 0 && seconds / WEEK_SECS < 256 {
-        return TTL { count: (seconds / WEEK_SECS) as u8, unit: TTL_UNIT_WEEK };
+    if seconds.is_multiple_of(WEEK_SECS) && seconds / WEEK_SECS < 256 {
+        return TTL {
+            count: (seconds / WEEK_SECS) as u8,
+            unit: TTL_UNIT_WEEK,
+        };
     }
-    if seconds % DAY_SECS == 0 && seconds / DAY_SECS < 256 {
-        return TTL { count: (seconds / DAY_SECS) as u8, unit: TTL_UNIT_DAY };
+    if seconds.is_multiple_of(DAY_SECS) && seconds / DAY_SECS < 256 {
+        return TTL {
+            count: (seconds / DAY_SECS) as u8,
+            unit: TTL_UNIT_DAY,
+        };
     }
-    if seconds % HOUR_SECS == 0 && seconds / HOUR_SECS < 256 {
-        return TTL { count: (seconds / HOUR_SECS) as u8, unit: TTL_UNIT_HOUR };
+    if seconds.is_multiple_of(HOUR_SECS) && seconds / HOUR_SECS < 256 {
+        return TTL {
+            count: (seconds / HOUR_SECS) as u8,
+            unit: TTL_UNIT_HOUR,
+        };
     }
     // Minutes: truncating division
     if seconds / MINUTE_SECS < 256 {
-        return TTL { count: (seconds / MINUTE_SECS) as u8, unit: TTL_UNIT_MINUTE };
+        return TTL {
+            count: (seconds / MINUTE_SECS) as u8,
+            unit: TTL_UNIT_MINUTE,
+        };
     }
     // Second pass: truncating division from smallest to largest
     if seconds / HOUR_SECS < 256 {
-        return TTL { count: (seconds / HOUR_SECS) as u8, unit: TTL_UNIT_HOUR };
+        return TTL {
+            count: (seconds / HOUR_SECS) as u8,
+            unit: TTL_UNIT_HOUR,
+        };
     }
     if seconds / DAY_SECS < 256 {
-        return TTL { count: (seconds / DAY_SECS) as u8, unit: TTL_UNIT_DAY };
+        return TTL {
+            count: (seconds / DAY_SECS) as u8,
+            unit: TTL_UNIT_DAY,
+        };
     }
     if seconds / WEEK_SECS < 256 {
-        return TTL { count: (seconds / WEEK_SECS) as u8, unit: TTL_UNIT_WEEK };
+        return TTL {
+            count: (seconds / WEEK_SECS) as u8,
+            unit: TTL_UNIT_WEEK,
+        };
     }
     if seconds / MONTH_SECS < 256 {
-        return TTL { count: (seconds / MONTH_SECS) as u8, unit: TTL_UNIT_MONTH };
+        return TTL {
+            count: (seconds / MONTH_SECS) as u8,
+            unit: TTL_UNIT_MONTH,
+        };
     }
     if seconds / YEAR_SECS < 256 {
-        return TTL { count: (seconds / YEAR_SECS) as u8, unit: TTL_UNIT_YEAR };
+        return TTL {
+            count: (seconds / YEAR_SECS) as u8,
+            unit: TTL_UNIT_YEAR,
+        };
     }
     TTL::EMPTY
 }
@@ -225,7 +258,13 @@ mod tests {
         // 24h normalizes to 1d via fitTtlCount
         let ttl = TTL::read("24h").unwrap();
         assert_eq!(ttl.to_seconds(), 86400);
-        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_DAY
+            }
+        );
     }
 
     #[test]
@@ -271,12 +310,24 @@ mod tests {
     fn test_ttl_overflow_normalizes() {
         // Go's ReadTTL calls fitTtlCount: 300m = 18000s = 5h (exact fit)
         let ttl = TTL::read("300m").unwrap();
-        assert_eq!(ttl, TTL { count: 5, unit: TTL_UNIT_HOUR });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 5,
+                unit: TTL_UNIT_HOUR
+            }
+        );
 
         // 256h = 921600s. Doesn't fit in hours (256 >= 256), doesn't fit exact in days.
         // Second pass: 921600/86400 = 10 (truncated) < 256 -> 10d
         let ttl = TTL::read("256h").unwrap();
-        assert_eq!(ttl, TTL { count: 10, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 10,
+                unit: TTL_UNIT_DAY
+            }
+        );
     }
 
     #[test]
@@ -284,19 +335,49 @@ mod tests {
         // Go's ReadTTL calls fitTtlCount which normalizes to coarsest unit.
         // 120m -> 2h, 7d -> 1w, 24h -> 1d.
         let ttl = TTL::read("120m").unwrap();
-        assert_eq!(ttl, TTL { count: 2, unit: TTL_UNIT_HOUR });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 2,
+                unit: TTL_UNIT_HOUR
+            }
+        );
 
         let ttl = TTL::read("7d").unwrap();
-        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_WEEK });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_WEEK
+            }
+        );
 
         let ttl = TTL::read("24h").unwrap();
-        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_DAY
+            }
+        );
 
         // Values that don't simplify stay as-is
         let ttl = TTL::read("5d").unwrap();
-        assert_eq!(ttl, TTL { count: 5, unit: TTL_UNIT_DAY });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 5,
+                unit: TTL_UNIT_DAY
+            }
+        );
 
         let ttl = TTL::read("3m").unwrap();
-        assert_eq!(ttl, TTL { count: 3, unit: TTL_UNIT_MINUTE });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 3,
+                unit: TTL_UNIT_MINUTE
+            }
+        );
     }
 }

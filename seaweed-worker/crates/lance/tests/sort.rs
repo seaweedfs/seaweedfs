@@ -5,15 +5,15 @@
 //! the commit is the half worth testing.
 
 use anyhow::Result;
-use seaweed_worker_core::pb::{
-    config_value::Kind, ConfigValue, ExecuteJobRequest, JobSpec, RunDetectionRequest,
-};
 use seaweed_worker_core::JobHandler;
+use seaweed_worker_core::pb::{
+    ConfigValue, ExecuteJobRequest, JobSpec, RunDetectionRequest, config_value::Kind,
+};
 use weed_lance_worker::catalog::NamespaceClient;
-use weed_lance_worker::jobs::sort::{SortHandler, JOB_TYPE};
+use weed_lance_worker::jobs::sort::{JOB_TYPE, SortHandler};
 
 mod common;
-use common::{fallback, namespace_url, Recorder};
+use common::{Recorder, fallback, namespace_url};
 
 /// One live gateway and one shared catalog, and `list_all_tables` sweeps
 /// everything, so these tests take a lock the way the compaction ones do.

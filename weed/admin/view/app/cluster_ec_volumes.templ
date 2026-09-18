@@ -12,21 +12,21 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
     <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
         <div>
             <h1 class="h2">
-                <i class="fas fa-database me-2"></i>EC Volumes
+                <i class="bi bi-database me-2"></i>EC Volumes
             </h1>
             if data.Collection != "" {
                 <div class="d-flex align-items-center mt-2">
                     if data.Collection == "default" {
                         <span class="badge bg-secondary text-white me-2">
-                            <i class="fas fa-filter me-1"></i>Collection: default
+                            <i class="bi bi-funnel me-1"></i>Collection: default
                         </span>
                     } else {
                         <span class="badge bg-info text-white me-2">
-                            <i class="fas fa-filter me-1"></i>Collection: {data.Collection}
+                            <i class="bi bi-funnel me-1"></i>Collection: {data.Collection}
                         </span>
                     }
                     <a href={ dash.PUrl(ctx, "/storage/ec-volumes") } class="btn btn-sm btn-outline-secondary">
-                        <i class="fas fa-times me-1"></i>Clear Filter
+                        <i class="bi bi-x me-1"></i>Clear Filter
                     </a>
                 </div>
             }
@@ -41,7 +41,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                     <option value="100" if data.PageSize == 100 { selected="selected" }>100 per page</option>
                 </select>
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="window.location.reload()">
-                    <i class="fas fa-refresh me-1"></i>Refresh
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                 </button>
             </div>
         </div>
@@ -58,7 +58,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.TotalVolumes)}</h4>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-cubes fa-2x"></i>
+                            <i class="bi bi-boxes icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -73,7 +73,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.TotalShards)}</h4>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-puzzle-piece fa-2x"></i>
+                            <i class="bi bi-puzzle icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -89,7 +89,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             <small>All { fmt.Sprintf("%d", erasure_coding.TotalShardsCount) } shards present</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-check-circle fa-2x"></i>
+                            <i class="bi bi-check-circle icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -105,7 +105,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             <small>Incomplete/Critical</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-exclamation-triangle fa-2x"></i>
+                            <i class="bi bi-exclamation-triangle icon-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -115,7 +115,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
 
     <!-- EC Storage Information Note -->
     <div class="alert alert-info mb-4" role="alert">
-        <i class="fas fa-info-circle me-2"></i>
+        <i class="bi bi-info-circle me-2"></i>
         <strong>EC Storage Note:</strong> 
         EC volumes use erasure coding ({ fmt.Sprintf("%d+%d", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount) }) which stores data across { fmt.Sprintf("%d", erasure_coding.TotalShardsCount) } shards with redundancy. 
         Physical storage is approximately { fmt.Sprintf("%.1fx", float64(erasure_coding.TotalShardsCount)/float64(erasure_coding.DataShardsCount)) } the original logical data size due to { fmt.Sprintf("%d", erasure_coding.ParityShardsCount) } parity shards.
@@ -131,12 +131,12 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             Volume ID
                             if data.SortBy == "volume_id" {
                                 if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
+                                    <i class="bi bi-sort-up ms-1"></i>
                                 } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
+                                    <i class="bi bi-sort-down ms-1"></i>
                                 }
                             } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
+                                <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                             }
                         </a>
                     </th>
@@ -146,12 +146,12 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                                 Collection
                                 if data.SortBy == "collection" {
                                     if data.SortOrder == "asc" {
-                                        <i class="fas fa-sort-up ms-1"></i>
+                                        <i class="bi bi-sort-up ms-1"></i>
                                     } else {
-                                        <i class="fas fa-sort-down ms-1"></i>
+                                        <i class="bi bi-sort-down ms-1"></i>
                                     }
                                 } else {
-                                    <i class="fas fa-sort ms-1 text-muted"></i>
+                                    <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                                 }
                             </a>
                         </th>
@@ -161,12 +161,12 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             Shard Count
                             if data.SortBy == "total_shards" {
                                 if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
+                                    <i class="bi bi-sort-up ms-1"></i>
                                 } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
+                                    <i class="bi bi-sort-down ms-1"></i>
                                 }
                             } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
+                                <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                             }
                         </a>
                     </th>
@@ -177,12 +177,12 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             Status
                             if data.SortBy == "completeness" {
                                 if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
+                                    <i class="bi bi-sort-up ms-1"></i>
                                 } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
+                                    <i class="bi bi-sort-down ms-1"></i>
                                 }
                             } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
+                                <i class="bi bi-arrow-down-up ms-1 text-muted"></i>
                             }
                         </a>
                     </th>
@@ -239,7 +239,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                                         onclick="showVolumeDetails(event)" 
                                         data-volume-id={ fmt.Sprintf("%d", volume.VolumeID) }
                                         title="View EC volume details">
-                                    <i class="fas fa-info-circle"></i>
+                                    <i class="bi bi-info-circle"></i>
                                 </button>
                             </div>
                         </td>
@@ -256,12 +256,12 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                 if data.Page > 1 {
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page="1">
-                            <i class="fas fa-angle-double-left"></i>
+                            <i class="bi bi-chevron-double-left"></i>
                         </a>
                     </li>
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.Page-1) }>
-                            <i class="fas fa-chevron-left"></i>
+                            <i class="bi bi-chevron-left"></i>
                         </a>
                     </li>
                 }
@@ -310,12 +310,12 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                 if data.Page < data.TotalPages {
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.Page+1) }>
-                            <i class="fas fa-chevron-right"></i>
+                            <i class="bi bi-chevron-right"></i>
                         </a>
                     </li>
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.TotalPages) }>
-                            <i class="fas fa-angle-double-right"></i>
+                            <i class="bi bi-chevron-double-right"></i>
                         </a>
                     </li>
                 }
@@ -560,7 +560,7 @@ func formatIndividualShardSizes(shardSizes map[int]int64) string {
 // displayVolumeDistribution shows the distribution summary for a volume
 templ displayVolumeDistribution(volume dash.EcVolumeWithShards) {
     <div class="small">
-        <i class="fas fa-sitemap me-1"></i>
+        <i class="bi bi-diagram-3 me-1"></i>
         { calculateVolumeDistributionSummary(volume) }
     </div>
 }
@@ -573,20 +573,20 @@ templ displayVolumeDistribution(volume dash.EcVolumeWithShards) {
 // - Minor Issues: Few shards missing (still fully recoverable)
 templ displayEcVolumeStatus(volume dash.EcVolumeWithShards) {
     if volume.IsComplete {
-        <span class="badge bg-success"><i class="fas fa-check me-1"></i>Complete</span>
+        <span class="badge bg-success"><i class="bi bi-check me-1"></i>Complete</span>
     } else {
         if len(volume.MissingShards) > erasure_coding.DataShardsCount {
             // Unrecoverable: more shards missing than EC can reconstruct
-            <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>Critical ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+            <span class="badge bg-danger"><i class="bi bi-exclamation-octagon me-1"></i>Critical ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         } else if len(volume.MissingShards) > (erasure_coding.DataShardsCount/2) {
             // High risk: approaching unrecoverable state
-            <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+            <span class="badge bg-warning"><i class="bi bi-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         } else if len(volume.MissingShards) > (erasure_coding.ParityShardsCount/2) {
             // Reduced redundancy but still recoverable
-            <span class="badge bg-warning"><i class="fas fa-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+            <span class="badge bg-warning"><i class="bi bi-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         } else {
             // Minor: few shards missing, fully recoverable with good margin
-            <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
+            <span class="badge bg-info"><i class="bi bi-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         }
     }
 }

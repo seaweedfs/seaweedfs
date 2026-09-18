@@ -402,6 +402,11 @@ func TestResolveChunkManifestKeepsRealErrorAfterInternalCancellation(t *testing.
 			<-ctx.Done()
 			return nil, earlyErr
 		case "late":
+			// The assertion is specifically about preserving the earlier input's
+			// real error after a later input cancels the batch. Do not let the
+			// later lookup cancel the batch before the earlier lookup has entered;
+			// that scheduling race is especially visible on slower 32-bit CI.
+			<-earlyStarted
 			close(lateStarted)
 			return nil, lateErr
 		default:
