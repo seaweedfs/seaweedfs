@@ -117,6 +117,38 @@ pub fn build_grpc_endpoint(
     Ok(endpoint)
 }
 
+/// Connect `endpoint` through a connector that re-validates every resolved
+/// address at connect time (Go's `guardedDialerPolicy` mirror), pinning a
+/// validated copy/tail source against DNS rebinding. `allow_untrusted`
+/// preserves the plain connect for operators that opted out.
+pub async fn connect_guarded(
+    endpoint: Endpoint,
+    target: &str,
+    allow_untrusted: bool,
+) -> Result<Channel, GrpcClientError> {
+    if allow_untrusted {
+        return endpoint
+            .connect()
+            .await
+            .map_err(|e| GrpcClientError(format!("connect {} failed: {}", target, e)));
+    }
+    let target_owned = target.to_string();
+    let connector = tower::service_fn(move |uri: Uri| {
+        let target = target_owned.clone();
+        async move {
+            let host = uri.host().unwrap_or_default().to_string();
+            let port = uri.port_u16().unwrap_or(80);
+            crate::remote_storage::guarded_tcp_connect(&host, port, &target)
+                .await
+                .map(hyper_util::rt::TokioIo::new)
+        }
+    });
+    endpoint
+        .connect_with_connector(connector)
+        .await
+        .map_err(|e| GrpcClientError(format!("connect {} failed: {}", target, e)))
+}
+
 /// Parse a SeaweedFS server address (`"ip:port.grpcPort"` or
 /// `"ip:port"`) into the `host:grpcPort` form `build_grpc_endpoint`
 /// expects. With the trailing `.grpcPort` segment, that segment IS

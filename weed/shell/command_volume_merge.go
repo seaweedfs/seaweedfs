@@ -232,14 +232,14 @@ func startTailNeedleStream(grpcDialOption grpc.DialOption, volumeId needle.Volum
 	ch := make(chan *needle.Needle, 32)
 	stream := &tailNeedleStream{ch: ch}
 	go func() {
-		err := operation.TailVolumeFromSource(server, grpcDialOption, volumeId, 0, mergeIdleTimeoutSeconds, func(n *needle.Needle) error {
+		err := operation.TailVolumeFromSource(server, volumeId, 0, mergeIdleTimeoutSeconds, func(n *needle.Needle) error {
 			select {
 			case ch <- n:
 			case <-done:
 				return fmt.Errorf("merge cancelled")
 			}
 			return nil
-		})
+		}, grpcDialOption)
 		close(ch)
 		stream.setErr(err)
 	}()

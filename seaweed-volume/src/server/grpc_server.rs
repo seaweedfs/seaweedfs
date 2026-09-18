@@ -1841,18 +1841,22 @@ impl VolumeServer for VolumeGrpcService {
             ))
         })?;
 
-        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
+        let endpoint = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
             .map_err(|e| {
                 Status::internal(format!("VolumeCopy volume {} parse source: {}", vid, e))
-            })?
-            .connect()
-            .await
-            .map_err(|e| {
-                Status::internal(format!(
-                    "VolumeCopy volume {} connect to {}: {}",
-                    vid, grpc_addr, e
-                ))
             })?;
+        let channel = super::grpc_client::connect_guarded(
+            endpoint,
+            source,
+            self.state.allow_untrusted_remote_endpoints,
+        )
+        .await
+        .map_err(|e| {
+            Status::internal(format!(
+                "VolumeCopy volume {} connect to {}: {}",
+                vid, grpc_addr, e
+            ))
+        })?;
 
         let mut client =
             volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
@@ -2925,11 +2929,15 @@ impl VolumeServer for VolumeGrpcService {
         let grpc_addr = parse_grpc_address(source)
             .map_err(|e| Status::internal(format!("invalid source address {}: {}", source, e)))?;
 
-        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
-            .map_err(|e| Status::internal(format!("parse source: {}", e)))?
-            .connect()
-            .await
-            .map_err(|e| Status::internal(format!("connect to {}: {}", grpc_addr, e)))?;
+        let endpoint = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
+            .map_err(|e| Status::internal(format!("parse source: {}", e)))?;
+        let channel = super::grpc_client::connect_guarded(
+            endpoint,
+            source,
+            self.state.allow_untrusted_remote_endpoints,
+        )
+        .await
+        .map_err(|e| Status::internal(format!("connect to {}: {}", grpc_addr, e)))?;
 
         let mut client =
             volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
@@ -3438,21 +3446,25 @@ impl VolumeServer for VolumeGrpcService {
             ))
         })?;
 
-        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
+        let endpoint = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
             .map_err(|e| {
                 Status::internal(format!(
                     "VolumeEcShardsCopy volume {} parse source: {}",
                     vid, e
                 ))
-            })?
-            .connect()
-            .await
-            .map_err(|e| {
-                Status::internal(format!(
-                    "VolumeEcShardsCopy volume {} connect to {}: {}",
-                    vid, grpc_addr, e
-                ))
             })?;
+        let channel = super::grpc_client::connect_guarded(
+            endpoint,
+            source,
+            self.state.allow_untrusted_remote_endpoints,
+        )
+        .await
+        .map_err(|e| {
+            Status::internal(format!(
+                "VolumeEcShardsCopy volume {} connect to {}: {}",
+                vid, grpc_addr, e
+            ))
+        })?;
 
         let mut client =
             volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
@@ -6401,6 +6413,14 @@ mod tests {
         collection: &str,
         ttl: Option<crate::storage::needle::ttl::TTL>,
     ) -> (VolumeGrpcService, TempDir) {
+        make_local_service_with_volume_and_trust(collection, ttl, true)
+    }
+
+    fn make_local_service_with_volume_and_trust(
+        collection: &str,
+        ttl: Option<crate::storage::needle::ttl::TTL>,
+        allow_untrusted: bool,
+    ) -> (VolumeGrpcService, TempDir) {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
 
@@ -6472,7 +6492,7 @@ mod tests {
                 crate::remote_storage::s3_tier::S3TierRegistry::new(),
             ),
             read_mode: crate::config::ReadMode::Local,
-            allow_untrusted_remote_endpoints: true,
+            allow_untrusted_remote_endpoints: allow_untrusted,
             master_url: String::new(),
             master_urls: Vec::new(),
             seed_master_set: std::collections::HashSet::new(),
@@ -6494,6 +6514,36 @@ mod tests {
         });
 
         (VolumeGrpcService { state }, tmp)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_copy_and_tail_handlers_reject_blocked_sources() {
+        let (service, _tmp) = make_local_service_with_volume_and_trust("guard_rpc", None, false);
+
+        let copy_req = Request::new(volume_server_pb::VolumeCopyRequest {
+            volume_id: 1,
+            source_data_node: "169.254.169.254:80".to_string(),
+            ..Default::default()
+        });
+        let status = service.volume_copy(copy_req).await.err().unwrap();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{}", status);
+
+        let tail_req = Request::new(volume_server_pb::VolumeTailReceiverRequest {
+            volume_id: 1,
+            source_volume_server: "127.0.0.1:8080".to_string(),
+            ..Default::default()
+        });
+        let status = service.volume_tail_receiver(tail_req).await.err().unwrap();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{}", status);
+
+        let ec_req = Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+            volume_id: 1,
+            source_data_node: "127.0.0.1:8080".to_string(),
+            shard_ids: vec![0],
+            ..Default::default()
+        });
+        let status = service.volume_ec_shards_copy(ec_req).await.err().unwrap();
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{}", status);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
