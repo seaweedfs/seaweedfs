@@ -702,10 +702,12 @@ pub struct Volume {
     io_error_quarantined: std::sync::atomic::AtomicBool,
 
     /// Protobuf VolumeInfo for tiered storage (.vif file).
-    pub volume_info: PbVolumeInfo,
-
-    /// Whether this volume has a remote file reference.
-    pub has_remote_file: bool,
+    ///
+    /// Private: `volume_info.files` and the write mode derived from it are the
+    /// same fact, so outside callers edit the list through
+    /// [`Volume::update_remote_files`] and read it through
+    /// [`Volume::volume_info`].
+    volume_info: PbVolumeInfo,
 }
 
 /// What a volume is created with beyond its id, directories and index kind:
@@ -783,7 +785,6 @@ impl Volume {
             io_error_count: std::sync::atomic::AtomicI32::new(0),
             io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
             volume_info: PbVolumeInfo::default(),
-            has_remote_file: false,
         };
 
         v.load(true, true, preallocate, version)?;
@@ -823,7 +824,6 @@ impl Volume {
             io_error_count: std::sync::atomic::AtomicI32::new(0),
             io_error_quarantined: std::sync::atomic::AtomicBool::new(false),
             volume_info: PbVolumeInfo::default(),
-            has_remote_file: false,
         }
     }
 
@@ -876,7 +876,7 @@ impl Volume {
 
         let has_volume_info_file = self.load_vif()?;
 
-        if self.volume_info.read_only && !self.has_remote_file {
+        if self.volume_info.read_only && !self.has_remote_file() {
             if self.volume_info.read_only_can_delete {
                 self.no_write_can_delete = true;
             } else {
@@ -884,7 +884,7 @@ impl Volume {
             }
         }
 
-        if self.has_remote_file {
+        if self.has_remote_file() {
             self.load_remote_dat_file()?;
             if let Some(remote_file) = self.volume_info.files.first() {
                 if remote_file.modified_time > 0 {
@@ -954,7 +954,7 @@ impl Volume {
                     // Match Go: v.volumeInfo.Version = uint32(v.SuperBlock.Version)
                     self.volume_info.version = self.super_block.version.0 as u32;
                 }
-                Err(e) if self.has_remote_file => {
+                Err(e) if self.has_remote_file() => {
                     warn!(
                         volume_id = self.id.0,
                         error = %e,
@@ -980,7 +980,7 @@ impl Volume {
             // A changed --dir.idx leaves the new directory without an index.
             // The .dat still holds every row, so rebuild rather than mount the
             // volume with every needle invisible.
-            if !self.has_remote_file
+            if !self.has_remote_file()
                 && !Path::new(&self.file_name(".idx")).exists()
                 && self.current_dat_file_size()? > SUPER_BLOCK_SIZE as u64
             {
@@ -1013,7 +1013,7 @@ impl Volume {
 
             // Match Go: CheckVolumeDataIntegrity after loading index (volume_loading.go L154-159)
             // Only for non-remote volumes (remote storage may not have local .dat)
-            if !self.has_remote_file {
+            if !self.has_remote_file() {
                 if let Err(e) = self.check_volume_data_integrity() {
                     self.no_write_or_delete = true;
                     warn!(
@@ -1361,7 +1361,7 @@ impl Volume {
 
     /// Clone the remote backend handle (cheap: an `Arc` plus key/size) so a
     /// caller can stream a tiered `.dat` from S3 after dropping the store lock.
-    /// Returns `None` for local volumes. `has_remote_file` implies `dat_file`
+    /// Returns `None` for local volumes. `has_remote_file()` implies `dat_file`
     /// is `None`, so this selects the same backend `read_dat_slice` would.
     pub(crate) fn remote_dat_file(&self) -> Option<RemoteDatFile> {
         self.remote_dat_file.clone()
@@ -2208,7 +2208,7 @@ impl Volume {
         n.data = vec![];
         n.append_at_ns = get_append_at_ns(self.last_append_at_ns);
 
-        let offset = if !self.has_remote_file {
+        let offset = if !self.has_remote_file() {
             // Normal volume: append tombstone to .dat file
             let (offset, _, _) = self.append_needle(n)?;
             offset
@@ -2937,14 +2937,14 @@ impl Volume {
         can_delete: bool,
         persist: bool,
     ) -> Result<(), VolumeError> {
-        if can_delete && !self.has_remote_file {
+        if can_delete && !self.has_remote_file() {
             // deletes append tombstones to .idx; a read-only boot attached no writer
             self.attach_idx_writer_if_missing()?;
         }
         self.no_write_or_delete = !can_delete;
         if can_delete {
             self.no_write_can_delete = true;
-        } else if !self.has_remote_file {
+        } else if !self.has_remote_file() {
             // downgrading a canDelete mark; remote volumes keep their derived flag
             self.no_write_can_delete = false;
         }
@@ -2989,7 +2989,7 @@ impl Volume {
         let was_no_write_can_delete = self.no_write_can_delete;
         self.no_write_or_delete = false;
         // Remote-tiered volumes must stay no_write_can_delete regardless of marks.
-        if !self.has_remote_file {
+        if !self.has_remote_file() {
             self.no_write_can_delete = false;
         }
 
@@ -3040,6 +3040,37 @@ impl Volume {
         self.load_index()
     }
 
+    /// The tiered-storage VolumeInfo backing the .vif file.
+    pub fn volume_info(&self) -> &PbVolumeInfo {
+        &self.volume_info
+    }
+
+    /// Whether this volume is backed by a remote file, i.e. whether the .vif
+    /// holds a remote reference. Derived rather than mirrored, so it can never
+    /// disagree with the reference list it describes.
+    pub fn has_remote_file(&self) -> bool {
+        !self.volume_info.files.is_empty()
+    }
+
+    /// Edit the remote reference list and recompute everything derived from it.
+    ///
+    /// This is the only way to change `volume_info.files` from outside the
+    /// module: the write/delete mode and the needle map follow from whether the
+    /// volume is remote, so an edit that skipped the refresh would leave the
+    /// volume claiming a mode its .vif contradicts.
+    ///
+    /// Not transactional: on error `f` has already been applied and the volume
+    /// is left pinned read-only, which is the safe end of a half-finished tier
+    /// transition. A caller that needs the old list back restores it with a
+    /// second call.
+    pub fn update_remote_files(
+        &mut self,
+        f: impl FnOnce(&mut Vec<PbRemoteFile>),
+    ) -> Result<(), VolumeError> {
+        f(&mut self.volume_info.files);
+        self.refresh_remote_write_mode()
+    }
+
     /// Recompute the Go-style write/delete mode from the current remote tier
     /// state, and bring the needle map in line with it — a volume that stops
     /// being remote also stops using the read-only sorted index.
@@ -3047,9 +3078,8 @@ impl Volume {
     /// If the map cannot be rebuilt the volume is pinned read-only rather than
     /// published as writable with an index that rejects every put; a restart
     /// recovers it.
-    pub fn refresh_remote_write_mode(&mut self) -> Result<(), VolumeError> {
-        self.has_remote_file = !self.volume_info.files.is_empty();
-        if self.has_remote_file {
+    fn refresh_remote_write_mode(&mut self) -> Result<(), VolumeError> {
+        if self.has_remote_file() {
             self.no_write_can_delete = true;
             self.no_write_or_delete = false;
         } else if !self.volume_info.read_only_can_delete {
@@ -3101,7 +3131,7 @@ impl Volume {
                 if self.volume_info.version == 0 {
                     self.volume_info.version = Version::current().0 as u32;
                 }
-                if !self.has_remote_file && self.volume_info.bytes_offset == 0 {
+                if !self.has_remote_file() && self.volume_info.bytes_offset == 0 {
                     self.volume_info.bytes_offset = OFFSET_SIZE as u32;
                 }
                 if self.volume_info.bytes_offset != 0
@@ -3130,7 +3160,7 @@ impl Volume {
                 if self.volume_info.version == 0 {
                     self.volume_info.version = Version::current().0 as u32;
                 }
-                if !self.has_remote_file && self.volume_info.bytes_offset == 0 {
+                if !self.has_remote_file() && self.volume_info.bytes_offset == 0 {
                     self.volume_info.bytes_offset = OFFSET_SIZE as u32;
                 }
                 if self.volume_info.bytes_offset != 0
@@ -3177,7 +3207,7 @@ impl Volume {
         // remoteness-derived no_write_can_delete is not an operator mark; sync
         // volume_info so refresh_remote_write_mode sees a real mark
         let marked_can_delete =
-            self.no_write_can_delete && !self.has_remote_file && !self.no_write_or_delete;
+            self.no_write_can_delete && !self.has_remote_file() && !self.no_write_or_delete;
         self.volume_info.read_only = self.no_write_or_delete || marked_can_delete;
         self.volume_info.read_only_can_delete = marked_can_delete;
         let mut vif = VifVolumeInfo::from_pb(&self.volume_info);
@@ -3198,7 +3228,7 @@ impl Volume {
     /// Matches Go's SaveVolumeInfo which computes ExpireAtSec from TTL.
     pub fn save_volume_info(&mut self) -> Result<(), VolumeError> {
         let marked_can_delete =
-            self.no_write_can_delete && !self.has_remote_file && !self.no_write_or_delete;
+            self.no_write_can_delete && !self.has_remote_file() && !self.no_write_or_delete;
         self.volume_info.read_only = self.no_write_or_delete || marked_can_delete;
         self.volume_info.read_only_can_delete = marked_can_delete;
 
@@ -4268,7 +4298,7 @@ impl Volume {
 
         let (storage_name, storage_key) = self.remote_storage_name_key();
         if !keep_remote_data
-            && self.has_remote_file
+            && self.has_remote_file()
             && !storage_name.is_empty()
             && !storage_key.is_empty()
         {
@@ -7159,6 +7189,53 @@ mod tests {
         .unwrap()
     }
 
+    /// The remote reference and the derived write mode are the same fact, so a
+    /// caller must not be able to move one without the other. Every edit goes
+    /// through update_remote_files, which refreshes the mode on the way out.
+    #[test]
+    fn test_update_remote_files_refreshes_the_derived_write_mode() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        let file_size = v.dat_file_size().unwrap();
+
+        assert!(!v.has_remote_file());
+        assert!(!v.is_no_write_can_delete());
+        assert!(!v.is_no_write_or_delete());
+
+        v.update_remote_files(|files| {
+            files.push(PbRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "default".to_string(),
+                key: "remote-key".to_string(),
+                offset: 0,
+                file_size,
+                modified_time: 123,
+                extension: ".dat".to_string(),
+            })
+        })
+        .unwrap();
+
+        assert!(v.has_remote_file());
+        assert!(
+            v.is_no_write_can_delete(),
+            "a remote-backed volume only serves deletes"
+        );
+        assert!(!v.is_no_write_or_delete());
+
+        v.update_remote_files(|files| {
+            files.remove(0);
+        })
+        .unwrap();
+
+        assert!(!v.has_remote_file());
+        assert!(
+            !v.is_no_write_can_delete(),
+            "dropping the last remote reference publishes the volume as writable"
+        );
+        assert!(!v.is_no_write_or_delete());
+    }
+
     // Tier-down clears the remote mode and publishes the volume as writable. The
     // map it booted with is the read-only sorted one, whose put always fails, so
     // without a rebuild the first write appends to .dat and then cannot be
@@ -7190,18 +7267,21 @@ mod tests {
 
         // What the tier-up handler does once the .dat is uploaded: record the
         // remote reference and reconcile the mode.
-        v.volume_info.files.push(PbRemoteFile {
-            backend_type: "s3".to_string(),
-            backend_id: "vif_tierup_test".to_string(),
-            key: "remote-key".to_string(),
-            offset: 0,
-            file_size: v.dat_file_size().unwrap(),
-            modified_time: 123,
-            extension: ".dat".to_string(),
-        });
-        v.refresh_remote_write_mode().unwrap();
+        let file_size = v.dat_file_size().unwrap();
+        v.update_remote_files(|files| {
+            files.push(PbRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "vif_tierup_test".to_string(),
+                key: "remote-key".to_string(),
+                offset: 0,
+                file_size,
+                modified_time: 123,
+                extension: ".dat".to_string(),
+            })
+        })
+        .unwrap();
 
-        assert!(v.has_remote_file);
+        assert!(v.has_remote_file());
         assert!(
             matches!(v.nm, Some(NeedleMap::SortedFile(_))),
             "tier-up must install the sorted map without waiting for a restart"
@@ -7224,12 +7304,14 @@ mod tests {
         assert!(matches!(v.nm, Some(NeedleMap::SortedFile(_))));
 
         // The tail of the tier-down handler, once the .dat is back on disk.
-        v.volume_info.files.remove(0);
-        v.refresh_remote_write_mode().unwrap();
+        v.update_remote_files(|files| {
+            files.remove(0);
+        })
+        .unwrap();
         v.save_volume_info().unwrap();
         v.open_local_dat_backend().unwrap();
 
-        assert!(!v.has_remote_file);
+        assert!(!v.has_remote_file());
         assert!(
             !v.is_read_only(),
             "tier-down should publish a writable volume"
@@ -7646,7 +7728,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(v.has_remote_file);
+        assert!(v.has_remote_file());
         let Some(NeedleMap::SortedFile(ref nm)) = v.nm else {
             panic!(
                 "tiered volume should search the on-disk .sdx, got {:?}",
@@ -7730,16 +7812,19 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let mut v = make_test_volume(dir);
 
-        v.volume_info.files.push(PbRemoteFile {
-            backend_type: "s3".to_string(),
-            backend_id: "default".to_string(),
-            key: "remote-key".to_string(),
-            offset: 0,
-            file_size: v.dat_file_size().unwrap(),
-            modified_time: 123,
-            extension: ".dat".to_string(),
-        });
-        v.refresh_remote_write_mode().unwrap();
+        let file_size = v.dat_file_size().unwrap();
+        v.update_remote_files(|files| {
+            files.push(PbRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "default".to_string(),
+                key: "remote-key".to_string(),
+                offset: 0,
+                file_size,
+                modified_time: 123,
+                extension: ".dat".to_string(),
+            })
+        })
+        .unwrap();
         v.set_writable().unwrap();
 
         assert!(v.is_read_only());
@@ -8174,7 +8259,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(v.has_remote_file);
+        assert!(v.has_remote_file());
         assert!(v.dat_file.is_none());
         assert!(v.remote_dat_file.is_some());
 
