@@ -80,6 +80,7 @@ type S3Options struct {
 	externalUrl               *string
 	defaultFileMode           *string
 	cacheSizeMB               *int64
+	readerCacheSizeMB         *int64
 
 	allowUntrustedRemoteEndpoints *bool
 	// shutdownCtx, when non-nil, tells startS3Server/startIcebergServer to
@@ -129,6 +130,7 @@ func init() {
 	s3StandaloneOptions.externalUrl = cmdS3.Flag.String("externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Advertised to Iceberg and Lance clients, and tried first when verifying S3 signatures behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	s3StandaloneOptions.defaultFileMode = cmdS3.Flag.String("defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 	s3StandaloneOptions.cacheSizeMB = cmdS3.Flag.Int64("cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
+	s3StandaloneOptions.readerCacheSizeMB = cmdS3.Flag.Int64("readerCacheSizeMB", 0, "memory budget in MiB for downloaded and in-flight reader buffers across all S3 GETs (0 means unlimited)")
 	s3StandaloneOptions.allowUntrustedRemoteEndpoints = cmdS3.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 }
 
@@ -354,6 +356,11 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.Fatalf("S3 API Server startup error: %v", fileModeErr)
 	}
 
+	var readerCacheSizeMB int64
+	if s3opt.readerCacheSizeMB != nil {
+		readerCacheSizeMB = *s3opt.readerCacheSizeMB
+	}
+
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
 		Masters:                   masterAddresses,
@@ -380,6 +387,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		ExternalUrl:               s3opt.resolveExternalUrl(),
 		DefaultFileMode:           defaultFileMode,
 		CacheSizeMB:               *s3opt.cacheSizeMB,
+		ReaderCacheSizeMB:         readerCacheSizeMB,
 		MaxMB:                     filerMaxMB,
 
 		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,

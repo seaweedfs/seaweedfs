@@ -41,7 +41,7 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 	}
 	size := int64(mem.AllocationSize(s.chunkSize))
 	if size > b.limit {
-		return fmt.Errorf("chunk buffer needs %d bytes, exceeding reader cache budget %d; increase -readerCacheSizeMB", size, b.limit)
+		return fmt.Errorf("chunk buffer needs %d bytes, exceeding reader cache budget %d; increase the readerCacheSizeMB budget", size, b.limit)
 	}
 	for {
 		b.Lock()
