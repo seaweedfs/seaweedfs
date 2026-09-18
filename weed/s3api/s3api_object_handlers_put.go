@@ -1045,6 +1045,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	return etag, s3err.ErrNone, responseMetadata
 }
 
+// createLookupTimeout bounds the entry lookups confirmCreateLanded runs under
+// the object write lock, so a hung filer cannot stall the write path.
+const createLookupTimeout = 10 * time.Second
+
 // confirmCreateLanded resolves a create whose outcome is uncertain: a stored
 // entry resolving to the uploaded chunks confirms the write landed — the
 // finalization the error skipped then runs under the object write lock, and
@@ -1054,13 +1058,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize) (landed, absent bool) {
 	dir, name := path.Dir(filePath), path.Base(filePath)
 	owner := s3a.routableWriteOwner(bucket, object)
+	lookupCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
+	defer cancel()
 	// Verify, finalize, and roll back inside one critical section: a concurrent
 	// write to the same key must not slip in between them.
 	s3a.withObjectWriteLock(bucket, object, nil, func() s3err.ErrorCode {
 		var existing *filer_pb.Entry
 		uncertain, queried := false, false
 		for _, target := range s3a.createTargetFilers(owner, bucket, object) {
-			e, lookupErr := s3a.lookupEntryOnFiler(target, dir, name)
+			e, lookupErr := s3a.lookupEntryOnFiler(lookupCtx, target, dir, name)
 			queried = true
 			if e != nil {
 				existing = e
@@ -1077,7 +1083,7 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, ent
 		if len(uploaded) == 0 {
 			return s3err.ErrNone
 		}
-		resolved, _, resolveErr := filer.ResolveChunkManifest(context.Background(), s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+		resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
 		if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
 			return s3err.ErrNone
 		}
