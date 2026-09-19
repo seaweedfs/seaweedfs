@@ -2834,7 +2834,7 @@ impl Volume {
                 if offset.is_zero() && size.is_deleted() {
                     return Ok(());
                 }
-                let on_disk_size = on_disk_size(size);
+                let on_disk_size = Size(size.raw() as i32);
                 // compute the actual size of the needle in disk, including needle header, body and alignment padding.
                 total_read += get_actual_size(on_disk_size, version);
                 let actual_offset = offset.to_actual_offset();
@@ -4425,17 +4425,10 @@ impl Volume {
 // ============================================================================
 
 /// Generate volume file base name: dir/collection_id or dir/id
-/// Maps an .idx entry's size to the size its record carries in .dat: a
-/// deletion tombstone is indexed as TombstoneFileSize (-1) but appended with
-/// Size=0. Mirrors Go's onDiskSize.
-fn on_disk_size(size: Size) -> Size {
-    if size.is_deleted() { Size(0) } else { size }
-}
-
 /// Byte offset just past the needle's on-disk record. Mirrors Go's
 /// needleDiskEnd.
 pub(crate) fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
-    offset.to_actual_offset() + get_actual_size(on_disk_size(size), version)
+    offset.to_actual_offset() + get_actual_size(Size(size.raw() as i32), version)
 }
 
 fn size_mismatch_error(offset: i64, id: NeedleId, found: Size, expected: Size) -> VolumeError {
