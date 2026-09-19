@@ -1,0 +1,106 @@
+name: "Snowflake S3Compat API tests"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/iam/**'
+      - 'weed/command/**'
+      - 'weed/storage/**'
+      - 'weed/operation/**'
+      - 'weed/wdclient/**'
+      - 'weed/cluster/**'
+      - 'weed/pb/**'
+      - 'test/s3/snowflake/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-snowflake-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/iam/**'
+      - 'weed/command/**'
+      - 'weed/storage/**'
+      - 'weed/operation/**'
+      - 'weed/wdclient/**'
+      - 'weed/cluster/**'
+      - 'weed/pb/**'
+      - 'test/s3/snowflake/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-snowflake-tests.yml'
+
+concurrency:
+  group: ${{ github.event.pull_request.number || github.ref }}/s3-snowflake-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  snowflake-s3compat-tests:
+    name: Snowflake S3Compat API tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      WORK_DIR: /tmp/seaweedfs-snowflake-tests
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Install SeaweedFS
+        run: |
+          cd weed
+          go install -buildvcs=false
+          weed version
+
+      - name: Run Snowflake S3Compat API tests
+        timeout-minutes: 20
+        run: |
+          # Starts weed server, creates the buckets/objects the suite needs,
+          # clones the upstream suite, and runs mvn -Dtest=S3CompatApiTest.
+          bash test/s3/snowflake/run.sh
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          echo "=== SeaweedFS Server Log ==="
+          tail -200 "$WORK_DIR/weed.log" || echo "No server log"
+          echo ""
+          echo "=== Surefire results ==="
+          cat "$WORK_DIR"/snowflake-s3compat-api-test-suite/s3compatapi/target/surefire-reports/*.txt 2>/dev/null || echo "No surefire reports"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snowflake-s3compat-surefire-reports
+          path: /tmp/seaweedfs-snowflake-tests/snowflake-s3compat-api-test-suite/s3compatapi/target/surefire-reports/
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -9 -f "weed server" || true
+          rm -rf "$WORK_DIR" || true
