@@ -417,9 +417,9 @@ impl CompactNeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    pub fn ascending_visit<F>(&self, f: F) -> Result<(), String>
+    pub fn ascending_visit<F, E>(&self, f: F) -> Result<(), E>
     where
-        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
     {
         self.map.ascending_visit(f)
     }
@@ -1203,9 +1203,13 @@ impl RedbNeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    pub fn ascending_visit<F>(&self, mut f: F) -> Result<(), String>
+    ///
+    /// `E: From<String>` carries this map's own redb failures (`redb iter:
+    /// ...`) into whatever error type the visitor uses.
+    pub fn ascending_visit<F, E>(&self, mut f: F) -> Result<(), E>
     where
-        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
+        E: From<String>,
     {
         let txn = self
             .db_or_err()
@@ -1443,9 +1447,13 @@ impl NeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    pub fn ascending_visit<F>(&self, f: F) -> Result<(), String>
+    ///
+    /// `E: From<String>` is what the two disk-backed maps need to report their
+    /// own read failures; the in-memory one never produces any.
+    pub fn ascending_visit<F, E>(&self, f: F) -> Result<(), E>
     where
-        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
+        E: From<String>,
     {
         match self {
             NeedleMap::InMemory(nm) => nm.ascending_visit(f),
@@ -1463,10 +1471,12 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => {
                 let mut entries = Vec::new();
-                // The visitor never fails, so neither can this.
+                // `Infallible` says in the type what the old comment said in
+                // prose: an in-memory walk has nothing that can fail, so the
+                // discarded `Result` cannot be hiding an error.
                 let _ = nm.ascending_visit(|id, nv| {
                     entries.push((id, *nv));
-                    Ok(())
+                    Ok::<(), std::convert::Infallible>(())
                 });
                 Ok(entries)
             }
@@ -1838,7 +1848,7 @@ mod tests {
         let mut live = 0u64;
         nm.ascending_visit(|_, _| {
             live += 1;
-            Ok(())
+            Ok::<(), String>(())
         })
         .unwrap();
         assert_eq!(live, N - 1);
@@ -2051,7 +2061,7 @@ mod tests {
         let mut visited = Vec::new();
         nm.ascending_visit(|id, nv| {
             visited.push((id, nv.size));
-            Ok(())
+            Ok::<(), String>(())
         })
         .unwrap();
 

@@ -1183,7 +1183,10 @@ impl VolumeServer for VolumeGrpcService {
                 .inc();
 
             if let Err(e) = result {
-                let _ = tx.blocking_send(Err(Status::internal(e)));
+                let _ = tx.blocking_send(Err(crate::server::status_with_context(
+                    &format!("compact volume {vid}"),
+                    e,
+                )));
             }
         });
 
@@ -1225,7 +1228,10 @@ impl VolumeServer for VolumeGrpcService {
                     volume_size,
                 },
             )),
-            Err(e) => Err(Status::internal(e)),
+            Err(e) => Err(crate::server::status_with_context(
+                &format!("commit compact volume {vid}"),
+                e,
+            )),
         }
     }
 
@@ -1241,7 +1247,10 @@ impl VolumeServer for VolumeGrpcService {
             Ok(()) => Ok(Response::new(
                 volume_server_pb::VacuumVolumeCleanupResponse {},
             )),
-            Err(e) => Err(Status::internal(e)),
+            Err(e) => Err(crate::server::status_with_context(
+                &format!("cleanup volume {vid}"),
+                e,
+            )),
         }
     }
 
@@ -1253,9 +1262,9 @@ impl VolumeServer for VolumeGrpcService {
         let collection = &request.into_inner().collection;
         {
             let mut store = self.state.store.write().unwrap();
-            store
-                .delete_collection(collection)
-                .map_err(Status::internal)?;
+            store.delete_collection(collection).map_err(|e| {
+                crate::server::status_with_context(&format!("delete collection {collection}"), e)
+            })?;
         }
         // The delta the notify path derives is the only thing that tells the
         // master these slots came free: a heartbeat carries the whole list only
@@ -6568,6 +6577,35 @@ mod tests {
         let store = service.state.store.read().unwrap();
         let (_, v) = store.find_volume(VolumeId(1)).unwrap();
         assert_eq!(v.file_count(), 1);
+    }
+
+    /// `weed shell`'s vacuum loop has to tell "that volume moved or was
+    /// deleted under me" apart from "this disk is failing". The store now
+    /// answers `VolumeError::VolumeNotFound`, so the RPC must surface
+    /// `NotFound` instead of the blanket `Internal` every store error used to
+    /// collapse into.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_vacuum_volume_commit_missing_volume_is_not_found() {
+        let (service, _tmp) = make_local_service_with_volume("vacuum_commit_missing", None);
+
+        let mut request =
+            Request::new(volume_server_pb::VacuumVolumeCommitRequest { volume_id: 4242 });
+        request
+            .extensions_mut()
+            .insert(tonic::transport::server::TcpConnectInfo {
+                local_addr: None,
+                remote_addr: Some("127.0.0.1:65000".parse().unwrap()),
+            });
+
+        let err = service
+            .vacuum_volume_commit(request)
+            .await
+            .expect_err("committing a compaction for a volume that is not mounted must fail");
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err:?}");
+        assert!(
+            err.message().contains("4242"),
+            "the message must still name the volume: {err:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
