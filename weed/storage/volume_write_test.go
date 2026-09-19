@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
@@ -336,5 +337,118 @@ func TestWriteNeedleBlobRejectsNegativeSize(t *testing.T) {
 				t.Errorf("needle 2 was indexed with size %d", nv.Size)
 			}
 		})
+	}
+}
+
+// WriteNeedleBlob appended a blob of any length. One that is not a whole number
+// of 8-byte units leaves .dat off the padding grid, so the next ordinary write is
+// indexed at a truncated offset and reads back as EOF. One that is 8 bytes off,
+// like a v3 record sent to a v2 volume, stays on the grid but leaves bytes that a
+// .dat scan reads as the next record.
+func TestWriteNeedleBlobRejectsLengthMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(blob []byte) []byte
+	}{
+		{"one byte too long", func(blob []byte) []byte { return append(blob, 0) }},
+		{"one byte short", func(blob []byte) []byte { return blob[:len(blob)-1] }},
+		{"8 bytes too long", func(blob []byte) []byte { return append(blob, make([]byte, 8)...) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			if err != nil {
+				t.Fatalf("volume creation: %v", err)
+			}
+			defer v.Close()
+
+			n := newRandomNeedle(1)
+			offset, _, _, err := v.writeNeedle2(n, true, false, false)
+			if err != nil {
+				t.Fatalf("write needle: %v", err)
+			}
+			blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
+			if err != nil {
+				t.Fatalf("read needle blob: %v", err)
+			}
+
+			datSizeBefore, _, _ := v.DataBackend.GetStat()
+
+			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), tc.mutate(blob), n.Size); err == nil {
+				t.Error("expected WriteNeedleBlob to reject a blob whose length does not match its size")
+			}
+
+			datSizeAfter, _, _ := v.DataBackend.GetStat()
+			if datSizeAfter != datSizeBefore {
+				t.Errorf(".dat grew from %d to %d on a rejected blob", datSizeBefore, datSizeAfter)
+			}
+
+			next := newRandomNeedle(3)
+			if _, _, _, err = v.writeNeedle2(next, true, false, false); err != nil {
+				t.Fatalf("write needle 3: %v", err)
+			}
+			got := newEmptyNeedle(3)
+			if _, err = v.readNeedle(got, nil, nil); err != nil {
+				t.Fatalf("read back needle 3: %v", err)
+			}
+			if !bytes.Equal(got.Data, next.Data) {
+				t.Error("needle 3 read back with different data")
+			}
+		})
+	}
+}
+
+// The length check must pass what the real callers send: a needle's own record,
+// and the size-0 record a delete leaves, which volume.merge copies too.
+func TestWriteNeedleBlobRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	n := newRandomNeedle(1)
+	offset, _, _, err := v.writeNeedle2(n, true, false, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
+	if err != nil {
+		t.Fatalf("read needle blob: %v", err)
+	}
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size); err != nil {
+		t.Fatalf("write needle blob: %v", err)
+	}
+	got := newEmptyNeedle(2)
+	if _, err = v.readNeedle(got, nil, nil); err != nil {
+		t.Fatalf("read back needle 2: %v", err)
+	}
+	if !bytes.Equal(got.Data, n.Data) {
+		t.Error("needle 2 read back with different data")
+	}
+
+	deleteOffset, _, _ := v.DataBackend.GetStat()
+	if _, err = v.doDeleteRequest(newEmptyNeedle(1)); err != nil {
+		t.Fatalf("delete needle 1: %v", err)
+	}
+	deleteRecord, err := v.ReadNeedleBlob(deleteOffset, 0)
+	if err != nil {
+		t.Fatalf("read delete record: %v", err)
+	}
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(3), deleteRecord, 0); err != nil {
+		t.Fatalf("write size-0 needle blob: %v", err)
+	}
+
+	next := newRandomNeedle(4)
+	if _, _, _, err = v.writeNeedle2(next, true, false, false); err != nil {
+		t.Fatalf("write needle 4: %v", err)
+	}
+	got = newEmptyNeedle(4)
+	if _, err = v.readNeedle(got, nil, nil); err != nil {
+		t.Fatalf("read back needle 4: %v", err)
+	}
+	if !bytes.Equal(got.Data, next.Data) {
+		t.Error("needle 4 read back with different data")
 	}
 }
