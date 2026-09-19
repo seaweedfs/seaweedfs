@@ -3,6 +3,7 @@ package needle
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -66,8 +67,13 @@ func TestReadNeedleBodyBytesWrittenNeedles(t *testing.T) {
 				written := &Needle{Id: 7, Cookie: 9, Data: data, Checksum: NewCRC(data), AppendAtNs: 42}
 				buf := new(bytes.Buffer)
 				if _, _, err := writeNeedleByVersion(version, written, 0, buf); err != nil {
-					// not every readable version is writable in every build
-					t.Skipf("write needle: %v", err)
+					// Some builds can read a version they cannot write; skip
+					// only that recognized case so a real writer regression
+					// still fails the test.
+					if strings.Contains(strings.ToLower(err.Error()), "unsupported version") {
+						t.Skipf("version %d is not writable in this build: %v", version, err)
+					}
+					t.Fatalf("write needle: %v", err)
 				}
 
 				n := new(Needle)
