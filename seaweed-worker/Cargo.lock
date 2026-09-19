@@ -5330,6 +5330,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "seaweed-common"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+]
+
+[[package]]
 name = "seaweed-worker-core"
 version = "0.1.0"
 dependencies = [
@@ -5340,6 +5347,7 @@ dependencies = [
  "prost",
  "prost-types",
  "protoc-bin-vendored",
+ "seaweed-common",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -6449,7 +6457,7 @@ dependencies = [
  "lance-table",
  "prometheus",
  "reqwest 0.12.28",
- "rustls",
+ "seaweed-common",
  "seaweed-worker-core",
  "seaweed-worker-sort",
  "serde",

@@ -31,6 +31,9 @@ ARG TAGS
 COPY weed-volume-prebuilt/ /prebuilt/
 COPY weed-worker-prebuilt/ /prebuilt-worker/
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build/seaweed-volume
+# seaweed-common is a path dependency of seaweed-volume that lives beside it,
+# so the source build below needs it in the same relative position.
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-common /build/seaweed-common
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed /build/weed
 WORKDIR /build/seaweed-volume
 RUN if [ -f "/prebuilt/weed-volume-${TARGETARCH}" ]; then \

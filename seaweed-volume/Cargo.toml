@@ -29,6 +29,11 @@ redb-experimental-cursor = ["redb/experimental_cursor"]
 needless_update = "allow"
 
 [dependencies]
+# Helpers the Rust plugin workers (seaweed-worker) need as well. A path
+# dependency because the two trees are separate cargo workspaces with no
+# common root manifest.
+seaweed-common = { path = "../seaweed-common" }
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }

@@ -5,12 +5,14 @@ on:
     branches: [ master ]
     paths:
       - 'seaweed-worker/**'
+      - 'seaweed-common/**'
       - 'weed/pb/plugin.proto'
       - '.github/workflows/rust-worker-tests.yml'
   push:
     branches: [ master, main ]
     paths:
       - 'seaweed-worker/**'
+      - 'seaweed-common/**'
       - 'weed/pb/plugin.proto'
       - '.github/workflows/rust-worker-tests.yml'
 
@@ -49,7 +51,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             seaweed-worker/target/release
-          key: rust-worker-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-worker/Cargo.lock') }}
+          key: rust-worker-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-worker/Cargo.lock', 'seaweed-common/Cargo.lock') }}
           restore-keys: |
             rust-worker-${{ steps.toolchain.outputs.fingerprint }}-
 
@@ -83,6 +85,17 @@ jobs:
       # Uncomment to keep it that way.
       # - name: Check formatting
       #   run: cd seaweed-worker && cargo fmt --all --check
+
+      # seaweed-common is a path dependency of core and lance, not a member of
+      # this workspace, so `--workspace` below does not reach its own tests.
+      # Release and this job's cached target directory, and the cache key above
+      # covers the shared crate's lock. That lock pins the same rustls and
+      # aws-lc-sys this workspace resolves, so the release build above has
+      # already paid for them.
+      - name: Run shared-crate unit tests
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/seaweed-worker/target
+        run: cd seaweed-common && cargo test --release
 
       # The tests that need a live gateway skip themselves without one, the way
       # the Go integration tests skip without Docker; the lifecycle suite in

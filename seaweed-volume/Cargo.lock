@@ -3488,6 +3488,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "seaweed-common"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+]
+
+[[package]]
 name = "sec1"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4584,6 +4591,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "rusty-leveldb",
+ "seaweed-common",
  "serde",
  "serde_json",
  "serde_urlencoded",

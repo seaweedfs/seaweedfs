@@ -9,6 +9,9 @@ description = "SeaweedFS plugin.proto worker contract"
 name = "seaweed_worker_core"
 
 [dependencies]
+# Helpers the Rust volume server needs as well. A path dependency because
+# the two trees are separate cargo workspaces with no common root manifest.
+seaweed-common = { path = "../../../seaweed-common" }
 anyhow.workspace = true
 async-trait.workspace = true
 prost.workspace = true
