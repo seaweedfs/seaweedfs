@@ -408,6 +408,68 @@ func TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck(t *testing.T) {
 	}
 }
 
+// TestCompactByVolumeData_SkipsNegativeSizeHeader covers issue #6763: a .dat
+// record whose header carries size -1 made compaction panic with "slice bounds
+// out of range [:-1]". The corrupt record must be skipped and the needles on
+// both sides of it kept.
+func TestCompactByVolumeData_SkipsNegativeSizeHeader(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+		t.Fatalf("write needle 1: %v", err)
+	}
+
+	// Size -1 still yields a positive body length, so the scan reads a body
+	// for this record and parses it.
+	datSize, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		t.Fatalf("stat .dat: %v", err)
+	}
+	corrupt := make([]byte, needle.GetActualSize(-1, v.Version()))
+	types.NeedleIdToBytes(corrupt[types.CookieSize:types.CookieSize+types.NeedleIdSize], types.Uint64ToNeedleId(99))
+	types.SizeToBytes(corrupt[types.CookieSize+types.NeedleIdSize:types.NeedleHeaderSize], -1)
+	if _, err := v.DataBackend.WriteAt(corrupt, datSize); err != nil {
+		t.Fatalf("append corrupt record: %v", err)
+	}
+
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(2), true, false, false); err != nil {
+		t.Fatalf("write needle 2: %v", err)
+	}
+
+	if err := v.CompactByVolumeData(nil); err != nil {
+		t.Fatalf("CompactByVolumeData: %v", err)
+	}
+
+	cpx, err := os.Open(filepath.Join(dir, "1.cpx"))
+	if err != nil {
+		t.Fatalf("open .cpx: %v", err)
+	}
+	defer cpx.Close()
+	kept := map[types.NeedleId]bool{}
+	if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, size types.Size) error {
+		if size.IsValid() {
+			kept[key] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .cpx: %v", err)
+	}
+	for _, id := range []uint64{1, 2} {
+		if !kept[types.Uint64ToNeedleId(id)] {
+			t.Errorf("needle %d missing from the compacted index", id)
+		}
+	}
+	if kept[types.Uint64ToNeedleId(99)] {
+		t.Errorf("corrupt record 99 should not be in the compacted index")
+	}
+}
+
 // TestExceedsExpectedCompactedSize guards the copy-phase integrity check
 // against regressing into double-subtracting skipped bytes: expectedLiveBytes
 // already excludes needles dropped as unreadable (they return before being
