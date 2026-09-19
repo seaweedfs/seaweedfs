@@ -85,21 +85,21 @@ func (v *Volume) scrubVolumeData(idxFile *os.File, idxFileSize int64) (int64, []
 		if offset.IsZero() && size.IsDeleted() {
 			return nil
 		}
-		// compute the actual size of the needle in disk, including needle header, body and alignment padding.
-		actualSize := int64(needle.GetActualSize(size, version))
-
-		// TODO: Needle.ReadData() is currently broken for deleted files, which have a types.Size < 0. Fix
-		// so deleted needles get properly scrubbed as well.
-		// TODO: idx.WalkIndexFile() returns a size -1 (and actual size of 32 bytes) for deleted needles. We
-		// want to scrub deleted needles whenever possible.
+		physicalSize := size
 		if size.IsDeleted() {
-			totalRead += actualSize
-			return nil
+			// TombstoneFileSize is an index-only deletion marker. The physical
+			// tombstone in .dat carries a zero-sized needle body.
+			physicalSize = types.Size(0)
 		}
+		// Compute the actual size of the needle on disk, including the needle
+		// header, body, tail, and alignment padding.
+		actualSize := int64(needle.GetActualSize(physicalSize, version))
 
 		n := needle.Needle{}
-		if err := n.ReadData(v.DataBackend, offset.ToActualOffset(), size, version); err != nil {
+		if err := n.ReadData(v.DataBackend, offset.ToActualOffset(), physicalSize, version); err != nil {
 			errs = append(errs, fmt.Errorf("failed to read needle %d on volume %d: %v", id, v.Id, err))
+		} else if size.IsDeleted() && n.Id != id {
+			errs = append(errs, fmt.Errorf("failed to read needle %d on volume %d: index key %v does not match needle's Id %v", id, v.Id, id, n.Id))
 		}
 
 		totalRead += actualSize
