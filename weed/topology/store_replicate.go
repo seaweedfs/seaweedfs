@@ -45,6 +45,15 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}
 	}
 
+	// a server without the volume only forwards the write, so with no replica
+	// to forward to it would be acknowledged without being stored
+	hasLocalVolume := s.GetVolume(volumeId) != nil
+	if !hasLocalVolume && len(remoteLocations) == 0 {
+		err = fmt.Errorf("volume %d not found on %s:%d", volumeId, s.Ip, s.Port)
+		glog.V(0).Infoln(err)
+		return
+	}
+
 	// read fsync value
 	fsync := false
 	if r.FormValue("fsync") == "true" {
@@ -60,7 +69,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}(time.Now())
 	}
 
-	if s.GetVolume(volumeId) != nil {
+	if hasLocalVolume {
 		start := time.Now()
 
 		inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToLocalDisk)
