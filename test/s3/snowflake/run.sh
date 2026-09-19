@@ -93,7 +93,7 @@ if [ -z "${SKIP_SERVER_START:-}" ]; then
   mkdir -p "$WEED_DATA_DIR"
 
   echo "Starting SeaweedFS (data dir: $WEED_DATA_DIR)"
-  "$WEED_BIN" server -filer -filer.maxMB=64 -s3 -ip.bind 127.0.0.1 \
+  "$WEED_BIN" server -filer -filer.maxMB=64 -s3 -ip 127.0.0.1 -ip.bind 127.0.0.1 \
     -dir="$WEED_DATA_DIR" \
     -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=5000 \
     -volume.max=4 -volume.preStopSeconds=1 \
@@ -102,6 +102,7 @@ if [ -z "${SKIP_SERVER_START:-}" ]; then
     -metricsPort="$METRICS_PORT" \
     -s3.allowDeleteBucketNotEmpty=true \
     -s3.autoCreateBucket=false \
+    -s3.port.iceberg=0 -s3.port.lance=0 \
     -s3.config="$SCRIPT_DIR/s3.json" \
     > "$WORK_DIR/weed.log" 2>&1 &
   WEED_PID=$!
