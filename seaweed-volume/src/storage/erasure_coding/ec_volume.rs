@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::sync::RwLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::pb::master_pb;
 use crate::storage::erasure_coding::ec_locate;
@@ -19,6 +19,32 @@ use crate::storage::volume_open::open_volume_file;
 
 /// An erasure-coded volume managing its local shards and index.
 pub const IO_ERROR_TOLERANCE: i32 = 3;
+
+/// The shard-location cache: where each shard lives, when that was last learned
+/// from the master, and whether a read has since disproved it. One struct behind
+/// one lock, because the freshness heuristic judges all three together (the map
+/// and its time from the reader's own snapshot, see
+/// `EcVolume::claim_shard_locations_refresh`) — a map published ahead of its
+/// refresh time reads as a fresh map stamped with the previous lookup, and a
+/// half-populated map must never look fresh at all.
+#[derive(Default)]
+pub(crate) struct ShardLocationCache {
+    /// Maps shard ID -> list of server addresses where that shard exists.
+    /// Used for distributed EC reads across the cluster.
+    locations: HashMap<ShardId, Vec<String>>,
+    /// Wall-clock timestamp of the most recent successful `LookupEcVolume`
+    /// refresh of `locations`. `None` until the first refresh. Drives the
+    /// staleness heuristic in `cached_lookup_ec_shard_locations` (mirrors Go's
+    /// `ShardLocationsRefreshTime`).
+    refreshed_at: Option<Instant>,
+    /// Marks the map for a prompt re-check: a read that failed against a cached
+    /// location has disproved what the map claims, and the normal freshness
+    /// window is far too long to serve from a map known to be wrong. Mirrors the
+    /// invalidation Go's `forgetShardId` performs. A field under the map's lock
+    /// rather than an atomic so the refresh can consume the mark in one critical
+    /// section, and a mark raised meanwhile survives for the next refresh.
+    stale: bool,
+}
 
 pub struct EcVolume {
     pub volume_id: VolumeId,
@@ -50,25 +76,11 @@ pub struct EcVolume {
     pub disk_type: DiskType,
     /// Directory where .ecx/.ecj were actually found (may differ from dir_idx after fallback).
     ecx_actual_dir: String,
-    /// Maps shard ID -> list of server addresses where that shard exists.
-    /// Used for distributed EC reads across the cluster. Wrapped in
-    /// `RwLock` so the read path can refresh the map (under master
-    /// lookup) without holding the Store write lock — mirrors Go's
-    /// `ShardLocationsLock sync.RWMutex` in `weed/storage/erasure_coding/ec_volume.go`.
-    pub shard_locations: std::sync::RwLock<HashMap<ShardId, Vec<String>>>,
-    /// Wall-clock timestamp of the most recent successful
-    /// `LookupEcVolume` refresh of `shard_locations`. `None` until the
-    /// first refresh. Drives the staleness heuristic in
-    /// `cached_lookup_ec_shard_locations` (mirrors Go's
-    /// `ShardLocationsRefreshTime`).
-    pub shard_locations_refresh_time: std::sync::Mutex<Option<std::time::Instant>>,
-    /// Marks the map for a prompt re-check: a read that failed against a cached
-    /// location has disproved what the map claims, and the normal freshness
-    /// window is far too long to serve from a map known to be wrong. Mirrors the
-    /// invalidation Go's `forgetShardId` performs. A mutex rather than an atomic
-    /// so the refresh can judge the map and consume the mark in one critical
-    /// section, and a mark raised meanwhile survives for the next refresh.
-    pub shard_locations_stale: std::sync::Mutex<bool>,
+    /// Where each shard lives and how far that is to be trusted, all under one
+    /// `RwLock` so the read path can refresh it (under master lookup) without
+    /// holding the Store write lock — mirrors Go's `ShardLocationsLock
+    /// sync.RWMutex` in `weed/storage/erasure_coding/ec_volume.go`.
+    shard_locations: RwLock<ShardLocationCache>,
     /// EC volume expiration time (unix epoch seconds), set during EC encode from TTL.
     pub expire_at_sec: u64,
     /// Encode-run identity (unix nanos) loaded from the .vif EcShardConfig. A read
@@ -441,9 +453,7 @@ impl EcVolume {
             deleted_needles: RwLock::new(HashSet::new()),
             disk_type: DiskType::default(),
             ecx_actual_dir: dir_idx.to_string(),
-            shard_locations: std::sync::RwLock::new(HashMap::new()),
-            shard_locations_refresh_time: std::sync::Mutex::new(None),
-            shard_locations_stale: std::sync::Mutex::new(false),
+            shard_locations: RwLock::new(ShardLocationCache::default()),
             expire_at_sec,
             encode_ts_ns,
             bitrot: None,
@@ -938,37 +948,6 @@ impl EcVolume {
 
     // ---- Shard locations (distributed tracking) ----
 
-    /// Set the list of server addresses for a single shard ID. Does
-    /// NOT touch `shard_locations_refresh_time` — a per-shard write
-    /// from inside a multi-shard population (e.g. iterating the
-    /// `LookupEcVolume` response shard-by-shard) would otherwise
-    /// flip the staleness flag while the map is still incomplete,
-    /// letting a concurrent reader observe `needs_refresh == false`
-    /// against a half-populated cache and return NotFound for the
-    /// not-yet-inserted shards.
-    ///
-    /// Callers writing back a whole `LookupEcVolume` reply should use
-    /// [`Self::merge_shard_locations`] instead — it upserts the reply's
-    /// shards under the write lock and advances the refresh timestamp in
-    /// one step, retaining cached shards the reply omits.
-    pub fn set_shard_locations(&self, shard_id: ShardId, locations: Vec<String>) {
-        self.shard_locations
-            .write()
-            .unwrap()
-            .insert(shard_id, locations);
-    }
-
-    /// Atomically replace the entire shard-locations map and stamp
-    /// the refresh time. Used by the distributed-read path's
-    /// post-`LookupEcVolume` write-back so the cache transitions
-    /// from old → fresh in a single observable step — concurrent
-    /// readers either see the full prior map or the full new map,
-    /// never an intermediate state with the freshness flag flipped.
-    pub fn replace_shard_locations(&self, locations: HashMap<ShardId, Vec<String>>) {
-        *self.shard_locations.write().unwrap() = locations;
-        *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
-    }
-
     /// Merge a fresh `LookupEcVolume` reply into the shard-locations cache and
     /// stamp the refresh time, returning a clone of the resulting map.
     ///
@@ -977,29 +956,54 @@ impl EcVolume {
     /// from the reply keep their previously-cached locations — so a reply that
     /// passes the data-shard completeness guard but omits a shard already in cache
     /// does not drop that shard's known location (unlike a full replace).
-    pub fn merge_shard_locations(
+    ///
+    /// Map and refresh time advance in one write section, so no reader can pair
+    /// the merged map with the previous lookup's timestamp.
+    pub(crate) fn merge_shard_locations(
         &self,
         locations: HashMap<ShardId, Vec<String>>,
     ) -> HashMap<ShardId, Vec<String>> {
-        let merged = {
-            let mut guard = self.shard_locations.write().unwrap();
-            for (shard_id, addrs) in locations {
-                guard.insert(shard_id, addrs);
-            }
-            guard.clone()
-        };
-        *self.shard_locations_refresh_time.lock().unwrap() = Some(std::time::Instant::now());
-        merged
+        let mut cache = self.shard_locations.write().unwrap();
+        for (shard_id, addrs) in locations {
+            cache.locations.insert(shard_id, addrs);
+        }
+        cache.refreshed_at = Some(Instant::now());
+        cache.locations.clone()
     }
 
-    /// Get a cloned list of server addresses for a given shard ID.
-    pub fn get_shard_locations(&self, shard_id: ShardId) -> Vec<String> {
-        self.shard_locations
-            .read()
-            .unwrap()
-            .get(&shard_id)
-            .cloned()
-            .unwrap_or_default()
+    /// The cached map and the time it was learned, read in one section. Both
+    /// halves describe the same refresh, which is what the freshness heuristic
+    /// assumes when it ages the map against the timestamp.
+    pub(crate) fn shard_locations_snapshot(
+        &self,
+    ) -> (HashMap<ShardId, Vec<String>>, Option<Instant>) {
+        let cache = self.shard_locations.read().unwrap();
+        (cache.locations.clone(), cache.refreshed_at)
+    }
+
+    /// Mark the cached map for a prompt re-check after a read failed against one
+    /// of its locations.
+    pub(crate) fn mark_shard_locations_stale(&self) {
+        self.shard_locations.write().unwrap().stale = true;
+    }
+
+    /// Put the stale mark to `decide`, and clear it only if `decide` says the
+    /// master lookup is going ahead — both in one critical section, so the mark
+    /// is consumed exactly once by the refresh that answers for it and a mark
+    /// raised meanwhile survives for the next one. `decide` owns the rest of the
+    /// freshness rule; it judges the map its caller will actually read from,
+    /// which is not necessarily the one cached here by the time it runs.
+    ///
+    /// `decide` runs under the cache write lock and must not acquire other locks:
+    /// every caller reaches this while already holding the store read lock, so a
+    /// cache-write → store-read inside `decide` would invert that order.
+    pub(crate) fn claim_shard_locations_refresh(&self, decide: impl FnOnce(bool) -> bool) -> bool {
+        let mut cache = self.shard_locations.write().unwrap();
+        let refresh = decide(cache.stale);
+        if refresh {
+            cache.stale = false;
+        }
+        refresh
     }
 
     // ---- I/O error tracking (mirrors Go's EcVolume IoErrorTracker) ----
@@ -3506,6 +3510,93 @@ mod tests {
             errs.iter().any(|e| e.contains("not verified")),
             "excluded runtime must be reported, got {:?}",
             errs
+        );
+    }
+
+    /// Mount a bare EC volume: an empty .ecx is enough to exercise the
+    /// shard-location cache, which is pure in-memory state.
+    fn mount_bare_ec_volume(dir: &str) -> EcVolume {
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(1));
+        std::fs::write(format!("{}.ecx", base), b"").unwrap();
+        EcVolume::new(dir, dir, "", VolumeId(1)).unwrap()
+    }
+
+    /// The map and the refresh time it was learned at must become visible in the
+    /// same step. A merge that published the map first and stamped the time
+    /// afterwards let a reader in between pair a fresh map with the previous
+    /// refresh time -- and the freshness heuristic judges exactly that pair, so
+    /// the reader re-looked-up a map that had just been refreshed.
+    #[test]
+    fn merge_shard_locations_publishes_map_and_time_together() {
+        let tmp = TempDir::new().unwrap();
+        let vol = mount_bare_ec_volume(tmp.path().to_str().unwrap());
+
+        let (locations, refreshed_at) = vol.shard_locations_snapshot();
+        assert!(locations.is_empty(), "a fresh mount knows no locations");
+        assert!(
+            refreshed_at.is_none(),
+            "a volume that never refreshed has no refresh time"
+        );
+
+        let reply: HashMap<ShardId, Vec<String>> =
+            HashMap::from([(0, vec!["a:1".to_string()]), (1, vec!["b:2".to_string()])]);
+        let merged = vol.merge_shard_locations(reply.clone());
+        assert_eq!(merged, reply, "merge returns the resulting map");
+
+        let (locations, refreshed_at) = vol.shard_locations_snapshot();
+        assert_eq!(locations, reply, "the snapshot reports the merged map");
+        assert!(
+            refreshed_at.is_some(),
+            "the merge that produced that map also stamped its refresh time"
+        );
+
+        // Upsert, not replace: a reply that omits a cached shard keeps it.
+        // `before` is taken outside the merge so the assertion fails if the
+        // second merge did not re-stamp: `later >= refreshed_at` would hold on
+        // the first merge's stamp alone.
+        let before = Instant::now();
+        let merged = vol.merge_shard_locations(HashMap::from([(1, vec!["c:3".to_string()])]));
+        assert_eq!(merged.get(&0), Some(&vec!["a:1".to_string()]));
+        assert_eq!(merged.get(&1), Some(&vec!["c:3".to_string()]));
+        let (locations, later) = vol.shard_locations_snapshot();
+        assert_eq!(locations, merged, "the snapshot reports the merged map");
+        assert!(
+            later.unwrap() >= before,
+            "the second merge re-stamped the refresh time"
+        );
+    }
+
+    /// The stale mark is consumed by the refresh that acts on it, exactly once:
+    /// otherwise every later read keeps re-looking-up a map no one has disproved
+    /// since. A claim that declines the refresh must leave the mark standing.
+    #[test]
+    fn claim_shard_locations_refresh_consumes_the_stale_mark_once() {
+        let tmp = TempDir::new().unwrap();
+        let vol = mount_bare_ec_volume(tmp.path().to_str().unwrap());
+
+        assert!(
+            !vol.claim_shard_locations_refresh(|stale| stale),
+            "an untouched cache carries no mark"
+        );
+
+        vol.mark_shard_locations_stale();
+        assert!(
+            vol.claim_shard_locations_refresh(|stale| stale),
+            "the mark is visible to the next claim"
+        );
+        assert!(
+            !vol.claim_shard_locations_refresh(|stale| stale),
+            "the claim that acted on the mark consumed it"
+        );
+
+        vol.mark_shard_locations_stale();
+        assert!(
+            !vol.claim_shard_locations_refresh(|_| false),
+            "the refresh decision stays the caller's"
+        );
+        assert!(
+            vol.claim_shard_locations_refresh(|stale| stale),
+            "a claim that did not refresh leaves the mark for the next one"
         );
     }
 }
