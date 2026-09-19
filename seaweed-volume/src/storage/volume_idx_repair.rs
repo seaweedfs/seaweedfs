@@ -122,7 +122,19 @@ impl Volume {
             } else {
                 found.remove(&id);
             }
-            offset += NEEDLE_HEADER_SIZE as i64 + needle_body_length(size, version);
+            let record_size = NEEDLE_HEADER_SIZE as i64 + needle_body_length(size, version);
+            // A corrupt header can make the record length zero or negative;
+            // the scan cannot advance past it.
+            if record_size <= 0 {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "corrupt needle header at offset {offset}: size {}, record length {record_size}",
+                        size.0
+                    ),
+                )));
+            }
+            offset += record_size;
         }
 
         Ok((found, order))
@@ -424,6 +436,31 @@ mod tests {
         assert!(
             read_needle_data(&v, 1).is_ok(),
             "needle 1 should have been recovered"
+        );
+    }
+
+    #[test]
+    fn test_scan_dat_head_fails_at_a_header_it_cannot_advance_past() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_test_volume(dir, 2);
+
+        let mut dat = OpenOptions::new()
+            .append(true)
+            .open(format!("{}/1.dat", dir))
+            .unwrap();
+        let mut corrupt = [0u8; NEEDLE_HEADER_SIZE];
+        NeedleId(99).to_bytes(&mut corrupt[4..12]);
+        Size(-100).to_bytes(&mut corrupt[12..16]);
+        dat.write_all(&corrupt).unwrap();
+        drop(dat);
+
+        let v = open_volume(dir);
+        let first = v.super_block.block_size() as i64;
+        let err = v.scan_dat_head(v.version(), first, 10).unwrap_err();
+        assert!(
+            matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::InvalidData),
+            "expected a corrupt-data error, got {err:?}"
         );
     }
 }

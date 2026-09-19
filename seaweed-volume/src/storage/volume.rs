@@ -497,10 +497,11 @@ impl DatScanPlan {
     /// `ScanVolumeFileFrom` feeds a `VolumeFileScanner`: only the record being
     /// visited is in memory. Reads are positional and never touch the
     /// `Volume`. The pass ends `Ok` at the end of the data, at a record that
-    /// does not fit before `end`, at a corrupt header, or when `visit` breaks.
-    /// It fails on any read error, including a short read below `end`: every
-    /// byte below `end` existed when the plan was taken, so a short read means
-    /// the file was truncated under the plan and the pass is incomplete.
+    /// does not fit before `end`, or when `visit` breaks. A corrupt header
+    /// fails the pass: ending early would let a truncated tail look complete.
+    /// It also fails on any read error, including a short read below `end`:
+    /// every byte below `end` existed when the plan was taken, so a short read
+    /// means the file was truncated under the plan and the pass is incomplete.
     pub(crate) fn scan(
         &self,
         mut visit: impl FnMut(RawNeedle<'_>) -> ControlFlow<()>,
@@ -516,11 +517,18 @@ impl DatScanPlan {
             if size.0 == 0 && id.is_empty() {
                 break;
             }
-            // A negative size is a corrupt header: body_length would size the
-            // buffer from a negative length or walk the scan from a wrong
-            // offset. Go's scanners stop here by returning io.EOF.
+            // A negative size is a corrupt header: the record length it
+            // implies cannot advance the scan past it, and stopping quietly
+            // would let a truncated tail look complete. Go's scan fails here.
             if size.0 < 0 {
-                break;
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "corrupt needle header at offset {offset}: size {}, record length {}",
+                        size.0,
+                        get_actual_size(size, self.version)
+                    ),
+                )));
             }
 
             // Nothing past `end` was a complete record when the plan was
@@ -2356,8 +2364,18 @@ impl Volume {
                 break;
             }
 
-            let body_length = needle::needle_body_length(size, version);
-            let total_size = NEEDLE_HEADER_SIZE as i64 + body_length;
+            let total_size = get_actual_size(size, version);
+            // A corrupt header can make the record length zero or negative;
+            // the scan cannot advance past it.
+            if total_size <= 0 {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "corrupt needle header at offset {offset}: size {}, record length {total_size}",
+                        size.0
+                    ),
+                )));
+            }
 
             if size.is_deleted() || size.0 <= 0 {
                 offset += total_size;
@@ -4590,7 +4608,8 @@ pub fn scan_volume_file(
             break; // end of valid data
         }
         // A negative size is a corrupt header, and body_length would advance the
-        // walk backwards from it. Go's scanners stop here by returning io.EOF.
+        // walk backwards from it. The index rebuild this feeds salvages the
+        // records before it, like Go's rebuild scanner stopping on io.EOF.
         if size.0 < 0 {
             break;
         }
@@ -5188,12 +5207,11 @@ mod tests {
 
     #[test]
     fn dat_scan_plan_ends_the_pass_at_a_corrupt_header() {
-        // A negative size is a corrupt header: sizing a buffer from it
-        // overflows, and a small one walks the scan from a wrong offset. A
-        // size running past the end bound cannot be a complete record either,
-        // and one near i32::MAX overflows the padding arithmetic. Both end
-        // the pass after the records before them, without reading or
-        // allocating the bogus body.
+        // A negative size is a corrupt header: the record length it implies
+        // cannot advance the scan past it, so the pass fails. A size running
+        // past the end bound, like one near i32::MAX, cannot be a complete
+        // record and ends the pass after the records before it, without
+        // reading or allocating the bogus body.
         for bad_size in [-1000, i32::MAX] {
             let tmp = TempDir::new().unwrap();
             let dir = tmp.path().to_str().unwrap();
@@ -5215,8 +5233,21 @@ mod tests {
                 .write_all(&bad)
                 .unwrap();
 
-            let records = scan_all(&v.dat_scan_plan(sb_size).unwrap());
-            assert_eq!(records.len(), 1, "size {}: only the good record", bad_size);
+            let mut visited = 0;
+            let result = v.dat_scan_plan(sb_size).unwrap().scan(|_| {
+                visited += 1;
+                ControlFlow::Continue(())
+            });
+            if bad_size < 0 {
+                let err = result.unwrap_err();
+                assert!(
+                    matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::InvalidData),
+                    "size {bad_size}: expected a corrupt-data error, got {err:?}"
+                );
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(visited, 1, "size {bad_size}: only the good record");
         }
     }
 
@@ -5254,6 +5285,62 @@ mod tests {
         assert!(
             matches!(err, VolumeError::Needle(_)),
             "expected a needle parse error, got {err:?}"
+        );
+    }
+
+    fn append_corrupt_header(v: &Volume, size: i32) {
+        let mut dat = OpenOptions::new()
+            .append(true)
+            .open(v.file_name(".dat"))
+            .unwrap();
+        let mut corrupt = [0u8; NEEDLE_HEADER_SIZE];
+        NeedleId(99).to_bytes(&mut corrupt[4..12]);
+        Size(size).to_bytes(&mut corrupt[12..16]);
+        dat.write_all(&corrupt).unwrap();
+    }
+
+    #[test]
+    fn dat_scan_plan_fails_at_a_header_it_cannot_advance_past() {
+        // A size so negative the record length is zero or less cannot be
+        // advanced past; the pass must fail rather than end early and let a
+        // truncated tail look complete.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        write_test_needle(&mut v, 1, b"good");
+        append_corrupt_header(&v, -100);
+
+        let plan = v.dat_scan_plan(v.super_block.block_size() as u64).unwrap();
+        let mut visited = 0;
+        let err = plan
+            .scan(|_| {
+                visited += 1;
+                ControlFlow::Continue(())
+            })
+            .unwrap_err();
+
+        assert_eq!(
+            visited, 1,
+            "the record before the corrupt header is visited"
+        );
+        assert!(
+            matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::InvalidData),
+            "expected a corrupt-data error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn read_all_needles_fails_at_a_header_it_cannot_advance_past() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        write_test_needle(&mut v, 1, b"good");
+        append_corrupt_header(&v, -100);
+
+        let err = v.read_all_needles().unwrap_err();
+        assert!(
+            matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::InvalidData),
+            "expected a corrupt-data error, got {err:?}"
         );
     }
 
