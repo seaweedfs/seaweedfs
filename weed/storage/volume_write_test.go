@@ -261,9 +261,8 @@ func TestWriteNeedleBlobRejectsSizeMismatch(t *testing.T) {
 	}
 }
 
-// A negative size went straight to make() in needle.ReadNeedleBlob. From -44
-// down on v3 the slice length is negative and make panics, and the ReadNeedleBlob
-// RPC has no recover, so one request took down the volume server.
+// A negative size reaches make() in needle.ReadNeedleBlob, and the blob RPCs
+// have no recover, so one request took down the volume server.
 func TestReadNeedleBlobRejectsNegativeSize(t *testing.T) {
 	dir := t.TempDir()
 	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -299,8 +298,7 @@ func TestReadNeedleBlobRejectsNegativeSize(t *testing.T) {
 	}
 }
 
-// With a blob header carrying the same negative size, WriteNeedleBlob appended
-// the blob to .dat and indexed the needle with that size.
+// The blob header carries the same negative size, so only the sign is wrong.
 func TestWriteNeedleBlobRejectsNegativeSize(t *testing.T) {
 	for _, size := range []types.Size{types.TombstoneFileSize, -5} {
 		t.Run(fmt.Sprintf("size %d", size), func(t *testing.T) {
@@ -340,11 +338,9 @@ func TestWriteNeedleBlobRejectsNegativeSize(t *testing.T) {
 	}
 }
 
-// WriteNeedleBlob appended a blob of any length. One that is not a whole number
-// of 8-byte units leaves .dat off the padding grid, so the next ordinary write is
-// indexed at a truncated offset and reads back as EOF. One that is 8 bytes off,
-// like a v3 record sent to a v2 volume, stays on the grid but leaves bytes that a
-// .dat scan reads as the next record.
+// A blob shorter or longer than its record size leaves .dat off the record grid:
+// later writes index at truncated offsets, or a scan reads the leftover bytes as
+// the next record.
 func TestWriteNeedleBlobRejectsLengthMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -371,7 +367,6 @@ func TestWriteNeedleBlobRejectsLengthMismatch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read needle blob: %v", err)
 			}
-
 			datSizeBefore, _, _ := v.DataBackend.GetStat()
 
 			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), tc.mutate(blob), n.Size); err == nil {
@@ -398,8 +393,8 @@ func TestWriteNeedleBlobRejectsLengthMismatch(t *testing.T) {
 	}
 }
 
-// The length check must pass what the real callers send: a needle's own record,
-// and the size-0 record a delete leaves, which volume.merge copies too.
+// The checks must pass what the real callers send: a needle's own record and the
+// size-0 record a delete leaves.
 func TestWriteNeedleBlobRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)

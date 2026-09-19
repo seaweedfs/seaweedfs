@@ -457,8 +457,7 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	if v.IsReadOnly() {
 		return fmt.Errorf("volume %d is read only", v.Id)
 	}
-	// A negative size is the index's deletion marker, never a record's length.
-	if size < 0 {
+	if size.IsDeleted() {
 		return fmt.Errorf("needle %d has invalid size %d", needleId, size)
 	}
 
@@ -472,9 +471,7 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	if blobHeader.Size != size {
 		return fmt.Errorf("needle %d size %d does not match its blob header size %d", needleId, size, blobHeader.Size)
 	}
-	// The blob is appended as is, so it must be exactly the record size implies in
-	// this volume's version. Otherwise later appends land off the 8-byte grid the
-	// index addresses, or a .dat scan reads the leftover bytes as the next record.
+	// The blob is appended as is: its length must be the record this size takes in this volume's version.
 	if actualSize := needle.GetActualSize(size, v.Version()); int64(len(needleBlob)) != actualSize {
 		return fmt.Errorf("needle %d blob of %d bytes does not match the %d bytes size %d takes in a version %d volume", needleId, len(needleBlob), actualSize, size, v.Version())
 	}

@@ -39,6 +39,9 @@ func (n *Needle) DiskSize(version Version) int64 {
 
 func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, version Version) (dataSlice []byte, err error) {
 
+	if size.IsDeleted() {
+		return nil, fmt.Errorf("invalid needle size %d: %w", size, ErrorSizeInvalid)
+	}
 	dataSize := GetActualSize(size, version)
 	dataSlice = make([]byte, int(dataSize))
 
