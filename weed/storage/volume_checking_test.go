@@ -175,17 +175,7 @@ func TestScrubVolumeData_IgnoresOffset0Tombstone(t *testing.T) {
 	}
 	f.Close()
 
-	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("reopen .idx: %v", err)
-	}
-	defer idxFile.Close()
-	idxStat, err := idxFile.Stat()
-	if err != nil {
-		t.Fatalf("stat .idx: %v", err)
-	}
-
-	if _, errs := v.scrubVolumeData(idxFile, idxStat.Size()); len(errs) != 0 {
+	if errs := scrubVolumeErrors(t, v); len(errs) != 0 {
 		t.Fatalf("offset-0 tombstone must not flag the volume, got %v", errs)
 	}
 }
@@ -205,51 +195,16 @@ func TestScrubVolumeDataChecksLocalDeletionTombstone(t *testing.T) {
 	if _, err := v.doDeleteRequest(newEmptyNeedle(deletedID)); err != nil {
 		t.Fatalf("delete needle: %v", err)
 	}
-	// Keep a later record so the tombstone is in the middle of .dat. FULL scrub
-	// must validate it without applying the tail-only integrity check.
+	// A later record keeps the tombstone mid-file rather than at the tail.
 	if _, _, _, err := v.writeNeedle2(newRandomNeedle(2), true, false, false); err != nil {
 		t.Fatalf("write needle after deletion: %v", err)
 	}
-	if err := v.DataBackend.Sync(); err != nil {
-		t.Fatalf("sync .dat: %v", err)
-	}
-	if err := v.nm.Sync(); err != nil {
-		t.Fatalf("sync .idx: %v", err)
-	}
+	syncVolumeFiles(t, v)
 
-	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("open .idx: %v", err)
-	}
-	var tombstoneOffset types.Offset
-	if err := idx.WalkIndexFile(idxFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if key == types.Uint64ToNeedleId(deletedID) && !offset.IsZero() && size.IsDeleted() {
-			tombstoneOffset = offset
-		}
-		return nil
-	}); err != nil {
-		idxFile.Close()
-		t.Fatalf("walk .idx: %v", err)
-	}
-	idxFile.Close()
-	if tombstoneOffset.IsZero() {
-		t.Fatal("expected a local deletion tombstone in .idx")
-	}
-
-	idxFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("reopen .idx for healthy scrub: %v", err)
-	}
-	idxStat, err := idxFile.Stat()
-	if err != nil {
-		idxFile.Close()
-		t.Fatalf("stat .idx for healthy scrub: %v", err)
-	}
-	if _, errs := v.scrubVolumeData(idxFile, idxStat.Size()); len(errs) != 0 {
-		idxFile.Close()
+	tombstoneOffset := localTombstoneOffset(t, v, deletedID)
+	if errs := scrubVolumeErrors(t, v); len(errs) != 0 {
 		t.Fatalf("healthy local deletion tombstone must pass scrub, got %v", errs)
 	}
-	idxFile.Close()
 
 	corruptedID := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(corruptedID, types.Uint64ToNeedleId(99))
@@ -260,18 +215,8 @@ func TestScrubVolumeDataChecksLocalDeletionTombstone(t *testing.T) {
 		t.Fatalf("sync corrupted .dat: %v", err)
 	}
 
-	idxFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("reopen .idx: %v", err)
-	}
-	defer idxFile.Close()
-	idxStat, err = idxFile.Stat()
-	if err != nil {
-		t.Fatalf("stat .idx: %v", err)
-	}
-
-	if _, errs := v.scrubVolumeData(idxFile, idxStat.Size()); len(errs) == 0 {
-		t.Fatal("scrub should report a corrupted local deletion tombstone")
+	if errs := scrubVolumeErrors(t, v); !strings.Contains(fmt.Sprint(errs), "does not match needle's Id") {
+		t.Fatalf("scrub should report the corrupted tombstone's Id, got %v", errs)
 	}
 }
 
@@ -290,52 +235,17 @@ func TestScrubVolumeDataReportsTruncatedLocalDeletionTombstone(t *testing.T) {
 	if _, err := v.doDeleteRequest(newEmptyNeedle(deletedID)); err != nil {
 		t.Fatalf("delete needle: %v", err)
 	}
-	if err := v.DataBackend.Sync(); err != nil {
-		t.Fatalf("sync .dat: %v", err)
-	}
-	if err := v.nm.Sync(); err != nil {
-		t.Fatalf("sync .idx: %v", err)
-	}
+	syncVolumeFiles(t, v)
 
-	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("open .idx: %v", err)
-	}
-	var tombstoneOffset types.Offset
-	if err := idx.WalkIndexFile(idxFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if key == types.Uint64ToNeedleId(deletedID) && !offset.IsZero() && size.IsDeleted() {
-			tombstoneOffset = offset
-		}
-		return nil
-	}); err != nil {
-		idxFile.Close()
-		t.Fatalf("walk .idx: %v", err)
-	}
-	idxFile.Close()
-	if tombstoneOffset.IsZero() {
-		t.Fatal("expected a local deletion tombstone in .idx")
-	}
-
-	truncatedSize := tombstoneOffset.ToActualOffset() + int64(types.NeedleHeaderSize)
-	if err := v.DataBackend.Truncate(truncatedSize); err != nil {
+	tombstoneOffset := localTombstoneOffset(t, v, deletedID)
+	if err := v.DataBackend.Truncate(tombstoneOffset.ToActualOffset() + int64(types.NeedleHeaderSize)); err != nil {
 		t.Fatalf("truncate tombstone: %v", err)
 	}
 	if err := v.DataBackend.Sync(); err != nil {
 		t.Fatalf("sync truncated .dat: %v", err)
 	}
 
-	idxFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("reopen .idx: %v", err)
-	}
-	defer idxFile.Close()
-	idxStat, err := idxFile.Stat()
-	if err != nil {
-		t.Fatalf("stat .idx: %v", err)
-	}
-
-	_, errs := v.scrubVolumeData(idxFile, idxStat.Size())
-	if !strings.Contains(fmt.Sprint(errs), "failed to read needle 1 on volume 1: EOF") {
+	if errs := scrubVolumeErrors(t, v); !strings.Contains(fmt.Sprint(errs), "failed to read needle 1 on volume 1: EOF") {
 		t.Fatalf("scrub should report the truncated tombstone read, got %v", errs)
 	}
 }
@@ -392,7 +302,7 @@ func TestCheckVolumeDataIntegrityWithDeletionTombstone(t *testing.T) {
 	}
 }
 
-// TestCheckVolumeDataIntegritySortedIndex reproduces issue #9688: after the
+// TestCheckVolumeDataIntegritySortedIndex covers the case where the
 // .idx is rebuilt sorted by key — what weed fix and other rebuilds emitted via
 // needle_map.AscendingVisit — the last file-position entry is the highest-key
 // needle, not the needle at the .dat tail. The integrity check compared that
@@ -486,7 +396,7 @@ func TestCheckVolumeDataIntegrityVerifiesDeletionTail(t *testing.T) {
 	}
 }
 
-// TestVolumeLoadStaysWritableWithKeySortedIndex reproduces issue #9688 end to
+// TestVolumeLoadStaysWritableWithKeySortedIndex exercises end to
 // end through the real volume load path: a volume whose .idx is sorted by key
 // (the on-disk state weed fix left behind) must reload writable, not flip to
 // read-only — and a live needle must still be readable afterward.
@@ -522,7 +432,7 @@ func TestVolumeLoadStaysWritableWithKeySortedIndex(t *testing.T) {
 	}
 	defer reloaded.Close()
 	if reloaded.noWriteOrDelete {
-		t.Fatal("volume flipped read-only after reload with a key-sorted .idx (issue #9688)")
+		t.Fatal("volume flipped read-only after reload with a key-sorted .idx")
 	}
 
 	// The surviving needle is still readable, and new writes still succeed.
@@ -575,9 +485,60 @@ func rewriteIdxSortedByKey(t *testing.T, idxPath string) {
 	}
 }
 
+// localTombstoneOffset returns the .dat offset a local delete's .idx row
+// points at: the physical tombstone record.
+func localTombstoneOffset(t *testing.T, v *Volume, id uint64) types.Offset {
+	t.Helper()
+	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		t.Fatalf("open .idx: %v", err)
+	}
+	defer idxFile.Close()
+
+	var offset types.Offset
+	if err := idx.WalkIndexFile(idxFile, 0, func(key types.NeedleId, o types.Offset, size types.Size) error {
+		if key == types.Uint64ToNeedleId(id) && !o.IsZero() && size.IsDeleted() {
+			offset = o
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .idx: %v", err)
+	}
+	if offset.IsZero() {
+		t.Fatalf("expected a local deletion tombstone for needle %d in .idx", id)
+	}
+	return offset
+}
+
+// scrubVolumeErrors runs a full scrub over the volume's current .idx.
+func scrubVolumeErrors(t *testing.T, v *Volume) []error {
+	t.Helper()
+	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		t.Fatalf("open .idx: %v", err)
+	}
+	defer idxFile.Close()
+	idxStat, err := idxFile.Stat()
+	if err != nil {
+		t.Fatalf("stat .idx: %v", err)
+	}
+	_, errs := v.scrubVolumeData(idxFile, idxStat.Size())
+	return errs
+}
+
+func syncVolumeFiles(t *testing.T, v *Volume) {
+	t.Helper()
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync .dat: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx: %v", err)
+	}
+}
+
 // TestMaxNeedleEnd ensures the needle map's MaxNeedleEnd accumulator lets
 // volume.load() detect an .idx that references bytes past the end of the .dat
-// — the deeper-than-tail corruption shape from issue #8928 that the existing
+// — the deeper-than-tail corruption shape that the existing
 // last-10-entries scan cannot see. The check is populated by the load walk
 // and read by volume.load() to flip the volume read-only.
 func TestMaxNeedleEnd(t *testing.T) {
