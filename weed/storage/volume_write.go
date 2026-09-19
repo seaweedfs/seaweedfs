@@ -457,6 +457,10 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	if v.IsReadOnly() {
 		return fmt.Errorf("volume %d is read only", v.Id)
 	}
+	// A negative size is the index's deletion marker, never a record's length.
+	if size < 0 {
+		return fmt.Errorf("needle %d has invalid size %d", needleId, size)
+	}
 
 	// size indexes the needle and places the v3 append timestamp, so a caller using
 	// the payload-only DataSize corrupts both, silently until the needle is read back.
