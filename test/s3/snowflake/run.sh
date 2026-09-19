@@ -18,6 +18,7 @@
 #   SKIP_SERVER_START   if set, do not start weed; prepare and run the suite
 #                       against ENDPOINT_URL
 #   SUITE_REPO          git url of the test suite             (default: upstream)
+#   SUITE_REV           suite commit to check out             (default: pinned SHA)
 #
 # The suite env vars (BUCKET_NAME_1, PREFIX_FOR_PAGE_LISTING,
 # PAGE_LISTING_TOTAL_SIZE, NOT_ACCESSIBLE_BUCKET) default to the same values
@@ -35,6 +36,8 @@ S3_PORT="${S3_PORT:-8333}"
 METRICS_PORT="${METRICS_PORT:-9324}"
 ENDPOINT_URL="${ENDPOINT_URL:-http://127.0.0.1:$S3_PORT}"
 SUITE_REPO="${SUITE_REPO:-https://github.com/snowflakedb/snowflake-s3compat-api-test-suite.git}"
+# Pinned upstream revision verified against SeaweedFS; bump deliberately.
+SUITE_REV="${SUITE_REV:-8ae535b35fff0d8a72e21bba4e51281ac991cab9}"
 WORK_DIR_CREATED=""
 if [ -z "${WORK_DIR:-}" ]; then
   WORK_DIR="$(mktemp -d)"
@@ -90,7 +93,7 @@ if [ -z "${SKIP_SERVER_START:-}" ]; then
   mkdir -p "$WEED_DATA_DIR"
 
   echo "Starting SeaweedFS (data dir: $WEED_DATA_DIR)"
-  "$WEED_BIN" server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+  "$WEED_BIN" server -filer -filer.maxMB=64 -s3 -ip.bind 127.0.0.1 \
     -dir="$WEED_DATA_DIR" \
     -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=5000 \
     -volume.max=4 -volume.preStopSeconds=1 \
@@ -114,7 +117,10 @@ fi
 
 SUITE_DIR="$WORK_DIR/snowflake-s3compat-api-test-suite"
 if [ ! -d "$SUITE_DIR" ]; then
-  git clone --depth 1 "$SUITE_REPO" "$SUITE_DIR"
+  git init -q "$SUITE_DIR"
+  git -C "$SUITE_DIR" remote add origin "$SUITE_REPO"
+  git -C "$SUITE_DIR" fetch -q --depth 1 origin "$SUITE_REV"
+  git -C "$SUITE_DIR" checkout -q FETCH_HEAD
 fi
 
 # The suite forces virtual-hosted style bucket addressing, which needs wildcard

@@ -9,6 +9,11 @@ on:
       - 'weed/server/**'
       - 'weed/iam/**'
       - 'weed/command/**'
+      - 'weed/storage/**'
+      - 'weed/operation/**'
+      - 'weed/wdclient/**'
+      - 'weed/cluster/**'
+      - 'weed/pb/**'
       - 'test/s3/snowflake/**'
       - 'go.mod'
       - 'go.sum'
@@ -21,13 +26,18 @@ on:
       - 'weed/server/**'
       - 'weed/iam/**'
       - 'weed/command/**'
+      - 'weed/storage/**'
+      - 'weed/operation/**'
+      - 'weed/wdclient/**'
+      - 'weed/cluster/**'
+      - 'weed/pb/**'
       - 'test/s3/snowflake/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/s3-snowflake-tests.yml'
 
 concurrency:
-  group: ${{ github.head_ref }}/s3-snowflake-tests
+  group: ${{ github.event.pull_request.number || github.ref }}/s3-snowflake-tests
   cancel-in-progress: true
 
 permissions:
@@ -43,6 +53,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7

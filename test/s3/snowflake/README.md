@@ -12,7 +12,7 @@ range reads), `getObjectMetadata`, `putObject` (including a 5 GB upload),
 Requires `weed` (or `WEED_BIN`), the `aws` CLI, `mvn`, and JDK 11+ on `PATH`.
 
 ```sh
-cd weed && go install -buildvcs=false   # build weed first
+(cd weed && go install -buildvcs=false)   # build weed first
 bash test/s3/snowflake/run.sh
 ```
 

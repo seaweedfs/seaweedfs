@@ -50,8 +50,11 @@ EOF
 $aws s3api put-bucket-policy --bucket "$NOT_ACCESSIBLE_BUCKET" --policy "file://$POLICY_FILE"
 rm -f "$POLICY_FILE"
 
-if $aws s3api get-bucket-location --bucket "$NOT_ACCESSIBLE_BUCKET" 2>/dev/null; then
-  echo "ERROR: expected AccessDenied on $NOT_ACCESSIBLE_BUCKET" >&2
+if OUT="$($aws s3api get-bucket-location --bucket "$NOT_ACCESSIBLE_BUCKET" 2>&1)"; then
+  echo "ERROR: expected AccessDenied on $NOT_ACCESSIBLE_BUCKET, got success" >&2
+  exit 1
+elif ! echo "$OUT" | grep -q "AccessDenied"; then
+  echo "ERROR: expected AccessDenied on $NOT_ACCESSIBLE_BUCKET, got: $OUT" >&2
   exit 1
 fi
 echo "Verified $NOT_ACCESSIBLE_BUCKET denies access"
