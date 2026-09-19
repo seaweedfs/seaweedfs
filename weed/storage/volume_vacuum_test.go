@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -467,6 +470,79 @@ func TestCompactByVolumeData_SkipsNegativeSizeHeader(t *testing.T) {
 	}
 	if kept[types.Uint64ToNeedleId(99)] {
 		t.Errorf("corrupt record 99 should not be in the compacted index")
+	}
+}
+
+// A more negative size gives the corrupt record a zero or negative length.
+// With -36 the scan re-read the same header forever. With -100 it stepped back
+// into needle 1 and, depending on the bytes it landed on, failed on a negative
+// offset or finished with a compacted volume that had lost needle 2. Compaction
+// must fail instead, and leave the original volume as it was.
+func TestCompactByVolumeData_FailsOnHeaderThatCannotAdvance(t *testing.T) {
+	for _, size := range []types.Size{-36, -100} {
+		t.Run(fmt.Sprintf("size%d", size), func(t *testing.T) {
+			dir := t.TempDir()
+
+			v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			if err != nil {
+				t.Fatalf("volume creation: %v", err)
+			}
+			stuck := false
+			defer func() {
+				// Close waits for a running compaction to finish.
+				if !stuck {
+					v.Close()
+				}
+			}()
+
+			if _, _, _, err := v.writeNeedle2(newRandomNeedle(1), true, false, false); err != nil {
+				t.Fatalf("write needle 1: %v", err)
+			}
+			datSize, _, err := v.DataBackend.GetStat()
+			if err != nil {
+				t.Fatalf("stat .dat: %v", err)
+			}
+			corrupt := make([]byte, types.NeedleHeaderSize)
+			types.NeedleIdToBytes(corrupt[types.CookieSize:types.CookieSize+types.NeedleIdSize], types.Uint64ToNeedleId(99))
+			types.SizeToBytes(corrupt[types.CookieSize+types.NeedleIdSize:], size)
+			if _, err := v.DataBackend.WriteAt(corrupt, datSize); err != nil {
+				t.Fatalf("append corrupt header: %v", err)
+			}
+			if _, _, _, err := v.writeNeedle2(newRandomNeedle(2), true, false, false); err != nil {
+				t.Fatalf("write needle 2: %v", err)
+			}
+			datBefore, err := os.ReadFile(v.FileName(".dat"))
+			if err != nil {
+				t.Fatalf("read .dat: %v", err)
+			}
+
+			err = runWithTimeout(10*time.Second, func() error { return v.CompactByVolumeData(nil) })
+			if errors.Is(err, errDidNotReturn) {
+				stuck = true
+				t.Fatalf("CompactByVolumeData: %v", err)
+			}
+			if !errors.Is(err, needle.ErrorCorrupted) {
+				t.Fatalf("CompactByVolumeData error = %v, want one wrapping ErrorCorrupted", err)
+			}
+
+			// No .cpx: nothing was produced that could be committed.
+			if _, err := os.Stat(v.FileName(".cpx")); !os.IsNotExist(err) {
+				t.Errorf("failed compaction left a compacted index: %v", err)
+			}
+			datAfter, err := os.ReadFile(v.FileName(".dat"))
+			if err != nil {
+				t.Fatalf("read .dat: %v", err)
+			}
+			if !bytes.Equal(datBefore, datAfter) {
+				t.Errorf(".dat changed: %d bytes before, %d after", len(datBefore), len(datAfter))
+			}
+			for _, id := range []uint64{1, 2} {
+				n := &needle.Needle{Id: types.Uint64ToNeedleId(id)}
+				if _, err := v.readNeedle(n, &ReadOption{}, nil); err != nil {
+					t.Errorf("read needle %d from the original volume: %v", id, err)
+				}
+			}
+		})
 	}
 }
 
