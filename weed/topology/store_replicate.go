@@ -45,6 +45,14 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}
 	}
 
+	// with no local volume and no replica to forward to, the write would be acknowledged without being stored
+	hasLocalVolume := s.HasVolume(volumeId)
+	if !hasLocalVolume && len(remoteLocations) == 0 {
+		err = fmt.Errorf("volume %d not found on %s:%d", volumeId, s.Ip, s.Port)
+		glog.V(0).Infoln(err)
+		return
+	}
+
 	// read fsync value
 	fsync := false
 	if r.FormValue("fsync") == "true" {
@@ -60,7 +68,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}(time.Now())
 	}
 
-	if s.GetVolume(volumeId) != nil {
+	if hasLocalVolume {
 		start := time.Now()
 
 		inFlightGauge := stats.VolumeServerInFlightRequestsGauge.WithLabelValues(stats.WriteToLocalDisk)

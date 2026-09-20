@@ -80,10 +80,14 @@ func (m *mockMasterServer) LookupVolume(ctx context.Context, req *master_pb.Look
 	m.calls++
 	var vls []*master_pb.LookupVolumeResponse_VolumeIdLocation
 	for _, vid := range req.VolumeOrFileIds {
-		vls = append(vls, &master_pb.LookupVolumeResponse_VolumeIdLocation{
+		vl := &master_pb.LookupVolumeResponse_VolumeIdLocation{
 			VolumeOrFileId: vid,
 			Locations:      m.locations,
-		})
+		}
+		if len(m.locations) == 0 {
+			vl.Error = fmt.Sprintf("volume id %s not found", vid)
+		}
+		vls = append(vls, vl)
 	}
 	return &master_pb.LookupVolumeResponse{VolumeIdLocations: vls}, nil
 }
@@ -221,6 +225,49 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("replica never received the fan-out request")
+			}
+		})
+	}
+}
+
+// TestReplicatedWriteRejectsWriteWithNoTarget verifies that a write this server
+// cannot store and has no replica to forward to fails instead of being
+// acknowledged with nothing written.
+func TestReplicatedWriteRejectsWriteWithNoTarget(t *testing.T) {
+	master := &mockMasterServer{}
+	masterFn, dialOption := startMockMasterServer(t, master)
+	store := &storage.Store{Ip: "127.0.0.1", Port: 8080}
+	volumeId := needle.VolumeId(31234)
+
+	for _, tc := range []struct {
+		name      string
+		query     string
+		locations []*master_pb.Location
+	}{
+		{name: "volume unknown to the master"},
+		{name: "master lists only this server", locations: []*master_pb.Location{{Url: "127.0.0.1:8080"}}},
+		{name: "replica write for a volume not on this server", query: "?type=replicate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			master.mu.Lock()
+			master.locations = tc.locations
+			master.mu.Unlock()
+
+			r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/31234,01637037d6"+tc.query, nil)
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			n := &needle.Needle{
+				Id:   1,
+				Data: []byte("test data"),
+				Ttl:  needle.EMPTY_TTL,
+			}
+			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "")
+			if err == nil {
+				t.Fatal("ReplicatedWrite acknowledged a write that no volume stored")
+			}
+			if !strings.Contains(err.Error(), "not found") {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}
