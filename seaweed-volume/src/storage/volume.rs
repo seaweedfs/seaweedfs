@@ -3478,6 +3478,21 @@ impl Volume {
                 ),
             )));
         }
+        // The blob is appended as is: its length must be the record this size takes in this volume's version.
+        let actual_size = get_actual_size(size, self.version());
+        if needle_blob.len() as i64 != actual_size {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle {} blob of {} bytes does not match the {} bytes size {} takes in a version {} volume",
+                    needle_id.0,
+                    needle_blob.len(),
+                    actual_size,
+                    size.0,
+                    self.version().0
+                ),
+            )));
+        }
 
         // Dedup check: if the same needle already exists with matching content, skip the write.
         // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
@@ -6508,6 +6523,59 @@ mod tests {
 
         v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
             .unwrap();
+    }
+
+    // A blob shorter or longer than its record size leaves .dat off the record
+    // grid: later writes index at truncated offsets, or a scan reads the leftover
+    // bytes as the next record.
+    #[test]
+    fn test_write_needle_blob_rejects_length_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            data: b"the merged payload".to_vec(),
+            data_size: 18,
+            ..Needle::default()
+        };
+        n.checksum = CRC::new(&n.data);
+        let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
+        let blob = v.read_needle_blob(offset as i64, n.size).unwrap();
+
+        let dat_size_before = v.dat_file_size().unwrap();
+
+        let mut too_long = blob.clone();
+        too_long.push(0);
+        let too_short = blob[..blob.len() - 1].to_vec();
+        let mut eight_long = blob.clone();
+        eight_long.extend_from_slice(&[0u8; 8]);
+        for mutated in [&too_long, &too_short, &eight_long] {
+            let err = v
+                .write_needle_blob_and_index(NeedleId(2), mutated, n.size)
+                .unwrap_err();
+            assert!(matches!(err, VolumeError::Io(_)), "got {err:?}");
+            assert_eq!(v.dat_file_size().unwrap(), dat_size_before);
+        }
+
+        // Later ordinary writes still read back correctly.
+        let mut next = Needle {
+            id: NeedleId(3),
+            cookie: Cookie(2),
+            data: b"next".to_vec(),
+            data_size: 4,
+            ..Needle::default()
+        };
+        next.checksum = CRC::new(&next.data);
+        v.write_needle(&mut next, true, false).unwrap();
+        let mut got = Needle {
+            id: NeedleId(3),
+            ..Needle::default()
+        };
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"next");
     }
 
     #[test]
