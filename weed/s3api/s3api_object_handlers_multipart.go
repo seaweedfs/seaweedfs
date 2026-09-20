@@ -445,6 +445,16 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	// Parts inherit the checksum algorithm declared at CreateMultipartUpload
+	// when the request doesn't specify one (AWS behavior).
+	if headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm]); headerName != "" {
+		if algo, _, code := detectRequestedChecksumAlgorithm(r); code == s3err.ErrNone && algo == ChecksumAlgorithmNone {
+			if name := checksumAlgorithmNameFromHeaderName(headerName); name != "" {
+				r.Header.Set(s3_constants.AmzChecksumAlgorithm, name)
+			}
+		}
+	}
+
 	filePath := s3a.genPartUploadPath(bucket, uploadID, partID)
 
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
