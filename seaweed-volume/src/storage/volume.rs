@@ -4372,30 +4372,25 @@ impl Volume {
         self.dir != self.dir_idx && has_ecx(&volume_file_name(&self.dir, &self.collection, self.id))
     }
 
-    /// Check if an I/O error is a storage-media failure and record it for
-    /// health monitoring. On success (None), clears any previously recorded
-    /// EIO error. Matches Go's `checkReadWriteError` in
-    /// `weed/storage/io_error.go`.
+    /// Matches Go's `checkReadWriteError` in `weed/storage/io_error.go`.
     fn check_read_write_error(&self, err: Option<&io::Error>) {
-        self.io_errors.record(err);
+        self.io_errors.check_read_write_error(err);
     }
 
     pub fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
-        self.io_errors.state()
+        self.io_errors.get_io_error_state()
     }
 
-    /// Whether sustained storage-media errors mean the volume has to be
-    /// quarantined and stop being reported to the master.
     pub fn should_quarantine(&self) -> bool {
         self.io_errors.should_quarantine()
     }
 
     pub fn mark_io_quarantined(&self) {
-        self.io_errors.mark_quarantined();
+        self.io_errors.mark_io_quarantined();
     }
 
     pub fn reset_io_error_state(&self) {
-        self.io_errors.reset();
+        self.io_errors.reset_io_error_state();
     }
 
     #[cfg(test)]

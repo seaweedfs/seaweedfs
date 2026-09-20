@@ -1,21 +1,11 @@
-//! Shared I/O-error tracking for `Volume` and `EcVolume`.
-//!
-//! Both volume kinds count consecutive storage-media errors and quarantine
-//! themselves once the count is sustained, so the tracker lives here once
-//! rather than once per volume kind. Mirrors Go's `weed/storage/io_error.go`,
-//! which keeps `IoErrorTracker` and `IoErrorTolerance` in their own file and
-//! embeds the tracker in `Volume`. Go's `EcVolume` re-implements the fields
-//! and methods because they are unexported and EC lives in another package,
-//! and its copy tests EIO directly, so it misses the Windows codes;
-//! `pub(crate)` lets both volume kinds share one tracker — and one
-//! `is_storage_io_error` — here.
+//! Consecutive storage-media error tracking shared by `Volume` and
+//! `EcVolume`. Mirrors Go's `weed/storage/io_error.go`.
 
 use std::io;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
-/// Consecutive storage-media errors a volume is allowed before it is
-/// quarantined and stops being reported to the master.
+/// Consecutive storage-media errors allowed before the volume is quarantined.
 pub(crate) const IO_ERROR_TOLERANCE: i32 = 3;
 
 /// Returns true for I/O errors that indicate faulty storage media, not
@@ -38,13 +28,9 @@ pub(crate) fn is_storage_io_error(e: &io::Error) -> bool {
     }
 }
 
-/// Consecutive storage-media error state for one volume.
-///
-/// `record` is the only writer of `last`/`count`: an error the platform
-/// attributes to failing media bumps the count, anything else — including a
-/// success — clears it, so a single transient failure never accumulates.
-/// `quarantined` is sticky on purpose: once set it survives later successful
-/// I/O and is lifted only by an explicit `reset` (Go's `markIoQuarantined`).
+/// Consecutive storage-media error state for one volume. `quarantined` is
+/// sticky: once set it survives later successful I/O and is lifted only by
+/// `reset_io_error_state`.
 #[derive(Default)]
 pub(crate) struct IoErrorTracker {
     last: Mutex<Option<String>>,
@@ -53,10 +39,9 @@ pub(crate) struct IoErrorTracker {
 }
 
 impl IoErrorTracker {
-    /// Record the outcome of an I/O operation: `Some(e)` for a failure,
-    /// `None` for a success. Only storage-media failures count; every other
-    /// outcome clears the running count and the last recorded error.
-    pub(crate) fn record(&self, err: Option<&io::Error>) {
+    /// `Some(e)` records a failure, `None` a success. Only storage-media
+    /// failures count; every other outcome clears the count and last error.
+    pub(crate) fn check_read_write_error(&self, err: Option<&io::Error>) {
         if let Some(e) = err
             && is_storage_io_error(e)
         {
@@ -76,26 +61,23 @@ impl IoErrorTracker {
     }
 
     /// The last recorded error, the consecutive count, and the quarantine flag.
-    pub(crate) fn state(&self) -> (Option<String>, i32, bool) {
+    pub(crate) fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
         let err = self.last.lock().ok().and_then(|g| g.clone());
         let count = self.count.load(Ordering::Relaxed);
         let quarantined = self.quarantined.load(Ordering::Relaxed);
         (err, count, quarantined)
     }
 
-    /// Whether the volume has to be quarantined: either it already is, or the
-    /// consecutive error count has reached the tolerance.
     pub(crate) fn should_quarantine(&self) -> bool {
         self.quarantined.load(Ordering::Relaxed)
             || self.count.load(Ordering::Relaxed) >= IO_ERROR_TOLERANCE
     }
 
-    pub(crate) fn mark_quarantined(&self) {
+    pub(crate) fn mark_io_quarantined(&self) {
         self.quarantined.store(true, Ordering::Relaxed);
     }
 
-    /// Clear everything, including the sticky quarantine flag.
-    pub(crate) fn reset(&self) {
+    pub(crate) fn reset_io_error_state(&self) {
         self.count.store(0, Ordering::Relaxed);
         self.quarantined.store(false, Ordering::Relaxed);
         if let Ok(mut guard) = self.last.lock() {
@@ -108,8 +90,6 @@ impl IoErrorTracker {
         if let Ok(mut guard) = self.last.lock() {
             *guard = err.map(|value| value.to_string());
         }
-        // Set the count at the tolerance so the helper reflects a sustained
-        // error, not a single transient one.
         if err.is_some() {
             self.count.store(IO_ERROR_TOLERANCE, Ordering::Relaxed);
         } else {
@@ -138,69 +118,67 @@ mod tests {
     }
 
     #[test]
-    fn record_counts_consecutive_media_errors() {
+    fn check_read_write_error_counts_consecutive_media_errors() {
         let tracker = IoErrorTracker::default();
-        tracker.record(Some(&media_error()));
-        tracker.record(Some(&media_error()));
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.check_read_write_error(Some(&media_error()));
 
-        let (last, count, quarantined) = tracker.state();
+        let (last, count, quarantined) = tracker.get_io_error_state();
         assert_eq!(last, Some(media_error().to_string()));
         assert_eq!(count, 2);
         assert!(!quarantined);
     }
 
     #[test]
-    fn record_success_clears_the_count_and_the_last_error() {
+    fn success_clears_the_count_and_the_last_error() {
         let tracker = IoErrorTracker::default();
-        tracker.record(Some(&media_error()));
-        tracker.record(None);
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.check_read_write_error(None);
 
-        assert_eq!(tracker.state(), (None, 0, false));
+        assert_eq!(tracker.get_io_error_state(), (None, 0, false));
     }
 
     #[test]
-    fn record_non_media_error_clears_the_count() {
+    fn non_media_error_clears_the_count() {
         let tracker = IoErrorTracker::default();
-        tracker.record(Some(&media_error()));
-        tracker.record(Some(&io::Error::new(
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.check_read_write_error(Some(&io::Error::new(
             io::ErrorKind::NotFound,
             "no such file",
         )));
 
-        assert_eq!(tracker.state(), (None, 0, false));
+        assert_eq!(tracker.get_io_error_state(), (None, 0, false));
     }
 
     #[test]
     fn should_quarantine_only_once_the_tolerance_is_reached() {
         let tracker = IoErrorTracker::default();
         for _ in 1..IO_ERROR_TOLERANCE {
-            tracker.record(Some(&media_error()));
+            tracker.check_read_write_error(Some(&media_error()));
             assert!(!tracker.should_quarantine());
         }
-        tracker.record(Some(&media_error()));
+        tracker.check_read_write_error(Some(&media_error()));
         assert!(tracker.should_quarantine());
     }
 
     #[test]
     fn quarantine_survives_later_successful_io() {
         let tracker = IoErrorTracker::default();
-        tracker.mark_quarantined();
-        tracker.record(None);
+        tracker.mark_io_quarantined();
+        tracker.check_read_write_error(None);
 
-        // The count and the last error clear, but the quarantine is sticky:
-        // only explicit recovery lifts it.
-        assert_eq!(tracker.state(), (None, 0, true));
+        assert_eq!(tracker.get_io_error_state(), (None, 0, true));
         assert!(tracker.should_quarantine());
     }
 
     #[test]
-    fn reset_lifts_the_quarantine() {
+    fn reset_io_error_state_lifts_the_quarantine() {
         let tracker = IoErrorTracker::default();
-        tracker.record(Some(&media_error()));
-        tracker.mark_quarantined();
-        tracker.reset();
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.mark_io_quarantined();
+        tracker.reset_io_error_state();
 
-        assert_eq!(tracker.state(), (None, 0, false));
+        assert_eq!(tracker.get_io_error_state(), (None, 0, false));
         assert!(!tracker.should_quarantine());
     }
 
@@ -210,7 +188,7 @@ mod tests {
         tracker.set_last_io_error_for_test(Some("input/output error"));
         assert!(tracker.should_quarantine());
         assert_eq!(
-            tracker.state(),
+            tracker.get_io_error_state(),
             (
                 Some("input/output error".to_string()),
                 IO_ERROR_TOLERANCE,
@@ -219,6 +197,6 @@ mod tests {
         );
 
         tracker.set_last_io_error_for_test(None);
-        assert_eq!(tracker.state(), (None, 0, false));
+        assert_eq!(tracker.get_io_error_state(), (None, 0, false));
     }
 }

@@ -1003,34 +1003,26 @@ impl EcVolume {
         refresh
     }
 
-    // ---- I/O error tracking (mirrors Go's EcVolume IoErrorTracker) ----
+    // ---- I/O error tracking ----
 
     pub fn check_read_write_error(&self, err: Option<&io::Error>) {
-        self.io_errors.record(err);
+        self.io_errors.check_read_write_error(err);
     }
 
     pub fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
-        self.io_errors.state()
+        self.io_errors.get_io_error_state()
     }
 
-    /// Whether sustained storage-media errors mean the EC volume has to be
-    /// quarantined and stop being reported to the master.
     pub fn should_quarantine(&self) -> bool {
         self.io_errors.should_quarantine()
     }
 
     pub fn mark_io_quarantined(&self) {
-        self.io_errors.mark_quarantined();
+        self.io_errors.mark_io_quarantined();
     }
 
-    /// Clear the error count, the last error and the quarantine flag.
-    ///
-    /// `IoErrorTracker::mark_quarantined` is sticky — a later successful read
-    /// clears the count but not the quarantine — so this is the only way back
-    /// for an EC volume whose storage has since been repaired. Mirrors Go's
-    /// `EcVolume.ResetIoErrorState`.
     pub fn reset_io_error_state(&self) {
-        self.io_errors.reset();
+        self.io_errors.reset_io_error_state();
     }
 
     // ---- Index operations ----
