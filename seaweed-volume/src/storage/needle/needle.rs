@@ -749,6 +749,14 @@ pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
         (s, None)
     };
 
+    // Every length check and the split below are in BYTES, so a multi-byte
+    // character would let `split` land inside one and panic the slice. Hex is
+    // ASCII by definition; reject anything else up front, as Go's ParseUint
+    // does a step later.
+    if !hex_part.is_ascii() {
+        return Err("KeyHash must be ASCII hex.".to_string());
+    }
+
     // Go: len(key_hash_string) <= CookieSize*2 => error (must be > 8 hex chars)
     if hex_part.len() <= COOKIE_SIZE * 2 {
         return Err("KeyHash is too short.".to_string());
@@ -827,6 +835,30 @@ pub enum NeedleError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fid whose hex part carries multi-byte UTF-8 must be rejected, not
+    /// panic. `split` is a byte offset into `hex_part`; before the ASCII guard
+    /// `&hex_part[..split]` could land inside a character. `GET /3,ééééa` is
+    /// nine bytes, so it passes the length checks and splits at byte 1 —
+    /// halfway through the first `é`. Go's `ParseUint` just errors.
+    #[test]
+    fn parse_needle_id_cookie_rejects_non_ascii_instead_of_panicking() {
+        for s in ["ééééa", "ééééaaaaa", "0123456é9abc", "ééééa_1"] {
+            assert!(
+                parse_needle_id_cookie(s).is_err(),
+                "non-ASCII fid {:?} must be an error",
+                s
+            );
+        }
+    }
+
+    /// The ASCII guard must not change any accepted input.
+    #[test]
+    fn parse_needle_id_cookie_still_accepts_ascii_hex() {
+        let (id, cookie) = parse_needle_id_cookie("01637037d6").unwrap();
+        assert_eq!(id, NeedleId(0x01));
+        assert_eq!(cookie, Cookie(0x637037d6));
+    }
 
     #[test]
     fn test_parse_header() {

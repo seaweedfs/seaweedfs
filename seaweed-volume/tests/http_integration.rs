@@ -1142,3 +1142,116 @@ async fn delete_on_ec_volume_succeeds_when_the_needles_shard_is_not_mounted() {
         "the delete must have been journalled, not just answered 202"
     );
 }
+
+// ============================================================================
+// Hostile response-header override params must not panic the handler
+//
+// The `response-*` query params are attacker-controlled and were inserted with
+// `parse().unwrap()`. `%0A` decodes to a newline, `HeaderValue::from_str`
+// rejects it, and the unwrap panicked the connection task — unauthenticated.
+// The override must simply be skipped.
+// ============================================================================
+
+#[tokio::test]
+async fn hostile_response_header_overrides_are_skipped_not_panicked() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6";
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(b"payload".to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // One request per override param, each carrying a raw newline.
+    for param in [
+        "response-cache-control",
+        "response-content-encoding",
+        "response-expires",
+        "response-content-language",
+        "response-content-disposition",
+        "response-content-type",
+    ] {
+        let app = build_admin_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{}?{}=%0Aevil", uri, param))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{} with a newline must be ignored, not panic",
+            param
+        );
+        assert_eq!(body_bytes(response).await, b"payload".to_vec());
+    }
+}
+
+// ============================================================================
+// Non-ASCII in the fid and in ?ttl= must be rejected, not panic
+//
+// `parse_needle_id_cookie` split the hex by BYTE offset and `TTL::read` took
+// the unit as the last BYTE, so a multi-byte character split inside itself.
+// Both are reachable unauthenticated from the request line / query string.
+// ============================================================================
+
+#[tokio::test]
+async fn non_ascii_fid_and_ttl_are_rejected_not_panicked() {
+    let (state, _tmp) = test_state();
+
+    // A fid whose hex part is multi-byte UTF-8.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/1,%C3%A9%C3%A9%C3%A9%C3%A9a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_client_error() || response.status().is_server_error(),
+        "non-ASCII fid must produce an error status, got {}",
+        response.status()
+    );
+
+    // A TTL whose unit character is multi-byte. The upload path does
+    // `TTL::read(..).ok()`, so *any* unparseable TTL is simply dropped and the
+    // write succeeds — the point here is that a non-ASCII one now takes that
+    // same road instead of panicking. Assert it matches an ASCII-invalid TTL
+    // rather than inventing a stricter contract than the handler has.
+    let mut statuses = Vec::new();
+    // Distinct needle ids: reusing one id with a different cookie is a
+    // cookie-mismatch overwrite, which would mask what this test measures.
+    for (fid, ttl) in [("/1,03637037d7", "5%C3%A9"), ("/1,04637037d8", "5z")] {
+        let app = build_admin_router(state.clone());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("{}?ttl={}", fid, ttl))
+                    .body(Body::from(b"x".to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        statuses.push(response.status());
+    }
+    assert_eq!(
+        statuses[0], statuses[1],
+        "a non-ASCII ttl must behave like any other invalid ttl, not panic"
+    );
+}

@@ -221,6 +221,39 @@ mod tests {
     use super::*;
     use crate::storage::types::*;
 
+    /// A replication string with multi-byte UTF-8 must be an error, not a
+    /// panic. Padding is decided by byte length but indexing is by character,
+    /// so `"é"` (2 bytes) padded to `"0é"` yields only 2 chars and `chars[2]`
+    /// panicked. Reachable from AllocateVolume/VolumeConfigure and, worse,
+    /// from a malformed `.vif` at volume load — turning an intended Err into a
+    /// load-time panic.
+    #[test]
+    fn replica_placement_rejects_non_ascii_instead_of_panicking() {
+        for s in ["é", "0é", "é0", "🦀", "ééé"] {
+            assert!(
+                ReplicaPlacement::from_string(s).is_err(),
+                "non-ASCII replication {:?} must error",
+                s
+            );
+        }
+    }
+
+    /// The ASCII guard must not change any accepted input, including the
+    /// zero-padding shorthands.
+    #[test]
+    fn replica_placement_still_accepts_ascii_shorthands() {
+        assert_eq!(
+            ReplicaPlacement::from_string("1").unwrap(),
+            ReplicaPlacement::from_string("001").unwrap()
+        );
+        assert_eq!(
+            ReplicaPlacement::from_string("01").unwrap(),
+            ReplicaPlacement::from_string("001").unwrap()
+        );
+        let rp = ReplicaPlacement::from_string("010").unwrap();
+        assert_eq!(rp.diff_rack_count, 1);
+    }
+
     #[test]
     fn test_super_block_round_trip() {
         let sb = SuperBlock {
