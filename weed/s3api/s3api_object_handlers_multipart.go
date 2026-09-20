@@ -446,11 +446,16 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Parts inherit the checksum algorithm declared at CreateMultipartUpload
-	// when the request doesn't specify one (AWS behavior).
+	// when the request doesn't specify one; a conflicting one is rejected.
 	if headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm]); headerName != "" {
-		if algo, _, code := detectRequestedChecksumAlgorithm(r); code == s3err.ErrNone && algo == ChecksumAlgorithmNone {
-			if name := checksumAlgorithmNameFromHeaderName(headerName); name != "" {
-				r.Header.Set(s3_constants.AmzChecksumAlgorithm, name)
+		if algo, reqHeaderName, code := detectRequestedChecksumAlgorithm(r); code == s3err.ErrNone {
+			if algo == ChecksumAlgorithmNone {
+				if name := checksumAlgorithmNameFromHeaderName(headerName); name != "" {
+					r.Header.Set(s3_constants.AmzChecksumAlgorithm, name)
+				}
+			} else if reqHeaderName != headerName {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+				return
 			}
 		}
 	}

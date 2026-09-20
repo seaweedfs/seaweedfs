@@ -211,3 +211,33 @@ func TestCompleteMultipartUploadValidatesPartChecksums(t *testing.T) {
 
 	require.NoError(t, complete(part.ChecksumSHA256))
 }
+
+// UploadPart with a checksum algorithm that conflicts with the one declared at
+// CreateMultipartUpload is rejected, as on AWS.
+func TestMultipartPartConflictingAlgorithm(t *testing.T) {
+	client := newWhenRequiredChecksumClient(t)
+
+	bucket := uniqueBucket()
+	createBucket(t, client, bucket)
+	defer cleanupBucket(t, client, bucket)
+
+	create, err := client.CreateMultipartUpload(context.Background(), &s3.CreateMultipartUploadInput{
+		Bucket:            aws.String(bucket),
+		Key:               aws.String("conflict"),
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+	})
+	require.NoError(t, err)
+
+	_, err = client.UploadPart(context.Background(), &s3.UploadPartInput{
+		Bucket:            aws.String(bucket),
+		Key:               aws.String("conflict"),
+		UploadId:          create.UploadId,
+		PartNumber:        aws.Int32(1),
+		Body:              bytes.NewReader([]byte("data")),
+		ChecksumAlgorithm: types.ChecksumAlgorithmCrc32,
+	})
+	var apiErr smithy.APIError
+	require.Error(t, err)
+	require.True(t, errors.As(err, &apiErr))
+	require.Equal(t, "InvalidRequest", apiErr.ErrorCode())
+}
