@@ -38,6 +38,9 @@ pub enum VolumeError {
     #[error("not found")]
     NotFound,
 
+    #[error("volume id {0} is not found")]
+    VolumeNotFound(VolumeId),
+
     #[error("already deleted")]
     Deleted,
 
@@ -61,6 +64,13 @@ pub enum VolumeError {
 
     #[error("volume size limit exceeded: current {current}, limit {limit}")]
     SizeLimitExceeded { current: u64, limit: u64 },
+
+    #[error("not enough free space: required {required}, free {free}")]
+    InsufficientSpace {
+        vid: VolumeId,
+        required: u64,
+        free: u64,
+    },
 
     #[error("volume not initialized")]
     NotInitialized,

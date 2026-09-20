@@ -82,9 +82,9 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 
 	if err != nil {
 		glog.Errorf("delete collection %s: %v", req.Collection, err)
-	} else {
-		glog.V(2).Infof("delete collection %v", req)
+		return resp, volumeStatusError(fmt.Errorf("delete collection %s: %w", req.Collection, err))
 	}
+	glog.V(2).Infof("delete collection %v", req)
 
 	return resp, err
 
@@ -202,7 +202,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)
-		return resp, volumeDeleteStatusError(err)
+		return resp, volumeStatusError(err)
 	} else {
 		// V(0) so destructive RPCs are always traceable.
 		glog.Infof("volume delete %v", req)
@@ -212,15 +212,18 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 }
 
-// volumeDeleteStatusError keeps the store's message so callers matching on
+// volumeStatusError keeps the store's message so callers matching on
 // "not found" or "volume not empty" keep working, and adds the status code so
 // new callers do not have to.
-func volumeDeleteStatusError(err error) error {
+func volumeStatusError(err error) error {
 	if errors.Is(err, storage.ErrVolumeNotFound) {
 		return status.Error(codes.NotFound, err.Error())
 	}
 	if errors.Is(err, storage.ErrVolumeNotEmpty) {
 		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	if errors.Is(err, storage.ErrInsufficientSpace) {
+		return status.Error(codes.ResourceExhausted, err.Error())
 	}
 	return err
 }

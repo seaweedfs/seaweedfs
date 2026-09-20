@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -27,9 +28,10 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 
 	if err != nil {
 		glog.V(3).Infof("check volume %d: %v", req.VolumeId, err)
+		return resp, volumeStatusError(err)
 	}
 
-	return resp, err
+	return resp, nil
 
 }
 
@@ -70,7 +72,7 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 	stats.VolumeServerVacuumingCompactCounter.WithLabelValues(strconv.FormatBool(err == nil && sendErr == nil)).Inc()
 	if err != nil {
 		glog.Errorf("failed compact volume %d: %v", req.VolumeId, err)
-		return err
+		return volumeStatusError(fmt.Errorf("compact volume %d: %w", req.VolumeId, err))
 	}
 	if sendErr != nil {
 		glog.Errorf("failed compact volume %d report progress: %v", req.VolumeId, sendErr)
@@ -99,15 +101,15 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 
 	readOnly, volumeSize, err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
 
-	if err != nil {
-		glog.Errorf("failed commit volume %d: %v", req.VolumeId, err)
-	} else {
-		glog.V(1).Infof("commit volume %d", req.VolumeId)
-	}
 	stats.VolumeServerVacuumingCommitCounter.WithLabelValues(strconv.FormatBool(err == nil)).Inc()
 	resp.IsReadOnly = readOnly
 	resp.VolumeSize = uint64(volumeSize)
-	return resp, err
+	if err != nil {
+		glog.Errorf("failed commit volume %d: %v", req.VolumeId, err)
+		return resp, volumeStatusError(fmt.Errorf("commit compact volume %d: %w", req.VolumeId, err))
+	}
+	glog.V(1).Infof("commit volume %d", req.VolumeId)
+	return resp, nil
 
 }
 
@@ -124,10 +126,10 @@ func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_ser
 
 	if err != nil {
 		glog.Errorf("failed cleanup volume %d: %v", req.VolumeId, err)
-	} else {
-		glog.V(1).Infof("cleanup volume %d", req.VolumeId)
+		return resp, volumeStatusError(fmt.Errorf("cleanup volume %d: %w", req.VolumeId, err))
 	}
+	glog.V(1).Infof("cleanup volume %d", req.VolumeId)
 
-	return resp, err
+	return resp, nil
 
 }

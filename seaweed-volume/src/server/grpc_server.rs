@@ -1125,7 +1125,9 @@ impl VolumeServer for VolumeGrpcService {
         let store = self.state.store.read().unwrap();
         let garbage_ratio = match store.find_volume(vid) {
             Some((_, vol)) => vol.garbage_level(),
-            None => return Err(Status::not_found(format!("not found volume id {}", vid))),
+            None => {
+                return Err(crate::storage::volume::VolumeError::VolumeNotFound(vid).into());
+            }
         };
         Ok(Response::new(volume_server_pb::VacuumVolumeCheckResponse {
             garbage_ratio,
@@ -1183,7 +1185,10 @@ impl VolumeServer for VolumeGrpcService {
                 .inc();
 
             if let Err(e) = result {
-                let _ = tx.blocking_send(Err(Status::internal(e)));
+                let _ = tx.blocking_send(Err(crate::server::status_with_context(
+                    &format!("compact volume {vid}"),
+                    e,
+                )));
             }
         });
 
@@ -1225,7 +1230,10 @@ impl VolumeServer for VolumeGrpcService {
                     volume_size,
                 },
             )),
-            Err(e) => Err(Status::internal(e)),
+            Err(e) => Err(crate::server::status_with_context(
+                &format!("commit compact volume {vid}"),
+                e,
+            )),
         }
     }
 
@@ -1241,7 +1249,10 @@ impl VolumeServer for VolumeGrpcService {
             Ok(()) => Ok(Response::new(
                 volume_server_pb::VacuumVolumeCleanupResponse {},
             )),
-            Err(e) => Err(Status::internal(e)),
+            Err(e) => Err(crate::server::status_with_context(
+                &format!("cleanup volume {vid}"),
+                e,
+            )),
         }
     }
 
@@ -1253,9 +1264,9 @@ impl VolumeServer for VolumeGrpcService {
         let collection = &request.into_inner().collection;
         {
             let mut store = self.state.store.write().unwrap();
-            store
-                .delete_collection(collection)
-                .map_err(Status::internal)?;
+            store.delete_collection(collection).map_err(|e| {
+                crate::server::status_with_context(&format!("delete collection {collection}"), e)
+            })?;
         }
         // The delta the notify path derives is the only thing that tells the
         // master these slots came free: a heartbeat carries the whole list only
@@ -1560,24 +1571,16 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
         if req.only_empty {
-            let (_, vol) = store
-                .find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+            let (_, vol) = store.find_volume(vid).ok_or_else(|| {
+                Status::from(crate::storage::volume::VolumeError::VolumeNotFound(vid))
+            })?;
             if vol.file_count() > 0 {
-                return Err(Status::failed_precondition("volume not empty"));
+                return Err(Status::from(crate::storage::volume::VolumeError::NotEmpty));
             }
         }
         store
             .delete_volume(vid, req.only_empty, req.keep_remote_data)
-            .map_err(|e| match e {
-                crate::storage::volume::VolumeError::NotFound => {
-                    Status::not_found(format!("not found volume id {}", vid))
-                }
-                crate::storage::volume::VolumeError::NotEmpty => {
-                    Status::failed_precondition("volume not empty")
-                }
-                other => Status::internal(other.to_string()),
-            })?;
+            .map_err(|e| crate::server::status_with_context(&format!("delete volume {vid}"), e))?;
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))
     }
@@ -6573,6 +6576,30 @@ mod tests {
         let store = service.state.store.read().unwrap();
         let (_, v) = store.find_volume(VolumeId(1)).unwrap();
         assert_eq!(v.file_count(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_vacuum_volume_commit_missing_volume_is_not_found() {
+        let (service, _tmp) = make_local_service_with_volume("vacuum_commit_missing", None);
+
+        let mut request =
+            Request::new(volume_server_pb::VacuumVolumeCommitRequest { volume_id: 4242 });
+        request
+            .extensions_mut()
+            .insert(tonic::transport::server::TcpConnectInfo {
+                local_addr: None,
+                remote_addr: Some("127.0.0.1:65000".parse().unwrap()),
+            });
+
+        let err = service
+            .vacuum_volume_commit(request)
+            .await
+            .expect_err("committing a compaction for a volume that is not mounted must fail");
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err:?}");
+        assert!(
+            err.message().contains("4242"),
+            "the message must still name the volume: {err:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -9,12 +9,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
+var ErrInsufficientSpace = fmt.Errorf("insufficient free space")
+
 func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {
 	if v := s.findVolume(volumeId); v != nil {
 		glog.V(3).Infof("volume %d garbage level: %f", volumeId, v.garbageLevel())
 		return v.garbageLevel(), nil
 	}
-	return 0, fmt.Errorf("volume id %d is not found during check compact", volumeId)
+	return 0, fmt.Errorf("volume id %d is not found during check compact: %w", volumeId, ErrVolumeNotFound)
 }
 
 func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compactionBytePerSecond int64, progressFn ProgressFunc) error {
@@ -28,7 +30,7 @@ func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compaction
 			ProgressCallback:  progressFn,
 		})
 	}
-	return fmt.Errorf("volume id %d is not found during compact", vid)
+	return fmt.Errorf("volume id %d is not found during compact: %w", vid, ErrVolumeNotFound)
 }
 
 func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, int64, error) {
@@ -44,14 +46,14 @@ func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, int64, error) {
 		}
 		return isReadOnly, volumeSize, err
 	}
-	return false, 0, fmt.Errorf("volume id %d is not found during commit compact", vid)
+	return false, 0, fmt.Errorf("volume id %d is not found during commit compact: %w", vid, ErrVolumeNotFound)
 }
 
 func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 	if v := s.findVolume(vid); v != nil {
 		return v.cleanupCompact()
 	}
-	return fmt.Errorf("volume id %d is not found during cleaning up", vid)
+	return fmt.Errorf("volume id %d is not found during cleaning up: %w", vid, ErrVolumeNotFound)
 }
 
 func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
@@ -69,8 +71,8 @@ func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
 
 	diskStatus := stats.NewDiskStatus(v.dir)
 	if int64(diskStatus.Free) < spaceNeeded {
-		return fmt.Errorf("insufficient free space for compaction: need %d bytes (volume: %d, index: %d), but only %d bytes available",
-			spaceNeeded, volumeSize, indexSize, diskStatus.Free)
+		return fmt.Errorf("insufficient free space for compaction: need %d bytes (volume: %d, index: %d), but only %d bytes available: %w",
+			spaceNeeded, volumeSize, indexSize, diskStatus.Free, ErrInsufficientSpace)
 	}
 
 	glog.V(1).Infof("volume %d compaction space check: volume=%d, index=%d, space_needed=%d, free_space=%d",

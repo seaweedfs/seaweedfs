@@ -417,9 +417,9 @@ impl CompactNeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    pub fn ascending_visit<F>(&self, f: F) -> Result<(), String>
+    pub fn ascending_visit<F, E>(&self, f: F) -> Result<(), E>
     where
-        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
     {
         self.map.ascending_visit(f)
     }
@@ -1203,9 +1203,10 @@ impl RedbNeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    pub fn ascending_visit<F>(&self, mut f: F) -> Result<(), String>
+    pub fn ascending_visit<F, E>(&self, mut f: F) -> Result<(), E>
     where
-        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
+        E: From<String>,
     {
         let txn = self
             .db_or_err()
@@ -1443,9 +1444,10 @@ impl NeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    pub fn ascending_visit<F>(&self, f: F) -> Result<(), String>
+    pub fn ascending_visit<F, E>(&self, f: F) -> Result<(), E>
     where
-        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
+        E: From<String>,
     {
         match self {
             NeedleMap::InMemory(nm) => nm.ascending_visit(f),
@@ -1466,7 +1468,7 @@ impl NeedleMap {
                 // The visitor never fails, so neither can this.
                 let _ = nm.ascending_visit(|id, nv| {
                     entries.push((id, *nv));
-                    Ok(())
+                    Ok::<(), std::convert::Infallible>(())
                 });
                 Ok(entries)
             }
@@ -1838,7 +1840,7 @@ mod tests {
         let mut live = 0u64;
         nm.ascending_visit(|_, _| {
             live += 1;
-            Ok(())
+            Ok::<(), String>(())
         })
         .unwrap();
         assert_eq!(live, N - 1);
@@ -2051,7 +2053,7 @@ mod tests {
         let mut visited = Vec::new();
         nm.ascending_visit(|id, nv| {
             visited.push((id, nv.size));
-            Ok(())
+            Ok::<(), String>(())
         })
         .unwrap();
 
