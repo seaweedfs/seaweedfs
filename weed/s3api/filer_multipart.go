@@ -581,7 +581,8 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			glog.Errorf("completeMultipartUpload: %v", typeErr)
 			return nil, nil, s3err.ErrInvalidRequest
 		}
-		if completeType := r.Header.Get(s3_constants.AmzChecksumType); completeType != "" && !strings.EqualFold(completeType, resolvedType) {
+		query := parseRequestQuery(r)
+		if completeType := lookupHeaderOrQuery(r, query, s3_constants.AmzChecksumType); completeType != "" && !strings.EqualFold(completeType, resolvedType) {
 			return nil, nil, s3err.ErrBadDigest
 		}
 		checksumType = resolvedType
@@ -621,7 +622,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			glog.Errorf("completeMultipartUpload: %s checksum computation failed: %v", checksumType, checksumErr)
 			return nil, nil, s3err.ErrInvalidPart
 		}
-		if objectChecksum := r.Header.Get(checksumHeaderName); objectChecksum != "" && objectChecksum != checksumValue {
+		if objectChecksum := lookupHeaderOrQuery(r, query, checksumHeaderName); objectChecksum != "" && objectChecksum != checksumValue {
 			return nil, nil, s3err.ErrBadDigest
 		}
 	}
