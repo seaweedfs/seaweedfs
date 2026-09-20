@@ -87,6 +87,7 @@ const (
 	AmzTrailer              = "X-Amz-Trailer"
 	AmzSdkChecksumAlgorithm = "X-Amz-Sdk-Checksum-Algorithm"
 	AmzChecksumType         = "X-Amz-Checksum-Type"
+	AmzChecksumMode         = "X-Amz-Checksum-Mode"
 
 	// S3 checksum type values (x-amz-checksum-type). A COMPOSITE checksum is a
 	// checksum-of-per-part-checksums ("base64-N"); a FULL_OBJECT checksum is the
