@@ -343,9 +343,6 @@ async fn run(
         pre_stop_seconds: config.pre_stop_seconds,
         volume_state_notify: tokio::sync::Notify::new(),
         write_queue: std::sync::OnceLock::new(),
-        s3_tier_registry: std::sync::RwLock::new(
-            seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
-        ),
         read_mode: config.read_mode,
         allow_untrusted_remote_endpoints: config.allow_untrusted_remote_endpoints,
         master_url,
