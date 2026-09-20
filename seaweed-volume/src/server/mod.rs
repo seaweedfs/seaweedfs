@@ -24,7 +24,7 @@ impl From<VolumeError> for Status {
         let message = err.to_string();
         match err {
             VolumeError::NotFound | VolumeError::VolumeNotFound(_) => Status::not_found(message),
-            VolumeError::ReadOnly => Status::failed_precondition(message),
+            VolumeError::ReadOnly | VolumeError::NotEmpty => Status::failed_precondition(message),
             VolumeError::InsufficientSpace { .. } => Status::resource_exhausted(message),
             VolumeError::AlreadyExists => Status::already_exists(message),
             _ => Status::internal(message),

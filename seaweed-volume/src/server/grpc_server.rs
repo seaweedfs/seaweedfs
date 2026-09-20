@@ -1554,24 +1554,16 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
         if req.only_empty {
-            let (_, vol) = store
-                .find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+            let (_, vol) = store.find_volume(vid).ok_or_else(|| {
+                Status::from(crate::storage::volume::VolumeError::VolumeNotFound(vid))
+            })?;
             if vol.file_count() > 0 {
-                return Err(Status::failed_precondition("volume not empty"));
+                return Err(Status::from(crate::storage::volume::VolumeError::NotEmpty));
             }
         }
         store
             .delete_volume(vid, req.only_empty, req.keep_remote_data)
-            .map_err(|e| match e {
-                crate::storage::volume::VolumeError::NotFound => {
-                    Status::not_found(format!("not found volume id {}", vid))
-                }
-                crate::storage::volume::VolumeError::NotEmpty => {
-                    Status::failed_precondition("volume not empty")
-                }
-                other => Status::internal(other.to_string()),
-            })?;
+            .map_err(|e| crate::server::status_with_context(&format!("delete volume {vid}"), e))?;
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))
     }
