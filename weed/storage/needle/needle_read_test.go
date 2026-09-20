@@ -21,6 +21,17 @@ func readNeedleBodyBytes(t *testing.T, n *Needle, body []byte, version Version) 
 	return n.ReadNeedleBodyBytes(body, version)
 }
 
+// The size feeds the read buffer's length, so a negative one never reaches make().
+func TestReadNeedleBlobRejectsNegativeSize(t *testing.T) {
+	for _, version := range []Version{Version1, Version2, Version3} {
+		for _, size := range []Size{TombstoneFileSize, -100} {
+			if _, err := ReadNeedleBlob(nil, 0, size, version); !errors.Is(err, ErrorSizeInvalid) {
+				t.Fatalf("version %d size %d: expected ErrorSizeInvalid, got %v", version, size, err)
+			}
+		}
+	}
+}
+
 // A corrupted .dat header can carry a size that does not fit the body read for
 // it. Vacuum used to panic on it with "slice bounds out of range [:-1]" (#6763).
 func TestReadNeedleBodyBytesRejectsCorruptSize(t *testing.T) {

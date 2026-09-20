@@ -235,6 +235,11 @@ func min(x, y int) int {
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) ReadNeedleBlob(offset int64, size Size) ([]byte, error) {
+	// A deletion marker is not a record length; reject it before taking the lock.
+	if size.IsDeleted() {
+		return nil, fmt.Errorf("invalid needle size %d", size)
+	}
+
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 

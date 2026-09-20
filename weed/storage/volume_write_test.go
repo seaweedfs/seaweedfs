@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -256,5 +258,192 @@ func TestWriteNeedleBlobRejectsSizeMismatch(t *testing.T) {
 
 	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size); err != nil {
 		t.Fatalf("write needle blob with the header size: %v", err)
+	}
+}
+
+// A negative size reaches make() in needle.ReadNeedleBlob, and the blob RPCs
+// have no recover, so one request took down the volume server.
+func TestReadNeedleBlobRejectsNegativeSize(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	n := newRandomNeedle(1)
+	offset, _, _, err := v.writeNeedle2(n, true, false, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+
+	for _, size := range []types.Size{types.TombstoneFileSize, -100, math.MinInt32} {
+		t.Run(fmt.Sprintf("size %d", size), func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("ReadNeedleBlob panicked: %v", r)
+				}
+			}()
+			if _, err := v.ReadNeedleBlob(int64(offset), size); err == nil {
+				t.Error("expected ReadNeedleBlob to reject a negative size")
+			}
+		})
+	}
+
+	// Only negative sizes are rejected: size 0 is what a delete record carries.
+	for _, size := range []types.Size{0, n.Size} {
+		if _, err := v.ReadNeedleBlob(int64(offset), size); err != nil {
+			t.Errorf("ReadNeedleBlob with size %d: %v", size, err)
+		}
+	}
+}
+
+// The blob header carries the same negative size, so only the sign is wrong.
+func TestWriteNeedleBlobRejectsNegativeSize(t *testing.T) {
+	for _, size := range []types.Size{types.TombstoneFileSize, -5} {
+		t.Run(fmt.Sprintf("size %d", size), func(t *testing.T) {
+			dir := t.TempDir()
+			v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			if err != nil {
+				t.Fatalf("volume creation: %v", err)
+			}
+			defer v.Close()
+
+			n := newRandomNeedle(1)
+			offset, _, _, err := v.writeNeedle2(n, true, false, false)
+			if err != nil {
+				t.Fatalf("write needle: %v", err)
+			}
+			blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
+			if err != nil {
+				t.Fatalf("read needle blob: %v", err)
+			}
+			// Make the header agree with the size, so only the sign is wrong.
+			types.SizeToBytes(blob[types.NeedleHeaderSize-types.SizeSize:types.NeedleHeaderSize], size)
+
+			datSizeBefore, _, _ := v.DataBackend.GetStat()
+
+			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, size); err == nil {
+				t.Error("expected WriteNeedleBlob to reject a negative size")
+			}
+
+			datSizeAfter, _, _ := v.DataBackend.GetStat()
+			if datSizeAfter != datSizeBefore {
+				t.Errorf(".dat grew from %d to %d on a rejected blob", datSizeBefore, datSizeAfter)
+			}
+			if nv, ok := v.nm.Get(types.Uint64ToNeedleId(2)); ok {
+				t.Errorf("needle 2 was indexed with size %d", nv.Size)
+			}
+		})
+	}
+}
+
+// A blob shorter or longer than its record size leaves .dat off the record grid:
+// later writes index at truncated offsets, or a scan reads the leftover bytes as
+// the next record.
+func TestWriteNeedleBlobRejectsLengthMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(blob []byte) []byte
+	}{
+		{"one byte too long", func(blob []byte) []byte { return append(blob, 0) }},
+		{"one byte short", func(blob []byte) []byte { return blob[:len(blob)-1] }},
+		{"8 bytes too long", func(blob []byte) []byte { return append(blob, make([]byte, 8)...) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			if err != nil {
+				t.Fatalf("volume creation: %v", err)
+			}
+			defer v.Close()
+
+			n := newRandomNeedle(1)
+			offset, _, _, err := v.writeNeedle2(n, true, false, false)
+			if err != nil {
+				t.Fatalf("write needle: %v", err)
+			}
+			blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
+			if err != nil {
+				t.Fatalf("read needle blob: %v", err)
+			}
+			datSizeBefore, _, _ := v.DataBackend.GetStat()
+
+			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), tc.mutate(blob), n.Size); err == nil {
+				t.Error("expected WriteNeedleBlob to reject a blob whose length does not match its size")
+			}
+
+			datSizeAfter, _, _ := v.DataBackend.GetStat()
+			if datSizeAfter != datSizeBefore {
+				t.Errorf(".dat grew from %d to %d on a rejected blob", datSizeBefore, datSizeAfter)
+			}
+
+			next := newRandomNeedle(3)
+			if _, _, _, err = v.writeNeedle2(next, true, false, false); err != nil {
+				t.Fatalf("write needle 3: %v", err)
+			}
+			got := newEmptyNeedle(3)
+			if _, err = v.readNeedle(got, nil, nil); err != nil {
+				t.Fatalf("read back needle 3: %v", err)
+			}
+			if !bytes.Equal(got.Data, next.Data) {
+				t.Error("needle 3 read back with different data")
+			}
+		})
+	}
+}
+
+// The checks must pass what the real callers send: a needle's own record and the
+// size-0 record a delete leaves.
+func TestWriteNeedleBlobRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	n := newRandomNeedle(1)
+	offset, _, _, err := v.writeNeedle2(n, true, false, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
+	if err != nil {
+		t.Fatalf("read needle blob: %v", err)
+	}
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size); err != nil {
+		t.Fatalf("write needle blob: %v", err)
+	}
+	got := newEmptyNeedle(2)
+	if _, err = v.readNeedle(got, nil, nil); err != nil {
+		t.Fatalf("read back needle 2: %v", err)
+	}
+	if !bytes.Equal(got.Data, n.Data) {
+		t.Error("needle 2 read back with different data")
+	}
+
+	deleteOffset, _, _ := v.DataBackend.GetStat()
+	if _, err = v.doDeleteRequest(newEmptyNeedle(1)); err != nil {
+		t.Fatalf("delete needle 1: %v", err)
+	}
+	deleteRecord, err := v.ReadNeedleBlob(deleteOffset, 0)
+	if err != nil {
+		t.Fatalf("read delete record: %v", err)
+	}
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(3), deleteRecord, 0); err != nil {
+		t.Fatalf("write size-0 needle blob: %v", err)
+	}
+
+	next := newRandomNeedle(4)
+	if _, _, _, err = v.writeNeedle2(next, true, false, false); err != nil {
+		t.Fatalf("write needle 4: %v", err)
+	}
+	got = newEmptyNeedle(4)
+	if _, err = v.readNeedle(got, nil, nil); err != nil {
+		t.Fatalf("read back needle 4: %v", err)
+	}
+	if !bytes.Equal(got.Data, next.Data) {
+		t.Error("needle 4 read back with different data")
 	}
 }
