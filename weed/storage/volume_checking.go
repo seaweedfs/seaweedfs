@@ -85,21 +85,15 @@ func (v *Volume) scrubVolumeData(idxFile *os.File, idxFileSize int64) (int64, []
 		if offset.IsZero() && size.IsDeleted() {
 			return nil
 		}
+		physicalSize := types.Size(size.Raw())
 		// compute the actual size of the needle in disk, including needle header, body and alignment padding.
-		actualSize := int64(needle.GetActualSize(size, version))
-
-		// TODO: Needle.ReadData() is currently broken for deleted files, which have a types.Size < 0. Fix
-		// so deleted needles get properly scrubbed as well.
-		// TODO: idx.WalkIndexFile() returns a size -1 (and actual size of 32 bytes) for deleted needles. We
-		// want to scrub deleted needles whenever possible.
-		if size.IsDeleted() {
-			totalRead += actualSize
-			return nil
-		}
+		actualSize := int64(needle.GetActualSize(physicalSize, version))
 
 		n := needle.Needle{}
-		if err := n.ReadData(v.DataBackend, offset.ToActualOffset(), size, version); err != nil {
+		if err := n.ReadData(v.DataBackend, offset.ToActualOffset(), physicalSize, version); err != nil {
 			errs = append(errs, fmt.Errorf("failed to read needle %d on volume %d: %v", id, v.Id, err))
+		} else if size.IsDeleted() && n.Id != id {
+			errs = append(errs, fmt.Errorf("index key %v does not match needle's Id %v on volume %d", id, n.Id, v.Id))
 		}
 
 		totalRead += actualSize
@@ -149,7 +143,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 		return 0, nil
 	}
 	// The deeper-than-tail structural check (every (offset + actual size)
-	// fits inside .dat — issue #8928) lives in volume.load(): it reads
+	// fits inside .dat) lives in volume.load(): it reads
 	// MaximumNeedleEnd from the needle map after the load walk, so we don't
 	// need a redundant linear scan of the .idx here.
 
@@ -159,7 +153,7 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	// puts the highest-key needle last instead of the .dat-tail needle. Picking
 	// the last file-position entry there compares a mid-file needle's tail
 	// against the full .dat size and falsely flips the volume read-only on every
-	// load (issue #9688).
+	// load.
 	tailEntryPos, err := findDatTailEntryOffset(v, indexFile, indexSize)
 	if err != nil {
 		return 0, fmt.Errorf("CheckVolumeDataIntegrity %s: %v", indexFile.Name(), err)
@@ -218,14 +212,8 @@ func findDatTailEntryOffset(v *Volume, indexFile *os.File, indexSize int64) (int
 }
 
 // needleDiskEnd returns the byte offset just past the needle's on-disk record.
-// Deletion tombstones carry TombstoneFileSize (-1) in the .idx but are written
-// with DataSize=0, so their on-disk record is sized as 0.
 func needleDiskEnd(offset types.Offset, size types.Size, version needle.Version) int64 {
-	onDiskSize := size
-	if size.IsDeleted() {
-		onDiskSize = 0
-	}
-	return offset.ToActualOffset() + needle.GetActualSize(onDiskSize, version)
+	return offset.ToActualOffset() + needle.GetActualSize(types.Size(size.Raw()), version)
 }
 
 func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (lastAppendAtNs uint64, err error) {

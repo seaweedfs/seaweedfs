@@ -2834,11 +2834,9 @@ impl Volume {
                 if offset.is_zero() && size.is_deleted() {
                     return Ok(());
                 }
-                // Deleted needles still occupy .dat space: count their size, don't read.
-                total_read += get_actual_size(size, version);
-                if size.is_deleted() {
-                    return Ok(());
-                }
+                let on_disk_size = Size(size.raw() as i32);
+                // compute the actual size of the needle in disk, including needle header, body and alignment padding.
+                total_read += get_actual_size(on_disk_size, version);
                 let actual_offset = offset.to_actual_offset();
                 if actual_offset < 0 || actual_offset as u64 >= dat_size {
                     broken.push(format!(
@@ -2853,12 +2851,20 @@ impl Volume {
                     ..Needle::default()
                 };
                 let mut read_option = ReadOption::default();
-                if let Err(e) =
-                    self.read_needle_data_at_unlocked(&mut n, actual_offset, size, &mut read_option)
-                {
+                if let Err(e) = self.read_needle_data_at_unlocked(
+                    &mut n,
+                    actual_offset,
+                    on_disk_size,
+                    &mut read_option,
+                ) {
                     broken.push(format!(
                         "failed to read needle {} on volume {}: {}",
                         needle_id.0, self.id.0, e
+                    ));
+                } else if size.is_deleted() && n.id != needle_id {
+                    broken.push(format!(
+                        "index key {} does not match needle's Id {} on volume {}",
+                        needle_id.0, n.id.0, self.id.0
                     ));
                 }
                 Ok(())
@@ -4419,12 +4425,10 @@ impl Volume {
 // ============================================================================
 
 /// Generate volume file base name: dir/collection_id or dir/id
-/// Byte offset just past the needle's on-disk record. Deletion tombstones
-/// carry TombstoneFileSize (-1) in the .idx but are written with DataSize=0,
-/// so their on-disk record is sized as 0. Mirrors Go's needleDiskEnd.
+/// Byte offset just past the needle's on-disk record. Mirrors Go's
+/// needleDiskEnd.
 pub(crate) fn needle_disk_end(offset: Offset, size: Size, version: Version) -> i64 {
-    let on_disk_size = if size.is_deleted() { Size(0) } else { size };
-    offset.to_actual_offset() + get_actual_size(on_disk_size, version)
+    offset.to_actual_offset() + get_actual_size(Size(size.raw() as i32), version)
 }
 
 fn size_mismatch_error(offset: i64, id: NeedleId, found: Size, expected: Size) -> VolumeError {
@@ -6073,6 +6077,112 @@ mod tests {
             broken
         );
         assert_eq!(count, 2, "both .idx rows are walked");
+    }
+
+    /// The .dat offset a local delete's .idx row points at: the physical
+    /// tombstone record. Mirrors the Go test helper localTombstoneOffset.
+    fn local_tombstone_offset(v: &Volume, id: u64) -> Offset {
+        let mut idx_file = File::open(v.file_name(".idx")).unwrap();
+        let mut found = Offset::default();
+        idx::walk_index_file(&mut idx_file, 0, |key, offset, size| {
+            if key == NeedleId(id) && !offset.is_zero() && size.is_deleted() {
+                found = offset;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            !found.is_zero(),
+            "expected a local deletion tombstone for needle {} in .idx",
+            id
+        );
+        found
+    }
+
+    #[test]
+    fn test_scrub_checks_local_deletion_tombstone() {
+        // Mirror of Go's TestScrubVolumeDataChecksLocalDeletionTombstone: a
+        // local delete's tombstone record is read and its needle id checked
+        // against the .idx key.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        write_test_needle(&mut v, 1, b"needle data");
+        v.delete_needle(&mut Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            ..Needle::default()
+        })
+        .unwrap();
+        // A later record keeps the tombstone mid-file rather than at the tail.
+        write_test_needle(&mut v, 2, b"needle data");
+        v.sync_to_disk().unwrap();
+
+        let tombstone_offset = local_tombstone_offset(&v, 1);
+        let (_count, broken) = v.scrub().unwrap();
+        assert!(
+            broken.is_empty(),
+            "healthy local deletion tombstone must pass scrub, got {:?}",
+            broken
+        );
+
+        let mut id_bytes = [0u8; NEEDLE_ID_SIZE];
+        NeedleId(99).to_bytes(&mut id_bytes);
+        let mut dat = OpenOptions::new()
+            .write(true)
+            .open(v.file_name(".dat"))
+            .unwrap();
+        dat.seek(SeekFrom::Start(
+            tombstone_offset.to_actual_offset() as u64 + COOKIE_SIZE as u64,
+        ))
+        .unwrap();
+        dat.write_all(&id_bytes).unwrap();
+        dat.sync_all().unwrap();
+
+        let (_count, broken) = v.scrub().unwrap();
+        assert!(
+            broken
+                .iter()
+                .any(|e| e.contains("does not match needle's Id")),
+            "scrub should report the corrupted tombstone's Id, got {:?}",
+            broken
+        );
+    }
+
+    #[test]
+    fn test_scrub_reports_truncated_local_deletion_tombstone() {
+        // Mirror of Go's TestScrubVolumeDataReportsTruncatedLocalDeletionTombstone.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        write_test_needle(&mut v, 1, b"needle data");
+        v.delete_needle(&mut Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            ..Needle::default()
+        })
+        .unwrap();
+        v.sync_to_disk().unwrap();
+
+        let tombstone_offset = local_tombstone_offset(&v, 1);
+        let dat = OpenOptions::new()
+            .write(true)
+            .open(v.file_name(".dat"))
+            .unwrap();
+        dat.set_len(tombstone_offset.to_actual_offset() as u64 + NEEDLE_HEADER_SIZE as u64)
+            .unwrap();
+        dat.sync_all().unwrap();
+
+        let (_count, broken) = v.scrub().unwrap();
+        assert!(
+            broken
+                .iter()
+                .any(|e| e.contains("failed to read needle 1 on volume 1")),
+            "scrub should report the truncated tombstone read, got {:?}",
+            broken
+        );
     }
 
     #[test]
