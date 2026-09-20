@@ -2,6 +2,7 @@ pub mod disk_location;
 pub mod erasure_coding;
 pub mod idx;
 pub(crate) mod io;
+pub(crate) mod io_error;
 pub mod needle;
 pub mod needle_map;
 pub mod store;
