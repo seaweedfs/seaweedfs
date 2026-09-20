@@ -37,12 +37,6 @@ pub enum VolumeError {
     #[error("not found")]
     NotFound,
 
-    /// No volume with this id is mounted on this server, as reported by the
-    /// compaction and collection API on `Store`. `NotFound` above is
-    /// needle-level and carries no payload, so those lookups need their own
-    /// variant to keep the id in the message the operator reads. The rest of
-    /// `Store` still answers `NotFound` for a missing volume; migrating it is
-    /// incremental.
     #[error("volume id {0} is not found")]
     VolumeNotFound(VolumeId),
 
@@ -70,11 +64,6 @@ pub enum VolumeError {
     #[error("volume size limit exceeded: current {current}, limit {limit}")]
     SizeLimitExceeded { current: u64, limit: u64 },
 
-    /// Compaction rewrites the volume beside the original, so the disk has to
-    /// hold both copies at once. Reported separately from a plain I/O error:
-    /// the caller can retry elsewhere, or after a vacuum of another volume.
-    /// `vid` is carried for callers that inspect the error; the message leaves
-    /// it out because the RPC prefixes "compact volume {vid}: " already.
     #[error("not enough free space: required {required}, free {free}")]
     InsufficientSpace {
         vid: VolumeId,

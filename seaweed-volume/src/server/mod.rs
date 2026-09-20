@@ -19,11 +19,6 @@ pub mod volume_server;
 pub mod write_queue;
 
 /// Map a storage error onto the gRPC code that describes it.
-///
-/// Every store call used to reach the wire as `Status::internal`, so a client
-/// could not tell "that volume is not on this server" (retry elsewhere) from
-/// "this disk is failing" (page someone). The message is the error's `Display`
-/// so operator logs keep the wording the storage layer produced.
 impl From<VolumeError> for Status {
     fn from(err: VolumeError) -> Self {
         let message = err.to_string();
@@ -37,8 +32,7 @@ impl From<VolumeError> for Status {
     }
 }
 
-/// Same mapping, with the RPC's own context prefixed onto the message the way
-/// the storage layer used to format it in-place (`compact volume 7: ...`).
+/// Same mapping, with the RPC's own context prefixed (`compact volume 7: ...`).
 pub fn status_with_context(context: &str, err: VolumeError) -> Status {
     let status = Status::from(err);
     Status::new(status.code(), format!("{context}: {}", status.message()))
@@ -69,12 +63,8 @@ mod tests {
             Code::ResourceExhausted
         );
         assert_eq!(code(VolumeError::AlreadyExists), Code::AlreadyExists);
-        // Anything the mapping does not name stays `internal`, which is what
-        // every store error used to be.
         assert_eq!(code(VolumeError::NotInitialized), Code::Internal);
 
-        // The context prefix keeps the mapped code and does not restate what
-        // the error already says.
         let status = status_with_context(
             "compact volume 7",
             VolumeError::InsufficientSpace {

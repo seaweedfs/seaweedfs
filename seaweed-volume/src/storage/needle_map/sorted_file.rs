@@ -317,10 +317,6 @@ impl SortedFileNeedleMap {
     }
 
     /// Visit all live entries in ascending order by needle ID.
-    ///
-    /// `E: From<String>` carries a short or unreadable `.sdx` — the error
-    /// `visit_live_entries` reports, as opposed to one the visitor raised —
-    /// into the caller's error type.
     pub fn ascending_visit<F, E>(&self, mut f: F) -> Result<(), E>
     where
         F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,

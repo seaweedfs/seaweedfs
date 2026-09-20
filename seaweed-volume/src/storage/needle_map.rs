@@ -1195,9 +1195,6 @@ impl RedbNeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    ///
-    /// `E: From<String>` carries this map's own redb failures (`redb iter:
-    /// ...`) into whatever error type the visitor uses.
     pub fn ascending_visit<F, E>(&self, mut f: F) -> Result<(), E>
     where
         F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
@@ -1439,9 +1436,6 @@ impl NeedleMap {
     }
 
     /// Visit all entries in ascending order by needle ID.
-    ///
-    /// `E: From<String>` is what the two disk-backed maps need to report their
-    /// own read failures; the in-memory one never produces any.
     pub fn ascending_visit<F, E>(&self, f: F) -> Result<(), E>
     where
         F: FnMut(NeedleId, &NeedleValue) -> Result<(), E>,
@@ -1463,9 +1457,7 @@ impl NeedleMap {
         match self {
             NeedleMap::InMemory(nm) => {
                 let mut entries = Vec::new();
-                // `Infallible` says in the type what the old comment said in
-                // prose: an in-memory walk has nothing that can fail, so the
-                // discarded `Result` cannot be hiding an error.
+                // The visitor never fails, so neither can this.
                 let _ = nm.ascending_visit(|id, nv| {
                     entries.push((id, *nv));
                     Ok::<(), std::convert::Infallible>(())

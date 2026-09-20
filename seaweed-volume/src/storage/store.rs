@@ -1372,10 +1372,6 @@ impl Store {
     where
         F: Fn(i64) -> bool,
     {
-        // One lookup answers everything the space check needs — which disk the
-        // volume sits on and how big it currently is — so the sizes and the
-        // free-space reading describe the same volume even if the caller races
-        // a mount elsewhere.
         // Required space matches Go's CompactVolume check: the larger of the
         // requested preallocation and the estimated volume size.
         let (loc_idx, space_needed) = {
@@ -2297,10 +2293,6 @@ mod tests {
         assert!(matches!(err, Err(VolumeError::NotFound)));
     }
 
-    /// The vacuum entry points used to flatten "no such volume" into a
-    /// formatted `String`, so the gRPC layer could only answer `Internal`.
-    /// They now carry the volume id in a typed variant that the RPC maps to
-    /// `NotFound`.
     #[test]
     fn test_compaction_of_missing_volume_is_volume_not_found() {
         let tmp = TempDir::new().unwrap();
@@ -2327,18 +2319,12 @@ mod tests {
             "{cleanup:?}"
         );
 
-        // The operator-facing wording keeps the volume id, which is what the
-        // vacuum logs and `weed shell` output are read for.
         assert_eq!(
             VolumeError::VolumeNotFound(missing).to_string(),
             "volume id 4242 is not found"
         );
     }
 
-    /// Covers what the missing-volume test above cannot reach: the folded
-    /// lookup that computes the space estimate, the free-space check, and the
-    /// mutable re-lookup that actually runs the compaction. A regression in
-    /// any of the three would still leave the not-found test green.
     #[test]
     fn test_compact_then_commit_reclaims_a_deleted_needle() {
         let tmp = TempDir::new().unwrap();

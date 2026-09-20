@@ -1108,7 +1108,9 @@ impl VolumeServer for VolumeGrpcService {
         let store = self.state.store.read().unwrap();
         let garbage_ratio = match store.find_volume(vid) {
             Some((_, vol)) => vol.garbage_level(),
-            None => return Err(Status::not_found(format!("not found volume id {}", vid))),
+            None => {
+                return Err(crate::storage::volume::VolumeError::VolumeNotFound(vid).into());
+            }
         };
         Ok(Response::new(volume_server_pb::VacuumVolumeCheckResponse {
             garbage_ratio,
@@ -6422,11 +6424,6 @@ mod tests {
         assert_eq!(v.file_count(), 1);
     }
 
-    /// `weed shell`'s vacuum loop has to tell "that volume moved or was
-    /// deleted under me" apart from "this disk is failing". The store now
-    /// answers `VolumeError::VolumeNotFound`, so the RPC must surface
-    /// `NotFound` instead of the blanket `Internal` every store error used to
-    /// collapse into.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vacuum_volume_commit_missing_volume_is_not_found() {
         let (service, _tmp) = make_local_service_with_volume("vacuum_commit_missing", None);
