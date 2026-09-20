@@ -591,15 +591,22 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			provided[part.PartNumber] = part.GetChecksum(checksumHeaderName)
 		}
 		for _, partNumber := range completedPartNumbers {
-			if provided[partNumber] == "" {
-				return nil, nil, s3err.ErrInvalidRequest
+			providedChecksum := provided[partNumber]
+			if providedChecksum == "" {
+				// COMPOSITE uploads must carry every part checksum in the
+				// request; FULL_OBJECT uploads instead carry the whole-object
+				// checksum in a request header.
+				if checksumType == s3_constants.ChecksumTypeComposite {
+					return nil, nil, s3err.ErrInvalidRequest
+				}
+				continue
 			}
 			raw, _, decodeErr := decodePartChecksum(partNumber, partEntries[partNumber], checksumHeaderName)
 			if decodeErr != nil {
 				glog.Errorf("completeMultipartUpload: %v", decodeErr)
 				return nil, nil, s3err.ErrInvalidPart
 			}
-			if provided[partNumber] != base64.StdEncoding.EncodeToString(raw) {
+			if providedChecksum != base64.StdEncoding.EncodeToString(raw) {
 				return nil, nil, s3err.ErrBadDigest
 			}
 		}
@@ -613,6 +620,9 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		if checksumErr != nil {
 			glog.Errorf("completeMultipartUpload: %s checksum computation failed: %v", checksumType, checksumErr)
 			return nil, nil, s3err.ErrInvalidPart
+		}
+		if objectChecksum := r.Header.Get(checksumHeaderName); objectChecksum != "" && objectChecksum != checksumValue {
+			return nil, nil, s3err.ErrBadDigest
 		}
 	}
 
