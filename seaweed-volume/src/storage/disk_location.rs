@@ -1133,15 +1133,20 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
             Ok(p) => p,
             Err(_) => return (0, 0),
         };
-        unsafe {
-            let mut stat: libc::statvfs = std::mem::zeroed();
-            if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-                let all = stat.f_blocks as u64 * stat.f_frsize as u64;
-                let free = stat.f_bavail as u64 * stat.f_frsize as u64;
-                return (all, free);
-            }
+        // SAFETY: `libc::statvfs` is plain data — integers and reserved
+        // padding, no pointers and no restricted niches — so the all-zero
+        // value is a valid one for the call to overwrite.
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `c_path` is a live NUL-terminated `CString` that outlives
+        // the call, and `&mut stat` is a live, aligned, exclusive pointer the
+        // kernel only writes through; the fields are read below only after
+        // the call reports success.
+        if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+            return (0, 0);
         }
-        (0, 0)
+        let all = stat.f_blocks as u64 * stat.f_frsize as u64;
+        let free = stat.f_bavail as u64 * stat.f_frsize as u64;
+        (all, free)
     }
     #[cfg(windows)]
     {
