@@ -219,20 +219,64 @@ func TestApplyMultipartChecksumHeaderToRequest(t *testing.T) {
 		t.Fatalf("expected inherited algorithm SHA256, got %q", got)
 	}
 
-	// 2. Do not override when request already provides explicit checksum header
+	// 2. Do not override when request already provides explicit matching checksum header (SHA256)
 	r2 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
-	r2.Header.Set(s3_constants.AmzChecksumSHA256, "explicit-value")
+	r2.Header.Set(s3_constants.AmzChecksumSHA256, "explicit-sha256-value")
 	applyMultipartChecksumHeaderToRequest(r2, uploadEntry)
 	if got := r2.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
-		t.Fatalf("expected empty AmzChecksumAlgorithm when explicit checksum present, got %q", got)
+		t.Fatalf("expected empty AmzChecksumAlgorithm when explicit matching checksum present, got %q", got)
+	}
+	if got := r2.Header.Get(s3_constants.AmzChecksumSHA256); got != "explicit-sha256-value" {
+		t.Fatalf("expected explicit checksum header preserved, got %q", got)
 	}
 
-	// 3. Do not override when request already provides AmzChecksumAlgorithm
-	r3 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
-	r3.Header.Set(s3_constants.AmzChecksumAlgorithm, "CRC32")
-	applyMultipartChecksumHeaderToRequest(r3, uploadEntry)
-	if got := r3.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "CRC32" {
+	// 3. Do not override when request provides explicit CONFLICTING checksum headers
+	conflictingHeaders := []struct {
+		header string
+		value  string
+	}{
+		{s3_constants.AmzChecksumCRC32, "explicit-crc32"},
+		{s3_constants.AmzChecksumCRC32C, "explicit-crc32c"},
+		{s3_constants.AmzChecksumCRC64NVME, "explicit-crc64nvme"},
+		{s3_constants.AmzChecksumSHA1, "explicit-sha1"},
+	}
+	for _, ch := range conflictingHeaders {
+		r := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
+		r.Header.Set(ch.header, ch.value)
+		applyMultipartChecksumHeaderToRequest(r, uploadEntry)
+		if got := r.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
+			t.Fatalf("expected empty AmzChecksumAlgorithm when explicit %s present, got %q", ch.header, got)
+		}
+		if got := r.Header.Get(ch.header); got != ch.value {
+			t.Fatalf("expected explicit header %s preserved, got %q", ch.header, got)
+		}
+	}
+
+	// 4. Do not override when request provides explicit AmzChecksumAlgorithm
+	r4 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
+	r4.Header.Set(s3_constants.AmzChecksumAlgorithm, "CRC32")
+	applyMultipartChecksumHeaderToRequest(r4, uploadEntry)
+	if got := r4.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "CRC32" {
 		t.Fatalf("expected explicit algorithm CRC32, got %q", got)
+	}
+
+	// 5. Do not override when request provides AmzSdkChecksumAlgorithm
+	r5 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
+	r5.Header.Set(s3_constants.AmzSdkChecksumAlgorithm, "CRC32C")
+	applyMultipartChecksumHeaderToRequest(r5, uploadEntry)
+	if got := r5.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
+		t.Fatalf("expected empty AmzChecksumAlgorithm when AmzSdkChecksumAlgorithm present, got %q", got)
+	}
+	if got := r5.Header.Get(s3_constants.AmzSdkChecksumAlgorithm); got != "CRC32C" {
+		t.Fatalf("expected explicit sdk algorithm CRC32C, got %q", got)
+	}
+
+	// 6. Do not override when request provides AmzTrailer
+	r6 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
+	r6.Header.Set(s3_constants.AmzTrailer, "x-amz-checksum-crc32")
+	applyMultipartChecksumHeaderToRequest(r6, uploadEntry)
+	if got := r6.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
+		t.Fatalf("expected empty AmzChecksumAlgorithm when checksum trailer present, got %q", got)
 	}
 }
 

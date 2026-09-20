@@ -327,27 +327,45 @@ func (s3a *S3ApiServer) applyDestSSEHeadersToCopyRequest(
 	return s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID)
 }
 
+// hasExplicitChecksum reports whether the request explicitly specifies a checksum
+// algorithm, trailer, or checksum value header (or query parameter).
+func hasExplicitChecksum(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	alg, _, errCode := detectRequestedChecksumAlgorithm(r)
+	return alg != ChecksumAlgorithmNone || errCode != s3err.ErrNone
+}
+
+// applyMultipartChecksumHeaderToRequest inherits the multipart upload's configured
+// checksum algorithm for an UploadPart request when the request does not specify
+// an explicit checksum header, trailer, or algorithm.
 func applyMultipartChecksumHeaderToRequest(r *http.Request, uploadEntry *filer_pb.Entry) {
 	if uploadEntry == nil || uploadEntry.Extended == nil || r == nil {
 		return
 	}
 	headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm])
 	if algorithm := checksumAlgorithmNameFromHeaderName(headerName); algorithm != "" {
-		if r.Header.Get(s3_constants.AmzChecksumAlgorithm) == "" && r.Header.Get(s3_constants.AmzSdkChecksumAlgorithm) == "" && r.Header.Get(headerName) == "" {
+		if !hasExplicitChecksum(r) {
 			r.Header.Set(s3_constants.AmzChecksumAlgorithm, algorithm)
 		}
 	}
 }
 
+// applyDestChecksumHeaderToCopyRequest inherits the multipart upload's configured
+// checksum algorithm for an UploadPartCopy request when the request does not specify
+// an explicit checksum header, trailer, or algorithm.
 func applyDestChecksumHeaderToCopyRequest(r *http.Request, uploadEntry *filer_pb.Entry) {
-	if uploadEntry == nil || uploadEntry.Extended == nil {
+	if uploadEntry == nil || uploadEntry.Extended == nil || r == nil {
 		return
 	}
 	headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm])
 	if algorithm := checksumAlgorithmNameFromHeaderName(headerName); algorithm != "" {
-		// Drop any inherited sdk-checksum selector; it outranks the header we set.
-		r.Header.Del(s3_constants.AmzSdkChecksumAlgorithm)
-		r.Header.Set(s3_constants.AmzChecksumAlgorithm, algorithm)
+		if !hasExplicitChecksum(r) {
+			// Drop any inherited sdk-checksum selector; it outranks the header we set.
+			r.Header.Del(s3_constants.AmzSdkChecksumAlgorithm)
+			r.Header.Set(s3_constants.AmzChecksumAlgorithm, algorithm)
+		}
 	}
 }
 

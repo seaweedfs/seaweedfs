@@ -42,6 +42,25 @@ func TestApplyDestChecksumHeaderToCopyRequest(t *testing.T) {
 			t.Fatalf("expected no checksum header, got %q", got)
 		}
 	}
+
+	// Explicit matching checksum on copy request is preserved
+	reqMatch := httptest.NewRequest(http.MethodPut, "http://example.com/bucket/object", nil)
+	reqMatch.Header.Set(s3_constants.AmzChecksumCRC64NVME, "explicit-crc64")
+	applyDestChecksumHeaderToCopyRequest(reqMatch, entry)
+	if got := reqMatch.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
+		t.Fatalf("expected empty AmzChecksumAlgorithm when explicit checksum present on copy request, got %q", got)
+	}
+
+	// Explicit conflicting checksum on copy request is not overwritten
+	reqConflict := httptest.NewRequest(http.MethodPut, "http://example.com/bucket/object", nil)
+	reqConflict.Header.Set(s3_constants.AmzChecksumSHA256, "explicit-sha256")
+	applyDestChecksumHeaderToCopyRequest(reqConflict, entry)
+	if got := reqConflict.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
+		t.Fatalf("expected empty AmzChecksumAlgorithm when conflicting explicit checksum present, got %q", got)
+	}
+	if got := reqConflict.Header.Get(s3_constants.AmzChecksumSHA256); got != "explicit-sha256" {
+		t.Fatalf("expected explicit checksum header preserved, got %q", got)
+	}
 }
 
 func TestUploadEntryHasChecksum(t *testing.T) {
