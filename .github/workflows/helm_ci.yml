@@ -118,9 +118,6 @@ jobs:
 
           echo ""
           echo "=== Testing admin.allowInsecureBind satisfies the admin auth render guard ==="
-          # admin.ip defaults to 0.0.0.0 (non-loopback), which weed admin 4.46
-          # refuses to bind without authentication (see PR #11228 for the
-          # -allowInsecureBind opt-out this flag maps to).
           helm template test $CHART_DIR --set admin.enabled=true --set admin.allowInsecureBind=true \
             > /tmp/admin-allow-insecure-bind.yaml
           grep -q -- "-allowInsecureBind" /tmp/admin-allow-insecure-bind.yaml
