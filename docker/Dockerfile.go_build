@@ -14,6 +14,9 @@ RUN cd /go/src/github.com/seaweedfs/seaweedfs && \
       git checkout $BRANCH) || \
      (echo "ERROR: Branch/commit $BRANCH not found in repository" && \
       echo "Available branches:" && git branch -a && exit 1))
+# seaweed-common only exists on revisions that have it; a BRANCH predating it
+# still needs the directory so the COPY into rust_builder below never fails.
+RUN mkdir -p /go/src/github.com/seaweedfs/seaweedfs/seaweed-common
 ARG TARGETOS TARGETARCH TARGETVARIANT
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
