@@ -82,7 +82,7 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 
 	if err != nil {
 		glog.Errorf("delete collection %s: %v", req.Collection, err)
-		return resp, volumeStatusError(err)
+		return resp, volumeStatusError(fmt.Errorf("delete collection %s: %w", req.Collection, err))
 	}
 	glog.V(2).Infof("delete collection %v", req)
 

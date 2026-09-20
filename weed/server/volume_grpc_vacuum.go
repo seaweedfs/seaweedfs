@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -71,7 +72,7 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 	stats.VolumeServerVacuumingCompactCounter.WithLabelValues(strconv.FormatBool(err == nil && sendErr == nil)).Inc()
 	if err != nil {
 		glog.Errorf("failed compact volume %d: %v", req.VolumeId, err)
-		return volumeStatusError(err)
+		return volumeStatusError(fmt.Errorf("compact volume %d: %w", req.VolumeId, err))
 	}
 	if sendErr != nil {
 		glog.Errorf("failed compact volume %d report progress: %v", req.VolumeId, sendErr)
@@ -105,7 +106,7 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 	resp.VolumeSize = uint64(volumeSize)
 	if err != nil {
 		glog.Errorf("failed commit volume %d: %v", req.VolumeId, err)
-		return resp, volumeStatusError(err)
+		return resp, volumeStatusError(fmt.Errorf("commit compact volume %d: %w", req.VolumeId, err))
 	}
 	glog.V(1).Infof("commit volume %d", req.VolumeId)
 	return resp, nil
@@ -125,7 +126,7 @@ func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_ser
 
 	if err != nil {
 		glog.Errorf("failed cleanup volume %d: %v", req.VolumeId, err)
-		return resp, volumeStatusError(err)
+		return resp, volumeStatusError(fmt.Errorf("cleanup volume %d: %w", req.VolumeId, err))
 	}
 	glog.V(1).Infof("cleanup volume %d", req.VolumeId)
 
