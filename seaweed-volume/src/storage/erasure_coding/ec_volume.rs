@@ -1023,6 +1023,16 @@ impl EcVolume {
         self.io_errors.mark_quarantined();
     }
 
+    /// Clear the error count, the last error and the quarantine flag.
+    ///
+    /// `IoErrorTracker::mark_quarantined` is sticky — a later successful read
+    /// clears the count but not the quarantine — so this is the only way back
+    /// for an EC volume whose storage has since been repaired. Mirrors Go's
+    /// `EcVolume.ResetIoErrorState`.
+    pub fn reset_io_error_state(&self) {
+        self.io_errors.reset();
+    }
+
     // ---- Index operations ----
 
     /// Find a needle's offset and size in the sorted .ecx index via binary search.
