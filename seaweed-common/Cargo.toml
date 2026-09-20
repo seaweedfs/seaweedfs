@@ -1,0 +1,27 @@
+[package]
+name = "seaweed-common"
+version = "0.1.0"
+edition = "2024"
+# The lower of the two consumers' floors (seaweed-volume 1.91.1,
+# seaweed-worker 1.94.1), so depending on this crate cannot raise either
+# tree's MSRV. Verified with `cargo +1.91.1 check --all-targets`.
+rust-version = "1.91.1"
+description = "Helpers shared by the SeaweedFS Rust volume server and the Rust plugin workers"
+
+# There is no root manifest: seaweed-volume and seaweed-worker are separate
+# cargo trees with their own lockfiles, and this crate is a path dependency of
+# both rather than a member of either. Keeping the lint policy identical in all
+# three manifests is what stops them drifting.
+[lints.clippy]
+# Protobuf message literals keep `..Default::default()` on purpose: it is
+# what lets a proto gain a field without touching every constructor.
+needless_update = "allow"
+
+[dependencies]
+# The same requirement both consumers already write. Cargo unifies all
+# semver-compatible `rustls = "0.23"` requirements into one crate per binary,
+# which is what makes `install_default_crypto_provider` write the same
+# process-wide static the consuming crate reads. rustls is already in both
+# trees (the volume server directly, seaweed-worker-core through tonic's
+# `tls-aws-lc`), so this adds no crate to either graph.
+rustls = "0.23"

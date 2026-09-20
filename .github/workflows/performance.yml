@@ -8,6 +8,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'seaweed-volume/**'
+      - 'seaweed-common/**'
       - 'test/perf/**'
       - '.github/workflows/performance.yml'
   workflow_dispatch:

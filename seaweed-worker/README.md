@@ -9,6 +9,10 @@ one.
     crates/core     the contract: stream, handshake, heartbeat, registry, config forms
     crates/lance    maintenance jobs for Lance tables, and a binary
 
+It also depends on `../seaweed-common`, a small crate outside this workspace
+holding the few helpers the Rust volume server needs identically — the
+HTTP<->gRPC address rule and the rustls provider choice.
+
 `core` knows nothing about any job. A second worker is a new crate beside
 `lance` that depends on it, not a fork of the protocol.
 
