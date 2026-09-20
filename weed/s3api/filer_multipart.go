@@ -383,7 +383,7 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 	}
 }
 
-func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
+func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
 	if entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key, ""); err == nil && entry != nil && entry.Extended != nil {
 		if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
 			cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
@@ -581,7 +581,28 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			glog.Errorf("completeMultipartUpload: %v", typeErr)
 			return nil, nil, s3err.ErrInvalidRequest
 		}
+		if completeType := r.Header.Get(s3_constants.AmzChecksumType); completeType != "" && !strings.EqualFold(completeType, resolvedType) {
+			return nil, nil, s3err.ErrBadDigest
+		}
 		checksumType = resolvedType
+
+		provided := make(map[int]string, len(parts.Parts))
+		for _, part := range parts.Parts {
+			provided[part.PartNumber] = part.GetChecksum(checksumHeaderName)
+		}
+		for _, partNumber := range completedPartNumbers {
+			if provided[partNumber] == "" {
+				return nil, nil, s3err.ErrInvalidRequest
+			}
+			raw, _, decodeErr := decodePartChecksum(partNumber, partEntries[partNumber], checksumHeaderName)
+			if decodeErr != nil {
+				glog.Errorf("completeMultipartUpload: %v", decodeErr)
+				return nil, nil, s3err.ErrInvalidPart
+			}
+			if provided[partNumber] != base64.StdEncoding.EncodeToString(raw) {
+				return nil, nil, s3err.ErrBadDigest
+			}
+		}
 
 		var checksumErr error
 		if checksumType == s3_constants.ChecksumTypeFullObject {
@@ -656,7 +677,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	routeKey := s3a.objectRouteKey(*input.Bucket, *input.Key)
 	completionBody := func() s3err.ErrorCode {
 		var prepCode s3err.ErrorCode
-		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
+		completionState, output, prepCode = s3a.prepareMultipartCompletionState(r, input, parts, uploadDirectory, entryName, dirName, completedPartNumbers, completedPartMap, maxPartNo)
 		if prepCode != s3err.ErrNone || output != nil {
 			return prepCode
 		}

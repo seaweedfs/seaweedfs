@@ -1225,6 +1225,22 @@ func (c *ChecksumResult) SetChecksum(headerName, value string) {
 	}
 }
 
+func (c *ChecksumResult) GetChecksum(headerName string) string {
+	switch headerName {
+	case s3_constants.AmzChecksumCRC32:
+		return c.ChecksumCRC32
+	case s3_constants.AmzChecksumCRC32C:
+		return c.ChecksumCRC32C
+	case s3_constants.AmzChecksumCRC64NVME:
+		return c.ChecksumCRC64NVME
+	case s3_constants.AmzChecksumSHA1:
+		return c.ChecksumSHA1
+	case s3_constants.AmzChecksumSHA256:
+		return c.ChecksumSHA256
+	}
+	return ""
+}
+
 // lookupHeaderOrQuery returns the value of an x-amz-* parameter, checking the
 // request headers first and falling back to the pre-parsed query values. AWS
 // SDK presigners hoist headers such as x-amz-sdk-checksum-algorithm into the

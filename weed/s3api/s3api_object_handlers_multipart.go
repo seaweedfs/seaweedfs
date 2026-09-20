@@ -645,6 +645,7 @@ type CompleteMultipartUpload struct {
 type CompletedPart struct {
 	ETag       string
 	PartNumber int
+	ChecksumResult
 }
 
 // handleSSES3MultipartHeaders handles SSE-S3 multipart upload header setup to reduce nesting complexity
