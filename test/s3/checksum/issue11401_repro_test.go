@@ -212,6 +212,61 @@ func TestCompleteMultipartUploadValidatesPartChecksums(t *testing.T) {
 	require.NoError(t, complete(part.ChecksumSHA256))
 }
 
+// FULL_OBJECT uploads need no per-part checksums in the complete request; the
+// whole-object checksum travels in a request header and is validated against
+// the computed value (BadDigest on mismatch), as on AWS.
+func TestCompleteMultipartUploadFullObjectChecksum(t *testing.T) {
+	client := newWhenRequiredChecksumClient(t)
+
+	bucket := uniqueBucket()
+	createBucket(t, client, bucket)
+	defer cleanupBucket(t, client, bucket)
+
+	body := bytes.Repeat([]byte("w"), 1024)
+	key := "full-object"
+
+	create, err := client.CreateMultipartUpload(context.Background(), &s3.CreateMultipartUploadInput{
+		Bucket:            aws.String(bucket),
+		Key:               aws.String(key),
+		ChecksumAlgorithm: types.ChecksumAlgorithmCrc64nvme,
+	})
+	require.NoError(t, err)
+	require.Equal(t, types.ChecksumTypeFullObject, create.ChecksumType)
+
+	part, err := client.UploadPart(context.Background(), &s3.UploadPartInput{
+		Bucket:     aws.String(bucket),
+		Key:        aws.String(key),
+		UploadId:   create.UploadId,
+		PartNumber: aws.Int32(1),
+		Body:       bytes.NewReader(body),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(part.ChecksumCRC64NVME))
+
+	complete := func(objectChecksum *string) error {
+		_, err := client.CompleteMultipartUpload(context.Background(), &s3.CompleteMultipartUploadInput{
+			Bucket:            aws.String(bucket),
+			Key:               aws.String(key),
+			UploadId:          create.UploadId,
+			ChecksumCRC64NVME: objectChecksum,
+			MultipartUpload: &types.CompletedMultipartUpload{Parts: []types.CompletedPart{{
+				ETag:       part.ETag,
+				PartNumber: aws.Int32(1),
+			}}},
+		})
+		return err
+	}
+
+	var apiErr smithy.APIError
+	wrong := base64.StdEncoding.EncodeToString(func() []byte { s := sha256.Sum256(body); return s[:] }())
+	err = complete(aws.String(wrong))
+	require.Error(t, err)
+	require.True(t, errors.As(err, &apiErr))
+	require.Equal(t, "BadDigest", apiErr.ErrorCode())
+
+	require.NoError(t, complete(part.ChecksumCRC64NVME))
+}
+
 // UploadPart with a checksum algorithm that conflicts with the one declared at
 // CreateMultipartUpload is rejected, as on AWS.
 func TestMultipartPartConflictingAlgorithm(t *testing.T) {
