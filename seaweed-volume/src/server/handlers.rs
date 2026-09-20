@@ -2787,15 +2787,23 @@ pub async fn delete_handler(
     {
         let has_ec = state.store.read().unwrap().has_ec_volume(vid);
         if has_ec {
-            // Step 1: Read the EC needle to get its size and validate cookie
-            let ec_read_result = {
-                let store = state.store.read().unwrap();
-                store
-                    .find_ec_volume(vid)
-                    .map(|ecv| ecv.read_ec_shard_needle(needle_id))
-            };
+            // Step 1: Read the EC needle to get its size and validate cookie.
+            //
+            // This must go through the *distributed* reader, as the GET path
+            // does. The local-only `EcVolume::read_ec_shard_needle` errors
+            // "ec shard N not available locally" for any interval that lives on
+            // a peer, so on a standard 10+4 spread every HTTP DELETE of an EC
+            // needle failed 500 and never appended to `.ecj`. The distributed
+            // reader does a local-first pass in its snapshot phase, so the
+            // all-shards-local case costs the same as before.
+            //
+            // No store guard is held across this call: the reader takes and
+            // releases its own, and `RwLockReadGuard` is `!Send`.
+            let ec_read_result =
+                crate::server::store_ec::read_ec_shard_needle_distributed(&state, vid, needle_id)
+                    .await;
             match ec_read_result {
-                Some(Ok(Some(ec_needle))) => {
+                Ok(Some(ec_needle)) => {
                     // Step 2: Validate cookie (Go: cookie != 0 && cookie != n.Cookie)
                     if cookie.0 != 0 && ec_needle.cookie != cookie {
                         return json_error_with_query(
@@ -2823,8 +2831,11 @@ pub async fn delete_handler(
                         Some(&del_params),
                     );
                 }
-                Some(Ok(None)) => {
-                    // Needle not found in EC volume
+                Ok(None) => {
+                    // Needle not in the EC index, or the volume disappeared
+                    // between the `has_ec` check and the snapshot — the
+                    // distributed reader reports both as `Ok(None)`, and both
+                    // mean the same thing to a deleter.
                     let result = DeleteResult { size: 0 };
                     return json_response_with_params(
                         StatusCode::NOT_FOUND,
@@ -2832,20 +2843,23 @@ pub async fn delete_handler(
                         Some(&del_params),
                     );
                 }
-                Some(Err(e)) => {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // A shard or interval the read needed is gone rather than
+                    // merely remote. The GET path answers 404 here; answering
+                    // 500 (as this handler did for every error) told callers to
+                    // retry a delete that can never succeed.
+                    let result = DeleteResult { size: 0 };
+                    return json_response_with_params(
+                        StatusCode::NOT_FOUND,
+                        &result,
+                        Some(&del_params),
+                    );
+                }
+                Err(e) => {
                     return json_error_with_query(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("Deletion Failed: {}", e),
                         Some(&del_query),
-                    );
-                }
-                None => {
-                    // EC volume disappeared between has_ec check and find
-                    let result = DeleteResult { size: 0 };
-                    return json_response_with_params(
-                        StatusCode::NOT_FOUND,
-                        &result,
-                        Some(&del_params),
                     );
                 }
             }

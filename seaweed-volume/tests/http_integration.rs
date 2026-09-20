@@ -1040,3 +1040,105 @@ async fn chunk_manifest_expands_chunk_stored_on_ec_volume() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body_bytes(response).await, chunk_data);
 }
+
+// ============================================================================
+// HTTP DELETE on an EC volume whose shards are not all mounted locally
+//
+// The delete handler used to validate the cookie with the local-only
+// `EcVolume::read_ec_shard_needle`, which errors "ec shard N not available
+// locally" for any interval held by a peer. Every such error was mapped to 500
+// and no `.ecj` tombstone was written, so on a standard 10+4 spread across 14
+// servers no HTTP delete of an EC needle could ever succeed.
+//
+// A single node can exercise that path without peers: mount 13 of the 14
+// shards, leaving out the one holding the needle's interval. The distributed
+// reader seeds its Reed-Solomon buffers from locally mounted siblings (Phase 0
+// in `store_ec.rs`), so with >= 10 survivors it reconstructs without any peer
+// fan-out — while the local-only read still fails outright.
+// ============================================================================
+
+#[tokio::test]
+async fn delete_on_ec_volume_succeeds_when_the_needles_shard_is_not_mounted() {
+    use seaweed_volume::storage::erasure_coding::ec_encoder::write_ec_files;
+    use seaweed_volume::storage::erasure_coding::ec_shard::ShardId;
+    use seaweed_volume::storage::needle::needle::{FileId, Needle};
+    use seaweed_volume::storage::types::{Cookie, NeedleId};
+    use seaweed_volume::storage::volume::{Volume, VolumeSpec};
+
+    let (state, tmp) = test_state();
+    let dir = tmp.path().to_str().unwrap();
+
+    let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let nid = NeedleId(0x5c);
+    let cookie = Cookie(0x0badc0de);
+
+    // Build regular volume 4, then EC-encode it. The volume is standalone and
+    // never registered in the store, so afterwards it exists only as shards.
+    {
+        let mut v = Volume::new(
+            dir,
+            dir,
+            VolumeId(4),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: nid,
+            cookie,
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+    }
+    write_ec_files(dir, dir, "", VolumeId(4), 10, 4).unwrap();
+
+    // Mount shards 1..=13 only. A needle at .dat offset 0 lives in shard 0's
+    // first small block, so the interval this delete needs is deliberately the
+    // one shard that is absent.
+    {
+        let mut store = state.store.write().unwrap();
+        let shard_ids: Vec<ShardId> = (1..14).collect();
+        store.mount_ec_shards(VolumeId(4), "", &shard_ids).unwrap();
+    }
+
+    let fid = FileId::new(VolumeId(4), nid, cookie).to_string();
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/{}", fid))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::ACCEPTED,
+        "DELETE of an EC needle must reconstruct through the distributed \
+         reader instead of failing 500 on a non-local shard"
+    );
+
+    // The tombstone must actually have landed: a later GET is a 404.
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{}", fid))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "the delete must have been journalled, not just answered 202"
+    );
+}
