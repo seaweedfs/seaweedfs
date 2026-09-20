@@ -299,7 +299,13 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 			glog.V(0).Infof("visit needle error: %v", err)
 			return fmt.Errorf("visit needle error: %w", err)
 		}
-		offset += NeedleHeaderSize + rest
+		// A corrupt header can carry a size so negative that the record length
+		// is zero or less; the scan cannot advance past it.
+		recordSize := NeedleHeaderSize + rest
+		if recordSize <= 0 {
+			return fmt.Errorf("%s: needle header at offset %d has size %d, record length %d: %w", datBackend.Name(), offset, n.Size, recordSize, needle.ErrorCorrupted)
+		}
+		offset += recordSize
 		glog.V(4).Infof("==> new entry offset %d", offset)
 		if n, nh, rest, err = needle.ReadNeedleHeader(datBackend, version, offset); err != nil {
 			if err == io.EOF {
