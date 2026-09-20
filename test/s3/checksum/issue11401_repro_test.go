@@ -27,18 +27,11 @@ func newWhenRequiredChecksumClient(t *testing.T) *s3.Client {
 		config.WithRegion(defaultConfig.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			defaultConfig.AccessKey, defaultConfig.SecretKey, "")),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:               defaultConfig.Endpoint,
-					SigningRegion:     defaultConfig.Region,
-					HostnameImmutable: true,
-				}, nil
-			})),
 	)
 	require.NoError(t, err)
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
+		o.BaseEndpoint = aws.String(defaultConfig.Endpoint)
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 }
