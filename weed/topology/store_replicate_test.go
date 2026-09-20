@@ -232,7 +232,7 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 
 // TestReplicatedWriteRejectsWriteWithNoTarget verifies that a write this server
 // cannot store and has no replica to forward to fails instead of being
-// acknowledged with nothing written (#6609).
+// acknowledged with nothing written.
 func TestReplicatedWriteRejectsWriteWithNoTarget(t *testing.T) {
 	master := &mockMasterServer{}
 	masterFn, dialOption := startMockMasterServer(t, master)

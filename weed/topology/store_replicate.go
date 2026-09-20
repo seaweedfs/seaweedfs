@@ -45,9 +45,8 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 		}
 	}
 
-	// a server without the volume only forwards the write, so with no replica
-	// to forward to it would be acknowledged without being stored
-	hasLocalVolume := s.GetVolume(volumeId) != nil
+	// with no local volume and no replica to forward to, the write would be acknowledged without being stored
+	hasLocalVolume := s.HasVolume(volumeId)
 	if !hasLocalVolume && len(remoteLocations) == 0 {
 		err = fmt.Errorf("volume %d not found on %s:%d", volumeId, s.Ip, s.Port)
 		glog.V(0).Infoln(err)
