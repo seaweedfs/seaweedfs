@@ -6614,8 +6614,9 @@ mod tests {
     // S3 that accepts multipart uploads — so this probes only the part that
     // changed: the destination is resolved from the process-wide registry, now
     // the only one. A backend registered nowhere else has to get past that
-    // lookup. The response is dropped as soon as it arrives, so the spawned
-    // transfer sees a departed caller and never opens a connection.
+    // lookup. The stream stays open until the spawned transfer reports its
+    // terminal error, so the task cannot race a dropped receiver or outlive
+    // the test.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_tier_move_to_remote_resolves_the_destination_from_the_global_registry() {
         let (service, _tmp) = make_local_service_with_volume("", None);
@@ -6628,7 +6629,7 @@ mod tests {
                     secret_key: "secret".to_string(),
                     region: "us-east-1".to_string(),
                     bucket: "bucket-a".to_string(),
-                    // Nothing listens here; no request is ever made to it.
+                    // Nothing listens here; the upload fails instead of hanging.
                     endpoint: "http://127.0.0.1:1".to_string(),
                     storage_class: "STANDARD".to_string(),
                     force_path_style: true,
@@ -6636,7 +6637,7 @@ mod tests {
             );
         }
 
-        let outcome = service
+        let mut stream = service
             .volume_tier_move_dat_to_remote(Request::new(
                 volume_server_pb::VolumeTierMoveDatToRemoteRequest {
                     volume_id: 1,
@@ -6646,16 +6647,25 @@ mod tests {
                 },
             ))
             .await
-            // Dropping the response hangs up before the upload can start.
-            .map(drop)
-            .map_err(|status| status.to_string());
+            .expect("tier-up must resolve its destination from the global registry")
+            .into_inner();
 
+        // The dead endpoint fails the multipart upload; the terminal error is
+        // also what proves the spawned task ran to completion rather than
+        // leaving background network work behind.
+        let terminal = stream.next().await;
         global_s3_tier_registry()
             .write()
             .unwrap()
             .remove("s3.tier_up_probe");
 
-        outcome.expect("tier-up must resolve its destination from the global registry");
+        match terminal {
+            Some(Err(status)) => {
+                assert_eq!(status.code(), tonic::Code::Internal, "{status:?}");
+                assert!(status.message().contains("s3.tier_up_probe"), "{status:?}");
+            }
+            other => panic!("the dead endpoint must fail the upload, got {other:?}"),
+        }
     }
 
     /// Build a local service whose volume has a `.dat` large enough to span
