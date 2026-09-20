@@ -187,6 +187,25 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		w.Header().Set("x-amz-version-id", *response.VersionId)
 	}
 
+	if response.ChecksumCRC32 != "" {
+		w.Header().Set(s3_constants.AmzChecksumCRC32, response.ChecksumCRC32)
+	}
+	if response.ChecksumCRC32C != "" {
+		w.Header().Set(s3_constants.AmzChecksumCRC32C, response.ChecksumCRC32C)
+	}
+	if response.ChecksumCRC64NVME != "" {
+		w.Header().Set(s3_constants.AmzChecksumCRC64NVME, response.ChecksumCRC64NVME)
+	}
+	if response.ChecksumSHA1 != "" {
+		w.Header().Set(s3_constants.AmzChecksumSHA1, response.ChecksumSHA1)
+	}
+	if response.ChecksumSHA256 != "" {
+		w.Header().Set(s3_constants.AmzChecksumSHA256, response.ChecksumSHA256)
+	}
+	if response.ChecksumType != "" {
+		w.Header().Set(s3_constants.AmzChecksumType, response.ChecksumType)
+	}
+
 	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3UploadedObjectsCounter.WithLabelValues(bucket).Inc()
 
@@ -454,6 +473,9 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d",
 		bucket, object, uploadID, partID, r.ContentLength)
 
+	// Apply checksum algorithm from the upload entry if not explicitly provided
+	applyMultipartChecksumHeaderToRequest(r, uploadEntry)
+
 	// MPU parts must NOT inherit the bucket's lifecycle Expiration.Days
 	// volume TTL: the rule targets the user-visible object, not the
 	// transient .uploads/<id>/<n> path, and a part write would otherwise
@@ -477,6 +499,10 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		bucket, object, partID, etag, sseMetadata.SSEType)
 
 	setEtag(w, etag)
+
+	if sseMetadata.ChecksumHeaderName != "" && sseMetadata.ChecksumValue != "" {
+		w.Header().Set(sseMetadata.ChecksumHeaderName, sseMetadata.ChecksumValue)
+	}
 
 	// Set SSE response headers for multipart uploads
 	s3a.setSSEResponseHeaders(w, r, sseMetadata)

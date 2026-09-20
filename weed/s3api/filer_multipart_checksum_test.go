@@ -204,3 +204,86 @@ func TestCreateMultipartUploadResultChecksumHeaders(t *testing.T) {
 		t.Fatalf("response %q carries checksum members in the XML body", encoded)
 	}
 }
+
+func TestApplyMultipartChecksumHeaderToRequest(t *testing.T) {
+	uploadEntry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtChecksumAlgorithm: []byte(s3_constants.AmzChecksumSHA256),
+		},
+	}
+
+	// 1. Inherit checksum algorithm when request has no checksum header
+	r1 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
+	applyMultipartChecksumHeaderToRequest(r1, uploadEntry)
+	if got := r1.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "SHA256" {
+		t.Fatalf("expected inherited algorithm SHA256, got %q", got)
+	}
+
+	// 2. Do not override when request already provides explicit checksum header
+	r2 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
+	r2.Header.Set(s3_constants.AmzChecksumSHA256, "explicit-value")
+	applyMultipartChecksumHeaderToRequest(r2, uploadEntry)
+	if got := r2.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "" {
+		t.Fatalf("expected empty AmzChecksumAlgorithm when explicit checksum present, got %q", got)
+	}
+
+	// 3. Do not override when request already provides AmzChecksumAlgorithm
+	r3 := httptest.NewRequest(http.MethodPut, "/bucket/key?partNumber=1&uploadId=123", nil)
+	r3.Header.Set(s3_constants.AmzChecksumAlgorithm, "CRC32")
+	applyMultipartChecksumHeaderToRequest(r3, uploadEntry)
+	if got := r3.Header.Get(s3_constants.AmzChecksumAlgorithm); got != "CRC32" {
+		t.Fatalf("expected explicit algorithm CRC32, got %q", got)
+	}
+}
+
+func TestSetResponseHeadersChecksumModeVariations(t *testing.T) {
+	s3a := &S3ApiServer{}
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{FileSize: 100},
+		Extended: map[string][]byte{
+			s3_constants.ExtChecksumAlgorithm: []byte(s3_constants.AmzChecksumSHA256),
+			s3_constants.ExtChecksumValue:     []byte("abcdefg=="),
+			s3_constants.ExtChecksumType:      []byte(s3_constants.ChecksumTypeComposite),
+		},
+	}
+
+	cases := []struct {
+		name         string
+		headerMode   string
+		queryMode    string
+		wantChecksum string
+		wantType     string
+	}{
+		{"exact uppercase header", "ENABLED", "", "abcdefg==", s3_constants.ChecksumTypeComposite},
+		{"lowercase header", "enabled", "", "abcdefg==", s3_constants.ChecksumTypeComposite},
+		{"mixed case header", "Enabled", "", "abcdefg==", s3_constants.ChecksumTypeComposite},
+		{"query parameter uppercase", "", "ENABLED", "abcdefg==", s3_constants.ChecksumTypeComposite},
+		{"query parameter lowercase", "", "enabled", "abcdefg==", s3_constants.ChecksumTypeComposite},
+		{"disabled header", "DISABLED", "", "", ""},
+		{"no mode", "", "", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			urlStr := "/bucket/key"
+			if tc.queryMode != "" {
+				urlStr += "?x-amz-checksum-mode=" + tc.queryMode
+			}
+			r := httptest.NewRequest(http.MethodHead, urlStr, nil)
+			if tc.headerMode != "" {
+				r.Header.Set(s3_constants.AmzChecksumMode, tc.headerMode)
+			}
+			w := httptest.NewRecorder()
+			s3a.setResponseHeaders(w, r, entry, 100)
+
+			gotChecksum := w.Header().Get(s3_constants.AmzChecksumSHA256)
+			gotType := w.Header().Get(s3_constants.AmzChecksumType)
+			if gotChecksum != tc.wantChecksum {
+				t.Fatalf("checksum header: got %q, want %q", gotChecksum, tc.wantChecksum)
+			}
+			if gotType != tc.wantType {
+				t.Fatalf("checksum type header: got %q, want %q", gotType, tc.wantType)
+			}
+		})
+	}
+}

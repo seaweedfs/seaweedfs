@@ -2234,11 +2234,11 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Set checksum header if stored in metadata, but only when:
-	// 1. The request contains "x-amz-checksum-mode: ENABLED" (per AWS S3 spec)
+	// 1. The request contains "x-amz-checksum-mode: ENABLED" (case-insensitive, header or query per AWS S3 spec)
 	// 2. The response covers the full object (no Range header, no partNumber)
 	//    The stored checksum covers the full object; returning it for partial
 	//    responses causes SDK checksum validation failures.
-	if r != nil && r.Header.Get("X-Amz-Checksum-Mode") == "ENABLED" && r.Header.Get("Range") == "" && requestedPartNumber(r) == 0 {
+	if r != nil && strings.EqualFold(lookupHeaderOrQuery(r, parseRequestQuery(r), s3_constants.AmzChecksumMode), "ENABLED") && r.Header.Get("Range") == "" && requestedPartNumber(r) == 0 {
 		if entry.Extended != nil {
 			if algoName, ok := entry.Extended[s3_constants.ExtChecksumAlgorithm]; ok {
 				if checksumVal, ok := entry.Extended[s3_constants.ExtChecksumValue]; ok {

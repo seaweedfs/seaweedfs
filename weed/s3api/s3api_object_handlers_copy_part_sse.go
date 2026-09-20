@@ -327,6 +327,18 @@ func (s3a *S3ApiServer) applyDestSSEHeadersToCopyRequest(
 	return s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID)
 }
 
+func applyMultipartChecksumHeaderToRequest(r *http.Request, uploadEntry *filer_pb.Entry) {
+	if uploadEntry == nil || uploadEntry.Extended == nil || r == nil {
+		return
+	}
+	headerName := string(uploadEntry.Extended[s3_constants.ExtChecksumAlgorithm])
+	if algorithm := checksumAlgorithmNameFromHeaderName(headerName); algorithm != "" {
+		if r.Header.Get(s3_constants.AmzChecksumAlgorithm) == "" && r.Header.Get(s3_constants.AmzSdkChecksumAlgorithm) == "" && r.Header.Get(headerName) == "" {
+			r.Header.Set(s3_constants.AmzChecksumAlgorithm, algorithm)
+		}
+	}
+}
+
 func applyDestChecksumHeaderToCopyRequest(r *http.Request, uploadEntry *filer_pb.Entry) {
 	if uploadEntry == nil || uploadEntry.Extended == nil {
 		return
