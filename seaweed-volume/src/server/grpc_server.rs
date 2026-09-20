@@ -2418,8 +2418,13 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::ReceiveFileResponse>, Status> {
         self.state.check_maintenance()?;
 
+        use tokio::io::AsyncWriteExt;
+
         let mut stream = request.into_inner();
-        let mut target_file: Option<std::fs::File> = None;
+        // tokio::fs + BufWriter, as `drain_copy_stream_to_file` below already
+        // does: the chunk writes and the final fsync are disk I/O and must not
+        // run on the runtime worker that is also driving this stream.
+        let mut target_file: Option<tokio::io::BufWriter<tokio::fs::File>> = None;
         let mut file_path: Option<String> = None;
         let mut bytes_written: u64 = 0;
         let mut resp_error: Option<String> = None;
@@ -2557,16 +2562,20 @@ impl VolumeServer for VolumeGrpcService {
                             }
                         };
 
-                        target_file = Some(std::fs::File::create(&path).map_err(|e| {
+                        let f = tokio::fs::File::create(&path).await.map_err(|e| {
                             Status::internal(format!("failed to create file: {}", e))
-                        })?);
+                        })?;
+                        target_file = Some(tokio::io::BufWriter::new(f));
                         file_path = Some(path);
                     }
                     Some(volume_server_pb::receive_file_request::Data::FileContent(content)) => {
                         if let Some(ref mut f) = target_file {
-                            use std::io::Write;
-                            match f.write(&content) {
-                                Ok(n) => bytes_written += n as u64,
+                            // write_all, not write: a short write (ENOSPC, NFS)
+                            // used to be counted as a success for however many
+                            // bytes landed, silently shifting every later chunk
+                            // and returning error: "". Go's os.File.Write loops.
+                            match f.write_all(&content).await {
+                                Ok(()) => bytes_written += content.len() as u64,
                                 Err(e) => {
                                     // Match Go: write failures are response-level errors, not gRPC errors
                                     resp_error = Some(format!("failed to write file: {}", e));
@@ -2598,8 +2607,25 @@ impl VolumeServer for VolumeGrpcService {
                         bytes_written: 0,
                     }));
                 }
-                if let Some(ref f) = target_file {
-                    let _ = f.sync_all();
+                // Flush the BufWriter and fsync, and report a failure instead of
+                // discarding it. Go omits this check, but ReceiveFileResponse
+                // carries an `error` field and the caller renames the staged
+                // file into place on success — answering "wrote N bytes" after
+                // an EIO on fsync publishes a file whose data never reached the
+                // platter.
+                if let Some(ref mut f) = target_file {
+                    if let Err(e) = f.flush().await {
+                        return Ok(Response::new(volume_server_pb::ReceiveFileResponse {
+                            error: format!("failed to flush file: {}", e),
+                            bytes_written: 0,
+                        }));
+                    }
+                    if let Err(e) = f.get_ref().sync_all().await {
+                        return Ok(Response::new(volume_server_pb::ReceiveFileResponse {
+                            error: format!("failed to sync file: {}", e),
+                            bytes_written: 0,
+                        }));
+                    }
                 }
                 Ok(Response::new(volume_server_pb::ReceiveFileResponse {
                     error: String::new(),
@@ -2612,7 +2638,7 @@ impl VolumeServer for VolumeGrpcService {
                     drop(f);
                 }
                 if let Some(ref p) = file_path {
-                    let _ = std::fs::remove_file(p);
+                    let _ = tokio::fs::remove_file(p).await;
                 }
                 Err(e)
             }
@@ -6994,6 +7020,71 @@ mod tests {
     // delete_volume. Without the lock seam the task sees is_closed() at its
     // very first check and returns before mount_volume, exercising the wrong
     // path — the test would be green for the wrong reason.
+    /// ReceiveFile had no test at all, which is how a `write()` whose short
+    /// return was counted as success survived. This drives the real streaming
+    /// handler over a real connection with chunks that do not divide evenly,
+    /// and checks the bytes on disk rather than just the reported count -- a
+    /// dropped or reordered chunk changes the file even when `bytes_written`
+    /// still adds up.
+    #[tokio::test]
+    async fn receive_file_writes_every_chunk_and_reports_the_full_length() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let (port, _shutdown) = serve_source(service).await;
+
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::connect(
+            format!("http://127.0.0.1:{}", port),
+        )
+        .await
+        .unwrap();
+
+        // Deliberately ragged chunk sizes, and a payload whose bytes are
+        // position-dependent so any shift is visible.
+        let payload: Vec<u8> = (0..70_001u32).map(|i| (i % 251) as u8).collect();
+        let mut messages = vec![volume_server_pb::ReceiveFileRequest {
+            data: Some(volume_server_pb::receive_file_request::Data::Info(
+                volume_server_pb::ReceiveFileInfo {
+                    volume_id: 1,
+                    ext: ".recv_test".to_string(),
+                    collection: String::new(),
+                    is_ec_volume: false,
+                    shard_id: 0,
+                    file_size: payload.len() as u64,
+                    disk_type: String::new(),
+                    disk_id: 0,
+                },
+            )),
+        }];
+        for chunk in payload.chunks(7_777) {
+            messages.push(volume_server_pb::ReceiveFileRequest {
+                data: Some(volume_server_pb::receive_file_request::Data::FileContent(
+                    chunk.to_vec(),
+                )),
+            });
+        }
+
+        let response = client
+            .receive_file(tokio_stream::iter(messages))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(response.error, "", "ReceiveFile reported an error");
+        assert_eq!(
+            response.bytes_written,
+            payload.len() as u64,
+            "bytes_written must cover the whole payload"
+        );
+
+        let written = std::fs::read(format!("{}/1.recv_test", dir)).unwrap();
+        assert_eq!(
+            written.len(),
+            payload.len(),
+            "file on disk is a different length than the payload"
+        );
+        assert_eq!(written, payload, "file on disk does not match the payload");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[expect(
         clippy::await_holding_lock,
