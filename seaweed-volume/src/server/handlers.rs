@@ -2661,8 +2661,15 @@ pub async fn post_handler(
     // sees it the same way the primary did.
     let fsync = form_value("fsync").as_deref() == Some("true");
 
+    // Go computes the checksum while building the needle (CreateNeedleFromRequest).
+    // The write queue takes the needle away, so the response fields that come
+    // from it are read here, before the write, rather than from a copy.
+    n.checksum = crate::storage::needle::crc::CRC::new(&n.data);
+    let needle_etag = n.etag();
+    let needle_has_name = n.has_name();
+
     let write_result = if let Some(wq) = state.write_queue.get() {
-        wq.submit(vid, n.clone(), fsync).await
+        wq.submit(vid, n, fsync).await
     } else {
         let mut store = state.store.write().unwrap();
         store.write_volume_needle(vid, &mut n, fsync)
@@ -2713,22 +2720,22 @@ pub async fn post_handler(
     let resp = match write_result {
         Ok((_offset, _size, is_unchanged)) => {
             if is_unchanged {
-                let etag = format!("\"{}\"", n.etag());
+                let etag = format!("\"{}\"", needle_etag);
                 (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response()
             } else {
                 // Go only includes contentMd5 when the client provided Content-MD5
                 let result = UploadResult {
-                    name: if n.has_name() {
+                    name: if needle_has_name {
                         filename.clone()
                     } else {
                         String::new()
                     },
                     size: original_data_size, // H3: use original size, not compressed
-                    etag: n.etag(),
+                    etag: needle_etag.clone(),
                     mime: mime_type.clone(),
                     content_md5: original_content_md5.clone(),
                 };
-                let etag = n.etag();
+                let etag = needle_etag;
                 let etag_header = if etag.starts_with('"') {
                     etag.clone()
                 } else {
