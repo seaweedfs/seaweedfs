@@ -27,6 +27,7 @@ func TestAmbiguousSubresource(t *testing.T) {
 		"uploads=&prefix=a&x-id=CreateMultipartUpload",
 		"list-type=2&prefix=a&continuation-token=x",
 		"acl=&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeef",
+		"seaweedfs-quota=",
 	} {
 		req, _ := http.NewRequest("GET", "http://localhost/bucket/key?"+query, nil)
 		assert.False(t, hasAmbiguousSubresource(req.URL.Query()), "%q names one operation", query)
@@ -49,6 +50,9 @@ func TestAmbiguousSubresource(t *testing.T) {
 		"list-type=2&tagging=",
 		"ownershipControls=&list-type=2",
 		"list-type=2&versions=",
+		"policy=&seaweedfs-quota=",
+		"seaweedfs-quota=&policy=",
+		"seaweedfs-quota=&tagging=",
 	} {
 		req, _ := http.NewRequest("PUT", "http://localhost/bucket?"+query, nil)
 		assert.True(t, hasAmbiguousSubresource(req.URL.Query()), "%q names two operations", query)
