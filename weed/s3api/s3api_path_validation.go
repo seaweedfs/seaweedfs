@@ -61,7 +61,9 @@ var operationSubresources = map[string]bool{
 func hasAmbiguousSubresource(query url.Values) bool {
 	seen := 0
 	for key := range query {
-		if !operationSubresources[key] {
+		// bucketQueryActions keys select an operation by definition, so they
+		// count even if operationSubresources was not updated for them.
+		if _, ok := bucketQueryActions[key]; !ok && !operationSubresources[key] {
 			continue
 		}
 		if seen++; seen > 1 {
