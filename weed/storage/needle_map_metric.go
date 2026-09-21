@@ -26,6 +26,35 @@ type mapMetric struct {
 	MaximumNeedleEnd int64 `json:"MaxNeedleEnd"`
 }
 
+type batchMapMetricSnapshot struct {
+	deletionCounter     uint32
+	fileCounter         uint32
+	deletionByteCounter uint64
+	fileByteCounter     uint64
+	maximumFileKey      uint64
+	maximumNeedleEnd    int64
+}
+
+func (mm *mapMetric) snapshotBatchMetrics() batchMapMetricSnapshot {
+	return batchMapMetricSnapshot{
+		deletionCounter:     atomic.LoadUint32(&mm.DeletionCounter),
+		fileCounter:         atomic.LoadUint32(&mm.FileCounter),
+		deletionByteCounter: atomic.LoadUint64(&mm.DeletionByteCounter),
+		fileByteCounter:     atomic.LoadUint64(&mm.FileByteCounter),
+		maximumFileKey:      atomic.LoadUint64(&mm.MaximumFileKey),
+		maximumNeedleEnd:    atomic.LoadInt64(&mm.MaximumNeedleEnd),
+	}
+}
+
+func (mm *mapMetric) restoreBatchMetrics(snapshot batchMapMetricSnapshot) {
+	atomic.StoreUint32(&mm.DeletionCounter, snapshot.deletionCounter)
+	atomic.StoreUint32(&mm.FileCounter, snapshot.fileCounter)
+	atomic.StoreUint64(&mm.DeletionByteCounter, snapshot.deletionByteCounter)
+	atomic.StoreUint64(&mm.FileByteCounter, snapshot.fileByteCounter)
+	atomic.StoreUint64(&mm.MaximumFileKey, snapshot.maximumFileKey)
+	atomic.StoreInt64(&mm.MaximumNeedleEnd, snapshot.maximumNeedleEnd)
+}
+
 func (mm *mapMetric) logDelete(deletedByteCount Size) {
 	if mm == nil {
 		return

@@ -189,6 +189,14 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	return levelDbWrite(m.db, key, offset, size, watermark != 0, watermark)
 }
 
+func (m *LevelDbNeedleMap) truncateIndex(offset int64) error {
+	if err := m.baseNeedleMapper.truncateIndex(offset); err != nil {
+		return err
+	}
+	m.recordCount = uint64(offset / NeedleMapEntrySize)
+	return nil
+}
+
 func getWatermark(db *leveldb.DB) uint64 {
 	data, err := db.Get(watermarkKey, nil)
 	if err != nil || len(data) != 8 {

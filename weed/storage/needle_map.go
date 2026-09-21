@@ -37,6 +37,15 @@ type NeedleMapper interface {
 	ReadIndexEntry(n int64) (key NeedleId, offset Offset, size Size, err error)
 }
 
+type batchIndexRollbacker interface {
+	truncateIndex(offset int64) error
+}
+
+type batchMetricRollbacker interface {
+	snapshotBatchMetrics() batchMapMetricSnapshot
+	restoreBatchMetrics(snapshot batchMapMetricSnapshot)
+}
+
 type baseNeedleMapper struct {
 	mapMetric
 
@@ -73,6 +82,17 @@ func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size 
 
 func (nm *baseNeedleMapper) Sync() error {
 	return nm.indexFile.Sync()
+}
+
+func (nm *baseNeedleMapper) truncateIndex(offset int64) error {
+	nm.indexFileAccessLock.Lock()
+	defer nm.indexFileAccessLock.Unlock()
+
+	if err := nm.indexFile.Truncate(offset); err != nil {
+		return err
+	}
+	nm.indexFileOffset = offset
+	return nil
 }
 
 func (nm *baseNeedleMapper) ReadIndexEntry(n int64) (key NeedleId, offset Offset, size Size, err error) {

@@ -33,6 +33,8 @@ type Volume struct {
 	needleMapKind      NeedleMapKind
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	ioUnavailable      bool
+	ioUnavailableError string
 	noWriteLock        sync.RWMutex
 	hasRemoteFile      atomic.Bool // if the volume is tiered: data lives in a remote backend
 	MemoryMapMaxSizeMb uint32
@@ -500,11 +502,45 @@ func (v *Volume) IsReadOnly() bool {
 func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow bool) {
 	v.noWriteLock.RLock()
 	noWriteOrDelete, noWriteCanDelete = v.noWriteOrDelete, v.noWriteCanDelete
+	if v.ioUnavailable {
+		noWriteOrDelete = true
+	}
 	v.noWriteLock.RUnlock()
 	// The location is attached when the volume joins a disk location, which is
 	// after NewVolume hands it back.
 	diskSpaceLow = v.location != nil && v.location.isDiskSpaceLow.Load()
 	return noWriteOrDelete || noWriteCanDelete || diskSpaceLow, noWriteOrDelete, noWriteCanDelete, diskSpaceLow
+}
+
+var errVolumeUnavailable = errors.New("volume unavailable")
+
+func (v *Volume) unavailableError() error {
+	v.noWriteLock.RLock()
+	unavailable := v.ioUnavailable
+	reason := v.ioUnavailableError
+	v.noWriteLock.RUnlock()
+	if !unavailable {
+		return nil
+	}
+	if reason == "" {
+		return fmt.Errorf("volume %d is unavailable: %w", v.Id, errVolumeUnavailable)
+	}
+	return fmt.Errorf("volume %d is unavailable: %s: %w", v.Id, reason, errVolumeUnavailable)
+}
+
+func (v *Volume) markBatchRecoveryFailed(err error) {
+	v.noWriteLock.Lock()
+	v.noWriteOrDelete = true
+	v.ioUnavailable = true
+	v.ioUnavailableError = err.Error()
+	v.noWriteLock.Unlock()
+
+	if v.volumeInfo != nil {
+		if persistErr := v.PersistReadOnly(true, false); persistErr != nil {
+			glog.Warningf("volume %d: failed to persist unavailable state: %v", v.Id, persistErr)
+		}
+	}
+	glog.Errorf("volume %d entered unavailable state after batch recovery failed: %v", v.Id, err)
 }
 
 func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) error {
