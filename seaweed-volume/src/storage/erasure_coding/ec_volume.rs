@@ -1620,9 +1620,21 @@ impl EcVolume {
                 // write_all may have extended the file on disk before
                 // sync_all failed; truncate back to the known-good size so
                 // the on-disk journal never drifts past `deleted_needles`.
-                if let Some(ecj) = self.ecj_file.as_mut()
-                    && let Err(trunc_err) = ecj.set_len(prev_ecj_size as u64)
-                {
+                // Uses its own write handle: on Windows the append handle
+                // lacks FILE_WRITE_DATA, so set_len through it fails with
+                // ERROR_ACCESS_DENIED and the rollback would silently not
+                // happen.
+                let ecj_path = format!(
+                    "{}.ecj",
+                    crate::storage::volume::volume_file_name(
+                        &self.ecx_actual_dir,
+                        &self.collection,
+                        self.volume_id,
+                    )
+                );
+                let rollback = open_volume_file(OpenOptions::new().write(true), &ecj_path)
+                    .and_then(|f| f.set_len(prev_ecj_size as u64).and_then(|_| f.sync_all()));
+                if let Err(trunc_err) = rollback {
                     tracing::error!(
                         volume_id = self.volume_id.0,
                         needle_id = needle_id.0,
@@ -2403,7 +2415,13 @@ mod tests {
     /// Write a raw `.ecj` containing `ids` repeated `repeats` times, i.e. the
     /// shape the append paths produce when a peer's whole journal is
     /// concatenated onto this one over and over.
-    fn write_bloated_ecj(dir: &str, collection: &str, vid: VolumeId, ids: &[NeedleId], repeats: usize) {
+    fn write_bloated_ecj(
+        dir: &str,
+        collection: &str,
+        vid: VolumeId,
+        ids: &[NeedleId],
+        repeats: usize,
+    ) {
         let base = crate::storage::volume::volume_file_name(dir, collection, vid);
         let mut one = vec![0u8; ids.len() * NEEDLE_ID_SIZE];
         for (i, id) in ids.iter().enumerate() {
@@ -2482,8 +2500,14 @@ mod tests {
             "delete after a torn tail was lost: {:?}",
             deleted,
         );
-        assert_eq!(deleted.len(), ids.len() + 1, "misaligned decode: {:?}", deleted);
+        assert_eq!(
+            deleted.len(),
+            ids.len() + 1,
+            "misaligned decode: {:?}",
+            deleted
+        );
     }
+
     /// A journal spanning several read chunks must load every entry — guards
     /// the chunk-boundary arithmetic in the buffered loader.
     #[test]
