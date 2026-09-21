@@ -2815,14 +2815,27 @@ pub async fn delete_handler(
                     let count = ec_needle.data_size as i64;
                     // Step 3: Journal the delete
                     let mut store = state.store.write().unwrap();
-                    if let Some(ecv) = store.find_ec_volume_mut(vid)
-                        && let Err(e) = ecv.journal_delete(needle_id)
-                    {
-                        return json_error_with_query(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            format!("Deletion Failed: {}", e),
-                            Some(&del_query),
-                        );
+                    match store.find_ec_volume_mut(vid) {
+                        Some(ecv) => {
+                            if let Err(e) = ecv.journal_delete(needle_id) {
+                                return json_error_with_query(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    format!("Deletion Failed: {}", e),
+                                    Some(&del_query),
+                                );
+                            }
+                        }
+                        // Unmounted between the read and the append: nothing
+                        // was journalled, so answering 202 would lose the
+                        // delete while reporting success.
+                        None => {
+                            let result = DeleteResult { size: 0 };
+                            return json_response_with_params(
+                                StatusCode::NOT_FOUND,
+                                &result,
+                                Some(&del_params),
+                            );
+                        }
                     }
                     let result = DeleteResult { size: count };
                     return json_response_with_params(
