@@ -221,6 +221,35 @@ mod tests {
     use super::*;
     use crate::storage::types::*;
 
+    /// Multi-byte input must be an error, not a panic: `to_digit` on the
+    /// leading characters rejects it before `chars[2]` is ever indexed.
+    #[test]
+    fn replica_placement_rejects_non_ascii_instead_of_panicking() {
+        for s in ["é", "0é", "é0", "🦀", "ééé"] {
+            assert!(
+                ReplicaPlacement::from_string(s).is_err(),
+                "non-ASCII replication {:?} must error",
+                s
+            );
+        }
+    }
+
+    /// The ASCII guard must not change any accepted input, including the
+    /// zero-padding shorthands.
+    #[test]
+    fn replica_placement_still_accepts_ascii_shorthands() {
+        assert_eq!(
+            ReplicaPlacement::from_string("1").unwrap(),
+            ReplicaPlacement::from_string("001").unwrap()
+        );
+        assert_eq!(
+            ReplicaPlacement::from_string("01").unwrap(),
+            ReplicaPlacement::from_string("001").unwrap()
+        );
+        let rp = ReplicaPlacement::from_string("010").unwrap();
+        assert_eq!(rp.diff_rack_count, 1);
+    }
+
     #[test]
     fn test_super_block_round_trip() {
         let sb = SuperBlock {

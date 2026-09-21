@@ -1351,9 +1351,7 @@ async fn get_or_head_handler_inner(
 
     // H6: Determine Content-Type: filter application/octet-stream, use mime_guess
     // For chunk manifests, skip extension-based MIME override — use stored MIME as-is (Go parity)
-    let content_type = if let Some(ref ct) = query.response_content_type {
-        Some(ct.clone())
-    } else if n.is_chunk_manifest() {
+    let content_type = if n.is_chunk_manifest() {
         // Chunk manifests: use stored MIME but filter application/octet-stream (Go L334)
         if !n.mime.is_empty() {
             let mt = String::from_utf8_lossy(&n.mime).to_string();
@@ -1402,27 +1400,50 @@ async fn get_or_head_handler_inner(
             }
         }
     };
-    if let Some(ref ct) = content_type {
-        response_headers.insert(header::CONTENT_TYPE, ct.parse().unwrap());
+    // Every value below can come straight from the query string, so none of
+    // them may be unwrapped: `?response-cache-control=%0Aevil` decodes to a
+    // value with a newline, `HeaderValue::from_str` rejects it, and the unwrap
+    // would panic the connection task. An invalid `response-content-type`
+    // falls back to the needle MIME rather than dropping Content-Type.
+    if let Some(hval) = query
+        .response_content_type
+        .as_ref()
+        .and_then(|ct| ct.parse::<header::HeaderValue>().ok())
+    {
+        response_headers.insert(header::CONTENT_TYPE, hval);
+    } else if let Some(ref ct) = content_type
+        && let Ok(hval) = ct.parse()
+    {
+        response_headers.insert(header::CONTENT_TYPE, hval);
     }
 
     // Cache-Control override from query param
-    if let Some(ref cc) = query.response_cache_control {
-        response_headers.insert(header::CACHE_CONTROL, cc.parse().unwrap());
+    if let Some(ref cc) = query.response_cache_control
+        && let Ok(hval) = cc.parse()
+    {
+        response_headers.insert(header::CACHE_CONTROL, hval);
     }
 
     // S3 response passthrough headers
-    if let Some(ref ce) = query.response_content_encoding {
-        response_headers.insert(header::CONTENT_ENCODING, ce.parse().unwrap());
+    if let Some(ref ce) = query.response_content_encoding
+        && let Ok(hval) = ce.parse()
+    {
+        response_headers.insert(header::CONTENT_ENCODING, hval);
     }
-    if let Some(ref exp) = query.response_expires {
-        response_headers.insert(header::EXPIRES, exp.parse().unwrap());
+    if let Some(ref exp) = query.response_expires
+        && let Ok(hval) = exp.parse()
+    {
+        response_headers.insert(header::EXPIRES, hval);
     }
-    if let Some(ref cl) = query.response_content_language {
-        response_headers.insert("Content-Language", cl.parse().unwrap());
+    if let Some(ref cl) = query.response_content_language
+        && let Ok(hval) = cl.parse()
+    {
+        response_headers.insert("Content-Language", hval);
     }
-    if let Some(ref cd) = query.response_content_disposition {
-        response_headers.insert(header::CONTENT_DISPOSITION, cd.parse().unwrap());
+    if let Some(ref cd) = query.response_content_disposition
+        && let Ok(hval) = cd.parse()
+    {
+        response_headers.insert(header::CONTENT_DISPOSITION, hval);
     }
 
     // Last-Modified
