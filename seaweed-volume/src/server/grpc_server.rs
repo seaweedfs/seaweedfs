@@ -3109,19 +3109,24 @@ impl VolumeServer for VolumeGrpcService {
         // .ecx at reconcile, where the new .vif makes the encode_ts_ns guard pass.
         // The source .dat/.idx/.vif are kept (the .vif only goes on a shard-only
         // disk). The write lock is released before the long encode.
-        {
+        let swept = {
             let mut store = self.state.store.write().unwrap();
             store.unload_ec_volume(vid);
-            for loc in &store.locations {
+            store.locations.iter().try_for_each(|loc| {
                 loc.remove_ec_volume_files_full_teardown(collection, vid)
                     .map_err(|e| {
                         Status::internal(format!(
                             "wipe stale EC artifacts for volume {} on {}: {}",
                             vid.0, loc.directory, e
                         ))
-                    })?;
-            }
-        }
+                    })
+            })
+        };
+        // The unload dropped mounted shards, so tell the master now, like every
+        // other unmount path, rather than leaving it to route reads here until
+        // the next pulse. Before the `?`: a failed sweep has unloaded them too.
+        self.state.volume_state_notify.notify_one();
+        swept?;
 
         let block_size = match crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
@@ -7851,7 +7856,19 @@ mod tests {
             std::fs::write(sibling.path().join(format!("1{}", ext)), b"stale-run").unwrap();
         }
 
+        // Drain the permit the mount above left, so the wake-up asserted below
+        // can only come from the re-generate's unload.
+        let notify = &service.state.volume_state_notify;
+        let _ = tokio::time::timeout(std::time::Duration::ZERO, notify.notified()).await;
+
         generate().await.unwrap();
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::ZERO, notify.notified())
+                .await
+                .is_ok(),
+            "unloading the mounted shards must wake the heartbeat"
+        );
 
         for ext in stale {
             assert!(
