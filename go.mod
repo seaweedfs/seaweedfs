@@ -340,7 +340,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.24 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.50.0
+	github.com/aws/aws-sdk-go-v2/service/sts v1.51.0
 	github.com/aws/smithy-go v1.28.1
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/bradenaw/juniper v0.15.3 // indirect
