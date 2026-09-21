@@ -3542,7 +3542,18 @@ impl VolumeServer for VolumeGrpcService {
             let file = tokio::fs::File::create(&file_path)
                 .await
                 .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecx").await?;
+            let written = drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecx").await?;
+            // A source that genuinely holds a 0-byte .ecx would leave a stub
+            // here that no placement or mount decision accepts. Catch it at
+            // distribute time, as Go does, so the orchestrator can pick another
+            // source instead of learning about it at mount.
+            if written == 0 {
+                let _ = tokio::fs::remove_file(&file_path).await;
+                return Err(Status::internal(format!(
+                    "VolumeEcShardsCopy volume {}: source .ecx is 0 bytes",
+                    vid
+                )));
+            }
         }
 
         // Copy .ecj file if requested

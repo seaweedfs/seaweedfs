@@ -13,7 +13,7 @@ use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
 use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, ShardId};
-use crate::storage::erasure_coding::ec_volume::EcVolume;
+use crate::storage::erasure_coding::ec_volume::{EcVolume, is_usable_ecx_file};
 use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
@@ -905,11 +905,29 @@ impl Store {
         shard_id: ShardId,
         source_disk_type: &str,
     ) -> Result<(), VolumeError> {
+        // The .ecx may live on a different disk than the shard being mounted
+        // (ec.balance / ec.rebuild can spread shards across sibling disks), so
+        // look up its owner once and point EcVolume::new at the directory that
+        // really has it — Go's MountEcShards does the same. Without an index
+        // anywhere the mount fails instead of advertising an unreadable shard.
+        let ecx_idx_dir = self.find_ecx_idx_dir_for_volume(collection, vid);
         for loc in &mut self.locations {
             // Check if the shard file exists on this location
             let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
             if std::path::Path::new(&shard.file_name()).exists() {
-                loc.mount_ec_shards(vid, collection, &[shard_id], source_disk_type)?;
+                let idx_dir = match &ecx_idx_dir {
+                    Some(owner_dir) if !loc.has_ecx_file_on_disk(collection, vid) => {
+                        owner_dir.clone()
+                    }
+                    _ => loc.idx_directory.clone(),
+                };
+                loc.mount_ec_shards_with_idx_dir(
+                    vid,
+                    collection,
+                    &[shard_id],
+                    &idx_dir,
+                    source_disk_type,
+                )?;
                 return Ok(());
             }
         }
@@ -917,6 +935,25 @@ impl Store {
             io::ErrorKind::NotFound,
             format!("MountEcShards {}.{} not found on disk", vid, shard_id),
         )))
+    }
+
+    /// The directory holding a usable `.ecx` for (collection, vid) on any local
+    /// disk, index directory before data directory. A 0-byte `.ecx` is a stub
+    /// from a failed copy and counts as absent, so the scan continues to a
+    /// sibling disk. Mirrors Go's `Store.findEcxIdxDirForVolume`.
+    fn find_ecx_idx_dir_for_volume(&self, collection: &str, vid: VolumeId) -> Option<String> {
+        for loc in &self.locations {
+            for scan in [&loc.idx_directory, &loc.directory] {
+                if scan.is_empty() {
+                    continue;
+                }
+                let base = crate::storage::volume::volume_file_name(scan, collection, vid);
+                if is_usable_ecx_file(&format!("{}.ecx", base)) {
+                    return Some(scan.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Unmount EC shards for a volume (batch).
@@ -1203,7 +1240,9 @@ impl Store {
         for (i, loc) in self.locations.iter().enumerate() {
             let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
             let ecx_path = format!("{}.ecx", base);
-            if std::path::Path::new(&ecx_path).exists() {
+            // A 0-byte .ecx is a failed-copy stub, not an index (Go requires
+            // Size() > 0); keep looking for a disk with a real one.
+            if is_usable_ecx_file(&ecx_path) {
                 return Some(i);
             }
         }
@@ -2263,6 +2302,8 @@ mod tests {
         let mut store = make_test_store(&[dir]);
 
         std::fs::write(format!("{}/expired_ec_case_9.ec00", dir), b"expired").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/expired_ec_case_9.ecx", dir), [0u8; 16]).unwrap();
         store.locations[0]
             .mount_ec_shards(VolumeId(9), "expired_ec_case", &[0], "")
             .unwrap();
@@ -2553,6 +2594,14 @@ mod tests {
             b"shard data",
         )
         .unwrap();
+        std::fs::write(
+            format!(
+                "{}/{}_{}.ecx",
+                store.locations[1].directory, collection, vid.0
+            ),
+            vec![0u8; 20],
+        )
+        .unwrap();
         store.locations[1]
             .mount_ec_shards(vid, collection, &[0], "")
             .unwrap();
@@ -2628,6 +2677,14 @@ mod tests {
             b"shard data",
         )
         .unwrap();
+        std::fs::write(
+            format!(
+                "{}/{}_{}.ecx",
+                store.locations[1].directory, collection, vid.0
+            ),
+            vec![0u8; 20],
+        )
+        .unwrap();
         store.locations[1]
             .mount_ec_shards(vid, collection, &[0], "")
             .unwrap();
@@ -2661,12 +2718,14 @@ mod tests {
         let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
         std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
         std::fs::write(format!("{}.ec01", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base0), vec![0u8; 20]).unwrap();
         store.locations[0]
             .mount_ec_shards(vid, collection, &[0, 1], "")
             .unwrap();
 
         let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
         std::fs::write(format!("{}.ec02", base1), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base1), vec![0u8; 20]).unwrap();
         store.locations[1]
             .mount_ec_shards(vid, collection, &[2], "")
             .unwrap();
@@ -2706,6 +2765,7 @@ mod tests {
 
         let base = volume_file_name(&store.locations[0].directory, collection, vid);
         std::fs::write(format!("{}.ec00", base), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
         store.locations[0]
             .mount_ec_shards(vid, collection, &[0], "")
             .unwrap();
@@ -2717,6 +2777,7 @@ mod tests {
         for shard_id in &filler_shards {
             std::fs::write(format!("{}.ec{:02}", filler_base, shard_id), b"x").unwrap();
         }
+        std::fs::write(format!("{}.ecx", filler_base), vec![0u8; 20]).unwrap();
         store.locations[0]
             .mount_ec_shards(filler, collection, &filler_shards, "")
             .unwrap();
@@ -2734,6 +2795,54 @@ mod tests {
         );
     }
 
+    /// Per-shard `VolumeEcShardsMount` with no `.ecx` on any local disk must
+    /// fail (Go: "no .ecx index found on any local disk") rather than register
+    /// a volume whose every read dies with "ecx file not open".
+    #[test]
+    fn test_mount_ec_shard_without_ecx_fails_and_advertises_nothing() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        let collection = "grafana-loki";
+        let vid = VolumeId(12121);
+        let base = volume_file_name(&store.locations[1].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base), b"x").unwrap();
+
+        let err = store
+            .mount_ec_shard(vid, collection, 0, "")
+            .expect_err("a shard without an index must not mount");
+        assert!(
+            matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::NotFound),
+            "got {:?}",
+            err
+        );
+        assert!(store.find_ec_volume(vid).is_none());
+    }
+
+    /// The `.ecx` may sit on a sibling disk of the one holding the shard; the
+    /// per-shard mount routes EcVolume::new at the owner's directory, skipping
+    /// a 0-byte stub on the way (Go's findEcxIdxDirForVolume).
+    #[test]
+    fn test_mount_ec_shard_uses_valid_ecx_on_sibling_disk() {
+        let (mut store, _tmp) = make_ec_target_test_store(3);
+        let collection = "grafana-loki";
+        let vid = VolumeId(13131);
+        let stub = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ecx", stub), b"").unwrap();
+        let owner_dir = store.locations[1].directory.clone();
+        let owner = volume_file_name(&owner_dir, collection, vid);
+        std::fs::write(format!("{}.ecx", owner), vec![0u8; 20]).unwrap();
+        let shard = volume_file_name(&store.locations[2].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", shard), b"x").unwrap();
+
+        // The stub is not a location for the batch path either.
+        assert_eq!(store.find_ec_location(vid, collection), Some(1));
+
+        store.mount_ec_shard(vid, collection, 0, "").unwrap();
+        let ec_vol = store.locations[2]
+            .find_ec_volume(vid)
+            .expect("mounted on the shard's disk");
+        assert_eq!(ec_vol.ecx_actual_dir(), owner_dir);
+    }
+
     /// Mixed-owner batch contract: a batch whose requested shards are
     /// already owned by different disks reports every owner, so
     /// `volume_ec_shards_copy` can refuse it rather than rank the owners
@@ -2747,11 +2856,13 @@ mod tests {
         let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
         std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
         std::fs::write(format!("{}.ec01", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base0), vec![0u8; 20]).unwrap();
         store.locations[0]
             .mount_ec_shards(vid, collection, &[0, 1], "")
             .unwrap();
         let base1 = volume_file_name(&store.locations[1].directory, collection, vid);
         std::fs::write(format!("{}.ec02", base1), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base1), vec![0u8; 20]).unwrap();
         store.locations[1]
             .mount_ec_shards(vid, collection, &[2], "")
             .unwrap();
