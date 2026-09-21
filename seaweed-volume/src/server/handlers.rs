@@ -2813,22 +2813,29 @@ pub async fn delete_handler(
                         );
                     }
                     let count = ec_needle.data_size as i64;
-                    // Step 3: Journal the delete
-                    let mut store = state.store.write().unwrap();
-                    match store.find_ec_volume_mut(vid) {
-                        Some(ecv) => {
-                            if let Err(e) = ecv.journal_delete(needle_id) {
-                                return json_error_with_query(
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    format!("Deletion Failed: {}", e),
-                                    Some(&del_query),
-                                );
-                            }
+                    // Step 3: Journal the delete on a holder of the needle's
+                    // primary data shard — Go's DeleteEcShardNeedle forwards a
+                    // VolumeEcBlobDelete there rather than journaling locally,
+                    // so exactly one node carries the tombstone and
+                    // delete_count stays consistent across replicas.
+                    match crate::server::store_ec::delete_ec_shard_needle_distributed(
+                        &state, vid, needle_id,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            let result = DeleteResult { size: count };
+                            return json_response_with_params(
+                                StatusCode::ACCEPTED,
+                                &result,
+                                Some(&del_params),
+                            );
                         }
-                        // Unmounted between the read and the append: nothing
-                        // was journalled, so answering 202 would lose the
-                        // delete while reporting success.
-                        None => {
+                        // Unmounted between the read and the append, or the
+                        // needle went away in the same window: nothing was
+                        // journalled, so answering 202 would lose the delete
+                        // while reporting success.
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                             let result = DeleteResult { size: 0 };
                             return json_response_with_params(
                                 StatusCode::NOT_FOUND,
@@ -2836,13 +2843,14 @@ pub async fn delete_handler(
                                 Some(&del_params),
                             );
                         }
+                        Err(e) => {
+                            return json_error_with_query(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("Deletion Failed: {}", e),
+                                Some(&del_query),
+                            );
+                        }
                     }
-                    let result = DeleteResult { size: count };
-                    return json_response_with_params(
-                        StatusCode::ACCEPTED,
-                        &result,
-                        Some(&del_params),
-                    );
                 }
                 Ok(None) => {
                     // Needle not in the EC index, or the volume disappeared
