@@ -1,16 +1,42 @@
+//! Construction of the volume server's *outgoing* gRPC clients: TLS material,
+//! endpoint tuning, dial bounds, and the three client constructors every call
+//! site goes through.
+//!
+//! The keepalive, window-size and message-size constants below are shared with
+//! the *inbound* server built in `main.rs`, which imports them from here rather
+//! than declaring its own. Changing one therefore changes both directions at
+//! once, which is deliberate: a volume server talks to its peers with the same
+//! HTTP/2 settings it offers them.
+
 use std::error::Error;
 use std::fmt;
 use std::time::Duration;
 
 use hyper::http::Uri;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
+use tonic::{Request, Status};
 
 use crate::config::VolumeServerConfig;
+use crate::pb::filer_pb::seaweed_filer_client::SeaweedFilerClient;
+use crate::pb::master_pb::seaweed_client::SeaweedClient;
+use crate::pb::volume_server_pb::volume_server_client::VolumeServerClient;
+use crate::server::request_id::outgoing_request_id_interceptor;
 
 pub const GRPC_MAX_MESSAGE_SIZE: usize = 1 << 30;
-const GRPC_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
-const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
-const GRPC_INITIAL_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
+pub const GRPC_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+pub const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+pub const GRPC_INITIAL_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
+
+/// Bound on the TCP connect of every outgoing dial. `build_grpc_endpoint` is
+/// private and `connect_channel` is the only way out of this module, so every
+/// call site picks this up whether it thinks about timeouts or not.
+///
+/// It bounds the TCP handshake only — tonic hands it to
+/// `HttpConnector::set_connect_timeout`. A peer that completes the handshake
+/// and then stalls in the TLS or HTTP/2 exchange is not covered; callers that
+/// need that bound wrap the whole dial (see `connect_ping_target`).
+const GRPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 pub struct OutgoingGrpcTlsConfig {
@@ -81,7 +107,7 @@ pub fn grpc_endpoint_uri(grpc_host_port: &str, tls: Option<&OutgoingGrpcTlsConfi
     format!("{}://{}", scheme, grpc_host_port)
 }
 
-pub fn build_grpc_endpoint(
+fn build_grpc_endpoint(
     grpc_host_port: &str,
     tls: Option<&OutgoingGrpcTlsConfig>,
 ) -> Result<Endpoint, GrpcClientError> {
@@ -149,6 +175,152 @@ pub async fn connect_guarded(
         .map_err(|e| GrpcClientError(format!("connect {} failed: {}", target, e)))
 }
 
+/// How a dial is bounded.
+///
+/// `connect_timeout` is handed to the TCP connector. `request_timeout` becomes
+/// [`Endpoint::timeout`], which tonic installs as a `GrpcTimeout` layer in
+/// front of *every* request the resulting channel carries — it is not a
+/// property of one call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GrpcDialOptions {
+    /// Bound on establishing the connection to the peer.
+    pub connect_timeout: Duration,
+    /// Deadline applied to each RPC on the channel, or `None` to leave them
+    /// unbounded.
+    pub request_timeout: Option<Duration>,
+}
+
+impl GrpcDialOptions {
+    /// A short request/response call: connect within 5 s, answer within 10 s.
+    pub fn unary() -> Self {
+        Self {
+            connect_timeout: GRPC_CONNECT_TIMEOUT,
+            request_timeout: Some(Duration::from_secs(10)),
+        }
+    }
+
+    /// A call the peer may take a while to answer: connect within 5 s, answer
+    /// within 30 s.
+    pub fn long() -> Self {
+        Self {
+            connect_timeout: GRPC_CONNECT_TIMEOUT,
+            request_timeout: Some(Duration::from_secs(30)),
+        }
+    }
+
+    /// A bounded connect with no deadline on the RPCs themselves.
+    ///
+    /// `request_timeout` must stay `None` here. [`Endpoint::timeout`] is not a
+    /// transfer budget: tonic layers it as a `GrpcTimeout` around the
+    /// response future, which resolves when the server's *first response
+    /// headers* arrive, so it bounds how long the peer may take to start
+    /// answering — per request, for every request the channel carries. A 10 s
+    /// value picked to suit one short call would therefore also be the header
+    /// deadline for the `VolumeCopy` that shares the dial, and a busy source
+    /// that takes longer than that to open its file would lose the whole copy.
+    /// `VolumeCopy`, `VolumeTailSender` and `VolumeEcShardsCopy` have never
+    /// carried one.
+    pub fn stream() -> Self {
+        Self {
+            connect_timeout: GRPC_CONNECT_TIMEOUT,
+            request_timeout: None,
+        }
+    }
+}
+
+/// Dial a peer and return a connected channel.
+///
+/// The error carries only the transport failure: every caller already wraps it
+/// with the address and the operation it was attempting.
+pub async fn connect_channel(
+    grpc_host_port: &str,
+    tls: Option<&OutgoingGrpcTlsConfig>,
+    opts: GrpcDialOptions,
+) -> Result<Channel, GrpcClientError> {
+    let mut endpoint =
+        build_grpc_endpoint(grpc_host_port, tls)?.connect_timeout(opts.connect_timeout);
+    if let Some(request_timeout) = opts.request_timeout {
+        endpoint = endpoint.timeout(request_timeout);
+    }
+    endpoint
+        .connect()
+        .await
+        .map_err(|e| GrpcClientError(e.to_string()))
+}
+
+/// Dial a copy/tail source and return a connected channel, re-validating every
+/// resolved address at connect time.
+///
+/// The guarded equivalent of [`connect_channel`]: same `opts` bounds, but the
+/// dial goes through [`connect_guarded`] so a source address that passed
+/// validation cannot be re-pointed by DNS between the check and the connect.
+/// The bounds are applied to the endpoint *before* delegating, so the
+/// `allow_untrusted` opt-out is timed too.
+///
+/// `target` is the caller-facing source address (the unparsed
+/// `"ip:port.grpcPort"` form), which is what the guard pins against; the error
+/// carries only the transport failure, as every caller already wraps it with
+/// the address and the operation it was attempting.
+pub async fn connect_channel_guarded(
+    grpc_host_port: &str,
+    target: &str,
+    tls: Option<&OutgoingGrpcTlsConfig>,
+    opts: GrpcDialOptions,
+    allow_untrusted: bool,
+) -> Result<Channel, GrpcClientError> {
+    let mut endpoint =
+        build_grpc_endpoint(grpc_host_port, tls)?.connect_timeout(opts.connect_timeout);
+    if let Some(request_timeout) = opts.request_timeout {
+        endpoint = endpoint.timeout(request_timeout);
+    }
+    connect_guarded(endpoint, target, allow_untrusted).await
+}
+
+/// The outgoing request-id interceptor as a concrete type, so the client
+/// aliases below can name it.
+pub type RequestIdInterceptor = fn(Request<()>) -> Result<Request<()>, Status>;
+
+/// A volume-server client with the request-id interceptor attached.
+pub type VolumeServerGrpcClient =
+    VolumeServerClient<InterceptedService<Channel, RequestIdInterceptor>>;
+/// A master client with the request-id interceptor attached.
+pub type MasterGrpcClient = SeaweedClient<InterceptedService<Channel, RequestIdInterceptor>>;
+/// A filer client with the request-id interceptor attached.
+pub type FilerGrpcClient = SeaweedFilerClient<InterceptedService<Channel, RequestIdInterceptor>>;
+
+/// Wrap a connected channel in a volume-server client that forwards the
+/// current request id and lifts both message-size limits.
+pub fn volume_server_client(channel: Channel) -> VolumeServerGrpcClient {
+    VolumeServerClient::with_interceptor(
+        channel,
+        outgoing_request_id_interceptor as RequestIdInterceptor,
+    )
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+}
+
+/// Wrap a connected channel in a master client that forwards the current
+/// request id and lifts both message-size limits.
+pub fn master_client(channel: Channel) -> MasterGrpcClient {
+    SeaweedClient::with_interceptor(
+        channel,
+        outgoing_request_id_interceptor as RequestIdInterceptor,
+    )
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+}
+
+/// Wrap a connected channel in a filer client that forwards the current
+/// request id and lifts both message-size limits.
+pub fn filer_client(channel: Channel) -> FilerGrpcClient {
+    SeaweedFilerClient::with_interceptor(
+        channel,
+        outgoing_request_id_interceptor as RequestIdInterceptor,
+    )
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+}
+
 /// Parse a SeaweedFS server address (`"ip:port.grpcPort"` or
 /// `"ip:port"`) into the `host:grpcPort` form `build_grpc_endpoint`
 /// expects. With the trailing `.grpcPort` segment, that segment IS
@@ -169,9 +341,16 @@ pub fn parse_grpc_address(source: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_grpc_endpoint, grpc_endpoint_uri, load_outgoing_grpc_tls};
+    use super::{
+        GrpcDialOptions, build_grpc_endpoint, connect_channel, grpc_endpoint_uri,
+        load_outgoing_grpc_tls, volume_server_client,
+    };
     use crate::config::{NeedleMapKind, ReadMode, VolumeServerConfig};
+    use crate::pb::volume_server_pb;
     use crate::security::tls::TlsPolicy;
+    use crate::server::request_id::scope_request_id;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     const TEST_CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBPDCB76ADAgECAhRuRPQgeAu43BT/M7EfAWSdapVdYDAFBgMrZXAwFDESMBAG\nA1UEAwwJbG9jYWxob3N0MB4XDTI2MDcwNTE2MTUyOVoXDTM2MDcwMjE2MTUyOVow\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCowBQYDK2VwAyEAr/3bNIFI+8V32oCiY6y+\nXRFmZpdNQ2g//VtRkT+nQg+jUzBRMB0GA1UdDgQWBBTsy9tLf1zPiXCQfgci6zNi\ndEzRSjAfBgNVHSMEGDAWgBTsy9tLf1zPiXCQfgci6zNidEzRSjAPBgNVHRMBAf8E\nBTADAQH/MAUGAytlcANBAIvsdw0IbvOBBkb9cd7BfMJfIP9pQQrAL03pCRWJFnFh\nSysaLVgFXI4T078IiaM874oO+iB+5vNbWEpc7CkGow4=\n-----END CERTIFICATE-----\n";
     const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIHbyn71Kk+Y7KT3sBctit7uZpErpoH6qDbFj6P8qGaZH\n-----END PRIVATE KEY-----\n";
@@ -384,5 +563,113 @@ mod tests {
         use super::parse_grpc_address;
         let endpoint = build_grpc_endpoint(&parse_grpc_address("::1:9333").unwrap(), None).unwrap();
         assert_eq!(endpoint.uri().port_u16(), Some(19333));
+    }
+    /// A minimal HTTP/2 server that records the gRPC request headers it is
+    /// sent and answers every call with a trailers-only `unimplemented`. It is
+    /// enough to prove what a helper-built client puts on the wire, without
+    /// standing up the whole `VolumeServer` service behind a tonic server.
+    async fn serve_header_capture() -> (u16, Arc<Mutex<Option<String>>>) {
+        use hyper::service::service_fn;
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let captured = Arc::clone(&seen);
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let captured = Arc::clone(&captured);
+                tokio::spawn(async move {
+                    let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                        .serve_connection(
+                            TokioIo::new(stream),
+                            service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                                let captured = Arc::clone(&captured);
+                                async move {
+                                    let value = req
+                                        .headers()
+                                        .get("x-amz-request-id")
+                                        .and_then(|v| v.to_str().ok())
+                                        .map(str::to_string);
+                                    *captured.lock().unwrap() = value;
+                                    Ok::<_, std::convert::Infallible>(
+                                        hyper::http::Response::builder()
+                                            .status(200)
+                                            .header("content-type", "application/grpc")
+                                            .header("grpc-status", "12")
+                                            .body(tonic::body::Body::empty())
+                                            .unwrap(),
+                                    )
+                                }
+                            }),
+                        )
+                        .await;
+                });
+            }
+        });
+
+        (port, seen)
+    }
+
+    #[tokio::test]
+    async fn test_helper_built_client_sends_the_scoped_request_id() {
+        let (port, seen) = serve_header_capture().await;
+
+        let channel = connect_channel(
+            &format!("127.0.0.1:{}", port),
+            None,
+            GrpcDialOptions::unary(),
+        )
+        .await
+        .expect("dial the header-capturing server");
+
+        let mut client = volume_server_client(channel);
+        // The interceptor has a request id to forward only inside a scope, so
+        // the call has to run inside one for this to test anything.
+        let _ = scope_request_id("REQUEST-ID-ON-THE-WIRE".to_string(), async move {
+            client
+                .ping(volume_server_pb::PingRequest {
+                    target: String::new(),
+                    target_type: String::new(),
+                })
+                .await
+        })
+        .await;
+
+        assert_eq!(
+            seen.lock().unwrap().as_deref(),
+            Some("REQUEST-ID-ON-THE-WIRE"),
+            "a client built by volume_server_client must carry the outgoing request id"
+        );
+    }
+
+    #[test]
+    fn test_dial_presets_match_the_call_sites_they_replace() {
+        assert_eq!(
+            GrpcDialOptions::unary().connect_timeout,
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            GrpcDialOptions::unary().request_timeout,
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(
+            GrpcDialOptions::long().connect_timeout,
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            GrpcDialOptions::long().request_timeout,
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            GrpcDialOptions::stream().connect_timeout,
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            GrpcDialOptions::stream().request_timeout,
+            None,
+            "a streaming dial must not put a per-request deadline on the channel"
+        );
     }
 }
