@@ -2600,32 +2600,33 @@ impl VolumeServer for VolumeGrpcService {
 
         match result {
             Ok(()) => {
-                // Check for protocol-level errors (returned in response body, not gRPC status)
-                if let Some(err_msg) = resp_error {
-                    return Ok(Response::new(volume_server_pb::ReceiveFileResponse {
-                        error: err_msg,
-                        bytes_written: 0,
-                    }));
-                }
                 // Flush the BufWriter and fsync, and report a failure instead of
                 // discarding it. Go omits this check, but ReceiveFileResponse
                 // carries an `error` field and the caller renames the staged
                 // file into place on success — answering "wrote N bytes" after
                 // an EIO on fsync publishes a file whose data never reached the
                 // platter.
-                if let Some(ref mut f) = target_file {
+                if resp_error.is_none()
+                    && let Some(ref mut f) = target_file
+                {
                     if let Err(e) = f.flush().await {
-                        return Ok(Response::new(volume_server_pb::ReceiveFileResponse {
-                            error: format!("failed to flush file: {}", e),
-                            bytes_written: 0,
-                        }));
+                        resp_error = Some(format!("failed to flush file: {}", e));
+                    } else if let Err(e) = f.get_ref().sync_all().await {
+                        resp_error = Some(format!("failed to sync file: {}", e));
                     }
-                    if let Err(e) = f.get_ref().sync_all().await {
-                        return Ok(Response::new(volume_server_pb::ReceiveFileResponse {
-                            error: format!("failed to sync file: {}", e),
-                            bytes_written: 0,
-                        }));
+                }
+                // Protocol-level errors are returned in the response body, not
+                // gRPC status. Any of them leaves a partial staged file behind;
+                // remove it as Go does on a failed write.
+                if let Some(err_msg) = resp_error {
+                    drop(target_file.take());
+                    if let Some(ref p) = file_path {
+                        let _ = tokio::fs::remove_file(p).await;
                     }
+                    return Ok(Response::new(volume_server_pb::ReceiveFileResponse {
+                        error: err_msg,
+                        bytes_written: 0,
+                    }));
                 }
                 Ok(Response::new(volume_server_pb::ReceiveFileResponse {
                     error: String::new(),
