@@ -805,6 +805,20 @@ impl DiskLocation {
         self.ec_volumes.remove(&vid)
     }
 
+    /// Drop the in-memory EC volume for vid and close its descriptors without
+    /// deleting any file, so a following unlink frees the inodes instead of
+    /// leaving open fds serving the old bytes. Mirrors Go's unloadEcVolume.
+    pub fn unload_ec_volume(&mut self, vid: VolumeId) {
+        if let Some(mut ec_vol) = self.ec_volumes.remove(&vid) {
+            for _ in 0..ec_vol.shard_count() {
+                crate::metrics::VOLUME_GAUGE
+                    .with_label_values(&[&ec_vol.collection, "ec_shards"])
+                    .dec();
+            }
+            ec_vol.close();
+        }
+    }
+
     /// Mount EC shards for a volume on this location.
     ///
     /// `source_disk_type` is the source volume's disk type carried on the

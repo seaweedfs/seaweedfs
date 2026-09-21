@@ -1198,6 +1198,16 @@ impl Store {
         None
     }
 
+    /// Drop any in-memory EC volume for vid from EVERY disk and close its
+    /// descriptors without deleting files. Unlike remove_ec_volume this does not
+    /// stop at the first disk: a split-disk volume is registered on each disk
+    /// holding a shard. Mirrors Go's Store.UnloadEcVolume.
+    pub fn unload_ec_volume(&mut self, vid: VolumeId) {
+        for loc in &mut self.locations {
+            loc.unload_ec_volume(vid);
+        }
+    }
+
     /// Find the location index containing EC files for a volume.
     pub fn find_ec_location(&self, vid: VolumeId, collection: &str) -> Option<usize> {
         for (i, loc) in self.locations.iter().enumerate() {
