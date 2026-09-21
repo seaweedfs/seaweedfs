@@ -906,8 +906,11 @@ impl VolumeServer for VolumeGrpcService {
                 store.has_ec_volume(file_id.volume_id)
             };
 
-            // Cookie validation (unless skip_cookie_check)
-            if !req.skip_cookie_check {
+            // Cookie validation (unless skip_cookie_check). EC volumes always
+            // take this branch: the distributed read is the only source of the
+            // on-disk cookie and size, and Go's DeleteEcShardNeedle compares
+            // the fid cookie against it even when the caller asked to skip.
+            if !req.skip_cookie_check || is_ec_volume {
                 let original_cookie = n.cookie;
                 if !is_ec_volume {
                     let store = self.state.store.read().unwrap();
@@ -925,48 +928,43 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
                 } else {
-                    // For EC volumes, verify needle exists in ecx index
-                    let store = self.state.store.read().unwrap();
-                    if let Some(ec_vol) = store.find_ec_volume(file_id.volume_id) {
-                        match ec_vol.find_needle_from_ecx(n.id) {
-                            Ok(Some((_, size))) if !size.is_deleted() => {
-                                // Needle exists and is not deleted — cookie check not possible
-                                // for EC volumes without distributed read, so we accept it
-                                n.data_size = size.0 as u32;
-                            }
-                            Ok(_) => {
-                                results.push(volume_server_pb::DeleteResult {
-                                    file_id: fid_str.clone(),
-                                    status: 404,
-                                    error: format!("ec needle {} not found", fid_str),
-                                    size: 0,
-                                    version: 0,
-                                });
-                                continue;
-                            }
-                            Err(e) => {
-                                results.push(volume_server_pb::DeleteResult {
-                                    file_id: fid_str.clone(),
-                                    status: 404,
-                                    error: e.to_string(),
-                                    size: 0,
-                                    version: 0,
-                                });
-                                continue;
-                            }
+                    // Go's ReadEcShardNeedle fills the needle — the local .ecx
+                    // alone can't supply the cookie or the manifest flag.
+                    match crate::server::store_ec::read_ec_shard_needle_distributed(
+                        &self.state,
+                        file_id.volume_id,
+                        n.id,
+                    )
+                    .await
+                    {
+                        Ok(Some(ec_needle)) => n = ec_needle,
+                        Ok(None) => {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 404,
+                                error: format!("ec needle {} not found", fid_str),
+                                size: 0,
+                                version: 0,
+                            });
+                            continue;
                         }
-                    } else {
-                        results.push(volume_server_pb::DeleteResult {
-                            file_id: fid_str.clone(),
-                            status: 404,
-                            error: format!("ec volume {} not found", file_id.volume_id),
-                            size: 0,
-                            version: 0,
-                        });
-                        continue;
+                        Err(e) => {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 404,
+                                error: e.to_string(),
+                                size: 0,
+                                version: 0,
+                            });
+                            continue;
+                        }
                     }
                 }
-                if n.cookie != original_cookie {
+                // Go's inner check is `cookie != 0 && cookie != n.Cookie`: a
+                // zero fid cookie skips validation, which can only happen
+                // here when skip_cookie_check was already requested.
+                if (!req.skip_cookie_check || original_cookie.0 != 0) && n.cookie != original_cookie
+                {
                     results.push(volume_server_pb::DeleteResult {
                         file_id: fid_str.clone(),
                         status: 400,
@@ -1068,42 +1066,50 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
             } else {
-                // EC volume deletion: journal the delete locally (with cookie validation, matching Go)
-                let mut store = self.state.store.write().unwrap();
-                if let Some(ec_vol) = store.find_ec_volume_mut(file_id.volume_id) {
-                    let cookie = if req.skip_cookie_check {
-                        crate::storage::types::Cookie(0)
-                    } else {
-                        n.cookie
-                    };
-                    match ec_vol.journal_delete_with_cookie(n.id, cookie) {
-                        Ok(()) => {
-                            results.push(volume_server_pb::DeleteResult {
-                                file_id: fid_str.clone(),
-                                status: 202,
-                                error: String::new(),
-                                size: n.data_size,
-                                version: 0,
-                            });
-                        }
-                        Err(e) => {
-                            results.push(volume_server_pb::DeleteResult {
-                                file_id: fid_str.clone(),
-                                status: 500,
-                                error: e.to_string(),
-                                size: 0,
-                                version: 0,
-                            });
-                        }
+                // EC volume deletion: forward the tombstone to a holder of the
+                // needle's primary shard (Go's DeleteEcShardNeedle →
+                // VolumeEcBlobDelete). The cookie was already validated
+                // against the distributed read above.
+                match crate::server::store_ec::delete_ec_shard_needle_distributed(
+                    &self.state,
+                    file_id.volume_id,
+                    n.id,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        results.push(volume_server_pb::DeleteResult {
+                            file_id: fid_str.clone(),
+                            status: 202,
+                            error: String::new(),
+                            size: n.data_size,
+                            version: 0,
+                        });
                     }
-                } else {
-                    results.push(volume_server_pb::DeleteResult {
-                        file_id: fid_str.clone(),
-                        status: 404,
-                        error: format!("ec volume {} not found", file_id.volume_id),
-                        size: 0,
-                        version: 0,
-                    });
+                    Err(e) => {
+                        // Needle vanished while the volume stays mounted:
+                        // Go's ErrorDeleted → NotModified. The volume itself
+                        // unmounting means no journal anywhere, so 500 (Go's
+                        // generic error path) lets the caller retry.
+                        let already_gone = e.kind() == std::io::ErrorKind::NotFound
+                            && self
+                                .state
+                                .store
+                                .read()
+                                .unwrap()
+                                .has_ec_volume(file_id.volume_id);
+                        results.push(volume_server_pb::DeleteResult {
+                            file_id: fid_str.clone(),
+                            status: if already_gone { 304 } else { 500 },
+                            error: if already_gone {
+                                String::new()
+                            } else {
+                                e.to_string()
+                            },
+                            size: 0,
+                            version: 0,
+                        });
+                    }
                 }
             }
         }
@@ -3941,18 +3947,24 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let needle_id = NeedleId(req.file_key);
 
-        // Go checks if needle is already deleted (via ecx) before journaling.
-        // Search all locations for the EC volume.
+        // Go's handler locates the needle first: absent fails the RPC so the
+        // caller moves to the next holder; an existing tombstone is a no-op.
         let mut store = self.state.store.write().unwrap();
         if let Some(ec_vol) = store.find_ec_volume_mut(vid) {
-            // Check if already deleted via ecx index
-            if let Ok(Some((_offset, size))) = ec_vol.find_needle_from_ecx(needle_id)
-                && size.is_deleted()
-            {
-                // Already deleted, no-op
-                return Ok(Response::new(
-                    volume_server_pb::VolumeEcBlobDeleteResponse {},
-                ));
+            match ec_vol.find_needle_from_ecx(needle_id) {
+                Ok(Some((_, size))) if size.is_deleted() => {
+                    return Ok(Response::new(
+                        volume_server_pb::VolumeEcBlobDeleteResponse {},
+                    ));
+                }
+                Ok(None) => {
+                    return Err(Status::not_found(format!(
+                        "needle {} not in ec volume {}",
+                        needle_id, req.volume_id
+                    )));
+                }
+                Ok(Some(_)) => {}
+                Err(e) => return Err(Status::internal(e.to_string())),
             }
             ec_vol
                 .journal_delete(needle_id)
