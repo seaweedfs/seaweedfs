@@ -26,6 +26,11 @@ var (
 	destroyDelaySeconds int64 = 0
 )
 
+// ecjLoadChunkBytes bounds each positional read when seeding deletedNeedles
+// from .ecj. A multiple of NeedleIdSize; 1 MiB is 131072 entries per syscall,
+// which keeps a bloated journal from spending mount in per-entry reads.
+const ecjLoadChunkBytes = 1 << 20
+
 type EcVolume struct {
 	VolumeId                  needle.VolumeId
 	Collection                string
@@ -206,6 +211,20 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		ev.ecjFileSize = ecjFi.Size()
 	} else {
 		glog.Warningf("stat ec volume journal %s.ecj: %v", indexBaseFileName, statErr)
+	}
+	// Truncate a torn tail before the loader runs: appends land at the
+	// physical end, so a trailing partial record would misalign every later
+	// delete and lose it on the next mount.
+	if ragged := ev.ecjFileSize % int64(types.NeedleIdSize); ragged != 0 {
+		whole := ev.ecjFileSize - ragged
+		glog.Warningf("ec volume %d: truncating torn .ecj tail %d -> %d bytes", vid, ev.ecjFileSize, whole)
+		if truncErr := ev.ecjFile.Truncate(whole); truncErr != nil {
+			return nil, fmt.Errorf("ec volume %d: repair torn .ecj tail: %w", vid, truncErr)
+		}
+		if syncErr := ev.ecjFile.Sync(); syncErr != nil {
+			return nil, fmt.Errorf("ec volume %d: sync .ecj after tail repair: %w", vid, syncErr)
+		}
+		ev.ecjFileSize = whole
 	}
 	ev.deletedNeedles = make(map[types.NeedleId]struct{})
 	if loadErr := ev.loadDeletedNeedlesFromEcj(); loadErr != nil {
@@ -636,13 +655,20 @@ func (ev *EcVolume) loadDeletedNeedlesFromEcj() error {
 	if ev.ecjFile == nil || ev.ecjFileSize < int64(types.NeedleIdSize) {
 		return nil
 	}
-	buf := make([]byte, types.NeedleIdSize)
-	for off := int64(0); off+int64(types.NeedleIdSize) <= ev.ecjFileSize; off += int64(types.NeedleIdSize) {
-		if _, err := ev.ecjFile.ReadAt(buf, off); err != nil {
+	buf := make([]byte, ecjLoadChunkBytes)
+	for off := int64(0); off+int64(types.NeedleIdSize) <= ev.ecjFileSize; {
+		want := min(int64(ecjLoadChunkBytes), ev.ecjFileSize-off)
+		want -= want % int64(types.NeedleIdSize)
+		if want == 0 {
+			break
+		}
+		if _, err := ev.ecjFile.ReadAt(buf[:want], off); err != nil {
 			return fmt.Errorf("read ecj at %d: %w", off, err)
 		}
-		id := types.BytesToNeedleId(buf)
-		ev.deletedNeedles[id] = struct{}{}
+		for i := int64(0); i+int64(types.NeedleIdSize) <= want; i += int64(types.NeedleIdSize) {
+			ev.deletedNeedles[types.BytesToNeedleId(buf[i:i+types.NeedleIdSize])] = struct{}{}
+		}
+		off += want
 	}
 	return nil
 }

@@ -44,6 +44,10 @@ pub(crate) struct ShardLocationCache {
     stale: bool,
 }
 
+/// Bytes read per positional read when seeding `deleted_needles` from `.ecj`.
+/// A multiple of `NEEDLE_ID_SIZE`; 1 MiB is 131072 entries per syscall.
+const ECJ_LOAD_CHUNK_BYTES: usize = 1 << 20;
+
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
     pub volume_id: VolumeId,
@@ -494,6 +498,45 @@ impl EcVolume {
         let ecj_base =
             crate::storage::volume::volume_file_name(&vol.ecx_actual_dir, collection, volume_id);
         let ecj_path = format!("{}.ecj", ecj_base);
+
+        // Repair a torn tail BEFORE the append handle exists.
+        //
+        // The file is a flat array of fixed-size records and the journal handle
+        // is in append mode, so every write lands at the physical end. A
+        // trailing partial record therefore knocks every later append out of
+        // alignment: the loader below skips the partial bytes, but the next
+        // mount decodes those bytes together with the leading bytes of a real
+        // entry, yielding one garbage id and silently dropping the delete that
+        // followed the tear. Truncating to a whole number of records costs at
+        // most one incomplete id that was never readable anyway.
+        //
+        // This deliberately uses its own read+write handle rather than the
+        // append handle opened below: on Windows, `append(true)` requests
+        // FILE_APPEND_DATA *without* FILE_WRITE_DATA (and `.write(true)` is
+        // subsumed by `.append(true)`), so SetEndOfFile through that handle
+        // fails with ERROR_ACCESS_DENIED. The handle is scoped so it is closed
+        // again before the append handle opens.
+        {
+            let repair = open_volume_file(
+                OpenOptions::new().read(true).write(true).create(true),
+                &ecj_path,
+            )?;
+            let on_disk = repair.metadata()?.len() as i64;
+            let ragged = on_disk % NEEDLE_ID_SIZE as i64;
+            if ragged != 0 {
+                let whole = on_disk - ragged;
+                tracing::warn!(
+                    volume_id = volume_id.0,
+                    collection = %collection,
+                    on_disk_bytes = on_disk,
+                    truncated_to = whole,
+                    "truncating torn .ecj tail so later appends stay aligned",
+                );
+                repair.set_len(whole as u64)?;
+                repair.sync_all()?;
+            }
+        }
+
         let ecj_file = open_volume_file(
             OpenOptions::new()
                 .read(true)
@@ -693,6 +736,14 @@ impl EcVolume {
     /// from `new()` under exclusive ownership of the just-constructed
     /// EcVolume, so locking is not strictly required — but we take the
     /// write lock anyway for symmetry with later mutations.
+    ///
+    /// Read in large chunks. This previously issued one `NEEDLE_ID_SIZE`-byte
+    /// positional read per entry, which is fine for a healthy journal (a few
+    /// KB) and catastrophic for a bloated one: at the 1.51 TB seen in
+    /// production that is ~188e9 syscalls, so the server spun at 100% of one
+    /// core with a 31 MB RSS — the set stays small because the ids repeat —
+    /// and never opened its HTTP port, which made the master unregister every
+    /// volume it held. Chunked reads cut that by ~`ECJ_LOAD_CHUNK_BYTES / 8`.
     fn load_deleted_needles_from_ecj(&mut self) -> io::Result<()> {
         let ecj_file = match self.ecj_file.as_ref() {
             Some(f) => f,
@@ -701,35 +752,51 @@ impl EcVolume {
         if self.ecj_file_size < NEEDLE_ID_SIZE as i64 {
             return Ok(());
         }
-        let mut buf = [0u8; NEEDLE_ID_SIZE];
-        let mut set = self
-            .deleted_needles
-            .write()
-            .map_err(|_| io::Error::other("deleted_needles lock poisoned"))?;
-        let mut off: i64 = 0;
-        while off + NEEDLE_ID_SIZE as i64 <= self.ecj_file_size {
+
+        // Build into a local set and merge at the end. The previous version
+        // held the `deleted_needles` write lock for the whole scan, which on a
+        // bloated journal is the entire (unbounded) startup.
+        let mut loaded: HashSet<NeedleId> = HashSet::new();
+        let mut buf = vec![0u8; ECJ_LOAD_CHUNK_BYTES];
+        let end = self.ecj_file_size as u64;
+        let mut off: u64 = 0;
+        while off + NEEDLE_ID_SIZE as u64 <= end {
+            // Whole entries only; a trailing partial record is ignored, as the
+            // per-entry loop did by construction.
+            let mut want = std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, end - off) as usize;
+            want -= want % NEEDLE_ID_SIZE;
+            if want == 0 {
+                break;
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::FileExt;
-                ecj_file.read_exact_at(&mut buf, off as u64)?;
+                ecj_file.read_exact_at(&mut buf[..want], off)?;
             }
             #[cfg(windows)]
             {
                 // Positional read so concurrent readers of the shared .ecj
                 // handle can't interleave seek/read. Mirrors the
                 // read_exact_at helper at the bottom of this file.
-                read_exact_at(ecj_file, &mut buf, off as u64)?;
+                read_exact_at(ecj_file, &mut buf[..want], off)?;
             }
             #[cfg(not(any(unix, windows)))]
             {
                 compile_error!("Platform not supported: only unix and windows are supported");
             }
-            set.insert(NeedleId::from_bytes(&buf));
-            off += NEEDLE_ID_SIZE as i64;
+            for entry in buf[..want].chunks_exact(NEEDLE_ID_SIZE) {
+                loaded.insert(NeedleId::from_bytes(entry));
+            }
+            off += want as u64;
         }
+
+        let mut set = self
+            .deleted_needles
+            .write()
+            .map_err(|_| io::Error::other("deleted_needles lock poisoned"))?;
+        set.extend(loaded);
         Ok(())
     }
-
     /// Returns (file_count, delete_count) for this EC volume. Mirrors Go's
     /// `EcVolume.FileAndDeleteCount`:
     ///
@@ -1553,9 +1620,21 @@ impl EcVolume {
                 // write_all may have extended the file on disk before
                 // sync_all failed; truncate back to the known-good size so
                 // the on-disk journal never drifts past `deleted_needles`.
-                if let Some(ecj) = self.ecj_file.as_mut()
-                    && let Err(trunc_err) = ecj.set_len(prev_ecj_size as u64)
-                {
+                // Uses its own write handle: on Windows the append handle
+                // lacks FILE_WRITE_DATA, so set_len through it fails with
+                // ERROR_ACCESS_DENIED and the rollback would silently not
+                // happen.
+                let ecj_path = format!(
+                    "{}.ecj",
+                    crate::storage::volume::volume_file_name(
+                        &self.ecx_actual_dir,
+                        &self.collection,
+                        self.volume_id,
+                    )
+                );
+                let rollback = open_volume_file(OpenOptions::new().write(true), &ecj_path)
+                    .and_then(|f| f.set_len(prev_ecj_size as u64).and_then(|_| f.sync_all()));
+                if let Err(trunc_err) = rollback {
                     tracing::error!(
                         volume_id = self.volume_id.0,
                         needle_id = needle_id.0,
@@ -2331,6 +2410,122 @@ mod tests {
         vol.journal_delete(NeedleId(999)).unwrap();
         let (fc, dc) = vol.file_and_delete_count();
         assert_eq!((fc, dc), (2, 2));
+    }
+
+    /// Write a raw `.ecj` containing `ids` repeated `repeats` times, i.e. the
+    /// shape the append paths produce when a peer's whole journal is
+    /// concatenated onto this one over and over.
+    fn write_bloated_ecj(
+        dir: &str,
+        collection: &str,
+        vid: VolumeId,
+        ids: &[NeedleId],
+        repeats: usize,
+    ) {
+        let base = crate::storage::volume::volume_file_name(dir, collection, vid);
+        let mut one = vec![0u8; ids.len() * NEEDLE_ID_SIZE];
+        for (i, id) in ids.iter().enumerate() {
+            id.to_bytes(&mut one[i * NEEDLE_ID_SIZE..(i + 1) * NEEDLE_ID_SIZE]);
+        }
+        let mut f = File::create(format!("{}.ecj", base)).unwrap();
+        for _ in 0..repeats {
+            f.write_all(&one).unwrap();
+        }
+        f.sync_all().unwrap();
+    }
+    /// A journal whose length is not a whole number of entries must not lose
+    /// the entries that ARE complete, and must not panic.
+    #[test]
+    fn test_ecj_with_trailing_partial_entry() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "", VolumeId(40), &[]);
+
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(40));
+        let ids: Vec<NeedleId> = (1..=3).map(NeedleId).collect();
+        let mut bytes = vec![0u8; ids.len() * NEEDLE_ID_SIZE];
+        for (i, id) in ids.iter().enumerate() {
+            id.to_bytes(&mut bytes[i * NEEDLE_ID_SIZE..(i + 1) * NEEDLE_ID_SIZE]);
+        }
+        bytes.extend_from_slice(&[0xAB, 0xCD, 0xEF]); // torn tail
+        std::fs::write(format!("{}.ecj", base), &bytes).unwrap();
+
+        let vol = EcVolume::new(dir, dir, "", VolumeId(40)).unwrap();
+        assert_eq!(vol.read_deleted_needles().unwrap(), ids);
+    }
+
+    /// A torn tail must be truncated at mount, not merely skipped. The handle
+    /// is in append mode, so leaving the partial bytes in place would push
+    /// every later append out of alignment: the delete taken after the tear
+    /// would decode as garbage on the next mount and be silently lost.
+    #[test]
+    fn test_torn_ecj_tail_is_repaired_so_later_deletes_survive() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        // journal_delete only appends on a live->tombstone transition.
+        write_ecx_file(
+            dir,
+            "",
+            VolumeId(42),
+            &[(NeedleId(7), Offset::from_actual_offset(8), Size(10))],
+        );
+
+        let base = crate::storage::volume::volume_file_name(dir, "", VolumeId(42));
+        let ecj_path = format!("{}.ecj", base);
+        let ids: Vec<NeedleId> = (1..=3).map(NeedleId).collect();
+        let mut bytes = vec![0u8; ids.len() * NEEDLE_ID_SIZE];
+        for (i, id) in ids.iter().enumerate() {
+            id.to_bytes(&mut bytes[i * NEEDLE_ID_SIZE..(i + 1) * NEEDLE_ID_SIZE]);
+        }
+        bytes.extend_from_slice(&[0xAB, 0xCD, 0xEF]); // torn tail
+        std::fs::write(&ecj_path, &bytes).unwrap();
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(42)).unwrap();
+
+        // The tear is gone from disk, not just ignored in memory.
+        assert_eq!(
+            std::fs::metadata(&ecj_path).unwrap().len(),
+            (ids.len() * NEEDLE_ID_SIZE) as u64,
+            "torn tail should have been truncated at mount",
+        );
+
+        vol.journal_delete(NeedleId(7)).unwrap();
+        drop(vol);
+
+        // The delete taken after the repair must survive a remount.
+        let vol2 = EcVolume::new(dir, dir, "", VolumeId(42)).unwrap();
+        let deleted = vol2.read_deleted_needles().unwrap();
+        assert!(
+            deleted.contains(&NeedleId(7)),
+            "delete after a torn tail was lost: {:?}",
+            deleted,
+        );
+        assert_eq!(
+            deleted.len(),
+            ids.len() + 1,
+            "misaligned decode: {:?}",
+            deleted
+        );
+    }
+
+    /// A journal spanning several read chunks must load every entry — guards
+    /// the chunk-boundary arithmetic in the buffered loader.
+    #[test]
+    fn test_ecj_spanning_multiple_read_chunks() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "", VolumeId(41), &[]);
+
+        // 2.5 chunks' worth of DISTINCT ids, so nothing is masked by dedup and
+        // the total is not a chunk multiple.
+        let n = (ECJ_LOAD_CHUNK_BYTES / NEEDLE_ID_SIZE) * 5 / 2;
+        let ids: Vec<NeedleId> = (1..=n as u64).map(NeedleId).collect();
+        write_bloated_ecj(dir, "", VolumeId(41), &ids, 1);
+
+        let vol = EcVolume::new(dir, dir, "", VolumeId(41)).unwrap();
+        let deleted = vol.read_deleted_needles().unwrap();
+        assert_eq!(deleted.len(), n, "entries lost across a chunk boundary");
+        assert_eq!(deleted, ids);
     }
 
     #[test]
