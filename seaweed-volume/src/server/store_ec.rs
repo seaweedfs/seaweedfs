@@ -393,6 +393,10 @@ async fn delete_on_ec_shard_holders(
     if local_shards.contains(&shard_id) {
         match journal_delete_local(state, target.vid, target.needle_id) {
             Ok(()) => return Ok(true),
+            // Nothing was committed — the volume unmounted or remounted
+            // without the needle — so it is safe to fall back to other
+            // shard holders, unlike an RPC failure which may have landed.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(e) => last_err = Some(e),
         }
     }
