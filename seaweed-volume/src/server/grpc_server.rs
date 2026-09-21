@@ -2571,9 +2571,8 @@ impl VolumeServer for VolumeGrpcService {
                     Some(volume_server_pb::receive_file_request::Data::FileContent(content)) => {
                         if let Some(ref mut f) = target_file {
                             // write_all, not write: a short write (ENOSPC, NFS)
-                            // used to be counted as a success for however many
-                            // bytes landed, silently shifting every later chunk
-                            // and returning error: "". Go's os.File.Write loops.
+                            // would be counted as success for however many
+                            // bytes landed, silently shifting later chunks.
                             match f.write_all(&content).await {
                                 Ok(()) => bytes_written += content.len() as u64,
                                 Err(e) => {
@@ -2600,12 +2599,10 @@ impl VolumeServer for VolumeGrpcService {
 
         match result {
             Ok(()) => {
-                // Flush the BufWriter and fsync, and report a failure instead of
-                // discarding it. Go omits this check, but ReceiveFileResponse
-                // carries an `error` field and the caller renames the staged
-                // file into place on success — answering "wrote N bytes" after
-                // an EIO on fsync publishes a file whose data never reached the
-                // platter.
+                // Flush the BufWriter and fsync, reporting failure through the
+                // response `error` field: the caller renames the staged file
+                // into place on success, so a swallowed fsync error would
+                // publish data that never reached disk.
                 if resp_error.is_none()
                     && let Some(ref mut f) = target_file
                 {
