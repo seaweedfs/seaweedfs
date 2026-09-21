@@ -221,12 +221,8 @@ mod tests {
     use super::*;
     use crate::storage::types::*;
 
-    /// A replication string with multi-byte UTF-8 must be an error, not a
-    /// panic. Padding is decided by byte length but indexing is by character,
-    /// so `"é"` (2 bytes) padded to `"0é"` yields only 2 chars and `chars[2]`
-    /// panicked. Reachable from AllocateVolume/VolumeConfigure and, worse,
-    /// from a malformed `.vif` at volume load — turning an intended Err into a
-    /// load-time panic.
+    /// Multi-byte input must be an error, not a panic: `to_digit` on the
+    /// leading characters rejects it before `chars[2]` is ever indexed.
     #[test]
     fn replica_placement_rejects_non_ascii_instead_of_panicking() {
         for s in ["é", "0é", "é0", "🦀", "ééé"] {
