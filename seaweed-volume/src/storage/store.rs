@@ -911,30 +911,53 @@ impl Store {
         // really has it — Go's MountEcShards does the same. Without an index
         // anywhere the mount fails instead of advertising an unreadable shard.
         let ecx_idx_dir = self.find_ecx_idx_dir_for_volume(collection, vid);
+        // Keep going past a disk that cannot mount the shard: an interrupted
+        // move can leave an unusable copy on one disk and a good one on the
+        // next. Like Go, a NotFound just means "not this disk"; anything else
+        // is collected so an all-disks-fail error names every disk tried.
+        let mut failures: Vec<(String, VolumeError)> = Vec::new();
         for loc in &mut self.locations {
             // Check if the shard file exists on this location
             let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
-            if std::path::Path::new(&shard.file_name()).exists() {
-                let idx_dir = match &ecx_idx_dir {
-                    Some(owner_dir) if !loc.has_ecx_file_on_disk(collection, vid) => {
-                        owner_dir.clone()
-                    }
-                    _ => loc.idx_directory.clone(),
-                };
-                loc.mount_ec_shards_with_idx_dir(
-                    vid,
-                    collection,
-                    &[shard_id],
-                    &idx_dir,
-                    source_disk_type,
-                )?;
-                return Ok(());
+            if !std::path::Path::new(&shard.file_name()).exists() {
+                continue;
+            }
+            let idx_dir = match &ecx_idx_dir {
+                Some(owner_dir) if !loc.has_ecx_file_on_disk(collection, vid) => owner_dir.clone(),
+                _ => loc.idx_directory.clone(),
+            };
+            match loc.mount_ec_shards_with_idx_dir(
+                vid,
+                collection,
+                &[shard_id],
+                &idx_dir,
+                source_disk_type,
+            ) {
+                Ok(()) => return Ok(()),
+                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => failures.push((loc.directory.clone(), e)),
             }
         }
-        Err(VolumeError::Io(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("MountEcShards {}.{} not found on disk", vid, shard_id),
-        )))
+        if failures.is_empty() {
+            let what = if ecx_idx_dir.is_none() {
+                "no .ecx index found on any local disk"
+            } else {
+                "not found on disk"
+            };
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("MountEcShards {}.{} {}", vid, shard_id, what),
+            )));
+        }
+        let tried = failures
+            .iter()
+            .map(|(dir, e)| format!("{}: {}", dir, e))
+            .collect::<Vec<_>>()
+            .join("; ");
+        Err(VolumeError::Io(io::Error::other(format!(
+            "MountEcShards {}.{} failed on all disks: {}",
+            vid, shard_id, tried
+        ))))
     }
 
     /// The directory holding a usable `.ecx` for (collection, vid) on any local
@@ -2815,6 +2838,58 @@ mod tests {
             err
         );
         assert!(store.find_ec_volume(vid).is_none());
+    }
+
+    /// An interrupted move can leave a 0-byte shard on one disk and the good
+    /// copy on the next. The first disk's failure must not end the scan (Go's
+    /// MountEcShards keeps going), and nothing of the failed attempt may stay
+    /// registered.
+    #[test]
+    fn test_mount_ec_shard_continues_past_a_disk_that_cannot_mount() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        let collection = "grafana-loki";
+        let vid = VolumeId(13132);
+        for loc in &store.locations {
+            let base = volume_file_name(&loc.directory, collection, vid);
+            std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
+        }
+        let bad = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", bad), b"").unwrap();
+        let good = volume_file_name(&store.locations[1].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", good), b"x").unwrap();
+
+        store.mount_ec_shard(vid, collection, 0, "").unwrap();
+
+        assert!(store.locations[0].find_ec_volume(vid).is_none());
+        assert!(store.locations[1].find_ec_volume(vid).unwrap().has_shard(0));
+    }
+
+    /// When every disk holding the shard fails, the error names each of them.
+    #[test]
+    fn test_mount_ec_shard_reports_every_failing_disk() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        let collection = "grafana-loki";
+        let vid = VolumeId(13133);
+        for loc in &store.locations {
+            let base = volume_file_name(&loc.directory, collection, vid);
+            std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
+            std::fs::write(format!("{}.ec00", base), b"").unwrap();
+        }
+
+        let err = store
+            .mount_ec_shard(vid, collection, 0, "")
+            .unwrap_err()
+            .to_string();
+
+        for loc in &store.locations {
+            assert!(
+                err.contains(&loc.directory),
+                "{} missing from: {}",
+                loc.directory,
+                err
+            );
+            assert!(loc.find_ec_volume(vid).is_none());
+        }
     }
 
     /// The `.ecx` may sit on a sibling disk of the one holding the shard; the
