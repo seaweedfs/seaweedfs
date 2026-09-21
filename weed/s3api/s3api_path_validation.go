@@ -53,14 +53,17 @@ var operationSubresources = map[string]bool{
 	"location": true, "logging": true, "metrics": true, "notification": true,
 	"object-lock": true, "ownershipControls": true, "policy": true, "policyStatus": true,
 	"publicAccessBlock": true, "renameObject": true, "replication": true,
-	"requestPayment": true, "retention": true, "tagging": true, "uploadId": true,
+	"requestPayment": true, "retention": true, "seaweedfs-quota": true,
+	"tagging": true, "uploadId": true,
 	"uploads": true, "versioning": true, "versions": true, "website": true,
 }
 
 func hasAmbiguousSubresource(query url.Values) bool {
 	seen := 0
 	for key := range query {
-		if !operationSubresources[key] {
+		// bucketQueryActions keys select an operation by definition, so they
+		// count even if operationSubresources was not updated for them.
+		if _, ok := bucketQueryActions[key]; !ok && !operationSubresources[key] {
 			continue
 		}
 		if seen++; seen > 1 {

@@ -185,6 +185,33 @@ func TestResolveS3Action_ListType(t *testing.T) {
 	}
 }
 
+// The seaweedfs-quota routes are registered last among the bucket subresource
+// routes, so the resolver must resolve it last as well: a request combining it
+// with another selector is served by that selector's handler, and authorization
+// must name the same operation.
+func TestResolveS3Action_Quota(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		query  string
+		want   string
+	}{
+		{"quota get", http.MethodGet, "seaweedfs-quota", s3_constants.S3_ACTION_GET_BUCKET_QUOTA},
+		{"quota put", http.MethodPut, "seaweedfs-quota", s3_constants.S3_ACTION_PUT_BUCKET_QUOTA},
+		{"policy wins over quota", http.MethodPut, "policy&seaweedfs-quota", s3_constants.S3_ACTION_PUT_BUCKET_POLICY},
+		{"quota after policy wins too", http.MethodPut, "seaweedfs-quota&policy", s3_constants.S3_ACTION_PUT_BUCKET_POLICY},
+		{"tagging wins over quota", http.MethodPut, "tagging&seaweedfs-quota", s3_constants.S3_ACTION_PUT_BUCKET_TAGGING},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket?"+tt.query, nil)
+			if got := ResolveS3Action(r, s3_constants.ACTION_ADMIN, "bucket", ""); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // A base action naming another service carries no S3 request shape, so a query
 // parameter on the request must not redirect it to an S3 action.
 func TestResolveS3ActionKeepsNonS3Service(t *testing.T) {

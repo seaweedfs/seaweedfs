@@ -116,11 +116,6 @@ var bucketQueryActions = map[string]map[string]string{
 		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS,
 		http.MethodDelete: s3_constants.S3_ACTION_PUT_BUCKET_OWNERSHIP_CONTROLS, // DELETE uses same permission as PUT
 	},
-	// SeaweedFS extension: bucket quota subresource
-	"seaweedfs-quota": {
-		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_QUOTA,
-		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_QUOTA,
-	},
 }
 
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
@@ -265,6 +260,17 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	// Example: POST /bucket?delete (not POST /bucket/object?delete)
 	if query.Has("delete") && method == http.MethodPost && !hasObject {
 		return s3_constants.S3_ACTION_DELETE_OBJECT
+	}
+
+	// SeaweedFS extension: the quota routes are registered last among the
+	// bucket subresource routes, so resolve seaweedfs-quota last to match.
+	if !hasObject && query.Has("seaweedfs-quota") {
+		switch method {
+		case http.MethodGet:
+			return s3_constants.S3_ACTION_GET_BUCKET_QUOTA
+		case http.MethodPut:
+			return s3_constants.S3_ACTION_PUT_BUCKET_QUOTA
+		}
 	}
 
 	return ""
