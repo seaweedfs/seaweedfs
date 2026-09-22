@@ -70,7 +70,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/viper v1.21.0
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
 	github.com/tidwall/gjson v1.18.0
@@ -159,7 +159,7 @@ require (
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.151.1
 	go.etcd.io/etcd/client/pkg/v3 v3.7.1
-	go.uber.org/atomic v1.11.0
+	go.uber.org/atomic v1.12.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/tools/godoc v0.1.0-deprecated
 	google.golang.org/grpc/security/advancedtls v1.0.0
@@ -289,7 +289,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.uber.org/mock v0.5.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 )
