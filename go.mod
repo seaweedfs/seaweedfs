@@ -151,7 +151,7 @@ require (
 	github.com/seaweedfs/go-fuse/v2 v2.9.4
 	github.com/shirou/gopsutil/v4 v4.26.7
 	github.com/tarantool/go-option v1.1.0
-	github.com/tarantool/go-tarantool/v3 v3.0.1
+	github.com/tarantool/go-tarantool/v3 v3.0.2
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/twmb/avro v1.8.0
