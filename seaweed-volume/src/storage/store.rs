@@ -1482,10 +1482,35 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
     )))
 }
 
-fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeError> {
+/// Mirrors Go's SaveVolumeInfo: a read-only .vif fails the save, and the
+/// file is replaced atomically so a failed write keeps the previous
+/// metadata intact.
+pub(crate) fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeError> {
+    if std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly()) {
+        return Err(VolumeError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("failed to check {} not writable", path),
+        )));
+    }
     let content = serde_json::to_string_pretty(info)
         .map_err(|e| VolumeError::Io(io::Error::other(e.to_string())))?;
-    std::fs::write(path, content)?;
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = format!(
+        "{}.tmp.{}.{}",
+        path,
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let write = (|| -> io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()
+    })();
+    if let Err(e) = write.and_then(|()| std::fs::rename(&tmp, path)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 

@@ -3176,15 +3176,9 @@ impl VolumeServer for VolumeGrpcService {
                 }),
                 ..Default::default()
             };
-            let result = serde_json::to_string_pretty(&vif)
-                .map_err(|e| Status::internal(format!("serialize vif: {}", e)))
-                .and_then(|content| {
-                    std::fs::write(&vif_path, content)
-                        .map_err(|e| Status::internal(format!("write vif: {}", e)))
-                });
-            if let Err(e) = result {
+            if let Err(e) = crate::storage::store::save_vif_volume_info(&vif_path, &vif) {
                 cleanup_encode();
-                return Err(e);
+                return Err(Status::internal(format!("write vif: {}", e)));
             }
         }
 
