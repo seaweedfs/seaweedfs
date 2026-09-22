@@ -806,7 +806,7 @@ impl DiskLocation {
     }
 
     /// Drop the in-memory EC volume for vid and close its descriptors without
-    /// deleting any file, so a following unlink frees the inodes instead of
+    /// deleting files, so a following unlink frees the inodes instead of
     /// leaving open fds serving the old bytes. Mirrors Go's unloadEcVolume.
     pub fn unload_ec_volume(&mut self, vid: VolumeId) {
         if let Some(mut ec_vol) = self.ec_volumes.remove(&vid) {

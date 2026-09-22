@@ -3101,14 +3101,12 @@ impl VolumeServer for VolumeGrpcService {
                 tonic::Status::internal(format!("read ec shard config for volume {}: {}", vid.0, e))
             })?;
 
-        // Wipe any EC artifacts from a prior encode so a retry never mixes two runs
-        // (matching Go's UnloadEcVolume + removeStaleEcArtifacts). Evict the
-        // in-memory EcVolume first so the unlink frees the inodes instead of leaving
-        // open fds serving the old bytes. Sweep every disk: a stale shard can sit on
-        // a sibling disk and would otherwise survive and be mounted against the new
-        // .ecx at reconcile, where the new .vif makes the encode_ts_ns guard pass.
-        // The source .dat/.idx/.vif are kept (the .vif only goes on a shard-only
-        // disk). The write lock is released before the long encode.
+        // Wipe any EC artifacts from a prior encode so a retry never mixes two
+        // runs (Go's UnloadEcVolume + removeStaleEcArtifacts). Evict the
+        // in-memory EcVolume first so the unlink frees the inodes instead of
+        // leaving open fds serving the old bytes, and sweep every disk: a
+        // stale shard on a sibling disk would otherwise be mounted against the
+        // new .ecx at reconcile. The source .dat/.idx/.vif are kept.
         let swept = {
             let mut store = self.state.store.write().unwrap();
             store.unload_ec_volume(vid);
@@ -3122,11 +3120,25 @@ impl VolumeServer for VolumeGrpcService {
                     })
             })
         };
-        // The unload dropped mounted shards, so tell the master now, like every
-        // other unmount path, rather than leaving it to route reads here until
-        // the next pulse. Before the `?`: a failed sweep has unloaded them too.
+        // The unload dropped mounted shards, so wake the heartbeat now rather
+        // than leaving the master to route reads here until the next pulse. A
+        // failed sweep has unloaded them too, hence before the `?`.
         self.state.volume_state_notify.notify_one();
         swept?;
+
+        // On any failure before the .vif is committed, remove the freshly
+        // written .ecNN, .ecx and generation-0 .ecsum (matching Go's deferred
+        // cleanup) so a retry never starts from this run's leftovers.
+        let cleanup_encode = || {
+            let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
+            for i in 0..(data_shards + parity_shards) {
+                let _ = std::fs::remove_file(format!("{}.ec{:02}", base, i));
+            }
+            let _ = std::fs::remove_file(format!("{}.ecx", base));
+            let _ = std::fs::remove_file(
+                crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0),
+            );
+        };
 
         let block_size = match crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
@@ -3138,18 +3150,7 @@ impl VolumeServer for VolumeGrpcService {
         ) {
             Ok(block_size) => block_size,
             Err(e) => {
-                // Cleanup partially-created .ecNN, .ecx and generation-0 .ecsum
-                // files on failure (matching Go defer)
-                let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
-                let total_shards = data_shards + parity_shards;
-                for i in 0..total_shards {
-                    let shard_path = format!("{}.ec{:02}", base, i);
-                    let _ = std::fs::remove_file(&shard_path);
-                }
-                let _ = std::fs::remove_file(format!("{}.ecx", base));
-                let _ = std::fs::remove_file(
-                    crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0),
-                );
+                cleanup_encode();
                 return Err(Status::internal(e.to_string()));
             }
         };
@@ -3175,10 +3176,16 @@ impl VolumeServer for VolumeGrpcService {
                 }),
                 ..Default::default()
             };
-            let content = serde_json::to_string_pretty(&vif)
-                .map_err(|e| Status::internal(format!("serialize vif: {}", e)))?;
-            std::fs::write(&vif_path, content)
-                .map_err(|e| Status::internal(format!("write vif: {}", e)))?;
+            let result = serde_json::to_string_pretty(&vif)
+                .map_err(|e| Status::internal(format!("serialize vif: {}", e)))
+                .and_then(|content| {
+                    std::fs::write(&vif_path, content)
+                        .map_err(|e| Status::internal(format!("write vif: {}", e)))
+                });
+            if let Err(e) = result {
+                cleanup_encode();
+                return Err(e);
+            }
         }
 
         Ok(Response::new(
@@ -7785,13 +7792,10 @@ mod tests {
         assert!(vif.expire_at_sec <= before + ttl.to_seconds() + 5);
     }
 
-    /// REGRESSION: a re-encode must not mix artifacts from a previous run.
-    ///
-    /// Generate used to go straight into the encode, truncating only the
-    /// `.ecNN` files on the encoding disk. A stale shard left on a SIBLING disk
-    /// survived, and reconcile later mounted it against the new `.ecx`; the new
-    /// `.vif` made the encode_ts_ns identity guard pass, so reads served
-    /// old-run bytes at new-run offsets. Go evicts the EcVolume and sweeps every
+    /// A re-encode must not mix artifacts from a previous run. Generate used to
+    /// go straight into the encode, truncating only the `.ecNN` files on the
+    /// encoding disk; a stale shard on a sibling disk survived and was later
+    /// mounted against the new `.ecx`. Go evicts the EcVolume and sweeps every
     /// disk first (UnloadEcVolume + removeStaleEcArtifacts).
     #[tokio::test]
     async fn test_volume_ec_shards_generate_sweeps_stale_artifacts_on_every_disk() {
