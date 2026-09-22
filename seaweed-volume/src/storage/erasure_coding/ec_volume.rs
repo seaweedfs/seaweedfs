@@ -490,9 +490,9 @@ impl EcVolume {
         // the one co-located with the shard data first, then the caller's
         // index directory — either the shared -dir.idx dir or a sibling disk
         // that owns the .ecx when this disk holds only a 0-byte stub left by an
-        // interrupted copy (#9212). A 0-byte .ecx is also a legitimate empty
-        // index, so it yields only to a non-empty copy elsewhere, never to a
-        // mere absence. No .ecx at all fails the mount with NotFound (Go wraps
+        // interrupted copy. A 0-byte .ecx is also a legitimate empty index, so
+        // it yields only to a non-empty copy elsewhere, never to a mere
+        // absence. No .ecx at all fails the mount with NotFound (Go wraps
         // os.ErrNotExist): an EcVolume without an index would advertise shards
         // that no read can ever serve.
         let local_ecx = format!(
@@ -1936,7 +1936,7 @@ mod tests {
     }
 
     /// A 0-byte `.ecx` stub left by an interrupted copy yields to a non-empty
-    /// copy in the other directory, whichever side the stub is on (#9212).
+    /// copy in the other directory, whichever side the stub is on.
     #[test]
     fn test_new_prefers_non_empty_ecx_over_zero_byte_stub() {
         for stub_in_idx_dir in [true, false] {

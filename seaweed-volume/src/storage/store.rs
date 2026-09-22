@@ -922,8 +922,16 @@ impl Store {
             if !std::path::Path::new(&shard.file_name()).exists() {
                 continue;
             }
+            // If this disk owns the .ecx its own idx dir is the right answer;
+            // only a disk without a usable .ecx is pointed at the owner's.
             let idx_dir = match &ecx_idx_dir {
-                Some(owner_dir) if !loc.has_ecx_file_on_disk(collection, vid) => owner_dir.clone(),
+                Some(owner_dir)
+                    if loc.idx_directory != *owner_dir
+                        && loc.directory != *owner_dir
+                        && !loc.has_ecx_file_on_disk(collection, vid) =>
+                {
+                    owner_dir.clone()
+                }
                 _ => loc.idx_directory.clone(),
             };
             match loc.mount_ec_shards_with_idx_dir(
@@ -940,13 +948,13 @@ impl Store {
         }
         if failures.is_empty() {
             let what = if ecx_idx_dir.is_none() {
-                "no .ecx index found on any local disk"
+                ": no .ecx index found on any local disk"
             } else {
-                "not found on disk"
+                " not found on disk"
             };
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("MountEcShards {}.{} {}", vid, shard_id, what),
+                format!("MountEcShards {}.{}{}", vid, shard_id, what),
             )));
         }
         let tried = failures
@@ -955,7 +963,7 @@ impl Store {
             .collect::<Vec<_>>()
             .join("; ");
         Err(VolumeError::Io(io::Error::other(format!(
-            "MountEcShards {}.{} failed on all disks: {}",
+            "MountEcShards {}.{} load failures: {}",
             vid, shard_id, tried
         ))))
     }
@@ -965,9 +973,11 @@ impl Store {
     /// from a failed copy and counts as absent, so the scan continues to a
     /// sibling disk. Mirrors Go's `Store.findEcxIdxDirForVolume`.
     fn find_ecx_idx_dir_for_volume(&self, collection: &str, vid: VolumeId) -> Option<String> {
+        let mut seen = std::collections::HashSet::new();
         for loc in &self.locations {
             for scan in [&loc.idx_directory, &loc.directory] {
-                if scan.is_empty() {
+                // A shared -dir.idx is only stat'd once per call.
+                if scan.is_empty() || !seen.insert(scan.clone()) {
                     continue;
                 }
                 let base = crate::storage::volume::volume_file_name(scan, collection, vid);
