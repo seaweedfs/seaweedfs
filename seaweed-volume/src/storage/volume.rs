@@ -7001,6 +7001,61 @@ mod tests {
         assert_eq!(got.data, b"late-write");
     }
 
+    /// Mirrors Go's TestConcurrentWriteCrossesOffsetBoundary (issue #11410):
+    /// a replayed write's index entry must encode all offset bytes even when
+    /// old and new offsets sit in different 32 GiB ranges.
+    #[cfg(feature = "5bytes")]
+    #[test]
+    fn test_makeup_diff_replay_crosses_offset_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        write_test_needle(&mut v, 1, &[b'x'; 32]);
+        v.dat_file.as_ref().unwrap().set_len(64u64 << 30).unwrap();
+        v.compact_by_index(0, 0, |_| true).unwrap();
+
+        let late_data = vec![b'x'; 113];
+        write_test_needle(&mut v, 342511246, &late_data);
+
+        let mut before = Needle {
+            id: NeedleId(342511246),
+            ..Needle::default()
+        };
+        v.read_needle(&mut before).unwrap();
+        assert_eq!(before.data, late_data);
+
+        let expected_offset = fs::metadata(v.file_name(".cpd")).unwrap().len() as i64;
+        v.commit_compact().unwrap();
+
+        let mut idx_file = File::open(v.file_name(".idx")).unwrap();
+        let mut actual_offset = 0i64;
+        crate::storage::idx::walk_index_file(&mut idx_file, 0, |key, offset, _size| {
+            if key == NeedleId(342511246) {
+                actual_offset = offset.to_actual_offset();
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(actual_offset, expected_offset);
+
+        let mut after = Needle {
+            id: NeedleId(342511246),
+            ..Needle::default()
+        };
+        v.read_needle(&mut after).unwrap();
+        assert_eq!(after.data, late_data);
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+        let mut third = Needle {
+            id: NeedleId(342511246),
+            ..Needle::default()
+        };
+        v.read_needle(&mut third).unwrap();
+        assert_eq!(third.data, late_data);
+    }
+
     /// Vacuum compaction must tolerate an .idx entry whose offset points past
     /// the end of the .dat file (the failure mode in issue #8928). The bad
     /// entry is silently dropped from the resulting .cpx; healthy needles
