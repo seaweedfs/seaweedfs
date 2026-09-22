@@ -7003,9 +7003,10 @@ mod tests {
 
     /// Mirrors Go's TestConcurrentWriteCrossesOffsetBoundary (issue #11410):
     /// a replayed write's index entry must encode all offset bytes even when
-    /// old and new offsets sit in different 32 GiB ranges.
-    #[cfg(feature = "5bytes")]
+    /// old and new offsets sit in different 32 GiB ranges. Unix-only: Windows
+    /// set_len eagerly allocates the 64 GiB extension.
     #[test]
+    #[cfg(all(unix, feature = "5bytes"))]
     fn test_makeup_diff_replay_crosses_offset_boundary() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
