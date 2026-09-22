@@ -21,11 +21,9 @@ where
     let mut buf = vec![0u8; NEEDLE_MAP_ENTRY_SIZE * ROWS_TO_READ];
 
     loop {
-        // Fill the whole batch before decoding. `Read::read` may return a short
-        // count that is not a multiple of the entry size (FUSE/network files, a
-        // BufReader with an odd capacity); decoding it as-is would drop the split
-        // entry and misalign every later row. Go is immune: `ReadAt` returns a
-        // full buffer or an error.
+        // Fill the batch before decoding: `read` may return a count that is
+        // not a multiple of the entry size, and a split entry would misalign
+        // every later row. Go is immune: `ReadAt` fills or errors.
         let mut count = 0;
         let mut eof = false;
         while count < buf.len() {
@@ -198,10 +196,9 @@ mod tests {
         data
     }
 
-    /// Reader that hands back at most `chunk` bytes per `read`, as a FUSE or
-    /// network file may. 7 is coprime with the 17-byte entry size, so nearly
-    /// every read ends mid-entry. With `interrupts`, every other call fails
-    /// with `ErrorKind::Interrupted` instead.
+    /// Reader that hands back at most `chunk` bytes per `read`. 7 is coprime
+    /// with the 17-byte entry size, so nearly every read ends mid-entry. With
+    /// `interrupts`, every other call fails with `ErrorKind::Interrupted`.
     struct ShortReader {
         inner: Cursor<Vec<u8>>,
         chunk: usize,
