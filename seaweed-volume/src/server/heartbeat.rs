@@ -1849,6 +1849,8 @@ mod tests {
 
         let shard_path = format!("{}/ec_metrics_case_27.ec00", dir);
         std::fs::write(&shard_path, b"ec-shard").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/ec_metrics_case_27.ecx", dir), [0u8; 16]).unwrap();
         store.locations[0]
             .mount_ec_shards(VolumeId(27), "ec_metrics_case", &[0], "")
             .unwrap();
@@ -1893,6 +1895,8 @@ mod tests {
             .unwrap();
 
         std::fs::write(format!("{}/expired_heartbeat_ec_31.ec00", dir), b"expired").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/expired_heartbeat_ec_31.ecx", dir), [0u8; 16]).unwrap();
         store.locations[0]
             .mount_ec_shards(VolumeId(31), "expired_heartbeat_ec", &[0], "")
             .unwrap();
@@ -2194,6 +2198,8 @@ mod tests {
         let previous = collect_ec_shard_delta_messages(&store);
 
         std::fs::write(format!("{}/ec_delta_case_81.ec00", dir), b"delta").unwrap();
+        // An EC volume needs its .ecx to mount.
+        std::fs::write(format!("{}/ec_delta_case_81.ecx", dir), [0u8; 16]).unwrap();
         store.locations[0]
             .mount_ec_shards(VolumeId(81), "ec_delta_case", &[0], "")
             .unwrap();

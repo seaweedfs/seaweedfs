@@ -383,8 +383,26 @@ pub fn validate_block_size(block_size: i64) -> io::Result<()> {
     Ok(())
 }
 
+/// Size of the `.ecx` at `path`, or `None` when it is absent or a directory.
+/// Mirrors Go's `statEcxSize`.
+pub(crate) fn ecx_file_size(path: &str) -> Option<u64> {
+    match std::fs::metadata(path) {
+        Ok(meta) if !meta.is_dir() => Some(meta.len()),
+        _ => None,
+    }
+}
+
+/// Whether `path` is an `.ecx` that can steer placement, ownership or a copy:
+/// a regular file with content. A 0-byte `.ecx` is what a failed EC distribute
+/// copy leaves behind, and Go treats it as absent at every such decision
+/// (`HasEcxFileOnDisk`, `findEcxIdxDirForVolume`, `indexEcxOwners`) so the scan
+/// moves on to a sibling disk that may hold a valid index.
+pub(crate) fn is_usable_ecx_file(path: &str) -> bool {
+    ecx_file_size(path).is_some_and(|size| size > 0)
+}
+
 impl EcVolume {
-    /// Create a new EcVolume. Loads .ecx index and .ecj journal if present.
+    /// Create a new EcVolume. Opens the .ecx index (required) and the .ecj journal.
     pub fn new(
         dir: &str,
         dir_idx: &str,
@@ -467,27 +485,62 @@ impl EcVolume {
 
         // Open .ecx file (sorted index) in read/write mode for in-place deletion marking.
         // Matches Go which opens ecx for writing via MarkNeedleDeleted.
-        let ecx_path = vol.ecx_file_name();
-        if std::path::Path::new(&ecx_path).exists() {
-            let file = open_volume_file(OpenOptions::new().read(true).write(true), &ecx_path)?;
-            vol.ecx_file_size = file.metadata()?.len() as i64;
-            vol.ecx_file = Some(file);
-        } else if dir_idx != dir {
-            // Fall back to data directory if .ecx was created before -dir.idx was configured
-            let data_base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
-            let fallback_ecx = format!("{}.ecx", data_base);
-            if std::path::Path::new(&fallback_ecx).exists() {
-                tracing::info!(
+        //
+        // Resolve it the way Go's NewEcVolume does: prefer a non-empty copy,
+        // the one co-located with the shard data first, then the caller's
+        // index directory — either the shared -dir.idx dir or a sibling disk
+        // that owns the .ecx when this disk holds only a 0-byte stub left by an
+        // interrupted copy. A 0-byte .ecx is also a legitimate empty index, so
+        // it yields only to a non-empty copy elsewhere, never to a mere
+        // absence. No .ecx at all fails the mount with NotFound (Go wraps
+        // os.ErrNotExist): an EcVolume without an index would advertise shards
+        // that no read can ever serve.
+        let local_ecx = format!(
+            "{}.ecx",
+            crate::storage::volume::volume_file_name(dir, collection, volume_id)
+        );
+        let shared_ecx = vol.ecx_file_name();
+        let local_size = ecx_file_size(&local_ecx);
+        let shared_size = if dir_idx != dir {
+            ecx_file_size(&shared_ecx)
+        } else {
+            None
+        };
+        let use_local = match (local_size, shared_size) {
+            (Some(n), _) if n > 0 => true,
+            (_, Some(n)) if n > 0 => {
+                tracing::debug!(
                     volume_id = volume_id.0,
-                    "ecx file not found in idx dir, falling back to data dir"
+                    "ecx not local at {}, using {}",
+                    local_ecx,
+                    shared_ecx
                 );
-                let file =
-                    open_volume_file(OpenOptions::new().read(true).write(true), &fallback_ecx)?;
-                vol.ecx_file_size = file.metadata()?.len() as i64;
-                vol.ecx_file = Some(file);
-                vol.ecx_actual_dir = dir.to_string();
+                false
             }
-        }
+            // Only 0-byte copies exist: an empty index, local first.
+            (Some(_), _) => true,
+            (None, Some(_)) => false,
+            (None, None) => {
+                let tried = if dir_idx != dir {
+                    format!("{} (or {})", local_ecx, shared_ecx)
+                } else {
+                    local_ecx
+                };
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("cannot open ec volume index {}: not found", tried),
+                ));
+            }
+        };
+        let ecx_path = if use_local {
+            vol.ecx_actual_dir = dir.to_string();
+            local_ecx
+        } else {
+            shared_ecx
+        };
+        let file = open_volume_file(OpenOptions::new().read(true).write(true), &ecx_path)?;
+        vol.ecx_file_size = file.metadata()?.len() as i64;
+        vol.ecx_file = Some(file);
 
         // Open .ecj file (deletion journal) — use ecx_actual_dir for consistency.
         // Note: Go does NOT replay .ecj into .ecx at volume load (RebuildEcxFile
@@ -1863,6 +1916,63 @@ impl EcVolume {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Go's NewEcVolume fails with os.ErrNotExist when neither directory has an
+    /// `.ecx`. Mounting anyway advertises shards every read then fails on with
+    /// "ecx file not open", and zeroes the size `add_shard`'s 0-byte guard needs.
+    #[test]
+    fn test_new_without_ecx_is_not_found() {
+        let data = TempDir::new().unwrap();
+        let idx = TempDir::new().unwrap();
+        let (dir, dir_idx) = (data.path().to_str().unwrap(), idx.path().to_str().unwrap());
+        std::fs::write(format!("{}/7.ec00", dir), b"shard").unwrap();
+
+        for idx_dir in [dir, dir_idx] {
+            let err = EcVolume::new(dir, idx_dir, "", VolumeId(7))
+                .err()
+                .expect("an EC volume without an .ecx must not mount");
+            assert_eq!(err.kind(), io::ErrorKind::NotFound, "{}", err);
+        }
+    }
+
+    /// A 0-byte `.ecx` stub left by an interrupted copy yields to a non-empty
+    /// copy in the other directory, whichever side the stub is on.
+    #[test]
+    fn test_new_prefers_non_empty_ecx_over_zero_byte_stub() {
+        for stub_in_idx_dir in [true, false] {
+            let data = TempDir::new().unwrap();
+            let idx = TempDir::new().unwrap();
+            let (dir, dir_idx) = (data.path().to_str().unwrap(), idx.path().to_str().unwrap());
+            let (stub_dir, valid_dir) = if stub_in_idx_dir {
+                (dir_idx, dir)
+            } else {
+                (dir, dir_idx)
+            };
+            std::fs::write(format!("{}/7.ecx", stub_dir), b"").unwrap();
+            std::fs::write(
+                format!("{}/7.ecx", valid_dir),
+                vec![0u8; NEEDLE_MAP_ENTRY_SIZE],
+            )
+            .unwrap();
+
+            let vol = EcVolume::new(dir, dir_idx, "", VolumeId(7)).unwrap();
+            assert_eq!(vol.ecx_actual_dir(), valid_dir);
+            assert_eq!(vol.ecx_file_size, NEEDLE_MAP_ENTRY_SIZE as i64);
+        }
+    }
+
+    /// With no other copy a 0-byte `.ecx` is a legitimate empty index (a volume
+    /// whose needles were all deleted before encoding) and still mounts, as in Go.
+    #[test]
+    fn test_new_accepts_lone_zero_byte_ecx_as_empty_index() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        std::fs::write(format!("{}/7.ecx", dir), b"").unwrap();
+
+        let vol = EcVolume::new(dir, dir, "", VolumeId(7)).unwrap();
+        assert_eq!(vol.ecx_file_size, 0);
+        assert!(!is_usable_ecx_file(&vol.ecx_file_name()));
+    }
 
     /// `destroy()` must remove co-located `.ecsum` sidecars (Go Destroy parity).
     /// Without this, `collection.delete` leaves orphaned bitrot files that
