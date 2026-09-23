@@ -244,7 +244,7 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return 0, 0, false, err
 	}
 
@@ -323,7 +323,7 @@ func (v *Volume) rollbackUnflushedWrite(n *needle.Needle, offset uint64, end int
 // paths only return once the .dat is on disk.
 func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, isStopping bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return 0, 0, false, err
 	}
 
@@ -406,7 +406,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return 0, err
 	}
 
@@ -467,7 +467,7 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 	defer v.dataFileAccessLock.Unlock()
 
 	end, e := int64(0), error(nil)
-	if unavailableErr := v.unavailableError(); unavailableErr != nil {
+	if unavailableErr := v.UnavailableError(); unavailableErr != nil {
 		e = unavailableErr
 	} else if v.nm == nil || v.DataBackend == nil {
 		e = fmt.Errorf("volume %d is closed", v.Id)
@@ -602,7 +602,7 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return err
 	}
 

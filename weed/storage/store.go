@@ -935,7 +935,7 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return fmt.Errorf("volume %d cannot be marked writable: %w", i, err)
 	}
 	// If the volume booted with .vif ReadOnly=true, .idx is opened O_RDONLY
@@ -948,7 +948,7 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	v.noWriteLock.Lock()
 	if v.ioUnavailable {
 		v.noWriteLock.Unlock()
-		return fmt.Errorf("volume %d cannot be marked writable: %w", i, v.unavailableError())
+		return fmt.Errorf("volume %d cannot be marked writable: %w", i, v.UnavailableError())
 	}
 	prevNoWriteOrDelete := v.noWriteOrDelete
 	prevNoWriteCanDelete := v.noWriteCanDelete

@@ -16,6 +16,9 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
+	if err := v.UnavailableError(); err != nil {
+		return err
+	}
 
 	stopOffset, _, _ := v.FileStat()
 	foundOffset, isLastOne, err := v.BinarySearchByAppendAtNs(req.SinceNs)

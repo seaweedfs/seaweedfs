@@ -1356,6 +1356,9 @@ impl Volume {
     /// remote-only tiered volumes whose `.dat` is no longer present locally.
     pub fn read_dat_slice(&self, offset: u64, size: usize) -> Result<Vec<u8>, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
+        if let Some(e) = self.unavailable_error() {
+            return Err(e);
+        }
         let dat_size = self.current_dat_file_size()?;
         if size == 0 || offset >= dat_size {
             return Ok(Vec::new());
@@ -2340,7 +2343,7 @@ impl Volume {
         f.write_all(reason.as_bytes())?;
         f.sync_all()?;
         drop(f);
-        fsync_dir(&self.dir)
+        fsync_dir(&marker)
     }
 
     /// Re-arm the state a `.unavailable` marker recorded. The marker is
@@ -2435,6 +2438,9 @@ impl Volume {
     /// Read all live needles from the volume (for ReadAllNeedles streaming RPC).
     pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
+        if let Some(e) = self.unavailable_error() {
+            return Err(e);
+        }
         let nm = self.nm_or_not_found()?;
         let version = self.version();
         let dat_size = self.current_dat_file_size()? as i64;
@@ -3002,6 +3008,9 @@ impl Volume {
     /// dropping its store guard. See `DatScanPlan` for why the offset, the
     /// handle and the end bound must come from the same guard.
     pub(crate) fn dat_scan_plan(&self, from_offset: u64) -> Result<DatScanPlan, VolumeError> {
+        if let Some(e) = self.unavailable_error() {
+            return Err(e);
+        }
         let source = if self.dat_file.is_some() {
             // A fresh open, not `try_clone`: a duplicated handle shares the
             // file position, and on Windows `read_exact_at` goes through

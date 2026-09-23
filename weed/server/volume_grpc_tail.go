@@ -20,6 +20,9 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
+	if err := v.UnavailableError(); err != nil {
+		return err
+	}
 
 	defer glog.V(1).Infof("tailing volume %d finished", v.Id)
 

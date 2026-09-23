@@ -270,7 +270,7 @@ func TestBatchSyncFailureEntersFailClosedWhenTruncateFails(t *testing.T) {
 	_, _, _, err := v.writeNeedle2(fresh, true, true, false)
 	require.Error(t, err)
 	require.True(t, v.IsReadOnly(), "a failed recovery must make the volume unavailable")
-	require.NotNil(t, v.unavailableError())
+	require.NotNil(t, v.UnavailableError())
 
 	readBack := new(needle.Needle)
 	readBack.Id = fresh.Id
@@ -294,7 +294,7 @@ func TestUnavailableVolumeCannotBeMarkedWritable(t *testing.T) {
 	v.markIoUnavailable(errors.New("batch recovery failed"))
 
 	require.Error(t, store.MarkVolumeWritable(vid), "manual writable transition must not bypass quarantine")
-	require.NotNil(t, v.unavailableError())
+	require.NotNil(t, v.UnavailableError())
 }
 
 func TestMixedBatchSyncFailureRollsBackAsOneUnit(t *testing.T) {
@@ -368,7 +368,7 @@ func TestWriteNeedle2EntersFailClosedWhenInlineRollbackFails(t *testing.T) {
 
 	_, _, _, err := v.writeNeedle2(fixedNeedle(20, "cannot-be-recovered"), true, true, true)
 	require.Error(t, err)
-	require.NotNil(t, v.unavailableError())
+	require.NotNil(t, v.UnavailableError())
 
 	readBack := new(needle.Needle)
 	readBack.Id = 20
@@ -381,7 +381,7 @@ func TestUnavailableVolumeStaysUnavailableAfterReload(t *testing.T) {
 	v.markIoUnavailable(errors.New("batch recovery failed"))
 
 	reloaded := reopenCountingVolume(t, v)
-	require.NotNil(t, reloaded.unavailableError(), "the unavailable state must survive a reload")
+	require.NotNil(t, reloaded.UnavailableError(), "the unavailable state must survive a reload")
 	require.True(t, reloaded.IsReadOnly())
 
 	_, _, quarantined := reloaded.getIoErrorState()

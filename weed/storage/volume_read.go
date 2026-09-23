@@ -22,7 +22,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return 0, err
 	}
 
@@ -94,7 +94,7 @@ func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (e
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return err
 	}
 
@@ -123,7 +123,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	if readOption.HasSlowRead {
 		v.dataFileAccessLock.RLock()
 	}
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		if readOption.HasSlowRead {
 			v.dataFileAccessLock.RUnlock()
 		}
@@ -171,7 +171,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 
 		if readOption.HasSlowRead {
 			v.dataFileAccessLock.RLock()
-			if err := v.unavailableError(); err != nil {
+			if err := v.UnavailableError(); err != nil {
 				v.dataFileAccessLock.RUnlock()
 				return err
 			}
@@ -262,7 +262,7 @@ func (v *Volume) ReadNeedleBlob(offset int64, size Size) ([]byte, error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
-	if err := v.unavailableError(); err != nil {
+	if err := v.UnavailableError(); err != nil {
 		return nil, err
 	}
 

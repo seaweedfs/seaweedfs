@@ -68,6 +68,10 @@ update needle map when receiving new .dat bytes. But seems not necessary now.)
 
 func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption) error {
 
+	if err := v.UnavailableError(); err != nil {
+		return err
+	}
+
 	startFromOffset, _, _ := v.FileStat()
 	appendAtNs, err := v.findLastAppendAtNs()
 	if err != nil {

@@ -516,7 +516,7 @@ func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete,
 
 var errVolumeUnavailable = errors.New("volume unavailable")
 
-func (v *Volume) unavailableError() error {
+func (v *Volume) UnavailableError() error {
 	v.noWriteLock.RLock()
 	unavailable := v.ioUnavailable
 	reason := v.ioUnavailableError

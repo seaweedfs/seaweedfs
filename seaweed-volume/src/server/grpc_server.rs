@@ -1365,6 +1365,9 @@ impl VolumeServer for VolumeGrpcService {
         let (_, v) = store
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+        if let Some(e) = v.unavailable_error() {
+            return Err(Status::unavailable(e.to_string()));
+        }
 
         let dat_size = v.dat_file_size().unwrap_or(0);
         let super_block_size = v.super_block.block_size() as u64;
