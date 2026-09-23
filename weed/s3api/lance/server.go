@@ -146,7 +146,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	}
 
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		glog.V(2).Infof("lance: no route for %s %s", r.Method, r.RequestURI)
+		glog.V(2).Infof("lance: no route for %s %s", r.Method, r.URL.Path)
 		writeError(w, r, http.StatusNotFound, codeUnsupported, "no such operation")
 	})
 
@@ -160,7 +160,7 @@ func (s *Server) handleUnsupported(w http.ResponseWriter, r *http.Request) {
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		glog.V(2).Infof("lance request: %s %s from %s", r.Method, r.RequestURI, r.RemoteAddr)
+		glog.V(2).Infof("lance request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }
