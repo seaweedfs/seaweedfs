@@ -811,27 +811,21 @@ func TestRenameDeleteOldKeyNotFoundStillWrites(t *testing.T) {
 	}
 }
 
-func TestIfChunksEqualCarriesTheEventChunkFids(t *testing.T) {
+func TestIfEntryEqualCarriesTheEventEntry(t *testing.T) {
 	entry := &filer_pb.Entry{
-		Name: "f",
+		Name:    "f",
+		Content: []byte("inline"),
 		Chunks: []*filer_pb.FileChunk{
 			{FileId: "3,01a"},
 			{Fid: &filer_pb.FileId{VolumeId: 4, FileKey: 0x2b, Cookie: 0x0c}},
 		},
 	}
-	cond := ifChunksEqual(entry)
-	if len(cond.Clauses) != 1 || cond.Clauses[0].Kind != filer_pb.WriteCondition_IF_CHUNKS_EQUAL {
-		t.Fatalf("condition = %v, want one IF_CHUNKS_EQUAL clause", cond)
+	cond := ifEntryEqual(entry)
+	if len(cond.Clauses) != 1 || cond.Clauses[0].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+		t.Fatalf("condition = %v, want one IF_ENTRY_EQUAL clause", cond)
 	}
-	got := cond.Clauses[0].Fids
-	want := []string{"3,01a", entry.Chunks[1].GetFileIdString()}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("fids = %v, want %v", got, want)
-	}
-
-	inline := &filer_pb.Entry{Name: "small", Content: []byte("bytes")}
-	if fids := ifChunksEqual(inline).Clauses[0].Fids; len(fids) != 0 {
-		t.Fatalf("inline entry fids = %v, want none", fids)
+	if got := cond.Clauses[0].ExpectedEntry; !proto.Equal(got, entry) {
+		t.Fatalf("expected_entry = %v, want %v", got, entry)
 	}
 }
 

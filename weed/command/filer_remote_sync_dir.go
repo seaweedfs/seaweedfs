@@ -420,21 +420,22 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 }
 
 // updateLocalEntry stamps the entry an event described with its RemoteEntry.
-// The write carries IF_CHUNKS_EQUAL over the event's chunk fids: the filer
-// deletes every stored chunk absent from an updated entry, so a snapshot
-// older than the live entry (the file was rewritten while its upload was in
-// flight, or the event is a replay) would delete the live chunks. A failed
-// precondition means the filer moved past this event; the event that
-// superseded it follows in the log and stamps the current entry, so the stale
-// stamp is skipped the same way a superseded upload is.
+// The write carries IF_ENTRY_EQUAL over the event's entry: the filer deletes
+// every stored chunk absent from an updated entry, so a snapshot older than
+// the live entry (the file was rewritten while its upload was in flight, or
+// the event is a replay) would delete the live chunks. A failed precondition
+// means the filer moved past this event; the event that superseded it follows
+// in the log and stamps the current entry, so the stale stamp is skipped the
+// same way a superseded upload is.
 func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
+	expected := proto.Clone(entry).(*filer_pb.Entry)
 	entry.RemoteEntry = remoteEntry
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
-			Condition: ifChunksEqual(entry),
+			Condition: ifEntryEqual(expected),
 		})
 		return err
 	})
@@ -445,18 +446,11 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 	return err
 }
 
-// ifChunksEqual builds the precondition that the stored entry still holds
-// exactly the chunks the event described. An entry with inline content and no
-// chunks yields an empty fid list, which the filer satisfies only while the
-// stored entry has no chunks either.
-func ifChunksEqual(entry *filer_pb.Entry) *filer_pb.WriteCondition {
-	chunks := entry.GetChunks()
-	fids := make([]string, 0, len(chunks))
-	for _, chunk := range chunks {
-		fids = append(fids, chunk.GetFileIdString())
-	}
+// ifEntryEqual builds the precondition that the stored entry still equals the
+// one the event described: chunk fids, inline content, and metadata alike.
+func ifEntryEqual(entry *filer_pb.Entry) *filer_pb.WriteCondition {
 	return &filer_pb.WriteCondition{
-		Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_CHUNKS_EQUAL, Fids: fids}},
+		Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: entry}},
 	}
 }
 
