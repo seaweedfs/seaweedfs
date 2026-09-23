@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -806,5 +808,49 @@ func TestRenameDeleteOldKeyNotFoundStillWrites(t *testing.T) {
 	wantWrite := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dst/probe.bin"}
 	if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
 		t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+	}
+}
+
+func TestIfChunksEqualCarriesTheEventChunkFids(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name: "f",
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: "3,01a"},
+			{Fid: &filer_pb.FileId{VolumeId: 4, FileKey: 0x2b, Cookie: 0x0c}},
+		},
+	}
+	cond := ifChunksEqual(entry)
+	if len(cond.Clauses) != 1 || cond.Clauses[0].Kind != filer_pb.WriteCondition_IF_CHUNKS_EQUAL {
+		t.Fatalf("condition = %v, want one IF_CHUNKS_EQUAL clause", cond)
+	}
+	got := cond.Clauses[0].Fids
+	want := []string{"3,01a", entry.Chunks[1].GetFileIdString()}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("fids = %v, want %v", got, want)
+	}
+
+	inline := &filer_pb.Entry{Name: "small", Content: []byte("bytes")}
+	if fids := ifChunksEqual(inline).Clauses[0].Fids; len(fids) != 0 {
+		t.Fatalf("inline entry fids = %v, want none", fids)
+	}
+}
+
+func TestIsFailedPrecondition(t *testing.T) {
+	refused := status.Error(codes.FailedPrecondition, "precondition failed: /buckets/b/f")
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"status", refused, true},
+		{"wrapped status", fmt.Errorf("update entry: %w", refused), true},
+		{"message only", errors.New("rpc error: code = FailedPrecondition desc = precondition failed: /f"), true},
+		{"other", status.Error(codes.Unavailable, "filer down"), false},
+	}
+	for _, c := range cases {
+		if got := isFailedPrecondition(c.err); got != c.want {
+			t.Errorf("%s: isFailedPrecondition = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

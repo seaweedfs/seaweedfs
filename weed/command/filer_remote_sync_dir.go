@@ -20,6 +20,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -417,16 +419,57 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 	return false
 }
 
+// updateLocalEntry stamps the entry an event described with its RemoteEntry.
+// The write carries IF_CHUNKS_EQUAL over the event's chunk fids: the filer
+// deletes every stored chunk absent from an updated entry, so a snapshot
+// older than the live entry (the file was rewritten while its upload was in
+// flight, or the event is a replay) would delete the live chunks. A failed
+// precondition means the filer moved past this event; the event that
+// superseded it follows in the log and stamps the current entry, so the stale
+// stamp is skipped the same way a superseded upload is.
 func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
 	entry.RemoteEntry = remoteEntry
-	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
+			Condition: ifChunksEqual(entry),
 		})
 		return err
 	})
+	if isFailedPrecondition(err) {
+		glog.Errorf("skipping stale stamp of %s: %v", util.NewFullPath(dir, entry.Name), err)
+		return nil
+	}
+	return err
+}
+
+// ifChunksEqual builds the precondition that the stored entry still holds
+// exactly the chunks the event described. An entry with inline content and no
+// chunks yields an empty fid list, which the filer satisfies only while the
+// stored entry has no chunks either.
+func ifChunksEqual(entry *filer_pb.Entry) *filer_pb.WriteCondition {
+	chunks := entry.GetChunks()
+	fids := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		fids = append(fids, chunk.GetFileIdString())
+	}
+	return &filer_pb.WriteCondition{
+		Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_CHUNKS_EQUAL, Fids: fids}},
+	}
+}
+
+// isFailedPrecondition reports a write condition the filer refused, through
+// any wrapping WithFilerClient added.
+func isFailedPrecondition(err error) bool {
+	if err == nil {
+		return false
+	}
+	if st, ok := status.FromError(err); ok && st.Code() == codes.FailedPrecondition {
+		return true
+	}
+	return strings.Contains(err.Error(), "precondition failed")
 }
 
 func isMultipartUploadFile(dir string, name string) bool {
