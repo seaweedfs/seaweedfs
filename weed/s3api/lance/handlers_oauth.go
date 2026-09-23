@@ -86,13 +86,13 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		clientID, clientSecret, ok = r.BasicAuth()
 		if !ok {
-			writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "Missing client credentials")
+			writeInvalidClient(w, "Missing client credentials")
 			return
 		}
 	}
 
 	if clientID == "" || clientSecret == "" {
-		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "Missing client_id or client_secret")
+		writeInvalidClient(w, "Missing client_id or client_secret")
 		return
 	}
 
@@ -104,7 +104,7 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 	identityName, _, err := s.credentialValidator.ValidateS3Credential(clientID, clientSecret)
 	if err != nil {
 		glog.V(2).Infof("Lance OAuth: credential validation failed for client_id=%s: %v", clientID, err)
-		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "Invalid client credentials")
+		writeInvalidClient(w, "Invalid client credentials")
 		return
 	}
 
@@ -226,6 +226,13 @@ func deriveSigningKey(accessKey, secret string) []byte {
 	h.Write([]byte{0}) // null separator
 	h.Write([]byte(secret))
 	return h.Sum(nil)
+}
+
+// writeInvalidClient answers 401 with the Basic challenge RFC 6749 §5.2
+// requires, so a client knows which scheme to retry with.
+func writeInvalidClient(w http.ResponseWriter, description string) {
+	w.Header().Set("WWW-Authenticate", `Basic realm="lance"`)
+	writeOAuthError(w, http.StatusUnauthorized, "invalid_client", description)
 }
 
 func writeOAuthError(w http.ResponseWriter, status int, errCode, description string) {

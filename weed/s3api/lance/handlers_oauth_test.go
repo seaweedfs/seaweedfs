@@ -125,6 +125,9 @@ func TestHandleOAuthTokens_InvalidCredentials(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
 	}
+	if wa := w.Header().Get("WWW-Authenticate"); wa != `Basic realm="lance"` {
+		t.Fatalf("WWW-Authenticate = %q, want Basic challenge", wa)
+	}
 }
 
 func TestHandleOAuthTokens_UnsupportedGrantType(t *testing.T) {
