@@ -32,6 +32,9 @@ func (c *commandVolumeDeleteEmpty) Help() string {
 	volume.deleteEmpty -collectionPattern=important* -quietFor=24h -apply
 
 	This command deletes all empty volumes from one volume server.
+	A volume with no live needles left is empty too, even when its
+	.dat file is still large: compacting it first would only rewrite
+	bytes that are all deleted already.
 
 `
 }
@@ -97,7 +100,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 
 func isEmptyVolumeDeleteCandidate(v *master_pb.VolumeInformationMessage, quietSeconds, nowUnixSeconds int64, collectionMatcher *wildcard.CollectionMatcher) bool {
 	return collectionMatcher.Matches(v.Collection) &&
-		v.Size <= super_block.SuperBlockSize &&
+		(v.Size <= super_block.SuperBlockSize || v.FileCount > 0 && v.FileCount <= v.DeleteCount) &&
 		v.ModifiedAtSecond > 0 &&
 		v.ModifiedAtSecond+quietSeconds < nowUnixSeconds
 }
