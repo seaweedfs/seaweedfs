@@ -285,6 +285,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	executor := util.NewLimitedConcurrentExecutor(100)
 
 	var wg sync.WaitGroup
+	quotaFreed := make(chan struct{}, 1)
 
 	for len(todoVolumeMap) > 0 {
 		pendingVolumeMap := make(map[needle.VolumeId]*VolumeLocationList)
@@ -321,6 +322,10 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 					limiter[dn.Id()]++
 					limiterLock.Unlock()
 				}
+				select {
+				case quotaFreed <- struct{}{}:
+				default:
+				}
 			})
 			if automatic && t.IsVacuumDisabled() {
 				break
@@ -330,7 +335,10 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 			break
 		}
 		if len(todoVolumeMap) == len(pendingVolumeMap) {
-			time.Sleep(10 * time.Second)
+			select {
+			case <-quotaFreed:
+			case <-time.After(10 * time.Second):
+			}
 		}
 		todoVolumeMap = pendingVolumeMap
 	}
