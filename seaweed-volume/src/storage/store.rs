@@ -1268,6 +1268,16 @@ impl Store {
         None
     }
 
+    /// Drop any in-memory EC volume for vid from EVERY disk and close its
+    /// descriptors without deleting files. Unlike remove_ec_volume this does not
+    /// stop at the first disk: a split-disk volume is registered on each disk
+    /// holding a shard. Mirrors Go's Store.UnloadEcVolume.
+    pub fn unload_ec_volume(&mut self, vid: VolumeId) {
+        for loc in &mut self.locations {
+            loc.unload_ec_volume(vid);
+        }
+    }
+
     /// Find the location index containing EC files for a volume.
     pub fn find_ec_location(&self, vid: VolumeId, collection: &str) -> Option<usize> {
         for (i, loc) in self.locations.iter().enumerate() {
@@ -1544,10 +1554,35 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
     )))
 }
 
-fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeError> {
+/// Mirrors Go's SaveVolumeInfo: a read-only .vif fails the save, and the
+/// file is replaced atomically so a failed write keeps the previous
+/// metadata intact.
+pub(crate) fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeError> {
+    if std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly()) {
+        return Err(VolumeError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("failed to check {} not writable", path),
+        )));
+    }
     let content = serde_json::to_string_pretty(info)
         .map_err(|e| VolumeError::Io(io::Error::other(e.to_string())))?;
-    std::fs::write(path, content)?;
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = format!(
+        "{}.tmp.{}.{}",
+        path,
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let write = (|| -> io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()
+    })();
+    if let Err(e) = write.and_then(|()| std::fs::rename(&tmp, path)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 

@@ -3124,6 +3124,45 @@ impl VolumeServer for VolumeGrpcService {
                 tonic::Status::internal(format!("read ec shard config for volume {}: {}", vid.0, e))
             })?;
 
+        // Wipe any EC artifacts from a prior encode so a retry never mixes two
+        // runs (Go's UnloadEcVolume + removeStaleEcArtifacts). Evict the
+        // in-memory EcVolume first so the unlink frees the inodes instead of
+        // leaving open fds serving the old bytes, and sweep every disk: a
+        // stale shard on a sibling disk would otherwise be mounted against the
+        // new .ecx at reconcile. The source .dat/.idx/.vif are kept.
+        let swept = {
+            let mut store = self.state.store.write().unwrap();
+            store.unload_ec_volume(vid);
+            store.locations.iter().try_for_each(|loc| {
+                loc.remove_ec_volume_files_full_teardown(collection, vid)
+                    .map_err(|e| {
+                        Status::internal(format!(
+                            "wipe stale EC artifacts for volume {} on {}: {}",
+                            vid.0, loc.directory, e
+                        ))
+                    })
+            })
+        };
+        // The unload dropped mounted shards, so wake the heartbeat now rather
+        // than leaving the master to route reads here until the next pulse. A
+        // failed sweep has unloaded them too, hence before the `?`.
+        self.state.volume_state_notify.notify_one();
+        swept?;
+
+        // On any failure before the .vif is committed, remove the freshly
+        // written .ecNN, .ecx and generation-0 .ecsum (matching Go's deferred
+        // cleanup) so a retry never starts from this run's leftovers.
+        let cleanup_encode = || {
+            let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
+            for i in 0..(data_shards + parity_shards) {
+                let _ = std::fs::remove_file(format!("{}.ec{:02}", base, i));
+            }
+            let _ = std::fs::remove_file(format!("{}.ecx", base));
+            let _ = std::fs::remove_file(
+                crate::storage::erasure_coding::ec_bitrot::bitrot_sidecar_path(&base, 0),
+            );
+        };
+
         let block_size = match crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
             &idx_dir,
@@ -3134,14 +3173,7 @@ impl VolumeServer for VolumeGrpcService {
         ) {
             Ok(block_size) => block_size,
             Err(e) => {
-                // Cleanup partially-created .ecNN and .ecx files on failure (matching Go defer)
-                let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
-                let total_shards = data_shards + parity_shards;
-                for i in 0..total_shards {
-                    let shard_path = format!("{}.ec{:02}", base, i);
-                    let _ = std::fs::remove_file(&shard_path);
-                }
-                let _ = std::fs::remove_file(format!("{}.ecx", base));
+                cleanup_encode();
                 return Err(Status::internal(e.to_string()));
             }
         };
@@ -3167,10 +3199,10 @@ impl VolumeServer for VolumeGrpcService {
                 }),
                 ..Default::default()
             };
-            let content = serde_json::to_string_pretty(&vif)
-                .map_err(|e| Status::internal(format!("serialize vif: {}", e)))?;
-            std::fs::write(&vif_path, content)
-                .map_err(|e| Status::internal(format!("write vif: {}", e)))?;
+            if let Err(e) = crate::storage::store::save_vif_volume_info(&vif_path, &vif) {
+                cleanup_encode();
+                return Err(Status::internal(format!("write vif: {}", e)));
+            }
         }
 
         Ok(Response::new(
@@ -7801,6 +7833,124 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(vif_path).unwrap()).unwrap();
         assert!(vif.expire_at_sec >= before + ttl.to_seconds());
         assert!(vif.expire_at_sec <= before + ttl.to_seconds() + 5);
+    }
+
+    /// A re-encode must not mix artifacts from a previous run. Generate used to
+    /// go straight into the encode, truncating only the `.ecNN` files on the
+    /// encoding disk; a stale shard on a sibling disk survived and was later
+    /// mounted against the new `.ecx`. Go evicts the EcVolume and sweeps every
+    /// disk first (UnloadEcVolume + removeStaleEcArtifacts).
+    #[tokio::test]
+    async fn test_volume_ec_shards_generate_sweeps_stale_artifacts_on_every_disk() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let sibling = TempDir::new().unwrap();
+        let sibling_dir = sibling.path().to_str().unwrap();
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .add_location(
+                sibling_dir,
+                sibling_dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let generate = || {
+            service.volume_ec_shards_generate(Request::new(
+                volume_server_pb::VolumeEcShardsGenerateRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                },
+            ))
+        };
+        generate().await.unwrap();
+        service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                collection: String::new(),
+                shard_ids: (0..14).collect(),
+                source_disk_type: String::new(),
+                recover_missing_index: false,
+            }))
+            .await
+            .unwrap();
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .has_ec_volume(VolumeId(1))
+        );
+
+        // A prior run's leftovers on the sibling disk. `.ec20` is outside the
+        // 10+4 ratio: the sweep scans the shard-id cap, not the current total.
+        let stale = [
+            ".ec03",
+            ".ec20",
+            ".ecx",
+            ".ecj",
+            ".ecsum",
+            ".ecsum.v2",
+            ".vif",
+        ];
+        for ext in stale {
+            std::fs::write(sibling.path().join(format!("1{}", ext)), b"stale-run").unwrap();
+        }
+
+        // Drain the permit the mount above left, so the wake-up asserted below
+        // can only come from the re-generate's unload.
+        let notify = &service.state.volume_state_notify;
+        let _ = tokio::time::timeout(std::time::Duration::ZERO, notify.notified()).await;
+
+        generate().await.unwrap();
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::ZERO, notify.notified())
+                .await
+                .is_ok(),
+            "unloading the mounted shards must wake the heartbeat"
+        );
+
+        for ext in stale {
+            assert!(
+                !sibling.path().join(format!("1{}", ext)).exists(),
+                "stale 1{} on the sibling disk must not survive a re-generate",
+                ext
+            );
+        }
+        assert!(
+            !service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .has_ec_volume(VolumeId(1)),
+            "the mounted EC volume must be unloaded before its files are swept"
+        );
+        // The source volume and the fresh run stay on the encoding disk.
+        for ext in [".dat", ".idx", ".vif", ".ecx", ".ecsum", ".ec00", ".ec13"] {
+            assert!(
+                tmp.path().join(format!("1{}", ext)).exists(),
+                "1{} must exist on the encoding disk after a re-generate",
+                ext
+            );
+        }
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_some(),
+            "the source volume stays loaded"
+        );
     }
 
     /// REGRESSION: a node-wide scrub must survive a volume that legitimately
