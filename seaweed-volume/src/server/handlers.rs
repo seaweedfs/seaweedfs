@@ -211,6 +211,9 @@ impl http_body::Body for StreamingBody {
             let relookup_result = {
                 let store = self.server_state.store.read().unwrap();
                 if let Some((_, vol)) = store.find_volume(self.volume_id) {
+                    if let Some(e) = vol.unavailable_error() {
+                        return std::task::Poll::Ready(Some(Err(std::io::Error::other(e))));
+                    }
                     if vol.super_block.compaction_revision != self.compaction_revision {
                         // Compaction occurred — re-lookup the needle's data offset
                         Some(vol.re_lookup_needle_data_offset(self.needle_id))

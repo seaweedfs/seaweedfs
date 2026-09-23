@@ -1353,12 +1353,16 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
-        // Sync to disk first
+        // A quarantined volume is rejected before the sync does disk I/O for it.
         {
             let mut store = self.state.store.write().unwrap();
-            if let Some((_, v)) = store.find_volume_mut(vid) {
-                let _ = v.sync_to_disk();
+            let Some((_, v)) = store.find_volume_mut(vid) else {
+                return Err(Status::not_found(format!("not found volume id {}", vid)));
+            };
+            if let Some(e) = v.unavailable_error() {
+                return Err(Status::unavailable(e.to_string()));
             }
+            let _ = v.sync_to_disk();
         }
 
         let store = self.state.store.read().unwrap();
@@ -1441,6 +1445,7 @@ impl VolumeServer for VolumeGrpcService {
                 .map_err(|e| Status::internal(format!("open {}: {}", path, e)))?;
             DatReader::Local(file)
         };
+        let state = self.state.clone();
         drop(store);
 
         let total = dat_size - start_offset;
@@ -1448,7 +1453,20 @@ impl VolumeServer for VolumeGrpcService {
             Result<volume_server_pb::VolumeIncrementalCopyResponse, Status>,
         >(8);
 
+        // The reader handle is detached from the volume, so each chunk
+        // re-checks that the volume has not been quarantined mid-stream.
         tokio::task::spawn_blocking(move || {
+            macro_rules! bail_if_unavailable {
+                () => {{
+                    let store = state.store.read().unwrap();
+                    if let Some((_, v)) = store.find_volume(vid)
+                        && let Some(e) = v.unavailable_error()
+                    {
+                        let _ = tx.blocking_send(Err(Status::unavailable(e.to_string())));
+                        return;
+                    }
+                }};
+            }
             let buffer_size = 2 * 1024 * 1024u64; // 2MB chunks
             let mut bytes_to_read = total;
             let mut offset = start_offset;
@@ -1463,6 +1481,7 @@ impl VolumeServer for VolumeGrpcService {
                         return;
                     }
                     while bytes_to_read > 0 {
+                        bail_if_unavailable!();
                         let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
                         let mut buf = vec![0u8; chunk];
                         match reader.read(&mut buf) {
@@ -1489,6 +1508,7 @@ impl VolumeServer for VolumeGrpcService {
                     // handle. No store lock is held while the (potentially slow)
                     // S3 fetch runs, so it never blocks store writers.
                     while bytes_to_read > 0 {
+                        bail_if_unavailable!();
                         let chunk = std::cmp::min(bytes_to_read, buffer_size) as usize;
                         match remote.read_slice(offset, chunk) {
                             Ok(buf) if buf.is_empty() => break,
@@ -5907,7 +5927,19 @@ fn tail_pass(
     let mut last_processed_ns = last_timestamp_ns;
     let mut sent_any = false;
     let mut client_gone = false;
+    let mut unavailable: Option<String> = None;
     let scanned = plan.scan(|needle| {
+        // The plan is detached from the volume, so a failed recovery marking
+        // it unavailable mid-scan would otherwise keep streaming.
+        {
+            let store = state.store.read().unwrap();
+            if let Some((_, vol)) = store.find_volume(vid)
+                && let Some(e) = vol.unavailable_error()
+            {
+                unavailable = Some(e.to_string());
+                return ControlFlow::Break(());
+            }
+        }
         // Notice a receiver that hung up between sends too, so a pass over
         // needles it already has does not read on for nobody.
         if tx.is_closed() {
@@ -5941,6 +5973,9 @@ fn tail_pass(
         ControlFlow::Continue(())
     });
 
+    if let Some(reason) = unavailable {
+        return TailPass::Failed(format!("volume {} is unavailable: {}", vid, reason));
+    }
     if client_gone {
         return TailPass::ClientGone;
     }

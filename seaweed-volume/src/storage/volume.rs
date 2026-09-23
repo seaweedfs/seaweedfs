@@ -5740,7 +5740,7 @@ mod tests {
         );
         assert!(v.unavailable_error().is_some());
 
-        let mut reloaded = reload_volume(dir);
+        let reloaded = reload_volume(dir);
         assert!(reloaded.unavailable_error().is_some());
         assert!(reloaded.is_read_only());
         assert!(reloaded.should_quarantine());

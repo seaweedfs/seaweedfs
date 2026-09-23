@@ -100,6 +100,9 @@ func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption
 				}
 			}
 
+			if err := v.UnavailableError(); err != nil {
+				return err
+			}
 			n, writeErr := v.DataBackend.WriteAt(resp.FileContent, writeOffset)
 			if writeErr != nil {
 				return writeErr
