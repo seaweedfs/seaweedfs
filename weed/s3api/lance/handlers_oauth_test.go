@@ -130,6 +130,21 @@ func TestHandleOAuthTokens_InvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestHandleOAuthTokens_OversizedBody(t *testing.T) {
+	s := newTestServerWithOAuth()
+
+	body := "grant_type=client_credentials&client_id=" + strings.Repeat("x", maxRequestBody)
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	s.handleOAuthTokens(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleOAuthTokens_UnsupportedGrantType(t *testing.T) {
 	s := newTestServerWithOAuth()
 

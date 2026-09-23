@@ -61,6 +61,7 @@ func oauthExpirySeconds() int {
 // handleOAuthTokens implements the OAuth2 client_credentials flow.
 // POST /oauth/token
 func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	if err := r.ParseForm(); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "Could not parse form body")
 		return
