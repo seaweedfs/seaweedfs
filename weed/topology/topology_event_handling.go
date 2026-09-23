@@ -13,7 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
-func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64) {
+func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64, vacuumInterval time.Duration) {
 	go func() {
 		for {
 			if t.IsLeader() {
@@ -41,7 +41,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 			} else {
 				stats.MasterReplicaPlacementMismatch.Reset()
 			}
-			time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
+			time.Sleep(vacuumInterval + time.Duration(120*rand.Float32())*time.Second)
 		}
 	}(garbageThreshold)
 	go func() {
