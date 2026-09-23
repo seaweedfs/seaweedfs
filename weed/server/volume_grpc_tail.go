@@ -20,6 +20,9 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
+	if err := v.UnavailableError(); err != nil {
+		return err
+	}
 
 	defer glog.V(1).Infof("tailing volume %d finished", v.Id)
 
@@ -27,6 +30,9 @@ func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderR
 	drainingSeconds := req.IdleTimeoutSeconds
 
 	for {
+		if err := v.UnavailableError(); err != nil {
+			return err
+		}
 		lastProcessedTimestampNs, err := sendNeedlesSince(stream, v, lastTimestampNs)
 		if err != nil {
 			glog.Infof("sendNeedlesSince: %v", err)
@@ -64,6 +70,9 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailSenderServe
 	// log.Printf("reading ts %d offset %d isLast %v", lastTimestampNs, foundOffset, isLastOne)
 
 	if isLastOne {
+		if err := v.UnavailableError(); err != nil {
+			return 0, err
+		}
 		// need to heart beat to the client to ensure the connection health
 		sendErr := stream.Send(&volume_server_pb.VolumeTailSenderResponse{IsLastChunk: true, Version: uint32(v.Version())})
 		return lastTimestampNs, sendErr
@@ -72,6 +81,7 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailSenderServe
 	scanner := &VolumeFileScanner4Tailing{
 		stream:  stream,
 		version: uint32(v.Version()),
+		v:       v,
 	}
 
 	err = storage.ScanVolumeFileFrom(v.Version(), v.DataBackend, foundOffset.ToActualOffset(), scanner)
@@ -112,6 +122,7 @@ type VolumeFileScanner4Tailing struct {
 	stream                   volume_server_pb.VolumeServer_VolumeTailSenderServer
 	lastProcessedTimestampNs uint64
 	version                  uint32
+	v                        *storage.Volume
 }
 
 func (scanner *VolumeFileScanner4Tailing) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -123,6 +134,9 @@ func (scanner *VolumeFileScanner4Tailing) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4Tailing) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
+	if err := scanner.v.UnavailableError(); err != nil {
+		return err
+	}
 	isLastChunk := false
 
 	// need to send body by chunks

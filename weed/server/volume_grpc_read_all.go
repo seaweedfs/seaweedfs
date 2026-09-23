@@ -29,6 +29,9 @@ func (vs *VolumeServer) streamReadOneVolume(vid needle.VolumeId, stream volume_s
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", vid)
 	}
+	if err := v.UnavailableError(); err != nil {
+		return err
+	}
 
 	scanner := &storage.VolumeFileScanner4ReadAll{
 		Stream: stream,
