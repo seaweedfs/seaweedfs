@@ -618,6 +618,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) {
 	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
 
 	lanceServer := lance.NewServer(s3ApiServer, s3ApiServer)
+	lanceServer.SetCredentialValidator(s3ApiServer)
 	if s3opt.icebergCredentialRole != nil && *s3opt.icebergCredentialRole != "" {
 		lanceServer.SetCredentialVendor(lanceCredentialVendor{s3ApiServer})
 	}
