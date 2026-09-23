@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -528,19 +530,61 @@ func (v *Volume) unavailableError() error {
 	return fmt.Errorf("volume %d is unavailable: %s: %w", v.Id, reason, errVolumeUnavailable)
 }
 
-func (v *Volume) markBatchRecoveryFailed(err error) {
+func (v *Volume) markIoUnavailable(err error) {
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = true
 	v.ioUnavailable = true
 	v.ioUnavailableError = err.Error()
 	v.noWriteLock.Unlock()
+	v.markIoQuarantined()
 
+	if persistErr := v.persistUnavailable(err.Error()); persistErr != nil {
+		glog.Warningf("volume %d: failed to persist unavailable marker: %v", v.Id, persistErr)
+	}
 	if v.volumeInfo != nil {
 		if persistErr := v.PersistReadOnly(true, false); persistErr != nil {
 			glog.Warningf("volume %d: failed to persist unavailable state: %v", v.Id, persistErr)
 		}
 	}
-	glog.Errorf("volume %d entered unavailable state after batch recovery failed: %v", v.Id, err)
+	glog.Errorf("volume %d entered unavailable state after failed recovery: %v", v.Id, err)
+}
+
+// persistUnavailable records the failed-recovery state so a reload keeps the
+// volume unavailable instead of serving an unverified .dat/index pair.
+func (v *Volume) persistUnavailable(reason string) error {
+	marker := v.FileName(".unavailable")
+	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(reason); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return util.FsyncDir(v.dir)
+}
+
+// restoreUnavailable re-arms the in-memory state the .unavailable marker
+// recorded. The marker is deleted manually once the volume pair is verified.
+func (v *Volume) restoreUnavailable() {
+	reason, err := os.ReadFile(v.FileName(".unavailable"))
+	if err != nil {
+		return
+	}
+	v.noWriteLock.Lock()
+	v.noWriteOrDelete = true
+	v.ioUnavailable = true
+	v.ioUnavailableError = strings.TrimSpace(string(reason))
+	v.noWriteLock.Unlock()
+	v.markIoQuarantined()
+	glog.Warningf("volume %d is unavailable: %s", v.Id, v.ioUnavailableError)
 }
 
 func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) error {

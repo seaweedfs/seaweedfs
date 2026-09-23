@@ -946,6 +946,10 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 	}
 	v.noWriteLock.Lock()
+	if v.ioUnavailable {
+		v.noWriteLock.Unlock()
+		return fmt.Errorf("volume %d cannot be marked writable: %w", i, v.unavailableError())
+	}
 	prevNoWriteOrDelete := v.noWriteOrDelete
 	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false

@@ -180,6 +180,25 @@ func (m *SortedFileNeedleMap) Sync() error {
 	return nil
 }
 
+// truncateIndex drops .idx tombstones a failed batch appended. The .sdx is
+// untouched: a delete already marked there cannot be unmarked, so callers
+// treat the batch as unrecoverable before reaching this.
+func (m *SortedFileNeedleMap) truncateIndex(offset int64) error {
+	f, err := pooledIndexFiles.borrow(m.indexFileName, true)
+	if err != nil {
+		return err
+	}
+	defer pooledIndexFiles.release(f)
+
+	m.indexFileAccessLock.Lock()
+	defer m.indexFileAccessLock.Unlock()
+	if err := f.file.Truncate(offset); err != nil {
+		return err
+	}
+	m.indexFileOffset = offset
+	return nil
+}
+
 func (m *SortedFileNeedleMap) ReadIndexEntry(n int64) (key NeedleId, offset Offset, size Size, err error) {
 	var f *pooledFile
 	if f, err = pooledIndexFiles.borrow(m.indexFileName, false); err != nil {

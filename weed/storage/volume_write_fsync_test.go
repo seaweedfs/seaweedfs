@@ -291,7 +291,7 @@ func TestUnavailableVolumeCannotBeMarkedWritable(t *testing.T) {
 
 	v := store.findVolume(vid)
 	require.NotNil(t, v)
-	v.markBatchRecoveryFailed(errors.New("batch recovery failed"))
+	v.markIoUnavailable(errors.New("batch recovery failed"))
 
 	require.Error(t, store.MarkVolumeWritable(vid), "manual writable transition must not bypass quarantine")
 	require.NotNil(t, v.unavailableError())
@@ -353,6 +353,46 @@ func TestMixedBatchSyncFailureRollsBackAsOneUnit(t *testing.T) {
 	_, err = reloaded.readNeedle(readBack, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("keep-delete"), readBack.Data)
+
+	readBack = new(needle.Needle)
+	readBack.Id = fresh.Id
+	_, err = reloaded.readNeedle(readBack, nil, nil)
+	require.Error(t, err)
+}
+
+func TestWriteNeedle2EntersFailClosedWhenInlineRollbackFails(t *testing.T) {
+	v, counting := newCountingVolume(t)
+	counting.syncErr = errors.New("inline fsync failed")
+	counting.syncErrOnce = true
+	counting.truncateErr = errors.New("truncate failed")
+
+	_, _, _, err := v.writeNeedle2(fixedNeedle(20, "cannot-be-recovered"), true, true, true)
+	require.Error(t, err)
+	require.NotNil(t, v.unavailableError())
+
+	readBack := new(needle.Needle)
+	readBack.Id = 20
+	_, err = v.readNeedle(readBack, nil, nil)
+	require.Error(t, err)
+}
+
+func TestUnavailableVolumeStaysUnavailableAfterReload(t *testing.T) {
+	v, _ := newCountingVolume(t)
+	v.markIoUnavailable(errors.New("batch recovery failed"))
+
+	reloaded := reopenCountingVolume(t, v)
+	require.NotNil(t, reloaded.unavailableError(), "the unavailable state must survive a reload")
+	require.True(t, reloaded.IsReadOnly())
+
+	_, _, quarantined := reloaded.getIoErrorState()
+	require.True(t, quarantined, "a reloaded unavailable volume must stay out of heartbeats")
+
+	readBack := new(needle.Needle)
+	readBack.Id = 1
+	_, err := reloaded.readNeedle(readBack, nil, nil)
+	require.Error(t, err)
+	_, _, _, err = reloaded.writeNeedle2(fixedNeedle(1, "after-reload"), true, true, false)
+	require.Error(t, err)
 }
 
 func TestBatchFsyncRollbackWithLevelDbMapper(t *testing.T) {

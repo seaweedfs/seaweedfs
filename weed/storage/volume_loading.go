@@ -399,6 +399,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
+	v.restoreUnavailable()
+
 	if !hasVolumeInfoFile {
 		v.volumeInfo.Version = uint32(v.SuperBlock.Version)
 		v.volumeInfo.BytesOffset = uint32(types.OffsetSize)

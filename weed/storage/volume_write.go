@@ -221,6 +221,8 @@ func removeVolumeFiles(filename string, keepVif bool) {
 	deleteAndLog("rdb")
 	// marker for damaged or incomplete volume
 	deleteAndLog("note")
+	// marker for a volume whose failed-batch recovery could not be verified
+	deleteAndLog("unavailable")
 }
 
 // asyncRequestAppend queues a request for the batch worker, starting it on the
@@ -281,22 +283,25 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 // data we can vouch for, so they come back off the .dat and the needle map goes
 // back to what it pointed at before, rather than at an offset past the new end.
 func (v *Volume) rollbackUnflushedWrite(n *needle.Needle, offset uint64, end int64, priorOffset Offset, priorSize Size, hasPrior bool) {
+	var recoveryErr error
 	if te := v.DataBackend.Truncate(end); te != nil {
-		glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", v.DataBackend.Name(), end, te)
+		recoveryErr = fmt.Errorf("truncate %s back to %d: %w", v.DataBackend.Name(), end, te)
 	}
 	current, found := v.nm.Get(n.Id)
-	if !found || current.Offset.ToActualOffset() != int64(offset) {
-		// doWriteRequest kept an existing mapping at a higher offset
-		return
+	if found && current.Offset.ToActualOffset() == int64(offset) {
+		var err error
+		if hasPrior {
+			err = v.nm.Put(n.Id, priorOffset, priorSize)
+		} else {
+			err = v.nm.Delete(n.Id, ToOffset(int64(offset)))
+		}
+		if err != nil {
+			recoveryErr = errors.Join(recoveryErr,
+				fmt.Errorf("roll back the index of needle %d in volume %d: %w", n.Id, v.Id, err))
+		}
 	}
-	var err error
-	if hasPrior {
-		err = v.nm.Put(n.Id, priorOffset, priorSize)
-	} else {
-		err = v.nm.Delete(n.Id, ToOffset(int64(offset)))
-	}
-	if err != nil {
-		glog.V(0).Infof("Failed to roll back the index of needle %d in volume %d: %v", n.Id, v.Id, err)
+	if recoveryErr != nil {
+		v.markIoUnavailable(recoveryErr)
 	}
 }
 
@@ -493,8 +498,8 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 		snapshot.observeCurrent(v)
 	}
 
-	// If sync fails, data is not reliable. Fail every request and restore the
-	// complete batch before allowing another operation to observe the volume.
+	// if sync error the batch is not durable; restore it before another
+	// operation observes the volume
 	if syncErr := v.DataBackend.Sync(); syncErr != nil {
 		v.checkReadWriteError(syncErr)
 		v.lastAppendAtNs = batchLastAppendAtNs
@@ -502,12 +507,10 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 		batchErr := syncErr
 		if recoveryErr := v.rollbackBatch(end, indexEnd, orderedSnapshots, metricRollbacker, batchMetrics); recoveryErr != nil {
 			batchErr = errors.Join(syncErr, recoveryErr)
-			v.markBatchRecoveryFailed(batchErr)
+			v.markIoUnavailable(batchErr)
 		}
 		for i := 0; i < len(currentRequests); i++ {
-			if currentRequests[i].IsSucceed() {
-				currentRequests[i].UpdateResult(0, 0, false, batchErr)
-			}
+			currentRequests[i].UpdateResult(0, 0, false, batchErr)
 		}
 	}
 
