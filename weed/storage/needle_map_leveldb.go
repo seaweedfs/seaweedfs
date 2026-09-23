@@ -197,6 +197,26 @@ func (m *LevelDbNeedleMap) truncateIndex(offset int64) error {
 	return nil
 }
 
+func (m *LevelDbNeedleMap) removeMapping(key NeedleId) error {
+	if m.ldbTimeout > 0 {
+		if err := m.ensureLdbLoaded(); err != nil {
+			return err
+		}
+		defer m.ldbAccessLock.RUnlock()
+	}
+	return levelDbDelete(m.db, key)
+}
+
+func (m *LevelDbNeedleMap) restoreMapping(key NeedleId, offset Offset, size Size) error {
+	if m.ldbTimeout > 0 {
+		if err := m.ensureLdbLoaded(); err != nil {
+			return err
+		}
+		defer m.ldbAccessLock.RUnlock()
+	}
+	return levelDbWrite(m.db, key, offset, size, false, 0)
+}
+
 func getWatermark(db *leveldb.DB) uint64 {
 	data, err := db.Get(watermarkKey, nil)
 	if err != nil || len(data) != 8 {

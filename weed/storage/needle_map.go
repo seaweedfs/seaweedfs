@@ -41,6 +41,14 @@ type batchIndexRollbacker interface {
 	truncateIndex(offset int64) error
 }
 
+// batchMapRollbacker restores the in-memory/durable needle mapping without
+// touching the index file: a rolled-back batch rewrites the index wholesale
+// via truncateIndex, so replay-correcting entries are not needed here.
+type batchMapRollbacker interface {
+	removeMapping(key NeedleId) error
+	restoreMapping(key NeedleId, offset Offset, size Size) error
+}
+
 type batchMetricRollbacker interface {
 	snapshotBatchMetrics() batchMapMetricSnapshot
 	restoreBatchMetrics(snapshot batchMapMetricSnapshot)

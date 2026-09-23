@@ -46,14 +46,16 @@ func (s *batchNeedleSnapshot) observeCurrent(v *Volume) {
 }
 
 func (v *Volume) restoreBatchNeedle(snapshot *batchNeedleSnapshot) error {
-	if snapshot.found {
-		if !snapshot.size.IsDeleted() {
-			return v.nm.Put(snapshot.id, snapshot.offset, snapshot.size)
-		}
-		return v.nm.Delete(snapshot.id, snapshot.offset)
+	mapRollbacker, ok := v.nm.(batchMapRollbacker)
+	if !ok {
+		return fmt.Errorf("mapper %T cannot restore its mappings", v.nm)
 	}
-
-	return v.nm.Delete(snapshot.id, Offset{})
+	if snapshot.found {
+		return mapRollbacker.restoreMapping(snapshot.id, snapshot.offset, snapshot.size)
+	}
+	// A plain Delete would leave a tombstoned entry whose stale offset makes
+	// the next write to this needle fail reading a header that no longer exists.
+	return mapRollbacker.removeMapping(snapshot.id)
 }
 
 func (v *Volume) rollbackBatch(end int64, indexEnd int64, snapshots []*batchNeedleSnapshot,
@@ -293,7 +295,17 @@ func (v *Volume) rollbackUnflushedWrite(n *needle.Needle, offset uint64, end int
 		if hasPrior {
 			err = v.nm.Put(n.Id, priorOffset, priorSize)
 		} else {
+			// The tombstone must reach .idx so a replay forgets the needle, but
+			// the negated entry it leaves in memory points at truncated bytes
+			// and would fail the next write, so erase the mapping as well.
 			err = v.nm.Delete(n.Id, ToOffset(int64(offset)))
+			if err == nil {
+				if rb, ok := v.nm.(batchMapRollbacker); ok {
+					err = rb.removeMapping(n.Id)
+				} else {
+					err = fmt.Errorf("mapper %T cannot remove mapping", v.nm)
+				}
+			}
 		}
 		if err != nil {
 			recoveryErr = errors.Join(recoveryErr,

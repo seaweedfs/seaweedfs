@@ -457,6 +457,69 @@ func TestBatchFsyncRollbackRestoresOriginalValueAfterRepeatedNeedleId(t *testing
 	require.Equal(t, []byte("original-value"), readBack.Data)
 }
 
+// Rolling back a first-time write must not leave a tombstoned map entry: the
+// stale offset would make the next write to that needle fail reading a header
+// that no longer exists.
+func TestBatchRollbackLeavesNoPhantomMapping(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	counting.syncErr = errors.New("batch fsync failed")
+	counting.syncErrOnce = true
+	fresh := fixedNeedle(24, "batch-never-landed")
+	_, _, _, err := v.writeNeedle2(fresh, true, true, false)
+	require.Error(t, err)
+
+	_, _, _, err = v.writeNeedle2(fresh, true, true, false)
+	require.NoError(t, err, "rewriting a rolled-back needle must succeed")
+
+	readBack := new(needle.Needle)
+	readBack.Id = fresh.Id
+	_, err = v.readNeedle(readBack, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte("batch-never-landed"), readBack.Data)
+}
+
+// A request that already failed on its own must still surface the batch
+// failure: keeping its earlier error would hide that nothing was persisted,
+// or that recovery itself failed.
+func TestFailedBatchMarksEveryRequestFailed(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	kept := fixedNeedle(22, "original")
+	_, _, _, err := v.writeNeedle2(kept, true, true, true)
+	require.NoError(t, err)
+
+	counting.syncErr = errors.New("batch fsync failed")
+	counting.syncErrOnce = true
+
+	badCookie := fixedNeedle(22, "wrong-cookie")
+	badCookie.Cookie = kept.Cookie + 1
+	requests := []*needle.AsyncRequest{
+		needle.NewAsyncRequest(badCookie, true),
+		needle.NewAsyncRequest(fixedNeedle(23, "fresh"), true),
+	}
+	v.processBatch(requests)
+
+	for _, request := range requests {
+		_, _, _, err = request.WaitComplete()
+		require.ErrorContains(t, err, "batch fsync failed")
+	}
+}
+
+// The quarantine is what CollectHeartbeat keys on: an unavailable volume must
+// not be announced to the master at all.
+func TestUnavailableVolumeIsSkippedInHeartbeat(t *testing.T) {
+	store := newTestStore(t, 1)
+	v := mountTestVolume(t, store.Locations[0], 1, "pics")
+	fillTestVolume(t, v)
+	v.markIoUnavailable(errors.New("batch recovery failed"))
+
+	heartbeat := store.CollectHeartbeat()
+	for _, m := range heartbeat.Volumes {
+		require.NotEqual(t, uint32(1), m.Id, "a failed-recovery volume must not be announced")
+	}
+}
+
 // The pre-stop drain exists so writes already assigned to this server land.
 // Refusing them once stopping would turn every rolling restart into client
 // write failures for the length of the drain.

@@ -101,6 +101,14 @@ func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size Size) error 
 	return fmt.Errorf("needle map %s.sdx is read only: %w", m.baseFileName, os.ErrInvalid)
 }
 
+func (m *SortedFileNeedleMap) removeMapping(key NeedleId) error {
+	return fmt.Errorf("needle map %s.sdx is read only: %w", m.baseFileName, os.ErrInvalid)
+}
+
+func (m *SortedFileNeedleMap) restoreMapping(key NeedleId, offset Offset, size Size) error {
+	return fmt.Errorf("needle map %s.sdx is read only: %w", m.baseFileName, os.ErrInvalid)
+}
+
 func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 
 	f, err := pooledIndexFiles.borrow(m.dbFileName, true)
