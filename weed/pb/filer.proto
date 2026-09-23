@@ -479,6 +479,7 @@ message UpdateEntryRequest {
     // the write, under the filer's per-path lock. The caller must route the
     // key's writes to this entry's owner filer for the check to be authoritative.
     WriteCondition condition = 6;
+    bool is_moved = 7;             // set on a forwarded request so the owner applies it locally
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;

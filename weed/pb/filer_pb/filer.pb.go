@@ -2378,6 +2378,7 @@ type UpdateEntryRequest struct {
 	// the write, under the filer's per-path lock. The caller must route the
 	// key's writes to this entry's owner filer for the check to be authoritative.
 	Condition     *WriteCondition `protobuf:"bytes,6,opt,name=condition,proto3" json:"condition,omitempty"`
+	IsMoved       bool            `protobuf:"varint,7,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"` // set on a forwarded request so the owner applies it locally
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2452,6 +2453,13 @@ func (x *UpdateEntryRequest) GetCondition() *WriteCondition {
 		return x.Condition
 	}
 	return nil
+}
+
+func (x *UpdateEntryRequest) GetIsMoved() bool {
+	if x != nil {
+		return x.IsMoved
+	}
+	return false
 }
 
 type UpdateEntryResponse struct {
@@ -7429,7 +7437,7 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"error_code\x18\x03 \x01(\x0e2\x14.filer_pb.FilerErrorR\terrorCode\x12\x1a\n" +
 	"\tlog_ts_ns\x18\x04 \x01(\x03R\alogTsNs\x12#\n" +
-	"\rlog_signature\x18\x05 \x01(\x05R\flogSignature\"\x8a\x03\n" +
+	"\rlog_signature\x18\x05 \x01(\x05R\flogSignature\"\xa5\x03\n" +
 	"\x12UpdateEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
 	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x121\n" +
@@ -7438,7 +7446,8 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x18\x04 \x03(\x05R\n" +
 	"signatures\x12_\n" +
 	"\x11expected_extended\x18\x05 \x03(\v22.filer_pb.UpdateEntryRequest.ExpectedExtendedEntryR\x10expectedExtended\x126\n" +
-	"\tcondition\x18\x06 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x1aC\n" +
+	"\tcondition\x18\x06 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x12\x19\n" +
+	"\bis_moved\x18\a \x01(\bR\aisMoved\x1aC\n" +
 	"\x15ExpectedExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xa2\x01\n" +
