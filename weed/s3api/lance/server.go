@@ -3,6 +3,7 @@ package lance
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -23,6 +24,18 @@ type S3Authenticator interface {
 	DefaultAllow() bool
 }
 
+// CredentialValidator validates S3 access key / secret key pairs
+// and provides credential lookup for OAuth token verification.
+type CredentialValidator interface {
+	// ValidateS3Credential checks if the access key and secret key are valid.
+	// Returns the identity name and identity object on success.
+	ValidateS3Credential(accessKey, secretKey string) (identityName string, identity interface{}, err error)
+	// GetCredentialByAccessKey looks up a credential by access key.
+	// Returns the identity name, identity object, and secret key.
+	// Used for verifying Bearer tokens signed with a specific credential.
+	GetCredentialByAccessKey(accessKey string) (identityName string, identity interface{}, secretKey string, err error)
+}
+
 // VendedCredentials are short-lived S3 credentials scoped to one table.
 type VendedCredentials struct {
 	AccessKeyID     string
@@ -40,12 +53,13 @@ type CredentialVendor interface {
 
 // Server implements the Lance Namespace REST spec.
 type Server struct {
-	filerClient      FilerClient
-	tablesManager    *s3tables.Manager
-	authenticator    S3Authenticator
-	credentialVendor CredentialVendor
-	s3Endpoint       string
-	s3Region         string
+	filerClient         FilerClient
+	tablesManager       *s3tables.Manager
+	authenticator       S3Authenticator
+	credentialValidator CredentialValidator
+	credentialVendor    CredentialVendor
+	s3Endpoint          string
+	s3Region            string
 }
 
 // NewServer creates a Lance namespace server over the given filer.
@@ -61,6 +75,11 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 		tablesManager: manager,
 		authenticator: authenticator,
 	}
+}
+
+// SetCredentialValidator sets the credential validator for OAuth token support.
+func (s *Server) SetCredentialValidator(cv CredentialValidator) {
+	s.credentialValidator = cv
 }
 
 // SetCredentialVendor enables storage_options credential vending for clients
@@ -86,6 +105,9 @@ func (s *Server) SetS3Region(region string) {
 // proxy can route and authorize without deserializing the request.
 func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.Use(loggingMiddleware)
+
+	// OAuth2 token endpoint - no auth needed (this IS the auth endpoint)
+	router.HandleFunc("/oauth/token", s.handleOAuthTokens).Methods(http.MethodPost)
 
 	router.HandleFunc("/v1/namespace/{id}/create", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/namespace/{id}/list", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
@@ -124,7 +146,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	}
 
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		glog.V(2).Infof("lance: no route for %s %s", r.Method, r.RequestURI)
+		glog.V(2).Infof("lance: no route for %s %s", r.Method, r.URL.EscapedPath())
 		writeError(w, r, http.StatusNotFound, codeUnsupported, "no such operation")
 	})
 
@@ -138,16 +160,52 @@ func (s *Server) handleUnsupported(w http.ResponseWriter, r *http.Request) {
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		glog.V(2).Infof("lance request: %s %s from %s", r.Method, r.RequestURI, r.RemoteAddr)
+		glog.V(2).Infof("lance request: %s %s from %s", r.Method, r.URL.EscapedPath(), r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }
 
 // Auth authenticates the caller and puts the identity in the request context.
-// The Lance spec maps identity onto the same headers the S3 authenticator
-// already understands, so SigV4 and bearer tokens both keep working.
+// Lance clients authenticate the catalog with a Bearer token or an x-api-key
+// header; the S3 authenticator stays for callers that can SigV4-sign.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// A request carrying a Bearer token is a Lance REST client. An invalid
+		// or expired token gets 401 immediately; falling through to the S3
+		// authenticator would parse the header as SigV4 and fail with a
+		// different error that clients cannot act on.
+		// The auth scheme is case-insensitive (RFC 7235).
+		if strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "bearer ") {
+			if identityName, identity, ok := s.authenticateBearer(r); ok {
+				ctx := r.Context()
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				if identity != nil {
+					ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				}
+				r = r.WithContext(ctx)
+				handler(w, r)
+				return
+			}
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, r, http.StatusUnauthorized, codeUnauthenticated, "Bearer token is invalid or expired")
+			return
+		}
+
+		if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
+			if identityName, identity, ok := s.authenticateApiKey(apiKey); ok {
+				ctx := r.Context()
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				if identity != nil {
+					ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				}
+				r = r.WithContext(ctx)
+				handler(w, r)
+				return
+			}
+			writeError(w, r, http.StatusUnauthorized, codeUnauthenticated, "invalid x-api-key")
+			return
+		}
+
 		if s.authenticator == nil {
 			writeError(w, r, http.StatusUnauthorized, codeUnauthenticated, "authentication required")
 			return
