@@ -166,8 +166,8 @@ func loggingMiddleware(next http.Handler) http.Handler {
 }
 
 // Auth authenticates the caller and puts the identity in the request context.
-// Lance clients authenticate the catalog with a Bearer token; the S3
-// authenticator stays for callers that can SigV4-sign, like the shell.
+// Lance clients authenticate the catalog with a Bearer token or an x-api-key
+// header; the S3 authenticator stays for callers that can SigV4-sign.
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// A request carrying a Bearer token is a Lance REST client. An invalid
@@ -188,6 +188,21 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			}
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, r, http.StatusUnauthorized, codeUnauthenticated, "Bearer token is invalid or expired")
+			return
+		}
+
+		if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
+			if identityName, identity, ok := s.authenticateApiKey(apiKey); ok {
+				ctx := r.Context()
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+				if identity != nil {
+					ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				}
+				r = r.WithContext(ctx)
+				handler(w, r)
+				return
+			}
+			writeError(w, r, http.StatusUnauthorized, codeUnauthenticated, "invalid x-api-key")
 			return
 		}
 

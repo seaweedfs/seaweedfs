@@ -248,6 +248,56 @@ func TestAuthExpiredBearerReturns401(t *testing.T) {
 	}
 }
 
+// x-api-key carries "access_key:secret_key" straight to the catalog, with no
+// token to mint or expire - the header form LanceDB documents for API keys.
+func TestAuthApiKeyRunsHandler(t *testing.T) {
+	s := newTestServerWithOAuth()
+	auth := &mockS3Authenticator{errCode: s3err.ErrAccessDenied}
+	s.authenticator = auth
+
+	var gotIdentity string
+	handler := s.Auth(func(w http.ResponseWriter, r *http.Request) {
+		gotIdentity = s3_constants.GetIdentityNameFromContext(r)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/namespace/$/list", nil)
+	req.Header.Set("x-api-key", "AKID123:secret456")
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("x-api-key: status = %d, want 200", rec.Code)
+	}
+	if gotIdentity != "testuser" {
+		t.Fatalf("identity in context = %q, want testuser", gotIdentity)
+	}
+}
+
+func TestAuthApiKeyInvalid(t *testing.T) {
+	s := newTestServerWithOAuth()
+	auth := &mockS3Authenticator{errCode: s3err.ErrAccessDenied}
+	s.authenticator = auth
+
+	handler := s.Auth(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for _, key := range []string{"AKID123:wrongsecret", "AKID123", ":secret456", "unknown:key"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/namespace/$/list", nil)
+		req.Header.Set("x-api-key", key)
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("x-api-key %q: status = %d, want 401", key, rec.Code)
+		}
+	}
+	if auth.called {
+		t.Fatalf("bad x-api-key must not fall through to the S3 authenticator")
+	}
+}
+
 func TestAuthNoBearerStillUsesS3Authenticator(t *testing.T) {
 	s := newTestServerWithOAuth()
 	auth := &mockS3Authenticator{errCode: s3err.ErrNone}

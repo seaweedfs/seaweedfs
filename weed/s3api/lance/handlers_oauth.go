@@ -198,6 +198,25 @@ func (s *Server) authenticateBearer(r *http.Request) (string, interface{}, bool)
 	return identityName, identity, true
 }
 
+// authenticateApiKey validates an x-api-key header carrying an S3 credential
+// as "access_key:secret_key". Unlike a Bearer token it does not expire, which
+// suits clients that hold static headers.
+func (s *Server) authenticateApiKey(apiKey string) (string, interface{}, bool) {
+	if s.credentialValidator == nil {
+		return "", nil, false
+	}
+	accessKey, secretKey, ok := strings.Cut(apiKey, ":")
+	if !ok || accessKey == "" || secretKey == "" {
+		return "", nil, false
+	}
+	identityName, identity, err := s.credentialValidator.ValidateS3Credential(accessKey, secretKey)
+	if err != nil {
+		glog.V(2).Infof("Lance x-api-key: credential validation failed: %v", err)
+		return "", nil, false
+	}
+	return identityName, identity, true
+}
+
 // deriveSigningKey derives a signing key from the access key and secret using HMAC-SHA256.
 // Including the access key prevents cross-credential token forgery when two
 // credentials happen to share the same secret.
