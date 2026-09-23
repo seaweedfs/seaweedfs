@@ -236,7 +236,7 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
       - name: Set up QEMU
         if: matrix.platform != 'amd64'
-        uses: docker/setup-qemu-action@v4.3.0
+        uses: docker/setup-qemu-action@v4.4.0
       - name: Create BuildKit config
         run: |
           cat > /tmp/buildkitd.toml <<EOF
@@ -405,7 +405,7 @@ jobs:
           output: trivy-results.sarif
           exit-code: '0'
       - name: Upload Trivy scan results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4.38.0
+        uses: github/codeql-action/upload-sarif@v4.38.1
         if: always()
         with:
           sarif_file: trivy-results.sarif
