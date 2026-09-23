@@ -13,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
@@ -179,5 +180,87 @@ func TestDeleteEntryMetaAndDataDeletesCollectionWhenTheRequestIsCancelledMidDele
 
 	if store.getEntry(string(bucketPath)) != nil {
 		t.Error("the bucket entry survived the delete")
+	}
+}
+
+func seedBucket(t *testing.T, store *hookedStore, path util.FullPath) {
+	t.Helper()
+	if err := store.InsertEntry(context.Background(), &Entry{
+		FullPath: path,
+		Attr:     Attr{Mode: os.ModeDir | 0755},
+	}); err != nil {
+		t.Fatalf("seed bucket %s: %v", path, err)
+	}
+}
+
+// Two buckets resolving to one collection: deleting either must leave the
+// collection for the other. Previously the delete dropped the collection
+// named after the bucket regardless of where its data actually lived.
+func TestDeleteBucketKeepsSharedCollection(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets",
+		Collection:     "shared",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/a"))
+	seedBucket(t, store, util.FullPath("/buckets/b"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		t.Fatalf("shared collection was deleted: %q", call.name)
+	default:
+	}
+	if store.getEntry("/buckets/b") == nil {
+		t.Error("the surviving bucket's entry is gone")
+	}
+}
+
+// A bucket named after a collection other buckets resolve to is still just a
+// bucket: deleting it must not take the shared collection down with it.
+func TestDeleteBucketNamedAfterSharedCollection(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets",
+		Collection:     "shared",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/shared"))
+	seedBucket(t, store, util.FullPath("/buckets/other"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/shared", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		t.Fatalf("collection backing other buckets was deleted: %q", call.name)
+	default:
+	}
+}
+
+// A collection only the deleted bucket resolves to is dropped under its real
+// name, so a dedicated custom collection does not leak its volumes.
+func TestDeleteBucketDeletesResolvedCollection(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/only",
+		Collection:     "custom",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/only"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/only", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		if call.name != "custom" {
+			t.Fatalf("CollectionDelete = %q, want %q", call.name, "custom")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("CollectionDelete never reached the master")
 	}
 }

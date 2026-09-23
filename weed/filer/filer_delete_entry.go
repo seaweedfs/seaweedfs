@@ -68,6 +68,10 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return nil
 	}
 	isDeleteCollection := f.IsBucket(entry)
+	collectionName := ""
+	if isDeleteCollection {
+		collectionName = f.bucketCollection(ctx, entry.Name())
+	}
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
 		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
@@ -102,17 +106,18 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if isDeleteCollection {
-		collectionName := entry.Name()
-		// the entry is already gone: a caller that hung up must not leave the
-		// collection behind, so this cleanup outlives the request -- bounded all
-		// the same, or a master that is down parks this handler indefinitely and
-		// every client retry behind it parks another
-		collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
-		f.DoDeleteCollection(collectionCtx, collectionName)
-		cancelCollection()
+		if collectionName != "" {
+			// the entry is already gone: a caller that hung up must not leave the
+			// collection behind, so this cleanup outlives the request -- bounded all
+			// the same, or a master that is down parks this handler indefinitely and
+			// every client retry behind it parks another
+			collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
+			f.DoDeleteCollection(collectionCtx, collectionName)
+			cancelCollection()
+		}
 		// drop bucket-labeled series held by this process; the S3 gateway
 		// only cleans its own registry
-		stats.DeleteBucketMetrics(collectionName)
+		stats.DeleteBucketMetrics(entry.Name())
 	}
 
 	return nil
@@ -220,6 +225,48 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 // the bucket delete, which pays this and then the gateway's own follow-up
 // DeleteCollection, still has retry budget left.
 const collectionDeleteTimeout = 15 * time.Second
+
+// bucketCollection resolves the collection a bucket's objects land in
+// through the same rule chain the write path uses, and reports it only when
+// no other bucket resolves there too. A shared collection must survive the
+// bucket delete: dropping it removes volumes other buckets still write to. A
+// listing failure keeps the collection, the safe side of an unknown.
+func (f *Filer) bucketCollection(ctx context.Context, bucket string) (collection string) {
+	resolve := func(name string) string {
+		return util.Nvl(f.FilerConf.MatchStorageRule(f.DirBucketsPath+"/"+name+"/").Collection, name)
+	}
+	collection = resolve(bucket)
+	siblings, err := f.listBuckets(ctx)
+	if err != nil {
+		glog.ErrorfCtx(ctx, "list buckets for collection check: %v", err)
+		return ""
+	}
+	for _, sibling := range siblings {
+		if sibling != bucket && resolve(sibling) == collection {
+			return ""
+		}
+	}
+	return collection
+}
+
+func (f *Filer) listBuckets(ctx context.Context) (buckets []string, err error) {
+	lastFileName := ""
+	for {
+		entries, _, listErr := f.ListDirectoryEntries(ctx, util.FullPath(f.DirBucketsPath), lastFileName, false, PaginationSize, "", "", "")
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, entry := range entries {
+			lastFileName = entry.Name()
+			if f.IsBucket(entry) {
+				buckets = append(buckets, entry.Name())
+			}
+		}
+		if len(entries) < PaginationSize {
+			return buckets, nil
+		}
+	}
+}
 
 func (f *Filer) DoDeleteCollection(ctx context.Context, collectionName string) (err error) {
 
