@@ -297,8 +297,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 
 		// The post-load structural check below uses the in-memory needle map
-		// to verify that no .idx entry references bytes past the end of .dat
-		// (issue #8928). The check piggybacks on MaxNeedleEnd, which the load
+		// to verify that no .idx entry references bytes past the end of .dat.
+		// The check piggybacks on MaxNeedleEnd, which the load
 		// walks below populate without a second linear scan.
 
 		// Loaders can return a typed-nil pointer with err set; assigning that
@@ -386,7 +386,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// MaximumNeedleEnd, so this is just a numeric comparison — no extra
 		// disk I/O. A violation marks the volume read-only so a corrupt
 		// .idx left over from a crashed batched write does not silently
-		// power vacuum to drop reachable data. See issue #8928. err == nil
+		// power vacuum to drop reachable data. err == nil
 		// guards against a partial-walk MaximumNeedleEnd.
 		if err == nil && !v.HasRemoteFile() && v.nm != nil && v.DataBackend != nil {
 			if datSize, _, statErr := v.DataBackend.GetStat(); statErr == nil && datSize > 0 {

@@ -1036,7 +1036,6 @@ impl Volume {
                 // — no extra disk I/O. A violation marks the volume read-only
                 // so vacuum doesn't silently drop reachable data based on a
                 // corrupt .idx left over from a crashed batched write.
-                // See issue #8928.
                 if let Some(ref nm) = self.nm
                     && let Ok(dat_size) = self.current_dat_file_size()
                 {
@@ -2524,7 +2523,7 @@ impl Volume {
         let version = self.version();
 
         // The deeper-than-tail structural check (every (offset + actual size)
-        // fits inside .dat — issue #8928) is now handled in load() via the
+        // fits inside .dat) is now handled in load() via the
         // needle map's max_needle_end accumulator, so we don't pay for a
         // second linear scan of the .idx here.
 
@@ -3907,7 +3906,6 @@ impl Volume {
                     // surfaces as a generic Io rather than UnexpectedEof) must
                     // abort so an operator notices, rather than silently
                     // compacting away data that might come back on retry.
-                    // See issue #8928.
                     if !is_skippable_needle_read_error(&e) {
                         return Err(VolumeError::Io(io::Error::other(format!(
                             "cannot hydrate needle from file: {}",
@@ -7202,7 +7200,7 @@ mod tests {
     }
 
     /// Vacuum compaction must tolerate an .idx entry whose offset points past
-    /// the end of the .dat file (the failure mode in issue #8928). The bad
+    /// the end of the .dat file. The bad
     /// entry is silently dropped from the resulting .cpx; healthy needles
     /// survive untouched.
     #[test]
@@ -7269,7 +7267,7 @@ mod tests {
 
     /// The needle map's max_needle_end accumulator must let volume.load
     /// detect an .idx whose entries point past the end of the .dat — the
-    /// deeper-than-tail corruption shape from issue #8928 that the existing
+    /// deeper-than-tail corruption shape that the existing
     /// last-10-entries scan cannot see. The check is populated by the load
     /// walk and read in volume.load() to flip the volume read-only.
     #[test]

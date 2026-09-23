@@ -448,7 +448,7 @@ func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMes
 	// disk-path operation can ever succeed. Skip remote-tiered volumes, whose .dat
 	// legitimately lives in cloud storage. Only a present .dat is cached for 30s; a
 	// missing one is re-checked every heartbeat so the volume stays suppressed until
-	// the file returns. See github.com/seaweedfs/seaweedfs/issues/10004
+	// the file returns.
 	if fileCount > 0 && !v.HasRemoteFile() {
 		const diskCheckIntervalNs = 30 * int64(time.Second)
 		now := time.Now().UnixNano()
