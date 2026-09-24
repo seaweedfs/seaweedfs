@@ -4312,12 +4312,13 @@ impl Volume {
         only_garbage: bool,
         keep_remote_data: bool,
     ) -> Result<(), VolumeError> {
-        if only_empty && self.file_count() > 0 {
-            return Err(VolumeError::NotEmpty);
-        }
-        // Byte counters, not counts: index rows and live tallies drift apart
-        // on reload, while deleted bytes vs content bytes stay exact.
-        if only_garbage && !(self.content_size() > 0 && self.deleted_size() >= self.content_size()) {
+        // Either enabled check may pass: a volume with no live data qualifies
+        // whether it reads empty or as all garbage. Byte counters, not counts:
+        // index rows and live tallies drift apart on reload.
+        let empty_ok = only_empty && self.file_count() == 0;
+        let garbage_ok =
+            only_garbage && self.content_size() > 0 && self.deleted_size() >= self.content_size();
+        if (only_empty || only_garbage) && !empty_ok && !garbage_ok {
             return Err(VolumeError::NotEmpty);
         }
         if self.is_compacting {

@@ -1572,19 +1572,15 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
-        if req.only_empty {
+        if req.only_empty || req.only_garbage {
             let (_, vol) = store.find_volume(vid).ok_or_else(|| {
                 Status::from(crate::storage::volume::VolumeError::VolumeNotFound(vid))
             })?;
-            if vol.file_count() > 0 {
-                return Err(Status::from(crate::storage::volume::VolumeError::NotEmpty));
-            }
-        }
-        if req.only_garbage {
-            let (_, vol) = store.find_volume(vid).ok_or_else(|| {
-                Status::from(crate::storage::volume::VolumeError::VolumeNotFound(vid))
-            })?;
-            if !(vol.content_size() > 0 && vol.deleted_size() >= vol.content_size()) {
+            let empty_ok = req.only_empty && vol.file_count() == 0;
+            let garbage_ok = req.only_garbage
+                && vol.content_size() > 0
+                && vol.deleted_size() >= vol.content_size();
+            if !empty_ok && !garbage_ok {
                 return Err(Status::from(crate::storage::volume::VolumeError::NotEmpty));
             }
         }
@@ -8912,5 +8908,32 @@ mod tests {
                 .is_some(),
             "refused delete must leave the volume mounted"
         );
+    }
+
+    #[tokio::test]
+    async fn volume_delete_empty_or_garbage_uses_either_check() {
+        // Both flags set, volume fully deleted: the garbage check passes even
+        // though the empty check would not.
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = service.state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.delete_needle(&mut Needle {
+                id: NeedleId(11),
+                cookie: Cookie(0x3344),
+                ..Needle::default()
+            })
+            .unwrap();
+            vol.sync_to_disk().unwrap();
+        }
+        service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: true,
+                only_garbage: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect("a fully deleted volume deletes under either check");
     }
 }

@@ -48,20 +48,22 @@ func (v *Volume) Destroy(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	if onlyEmpty {
-		isEmpty, e := v.doIsEmpty()
-		if e != nil {
-			err = fmt.Errorf("failed to read isEmpty %v", e)
-			return
+	if onlyEmpty || onlyGarbage {
+		// Either enabled check may pass: a volume with no live data qualifies
+		// whether it reads empty or as all garbage.
+		emptyOk := false
+		if onlyEmpty {
+			isEmpty, e := v.doIsEmpty()
+			if e != nil {
+				err = fmt.Errorf("failed to read isEmpty %v", e)
+				return
+			}
+			emptyOk = isEmpty
 		}
-		if !isEmpty {
+		if !emptyOk && !(onlyGarbage && v.doIsGarbage()) {
 			err = ErrVolumeNotEmpty
 			return
 		}
-	}
-	if onlyGarbage && !v.doIsGarbage() {
-		err = ErrVolumeNotEmpty
-		return
 	}
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)

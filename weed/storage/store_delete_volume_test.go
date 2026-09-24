@@ -54,8 +54,10 @@ func TestDeleteVolumeOnlyGarbage(t *testing.T) {
 	if _, err := store.DeleteVolumeNeedle(5, n); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DeleteVolume(5, false, true, false); err != nil {
-		t.Fatalf("only-garbage delete of a fully deleted volume: %v", err)
+	// The shell sends both flags so a pre-upgrade server still refuses; either
+	// check passing must suffice here.
+	if err := store.DeleteVolume(5, true, true, false); err != nil {
+		t.Fatalf("delete of a fully deleted volume: %v", err)
 	}
 	if _, found := store.Locations[0].FindVolume(5); found {
 		t.Fatal("fully deleted volume survived")

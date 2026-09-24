@@ -260,7 +260,8 @@ message VolumeDeleteRequest {
     // used for moves where another server is taking over the same .vif.
     bool keep_remote_data = 3;
     // when true, delete only if every needle is deleted: the volume held
-    // data once but nothing is live anymore.
+    // data once but nothing is live anymore. Passing either check,
+    // only_empty or this one, is enough to delete.
     bool only_garbage = 4;
 }
 message VolumeDeleteResponse {
