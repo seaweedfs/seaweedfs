@@ -95,12 +95,12 @@ func TestUploadWithRetryDataReassignsOnVolumeSizeExceeded(t *testing.T) {
 	uploader := newUploader(httpClient)
 
 	assignCalls := 0
-	fileID, uploadResult, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, error) {
+	fileID, uploadResult, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
 		assignCalls++
 		if assignCalls == 1 {
-			return "1,first", "volume-a", "", nil
+			return "1,first", "volume-a", "", false, nil
 		}
-		return "2,second", "volume-b", "", nil
+		return "2,second", "volume-b", "", false, nil
 	}, &UploadOption{Filename: "test.bin"}, []byte("abc"))
 
 	if err != nil {
@@ -143,12 +143,12 @@ func TestUploadWithRetryDataReassignsOnReplicaWriteFailure(t *testing.T) {
 	uploader := newUploader(httpClient)
 
 	assignCalls := 0
-	fileID, uploadResult, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, error) {
+	fileID, uploadResult, err := uploader.uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
 		assignCalls++
 		if assignCalls == 1 {
-			return "1,first", "volume-a", "", nil
+			return "1,first", "volume-a", "", false, nil
 		}
-		return "2,second", "volume-b", "", nil
+		return "2,second", "volume-b", "", false, nil
 	}, &UploadOption{Filename: "test.bin"}, []byte("abc"))
 
 	if err != nil {
@@ -197,6 +197,45 @@ func (c *bodyCapturingHTTPClient) Do(req *http.Request) (*http.Response, error) 
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(c.successJSON)),
 	}, nil
+}
+
+type fsyncAssignClient struct {
+	filer_pb.SeaweedFilerClient
+	response *filer_pb.AssignVolumeResponse
+}
+
+func (c *fsyncAssignClient) AssignVolume(context.Context, *filer_pb.AssignVolumeRequest, ...grpc.CallOption) (*filer_pb.AssignVolumeResponse, error) {
+	return c.response, nil
+}
+
+func (c *fsyncAssignClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
+}
+func (c *fsyncAssignClient) AdjustedUrl(loc *filer_pb.Location) string { return loc.GetUrl() }
+func (c *fsyncAssignClient) GetDataCenter() string                     { return "" }
+
+func TestUploadWithRetryAppendsFsyncWhenAssigned(t *testing.T) {
+	var gotFsync string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFsync = r.URL.Query().Get("fsync")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"size":3}`)
+	}))
+	defer server.Close()
+
+	client := &fsyncAssignClient{response: &filer_pb.AssignVolumeResponse{
+		FileId:   "1,0123456789",
+		Location: &filer_pb.Location{Url: strings.TrimPrefix(server.URL, "http://")},
+		Fsync:    true,
+	}}
+	_, _, err, _ := newUploader(server.Client()).UploadWithRetry(client,
+		&filer_pb.AssignVolumeRequest{Path: "/bucket/object"}, &UploadOption{}, strings.NewReader("abc"))
+	if err != nil {
+		t.Fatalf("upload failed: %v", err)
+	}
+	if gotFsync != "true" {
+		t.Errorf("upload fsync = %q, want true when assignment requires fsync", gotFsync)
+	}
 }
 
 // hangingAssignSeaweedClient is a SeaweedFilerClient whose AssignVolume blocks
