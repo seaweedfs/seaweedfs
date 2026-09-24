@@ -97,7 +97,7 @@ func newFilerWithFakeMaster(t *testing.T) (*Filer, *hookedStore, *collectionDele
 
 	mc := wdclient.NewMasterClient(
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		"test", cluster.FilerType, pb.ServerAddress("localhost:0"), "", "",
+		"", cluster.FilerType, pb.ServerAddress("localhost:0"), "", "",
 		*pb.NewServiceDiscoveryFromMap(map[string]pb.ServerAddress{"m": masterAddress}),
 	)
 
@@ -238,6 +238,105 @@ func TestDeleteBucketNamedAfterSharedCollection(t *testing.T) {
 	case call := <-master.calls:
 		t.Fatalf("collection backing other buckets was deleted: %q", call.name)
 	default:
+	}
+}
+
+// A rule pointing a non-bucket path at the same collection keeps it: the
+// collection serves files the bucket delete must not orphan.
+func TestDeleteBucketKeepsCollectionUsedByNonBucketPath(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/a",
+		Collection:     "cold",
+	})
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/archives",
+		Collection:     "cold",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/a"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		t.Fatalf("collection used by /archives was deleted: %q", call.name)
+	default:
+	}
+}
+
+// A broad prefix rule covering the whole tree keeps the collection even for a
+// lone bucket: the same collection backs non-bucket paths too.
+func TestDeleteBucketKeepsCollectionFromBroadRule(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/",
+		Collection:     "everything",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/a"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		t.Fatalf("collection from a / rule was deleted: %q", call.name)
+	default:
+	}
+}
+
+// A rule nested under a surviving bucket keeps the collection: the other
+// bucket resolves elsewhere at its root, but objects deeper inside it still
+// land in the shared collection.
+func TestDeleteBucketKeepsCollectionFromNestedSiblingRule(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/a",
+		Collection:     "shared",
+	})
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/b/deep",
+		Collection:     "shared",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/a"))
+	seedBucket(t, store, util.FullPath("/buckets/b"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		t.Fatalf("collection used under /buckets/b/deep was deleted: %q", call.name)
+	default:
+	}
+}
+
+// A grouped gateway writes to <group>_<bucket> regardless of the storage
+// rules, so that is the collection the delete must drop -- and a rule-named
+// collection the bucket never used must survive.
+func TestDeleteBucketUnderFilerGroup(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.MasterClient.FilerGroup = "tenant1"
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/photos",
+		Collection:     "archive",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/photos"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/photos", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		if call.name != "tenant1_photos" {
+			t.Fatalf("CollectionDelete = %q, want %q", call.name, "tenant1_photos")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("CollectionDelete never reached the master")
 	}
 }
 

@@ -227,22 +227,43 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 const collectionDeleteTimeout = 15 * time.Second
 
 // bucketCollection resolves the collection a bucket's objects land in
-// through the same rule chain the write path uses, and reports it only when
-// no other bucket resolves there too. A shared collection must survive the
-// bucket delete: dropping it removes volumes other buckets still write to. A
-// listing failure keeps the collection, the safe side of an unknown.
+// through the same chain the write path uses -- a grouped gateway's explicit
+// collection, then the storage rules, then the bucket name -- and reports it
+// only when nothing outside the bucket can still route into it. A shared
+// collection must survive the bucket delete: dropping it removes volumes
+// other paths still write to. A listing failure keeps the collection, the
+// safe side of an unknown.
 func (f *Filer) bucketCollection(ctx context.Context, bucket string) (collection string) {
-	resolve := func(name string) string {
-		return util.Nvl(f.FilerConf.MatchStorageRule(f.DirBucketsPath+"/"+name+"/").Collection, name)
+	bucketDir := f.DirBucketsPath + "/" + bucket + "/"
+	resolve := func(dir, name string) string {
+		if f.MasterClient != nil {
+			if group := f.MasterClient.FilerGroup; group != "" {
+				return group + "_" + name
+			}
+		}
+		return util.Nvl(f.FilerConf.MatchStorageRule(dir).Collection, name)
 	}
-	collection = resolve(bucket)
+	collection = resolve(bucketDir, bucket)
+
+	// A rule whose prefix escapes the bucket can route other paths into the
+	// same collection, including prefixes nested under surviving buckets.
+	for _, rule := range f.FilerConf.ToProto().Locations {
+		prefix := strings.TrimSuffix(rule.LocationPrefix, "/") + "/"
+		if strings.HasPrefix(prefix, bucketDir) {
+			continue
+		}
+		if f.FilerConf.MatchStorageRule(prefix).Collection == collection {
+			return ""
+		}
+	}
+
 	siblings, err := f.listBuckets(ctx)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "list buckets for collection check: %v", err)
 		return ""
 	}
 	for _, sibling := range siblings {
-		if sibling != bucket && resolve(sibling) == collection {
+		if sibling != bucket && resolve(f.DirBucketsPath+"/"+sibling+"/", sibling) == collection {
 			return ""
 		}
 	}
