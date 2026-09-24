@@ -14,6 +14,9 @@ import (
 )
 
 func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64, vacuumInterval time.Duration) {
+	if vacuumInterval <= 0 {
+		vacuumInterval = 14 * time.Minute
+	}
 	go func() {
 		for {
 			if t.IsLeader() {
