@@ -245,6 +245,12 @@ func (f *Filer) bucketCollection(ctx context.Context, bucket string) (collection
 	}
 	collection = resolve(bucketDir, bucket)
 
+	// Rule-less writes outside buckets fall back to the filer's default
+	// collection, so a bucket resolving there shares it with them.
+	if collection == f.metaLogCollection {
+		return ""
+	}
+
 	// A rule whose prefix escapes the bucket can route other paths into the
 	// same collection, including prefixes nested under surviving buckets.
 	for _, rule := range f.FilerConf.ToProto().Locations {

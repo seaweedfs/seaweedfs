@@ -287,6 +287,28 @@ func TestDeleteBucketKeepsCollectionFromBroadRule(t *testing.T) {
 	}
 }
 
+// A bucket resolving to the filer's default collection keeps it: rule-less
+// writes outside buckets land there too, so it is never one bucket's alone.
+func TestDeleteBucketKeepsDefaultCollection(t *testing.T) {
+	f, store, master := newFilerWithFakeMaster(t)
+	f.metaLogCollection = "everything"
+	f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/a",
+		Collection:     "everything",
+	})
+	seedBucket(t, store, util.FullPath("/buckets/a"))
+
+	if err := f.DeleteEntryMetaAndData(context.Background(), "/buckets/a", true, false, true, false, nil, 0); err != nil {
+		t.Fatalf("DeleteEntryMetaAndData: %v", err)
+	}
+
+	select {
+	case call := <-master.calls:
+		t.Fatalf("the filer's default collection was deleted: %q", call.name)
+	default:
+	}
+}
+
 // A rule nested under a surviving bucket keeps the collection: the other
 // bucket resolves elsewhere at its root, but objects deeper inside it still
 // land in the shared collection.
