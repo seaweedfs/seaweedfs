@@ -642,9 +642,14 @@ fn byte_unit_multiplier(unit: &str) -> Option<u64> {
 }
 
 /// Parse a human-readable byte count with Go's `util.ParseBytes` grammar: a
-/// decimal number (thousands commas allowed, `1,024MB`), optional whitespace,
-/// then one of the suffixes in [`byte_unit_multiplier`], case-insensitive.
-/// `10GiB` → 10737418240, `1.5TB` → 1500000000000, `42 mib` → 44040192.
+/// decimal number, optional whitespace, then one of the suffixes in
+/// [`byte_unit_multiplier`], case-insensitive. `10GiB` → 10737418240,
+/// `1.5TB` → 1500000000000, `42 mib` → 44040192.
+///
+/// Like Go, the number may carry thousands commas — but a comma never reaches
+/// this function from `-minFreeSpace`, because that flag is split on commas
+/// into per-directory entries first (Go's `MustParseMinFreeSpace` does the
+/// same), so `-minFreeSpace=1,024MB` means the two entries `1` and `024MB`.
 fn parse_bytes(s: &str) -> Result<u64, String> {
     let digits_end = s
         .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))
@@ -1508,6 +1513,8 @@ mod tests {
             ("10gib", 10 * 1024 * 1024 * 1024),
             ("10GB", 10_000_000_000),
             ("1.5TB", 1_500_000_000_000),
+            // Go's ParseBytes accepts thousands commas; the -minFreeSpace flag
+            // never delivers one (see test_min_free_space_flag_commas_are_list_separators).
             ("1,024MB", 1_024_000_000),
             ("1,024", 1024),
             ("1PiB", 1 << 50),
@@ -1576,8 +1583,10 @@ mod tests {
         expect_bytes(parse_min_free_space("10GiB"), 10 << 30, "10GiB");
         expect_bytes(parse_min_free_space("10gib"), 10 << 30, "10gib");
         expect_bytes(parse_min_free_space("1.5TB"), 1_500_000_000_000, "1.5TB");
+        // Single-entry parser only: ParseFloat rejects the comma, so Go falls
+        // through to ParseBytes. From the flag these never arrive whole, see
+        // test_min_free_space_flag_commas_are_list_separators.
         expect_bytes(parse_min_free_space("1,024MB"), 1_024_000_000, "1,024MB");
-        // ParseFloat rejects the comma, so Go falls through to ParseBytes: 1000 bytes.
         expect_bytes(parse_min_free_space("1,000"), 1000, "1,000");
 
         // Go: percent outside 0..=100, or a byte size of at most 100 bytes.
@@ -1637,6 +1646,36 @@ mod tests {
         // Both flags empty: Go fatals (ParseMinFreeSpace("") fails) rather than
         // assuming 1%.
         assert!(parse_min_free_spaces("", "").is_err());
+    }
+
+    /// A comma in `-minFreeSpace` is the per-directory separator, never a
+    /// thousands separator: `1,024MB` is the two entries `1` (percent) and
+    /// `024MB`, exactly as Go's `MustParseMinFreeSpace` splits it. With one
+    /// `-dir` the count check in resolve_config rejects it; with two it is two
+    /// different thresholds. Documented so nobody reads parse_bytes's comma
+    /// support as reachable from the flag.
+    #[test]
+    fn test_min_free_space_flag_commas_are_list_separators() {
+        let result = parse_min_free_spaces("1,024MB", "").unwrap();
+        assert_eq!(result.len(), 2, "{result:?}");
+        assert!(
+            matches!(result[0], MinFreeSpace::Percent(v) if v == 1.0),
+            "{result:?}"
+        );
+        assert!(
+            matches!(result[1], MinFreeSpace::Bytes(v) if v == 24_000_000),
+            "{result:?}"
+        );
+
+        let _guard = process_state_lock();
+        let cli = Cli::parse_from(["bin", "--dir", "/tmp/a", "--minFreeSpace", "1,024MB"]);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            resolve_config_with_env(cli, &|_| None).min_free_spaces
+        }));
+        assert!(
+            outcome.is_err(),
+            "one -dir with two minFreeSpace entries must abort"
+        );
     }
 
     /// Negative control at the startup layer: resolving the config with an
