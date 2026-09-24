@@ -215,26 +215,45 @@ func (c *fsyncAssignClient) AdjustedUrl(loc *filer_pb.Location) string { return 
 func (c *fsyncAssignClient) GetDataCenter() string                     { return "" }
 
 func TestUploadWithRetryAppendsFsyncWhenAssigned(t *testing.T) {
-	var gotFsync string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotFsync = r.URL.Query().Get("fsync")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = io.WriteString(w, `{"size":3}`)
-	}))
-	defer server.Close()
+	for _, tc := range []struct {
+		name  string
+		proxy bool
+	}{
+		{name: "direct"},
+		{name: "filer proxy", proxy: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const fileID = "1,0123456789"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if gotFsync := r.URL.Query().Get("fsync"); gotFsync != "true" {
+					t.Errorf("upload fsync = %q, want true when assignment requires fsync", gotFsync)
+				}
+				if tc.proxy {
+					if got := r.URL.Query().Get("proxyChunkId"); got != fileID {
+						t.Errorf("proxyChunkId = %q, want %q", got, fileID)
+					}
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"size":3}`)
+			}))
+			defer server.Close()
 
-	client := &fsyncAssignClient{response: &filer_pb.AssignVolumeResponse{
-		FileId:   "1,0123456789",
-		Location: &filer_pb.Location{Url: strings.TrimPrefix(server.URL, "http://")},
-		Fsync:    true,
-	}}
-	_, _, err, _ := newUploader(server.Client()).UploadWithRetry(client,
-		&filer_pb.AssignVolumeRequest{Path: "/bucket/object"}, &UploadOption{}, strings.NewReader("abc"))
-	if err != nil {
-		t.Fatalf("upload failed: %v", err)
-	}
-	if gotFsync != "true" {
-		t.Errorf("upload fsync = %q, want true when assignment requires fsync", gotFsync)
+			host := strings.TrimPrefix(server.URL, "http://")
+			client := &fsyncAssignClient{response: &filer_pb.AssignVolumeResponse{
+				FileId:   fileID,
+				Location: &filer_pb.Location{Url: host},
+				Fsync:    true,
+			}}
+			option := &UploadOption{}
+			if tc.proxy {
+				option.GenUploadUrl = GenUploadUrlProxy(host)
+			}
+			_, _, err, _ := newUploader(server.Client()).UploadWithRetry(client,
+				&filer_pb.AssignVolumeRequest{Path: "/bucket/object"}, option, strings.NewReader("abc"))
+			if err != nil {
+				t.Fatalf("upload failed: %v", err)
+			}
+		})
 	}
 }
 
