@@ -320,7 +320,7 @@ func TestDestroyRemovesCommitMarker(t *testing.T) {
 		}
 	}
 
-	if err := v.Destroy(false, false); err != nil {
+	if err := v.Destroy(false, false, false); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
 

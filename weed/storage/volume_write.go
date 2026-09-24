@@ -44,7 +44,7 @@ var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
 // Destroy removes everything related to this volume. When keepRemoteData is
 // true the cloud-tier object backing the volume is left intact — used by
 // moves where another server is taking over the same .vif.
-func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
+func (v *Volume) Destroy(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (err error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -58,6 +58,10 @@ func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
 			err = ErrVolumeNotEmpty
 			return
 		}
+	}
+	if onlyGarbage && !v.doIsGarbage() {
+		err = ErrVolumeNotEmpty
+		return
 	}
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)

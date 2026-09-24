@@ -590,7 +590,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			// delete expired volumes.
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid, false, false)
+				found, err := location.deleteVolumeById(vid, false, false, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
@@ -1119,7 +1119,7 @@ func RenameOrCopyFile(src, dst string) error {
 	return nil
 }
 
-func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
+func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
 	// Delete every copy of the volume id across disks, not just the first match, so
 	// a stale twin (e.g. a re-attached disk; NewStore has no cross-disk duplicate
 	// guard) cannot survive a delete and re-register as the volume's content.
@@ -1139,7 +1139,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 			DiskType:         string(location.DiskType),
 			DiskId:           v.diskId,
 		}
-		err := location.DeleteVolume(i, onlyEmpty, keepRemoteData)
+		err := location.DeleteVolume(i, onlyEmpty, onlyGarbage, keepRemoteData)
 		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d disk_id:%d", i, v.diskId)
 			s.DeletedVolumesChan <- &message

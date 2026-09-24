@@ -82,8 +82,9 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 				if isEmptyVolumeDeleteCandidate(v, quietSeconds, nowUnixSeconds, collectionMatcher) {
 					if *applyBalancing {
 						log.Printf("deleting empty volume %d from %s", v.Id, dn.Id)
+						onlyGarbage := v.FileCount > 0 && v.FileCount <= v.DeleteCount
 						if deleteErr := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id),
-							pb.NewServerAddressFromDataNode(dn), true, false); deleteErr != nil {
+							pb.NewServerAddressFromDataNode(dn), !onlyGarbage, onlyGarbage, false); deleteErr != nil {
 							err = deleteErr
 						}
 						continue

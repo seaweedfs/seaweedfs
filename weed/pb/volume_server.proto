@@ -259,6 +259,9 @@ message VolumeDeleteRequest {
     // when true, do not remove the cloud-tier object backing the volume.
     // used for moves where another server is taking over the same .vif.
     bool keep_remote_data = 3;
+    // when true, delete only if every needle is deleted: the volume held
+    // data once but nothing is live anymore.
+    bool only_garbage = 4;
 }
 message VolumeDeleteResponse {
 }

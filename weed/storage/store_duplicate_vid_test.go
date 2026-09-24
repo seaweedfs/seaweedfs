@@ -42,7 +42,7 @@ func TestDeleteVolumeRemovesAllDuplicateCopies(t *testing.T) {
 		loc.SetVolume(vid, v)
 	}
 
-	require.NoError(t, store.DeleteVolume(vid, false, false))
+	require.NoError(t, store.DeleteVolume(vid, false, false, false))
 
 	_, found0 := store.Locations[0].FindVolume(vid)
 	_, found1 := store.Locations[1].FindVolume(vid)
