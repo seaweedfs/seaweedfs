@@ -4,6 +4,7 @@
 
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
+use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
 use aws_sdk_s3::primitives::ByteStream;
 
 use super::{RemoteEntry, RemoteStorageClient, RemoteStorageError};
@@ -25,6 +26,23 @@ impl S3RemoteStorageClient {
         endpoint: &str,
         force_path_style: bool,
     ) -> Self {
+        let client = Client::from_conf(
+            Self::config_builder(access_key, secret_key, region, endpoint, force_path_style)
+                .build(),
+        );
+
+        S3RemoteStorageClient { client, conf }
+    }
+
+    /// Build the SDK config for the given credentials and endpoint. Split out so
+    /// tests can attach a canned HTTP client before building the [`Client`].
+    fn config_builder(
+        access_key: &str,
+        secret_key: &str,
+        region: &str,
+        endpoint: &str,
+        force_path_style: bool,
+    ) -> aws_sdk_s3::config::Builder {
         let region = if region.is_empty() {
             "us-east-1"
         } else {
@@ -49,9 +67,7 @@ impl S3RemoteStorageClient {
             s3_config = s3_config.endpoint_url(endpoint);
         }
 
-        let client = Client::from_conf(s3_config.build());
-
-        S3RemoteStorageClient { client, conf }
+        s3_config
     }
 }
 
@@ -75,13 +91,16 @@ impl RemoteStorageClient for S3RemoteStorageClient {
             req = req.range(format!("bytes={}-", offset));
         }
 
-        let resp = req.send().await.map_err(|e| {
-            let msg = format!("{}", e);
-            if msg.contains("NoSuchKey") || msg.contains("404") {
+        let resp = req.send().await.map_err(|e| match e {
+            // Go checks `aerr.Code() == s3.ErrCodeNoSuchKey` on GET
+            // (weed/remote_storage/s3/s3_storage_client.go:436). A bare HTTP 404
+            // without a NoSuchKey body is deliberately NOT treated as not-found
+            // here: the Go SDK maps such a response to code "NotFound", which
+            // fails Go's NoSuchKey comparison, so it stays a generic error.
+            SdkError::ServiceError(ref se) if se.err().is_no_such_key() => {
                 RemoteStorageError::ObjectNotFound(format!("{}/{}", loc.bucket, key))
-            } else {
-                RemoteStorageError::Other(format!("s3 get object: {}", e))
             }
+            e => RemoteStorageError::Other(format!("s3 get object: {}", DisplayErrorContext(&e))),
         })?;
 
         let data = resp
@@ -108,7 +127,9 @@ impl RemoteStorageClient for S3RemoteStorageClient {
             .body(ByteStream::from(data.to_vec()))
             .send()
             .await
-            .map_err(|e| RemoteStorageError::Other(format!("s3 put object: {}", e)))?;
+            .map_err(|e| {
+                RemoteStorageError::Other(format!("s3 put object: {}", DisplayErrorContext(&e)))
+            })?;
 
         Ok(RemoteEntry {
             size: data.len() as i64,
@@ -134,13 +155,22 @@ impl RemoteStorageClient for S3RemoteStorageClient {
             .key(key)
             .send()
             .await
-            .map_err(|e| {
-                let msg = format!("{}", e);
-                if msg.contains("404") || msg.contains("NotFound") {
+            .map_err(|e| match e {
+                // Go checks the raw HTTP status on HEAD
+                // (weed/remote_storage/s3/s3_storage_client.go:373), because a
+                // HEAD response carries no error body to name a code. The SDK
+                // synthesizes `NotFound` from a body-less 404; the explicit
+                // status check covers a 404 whose body the SDK parsed into some
+                // other code (non-AWS servers do send one), matching Go exactly.
+                SdkError::ServiceError(ref se)
+                    if se.err().is_not_found() || se.raw().status().as_u16() == 404 =>
+                {
                     RemoteStorageError::ObjectNotFound(format!("{}/{}", loc.bucket, key))
-                } else {
-                    RemoteStorageError::Other(format!("s3 head object: {}", e))
                 }
+                e => RemoteStorageError::Other(format!(
+                    "s3 head object: {}",
+                    DisplayErrorContext(&e)
+                )),
             })?;
 
         Ok(RemoteEntry {
@@ -160,18 +190,17 @@ impl RemoteStorageClient for S3RemoteStorageClient {
             .key(key)
             .send()
             .await
-            .map_err(|e| RemoteStorageError::Other(format!("s3 delete object: {}", e)))?;
+            .map_err(|e| {
+                RemoteStorageError::Other(format!("s3 delete object: {}", DisplayErrorContext(&e)))
+            })?;
 
         Ok(())
     }
 
     async fn list_buckets(&self) -> Result<Vec<String>, RemoteStorageError> {
-        let resp = self
-            .client
-            .list_buckets()
-            .send()
-            .await
-            .map_err(|e| RemoteStorageError::Other(format!("s3 list buckets: {}", e)))?;
+        let resp = self.client.list_buckets().send().await.map_err(|e| {
+            RemoteStorageError::Other(format!("s3 list buckets: {}", DisplayErrorContext(&e)))
+        })?;
 
         Ok(resp
             .buckets()
@@ -182,5 +211,166 @@ impl RemoteStorageClient for S3RemoteStorageClient {
 
     fn remote_conf(&self) -> &RemoteConf {
         &self.conf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aws_sdk_s3::config::http::{HttpRequest, HttpResponse};
+    use aws_sdk_s3::config::retry::RetryConfig;
+    use aws_sdk_s3::config::{HttpClient, RuntimeComponents};
+    use aws_sdk_s3::primitives::SdkBody;
+    use aws_smithy_runtime_api::client::http::{
+        HttpConnector, HttpConnectorFuture, HttpConnectorSettings, SharedHttpConnector,
+    };
+    use aws_smithy_runtime_api::http::StatusCode;
+
+    /// An SDK HTTP client that answers every request with one canned response,
+    /// so the error-mapping paths can be exercised without a network or a
+    /// running S3 server.
+    #[derive(Debug, Clone)]
+    struct CannedResponse {
+        status: u16,
+        body: &'static str,
+    }
+
+    impl HttpConnector for CannedResponse {
+        fn call(&self, _request: HttpRequest) -> HttpConnectorFuture {
+            let status = StatusCode::try_from(self.status).expect("valid HTTP status");
+            HttpConnectorFuture::ready(Ok(HttpResponse::new(status, SdkBody::from(self.body))))
+        }
+    }
+
+    impl HttpClient for CannedResponse {
+        fn http_connector(
+            &self,
+            _settings: &HttpConnectorSettings,
+            _components: &RuntimeComponents,
+        ) -> SharedHttpConnector {
+            SharedHttpConnector::new(self.clone())
+        }
+    }
+
+    fn client_with(status: u16, body: &'static str) -> S3RemoteStorageClient {
+        let config = S3RemoteStorageClient::config_builder(
+            "AKIATEST",
+            "secret",
+            "us-east-1",
+            "http://127.0.0.1:1",
+            true,
+        )
+        .http_client(CannedResponse { status, body })
+        .retry_config(RetryConfig::disabled())
+        .build();
+        S3RemoteStorageClient {
+            client: Client::from_conf(config),
+            conf: RemoteConf::default(),
+        }
+    }
+
+    fn location() -> RemoteStorageLocation {
+        RemoteStorageLocation {
+            name: "remote".to_string(),
+            bucket: "bucket".to_string(),
+            path: "/dir/missing".to_string(),
+            ..Default::default()
+        }
+    }
+
+    const NO_SUCH_KEY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Key>dir/missing</Key></Error>"#;
+
+    const ACCESS_DENIED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>"#;
+
+    #[tokio::test]
+    async fn get_no_such_key_is_object_not_found() {
+        let err = client_with(404, NO_SUCH_KEY)
+            .read_file(&location(), 0, 0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, RemoteStorageError::ObjectNotFound(path) if path == "bucket/dir/missing"),
+            "expected ObjectNotFound, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_bare_404_is_not_object_not_found() {
+        // Go only compares the error code against NoSuchKey on GET; a 404 with
+        // no error body gets code "NotFound" in the Go SDK and stays generic.
+        let err = client_with(404, "")
+            .read_file(&location(), 0, 0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, RemoteStorageError::Other(_)),
+            "expected Other, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn head_404_is_object_not_found() {
+        let err = client_with(404, "")
+            .stat_file(&location())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, RemoteStorageError::ObjectNotFound(path) if path == "bucket/dir/missing"),
+            "expected ObjectNotFound, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn head_404_with_foreign_error_body_is_object_not_found() {
+        // A 404 whose body names a code other than NotFound: the SDK does not
+        // classify it, but Go's raw status check still says not-found.
+        let err = client_with(404, NO_SUCH_KEY)
+            .stat_file(&location())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, RemoteStorageError::ObjectNotFound(_)),
+            "expected ObjectNotFound, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_access_denied_keeps_service_error_code() {
+        let err = client_with(403, ACCESS_DENIED)
+            .read_file(&location(), 0, 0)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            matches!(err, RemoteStorageError::Other(_)),
+            "expected Other, got {err:?}"
+        );
+        assert!(
+            msg.contains("AccessDenied"),
+            "message should carry the S3 error code, got: {msg}"
+        );
+        assert!(
+            !msg.ends_with("service error"),
+            "message should not be the bare SdkError Display, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn head_access_denied_keeps_service_error_code() {
+        let err = client_with(403, ACCESS_DENIED)
+            .stat_file(&location())
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            matches!(err, RemoteStorageError::Other(_)),
+            "expected Other, got {err:?}"
+        );
+        assert!(
+            msg.contains("AccessDenied"),
+            "message should carry the S3 error code, got: {msg}"
+        );
     }
 }
