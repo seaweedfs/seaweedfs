@@ -7,7 +7,6 @@ import (
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 )
 
@@ -63,17 +62,6 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 	})
 	if err != nil {
 		return err
-	}
-
-	// delete the collection directly first
-	err = commandEnv.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
-		_, err = client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
-			Name: getCollectionName(commandEnv, *bucketName),
-		})
-		return err
-	})
-	if err != nil {
-		return
 	}
 
 	return filer_pb.Remove(ctx, commandEnv, filerBucketsPath, *bucketName, false, true, true, false, nil)
