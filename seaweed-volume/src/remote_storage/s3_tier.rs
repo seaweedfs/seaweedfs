@@ -555,18 +555,197 @@ pub fn global_s3_tier_registry() -> &'static RwLock<S3TierRegistry> {
     GLOBAL_S3_TIER_REGISTRY.get_or_init(|| RwLock::new(S3TierRegistry::new()))
 }
 
+/// The one process-wide runtime that drives tiered-S3 I/O issued from
+/// synchronous storage code (`read_range_blocking`, `delete_file_blocking`).
+///
+/// The SDK client's pooled HTTPS connections are kept alive by tasks on the
+/// runtime a request was driven on. Building a runtime per call, as this file
+/// used to, tore that pool down after every 64 KiB chunk, so every read
+/// re-dialed and re-handshook TLS. One long-lived runtime keeps the pool warm,
+/// which is what Go's synchronous S3 client gets for free.
+///
+/// Two workers are plenty: they only poll HTTP futures, the bytes are moved by
+/// the kernel, and the caller is blocked for the duration anyway.
+static TIER_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+fn tier_runtime() -> &'static tokio::runtime::Runtime {
+    TIER_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("tier-io")
+            .enable_all()
+            .build()
+            // Only fails when the OS refuses to spawn threads, in which case
+            // this volume server cannot serve anything else either.
+            .expect("failed to build the tier I/O tokio runtime")
+    })
+}
+
+/// Run `future` on the tier runtime and block the calling thread until it
+/// finishes.
+///
+/// Blocking the caller is unavoidable: the storage layer is synchronous
+/// (`read_exact_at`-style calls under `spawn_blocking`, or a plain OS thread
+/// during volume destroy). The caller may also be a worker of *another* tokio
+/// runtime, which is why this spawns onto the tier runtime and waits on a
+/// channel instead of using `Handle::block_on`: that one panics when called
+/// from inside any runtime context ("Cannot start a runtime from within a
+/// runtime"), whereas parking on a channel works from anywhere.
 fn block_on_tier_future<F, T>(future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>> + Send + 'static,
     T: Send + 'static,
 {
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to build tokio runtime: {}", e))?;
-        runtime.block_on(future)
-    })
-    .join()
-    .map_err(|_| "tier runtime thread panicked".to_string())?
+    let runtime = tier_runtime();
+    let task = runtime.spawn(future);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    runtime.spawn(async move {
+        // The receiver only goes away if the caller was unwound; nothing to
+        // report then.
+        let _ = tx.send(task.await);
+    });
+    match rx.recv() {
+        Ok(Ok(result)) => result,
+        Ok(Err(join_error)) => Err(describe_join_error(join_error)),
+        Err(_) => Err("tier I/O runtime dropped the task before it finished".to_string()),
+    }
+}
+
+/// Turn a `JoinError` into a message that keeps the panic payload, so an
+/// SDK panic surfaces as "boom" rather than a fixed "thread panicked".
+fn describe_join_error(join_error: tokio::task::JoinError) -> String {
+    if join_error.is_panic() {
+        let payload = join_error.into_panic();
+        let message = if let Some(s) = payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "non-string panic payload".to_string()
+        };
+        format!("tier I/O task panicked: {}", message)
+    } else {
+        format!("tier I/O task failed: {}", join_error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use tokio::runtime::Handle;
+
+    fn probe() -> Result<(tokio::runtime::Id, Option<String>), String> {
+        block_on_tier_future(async {
+            Ok((
+                Handle::current().id(),
+                std::thread::current().name().map(str::to_string),
+            ))
+        })
+    }
+
+    #[test]
+    fn block_on_tier_future_reuses_one_runtime() {
+        let (first_runtime, first_thread) = probe().expect("first call");
+        let (second_runtime, second_thread) = probe().expect("second call");
+        assert_eq!(
+            first_runtime, second_runtime,
+            "each call must run on the same long-lived tier runtime"
+        );
+        assert_eq!(first_thread.as_deref(), Some("tier-io"));
+        assert_eq!(second_thread.as_deref(), Some("tier-io"));
+
+        let mut runtimes = HashSet::new();
+        for _ in 0..20 {
+            let (id, _) = probe().expect("probe");
+            runtimes.insert(id);
+        }
+        assert_eq!(runtimes.len(), 1);
+    }
+
+    #[test]
+    fn block_on_tier_future_returns_the_value_and_the_error() {
+        assert_eq!(block_on_tier_future(async { Ok(7u32) }), Ok(7));
+        assert_eq!(
+            block_on_tier_future::<_, u32>(async { Err("nope".to_string()) }),
+            Err("nope".to_string())
+        );
+    }
+
+    #[test]
+    fn block_on_tier_future_works_from_a_std_thread() {
+        let (id, _) = std::thread::spawn(probe)
+            .join()
+            .expect("probe thread")
+            .expect("probe");
+        assert_eq!(id, tier_runtime().handle().id());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn block_on_tier_future_works_from_spawn_blocking() {
+        let (id, _) = tokio::task::spawn_blocking(probe)
+            .await
+            .expect("spawn_blocking")
+            .expect("probe");
+        assert_eq!(id, tier_runtime().handle().id());
+        assert_ne!(id, Handle::current().id());
+    }
+
+    // Called straight from another runtime's async context: the case that
+    // would panic with `Handle::block_on` ("Cannot start a runtime from
+    // within a runtime").
+    #[tokio::test]
+    async fn block_on_tier_future_works_from_a_current_thread_runtime() {
+        let (id, _) = probe().expect("probe");
+        assert_eq!(id, tier_runtime().handle().id());
+        assert_ne!(id, Handle::current().id());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn block_on_tier_future_works_from_a_multi_thread_runtime_worker() {
+        let (id, _) = probe().expect("probe");
+        assert_eq!(id, tier_runtime().handle().id());
+        assert_ne!(id, Handle::current().id());
+    }
+
+    #[test]
+    fn block_on_tier_future_reports_the_panic_payload() {
+        let err = block_on_tier_future::<_, ()>(async {
+            if std::hint::black_box(true) {
+                panic!("boom {}", 42);
+            }
+            Ok(())
+        })
+        .expect_err("a panicking future must be an error");
+        assert!(err.contains("boom 42"), "got: {err}");
+        assert!(err.contains("panicked"), "got: {err}");
+    }
+
+    #[test]
+    fn block_on_tier_future_reports_a_str_panic_payload() {
+        let err = block_on_tier_future::<_, ()>(async {
+            if std::hint::black_box(true) {
+                panic!("static boom");
+            }
+            Ok(())
+        })
+        .expect_err("a panicking future must be an error");
+        assert!(err.contains("static boom"), "got: {err}");
+    }
+
+    #[test]
+    fn backend_name_to_type_id_splits_on_dot() {
+        assert_eq!(
+            backend_name_to_type_id("s3"),
+            ("s3".to_string(), "default".to_string())
+        );
+        assert_eq!(
+            backend_name_to_type_id("s3.eu"),
+            ("s3".to_string(), "eu".to_string())
+        );
+        assert_eq!(
+            backend_name_to_type_id("s3.a.b"),
+            (String::new(), String::new())
+        );
+    }
 }
