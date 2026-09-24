@@ -48,22 +48,8 @@ func (v *Volume) Destroy(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
-	if onlyEmpty || onlyGarbage {
-		// Either enabled check may pass: a volume with no live data qualifies
-		// whether it reads empty or as all garbage.
-		emptyOk := false
-		if onlyEmpty {
-			isEmpty, e := v.doIsEmpty()
-			if e != nil {
-				err = fmt.Errorf("failed to read isEmpty %v", e)
-				return
-			}
-			emptyOk = isEmpty
-		}
-		if !emptyOk && !(onlyGarbage && v.doIsGarbage()) {
-			err = ErrVolumeNotEmpty
-			return
-		}
+	if err = v.checkDeletableLocked(onlyEmpty, onlyGarbage); err != nil {
+		return
 	}
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
@@ -87,6 +73,36 @@ func (v *Volume) Destroy(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) 
 	removeVolumeFiles(v.DataFileName(), keepVif)
 	removeVolumeFiles(v.IndexFileName(), keepVif)
 	return
+}
+
+// checkDeletableLocked enforces the guards Destroy applies before removing
+// any file: either enabled check may pass, since a volume with no live data
+// qualifies whether it reads empty or as all garbage.
+func (v *Volume) checkDeletableLocked(onlyEmpty bool, onlyGarbage bool) (err error) {
+	if !onlyEmpty && !onlyGarbage {
+		return nil
+	}
+	emptyOk := false
+	if onlyEmpty {
+		isEmpty, e := v.doIsEmpty()
+		if e != nil {
+			return fmt.Errorf("failed to read isEmpty %v", e)
+		}
+		emptyOk = isEmpty
+	}
+	if !emptyOk && !(onlyGarbage && v.doIsGarbage()) {
+		return ErrVolumeNotEmpty
+	}
+	return nil
+}
+
+// checkDeletable runs the onlyEmpty/onlyGarbage guards without removing
+// anything, so a delete spanning duplicate copies can validate all of them
+// before destroying any.
+func (v *Volume) checkDeletable(onlyEmpty bool, onlyGarbage bool) error {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	return v.checkDeletableLocked(onlyEmpty, onlyGarbage)
 }
 
 // sharesVifWithEcVolume reports whether an EC volume for this volume id lives

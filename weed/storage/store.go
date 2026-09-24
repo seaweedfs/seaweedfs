@@ -1123,6 +1123,16 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool
 	// Delete every copy of the volume id across disks, not just the first match, so
 	// a stale twin (e.g. a re-attached disk; NewStore has no cross-disk duplicate
 	// guard) cannot survive a delete and re-register as the volume's content.
+
+	// Validate all copies first: a guarded copy must not leave another disk's
+	// copy already destroyed.
+	if onlyEmpty || onlyGarbage {
+		for _, location := range s.Locations {
+			if err := location.CheckVolumeDeletable(i, onlyEmpty, onlyGarbage); err != nil && err != ErrVolumeNotFound {
+				return fmt.Errorf("DeleteVolume %d: %w", i, err)
+			}
+		}
+	}
 	deletedAny := false
 	var errs []error
 	for _, location := range s.Locations {

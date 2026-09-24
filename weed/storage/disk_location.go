@@ -528,6 +528,19 @@ func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapK
 
 var ErrVolumeNotFound = fmt.Errorf("volume not found")
 
+// CheckVolumeDeletable runs the DeleteVolume guards without deleting, so a
+// store-level delete can validate every duplicate copy before removing any.
+func (l *DiskLocation) CheckVolumeDeletable(vid needle.VolumeId, onlyEmpty bool, onlyGarbage bool) error {
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
+
+	v, ok := l.volumes[vid]
+	if !ok {
+		return ErrVolumeNotFound
+	}
+	return v.checkDeletable(onlyEmpty, onlyGarbage)
+}
+
 func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
 	l.volumesLock.Lock()
 	defer l.volumesLock.Unlock()
