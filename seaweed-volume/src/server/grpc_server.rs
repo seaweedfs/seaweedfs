@@ -2271,6 +2271,8 @@ impl VolumeServer for VolumeGrpcService {
         request: Request<volume_server_pb::CopyFileRequest>,
     ) -> Result<Response<Self::CopyFileStream>, Status> {
         let req = request.into_inner();
+        check_volume_file_extension(&req.ext).map_err(Status::invalid_argument)?;
+        check_volume_collection(&req.collection).map_err(Status::invalid_argument)?;
         let vid = VolumeId(req.volume_id);
 
         let file_name: String;
@@ -5645,6 +5647,31 @@ struct CopyProgress<'a> {
     next_report_target: &'a mut i64,
     report_interval: i64,
     throttler: &'a mut WriteThrottler,
+}
+
+/// Mirrors Go's checkVolumeFileExtension: the client-supplied Ext that
+/// CopyFile and ReceiveFile join onto the volume directory. A genuine
+/// extension is a leading dot plus alphanumerics (".dat", ".idx", ".ecx",
+/// ".ec00"..) and never a separator or "..".
+fn check_volume_file_extension(ext: &str) -> Result<(), String> {
+    let valid = ext.len() >= 2
+        && ext.starts_with('.')
+        && ext[1..].bytes().all(|b| b.is_ascii_alphanumeric());
+    if !valid {
+        return Err(format!("invalid file extension {ext:?}"));
+    }
+    Ok(())
+}
+
+/// Mirrors Go's checkVolumeCollection: the client-supplied Collection that
+/// CopyFile and ReceiveFile fold into a path component ("<collection>_<vid>").
+/// Collection names may hold '.' or '-', so this rejects only separators and
+/// bare parent references.
+fn check_volume_collection(collection: &str) -> Result<(), String> {
+    if collection == "." || collection == ".." || collection.contains(['/', '\\']) {
+        return Err(format!("invalid collection {collection:?}"));
+    }
+    Ok(())
 }
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
@@ -9040,5 +9067,59 @@ mod tests {
                 .is_some(),
             "refused delete must leave the volume mounted"
         );
+    }
+
+    // A collection or ext carrying a separator or ".." is folded into a path
+    // CopyFile then opens; it must be rejected rather than climbed out of the
+    // volume directory. Mirrors Go's checkVolumeFileExtension /
+    // checkVolumeCollection.
+    #[tokio::test]
+    async fn copy_file_rejects_traversal_in_collection_and_ext() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let unique = tmp
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let outside = tmp
+            .path()
+            .parent()
+            .unwrap()
+            .join(format!("copy_escape_{unique}_888.txt"));
+        std::fs::write(&outside, b"secret").unwrap();
+
+        let traversal = |collection: &str, ext: &str| volume_server_pb::CopyFileRequest {
+            volume_id: 888,
+            ext: ext.to_string(),
+            collection: collection.to_string(),
+            is_ec_volume: true,
+            stop_offset: u64::MAX,
+            compaction_revision: u32::MAX,
+            ignore_source_file_not_found: false,
+        };
+        let name = outside
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .trim_end_matches("_888.txt")
+            .to_string();
+        let status = service
+            .copy_file(Request::new(traversal(&format!("../{name}"), ".txt")))
+            .await
+            .err()
+            .expect("a collection that climbs out of the store must be rejected");
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{status}");
+
+        let status = service
+            .copy_file(Request::new(traversal("", "/../escape")))
+            .await
+            .err()
+            .expect("an ext that climbs out of the store must be rejected");
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{status}");
+
+        std::fs::remove_file(&outside).unwrap();
     }
 }
