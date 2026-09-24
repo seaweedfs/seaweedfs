@@ -156,15 +156,14 @@ impl RemoteStorageClient for S3RemoteStorageClient {
             .send()
             .await
             .map_err(|e| match e {
-                // Go checks the raw HTTP status on HEAD
+                // Go checks only the raw HTTP status on HEAD
                 // (weed/remote_storage/s3/s3_storage_client.go:373), because a
-                // HEAD response carries no error body to name a code. The SDK
-                // synthesizes `NotFound` from a body-less 404; the explicit
-                // status check covers a 404 whose body the SDK parsed into some
-                // other code (non-AWS servers do send one), matching Go exactly.
-                SdkError::ServiceError(ref se)
-                    if se.err().is_not_found() || se.raw().status().as_u16() == 404 =>
-                {
+                // HEAD response carries no error body to name a code. The raw
+                // status covers both the body-less 404 the SDK turns into
+                // `NotFound` and a 404 whose body names some other code
+                // (non-AWS servers do send one). A `NotFound` code on a
+                // non-404 status is NOT a missing object, as in Go.
+                SdkError::ServiceError(ref se) if se.raw().status().as_u16() == 404 => {
                     RemoteStorageError::ObjectNotFound(format!("{}/{}", loc.bucket, key))
                 }
                 e => RemoteStorageError::Other(format!(
@@ -281,6 +280,9 @@ mod tests {
     const NO_SUCH_KEY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Key>dir/missing</Key></Error>"#;
 
+    const NOT_FOUND_BODY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>NotFound</Code><Message>Not Found</Message></Error>"#;
+
     const ACCESS_DENIED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>"#;
 
@@ -333,6 +335,20 @@ mod tests {
         assert!(
             matches!(err, RemoteStorageError::ObjectNotFound(_)),
             "expected ObjectNotFound, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn head_not_found_code_on_a_non_404_status_is_not_object_not_found() {
+        // The SDK classifies a `NotFound` error code whatever the status; Go
+        // looks only at the status, so a 400 with such a body stays an error.
+        let err = client_with(400, NOT_FOUND_BODY)
+            .stat_file(&location())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, RemoteStorageError::Other(msg) if msg.contains("NotFound")),
+            "expected Other naming the code, got {err:?}"
         );
     }
 
