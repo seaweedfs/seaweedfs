@@ -34,20 +34,12 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-// A bucket creation lists collections, and a bucket deletion deletes one.
-// Neither RPC carried a deadline, so a transient failure anywhere down the chain
-// -- gateway to filer, filer to master, master to volume server -- held the S3
-// request open until the client gave up on it. Both budgets are taken outside
-// the filer failover walk, so they cover the whole walk rather than granting
-// each filer a fresh one.
-//
-// The delete is the shorter of the two: the filer has already spent its own
-// budget on this collection, under the bucket entry's delete inside s3a.rm, and
-// this call is the follow-up for when that did not happen.
-const (
-	collectionListTimeout   = 15 * time.Second
-	collectionDeleteTimeout = 10 * time.Second
-)
+// A bucket creation lists collections. The RPC carried no deadline, so a
+// transient failure anywhere down the chain -- gateway to filer, filer to
+// master, master to volume server -- held the S3 request open until the client
+// gave up on it. The budget is taken outside the filer failover walk, so it
+// covers the whole walk rather than granting each filer a fresh one.
+const collectionListTimeout = 15 * time.Second
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -479,11 +471,8 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Delete bucket directory first, then collection. This order ensures that if
-	// collection deletion fails, the bucket directory is already gone, preventing
-	// the "collection exists but bucket directory missing" inconsistency that blocks
-	// bucket recreation. An orphaned collection is harmless and will be cleaned up
-	// or reused when the bucket is recreated.
+	// The filer resolves and drops the bucket's collection inside the delete;
+	// it keeps a shared one rather than risk another bucket's volumes.
 	err := s3a.rm(r.Context(), s3a.option.BucketsPath, bucket, false, true)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -493,36 +482,6 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	if owner := bucketConfig.IdentityId; owner != "" {
 		if err := s3a.removeBucketFromOwnerIndex(owner, bucket); err != nil {
 			glog.Warningf("DeleteBucketHandler: owner index remove %s/%s: %v", owner, bucket, err)
-		}
-	}
-
-	// Bounded on a background context: the bucket directory is already gone, so
-	// this follow-up must survive a client disconnect, but it must not outlive the
-	// client by an unbounded amount either.
-	deleteCtx, cancelDelete := context.WithTimeout(context.Background(), collectionDeleteTimeout)
-	err = s3a.withFilerClient(deleteCtx, false, func(client filer_pb.SeaweedFilerClient) error {
-		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
-			Collection: s3a.getCollectionName(bucket),
-		}
-
-		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
-		if _, err := client.DeleteCollection(deleteCtx, deleteCollectionRequest); err != nil {
-			return fmt.Errorf("delete collection %s: %v", bucket, err)
-		}
-
-		return nil
-	})
-	timedOut := deleteCtx.Err() != nil
-	cancelDelete()
-
-	if err != nil {
-		// Log but don't fail — the bucket directory is already removed, so the bucket
-		// is effectively deleted. The orphaned collection will be cleaned up or reused.
-		if timedOut {
-			// Our own budget, not a refusal: the master carries on deleting once asked.
-			glog.Warningf("DeleteBucketHandler: stopped waiting for the collection delete for bucket %s: %v", bucket, err)
-		} else {
-			glog.Errorf("DeleteBucketHandler: failed to delete collection for bucket %s: %v", bucket, err)
 		}
 	}
 
