@@ -460,10 +460,8 @@ func isFailedPrecondition(err error) bool {
 	if err == nil {
 		return false
 	}
-	if st, ok := status.FromError(err); ok && st.Code() == codes.FailedPrecondition {
-		return true
-	}
-	return strings.Contains(err.Error(), "precondition failed")
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.FailedPrecondition
 }
 
 func isMultipartUploadFile(dir string, name string) bool {

@@ -839,7 +839,7 @@ func TestIsFailedPrecondition(t *testing.T) {
 		{"nil", nil, false},
 		{"status", refused, true},
 		{"wrapped status", fmt.Errorf("update entry: %w", refused), true},
-		{"message only", errors.New("rpc error: code = FailedPrecondition desc = precondition failed: /f"), true},
+		{"message only", errors.New("rpc error: code = FailedPrecondition desc = precondition failed: /f"), false},
 		{"other", status.Error(codes.Unavailable, "filer down"), false},
 	}
 	for _, c := range cases {
