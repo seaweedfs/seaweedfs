@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"math"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -19,7 +20,10 @@ func (f *Filer) ensureEntryInode(entry *Entry) {
 		entry.Attr.Crtime = time.Now()
 	}
 	if len(entry.HardLinkId) > 0 {
-		entry.Attr.Inode = uint64(util.HashStringToLong(string(entry.HardLinkId)))
+		entry.Attr.Inode = uint64(util.HashStringToLong(string(entry.HardLinkId))) & uint64(math.MaxInt64)
+		if entry.Attr.Inode == 0 {
+			entry.Attr.Inode = 1
+		}
 		return
 	}
 	entry.Attr.Inode = entry.FullPath.AsInode(entry.Attr.Crtime.Unix())
