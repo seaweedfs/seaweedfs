@@ -686,7 +686,7 @@ func TestRenameWithInheritedRemoteEntryWritesNewKey(t *testing.T) {
 
 	remote := &recordingRemote{}
 	filerClient := &stubFilerClient{}
-	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatal(err)
 	}
 
@@ -733,7 +733,7 @@ func TestRenameRemoteOnlyEntrySkipsEmptyUpload(t *testing.T) {
 
 	remote := &recordingRemote{}
 	filerClient := &stubFilerClient{}
-	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatal(err)
 	}
 	if len(remote.writes) != 0 {
@@ -766,7 +766,7 @@ func TestRenameDeleteOldKeyFailureReturnsError(t *testing.T) {
 	deleteErr := errors.New("AccessDenied: Access Denied")
 	remote := &recordingRemote{deleteErr: deleteErr}
 	filerClient := &stubFilerClient{}
-	err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp)
+	err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp)
 	if !errors.Is(err, deleteErr) {
 		t.Errorf("err = %v, want the delete failure returned so the event is retried", err)
 	}
@@ -802,7 +802,7 @@ func TestRenameDeleteOldKeyNotFoundStillWrites(t *testing.T) {
 
 	remote := &recordingRemote{deleteErr: remote_storage.ErrRemoteObjectNotFound}
 	filerClient := &stubFilerClient{}
-	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatalf("err = %v, want nil: an already-deleted old key must not block the write", err)
 	}
 	wantWrite := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dst/probe.bin"}
@@ -826,6 +826,38 @@ func TestIfEntryEqualCarriesTheEventEntry(t *testing.T) {
 	}
 	if got := cond.Clauses[0].ExpectedEntry; !proto.Equal(got, entry) {
 		t.Fatalf("expected_entry = %v, want %v", got, entry)
+	}
+}
+
+// The remote-bound entry loses (or gains) the storage class attribute while
+// the event entry keeps it, so IF_ENTRY_EQUAL still sees the entry the filer
+// stored — otherwise every stamp on an S3-written object reads as stale.
+func TestRemoteWriteEntryLeavesEventEntryUntouched(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1},
+		Extended:   map[string][]byte{s3_constants.AmzStorageClass: []byte("STANDARD")},
+	}
+
+	stripped := remoteWriteEntry(entry, "")
+	if _, ok := stripped.Extended[s3_constants.AmzStorageClass]; ok {
+		t.Fatalf("remote entry still carries %s", s3_constants.AmzStorageClass)
+	}
+	if string(entry.Extended[s3_constants.AmzStorageClass]) != "STANDARD" {
+		t.Fatalf("event entry Extended mutated: %v", entry.Extended)
+	}
+
+	overridden := remoteWriteEntry(entry, "GLACIER")
+	if got := string(overridden.Extended[s3_constants.AmzStorageClass]); got != "GLACIER" {
+		t.Fatalf("override = %q, want GLACIER", got)
+	}
+	if string(entry.Extended[s3_constants.AmzStorageClass]) != "STANDARD" {
+		t.Fatalf("event entry Extended mutated: %v", entry.Extended)
+	}
+
+	bare := &filer_pb.Entry{Name: "g", Attributes: &filer_pb.FuseAttributes{Mtime: 1}}
+	if got := string(remoteWriteEntry(bare, "GLACIER").Extended[s3_constants.AmzStorageClass]); got != "GLACIER" {
+		t.Fatalf("override on nil Extended = %q, want GLACIER", got)
 	}
 }
 
