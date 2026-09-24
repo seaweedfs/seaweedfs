@@ -193,6 +193,34 @@ func TestWriteConditionUnknownKindFailsClosed(t *testing.T) {
 	}
 }
 
+// IF_ENTRY_EQUAL compares the expected entry after the same normalization
+// FindEntry applied to the stored one: a raw event entry whose FileSize is
+// still zero must match a stored entry grown to its chunk extent.
+func TestIfEntryEqualNormalizesExpected(t *testing.T) {
+	raw := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 42},
+		Chunks: []*filer_pb.FileChunk{
+			{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 2}, Size: 100},
+		},
+	}
+	stored := filer.FromPbEntry("/d", raw)
+	if stored.FileSize != 100 {
+		t.Fatalf("stored FileSize = %d, want chunk extent 100", stored.FileSize)
+	}
+	cond := one(&filer_pb.WriteCondition_Clause{
+		Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+		ExpectedEntry: raw,
+	})
+	if !writeConditionSatisfied(cond, stored) {
+		t.Error("raw expected entry must equal its normalized stored form")
+	}
+	raw.Attributes.Mtime = 43
+	if writeConditionSatisfied(cond, stored) {
+		t.Error("changed expected entry must not equal the stored entry")
+	}
+}
+
 // storedEntryETag prefers the stored Seaweed ETag attribute and falls back to
 // the Md5-derived ETag, matching the S3 gateway.
 func TestStoredEntryETag(t *testing.T) {
