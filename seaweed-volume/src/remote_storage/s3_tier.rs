@@ -566,19 +566,28 @@ pub fn global_s3_tier_registry() -> &'static RwLock<S3TierRegistry> {
 ///
 /// Two workers are plenty: they only poll HTTP futures, the bytes are moved by
 /// the kernel, and the caller is blocked for the duration anyway.
-static TIER_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+///
+/// Built on first use. A build failure (the OS refusing threads) is returned
+/// to the caller as an error, not cached and not a panic: the callers sit in
+/// the middle of `Volume::destroy` and needle reads, whose own error paths
+/// must run, and a later call may succeed once the pressure is gone.
+static TIER_RUNTIME: std::sync::Mutex<Option<tokio::runtime::Runtime>> =
+    std::sync::Mutex::new(None);
 
-fn tier_runtime() -> &'static tokio::runtime::Runtime {
-    TIER_RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
+fn tier_handle() -> Result<tokio::runtime::Handle, String> {
+    let mut slot = TIER_RUNTIME
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if slot.is_none() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("tier-io")
             .enable_all()
             .build()
-            // Only fails when the OS refuses to spawn threads, in which case
-            // this volume server cannot serve anything else either.
-            .expect("failed to build the tier I/O tokio runtime")
-    })
+            .map_err(|e| format!("failed to build the tier I/O tokio runtime: {}", e))?;
+        *slot = Some(runtime);
+    }
+    Ok(slot.as_ref().expect("just initialised").handle().clone())
 }
 
 /// Run `future` on the tier runtime and block the calling thread until it
@@ -596,10 +605,10 @@ where
     F: Future<Output = Result<T, String>> + Send + 'static,
     T: Send + 'static,
 {
-    let runtime = tier_runtime();
-    let task = runtime.spawn(future);
+    let handle = tier_handle()?;
+    let task = handle.spawn(future);
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    runtime.spawn(async move {
+    handle.spawn(async move {
         // The receiver only goes away if the caller was unwound; nothing to
         // report then.
         let _ = tx.send(task.await);
@@ -678,7 +687,7 @@ mod tests {
             .join()
             .expect("probe thread")
             .expect("probe");
-        assert_eq!(id, tier_runtime().handle().id());
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -687,7 +696,7 @@ mod tests {
             .await
             .expect("spawn_blocking")
             .expect("probe");
-        assert_eq!(id, tier_runtime().handle().id());
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
         assert_ne!(id, Handle::current().id());
     }
 
@@ -697,14 +706,14 @@ mod tests {
     #[tokio::test]
     async fn block_on_tier_future_works_from_a_current_thread_runtime() {
         let (id, _) = probe().expect("probe");
-        assert_eq!(id, tier_runtime().handle().id());
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
         assert_ne!(id, Handle::current().id());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn block_on_tier_future_works_from_a_multi_thread_runtime_worker() {
         let (id, _) = probe().expect("probe");
-        assert_eq!(id, tier_runtime().handle().id());
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
         assert_ne!(id, Handle::current().id());
     }
 
