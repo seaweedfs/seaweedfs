@@ -401,13 +401,17 @@ impl VolumeGrpcService {
         // Step 1: stop master from redirecting traffic here
         self.notify_master_volume_readonly(&info, true).await?;
 
-        // Step 2: mark local volume readonly
+        // Step 2: mark local volume readonly. Go's Store.MarkVolumeReadonly
+        // answers "volume %d not found" when the volume left the store between
+        // the caller's lookup and this lock (the window spans a master round
+        // trip), and makeVolumeReadonly returns that error before step 3.
         {
             let mut store = self.state.store.write().unwrap();
-            if let Some((_, vol)) = store.find_volume_mut(vid) {
-                vol.set_read_only_persist(can_delete, persist)
-                    .map_err(|e| Status::internal(e.to_string()))?;
-            }
+            let (_, vol) = store
+                .find_volume_mut(vid)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            vol.set_read_only_persist(can_delete, persist)
+                .map_err(|e| Status::internal(e.to_string()))?;
             self.state.volume_state_notify.notify_one();
         }
 
@@ -8009,6 +8013,45 @@ mod tests {
 
         assert_eq!(err.code(), tonic::Code::NotFound);
         assert!(err.message().contains("volume id 17 not found"), "{}", err);
+    }
+
+    /// The volume can leave the store between make_volume_readonly's own
+    /// lookup and the write lock that marks it: step 1 in between is a master
+    /// round trip, and an unmount or a heartbeat expiry can land during it.
+    /// Go's Store.MarkVolumeReadonly answers "volume %d not found" there and
+    /// makeVolumeReadonly propagates it; the scrub caller above matches on
+    /// NotFound to skip the volume rather than fail the report.
+    ///
+    /// The window is opened deterministically: step 1 first awaits the
+    /// current_master_url read lock, so holding its write guard parks
+    /// make_volume_readonly after its lookup succeeded. join! polls the
+    /// futures in order, so the unmount lands while it is parked, and with no
+    /// master configured the released notification is a no-op — the write
+    /// lock in step 2 is the only place left that can notice the volume is gone.
+    #[tokio::test]
+    async fn test_make_volume_readonly_answers_not_found_when_volume_vanished_under_lock() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let park = service.state.current_master_url.write().await;
+
+        let (result, ()) = tokio::join!(
+            service.make_volume_readonly(VolumeId(1), false, true),
+            async {
+                assert!(
+                    service
+                        .state
+                        .store
+                        .write()
+                        .unwrap()
+                        .unmount_volume(VolumeId(1)),
+                    "the volume must still be mounted when the lookup ran"
+                );
+                drop(park);
+            }
+        );
+
+        let err = result.expect_err("marking a volume that vanished under the lock must fail");
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err:?}");
+        assert!(err.message().contains("volume 1 not found"), "{err:?}");
     }
 
     /// Same rule for EC volumes, which the heartbeat also expires under a store
