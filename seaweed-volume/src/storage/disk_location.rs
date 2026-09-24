@@ -598,13 +598,14 @@ impl DiskLocation {
         &mut self,
         vid: VolumeId,
         only_empty: bool,
+        only_garbage: bool,
         keep_remote_data: bool,
     ) -> Result<(), VolumeError> {
         if let Some(mut v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])
                 .dec();
-            v.destroy(only_empty, keep_remote_data)?;
+            v.destroy(only_empty, only_garbage, keep_remote_data)?;
             Ok(())
         } else {
             Err(VolumeError::NotFound)
@@ -625,7 +626,7 @@ impl DiskLocation {
                 crate::metrics::VOLUME_GAUGE
                     .with_label_values(&[&v.collection, "volume"])
                     .dec();
-                if let Err(e) = v.destroy(false, false) {
+                if let Err(e) = v.destroy(false, false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
                 }
             }
@@ -1737,7 +1738,7 @@ mod tests {
             .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
-        loc.delete_volume(VolumeId(1), false, false).unwrap();
+        loc.delete_volume(VolumeId(1), false, false, false).unwrap();
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_none());
     }

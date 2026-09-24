@@ -1048,7 +1048,7 @@ fn build_heartbeat_with_ec_status(
         }
 
         for vid in delete_vids {
-            let _ = loc.delete_volume(vid, false, false);
+            let _ = loc.delete_volume(vid, false, false, false);
         }
 
         for vid in quarantine_vids {
