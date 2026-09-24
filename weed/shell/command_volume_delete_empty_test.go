@@ -28,6 +28,10 @@ func TestIsEmptyVolumeDeleteCandidate(t *testing.T) {
 		{"overwrites alone are not empty", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 200, DeleteCount: 100, ModifiedAtSecond: old}, false},
 		{"recent all-deleted volume is kept", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 100, DeleteCount: 100, ModifiedAtSecond: now}, false},
 		{"never written volume is kept", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ModifiedAtSecond: 0}, false},
+		{"remote-backed replica is kept", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, RemoteStorageName: "s3", RemoteStorageKey: "v", ModifiedAtSecond: old}, false},
+		{"remote-backed garbage is kept", &master_pb.VolumeInformationMessage{Size: 1 << 30, FileCount: 100, DeleteCount: 100, RemoteStorageName: "s3", ModifiedAtSecond: old}, false},
+		{"protected read-only volume is kept", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ReadOnly: true, ModifiedAtSecond: old}, false},
+		{"deletable read-only volume can go", &master_pb.VolumeInformationMessage{Size: super_block.SuperBlockSize, ReadOnly: true, ReadOnlyCanDelete: true, ModifiedAtSecond: old}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -103,6 +103,10 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 
 func isEmptyVolumeDeleteCandidate(v *master_pb.VolumeInformationMessage, quietSeconds, nowUnixSeconds int64, collectionMatcher *wildcard.CollectionMatcher) bool {
 	return collectionMatcher.Matches(v.Collection) &&
+		// A remote-backed replica shares its cloud object with the others, so
+		// deleting one cannot drop it without hurting the survivors.
+		v.RemoteStorageName == "" &&
+		(!v.ReadOnly || v.ReadOnlyCanDelete) &&
 		(v.Size <= super_block.SuperBlockSize || v.FileCount > 0 && v.FileCount <= v.DeleteCount) &&
 		v.ModifiedAtSecond > 0 &&
 		v.ModifiedAtSecond+quietSeconds < nowUnixSeconds
