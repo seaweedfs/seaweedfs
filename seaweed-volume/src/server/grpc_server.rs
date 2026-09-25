@@ -3749,10 +3749,8 @@ impl VolumeServer for VolumeGrpcService {
                 // collides with. Echo the acknowledgement so the caller can tell a
                 // pre-upgrade server apart.
                 //
-                // Unload from EVERY disk (Go's Store.UnloadEcVolume), not just the first
-                // one holding the vid: a split-disk volume is registered on each disk
-                // that carries a shard, and each registration must close its
-                // descriptors and give back its ec_shards gauge before the unlink below.
+                // Unload every disk holding the vid (Go's Store.UnloadEcVolume):
+                // each registration returns its descriptors and ec_shards gauge.
                 {
                     let mut store = self.state.store.write().unwrap();
                     store.unload_ec_volume(vid);
@@ -7958,13 +7956,9 @@ mod tests {
         );
     }
 
-    /// VolumeEcShardsDelete blanket full teardown (`encode_ts_ns == 0`) on a
-    /// split-disk volume. Go calls `Store.UnloadEcVolume`, which walks EVERY
-    /// location; the Rust path used `Store::remove_ec_volume`, which stopped at
-    /// the first disk holding the vid and only dropped the map entry: the
-    /// sibling disk kept its EcVolume (and open descriptors) registered while
-    /// the unlink loop deleted its files underneath it, and neither disk gave
-    /// back its `ec_shards` gauge.
+    /// Blanket full teardown (`encode_ts_ns == 0`) on a split-disk volume:
+    /// like Go's Store.UnloadEcVolume, every disk unregisters its EcVolume
+    /// and returns its ec_shards gauge before the files are unlinked.
     #[tokio::test]
     async fn test_volume_ec_shards_delete_full_teardown_unloads_every_disk() {
         let collection = "ecdel-blanket";
@@ -8032,12 +8026,9 @@ mod tests {
         }
     }
 
-    /// VolumeEcShardsDelete fenced full teardown (`encode_ts_ns != 0`) wipes
-    /// only a disk whose generation is strictly older than the request. Go
-    /// calls `location.UnloadEcVolume` on that disk; the Rust path called
-    /// `DiskLocation::remove_ec_volume`, which dropped the map entry without
-    /// decrementing the `ec_shards` gauge for the shards it held or closing
-    /// their descriptors.
+    /// Fenced teardown (`encode_ts_ns != 0`) unloads only a disk whose
+    /// generation is strictly older than the request, as Go's
+    /// location.UnloadEcVolume does, returning the ec_shards gauge it held.
     #[tokio::test]
     async fn test_volume_ec_shards_delete_fenced_teardown_gives_back_gauge_for_older_disk() {
         let collection = "ecdel-fenced";
@@ -8438,10 +8429,8 @@ mod tests {
     /// field is a deliberate departure from it.
     struct SplitDiskEcFixture {
         vid_raw: u32,
-        /// Collection the files and the mounted volume carry. The default `""`
-        /// is the original layout; the delete tests pick a unique name so the
-        /// `ec_shards` gauge they read is theirs alone while the rest of this
-        /// module mounts under `""` in parallel.
+        /// Collection the files and mounted volume carry; the delete tests use
+        /// unique names so parallel tests under `""` share no gauge labels.
         collection: &'static str,
         /// Which shard id each disk gets. Which disk holds the shard a needle
         /// actually spans is the whole difference between reaching one disk and
