@@ -84,6 +84,25 @@ func TestRemoteDeletionTombstones_AncestorSubsumesAndCovers(t *testing.T) {
 	assert.Equal(t, int64(300), tombs.blockedSince("/m/dir/c.txt"))
 }
 
+func TestMaybeLazyFetchFromRemote_NewerRemoteObjectIsNotBlocked(t *testing.T) {
+	const storageType = "stub_tomb_regen"
+	stub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			// remote mtime postdates the delete: a new-generation object
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: time.Now().Unix() + 60, RemoteSize: 11},
+		},
+	}
+	f, _ := newMountedTestFiler(t, storageType, stub, 0)
+
+	filePath := util.FullPath("/buckets/mybucket/dir/a.txt")
+	f.noteRemoteDeletion(filePath, false, time.Now().UnixNano())
+
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
+	require.NoError(t, err)
+	assert.NotNil(t, entry, "a remote object rewritten after the delete is a new generation")
+	assert.Equal(t, 1, stub.statCalls)
+}
+
 func TestMaybeLazyFetchFromRemote_SkipsTombstonedPath(t *testing.T) {
 	const storageType = "stub_tomb_fetch"
 	stub := &countingRemoteClient{
@@ -101,7 +120,7 @@ func TestMaybeLazyFetchFromRemote_SkipsTombstonedPath(t *testing.T) {
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 0, stub.statCalls, "tombstoned path must not reach the remote")
+	assert.Equal(t, 1, stub.statCalls, "the remote object is statted but must not resurrect")
 }
 
 func TestMaybeLazyFetchFromRemote_SyncOffsetReleasesTombstone(t *testing.T) {
@@ -122,15 +141,15 @@ func TestMaybeLazyFetchFromRemote_SyncOffsetReleasesTombstone(t *testing.T) {
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 0, stub.statCalls)
+	assert.Equal(t, 1, stub.statCalls)
 
-	// once the watermark passes the delete event, the remote delete has
-	// landed and the lookup may consult the remote again
-	putRemoteSyncOffset(t, store, "/buckets/mybucket", deleteTsNs+int64(remoteDeletionConfirmGrace))
+	// once the watermark reaches the delete event's own timestamp, the
+	// remote delete has landed and the lookup may consult the remote again
+	putRemoteSyncOffset(t, store, "/buckets/mybucket", deleteTsNs)
 	entry, err = f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	assert.Equal(t, 1, stub.statCalls)
+	assert.Equal(t, 2, stub.statCalls)
 }
 
 func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
@@ -160,7 +179,7 @@ func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
 	entry, err := f.FindEntry(context.Background(), filePath)
 	assert.ErrorIs(t, err, filer_pb.ErrNotFound)
 	assert.Nil(t, entry)
-	assert.Equal(t, 0, stub.statCalls)
+	assert.Equal(t, 1, stub.statCalls)
 
 	// a peer-observed create at the path lifts the tombstone
 	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
@@ -173,7 +192,7 @@ func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
 	entry, err = f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	assert.Equal(t, 1, stub.statCalls)
+	assert.Equal(t, 2, stub.statCalls)
 }
 
 func TestOnMetadataChangeEvent_PeerDeleteTombstones(t *testing.T) {
@@ -196,7 +215,7 @@ func TestOnMetadataChangeEvent_PeerDeleteTombstones(t *testing.T) {
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/a.txt")
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 0, stub.statCalls)
+	assert.Equal(t, 1, stub.statCalls)
 }
 
 func TestOnMetadataChangeEvent_PeerDirDeleteTombstonesSubtree(t *testing.T) {
@@ -219,7 +238,7 @@ func TestOnMetadataChangeEvent_PeerDirDeleteTombstonesSubtree(t *testing.T) {
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/deep/a.txt")
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 0, stub.statCalls)
+	assert.Equal(t, 1, stub.statCalls)
 }
 
 func TestMaybeLazyListFromRemote_SkipsTombstonedChild(t *testing.T) {
@@ -241,4 +260,36 @@ func TestMaybeLazyListFromRemote_SkipsTombstonedChild(t *testing.T) {
 
 	assert.Nil(t, store.getEntry("/buckets/mybucket/deleted.txt"), "deleted child must not resurrect through a listing")
 	require.NotNil(t, store.getEntry("/buckets/mybucket/fresh.txt"), "other remote objects still list")
+}
+
+func TestMaybeLazyListFromRemote_RecreatedDirStillHidesOldGeneration(t *testing.T) {
+	const storageType = "stub_tomb_recreate"
+	deleteTs := time.Now().UnixNano()
+	oldMtime := deleteTs/int64(time.Second) - 10
+	newMtime := deleteTs/int64(time.Second) + 10
+	stub := &stubRemoteClient{
+		listDirFn: func(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+			if err := visitFn("/", "stale.txt", false, &filer_pb.RemoteEntry{RemoteMtime: oldMtime, RemoteSize: 10}); err != nil {
+				return err
+			}
+			return visitFn("/", "fresh.txt", false, &filer_pb.RemoteEntry{RemoteMtime: newMtime, RemoteSize: 20})
+		},
+	}
+	f, store := newMountedTestFiler(t, storageType, stub, 300)
+
+	f.noteRemoteDeletion("/buckets/mybucket/dir", true, deleteTs)
+	// the directory is recreated; the tombstone keeps hiding old-generation
+	// remote objects while new remote generations still merge
+	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		TsNs:      deleteTs + 1,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "dir", IsDirectory: true},
+		},
+	})
+
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket/dir"))
+
+	assert.Nil(t, store.getEntry("/buckets/mybucket/dir/stale.txt"))
+	require.NotNil(t, store.getEntry("/buckets/mybucket/dir/fresh.txt"))
 }

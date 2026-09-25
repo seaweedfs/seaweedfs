@@ -20,10 +20,6 @@ const (
 	// remoteDeletionTombstoneLimit bounds tracked paths; past it new
 	// tombstones are dropped after an expired sweep still leaves no room.
 	remoteDeletionTombstoneLimit = 1 << 16
-	// remoteDeletionConfirmGrace covers the skew between a tombstone stamped
-	// at local delete time and the event timestamp the write-back daemon
-	// reports its watermark against.
-	remoteDeletionConfirmGrace = time.Second
 )
 
 // remoteDeletionTombstones tracks paths deleted under a remote mount whose
@@ -190,13 +186,18 @@ func (f *Filer) noteRemoteDeletion(p util.FullPath, isDir bool, tsNs int64) {
 
 // isRemoteDeletionPending reports whether a remote write-back delete for p is
 // still owed: p was deleted under mountDir and neither a rewrite, the mount's
-// sync offset, nor the TTL has lifted the tombstone.
-func (f *Filer) isRemoteDeletionPending(ctx context.Context, p util.FullPath, mountDir util.FullPath) bool {
+// sync offset, nor the TTL has lifted the tombstone. remoteMtimeSec is the
+// remote object's own mtime — an object rewritten remotely after the delete
+// is a newer generation, not the one the tombstone hides.
+func (f *Filer) isRemoteDeletionPending(ctx context.Context, p util.FullPath, mountDir util.FullPath, remoteMtimeSec int64) bool {
 	if f.remoteTombstones == nil {
 		return false
 	}
 	tsNs := f.remoteTombstones.blockedSince(string(p))
 	if tsNs == 0 {
+		return false
+	}
+	if remoteMtimeSec > 0 && remoteMtimeSec*int64(time.Second) > tsNs {
 		return false
 	}
 	if f.remoteDeletionConsumed(ctx, mountDir, tsNs) {
@@ -211,7 +212,7 @@ func (f *Filer) remoteDeletionConsumed(ctx context.Context, mountDir util.FullPa
 		return true
 	}
 	offset, err := f.readRemoteSyncOffset(ctx, mountDir)
-	return err == nil && offset >= tsNs+int64(remoteDeletionConfirmGrace)
+	return err == nil && offset >= tsNs
 }
 
 // readRemoteSyncOffset reads the write-back daemon's persisted watermark for

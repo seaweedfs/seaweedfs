@@ -43,11 +43,6 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, nil
 	}
 
-	if f.isRemoteDeletionPending(ctx, p, mountDir) {
-		glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted locally, remote delete pending", p)
-		return nil, nil
-	}
-
 	remoteConf, found := f.RemoteStorage.FindRemoteStorageConf(p)
 	if !found {
 		return nil, nil
@@ -89,6 +84,10 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		}
 		if remoteEntry == nil {
 			glog.V(3).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s StatFile returned nil entry", p)
+			return lazyFetchResult{nil}, nil
+		}
+		if f.isRemoteDeletionPending(buildCtx, p, mountDir, remoteEntry.RemoteMtime) {
+			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted locally, remote delete pending", p)
 			return lazyFetchResult{nil}, nil
 		}
 
