@@ -288,8 +288,10 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			sourceInode = oldEntry.Attributes.Inode
 		}
 		if sourceInode != 0 {
-			if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dlmLock != nil {
-				oldPathAlreadyLocked = true
+			if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok {
+				lk := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
+				oldPathAlreadyLocked = fh.dlmLock != nil
+				wfs.fhLockTable.ReleaseLock(fh.fh, lk)
 			}
 		}
 		targetInode, targetMapped := wfs.inodeToPath.GetInode(newPath)
@@ -297,11 +299,13 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			targetInode = newEntry.Attributes.Inode
 		}
 		if targetInode != 0 && targetInode != sourceInode {
-			if targetFh, ok := wfs.fhMap.FindFileHandle(targetInode); ok && targetFh.dlmLock != nil {
+			if targetFh, ok := wfs.fhMap.FindFileHandle(targetInode); ok {
 				targetFhLock := wfs.fhLockTable.AcquireLock("renameDLM", targetFh.fh, util.ExclusiveLock)
-				newPathLock = targetFh.dlmLock
-				targetFh.dlmLock = nil
-				newPathLockFh = targetFh
+				if targetFh.dlmLock != nil {
+					newPathLock = targetFh.dlmLock
+					targetFh.dlmLock = nil
+					newPathLockFh = targetFh
+				}
 				wfs.fhLockTable.ReleaseLock(targetFh.fh, targetFhLock)
 			}
 		}
