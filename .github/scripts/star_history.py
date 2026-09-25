@@ -8,7 +8,10 @@ logs a warning rather than under-reporting.
 """
 import json
 import os
+import random
 import sys
+import time
+import urllib.error
 import urllib.request
 from datetime import datetime
 
@@ -22,13 +25,11 @@ REPO = "seaweedfs/seaweedfs"
 TOKEN = os.environ["GITHUB_TOKEN"]
 OUT = os.environ.get("OUT", "note/star_history.svg")
 PAGE_CAP = 400  # GitHub's hard limit on stargazer pagination
+MAX_ATTEMPTS = 10
 
 
-def fetch_stargazers():
-    stars = []
-    page = 1
-    while page <= PAGE_CAP:
-        url = f"https://api.github.com/repos/{REPO}/stargazers?per_page=100&page={page}"
+def fetch_page(url):
+    for attempt in range(1, MAX_ATTEMPTS + 1):
         req = urllib.request.Request(
             url,
             headers={
@@ -38,8 +39,43 @@ def fetch_stargazers():
                 "User-Agent": "seaweedfs-star-history",
             },
         )
-        with urllib.request.urlopen(req) as resp:
-            batch = json.load(resp)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as e:
+            # Retry transient server errors and (secondary) rate limits.
+            retryable = e.code >= 500 or e.code in (403, 429)
+            if not retryable or attempt == MAX_ATTEMPTS:
+                raise
+            try:
+                delay = int(e.headers.get("Retry-After"))
+            except (TypeError, ValueError):
+                delay = min(2 ** attempt, 60)
+            print(
+                f"::warning::GET {url} failed with HTTP {e.code} "
+                f"(attempt {attempt}/{MAX_ATTEMPTS}); retrying in {delay}s"
+            )
+            time.sleep(delay + random.uniform(0, 1))
+        except (urllib.error.URLError, OSError) as e:
+            # OSError also covers bare http.client.HTTPException subclasses
+            # (e.g. RemoteDisconnected), which urllib lets propagate
+            # unwrapped instead of raising URLError.
+            if attempt == MAX_ATTEMPTS:
+                raise
+            delay = min(2 ** attempt, 60)
+            print(
+                f"::warning::GET {url} failed with {e} "
+                f"(attempt {attempt}/{MAX_ATTEMPTS}); retrying in {delay}s"
+            )
+            time.sleep(delay + random.uniform(0, 1))
+
+
+def fetch_stargazers():
+    stars = []
+    page = 1
+    while page <= PAGE_CAP:
+        url = f"https://api.github.com/repos/{REPO}/stargazers?per_page=100&page={page}"
+        batch = fetch_page(url)
         if not batch:
             break
         for u in batch:
