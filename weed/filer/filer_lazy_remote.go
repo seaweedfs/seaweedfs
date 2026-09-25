@@ -38,15 +38,19 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, nil
 	}
 
-	// A startup tombstone rebuild is still replaying the meta log; without
-	// it a pending delete could resurrect here, so hold off on remote reads.
-	if f.remoteTombstonesPending.Load() {
-		return nil, nil
-	}
-
 	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(p)
 	if remoteLoc == nil {
 		return nil, nil
+	}
+
+	// A startup tombstone rebuild may still be replaying the meta log; wait
+	// for it so a pending delete cannot resurrect here.
+	if done := f.remoteTombstonesDone.Load(); done != nil {
+		select {
+		case <-*done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	if f.isRemoteDeletionPending(ctx, p, mountDir) {

@@ -305,12 +305,14 @@ func (f *Filer) readRemoteSyncOffset(ctx context.Context, mountDir util.FullPath
 	return int64(util.BytesToUint64(value)), nil
 }
 
-// RebuildRemoteDeletionTombstones replays the persisted metadata log from the
-// oldest write-back offset across mounts, restoring tombstones for deletes
-// committed before a restart but not yet applied to the remote. Every filer
-// writes its log files under the same directory, so pending peer deletes
-// replay too; only events still inside the unflushed buffer tail are missed.
-// Lazy remote reads hold off until the replay finishes or gives up.
+// RebuildRemoteDeletionTombstones gates lazy remote reads and replays the
+// persisted metadata log from the oldest write-back offset across mounts,
+// restoring tombstones for deletes committed before a restart but not yet
+// applied to the remote. Every filer writes its log files under the same
+// directory, so pending peer deletes replay too; only events still inside
+// the unflushed buffer tail are missed. The gate is set synchronously so no
+// lazy read can slip in before replay starts, and it stays closed until a
+// replay succeeds.
 func (f *Filer) RebuildRemoteDeletionTombstones(ctx context.Context) {
 	if f.RemoteStorage == nil || f.remoteTombstones == nil {
 		return
@@ -319,21 +321,18 @@ func (f *Filer) RebuildRemoteDeletionTombstones(ctx context.Context) {
 	if len(mounts) == 0 {
 		return
 	}
-	f.remoteTombstonesPending.Store(true)
-	defer f.remoteTombstonesPending.Store(false)
+	done := make(chan struct{})
+	f.remoteTombstonesDone.Store(&done)
+	go f.rebuildRemoteDeletionTombstones(ctx, mounts, done)
+}
 
+func (f *Filer) rebuildRemoteDeletionTombstones(ctx context.Context, mounts []util.FullPath, done chan struct{}) {
+	// the replay itself lists directories; do not let it wait on its own gate
+	ctx = context.WithValue(ctx, lazyFetchContextKey{}, true)
 	startTsNs := f.remoteDeletionRebuildStartTsNs(ctx, mounts)
-
-	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(2 * time.Second):
-			}
-		}
-		_, _, lastErr = f.ReadPersistedLogBuffer(ctx, log_buffer.NewMessagePosition(startTsNs, 0), 0,
+	backoff := 2 * time.Second
+	for {
+		_, _, err := f.ReadPersistedLogBuffer(ctx, log_buffer.NewMessagePosition(startTsNs, 0), 0,
 			func(logEntry *filer_pb.LogEntry) (bool, error) {
 				event := &filer_pb.SubscribeMetadataResponse{}
 				if err := proto.Unmarshal(logEntry.Data, event); err != nil {
@@ -342,17 +341,27 @@ func (f *Filer) RebuildRemoteDeletionTombstones(ctx context.Context) {
 				f.onRemoteDeletionEvents(event)
 				return false, nil
 			})
-		if lastErr == nil {
+		if err == nil {
+			close(done)
+			f.remoteTombstonesDone.Store(nil)
 			return
 		}
+		glog.WarningfCtx(ctx, "rebuild remote deletion tombstones: %v", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < time.Minute {
+			backoff *= 2
+		}
 	}
-	glog.WarningfCtx(ctx, "rebuild remote deletion tombstones: %v", lastErr)
 }
 
 // remoteDeletionRebuildStartTsNs returns the oldest write-back offset across
-// mounts — the earliest event the daemon may not have applied — or 0 when no
-// mount has a recorded offset (unreadable or absent, both replay from the
-// start).
+// mounts — the earliest event the daemon may not have applied. Mounts without
+// a recorded offset replay from the TTL floor: events older than it would
+// build tombstones that are already expired.
 func (f *Filer) remoteDeletionRebuildStartTsNs(ctx context.Context, mounts []util.FullPath) int64 {
 	startTsNs := int64(math.MaxInt64)
 	for _, dir := range mounts {
@@ -365,8 +374,9 @@ func (f *Filer) remoteDeletionRebuildStartTsNs(ctx context.Context, mounts []uti
 			startTsNs = offset
 		}
 	}
-	if startTsNs == int64(math.MaxInt64) {
-		return 0
+	ttlFloor := time.Now().Add(-remoteDeletionTombstoneTTL).UnixNano()
+	if startTsNs == int64(math.MaxInt64) || startTsNs < ttlFloor {
+		return ttlFloor
 	}
 	return startTsNs
 }

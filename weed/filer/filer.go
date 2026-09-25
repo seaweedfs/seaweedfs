@@ -75,10 +75,10 @@ type Filer struct {
 	persistedLogCache             *persistedLogCache
 	metaLogInflight               metaLogInflight
 	remoteTombstones              *remoteDeletionTombstones
-	// remoteTombstonesPending is true only while a startup rebuild replays
-	// the persisted meta log; lazy remote reads hold off until then so a
-	// restart cannot resurrect a delete the daemon has not applied yet.
-	remoteTombstonesPending atomic.Bool
+	// remoteTombstonesDone, when non-nil, is closed once the startup tombstone
+	// rebuild finishes; lazy remote reads wait on it so a pending delete
+	// cannot resurrect in the gap.
+	remoteTombstonesDone atomic.Pointer[chan struct{}]
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {

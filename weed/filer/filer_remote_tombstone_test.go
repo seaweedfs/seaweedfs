@@ -356,27 +356,41 @@ func TestRemoteDeletionRebuildStartTsNs_UsesOldestMountOffset(t *testing.T) {
 	mounts := f.RemoteStorage.MountedDirectories()
 	require.Len(t, mounts, 2)
 
-	putRemoteSyncOffset(t, store, "/buckets/mybucket", 300)
-	putRemoteSyncOffset(t, store, "/buckets/other", 200)
-	assert.Equal(t, int64(200), f.remoteDeletionRebuildStartTsNs(context.Background(), mounts),
+	now := time.Now().UnixNano()
+	putRemoteSyncOffset(t, store, "/buckets/mybucket", now-200)
+	putRemoteSyncOffset(t, store, "/buckets/other", now-300)
+	assert.Equal(t, now-300, f.remoteDeletionRebuildStartTsNs(context.Background(), mounts),
 		"rebuild must replay from the least-synced mount")
 
-	// a mount whose offset was never written replays everything
+	// a mount whose offset was never written replays only within the TTL
 	require.NoError(t, store.KvDelete(context.Background(), remote_storage.SyncOffsetKey("/buckets/other")))
-	assert.Zero(t, f.remoteDeletionRebuildStartTsNs(context.Background(), mounts))
+	floor := f.remoteDeletionRebuildStartTsNs(context.Background(), mounts)
+	assert.GreaterOrEqual(t, floor, time.Now().Add(-remoteDeletionTombstoneTTL-time.Second).UnixNano())
+
+	// an offset older than the TTL floor is raised to it
+	putRemoteSyncOffset(t, store, "/buckets/other", time.Now().Add(-remoteDeletionTombstoneTTL-time.Hour).UnixNano())
+	assert.Greater(t, f.remoteDeletionRebuildStartTsNs(context.Background(), mounts),
+		time.Now().Add(-remoteDeletionTombstoneTTL-time.Hour).UnixNano())
 }
 
-func TestRebuildRemoteDeletionTombstones_EmptyLogLeavesPendingClear(t *testing.T) {
+func TestRebuildRemoteDeletionTombstones_EmptyLogReleasesGate(t *testing.T) {
 	f, _ := newMountedTestFiler(t, "stub_rebuild_empty", nil, 0)
 
 	f.RebuildRemoteDeletionTombstones(context.Background())
+	done := f.remoteTombstonesDone.Load()
+	require.NotNil(t, done, "the gate must be set synchronously")
 
-	assert.False(t, f.remoteTombstonesPending.Load())
+	select {
+	case <-*done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("rebuild never released the gate")
+	}
+	assert.Nil(t, f.remoteTombstonesDone.Load())
 	ts, _ := f.remoteTombstones.blockedSince("/buckets/mybucket/a.txt")
 	assert.Zero(t, ts)
 }
 
-func TestMaybeLazyFetchFromRemote_SkipsWhileRebuildPending(t *testing.T) {
+func TestMaybeLazyFetchFromRemote_WaitsForRebuild(t *testing.T) {
 	const storageType = "stub_tomb_pending"
 	stub := &countingRemoteClient{
 		stubRemoteClient: stubRemoteClient{
@@ -385,9 +399,20 @@ func TestMaybeLazyFetchFromRemote_SkipsWhileRebuildPending(t *testing.T) {
 	}
 	f, _ := newMountedTestFiler(t, storageType, stub, 0)
 
-	f.remoteTombstonesPending.Store(true)
-	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/a.txt")
-	require.NoError(t, err)
+	// an unfinished rebuild blocks the fetch until the context gives up
+	gate := make(chan struct{})
+	f.remoteTombstonesDone.Store(&gate)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	entry, err := f.maybeLazyFetchFromRemote(ctx, "/buckets/mybucket/a.txt")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Nil(t, entry)
-	assert.Equal(t, 0, stub.statCalls, "lazy fetch must hold off while tombstones rebuild")
+	assert.Equal(t, 0, stub.statCalls)
+
+	// once the rebuild finishes, the fetch proceeds
+	close(gate)
+	entry, err = f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/a.txt")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, 1, stub.statCalls)
 }

@@ -42,9 +42,6 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 	if f.RemoteStorage == nil {
 		return
 	}
-	if f.remoteTombstonesPending.Load() {
-		return
-	}
 
 	// The ptrie stores mount rules with trailing "/". When p is exactly the
 	// mount directory (e.g. "/buckets/mybucket"), we must also try matching
@@ -55,6 +52,14 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		lookupPath = util.FullPath(string(p) + "/")
 		mountDir, remoteLoc = f.RemoteStorage.FindMountDirectory(lookupPath)
 		if remoteLoc == nil {
+			return
+		}
+	}
+
+	if done := f.remoteTombstonesDone.Load(); done != nil {
+		select {
+		case <-*done:
+		case <-ctx.Done():
 			return
 		}
 	}
