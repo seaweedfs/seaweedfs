@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -128,6 +129,19 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
 			f.lazyFetchGroup.Forget(key)
+			return lazyFetchResult{entry}, nil
+		}
+
+		// A delete records its tombstone before removing the entry, so a
+		// tombstone visible now means the insert raced a delete that already
+		// ran: retract the persisted entry so the path stays deleted.
+		if f.isRemoteDeletionPending(persistCtx, p, mountDir) {
+			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted while persisting", p)
+			f.lazyFetchGroup.Forget(key)
+			if err := f.DeleteEntryMetaAndData(persistCtx, p, false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+				glog.Warningf("maybeLazyFetchFromRemote: failed to retract %s: %v", p, err)
+			}
+			return lazyFetchResult{nil}, nil
 		}
 
 		return lazyFetchResult{entry}, nil
