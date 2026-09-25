@@ -88,6 +88,11 @@ func (t *remoteDeletionTombstones) upsert(path string, isDir bool, tsNs int64, f
 	if cur, ok := m[path]; ok {
 		if tsNs > cur {
 			m[path] = tsNs
+			if !fromEvent {
+				// a newer local delete restamps the tombstone ahead of its
+				// event — the offset cannot vouch for it until the event lands
+				t.pending[path] = true
+			}
 		}
 		if fromEvent && m[path] == tsNs {
 			delete(t.pending, path)

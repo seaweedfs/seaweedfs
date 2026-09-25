@@ -119,6 +119,25 @@ func TestRemoteDeletionTombstones_PendingIgnoresOffset(t *testing.T) {
 	assert.False(t, f.isRemoteDeletionPending(context.Background(), util.FullPath(filePath), "/buckets/mybucket"))
 }
 
+func TestRemoteDeletionTombstones_RaisedLocalTombstoneIsPendingAgain(t *testing.T) {
+	tombs := newRemoteDeletionTombstones()
+
+	tombs.addFromEvent("/m/a.txt", false, 100)
+	_, pending := tombs.blockedSince("/m/a.txt")
+	assert.False(t, pending)
+
+	// a newer local delete restamps the tombstone before its own event
+	// lands, so the write-back offset cannot vouch for it yet
+	tombs.add("/m/a.txt", false, 200)
+	_, pending = tombs.blockedSince("/m/a.txt")
+	assert.True(t, pending)
+
+	// once that delete's event confirms the new timestamp it releases normally
+	tombs.addFromEvent("/m/a.txt", false, 200)
+	_, pending = tombs.blockedSince("/m/a.txt")
+	assert.False(t, pending)
+}
+
 func TestMaybeLazyFetchFromRemote_SkipsTombstonedPath(t *testing.T) {
 	const storageType = "stub_tomb_fetch"
 	stub := &countingRemoteClient{
