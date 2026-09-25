@@ -92,11 +92,9 @@ impl RemoteStorageClient for S3RemoteStorageClient {
         }
 
         let resp = req.send().await.map_err(|e| match e {
-            // Go checks `aerr.Code() == s3.ErrCodeNoSuchKey` on GET
-            // (weed/remote_storage/s3/s3_storage_client.go:436). A bare HTTP 404
-            // without a NoSuchKey body is deliberately NOT treated as not-found
-            // here: the Go SDK maps such a response to code "NotFound", which
-            // fails Go's NoSuchKey comparison, so it stays a generic error.
+            // Go compares `aerr.Code()` to NoSuchKey on GET
+            // (s3_storage_client.go:436): a bare 404 maps to "NotFound"
+            // and stays a generic error, as it does here.
             SdkError::ServiceError(ref se) if se.err().is_no_such_key() => {
                 RemoteStorageError::ObjectNotFound(format!("{}/{}", loc.bucket, key))
             }
@@ -157,12 +155,9 @@ impl RemoteStorageClient for S3RemoteStorageClient {
             .await
             .map_err(|e| match e {
                 // Go checks only the raw HTTP status on HEAD
-                // (weed/remote_storage/s3/s3_storage_client.go:373), because a
-                // HEAD response carries no error body to name a code. The raw
-                // status covers both the body-less 404 the SDK turns into
-                // `NotFound` and a 404 whose body names some other code
-                // (non-AWS servers do send one). A `NotFound` code on a
-                // non-404 status is NOT a missing object, as in Go.
+                // (s3_storage_client.go:373): a HEAD response carries no
+                // error body, so a 404 is not-found whatever code the SDK
+                // assigns, and a non-404 is not.
                 SdkError::ServiceError(ref se) if se.raw().status().as_u16() == 404 => {
                     RemoteStorageError::ObjectNotFound(format!("{}/{}", loc.bucket, key))
                 }
@@ -300,8 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_bare_404_is_not_object_not_found() {
-        // Go only compares the error code against NoSuchKey on GET; a 404 with
-        // no error body gets code "NotFound" in the Go SDK and stays generic.
+        // Go compares codes, not statuses, on GET: a body-less 404 stays generic.
         let err = client_with(404, "")
             .read_file(&location(), 0, 0)
             .await
@@ -326,8 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn head_404_with_foreign_error_body_is_object_not_found() {
-        // A 404 whose body names a code other than NotFound: the SDK does not
-        // classify it, but Go's raw status check still says not-found.
+        // The raw status check makes a 404 not-found whatever body it carries.
         let err = client_with(404, NO_SUCH_KEY)
             .stat_file(&location())
             .await
@@ -340,8 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn head_not_found_code_on_a_non_404_status_is_not_object_not_found() {
-        // The SDK classifies a `NotFound` error code whatever the status; Go
-        // looks only at the status, so a 400 with such a body stays an error.
+        // A NotFound body on a non-404 status stays an error, as in Go.
         let err = client_with(400, NOT_FOUND_BODY)
             .stat_file(&location())
             .await
