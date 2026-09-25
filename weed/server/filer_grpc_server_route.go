@@ -3,12 +3,15 @@ package weed_server
 import (
 	"context"
 	"net"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // writeOwner returns the filer that serializes writes to key, or "" when this
@@ -59,10 +62,7 @@ func entryRouteKey(fullpath util.FullPath) string {
 }
 
 // movedFromPeer reports whether an is_moved marker arrived on a connection
-// from a ring member, i.e. it marks a genuine forwarded hop. is_moved is
-// caller-controlled, so an unverified marker is ignored and the request is
-// routed like a fresh one — a forged flag cannot make a conditional mutation
-// evaluate under a non-owner's lock.
+// from a ring member, i.e. it marks a genuine forwarded hop.
 func (fs *FilerServer) movedFromPeer(ctx context.Context, isMoved bool) bool {
 	if !isMoved || fs.filer.Dlm == nil {
 		return false
@@ -79,28 +79,69 @@ func (fs *FilerServer) movedFromPeer(ctx context.Context, isMoved bool) bool {
 	if peerIP == nil {
 		return false
 	}
-	for _, member := range fs.filer.Dlm.LockRing.GetSnapshot() {
+	for _, ip := range fs.ringMemberIPs(ctx) {
+		if ip.Equal(peerIP) {
+			return true
+		}
+	}
+	return false
+}
+
+// ringPeerIPs caches resolved member addresses of one ring membership.
+type ringPeerIPs struct {
+	members string
+	ips     []net.IP
+}
+
+// ringMemberIPs returns the ring members' addresses as IPs. Members can
+// advertise hostnames, so resolution is cached per membership to keep DNS off
+// each forwarded request; a failed lookup is not cached, so a DNS blip does
+// not keep rejecting genuine forwards until the next ring change.
+func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
+	members := fs.filer.Dlm.LockRing.GetSnapshot()
+	var sb strings.Builder
+	for _, member := range members {
+		sb.WriteString(string(member))
+		sb.WriteByte(' ')
+	}
+	key := sb.String()
+	if cached := fs.ringPeerIPs.Load(); cached != nil && cached.members == key {
+		return cached.ips
+	}
+	var ips []net.IP
+	resolved := true
+	for _, member := range members {
 		host, _, err := net.SplitHostPort(string(member))
 		if err != nil {
 			continue
 		}
 		if ip := net.ParseIP(host); ip != nil {
-			if ip.Equal(peerIP) {
-				return true
-			}
+			ips = append(ips, ip)
 			continue
 		}
-		// The member advertises a hostname; resolve it to compare with the
-		// connection's source address.
-		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+		found, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 		if err != nil {
+			resolved = false
 			continue
 		}
-		for _, ip := range ips {
-			if ip.Equal(peerIP) {
-				return true
-			}
-		}
+		ips = append(ips, found...)
 	}
-	return false
+	if resolved {
+		fs.ringPeerIPs.Store(&ringPeerIPs{members: key, ips: ips})
+	}
+	return ips
+}
+
+// checkMovedMarker refuses a request whose is_moved marker did not arrive from
+// a ring member while this filer is not the key's owner. The marker is
+// caller-controlled: applying it would evaluate a conditional mutation under a
+// non-owner's lock, and re-forwarding a claimed hop can cycle while rings
+// disagree — so an unverifiable marker on a non-owner is refused instead.
+// owner=="" means this filer is the serialization point and the request can
+// be applied locally.
+func (fs *FilerServer) checkMovedMarker(ctx context.Context, isMoved bool, owner pb.ServerAddress) error {
+	if !isMoved || fs.movedFromPeer(ctx, isMoved) || owner == "" || owner == fs.option.Host {
+		return nil
+	}
+	return status.Errorf(codes.FailedPrecondition, "is_moved not sent by a ring member; the key's owner is %s", owner)
 }
