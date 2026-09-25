@@ -249,6 +249,35 @@ func TestLockRingManager_EmptyRingNotBroadcast(t *testing.T) {
 	assert.Equal(t, []string{"filer1:8888"}, update.Servers)
 }
 
+func TestLockRingManager_PeriodicRebroadcast(t *testing.T) {
+	var mu sync.Mutex
+	var broadcasts []*master_pb.LockRingUpdate
+
+	lrm := NewLockRingManager(func(resp *master_pb.KeepConnectedResponse) {
+		mu.Lock()
+		if resp.LockRingUpdate != nil {
+			broadcasts = append(broadcasts, resp.LockRingUpdate)
+		}
+		mu.Unlock()
+	})
+	lrm.stabilizeDelay = 20 * time.Millisecond
+	lrm.rebroadcastInterval = 60 * time.Millisecond
+
+	group := FilerGroupName("default")
+	lrm.AddServer(group, "filer1:8888")
+
+	// Without any further membership change, the ring keeps being re-sent so
+	// a lost or poisoned update cannot be permanent.
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	require.GreaterOrEqual(t, len(broadcasts), 2, "ring should rebroadcast periodically")
+	for i := 1; i < len(broadcasts); i++ {
+		assert.Greater(t, broadcasts[i].Version, broadcasts[i-1].Version)
+	}
+	mu.Unlock()
+}
+
 func TestLockRingManager_GetLastUpdateReturnsBroadcastState(t *testing.T) {
 	lrm := NewLockRingManager(nil)
 
