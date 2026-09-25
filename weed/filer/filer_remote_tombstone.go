@@ -335,6 +335,13 @@ func (f *Filer) rebuildRemoteDeletionTombstones(ctx context.Context, mounts []ut
 	// the replay itself lists directories; do not let it wait on its own gate
 	ctx = context.WithValue(ctx, lazyFetchContextKey{}, true)
 	startTsNs := f.remoteDeletionRebuildStartTsNs(ctx, mounts)
+	openGate := func() {
+		close(done)
+		f.remoteTombstonesDone.Store(nil)
+	}
+	// Past this point every tombstone would be expired anyway, so holding the
+	// gate longer protects nothing; open it and let lazy reads resume.
+	replayDeadline := time.Now().Add(remoteDeletionTombstoneTTL)
 	backoff := 2 * time.Second
 	for {
 		_, _, err := f.ReadPersistedLogBuffer(ctx, log_buffer.NewMessagePosition(startTsNs, 0), 0,
@@ -347,11 +354,15 @@ func (f *Filer) rebuildRemoteDeletionTombstones(ctx context.Context, mounts []ut
 				return false, nil
 			})
 		if err == nil {
-			close(done)
-			f.remoteTombstonesDone.Store(nil)
+			openGate()
 			return
 		}
 		glog.WarningfCtx(ctx, "rebuild remote deletion tombstones: %v", err)
+		if !time.Now().Before(replayDeadline) {
+			glog.ErrorfCtx(ctx, "rebuild remote deletion tombstones: giving up after %v", remoteDeletionTombstoneTTL)
+			openGate()
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
