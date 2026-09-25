@@ -1176,14 +1176,16 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool
 func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
 	var lockedLocations []*DiskLocation
 	var lockedVolumes []*Volume
-	defer func() {
+	unlockAll := func() {
 		for _, v := range lockedVolumes {
 			v.dataFileAccessLock.Unlock()
 		}
 		for _, location := range lockedLocations {
 			location.volumesLock.Unlock()
 		}
-	}()
+		lockedVolumes, lockedLocations = nil, nil
+	}
+	defer unlockAll()
 	for _, location := range s.Locations {
 		location.volumesLock.Lock()
 		if v, ok := location.volumes[i]; ok {
@@ -1203,9 +1205,10 @@ func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarba
 
 	deletedAny := false
 	var errs []error
+	var deletedMessages []*master_pb.VolumeShortInformationMessage
 	for _, location := range lockedLocations {
 		v := location.volumes[i]
-		message := master_pb.VolumeShortInformationMessage{
+		message := &master_pb.VolumeShortInformationMessage{
 			Id:               uint32(v.Id),
 			Collection:       v.Collection,
 			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
@@ -1223,8 +1226,14 @@ func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarba
 		}
 		delete(location.volumes, i)
 		glog.V(0).Infof("DeleteVolume %d disk_id:%d", i, v.diskId)
-		s.DeletedVolumesChan <- &message
+		deletedMessages = append(deletedMessages, message)
 		deletedAny = true
+	}
+	// Send after the locks are released: a full channel would otherwise block
+	// here while the draining heartbeat loop waits on these same locks.
+	unlockAll()
+	for _, m := range deletedMessages {
+		s.DeletedVolumesChan <- m
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("DeleteVolume %d failed on some disks: %w", i, errors.Join(errs...))
