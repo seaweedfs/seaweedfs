@@ -241,6 +241,52 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
+	// Acquire DLM locks on both old and new paths to prevent another mount
+	// from opening either path for writing during the rename. Lock in
+	// sorted order to prevent deadlocks when two mounts rename in opposite
+	// directions (A→B vs B→A).
+	//
+	// Skip the old-path lock if this mount already holds it via an open
+	// file handle (otherwise we'd deadlock trying to re-acquire our own lock).
+	// Acquiring before the handle marks below keeps a lock failure from
+	// leaving source handles flagged for a rename that never happened.
+	var heldLocks []*cluster.LiveLock
+	if wfs.lockClient != nil {
+		defer func() {
+			for _, l := range heldLocks {
+				l.Stop()
+			}
+		}()
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+
+		// Check if the source file handle already holds a DLM lock on oldPath
+		oldPathAlreadyLocked := false
+		if sourceInode, found := wfs.inodeToPath.GetInode(oldPath); found {
+			if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dlmLock != nil {
+				oldPathAlreadyLocked = true
+			}
+		}
+
+		// Determine which paths need new DLM locks
+		pathsToLock := []string{string(newPath)}
+		if !oldPathAlreadyLocked {
+			pathsToLock = append(pathsToLock, string(oldPath))
+		}
+		// Sort for consistent lock ordering
+		if len(pathsToLock) == 2 && pathsToLock[0] > pathsToLock[1] {
+			pathsToLock[0], pathsToLock[1] = pathsToLock[1], pathsToLock[0]
+		}
+
+		for _, p := range pathsToLock {
+			dlmLock := wfs.lockClient.NewBlockingLongLivedLock(p, owner, lock_manager.LiveLockTTL)
+			if dlmLock == nil {
+				return fuse.Status(syscall.EAGAIN)
+			}
+			heldLocks = append(heldLocks, dlmLock)
+		}
+		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
+	}
+
 	// Ensure the source file's metadata exists on the filer before renaming.
 	// Two cases can leave the entry only in the local cache:
 	//   1. deferFilerCreate=true — file handle still open, dirtyMetadata set.
@@ -299,50 +345,6 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 				}
 			}()
 		}
-	}
-
-	// Acquire DLM locks on both old and new paths to prevent another mount
-	// from opening either path for writing during the rename. Lock in
-	// sorted order to prevent deadlocks when two mounts rename in opposite
-	// directions (A→B vs B→A).
-	//
-	// Skip the old-path lock if this mount already holds it via an open
-	// file handle (otherwise we'd deadlock trying to re-acquire our own lock).
-	if wfs.lockClient != nil {
-		owner := fmt.Sprintf("mount-%d", wfs.signature)
-
-		// Check if the source file handle already holds a DLM lock on oldPath
-		oldPathAlreadyLocked := false
-		if sourceInode, found := wfs.inodeToPath.GetInode(oldPath); found {
-			if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dlmLock != nil {
-				oldPathAlreadyLocked = true
-			}
-		}
-
-		// Determine which paths need new DLM locks
-		pathsToLock := []string{string(newPath)}
-		if !oldPathAlreadyLocked {
-			pathsToLock = append(pathsToLock, string(oldPath))
-		}
-		// Sort for consistent lock ordering
-		if len(pathsToLock) == 2 && pathsToLock[0] > pathsToLock[1] {
-			pathsToLock[0], pathsToLock[1] = pathsToLock[1], pathsToLock[0]
-		}
-
-		var heldLocks []*cluster.LiveLock
-		defer func() {
-			for _, l := range heldLocks {
-				l.Stop()
-			}
-		}()
-		for _, p := range pathsToLock {
-			dlmLock := wfs.lockClient.NewBlockingLongLivedLock(p, owner, lock_manager.LiveLockTTL)
-			if dlmLock == nil {
-				return fuse.Status(syscall.EAGAIN)
-			}
-			heldLocks = append(heldLocks, dlmLock)
-		}
-		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
 	}
 
 	// update remote filer
