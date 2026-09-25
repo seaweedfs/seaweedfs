@@ -132,6 +132,24 @@ func (t *remoteDeletionTombstones) dropCoveredLocked(dirPath string, tsNs int64)
 	}
 }
 
+// drop removes the exact tombstone recorded for path, e.g. when the delete
+// that recorded it fails before touching anything.
+func (t *remoteDeletionTombstones) drop(path string, tsNs int64) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if cur, ok := t.dirs[path]; ok && cur <= tsNs {
+		delete(t.dirs, path)
+		delete(t.pending, path)
+	}
+	if cur, ok := t.files[path]; ok && cur <= tsNs {
+		delete(t.files, path)
+		delete(t.pending, path)
+	}
+}
+
 // clear drops a file tombstone when a write at the path is at least as new as
 // the delete; a replayed older create must not lift a newer delete.
 func (t *remoteDeletionTombstones) clear(path string, tsNs int64) {
@@ -223,6 +241,15 @@ func (f *Filer) noteRemoteDeletion(p util.FullPath, isDir bool, tsNs int64) {
 		return
 	}
 	f.remoteTombstones.add(string(p), isDir, tsNs)
+}
+
+// unnoteRemoteDeletion retracts a tombstone when the delete that recorded it
+// fails before touching anything under path.
+func (f *Filer) unnoteRemoteDeletion(p util.FullPath, tsNs int64) {
+	if f.remoteTombstones == nil {
+		return
+	}
+	f.remoteTombstones.drop(string(p), tsNs)
 }
 
 // isRemoteDeletionPending reports whether a remote write-back delete for p is

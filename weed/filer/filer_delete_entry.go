@@ -125,11 +125,13 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32, onHardLinkIdsFn OnHardLinkIdsFunc) (err error) {
 
+	var dirTombstoneTs int64
 	if isRecursive {
 		// Tombstone the directory before its children: when the store drops
 		// the subtree without listing it, or a child error aborts the walk,
 		// the ancestor tombstone still covers every descendant.
-		f.noteRemoteDeletion(entry.FullPath, true, time.Now().UnixNano())
+		dirTombstoneTs = time.Now().UnixNano()
+		f.noteRemoteDeletion(entry.FullPath, true, dirTombstoneTs)
 	}
 
 	//collect all the chunks of this layer and delete them together at the end
@@ -141,6 +143,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		for {
 			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
 			if err != nil {
+				// nothing was deleted; a leftover tombstone would hide the
+				// still-existing remote children
+				f.unnoteRemoteDeletion(entry.FullPath, dirTombstoneTs)
 				glog.ErrorfCtx(ctx, "list folder %s: %v", entry.FullPath, err)
 				return fmt.Errorf("list folder %s: %v", entry.FullPath, err)
 			}
