@@ -173,6 +173,9 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 				}
 				if saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
 					glog.Warningf("maybeLazyListFromRemote: persist %s: %v", childPath, saveErr)
+				} else if f.isRemoteDeletionPending(persistCtx, childPath, mountDir) {
+					// a delete landed between the check above and the insert
+					f.retractLazyRemoteEntry(persistCtx, entry)
 				}
 			}
 			return nil

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -138,9 +140,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		if f.isRemoteDeletionPending(persistCtx, p, mountDir) {
 			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted while persisting", p)
 			f.lazyFetchGroup.Forget(key)
-			if err := f.DeleteEntryMetaAndData(persistCtx, p, false, false, false, false, nil, 0); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-				glog.Warningf("maybeLazyFetchFromRemote: failed to retract %s: %v", p, err)
-			}
+			f.retractLazyRemoteEntry(persistCtx, entry)
 			return lazyFetchResult{nil}, nil
 		}
 
@@ -155,6 +155,25 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, fmt.Errorf("maybeLazyFetchFromRemote: unexpected singleflight result type %T for %s", val, p)
 	}
 	return result.entry, nil
+}
+
+// retractLazyRemoteEntry deletes the entry at entry.FullPath only when it is
+// still the entry a lazy remote read just materialized — a concurrent write
+// may have replaced it, and deleting by path alone would take that write down.
+func (f *Filer) retractLazyRemoteEntry(ctx context.Context, entry *Entry) {
+	existing, findErr := f.FindEntry(ctx, entry.FullPath)
+	if findErr != nil || existing == nil {
+		return
+	}
+	sameEntry := existing.IsDirectory() == entry.IsDirectory() &&
+		((entry.Remote != nil && existing.Remote != nil && proto.Equal(existing.Remote, entry.Remote)) ||
+			(entry.Remote == nil && existing.Remote == nil && existing.Attr.Crtime.Equal(entry.Attr.Crtime)))
+	if !sameEntry {
+		return
+	}
+	if err := f.doDeleteEntryMetaAndData(ctx, existing, false, false, nil); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Warningf("retractLazyRemoteEntry %s: %v", entry.FullPath, err)
+	}
 }
 
 func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, error) {
