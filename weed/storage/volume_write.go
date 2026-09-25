@@ -47,7 +47,13 @@ var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
 func (v *Volume) Destroy(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (err error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	return v.destroyLocked(onlyEmpty, onlyGarbage, keepRemoteData)
+}
 
+// destroyLocked is Destroy for callers already holding dataFileAccessLock,
+// e.g. a guarded multi-copy delete that pins every copy under one lock span
+// so validation and removal cannot be split by a write.
+func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (err error) {
 	if err = v.checkDeletableLocked(onlyEmpty, onlyGarbage); err != nil {
 		return
 	}
@@ -94,15 +100,6 @@ func (v *Volume) checkDeletableLocked(onlyEmpty bool, onlyGarbage bool) (err err
 		return ErrVolumeNotEmpty
 	}
 	return nil
-}
-
-// checkDeletable runs the onlyEmpty/onlyGarbage guards without removing
-// anything, so a delete spanning duplicate copies can validate all of them
-// before destroying any.
-func (v *Volume) checkDeletable(onlyEmpty bool, onlyGarbage bool) error {
-	v.dataFileAccessLock.Lock()
-	defer v.dataFileAccessLock.Unlock()
-	return v.checkDeletableLocked(onlyEmpty, onlyGarbage)
 }
 
 // sharesVifWithEcVolume reports whether an EC volume for this volume id lives
