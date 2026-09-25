@@ -304,22 +304,27 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 // waiter must pick it up promptly, otherwise cross-mount write handoff stalls
 // long enough to time out clients.
 func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
-	var noLockServerSince time.Time
+	var unavailableSince time.Time
 	for lock.renewToken == "" {
 		err := lock.AttemptToLock(lockDuration)
 		if err == nil {
-			noLockServerSince = time.Time{}
+			unavailableSince = time.Time{}
 			continue
 		}
 		glog.V(1).Infof("create lock %s: %v", lock.key, err)
-		if strings.Contains(err.Error(), lock_manager.NoLockServerError.Error()) {
-			if noLockServerSince.IsZero() {
-				noLockServerSince = time.Now()
-			} else if time.Since(noLockServerSince) > lock.lc.noLockServerRetryPeriod {
-				return err
-			}
-		} else {
-			noLockServerSince = time.Time{}
+		if strings.Contains(err.Error(), "lock already owned") {
+			// Ordinary contention: a reachable server holds the lock, so
+			// waiting is the point and has no bound.
+			unavailableSince = time.Time{}
+			continue
+		}
+		// Anything else — "no lock server found", a dead ring member refusing
+		// connections — is a systemic fault waiting cannot fix; give up once
+		// it persists past the retry period.
+		if unavailableSince.IsZero() {
+			unavailableSince = time.Now()
+		} else if time.Since(unavailableSince) > lock.lc.noLockServerRetryPeriod {
+			return err
 		}
 	}
 	return nil

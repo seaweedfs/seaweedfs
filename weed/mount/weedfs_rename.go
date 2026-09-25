@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -328,11 +329,18 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			pathsToLock[0], pathsToLock[1] = pathsToLock[1], pathsToLock[0]
 		}
 
+		var heldLocks []*cluster.LiveLock
+		defer func() {
+			for _, l := range heldLocks {
+				l.Stop()
+			}
+		}()
 		for _, p := range pathsToLock {
 			dlmLock := wfs.lockClient.NewBlockingLongLivedLock(p, owner, lock_manager.LiveLockTTL)
-			if dlmLock != nil {
-				defer dlmLock.Stop()
+			if dlmLock == nil {
+				return fuse.Status(syscall.EAGAIN)
 			}
+			heldLocks = append(heldLocks, dlmLock)
 		}
 		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
 	}

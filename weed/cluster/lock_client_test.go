@@ -217,6 +217,75 @@ func TestNewShortLivedLockFailsFastOnNoLockServer(t *testing.T) {
 	}
 }
 
+type contendedLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (s *contendedLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	return &filer_pb.LockResponse{Error: "lock already owned by someone"}, nil
+}
+
+// A lock held by another owner is ordinary contention: acquisition waits it
+// out rather than failing on the unavailability bound.
+func TestNewShortLivedLockWaitsOutContention(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &contendedLockFiler{})
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(dialOption, pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	lc.noLockServerRetryPeriod = 200 * time.Millisecond
+
+	done := make(chan *LiveLock, 1)
+	go func() {
+		done <- lc.NewShortLivedLock("test-key", "test-owner")
+	}()
+	select {
+	case <-done:
+		t.Fatal("ordinary lock contention must not hit the unavailability bound")
+	case <-time.After(3 * lc.noLockServerRetryPeriod):
+	}
+}
+
+// A ring member that refuses connections is unavailability, not contention:
+// acquisition fails on the same bound as "no lock server found".
+func TestNewShortLivedLockFailsFastOnUnreachableFiler(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(dialOption, pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	lc.noLockServerRetryPeriod = 200 * time.Millisecond
+
+	start := time.Now()
+	lock := lc.NewShortLivedLock("test-key", "test-owner")
+	elapsed := time.Since(start)
+
+	if lock != nil {
+		t.Fatal("expected nil lock when the ring member is unreachable")
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("lock acquisition took %v, expected fail-fast", elapsed)
+	}
+}
+
 // LiveLock.generation is a fencing token written and read with 64-bit atomic
 // operations. On 32-bit platforms (GOARCH=386 and GOARCH=arm) a 64-bit atomic
 // op requires an 8-byte-aligned address, which Go only guarantees for the
