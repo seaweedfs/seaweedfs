@@ -37,6 +37,11 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 	if f.RemoteStorage == nil {
 		return nil, nil
 	}
+	// A startup tombstone rebuild is still replaying the meta log; without
+	// it a pending delete could resurrect here, so hold off on remote reads.
+	if f.remoteTombstonesPending.Load() {
+		return nil, nil
+	}
 
 	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(p)
 	if remoteLoc == nil {

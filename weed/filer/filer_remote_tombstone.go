@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -227,6 +230,72 @@ func (f *Filer) readRemoteSyncOffset(ctx context.Context, mountDir util.FullPath
 		return 0, nil
 	}
 	return int64(util.BytesToUint64(value)), nil
+}
+
+// RebuildRemoteDeletionTombstones replays the persisted metadata log from the
+// oldest write-back offset across mounts, restoring tombstones for deletes
+// committed before a restart but not yet applied to the remote. Every filer
+// writes its log files under the same directory, so pending peer deletes
+// replay too; only events still inside the unflushed buffer tail are missed.
+// Lazy remote reads hold off until the replay finishes or gives up.
+func (f *Filer) RebuildRemoteDeletionTombstones(ctx context.Context) {
+	if f.RemoteStorage == nil || f.remoteTombstones == nil {
+		return
+	}
+	mounts := f.RemoteStorage.MountedDirectories()
+	if len(mounts) == 0 {
+		return
+	}
+	f.remoteTombstonesPending.Store(true)
+	defer f.remoteTombstonesPending.Store(false)
+
+	startTsNs := f.remoteDeletionRebuildStartTsNs(ctx, mounts)
+
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+		_, _, lastErr = f.ReadPersistedLogBuffer(ctx, log_buffer.NewMessagePosition(startTsNs, 0), 0,
+			func(logEntry *filer_pb.LogEntry) (bool, error) {
+				event := &filer_pb.SubscribeMetadataResponse{}
+				if err := proto.Unmarshal(logEntry.Data, event); err != nil {
+					return false, nil
+				}
+				f.onRemoteDeletionEvents(event)
+				return false, nil
+			})
+		if lastErr == nil {
+			return
+		}
+	}
+	glog.WarningfCtx(ctx, "rebuild remote deletion tombstones: %v", lastErr)
+}
+
+// remoteDeletionRebuildStartTsNs returns the oldest write-back offset across
+// mounts — the earliest event the daemon may not have applied — or 0 when no
+// mount has a recorded offset (unreadable or absent, both replay from the
+// start).
+func (f *Filer) remoteDeletionRebuildStartTsNs(ctx context.Context, mounts []util.FullPath) int64 {
+	startTsNs := int64(math.MaxInt64)
+	for _, dir := range mounts {
+		offset, err := f.readRemoteSyncOffset(ctx, dir)
+		if err != nil {
+			glog.WarningfCtx(ctx, "read remote sync offset for %s: %v", dir, err)
+			offset = 0
+		}
+		if offset < startTsNs {
+			startTsNs = offset
+		}
+	}
+	if startTsNs == int64(math.MaxInt64) {
+		return 0
+	}
+	return startTsNs
 }
 
 // onRemoteDeletionEvents folds peer and local metadata events into the

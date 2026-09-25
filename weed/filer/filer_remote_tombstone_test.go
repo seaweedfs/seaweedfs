@@ -293,3 +293,46 @@ func TestMaybeLazyListFromRemote_RecreatedDirStillHidesOldGeneration(t *testing.
 	assert.Nil(t, store.getEntry("/buckets/mybucket/dir/stale.txt"))
 	require.NotNil(t, store.getEntry("/buckets/mybucket/dir/fresh.txt"))
 }
+
+func TestRemoteDeletionRebuildStartTsNs_UsesOldestMountOffset(t *testing.T) {
+	f, store := newMountedTestFiler(t, "stub_rebuild", nil, 0)
+	f.RemoteStorage.mapDirectoryToRemoteStorage("/buckets/other", &remote_pb.RemoteStorageLocation{
+		Name: "tombstonestore", Bucket: "other", Path: "/",
+	})
+	mounts := f.RemoteStorage.MountedDirectories()
+	require.Len(t, mounts, 2)
+
+	putRemoteSyncOffset(t, store, "/buckets/mybucket", 300)
+	putRemoteSyncOffset(t, store, "/buckets/other", 200)
+	assert.Equal(t, int64(200), f.remoteDeletionRebuildStartTsNs(context.Background(), mounts),
+		"rebuild must replay from the least-synced mount")
+
+	// a mount whose offset was never written replays everything
+	require.NoError(t, store.KvDelete(context.Background(), remote_storage.SyncOffsetKey("/buckets/other")))
+	assert.Zero(t, f.remoteDeletionRebuildStartTsNs(context.Background(), mounts))
+}
+
+func TestRebuildRemoteDeletionTombstones_EmptyLogLeavesPendingClear(t *testing.T) {
+	f, _ := newMountedTestFiler(t, "stub_rebuild_empty", nil, 0)
+
+	f.RebuildRemoteDeletionTombstones(context.Background())
+
+	assert.False(t, f.remoteTombstonesPending.Load())
+	assert.Zero(t, f.remoteTombstones.blockedSince("/buckets/mybucket/a.txt"))
+}
+
+func TestMaybeLazyFetchFromRemote_SkipsWhileRebuildPending(t *testing.T) {
+	const storageType = "stub_tomb_pending"
+	stub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+		},
+	}
+	f, _ := newMountedTestFiler(t, storageType, stub, 0)
+
+	f.remoteTombstonesPending.Store(true)
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/a.txt")
+	require.NoError(t, err)
+	assert.Nil(t, entry)
+	assert.Equal(t, 0, stub.statCalls, "lazy fetch must hold off while tombstones rebuild")
+}
