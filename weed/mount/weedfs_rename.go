@@ -423,17 +423,22 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				// Migrate the DLM lock from old path to new path so the
 				// lock key matches the current file location. Hold the
 				// fhLockTable to prevent ReleaseHandle from concurrently
-				// stopping the lock during migration.
+				// stopping the lock during migration. Acquire before
+				// releasing: a failed migration keeps the old lock rather
+				// than leaving the handle unlocked.
 				if wfs.lockClient != nil {
 					fhActiveLock := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
 					if fh.dlmLock != nil {
 						owner := fmt.Sprintf("mount-%d", wfs.signature)
-						fh.dlmLock.Stop()
-						fh.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+						newLock := wfs.lockClient.NewBlockingLongLivedLock(
 							string(newPath), owner, lock_manager.LiveLockTTL,
 						)
-						if fh.dlmLock != nil {
+						if newLock != nil {
+							fh.dlmLock.Stop()
+							fh.dlmLock = newLock
 							glog.V(1).Infof("DLM lock migrated from %s to %s", oldPath, newPath)
+						} else {
+							glog.Warningf("DLM lock migration to %s failed; keeping lock on %s", newPath, oldPath)
 						}
 					}
 					wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
