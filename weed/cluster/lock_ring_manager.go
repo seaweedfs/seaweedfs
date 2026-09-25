@@ -132,22 +132,27 @@ func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
 
 // rebroadcast re-sends the current ring unless a membership broadcast is
 // still stabilizing — emitting mid-window would publish an intermediate
-// topology that the pending timer immediately replaces.
+// topology that the pending timer immediately replaces. The check and the
+// update must sit in one critical section or a membership change can slip
+// a pending timer in between.
 func (lrm *LockRingManager) rebroadcast(filerGroup FilerGroupName) {
 	lrm.mu.Lock()
-	_, pending := lrm.pendingTimer[filerGroup]
-	lrm.mu.Unlock()
-	if pending {
-		return
+	var update *master_pb.LockRingUpdate
+	if _, pending := lrm.pendingTimer[filerGroup]; !pending {
+		update = lrm.nextBroadcastUpdate(filerGroup)
 	}
-	lrm.emit(filerGroup)
+	lrm.mu.Unlock()
+	lrm.sendUpdate(filerGroup, update)
 }
 
 func (lrm *LockRingManager) emit(filerGroup FilerGroupName) {
 	lrm.mu.Lock()
 	update := lrm.nextBroadcastUpdate(filerGroup)
 	lrm.mu.Unlock()
+	lrm.sendUpdate(filerGroup, update)
+}
 
+func (lrm *LockRingManager) sendUpdate(filerGroup FilerGroupName, update *master_pb.LockRingUpdate) {
 	if update == nil {
 		return
 	}
