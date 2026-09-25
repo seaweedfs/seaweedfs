@@ -17,10 +17,10 @@ import (
 )
 
 // doRename tries the streaming mux first, falling back to unary on transport errors.
-func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntryRequest, oldPath, newPath util.FullPath) error {
+func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntryRequest, oldPath, newPath util.FullPath, newPathLock **cluster.LiveLock) error {
 	if wfs.streamMutate != nil && wfs.streamMutate.IsAvailable() {
 		err := wfs.streamMutate.Rename(ctx, request, func(resp *filer_pb.StreamRenameEntryResponse) error {
-			return wfs.handleRenameResponse(ctx, resp)
+			return wfs.handleRenameResponse(ctx, resp, newPath, newPathLock)
 		})
 		if err == nil || !errors.Is(err, ErrStreamTransport) {
 			return err // success or application error
@@ -40,7 +40,7 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 				}
 				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
 			}
-			if err := wfs.handleRenameResponse(ctx, resp); err != nil {
+			if err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock); err != nil {
 				return err
 			}
 		}
@@ -251,10 +251,14 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	// Acquiring before the handle marks below keeps a lock failure from
 	// leaving source handles flagged for a rename that never happened.
 	var heldLocks []*cluster.LiveLock
+	var newPathLock *cluster.LiveLock
 	if wfs.lockClient != nil {
 		defer func() {
 			for _, l := range heldLocks {
 				l.Stop()
+			}
+			if newPathLock != nil {
+				newPathLock.Stop()
 			}
 		}()
 		owner := fmt.Sprintf("mount-%d", wfs.signature)
@@ -293,7 +297,11 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			if dlmLock == nil {
 				return fuse.Status(syscall.EAGAIN)
 			}
-			heldLocks = append(heldLocks, dlmLock)
+			if p == string(newPath) {
+				newPathLock = dlmLock
+			} else {
+				heldLocks = append(heldLocks, dlmLock)
+			}
 		}
 		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
 	}
@@ -368,7 +376,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 
 	ctx := context.Background()
-	err := wfs.doRename(ctx, request, oldPath, newPath)
+	err := wfs.doRename(ctx, request, oldPath, newPath, &newPathLock)
 	if err != nil {
 		glog.V(0).Infof("Rename %s => %s: %v", oldPath, newPath, err)
 		// Map error strings to FUSE status codes. String matching is used
@@ -400,7 +408,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 }
 
-func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse) error {
+func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse, renameNewPath util.FullPath, renameNewPathLock **cluster.LiveLock) error {
 	// comes from filer StreamRenameEntry, can only be create or delete entry
 
 	glog.V(4).Infof("dir Rename %+v", resp.EventNotification)
@@ -440,10 +448,19 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				if wfs.lockClient != nil {
 					fhActiveLock := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
 					if fh.dlmLock != nil {
-						owner := fmt.Sprintf("mount-%d", wfs.signature)
-						newLock := wfs.lockClient.NewBlockingLongLivedLock(
-							string(newPath), owner, lock_manager.LiveLockTTL,
-						)
+						var newLock *cluster.LiveLock
+						if newPath == renameNewPath && renameNewPathLock != nil && *renameNewPathLock != nil {
+							// The rename already holds the lock on the target;
+							// adopt it — re-acquiring our own lock would block
+							// until this handle is released.
+							newLock = *renameNewPathLock
+							*renameNewPathLock = nil
+						} else if newPath != renameNewPath {
+							owner := fmt.Sprintf("mount-%d", wfs.signature)
+							newLock = wfs.lockClient.NewBlockingLongLivedLock(
+								string(newPath), owner, lock_manager.LiveLockTTL,
+							)
+						}
 						if newLock != nil {
 							fh.dlmLock.Stop()
 							fh.dlmLock = newLock
