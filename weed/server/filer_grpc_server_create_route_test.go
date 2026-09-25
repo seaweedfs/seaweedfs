@@ -3,10 +3,12 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"net"
 	"testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -89,6 +91,14 @@ func TestCreateEntryPlainStaysLocal(t *testing.T) {
 	}
 }
 
+// ringPeerCtx simulates a request arriving over a connection from a ring
+// member, the provenance an is_moved marker needs before it is trusted.
+func ringPeerCtx() context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{
+		Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 49999},
+	})
+}
+
 // is_moved bounds forwarding to one hop: the owner applies it even if its own
 // ring view says someone else owns the key.
 func TestCreateEntryMovedAppliesLocally(t *testing.T) {
@@ -97,12 +107,29 @@ func TestCreateEntryMovedAppliesLocally(t *testing.T) {
 
 	req := createReq(name, true)
 	req.IsMoved = true
-	resp, err := fs.CreateEntry(context.Background(), req)
+	resp, err := fs.CreateEntry(ringPeerCtx(), req)
 	if err != nil || resp.Error != "" {
 		t.Fatalf("forwarded create must be applied locally, got err=%v resp=%v", err, resp.Error)
 	}
 	if _, found := store.entries[string(util.NewFullPath("/test", name))]; !found {
 		t.Fatal("forwarded create must reach the local store")
+	}
+}
+
+// A caller can set is_moved, but without a ring member's connection it is
+// ignored: the exclusive create still leaves this filer for the owner.
+func TestCreateEntryMovedFromClientIsNotTrusted(t *testing.T) {
+	fs, store := createRouteServer(t)
+	name := peerOwnedName(t, fs)
+
+	req := createReq(name, true)
+	req.IsMoved = true
+	_, err := fs.CreateEntry(context.Background(), req)
+	if err == nil {
+		t.Fatal("a forged is_moved must not skip owner routing")
+	}
+	if _, found := store.entries[string(util.NewFullPath("/test", name))]; found {
+		t.Fatal("a forged is_moved must not cause a local write")
 	}
 }
 

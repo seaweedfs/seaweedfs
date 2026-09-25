@@ -63,7 +63,7 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 		return &filer_pb.PosixLockResponse{}, fmt.Errorf("lock is required")
 	}
 
-	if !req.IsMoved && fs.filer.Dlm != nil {
+	if !fs.movedFromPeer(ctx, req.IsMoved) && fs.filer.Dlm != nil {
 		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.Key); owner != "" && owner != fs.option.Host {
 			forwarded := &filer_pb.PosixLockRequest{
 				Key:     req.Key,

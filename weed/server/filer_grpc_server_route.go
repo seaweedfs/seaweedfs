@@ -2,11 +2,13 @@ package weed_server
 
 import (
 	"context"
+	"net"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/peer"
 )
 
 // writeOwner returns the filer that serializes writes to key, or "" when this
@@ -54,4 +56,51 @@ func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send
 // resolve to the same owner, and land on that filer's one per-path lock.
 func entryRouteKey(fullpath util.FullPath) string {
 	return s3_constants.ObjectWriteRouteKeyPrefix + string(fullpath)
+}
+
+// movedFromPeer reports whether an is_moved marker arrived on a connection
+// from a ring member, i.e. it marks a genuine forwarded hop. is_moved is
+// caller-controlled, so an unverified marker is ignored and the request is
+// routed like a fresh one — a forged flag cannot make a conditional mutation
+// evaluate under a non-owner's lock.
+func (fs *FilerServer) movedFromPeer(ctx context.Context, isMoved bool) bool {
+	if !isMoved || fs.filer.Dlm == nil {
+		return false
+	}
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return false
+	}
+	peerHost, _, err := net.SplitHostPort(p.Addr.String())
+	if err != nil {
+		return false
+	}
+	peerIP := net.ParseIP(peerHost)
+	if peerIP == nil {
+		return false
+	}
+	for _, member := range fs.filer.Dlm.LockRing.GetSnapshot() {
+		host, _, err := net.SplitHostPort(string(member))
+		if err != nil {
+			continue
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.Equal(peerIP) {
+				return true
+			}
+			continue
+		}
+		// The member advertises a hostname; resolve it to compare with the
+		// connection's source address.
+		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+		if err != nil {
+			continue
+		}
+		for _, ip := range ips {
+			if ip.Equal(peerIP) {
+				return true
+			}
+		}
+	}
+	return false
 }

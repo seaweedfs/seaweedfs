@@ -769,10 +769,11 @@ func TestObjectTransactionRouteKeyOwnerAppliesLocally(t *testing.T) {
 	}
 }
 
-// A forwarded transaction (is_moved) applies locally even when the ring names a
-// different owner: is_moved bounds forwarding to a single hop, so two filers that
-// disagree on the owner during a ring change cannot loop. If is_moved were
-// ignored, this would attempt to dial the bogus owner instead of applying.
+// A forwarded transaction (is_moved over a ring member's connection) applies
+// locally even when the ring names a different owner: is_moved bounds
+// forwarding to a single hop, so two filers that disagree on the owner during
+// a ring change cannot loop. Without the marker this would attempt to dial
+// the bogus owner instead of applying.
 func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
 	self := pb.ServerAddress("localhost:1")
 	other := pb.ServerAddress("localhost:2")
@@ -781,7 +782,7 @@ func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
 	})
 	withRing(fs, self, other) // ring owner is "other", not self
 
-	resp, err := fs.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
+	resp, err := fs.ObjectTransaction(ringPeerCtx(), &filer_pb.ObjectTransactionRequest{
 		LockKey:  "/buckets/b/obj",
 		RouteKey: "s3.object.write:/buckets/b/obj",
 		IsMoved:  true,
