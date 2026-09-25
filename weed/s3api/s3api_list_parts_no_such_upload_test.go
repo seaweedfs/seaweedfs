@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -42,6 +43,7 @@ func (f *fakePartsFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream fi
 	}
 	// most stores list a missing directory as empty rather than erroring, which
 	// is exactly the behavior under test
+	count := uint32(0)
 	for _, entry := range f.parts {
 		if req.StartFromFileName != "" {
 			if req.InclusiveStartFrom {
@@ -54,9 +56,13 @@ func (f *fakePartsFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream fi
 				}
 			}
 		}
+		if req.Limit > 0 && count >= req.Limit {
+			break
+		}
 		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
 			return err
 		}
+		count++
 	}
 	return nil
 }
@@ -172,29 +178,67 @@ func TestListPartsPaginationWithUUIDParts(t *testing.T) {
 		},
 	})
 
+	// Page 1: marker = 0, MaxParts = 1. Returns part 1, IsTruncated = true, NextMarker = 1
 	input := listPartsInput("open-upload")
-	input.PartNumberMarker = aws.Int64(1)
+	input.PartNumberMarker = aws.Int64(0)
+	input.MaxParts = aws.Int64(1)
 
 	output, code := s3a.listObjectParts(input)
 	if code != s3err.ErrNone {
-		t.Fatalf("code = %v, want ErrNone", code)
+		t.Fatalf("page 1 code = %v, want ErrNone", code)
 	}
-	if len(output.Part) != 2 {
-		t.Fatalf("parts = %d, want 2 (parts 2 and 3)", len(output.Part))
+	if len(output.Part) != 1 || *output.Part[0].PartNumber != 1 {
+		t.Fatalf("page 1 parts = %v, want [part 1]", output.Part)
 	}
-	if *output.Part[0].PartNumber != 2 || *output.Part[1].PartNumber != 3 {
-		t.Fatalf("unexpected parts returned: %v, %v", *output.Part[0].PartNumber, *output.Part[1].PartNumber)
+	if !*output.IsTruncated {
+		t.Fatalf("page 1 IsTruncated = false, want true")
+	}
+	if output.NextPartNumberMarker == nil || *output.NextPartNumberMarker != 1 {
+		t.Fatalf("page 1 NextPartNumberMarker = %v, want 1", output.NextPartNumberMarker)
 	}
 
-	input.PartNumberMarker = aws.Int64(2)
+	// Page 2: marker = 1, MaxParts = 1. Advances to part 2, IsTruncated = true, NextMarker = 2
+	input.PartNumberMarker = output.NextPartNumberMarker
 	output, code = s3a.listObjectParts(input)
 	if code != s3err.ErrNone {
-		t.Fatalf("code = %v, want ErrNone", code)
+		t.Fatalf("page 2 code = %v, want ErrNone", code)
 	}
-	if len(output.Part) != 1 {
-		t.Fatalf("parts = %d, want 1 (part 3)", len(output.Part))
+	if len(output.Part) != 1 || *output.Part[0].PartNumber != 2 {
+		t.Fatalf("page 2 parts = %v, want [part 2]", output.Part)
 	}
-	if *output.Part[0].PartNumber != 3 {
-		t.Fatalf("unexpected part returned: %v", *output.Part[0].PartNumber)
+	if !*output.IsTruncated {
+		t.Fatalf("page 2 IsTruncated = false, want true")
+	}
+	if output.NextPartNumberMarker == nil || *output.NextPartNumberMarker != 2 {
+		t.Fatalf("page 2 NextPartNumberMarker = %v, want 2", output.NextPartNumberMarker)
+	}
+
+	// Page 3: marker = 2, MaxParts = 1. Returns part 3, IsTruncated = false, NextMarker = nil
+	input.PartNumberMarker = output.NextPartNumberMarker
+	output, code = s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("page 3 code = %v, want ErrNone", code)
+	}
+	if len(output.Part) != 1 || *output.Part[0].PartNumber != 3 {
+		t.Fatalf("page 3 parts = %v, want [part 3]", output.Part)
+	}
+	if *output.IsTruncated {
+		t.Fatalf("page 3 IsTruncated = true, want false")
+	}
+	if output.NextPartNumberMarker != nil {
+		t.Fatalf("page 3 NextPartNumberMarker = %v, want nil", output.NextPartNumberMarker)
+	}
+
+	// Extreme boundary test: MaxInt marker returns empty unpageable response safely
+	input.PartNumberMarker = aws.Int64(math.MaxInt64)
+	output, code = s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("max marker code = %v, want ErrNone", code)
+	}
+	if len(output.Part) != 0 {
+		t.Fatalf("max marker parts = %d, want 0", len(output.Part))
+	}
+	if *output.IsTruncated {
+		t.Fatalf("max marker IsTruncated = true, want false")
 	}
 }

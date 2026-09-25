@@ -1388,6 +1388,11 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		StorageClass:     aws.String("STANDARD"),
 	}
 
+	if input.PartNumberMarker != nil && *input.PartNumberMarker >= math.MaxInt {
+		output.IsTruncated = aws.Bool(false)
+		return output, s3err.ErrNone
+	}
+
 	startFrom := fmt.Sprintf("%04d", *input.PartNumberMarker+1)
 	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", startFrom, true, uint32(*input.MaxParts))
 	if err != nil {
@@ -1430,6 +1435,11 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
 			}
 		}
+	}
+
+	if len(output.Part) == 0 {
+		output.IsTruncated = aws.Bool(false)
+		output.NextPartNumberMarker = nil
 	}
 
 	glog.V(2).Infof("listObjectParts: Returning %d parts for uploadId=%s", len(output.Part), *input.UploadId)
