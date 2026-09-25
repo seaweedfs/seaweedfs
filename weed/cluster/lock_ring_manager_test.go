@@ -213,6 +213,42 @@ func TestLockRingManager_NoBroadcastWithoutFn(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // should not panic
 }
 
+func TestLockRingManager_EmptyRingNotBroadcast(t *testing.T) {
+	var mu sync.Mutex
+	var broadcasts []*master_pb.LockRingUpdate
+
+	lrm := NewLockRingManager(func(resp *master_pb.KeepConnectedResponse) {
+		mu.Lock()
+		if resp.LockRingUpdate != nil {
+			broadcasts = append(broadcasts, resp.LockRingUpdate)
+		}
+		mu.Unlock()
+	})
+	lrm.stabilizeDelay = 50 * time.Millisecond
+
+	group := FilerGroupName("default")
+
+	lrm.AddServer(group, "filer1:8888")
+	lrm.FlushPending(group)
+
+	mu.Lock()
+	broadcasts = nil
+	mu.Unlock()
+
+	// Removing the last member must not propagate an empty ring.
+	lrm.RemoveServer(group, "filer1:8888")
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	assert.Equal(t, 0, len(broadcasts), "empty ring must not be broadcast")
+	mu.Unlock()
+
+	// The last non-empty snapshot is still served to reconnecting clients.
+	update := lrm.GetLastUpdate(group)
+	require.NotNil(t, update)
+	assert.Equal(t, []string{"filer1:8888"}, update.Servers)
+}
+
 func TestLockRingManager_GetLastUpdateReturnsBroadcastState(t *testing.T) {
 	lrm := NewLockRingManager(nil)
 

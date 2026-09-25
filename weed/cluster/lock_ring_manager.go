@@ -116,16 +116,24 @@ func (lrm *LockRingManager) scheduleBroadcast(filerGroup FilerGroupName) {
 
 func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
 	lrm.mu.Lock()
+	members := lrm.members[filerGroup]
+	if len(members) == 0 {
+		// An empty lock ring is never usable: a late "last member removed"
+		// event from a former leader must not propagate and wedge every lock
+		// client. Keep the last non-empty broadcast as the snapshot served to
+		// reconnecting clients.
+		delete(lrm.pendingTimer, filerGroup)
+		lrm.mu.Unlock()
+		return
+	}
 	// Use wall-clock nanoseconds so the version survives master restarts
 	// without persistence — a restarted master produces a version greater
 	// than any pre-restart value (assuming clocks don't jump backward).
 	version := time.Now().UnixNano()
 	lrm.version[filerGroup] = version
-	servers := make([]string, 0)
-	if members, ok := lrm.members[filerGroup]; ok {
-		for addr := range members {
-			servers = append(servers, string(addr))
-		}
+	servers := make([]string, 0, len(members))
+	for addr := range members {
+		servers = append(servers, string(addr))
 	}
 	update := &master_pb.LockRingUpdate{
 		FilerGroup: string(filerGroup),
