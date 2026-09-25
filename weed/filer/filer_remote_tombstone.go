@@ -339,8 +339,10 @@ func (f *Filer) rebuildRemoteDeletionTombstones(ctx context.Context, mounts []ut
 		close(done)
 		f.remoteTombstonesDone.Store(nil)
 	}
-	// Past this point every tombstone would be expired anyway, so holding the
-	// gate longer protects nothing; open it and let lazy reads resume.
+	// Deletes made after startup are recorded through the live delete and
+	// event paths, so replay can only be missing deletes committed before
+	// the restart — and those have all crossed the tombstone TTL once this
+	// deadline passes. Holding the gate longer protects nothing.
 	replayDeadline := time.Now().Add(remoteDeletionTombstoneTTL)
 	backoff := 2 * time.Second
 	for {
