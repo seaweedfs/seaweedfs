@@ -60,7 +60,7 @@ Query parameters:
 | `dataNode` | preferred volume server | empty |
 | `saveInside` | store small content inside the metadata instead of a volume | false |
 | `maxMB` | split the upload into chunks of this many MB | filer `-maxMB` |
-| `mode` | unix permission bits, e.g. `0644` | `0664` |
+| `mode` | unix permission bits, e.g. `0644` | `0660` |
 | `op` | `append` appends to an existing file | overwrite |
 | `skipCheckParentDir` | `true` skips the parent-directory existence check | false |
 
@@ -101,7 +101,7 @@ curl -H "Accept: application/json" "http://localhost:8888/dir/?limit=10&lastFile
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `limit` | max entries per page | filer `-dirListingLimit` |
+| `limit` | max entries per page | filer `-dirListLimit` |
 | `lastFileName` | resume listing after this entry name | empty |
 | `namePattern` | include only names matching the wildcard | empty |
 | `namePatternExclude` | exclude names matching the wildcard | empty |
@@ -135,14 +135,18 @@ curl -X DELETE "http://localhost:8888/dir/?recursive=true"
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `recursive` | delete a non-empty directory tree | false |
+| `recursive` | delete a non-empty directory tree | false; when the filer runs with `filer.options.recursive_delete=true`, deletes are recursive unless `recursive=false` |
 | `ignoreRecursiveError` | keep deleting remaining entries after an error | false |
 | `skipChunkDeletion` | remove only the metadata, keep volume data | false |
 
 ### Tagging
 
+Tags are carried as `Seaweed-`-prefixed request headers, not query
+parameters; `?tagging` selects the tagging handler and `?tagging=k1,k2`
+lists the keys to remove.
+
 ```bash
-curl -X PUT "http://localhost:8888/dir/file.jpg?tagging&k1=v1"
+curl -X PUT -H "Seaweed-k1: v1" -H "Seaweed-k2: v2" "http://localhost:8888/dir/file.jpg?tagging"
 curl -X DELETE "http://localhost:8888/dir/file.jpg?tagging=k1,k2"
 ```
 
@@ -157,8 +161,9 @@ filer port needs to be exposed.
 
 ### Resumable uploads
 
-When started with `-tusBasePath` the filer serves the [TUS protocol](https://tus.io/)
-(`POST`, `PATCH`, `HEAD` on upload URLs) for resumable uploads.
+The filer serves the [TUS protocol](https://tus.io/) for resumable uploads
+(`POST`, `PATCH`, `HEAD` on upload URLs). It is enabled by default at
+`/.tus`; `-tusBasePath` changes the endpoint base path.
 
 ### Health
 
@@ -226,7 +231,7 @@ the result.
 curl -v "http://localhost:9333/3,01637037d6"
 ```
 
-`GET /{fileId}` answers `301 Moved Permanently` to a volume server holding
+`GET /{fileId}` answers `308 Permanent Redirect` to a volume server holding
 the file, preserving the query string (e.g. image-resize parameters).
 
 ### Cluster status
@@ -309,7 +314,7 @@ Supports `Range` and `HEAD`. Image files can be resized server-side:
 | Parameter | Description |
 |-----------|-------------|
 | `width`, `height` | resize bounds in pixels |
-| `mode` | `fit`, `fill`, or `crop` (default `fit`) |
+| `mode` | `fit` (contain) or `fill` (cover); omitted resizes to `width`/`height` |
 | `crop_x1`, `crop_y1`, `crop_x2`, `crop_y2` | explicit crop rectangle |
 | `cm` | `false` returns the chunk-manifest blob instead of resolving it |
 | `readDeleted` | `true` reads soft-deleted needles |
@@ -332,5 +337,6 @@ curl "http://localhost:8080/status?pretty=y"  # disk and volume inventory
 curl -I "http://localhost:8080/healthz"       # liveness/readiness
 ```
 
-`OPTIONS` preflights answer CORS headers; a volume server started with
-`-publicUrl` serves read-only requests on a separate public port.
+`OPTIONS` preflights answer CORS headers. When `-port.public` differs from
+`-port`, the volume server opens a separate read-only public listener on
+that port; `-publicUrl` sets the address it advertises to clients.
