@@ -481,15 +481,11 @@ fn find_options_arg(args: &[String]) -> String {
     String::new()
 }
 
-/// Parse a duration with Go's `time.ParseDuration` grammar, as the Go volume
-/// server's `flag.Duration` flags (`-inflightUploadDataTimeout` and friends)
-/// do: `[0-9]*(\.[0-9]*)?<unit>` repeated, with units `ns`, `us`/`µs`/`μs`,
-/// `ms`, `s`, `m`, `h`. A bare `0` is the only unit-less value Go accepts;
-/// `30` or `30sec` fail flag parsing there, so they fail here too. Go also
-/// accepts a leading sign; a negative duration has no `std::time::Duration`
-/// representation, so it is rejected rather than silently clamped.
-///
-/// Returns the Go error text so clap's usage error names the bad value.
+/// Parse a duration with Go's `time.ParseDuration` grammar, as Go's
+/// `flag.Duration` flags do: `[0-9]*(\.[0-9]*)?<unit>` repeated, units
+/// `ns`/`us`/`µs`/`μs`/`ms`/`s`/`m`/`h`. A bare `0` is the only unit-less
+/// value; a leading sign parses in Go but a negative has no
+/// `std::time::Duration`, so it is an error, not a clamp.
 fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
     let orig = s;
     let invalid = || format!("time: invalid duration {:?}", orig);
@@ -511,8 +507,7 @@ fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
         return Err(invalid());
     }
 
-    // Go accumulates into a uint64 and bounds it by 1<<63 (the int64 range
-    // of `time.Duration`), so overflow is an error, not a wrap.
+    // Go bounds the total by 1<<63 (int64 nanoseconds): overflow is an error.
     const MAX: u64 = 1 << 63;
     let mut total: u64 = 0;
     let mut bytes = s.as_bytes();
@@ -545,8 +540,7 @@ fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
             let mut overflow = false;
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 if !overflow {
-                    // Like Go's leadingFraction: past 19 digits the rest of
-                    // the fraction cannot affect the result, so drop it.
+                    // Like Go's leadingFraction, digits past ~19 are dropped.
                     match f
                         .checked_mul(10)
                         .and_then(|f| f.checked_add(u64::from(bytes[i] - b'0')))
@@ -576,8 +570,7 @@ fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
         if unit_len == 0 {
             return Err(format!("time: missing unit in duration {:?}", orig));
         }
-        // The slice boundary is at an ASCII byte (or the end), so it is a
-        // char boundary; `str::from_utf8` cannot fail on it.
+        // The boundary is an ASCII byte or the end, so it is a char boundary.
         let unit = std::str::from_utf8(&bytes[..unit_len]).map_err(|_| invalid())?;
         bytes = &bytes[unit_len..];
         let unit_nanos: u64 = match unit {
@@ -600,8 +593,7 @@ fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
         }
         v *= unit_nanos;
         if f > 0 {
-            // Float multiplication, exactly as Go does it, so `1.5h` and
-            // friends round the same way on both implementations.
+            // Go's float math, so `1.5h` rounds the same way on both sides.
             v += (f as f64 * (unit_nanos as f64 / scale)) as u64;
             if v > MAX {
                 return Err(invalid());
@@ -618,8 +610,8 @@ fn parse_go_duration(s: &str) -> Result<std::time::Duration, String> {
     Ok(std::time::Duration::from_nanos(total))
 }
 
-/// Byte-size suffixes accepted by Go's `util.ParseBytes` (`weed/util/bytes.go`),
-/// lower-cased. SI (`kb`, `k`) and IEC (`kib`, `ki`) forms, `b`, and no suffix.
+/// Byte-size suffixes of Go's `util.ParseBytes`, lower-cased: SI (`kb`, `k`)
+/// and IEC (`kib`, `ki`) forms, `b`, and no suffix.
 fn byte_unit_multiplier(unit: &str) -> Option<u64> {
     const K: u64 = 1_000;
     const KI: u64 = 1 << 10;
@@ -641,15 +633,12 @@ fn byte_unit_multiplier(unit: &str) -> Option<u64> {
     })
 }
 
-/// Parse a human-readable byte count with Go's `util.ParseBytes` grammar: a
-/// decimal number, optional whitespace, then one of the suffixes in
-/// [`byte_unit_multiplier`], case-insensitive. `10GiB` → 10737418240,
-/// `1.5TB` → 1500000000000, `42 mib` → 44040192.
+/// Parse a human-readable byte count with Go's `util.ParseBytes` grammar:
+/// decimal number, optional whitespace, then a [`byte_unit_multiplier`]
+/// suffix, case-insensitive. `10GiB` → 10737418240, `1.5TB` → 1500000000000.
 ///
-/// Like Go, the number may carry thousands commas — but a comma never reaches
-/// this function from `-minFreeSpace`, because that flag is split on commas
-/// into per-directory entries first (Go's `MustParseMinFreeSpace` does the
-/// same), so `-minFreeSpace=1,024MB` means the two entries `1` and `024MB`.
+/// Thousands commas parse as in Go but never arrive from `-minFreeSpace`,
+/// which is split on commas into per-directory entries first.
 fn parse_bytes(s: &str) -> Result<u64, String> {
     let digits_end = s
         .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))
@@ -668,15 +657,14 @@ fn parse_bytes(s: &str) -> Result<u64, String> {
     Ok(bytes as u64)
 }
 
-/// Parse one `-minFreeSpace` entry. Mirrors Go's `util.ParseMinFreeSpace()`
-/// (`weed/util/minfreespace.go`): a plain number is a percentage and must lie
-/// in `0..=100`; anything else must parse as a byte size above 100 bytes.
-/// `150` is an error, not 150 bytes, and `10GiBx` is an error, not 1%.
+/// Parse one `-minFreeSpace` entry like Go's `util.ParseMinFreeSpace()`: a
+/// plain number is a percentage in `0..=100`, anything else a byte size
+/// above 100 bytes. `150` errors rather than reading as bytes.
 fn parse_min_free_space(s: &str) -> Result<MinFreeSpace, String> {
     let s = s.trim();
     if let Ok(percent) = s.parse::<f64>() {
-        // Go's `percent < 0 || percent > 100` lets NaN through; the range
-        // check here rejects it, which is the only intentional difference.
+        // Go's range check lets NaN through; rejecting it is the one
+        // intentional difference.
         if !(0.0..=100.0).contains(&percent) {
             return Err(format!("minFreeSpace is invalid: {:?}", s));
         }
@@ -688,10 +676,9 @@ fn parse_min_free_space(s: &str) -> Result<MinFreeSpace, String> {
     }
 }
 
-/// Parse minFreeSpace / minFreeSpacePercent into MinFreeSpace values.
-/// Mirrors Go's `util.MustParseMinFreeSpace()`: `--minFreeSpace` takes
-/// precedence when set; every comma-separated entry must be valid, and the
-/// error names the first entry that is not.
+/// Parse minFreeSpace / minFreeSpacePercent like Go's
+/// `util.MustParseMinFreeSpace()`: `--minFreeSpace` wins when set, and any
+/// invalid comma-separated entry fails the whole list.
 fn parse_min_free_spaces(
     min_free_space: &str,
     min_free_space_percent: &str,
@@ -1458,14 +1445,13 @@ mod tests {
             parse_go_duration("9223372036854775807ns"),
             Ok(std::time::Duration::from_nanos(i64::MAX as u64))
         );
-        // Go accepts a negative duration; std::time::Duration cannot hold one,
-        // so it is an explicit error rather than a silent clamp to zero.
+        // Go accepts negatives; std::time::Duration cannot, so it errors.
         let negative = parse_go_duration("-1s").unwrap_err();
         assert!(negative.contains("negative"), "{}", negative);
     }
 
-    /// Negative control at the flag layer: clap must refuse the flag so the
-    /// process exits with a usage error, exactly where Go's flag package does.
+    /// Clap refuses the flag so the process exits with a usage error, exactly
+    /// where Go's flag package does.
     #[test]
     fn test_cli_rejects_invalid_duration_flags() {
         for value in ["30sec", "abc", "30"] {
@@ -1583,8 +1569,7 @@ mod tests {
         expect_bytes(parse_min_free_space("10GiB"), 10 << 30, "10GiB");
         expect_bytes(parse_min_free_space("10gib"), 10 << 30, "10gib");
         expect_bytes(parse_min_free_space("1.5TB"), 1_500_000_000_000, "1.5TB");
-        // Single-entry parser only: ParseFloat rejects the comma, so Go falls
-        // through to ParseBytes. From the flag these never arrive whole, see
+        // Comma inputs never arrive whole from the flag; see
         // test_min_free_space_flag_commas_are_list_separators.
         expect_bytes(parse_min_free_space("1,024MB"), 1_024_000_000, "1,024MB");
         expect_bytes(parse_min_free_space("1,000"), 1000, "1,000");
@@ -1648,12 +1633,9 @@ mod tests {
         assert!(parse_min_free_spaces("", "").is_err());
     }
 
-    /// A comma in `-minFreeSpace` is the per-directory separator, never a
-    /// thousands separator: `1,024MB` is the two entries `1` (percent) and
-    /// `024MB`, exactly as Go's `MustParseMinFreeSpace` splits it. With one
-    /// `-dir` the count check in resolve_config rejects it; with two it is two
-    /// different thresholds. Documented so nobody reads parse_bytes's comma
-    /// support as reachable from the flag.
+    /// A comma in `-minFreeSpace` separates per-directory entries, as in Go's
+    /// `MustParseMinFreeSpace`: `1,024MB` is `1` (percent) and `024MB`, and
+    /// one `-dir` fails the count check.
     #[test]
     fn test_min_free_space_flag_commas_are_list_separators() {
         let result = parse_min_free_spaces("1,024MB", "").unwrap();
