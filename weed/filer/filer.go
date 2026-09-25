@@ -265,7 +265,13 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 
 	oldEntry := existing
 	if oldEntry == nil {
-		oldEntry, _ = f.FindEntry(ctx, entry.FullPath)
+		var findErr error
+		oldEntry, findErr = f.FindEntry(ctx, entry.FullPath)
+		if o_excl && findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+			// An exclusive create cannot decide whether the path exists when
+			// the lookup itself failed; proceeding would upsert over it.
+			return fmt.Errorf("find entry %s: %w", entry.FullPath, findErr)
+		}
 	}
 
 	/*

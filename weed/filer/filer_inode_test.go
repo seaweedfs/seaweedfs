@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -122,6 +123,32 @@ func TestCreateEntryOExclPreservesExistingEntry(t *testing.T) {
 	err := f.CreateEntry(context.Background(), replacement, original, true, false, nil, false, f.MaxFilenameLength)
 	require.ErrorIs(t, err, filer_pb.ErrEntryAlreadyExists)
 
+	stored, findErr := store.FindEntry(context.Background(), original.FullPath)
+	require.NoError(t, findErr)
+	assert.Equal(t, original.Extended, stored.Extended)
+}
+
+func TestCreateEntryOExclFailsOnLookupError(t *testing.T) {
+	f, store := newTestFilerWithStubStore()
+
+	original := &Entry{
+		FullPath: util.FullPath("/buckets/my-bucket"),
+		Attr:     Attr{Mode: os.ModeDir | 0o777},
+		Extended: map[string][]byte{"owner": []byte("alice")},
+	}
+	require.NoError(t, store.InsertEntry(context.Background(), original))
+
+	// a failed lookup must not masquerade as "not found": without the check
+	// the insert path would upsert over the stored bucket entry
+	store.findErr = errors.New("transient store failure")
+	err := f.CreateEntry(context.Background(), &Entry{
+		FullPath: util.FullPath("/buckets/my-bucket"),
+		Attr:     Attr{Mode: os.ModeDir | 0o777},
+	}, nil, true, false, nil, false, f.MaxFilenameLength)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, filer_pb.ErrEntryAlreadyExists)
+
+	store.findErr = nil
 	stored, findErr := store.FindEntry(context.Background(), original.FullPath)
 	require.NoError(t, findErr)
 	assert.Equal(t, original.Extended, stored.Extended)
