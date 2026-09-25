@@ -50,10 +50,15 @@ func (t *remoteDeletionTombstones) add(path string, isDir bool, tsNs int64) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.files)+len(t.dirs) >= remoteDeletionTombstoneLimit {
-		t.evictExpiredLocked(time.Now().UnixNano())
-		if len(t.files)+len(t.dirs) >= remoteDeletionTombstoneLimit {
-			glog.V(0).Infof("remote deletion tombstones full (%d), skipping %s", remoteDeletionTombstoneLimit, path)
+	// An ancestor directory tombstone at least as new already covers the
+	// path; recording it again only spends capacity.
+	for p := path; ; {
+		i := strings.LastIndexByte(p, '/')
+		if i <= 0 {
+			break
+		}
+		p = p[:i]
+		if ancestorTs, ok := t.dirs[p]; ok && ancestorTs >= tsNs {
 			return
 		}
 	}
@@ -61,8 +66,40 @@ func (t *remoteDeletionTombstones) add(path string, isDir bool, tsNs int64) {
 	if isDir {
 		m = t.dirs
 	}
-	if cur, ok := m[path]; !ok || tsNs > cur {
-		m[path] = tsNs
+	if cur, ok := m[path]; ok {
+		if tsNs > cur {
+			m[path] = tsNs
+		}
+		return
+	}
+	if len(t.files)+len(t.dirs) >= remoteDeletionTombstoneLimit {
+		t.evictExpiredLocked(time.Now().UnixNano())
+		if len(t.files)+len(t.dirs) >= remoteDeletionTombstoneLimit {
+			glog.V(0).Infof("remote deletion tombstones full (%d), skipping %s", remoteDeletionTombstoneLimit, path)
+			return
+		}
+	}
+	m[path] = tsNs
+	if isDir {
+		t.dropCoveredLocked(path, tsNs)
+	}
+}
+
+// dropCoveredLocked removes descendant tombstones a new directory tombstone
+// subsumes: their deletes predate it, so the ancestor already hides those
+// remote objects. Descendants deleted later keep their own tombstone.
+// Caller must hold t.mu.
+func (t *remoteDeletionTombstones) dropCoveredLocked(dirPath string, tsNs int64) {
+	prefix := dirPath + "/"
+	for p, ts := range t.files {
+		if ts <= tsNs && strings.HasPrefix(p, prefix) {
+			delete(t.files, p)
+		}
+	}
+	for p, ts := range t.dirs {
+		if ts <= tsNs && strings.HasPrefix(p, prefix) {
+			delete(t.dirs, p)
+		}
 	}
 }
 

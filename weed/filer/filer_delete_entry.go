@@ -125,6 +125,13 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32, onHardLinkIdsFn OnHardLinkIdsFunc) (err error) {
 
+	if isRecursive {
+		// Tombstone the directory before its children: when the store drops
+		// the subtree without listing it, or a child error aborts the walk,
+		// the ancestor tombstone still covers every descendant.
+		f.noteRemoteDeletion(entry.FullPath, true, time.Now().UnixNano())
+	}
+
 	//collect all the chunks of this layer and delete them together at the end
 	var chunksToDelete []*filer_pb.FileChunk
 	lastFileName := ""

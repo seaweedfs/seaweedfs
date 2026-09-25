@@ -63,6 +63,27 @@ func TestRemoteDeletionTombstones_BlocksAndReleases(t *testing.T) {
 	assert.Zero(t, tombs.blockedSince("/m/dir"))
 }
 
+func TestRemoteDeletionTombstones_AncestorSubsumesAndCovers(t *testing.T) {
+	tombs := newRemoteDeletionTombstones()
+
+	// a child tombstone recorded before its ancestor is dropped once the
+	// ancestor's newer delete covers the whole subtree
+	tombs.add("/m/dir/a.txt", false, 100)
+	tombs.add("/m/dir", true, 200)
+	assert.Equal(t, int64(200), tombs.blockedSince("/m/dir"))
+	assert.Equal(t, int64(200), tombs.blockedSince("/m/dir/a.txt"))
+	_, exists := tombs.files["/m/dir/a.txt"]
+	assert.False(t, exists, "descendant tombstone is subsumed by the ancestor")
+
+	// adds under the covered subtree are skipped while the ancestor stands
+	tombs.add("/m/dir/b.txt", false, 150)
+	_, exists = tombs.files["/m/dir/b.txt"]
+	assert.False(t, exists)
+	// ...but a child deleted after the ancestor still records its own tombstone
+	tombs.add("/m/dir/c.txt", false, 300)
+	assert.Equal(t, int64(300), tombs.blockedSince("/m/dir/c.txt"))
+}
+
 func TestMaybeLazyFetchFromRemote_SkipsTombstonedPath(t *testing.T) {
 	const storageType = "stub_tomb_fetch"
 	stub := &countingRemoteClient{
