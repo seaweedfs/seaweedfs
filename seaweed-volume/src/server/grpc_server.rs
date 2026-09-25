@@ -2271,6 +2271,8 @@ impl VolumeServer for VolumeGrpcService {
         request: Request<volume_server_pb::CopyFileRequest>,
     ) -> Result<Response<Self::CopyFileStream>, Status> {
         let req = request.into_inner();
+        check_volume_file_extension(&req.ext).map_err(Status::invalid_argument)?;
+        check_volume_collection(&req.collection).map_err(Status::invalid_argument)?;
         let vid = VolumeId(req.volume_id);
 
         let file_name: String;
@@ -2453,6 +2455,14 @@ impl VolumeServer for VolumeGrpcService {
             while let Some(req) = stream.message().await? {
                 match req.data {
                     Some(volume_server_pb::receive_file_request::Data::Info(info)) => {
+                        if let Err(e) = check_volume_file_extension(&info.ext) {
+                            resp_error = Some(e);
+                            break;
+                        }
+                        if let Err(e) = check_volume_collection(&info.collection) {
+                            resp_error = Some(e);
+                            break;
+                        }
                         // Determine file path
                         let path = if info.is_ec_volume {
                             let store = self.state.store.read().unwrap();
@@ -5647,6 +5657,31 @@ struct CopyProgress<'a> {
     throttler: &'a mut WriteThrottler,
 }
 
+/// Mirrors Go's checkVolumeFileExtension: the client-supplied Ext that
+/// CopyFile and ReceiveFile join onto the volume directory. A genuine
+/// extension is a leading dot plus alphanumerics (".dat", ".idx", ".ecx",
+/// ".ec00"..) and never a separator or "..".
+fn check_volume_file_extension(ext: &str) -> Result<(), String> {
+    let valid = ext.len() >= 2
+        && ext.starts_with('.')
+        && ext[1..].bytes().all(|b| b.is_ascii_alphanumeric());
+    if !valid {
+        return Err(format!("invalid file extension {ext:?}"));
+    }
+    Ok(())
+}
+
+/// Mirrors Go's checkVolumeCollection: the client-supplied Collection that
+/// CopyFile and ReceiveFile fold into a path component ("<collection>_<vid>").
+/// Collection names may hold '.' or '-', so this rejects only separators and
+/// bare parent references.
+fn check_volume_collection(collection: &str) -> Result<(), String> {
+    if collection == "." || collection == ".." || collection.contains(['/', '\\']) {
+        return Err(format!("invalid collection {collection:?}"));
+    }
+    Ok(())
+}
+
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
 /// Returns the modified_ts_ns received from the source.
 async fn copy_file_from_source<T>(
@@ -7169,7 +7204,7 @@ mod tests {
             data: Some(volume_server_pb::receive_file_request::Data::Info(
                 volume_server_pb::ReceiveFileInfo {
                     volume_id: 1,
-                    ext: ".recv_test".to_string(),
+                    ext: ".recvtest".to_string(),
                     collection: String::new(),
                     is_ec_volume: false,
                     shard_id: 0,
@@ -7200,7 +7235,7 @@ mod tests {
             "bytes_written must cover the whole payload"
         );
 
-        let written = std::fs::read(format!("{}/1.recv_test", dir)).unwrap();
+        let written = std::fs::read(format!("{}/1.recvtest", dir)).unwrap();
         assert_eq!(
             written.len(),
             payload.len(),
@@ -9039,6 +9074,142 @@ mod tests {
                 .find_volume(VolumeId(1))
                 .is_some(),
             "refused delete must leave the volume mounted"
+        );
+    }
+
+    // A collection or ext carrying a separator or ".." is folded into a path
+    // CopyFile then opens; it must be rejected rather than climbed out of the
+    // volume directory. Mirrors Go's checkVolumeFileExtension /
+    // checkVolumeCollection.
+    #[tokio::test]
+    async fn copy_file_rejects_traversal_in_collection_and_ext() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let unique = tmp
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let outside = tmp
+            .path()
+            .parent()
+            .unwrap()
+            .join(format!("copy_escape_{unique}_888.txt"));
+        std::fs::write(&outside, b"secret").unwrap();
+
+        let traversal = |collection: &str, ext: &str| volume_server_pb::CopyFileRequest {
+            volume_id: 888,
+            ext: ext.to_string(),
+            collection: collection.to_string(),
+            is_ec_volume: true,
+            stop_offset: u64::MAX,
+            compaction_revision: u32::MAX,
+            ignore_source_file_not_found: false,
+        };
+        let name = outside
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .trim_end_matches("_888.txt")
+            .to_string();
+        let status = service
+            .copy_file(Request::new(traversal(&format!("../{name}"), ".txt")))
+            .await
+            .err()
+            .expect("a collection that climbs out of the store must be rejected");
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{status}");
+
+        let status = service
+            .copy_file(Request::new(traversal("", "/../escape")))
+            .await
+            .err()
+            .expect("an ext that climbs out of the store must be rejected");
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{status}");
+
+        std::fs::remove_file(&outside).unwrap();
+    }
+    // Same reach, write side: the path ReceiveFile creates is built from the
+    // client-supplied collection and ext.
+    #[tokio::test]
+    async fn receive_file_rejects_traversal_in_collection_and_ext() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let unique = tmp
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let outside = tmp
+            .path()
+            .parent()
+            .unwrap()
+            .join(format!("recv_escape_{unique}_777.dat"));
+        let (port, _shutdown) = serve_source(service).await;
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::connect(
+            format!("http://127.0.0.1:{}", port),
+        )
+        .await
+        .unwrap();
+
+        let send = |collection: String, ext: String| {
+            let messages = vec![
+                volume_server_pb::ReceiveFileRequest {
+                    data: Some(volume_server_pb::receive_file_request::Data::Info(
+                        volume_server_pb::ReceiveFileInfo {
+                            volume_id: 777,
+                            ext,
+                            collection,
+                            is_ec_volume: true,
+                            shard_id: 0,
+                            file_size: 4,
+                            disk_id: 0,
+                            disk_type: String::new(),
+                        },
+                    )),
+                },
+                volume_server_pb::ReceiveFileRequest {
+                    data: Some(volume_server_pb::receive_file_request::Data::FileContent(
+                        b"data".to_vec(),
+                    )),
+                },
+            ];
+            tokio_stream::iter(messages)
+        };
+        let name = outside
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .trim_end_matches("_777.dat")
+            .to_string();
+        let resp = client
+            .receive_file(send(format!("../{name}"), ".dat".to_string()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(
+            resp.error.contains("invalid collection"),
+            "a collection that climbs out of the store must be rejected: {:?}",
+            resp.error
+        );
+        assert!(
+            !outside.exists(),
+            "rejected ReceiveFile must not create {}",
+            outside.display()
+        );
+
+        let resp = client
+            .receive_file(send(String::new(), "/../escape".to_string()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(
+            resp.error.contains("invalid file extension"),
+            "an ext that climbs out of the store must be rejected: {:?}",
+            resp.error
         );
     }
 }
