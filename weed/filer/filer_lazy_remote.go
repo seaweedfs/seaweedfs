@@ -118,6 +118,12 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		persistBaseCtx, cancelPersist := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancelPersist()
 		persistCtx := context.WithValue(persistBaseCtx, lazyFetchContextKey{}, true)
+		// A delete may have landed while StatFile was in flight; re-check so
+		// the fetched object cannot resurrect a path whose delete is pending.
+		if f.isRemoteDeletionPending(persistCtx, p, mountDir) {
+			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted during remote stat", p)
+			return lazyFetchResult{nil}, nil
+		}
 		saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
