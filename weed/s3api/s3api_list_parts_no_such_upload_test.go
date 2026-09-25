@@ -43,6 +43,17 @@ func (f *fakePartsFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream fi
 	// most stores list a missing directory as empty rather than erroring, which
 	// is exactly the behavior under test
 	for _, entry := range f.parts {
+		if req.StartFromFileName != "" {
+			if req.InclusiveStartFrom {
+				if entry.Name < req.StartFromFileName {
+					continue
+				}
+			} else {
+				if entry.Name <= req.StartFromFileName {
+					continue
+				}
+			}
+		}
 		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
 			return err
 		}
@@ -148,5 +159,42 @@ func TestListPartsOpenUploadListsParts(t *testing.T) {
 	}
 	if *output.Part[0].PartNumber != 1 || *output.Part[0].Size != 5 {
 		t.Fatalf("part[0] = %d/%d, want 1/5", *output.Part[0].PartNumber, *output.Part[0].Size)
+	}
+}
+
+func TestListPartsPaginationWithUUIDParts(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partEntry("0001_c3a1e204.part", 5),
+			partEntry("0002_d4b2f315.part", 5),
+			partEntry("0003_e5c3a426.part", 5),
+		},
+	})
+
+	input := listPartsInput("open-upload")
+	input.PartNumberMarker = aws.Int64(1)
+
+	output, code := s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if len(output.Part) != 2 {
+		t.Fatalf("parts = %d, want 2 (parts 2 and 3)", len(output.Part))
+	}
+	if *output.Part[0].PartNumber != 2 || *output.Part[1].PartNumber != 3 {
+		t.Fatalf("unexpected parts returned: %v, %v", *output.Part[0].PartNumber, *output.Part[1].PartNumber)
+	}
+
+	input.PartNumberMarker = aws.Int64(2)
+	output, code = s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if len(output.Part) != 1 {
+		t.Fatalf("parts = %d, want 1 (part 3)", len(output.Part))
+	}
+	if *output.Part[0].PartNumber != 3 {
+		t.Fatalf("unexpected part returned: %v", *output.Part[0].PartNumber)
 	}
 }
