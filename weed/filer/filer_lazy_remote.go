@@ -37,6 +37,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 	if f.RemoteStorage == nil {
 		return nil, nil
 	}
+
 	// A startup tombstone rebuild is still replaying the meta log; without
 	// it a pending delete could resurrect here, so hold off on remote reads.
 	if f.remoteTombstonesPending.Load() {
@@ -45,6 +46,11 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 
 	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(p)
 	if remoteLoc == nil {
+		return nil, nil
+	}
+
+	if f.isRemoteDeletionPending(ctx, p, mountDir) {
+		glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted locally, remote delete pending", p)
 		return nil, nil
 	}
 
@@ -89,10 +95,6 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		}
 		if remoteEntry == nil {
 			glog.V(3).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s StatFile returned nil entry", p)
-			return lazyFetchResult{nil}, nil
-		}
-		if f.isRemoteDeletionPending(buildCtx, p, mountDir, remoteEntry.RemoteMtime) {
-			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted locally, remote delete pending", p)
 			return lazyFetchResult{nil}, nil
 		}
 

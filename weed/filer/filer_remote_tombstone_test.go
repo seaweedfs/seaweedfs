@@ -41,26 +41,35 @@ func putRemoteSyncOffset(t *testing.T, store *stubFilerStore, dir string, offset
 func TestRemoteDeletionTombstones_BlocksAndReleases(t *testing.T) {
 	tombs := newRemoteDeletionTombstones()
 
-	tombs.add("/m/a.txt", false, 100)
-	assert.Equal(t, int64(100), tombs.blockedSince("/m/a.txt"))
-	assert.Zero(t, tombs.blockedSince("/m/b.txt"))
+	tombs.addFromEvent("/m/a.txt", false, 100)
+	ts, _ := tombs.blockedSince("/m/a.txt")
+	assert.Equal(t, int64(100), ts)
+	ts, _ = tombs.blockedSince("/m/b.txt")
+	assert.Zero(t, ts)
 
 	// a delete of a directory blocks its whole subtree
-	tombs.add("/m/dir", true, 200)
-	assert.Equal(t, int64(200), tombs.blockedSince("/m/dir"))
-	assert.Equal(t, int64(200), tombs.blockedSince("/m/dir/deep/x.txt"))
-	assert.Zero(t, tombs.blockedSince("/m/dirx/y.txt"))
+	tombs.addFromEvent("/m/dir", true, 200)
+	ts, _ = tombs.blockedSince("/m/dir")
+	assert.Equal(t, int64(200), ts)
+	ts, _ = tombs.blockedSince("/m/dir/deep/x.txt")
+	assert.Equal(t, int64(200), ts)
+	ts, _ = tombs.blockedSince("/m/dirx/y.txt")
+	assert.Zero(t, ts)
 
 	// a rewrite at or after the delete lifts only that file's tombstone
 	tombs.clear("/m/a.txt", 100)
-	assert.Zero(t, tombs.blockedSince("/m/a.txt"))
-	tombs.add("/m/a.txt", false, 300)
+	ts, _ = tombs.blockedSince("/m/a.txt")
+	assert.Zero(t, ts)
+	tombs.addFromEvent("/m/a.txt", false, 300)
 	tombs.clear("/m/a.txt", 250)
-	assert.Equal(t, int64(300), tombs.blockedSince("/m/a.txt"), "older create must not lift newer delete")
+	ts, _ = tombs.blockedSince("/m/a.txt")
+	assert.Equal(t, int64(300), ts, "older create must not lift newer delete")
 
 	tombs.releaseThrough("/m/dir/deep/x.txt", 200)
-	assert.Zero(t, tombs.blockedSince("/m/dir/deep/x.txt"))
-	assert.Zero(t, tombs.blockedSince("/m/dir"))
+	ts, _ = tombs.blockedSince("/m/dir/deep/x.txt")
+	assert.Zero(t, ts)
+	ts, _ = tombs.blockedSince("/m/dir")
+	assert.Zero(t, ts)
 }
 
 func TestRemoteDeletionTombstones_AncestorSubsumesAndCovers(t *testing.T) {
@@ -68,39 +77,46 @@ func TestRemoteDeletionTombstones_AncestorSubsumesAndCovers(t *testing.T) {
 
 	// a child tombstone recorded before its ancestor is dropped once the
 	// ancestor's newer delete covers the whole subtree
-	tombs.add("/m/dir/a.txt", false, 100)
-	tombs.add("/m/dir", true, 200)
-	assert.Equal(t, int64(200), tombs.blockedSince("/m/dir"))
-	assert.Equal(t, int64(200), tombs.blockedSince("/m/dir/a.txt"))
+	tombs.addFromEvent("/m/dir/a.txt", false, 100)
+	tombs.addFromEvent("/m/dir", true, 200)
+	ts, _ := tombs.blockedSince("/m/dir")
+	assert.Equal(t, int64(200), ts)
+	ts, _ = tombs.blockedSince("/m/dir/a.txt")
+	assert.Equal(t, int64(200), ts)
 	_, exists := tombs.files["/m/dir/a.txt"]
 	assert.False(t, exists, "descendant tombstone is subsumed by the ancestor")
 
 	// adds under the covered subtree are skipped while the ancestor stands
-	tombs.add("/m/dir/b.txt", false, 150)
+	tombs.addFromEvent("/m/dir/b.txt", false, 150)
 	_, exists = tombs.files["/m/dir/b.txt"]
 	assert.False(t, exists)
 	// ...but a child deleted after the ancestor still records its own tombstone
-	tombs.add("/m/dir/c.txt", false, 300)
-	assert.Equal(t, int64(300), tombs.blockedSince("/m/dir/c.txt"))
+	tombs.addFromEvent("/m/dir/c.txt", false, 300)
+	ts, _ = tombs.blockedSince("/m/dir/c.txt")
+	assert.Equal(t, int64(300), ts)
 }
 
-func TestMaybeLazyFetchFromRemote_NewerRemoteObjectIsNotBlocked(t *testing.T) {
-	const storageType = "stub_tomb_regen"
-	stub := &countingRemoteClient{
-		stubRemoteClient: stubRemoteClient{
-			// remote mtime postdates the delete: a new-generation object
-			statResult: &filer_pb.RemoteEntry{RemoteMtime: time.Now().Unix() + 60, RemoteSize: 11},
+func TestRemoteDeletionTombstones_PendingIgnoresOffset(t *testing.T) {
+	f, store := newMountedTestFiler(t, "stub_tomb_pending_offset", nil, 0)
+
+	// recorded before its event lands: a later event may already have moved
+	// the mount's watermark past the local timestamp, so the offset cannot
+	// vouch for this delete yet
+	filePath := "/buckets/mybucket/dir/a.txt"
+	now := time.Now().UnixNano()
+	f.noteRemoteDeletion(util.FullPath(filePath), false, now)
+	putRemoteSyncOffset(t, store, "/buckets/mybucket", now+100)
+	assert.True(t, f.isRemoteDeletionPending(context.Background(), util.FullPath(filePath), "/buckets/mybucket"))
+
+	// once the delete event stamps the real timestamp, the watermark releases it
+	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket/dir",
+		TsNs:      now + 50,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "a.txt"},
 		},
-	}
-	f, _ := newMountedTestFiler(t, storageType, stub, 0)
-
-	filePath := util.FullPath("/buckets/mybucket/dir/a.txt")
-	f.noteRemoteDeletion(filePath, false, time.Now().UnixNano())
-
-	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
-	require.NoError(t, err)
-	assert.NotNil(t, entry, "a remote object rewritten after the delete is a new generation")
-	assert.Equal(t, 1, stub.statCalls)
+	})
+	assert.False(t, f.isRemoteDeletionPending(context.Background(), util.FullPath(filePath), "/buckets/mybucket"))
 }
 
 func TestMaybeLazyFetchFromRemote_SkipsTombstonedPath(t *testing.T) {
@@ -120,7 +136,28 @@ func TestMaybeLazyFetchFromRemote_SkipsTombstonedPath(t *testing.T) {
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 1, stub.statCalls, "the remote object is statted but must not resurrect")
+	assert.Equal(t, 0, stub.statCalls, "the remote object must not even be consulted")
+}
+
+func TestMaybeLazyFetchFromRemote_NewerRemoteMtimeStillBlocked(t *testing.T) {
+	const storageType = "stub_tomb_regen"
+	stub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: time.Now().Unix() + 60, RemoteSize: 11},
+		},
+	}
+	f, _ := newMountedTestFiler(t, storageType, stub, 0)
+
+	// a remote object whose mtime postdates the delete is still hidden: the
+	// remote clock cannot distinguish a new generation from the pending
+	// delete's target
+	filePath := util.FullPath("/buckets/mybucket/dir/a.txt")
+	f.noteRemoteDeletion(filePath, false, time.Now().UnixNano())
+
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
+	require.NoError(t, err)
+	assert.Nil(t, entry)
+	assert.Equal(t, 0, stub.statCalls)
 }
 
 func TestMaybeLazyFetchFromRemote_SyncOffsetReleasesTombstone(t *testing.T) {
@@ -134,14 +171,20 @@ func TestMaybeLazyFetchFromRemote_SyncOffsetReleasesTombstone(t *testing.T) {
 
 	filePath := util.FullPath("/buckets/mybucket/dir/a.txt")
 	deleteTsNs := time.Now().UnixNano()
-	f.noteRemoteDeletion(filePath, false, deleteTsNs)
+	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket/dir",
+		TsNs:      deleteTsNs,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "a.txt"},
+		},
+	})
 
 	// the daemon's persisted watermark is behind the delete: still blocked
 	putRemoteSyncOffset(t, store, "/buckets/mybucket", deleteTsNs-1)
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 1, stub.statCalls)
+	assert.Equal(t, 0, stub.statCalls)
 
 	// once the watermark reaches the delete event's own timestamp, the
 	// remote delete has landed and the lookup may consult the remote again
@@ -149,7 +192,7 @@ func TestMaybeLazyFetchFromRemote_SyncOffsetReleasesTombstone(t *testing.T) {
 	entry, err = f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	assert.Equal(t, 2, stub.statCalls)
+	assert.Equal(t, 1, stub.statCalls)
 }
 
 func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
@@ -179,7 +222,7 @@ func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
 	entry, err := f.FindEntry(context.Background(), filePath)
 	assert.ErrorIs(t, err, filer_pb.ErrNotFound)
 	assert.Nil(t, entry)
-	assert.Equal(t, 1, stub.statCalls)
+	assert.Equal(t, 0, stub.statCalls)
 
 	// a peer-observed create at the path lifts the tombstone
 	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
@@ -192,7 +235,7 @@ func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
 	entry, err = f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	assert.Equal(t, 2, stub.statCalls)
+	assert.Equal(t, 1, stub.statCalls)
 }
 
 func TestOnMetadataChangeEvent_PeerDeleteTombstones(t *testing.T) {
@@ -215,7 +258,7 @@ func TestOnMetadataChangeEvent_PeerDeleteTombstones(t *testing.T) {
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/a.txt")
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 1, stub.statCalls)
+	assert.Equal(t, 0, stub.statCalls)
 }
 
 func TestOnMetadataChangeEvent_PeerDirDeleteTombstonesSubtree(t *testing.T) {
@@ -238,7 +281,7 @@ func TestOnMetadataChangeEvent_PeerDirDeleteTombstonesSubtree(t *testing.T) {
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/deep/a.txt")
 	require.NoError(t, err)
 	assert.Nil(t, entry)
-	assert.Equal(t, 1, stub.statCalls)
+	assert.Equal(t, 0, stub.statCalls)
 }
 
 func TestMaybeLazyListFromRemote_SkipsTombstonedChild(t *testing.T) {
@@ -262,24 +305,28 @@ func TestMaybeLazyListFromRemote_SkipsTombstonedChild(t *testing.T) {
 	require.NotNil(t, store.getEntry("/buckets/mybucket/fresh.txt"), "other remote objects still list")
 }
 
-func TestMaybeLazyListFromRemote_RecreatedDirStillHidesOldGeneration(t *testing.T) {
+func TestMaybeLazyListFromRemote_RecreatedDirStillHidesChildren(t *testing.T) {
 	const storageType = "stub_tomb_recreate"
 	deleteTs := time.Now().UnixNano()
-	oldMtime := deleteTs/int64(time.Second) - 10
-	newMtime := deleteTs/int64(time.Second) + 10
 	stub := &stubRemoteClient{
 		listDirFn: func(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
-			if err := visitFn("/", "stale.txt", false, &filer_pb.RemoteEntry{RemoteMtime: oldMtime, RemoteSize: 10}); err != nil {
+			if err := visitFn("/", "stale.txt", false, &filer_pb.RemoteEntry{RemoteMtime: deleteTs/int64(time.Second) - 10, RemoteSize: 10}); err != nil {
 				return err
 			}
-			return visitFn("/", "fresh.txt", false, &filer_pb.RemoteEntry{RemoteMtime: newMtime, RemoteSize: 20})
+			return visitFn("/", "fresh.txt", false, &filer_pb.RemoteEntry{RemoteMtime: deleteTs/int64(time.Second) + 10, RemoteSize: 20})
 		},
 	}
 	f, store := newMountedTestFiler(t, storageType, stub, 300)
 
-	f.noteRemoteDeletion("/buckets/mybucket/dir", true, deleteTs)
-	// the directory is recreated; the tombstone keeps hiding old-generation
-	// remote objects while new remote generations still merge
+	// the directory is deleted then recreated; its remote children stay
+	// hidden — old or new mtime alike — until the remote delete lands
+	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		TsNs:      deleteTs,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "dir", IsDirectory: true},
+		},
+	})
 	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
 		Directory: "/buckets/mybucket",
 		TsNs:      deleteTs + 1,
@@ -291,7 +338,14 @@ func TestMaybeLazyListFromRemote_RecreatedDirStillHidesOldGeneration(t *testing.
 	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket/dir"))
 
 	assert.Nil(t, store.getEntry("/buckets/mybucket/dir/stale.txt"))
-	require.NotNil(t, store.getEntry("/buckets/mybucket/dir/fresh.txt"))
+	assert.Nil(t, store.getEntry("/buckets/mybucket/dir/fresh.txt"))
+
+	// after the write-back daemon confirms the remote delete, listing merges again
+	f.remoteTombstones.releaseThrough("/buckets/mybucket/dir/stale.txt", deleteTs)
+	delete(store.getEntry("/buckets/mybucket/dir").Extended, xattrRemoteListingSyncedAt)
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket/dir"))
+	assert.NotNil(t, store.getEntry("/buckets/mybucket/dir/stale.txt"))
+	assert.NotNil(t, store.getEntry("/buckets/mybucket/dir/fresh.txt"))
 }
 
 func TestRemoteDeletionRebuildStartTsNs_UsesOldestMountOffset(t *testing.T) {
@@ -318,7 +372,8 @@ func TestRebuildRemoteDeletionTombstones_EmptyLogLeavesPendingClear(t *testing.T
 	f.RebuildRemoteDeletionTombstones(context.Background())
 
 	assert.False(t, f.remoteTombstonesPending.Load())
-	assert.Zero(t, f.remoteTombstones.blockedSince("/buckets/mybucket/a.txt"))
+	ts, _ := f.remoteTombstones.blockedSince("/buckets/mybucket/a.txt")
+	assert.Zero(t, ts)
 }
 
 func TestMaybeLazyFetchFromRemote_SkipsWhileRebuildPending(t *testing.T) {

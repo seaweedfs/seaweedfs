@@ -112,11 +112,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 				return nil
 			}
 
-			var remoteMtimeSec int64
-			if remoteEntry != nil {
-				remoteMtimeSec = remoteEntry.RemoteMtime
-			}
-			if existingEntry == nil && f.isRemoteDeletionPending(persistCtx, childPath, mountDir, remoteMtimeSec) {
+			if existingEntry == nil && f.isRemoteDeletionPending(persistCtx, childPath, mountDir) {
 				return nil
 			}
 

@@ -30,20 +30,40 @@ const (
 // consumed the delete event yet. A lazy remote fetch or listing must not
 // resurrect them. A tombstone lifts when the path is written again, when the
 // mount's persisted sync offset passes the delete event, or on TTL.
+//
+// Tombstones recorded before their metadata event lands (the synchronous
+// delete path) are marked pending: the sync offset orders against event
+// timestamps, which only the event itself knows, so a pending tombstone can
+// only be lifted by the event confirming it or by TTL. Once the event stamps
+// the real timestamp the tombstone is releasable by the offset.
 type remoteDeletionTombstones struct {
-	mu    sync.Mutex
-	files map[string]int64 // file path -> delete event TsNs
-	dirs  map[string]int64 // deleted directory path -> event TsNs; covers its subtree
+	mu      sync.Mutex
+	files   map[string]int64 // file path -> delete event TsNs
+	dirs    map[string]int64 // deleted directory path -> event TsNs; covers its subtree
+	pending map[string]bool  // tombstone path recorded ahead of its event
 }
 
 func newRemoteDeletionTombstones() *remoteDeletionTombstones {
 	return &remoteDeletionTombstones{
-		files: make(map[string]int64),
-		dirs:  make(map[string]int64),
+		files:   make(map[string]int64),
+		dirs:    make(map[string]int64),
+		pending: make(map[string]bool),
 	}
 }
 
+// add records a tombstone ahead of its metadata event — the timestamp is the
+// local delete time, a lower bound the sync offset cannot order against.
 func (t *remoteDeletionTombstones) add(path string, isDir bool, tsNs int64) {
+	t.upsert(path, isDir, tsNs, false)
+}
+
+// addFromEvent records a tombstone stamped by the delete event itself, so the
+// mount's sync offset can release it once the daemon passes that event.
+func (t *remoteDeletionTombstones) addFromEvent(path string, isDir bool, tsNs int64) {
+	t.upsert(path, isDir, tsNs, true)
+}
+
+func (t *remoteDeletionTombstones) upsert(path string, isDir bool, tsNs int64, fromEvent bool) {
 	if t == nil {
 		return
 	}
@@ -69,6 +89,9 @@ func (t *remoteDeletionTombstones) add(path string, isDir bool, tsNs int64) {
 		if tsNs > cur {
 			m[path] = tsNs
 		}
+		if fromEvent && m[path] == tsNs {
+			delete(t.pending, path)
+		}
 		return
 	}
 	if len(t.files)+len(t.dirs) >= remoteDeletionTombstoneLimit {
@@ -79,6 +102,11 @@ func (t *remoteDeletionTombstones) add(path string, isDir bool, tsNs int64) {
 		}
 	}
 	m[path] = tsNs
+	if fromEvent {
+		delete(t.pending, path)
+	} else {
+		t.pending[path] = true
+	}
 	if isDir {
 		t.dropCoveredLocked(path, tsNs)
 	}
@@ -93,11 +121,13 @@ func (t *remoteDeletionTombstones) dropCoveredLocked(dirPath string, tsNs int64)
 	for p, ts := range t.files {
 		if ts <= tsNs && strings.HasPrefix(p, prefix) {
 			delete(t.files, p)
+			delete(t.pending, p)
 		}
 	}
 	for p, ts := range t.dirs {
 		if ts <= tsNs && strings.HasPrefix(p, prefix) {
 			delete(t.dirs, p)
+			delete(t.pending, p)
 		}
 	}
 }
@@ -112,23 +142,27 @@ func (t *remoteDeletionTombstones) clear(path string, tsNs int64) {
 	defer t.mu.Unlock()
 	if cur, ok := t.files[path]; ok && tsNs >= cur {
 		delete(t.files, path)
+		delete(t.pending, path)
 	}
 }
 
-// blockedSince returns the newest delete timestamp governing path: its own
-// file tombstone or one from a deleted ancestor directory. 0 means clear.
-func (t *remoteDeletionTombstones) blockedSince(path string) (tsNs int64) {
+// blockedSince returns the newest delete timestamp governing path — its own
+// file tombstone or one from a deleted ancestor directory — and whether that
+// tombstone is still waiting for its event. 0 means clear.
+func (t *remoteDeletionTombstones) blockedSince(path string) (tsNs int64, pending bool) {
 	if t == nil {
-		return 0
+		return 0, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if ts, ok := t.files[path]; ok {
 		tsNs = ts
+		pending = t.pending[path]
 	}
 	for p := path; ; {
 		if ts, ok := t.dirs[p]; ok && ts > tsNs {
 			tsNs = ts
+			pending = t.pending[p]
 		}
 		i := strings.LastIndexByte(p, '/')
 		if i <= 0 {
@@ -136,7 +170,7 @@ func (t *remoteDeletionTombstones) blockedSince(path string) (tsNs int64) {
 		}
 		p = p[:i]
 	}
-	return tsNs
+	return tsNs, pending
 }
 
 // releaseThrough drops the tombstones governing path that are no newer than
@@ -149,10 +183,12 @@ func (t *remoteDeletionTombstones) releaseThrough(path string, tsNs int64) {
 	defer t.mu.Unlock()
 	if cur, ok := t.files[path]; ok && cur <= tsNs {
 		delete(t.files, path)
+		delete(t.pending, path)
 	}
 	for p := path; ; {
 		if cur, ok := t.dirs[p]; ok && cur <= tsNs {
 			delete(t.dirs, p)
+			delete(t.pending, p)
 		}
 		i := strings.LastIndexByte(p, '/')
 		if i <= 0 {
@@ -166,11 +202,13 @@ func (t *remoteDeletionTombstones) evictExpiredLocked(nowNs int64) {
 	for p, ts := range t.files {
 		if nowNs-ts >= int64(remoteDeletionTombstoneTTL) {
 			delete(t.files, p)
+			delete(t.pending, p)
 		}
 	}
 	for p, ts := range t.dirs {
 		if nowNs-ts >= int64(remoteDeletionTombstoneTTL) {
 			delete(t.dirs, p)
+			delete(t.pending, p)
 		}
 	}
 }
@@ -189,19 +227,23 @@ func (f *Filer) noteRemoteDeletion(p util.FullPath, isDir bool, tsNs int64) {
 
 // isRemoteDeletionPending reports whether a remote write-back delete for p is
 // still owed: p was deleted under mountDir and neither a rewrite, the mount's
-// sync offset, nor the TTL has lifted the tombstone. remoteMtimeSec is the
-// remote object's own mtime — an object rewritten remotely after the delete
-// is a newer generation, not the one the tombstone hides.
-func (f *Filer) isRemoteDeletionPending(ctx context.Context, p util.FullPath, mountDir util.FullPath, remoteMtimeSec int64) bool {
+// sync offset, nor the TTL has lifted the tombstone.
+func (f *Filer) isRemoteDeletionPending(ctx context.Context, p util.FullPath, mountDir util.FullPath) bool {
 	if f.remoteTombstones == nil {
 		return false
 	}
-	tsNs := f.remoteTombstones.blockedSince(string(p))
+	tsNs, pending := f.remoteTombstones.blockedSince(string(p))
 	if tsNs == 0 {
 		return false
 	}
-	if remoteMtimeSec > 0 && remoteMtimeSec*int64(time.Second) > tsNs {
-		return false
+	if pending {
+		// Recorded ahead of its delete event — the write-back offset cannot
+		// vouch for it yet; only the TTL lifts it.
+		if f.remoteDeletionExpired(tsNs) {
+			f.remoteTombstones.releaseThrough(string(p), tsNs)
+			return false
+		}
+		return true
 	}
 	if f.remoteDeletionConsumed(ctx, mountDir, tsNs) {
 		f.remoteTombstones.releaseThrough(string(p), tsNs)
@@ -210,8 +252,12 @@ func (f *Filer) isRemoteDeletionPending(ctx context.Context, p util.FullPath, mo
 	return true
 }
 
+func (f *Filer) remoteDeletionExpired(tsNs int64) bool {
+	return time.Now().UnixNano()-tsNs >= int64(remoteDeletionTombstoneTTL)
+}
+
 func (f *Filer) remoteDeletionConsumed(ctx context.Context, mountDir util.FullPath, tsNs int64) bool {
-	if time.Now().UnixNano()-tsNs >= int64(remoteDeletionTombstoneTTL) {
+	if f.remoteDeletionExpired(tsNs) {
 		return true
 	}
 	offset, err := f.readRemoteSyncOffset(ctx, mountDir)
@@ -309,7 +355,11 @@ func (f *Filer) onRemoteDeletionEvents(event *filer_pb.SubscribeMetadataResponse
 	if message.OldEntry != nil {
 		sourcePath := filer_pb.MetadataEventSourceFullPath(event)
 		if message.NewEntry == nil || sourcePath != filer_pb.MetadataEventTargetFullPath(event) {
-			f.noteRemoteDeletion(util.FullPath(sourcePath), message.OldEntry.IsDirectory, event.TsNs)
+			if f.RemoteStorage != nil && f.remoteTombstones != nil {
+				if _, remoteLoc := f.RemoteStorage.FindMountDirectory(util.FullPath(sourcePath)); remoteLoc != nil {
+					f.remoteTombstones.addFromEvent(sourcePath, message.OldEntry.IsDirectory, event.TsNs)
+				}
+			}
 		}
 	}
 	if message.NewEntry != nil {
