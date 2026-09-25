@@ -401,10 +401,8 @@ impl VolumeGrpcService {
         // Step 1: stop master from redirecting traffic here
         self.notify_master_volume_readonly(&info, true).await?;
 
-        // Step 2: mark local volume readonly. Go's Store.MarkVolumeReadonly
-        // answers "volume %d not found" when the volume left the store between
-        // the caller's lookup and this lock (the window spans a master round
-        // trip), and makeVolumeReadonly returns that error before step 3.
+        // Step 2: mark local volume readonly; Go's MarkVolumeReadonly errors
+        // when the volume left the store during the step-1 master round trip.
         {
             let mut store = self.state.store.write().unwrap();
             let (_, vol) = store
@@ -8015,19 +8013,11 @@ mod tests {
         assert!(err.message().contains("volume id 17 not found"), "{}", err);
     }
 
-    /// The volume can leave the store between make_volume_readonly's own
-    /// lookup and the write lock that marks it: step 1 in between is a master
-    /// round trip, and an unmount or a heartbeat expiry can land during it.
-    /// Go's Store.MarkVolumeReadonly answers "volume %d not found" there and
-    /// makeVolumeReadonly propagates it; the scrub caller above matches on
-    /// NotFound to skip the volume rather than fail the report.
-    ///
-    /// The window is opened deterministically: step 1 first awaits the
-    /// current_master_url read lock, so holding its write guard parks
-    /// make_volume_readonly after its lookup succeeded. join! polls the
-    /// futures in order, so the unmount lands while it is parked, and with no
-    /// master configured the released notification is a no-op — the write
-    /// lock in step 2 is the only place left that can notice the volume is gone.
+    /// A volume can vanish between make_volume_readonly's lookup and its write
+    /// lock, a window spanning the step-1 master round trip; Go's
+    /// MarkVolumeReadonly answers "not found" there. Holding the
+    /// current_master_url write guard parks the call after its lookup, so
+    /// join!'s in-order polls land the unmount inside the window.
     #[tokio::test]
     async fn test_make_volume_readonly_answers_not_found_when_volume_vanished_under_lock() {
         let (service, _tmp) = make_local_service_with_volume("", None);
