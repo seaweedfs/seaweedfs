@@ -455,7 +455,17 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 							// until this handle is released.
 							newLock = *renameNewPathLock
 							*renameNewPathLock = nil
-						} else if newPath != renameNewPath {
+						} else if newPath == renameNewPath {
+							// No rename-held lock: the replaced target's handle
+							// still owns the lock on this path. Move it over so
+							// that handle's close cannot drop protection.
+							if targetFh, ok := wfs.fhMap.FindFileHandle(targetInode); ok && targetFh != fh {
+								targetFhLock := wfs.fhLockTable.AcquireLock("renameDLM", targetFh.fh, util.ExclusiveLock)
+								newLock = targetFh.dlmLock
+								targetFh.dlmLock = nil
+								wfs.fhLockTable.ReleaseLock(targetFh.fh, targetFhLock)
+							}
+						} else {
 							owner := fmt.Sprintf("mount-%d", wfs.signature)
 							newLock = wfs.lockClient.NewBlockingLongLivedLock(
 								string(newPath), owner, lock_manager.LiveLockTTL,
