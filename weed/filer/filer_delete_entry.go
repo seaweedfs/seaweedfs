@@ -145,6 +145,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 			for _, sub := range entries {
 				lastFileName = sub.Name()
+				f.noteRemoteDeletion(sub.FullPath, sub.IsDirectory(), time.Now().UnixNano())
 				if sub.IsDirectory() {
 					subIsDeletingBucket := f.IsBucket(sub)
 					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil, onHardLinkIdsFn)
@@ -206,6 +207,8 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 			return remoteDeletionErr
 		}
 	}
+
+	f.noteRemoteDeletion(entry.FullPath, entry.IsDirectory(), time.Now().UnixNano())
 
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)

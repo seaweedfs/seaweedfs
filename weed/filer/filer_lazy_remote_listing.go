@@ -109,6 +109,10 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 				return nil
 			}
 
+			if existingEntry == nil && f.isRemoteDeletionPending(persistCtx, childPath, mountDir) {
+				return nil
+			}
+
 			if existingEntry != nil {
 				// Merge: update remote metadata while preserving local state
 				// (Chunks, Extended, Uid/Gid/Mode, etc.)
