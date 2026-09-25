@@ -180,6 +180,42 @@ func TestScrubVolumeData_IgnoresOffset0Tombstone(t *testing.T) {
 	}
 }
 
+// A live needle whose header id no longer matches the index key must be
+// reported. ReadData only checks the body CRC, which does not cover the
+// header, so cookie/id damage is otherwise a clean scrub while reads 404
+// (#11460).
+func TestScrubVolumeDataChecksLiveNeedleHeaderId(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	const liveID = uint64(1)
+	offset, _, _, err := v.writeNeedle2(newRandomNeedle(liveID), true, false, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	syncVolumeFiles(t, v)
+	if errs := scrubVolumeErrors(t, v); len(errs) != 0 {
+		t.Fatalf("healthy live needle must pass scrub, got %v", errs)
+	}
+
+	corruptedID := make([]byte, types.NeedleIdSize)
+	types.NeedleIdToBytes(corruptedID, types.Uint64ToNeedleId(99))
+	if _, err := v.DataBackend.WriteAt(corruptedID, int64(offset)+types.CookieSize); err != nil {
+		t.Fatalf("corrupt needle id: %v", err)
+	}
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync corrupted .dat: %v", err)
+	}
+
+	if errs := scrubVolumeErrors(t, v); !strings.Contains(fmt.Sprint(errs), "does not match needle's Id") {
+		t.Fatalf("scrub should report the live needle's corrupted Id, got %v", errs)
+	}
+}
+
 func TestScrubVolumeDataChecksLocalDeletionTombstone(t *testing.T) {
 	dir := t.TempDir()
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)

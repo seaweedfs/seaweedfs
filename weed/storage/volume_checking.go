@@ -92,7 +92,10 @@ func (v *Volume) scrubVolumeData(idxFile *os.File, idxFileSize int64) (int64, []
 		n := needle.Needle{}
 		if err := n.ReadData(v.DataBackend, offset.ToActualOffset(), physicalSize, version); err != nil {
 			errs = append(errs, fmt.Errorf("failed to read needle %d on volume %d: %v", id, v.Id, err))
-		} else if size.IsDeleted() && n.Id != id {
+		} else if n.Id != id {
+			// The body CRC does not cover cookie+id. A live needle with a
+			// damaged header still reads, and only deleted needles were
+			// compared with the index key (#11460).
 			errs = append(errs, fmt.Errorf("index key %v does not match needle's Id %v on volume %d", id, n.Id, v.Id))
 		}
 
