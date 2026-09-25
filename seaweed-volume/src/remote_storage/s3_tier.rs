@@ -555,22 +555,14 @@ pub fn global_s3_tier_registry() -> &'static RwLock<S3TierRegistry> {
     GLOBAL_S3_TIER_REGISTRY.get_or_init(|| RwLock::new(S3TierRegistry::new()))
 }
 
-/// The one process-wide runtime that drives tiered-S3 I/O issued from
-/// synchronous storage code (`read_range_blocking`, `delete_file_blocking`).
+/// The one process-wide runtime for tiered-S3 I/O issued from synchronous
+/// storage code. A per-call runtime tore down the SDK's pooled connections
+/// after every 64 KiB chunk, re-dialing TLS per read; a long-lived runtime
+/// keeps the pool warm.
 ///
-/// The SDK client's pooled HTTPS connections are kept alive by tasks on the
-/// runtime a request was driven on. Building a runtime per call, as this file
-/// used to, tore that pool down after every 64 KiB chunk, so every read
-/// re-dialed and re-handshook TLS. One long-lived runtime keeps the pool warm,
-/// which is what Go's synchronous S3 client gets for free.
-///
-/// Two workers are plenty: they only poll HTTP futures, the bytes are moved by
-/// the kernel, and the caller is blocked for the duration anyway.
-///
-/// Built on first use. A build failure (the OS refusing threads) is returned
-/// to the caller as an error, not cached and not a panic: the callers sit in
-/// the middle of `Volume::destroy` and needle reads, whose own error paths
-/// must run, and a later call may succeed once the pressure is gone.
+/// Built on first use. A build failure is returned, not cached or panicked:
+/// callers sit inside `Volume::destroy` and needle reads, whose own error
+/// paths must run, and a later call may succeed.
 static TIER_RUNTIME: std::sync::Mutex<Option<tokio::runtime::Runtime>> =
     std::sync::Mutex::new(None);
 
@@ -591,15 +583,9 @@ fn tier_handle() -> Result<tokio::runtime::Handle, String> {
 }
 
 /// Run `future` on the tier runtime and block the calling thread until it
-/// finishes.
-///
-/// Blocking the caller is unavoidable: the storage layer is synchronous
-/// (`read_exact_at`-style calls under `spawn_blocking`, or a plain OS thread
-/// during volume destroy). The caller may also be a worker of *another* tokio
-/// runtime, which is why this spawns onto the tier runtime and waits on a
-/// channel instead of using `Handle::block_on`: that one panics when called
-/// from inside any runtime context ("Cannot start a runtime from within a
-/// runtime"), whereas parking on a channel works from anywhere.
+/// finishes. The caller may be a worker of *another* tokio runtime, so this
+/// waits on a channel rather than `Handle::block_on`, which panics when
+/// called from inside any runtime context.
 fn block_on_tier_future<F, T>(future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>> + Send + 'static,
