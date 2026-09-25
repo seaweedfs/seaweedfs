@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -20,6 +21,7 @@ import (
 type bucketCreateTestFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 
+	mu         sync.Mutex
 	createReqs []*filer_pb.CreateEntryRequest
 }
 
@@ -28,11 +30,19 @@ func (s *bucketCreateTestFilerServer) GetFilerConfiguration(context.Context, *fi
 }
 
 func (s *bucketCreateTestFilerServer) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.createReqs = append(s.createReqs, req)
 	return &filer_pb.CreateEntryResponse{
 		ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS,
 		Error:     "entry already exists",
 	}, nil
+}
+
+func (s *bucketCreateTestFilerServer) createRequests() []*filer_pb.CreateEntryRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*filer_pb.CreateEntryRequest(nil), s.createReqs...)
 }
 
 func TestS3BucketCreateRequestsExclusiveCreate(t *testing.T) {
@@ -42,11 +52,11 @@ func TestS3BucketCreateRequestsExclusiveCreate(t *testing.T) {
 
 	var output bytes.Buffer
 	err := (&commandS3BucketCreate{}).Do([]string{"-name", "my-bucket"}, commandEnv, &output)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
+	require.EqualError(t, err, "bucket my-bucket already exists")
 
-	require.Len(t, filerServer.createReqs, 1)
-	req := filerServer.createReqs[0]
+	reqs := filerServer.createRequests()
+	require.Len(t, reqs, 1)
+	req := reqs[0]
 	assert.True(t, req.OExcl, "bucket create must not replace an existing entry")
 	assert.Equal(t, "/buckets", req.Directory)
 	assert.Equal(t, "my-bucket", req.Entry.Name)
