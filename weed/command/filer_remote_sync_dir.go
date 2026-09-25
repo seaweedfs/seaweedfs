@@ -20,6 +20,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -41,14 +43,6 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 
 	var lastLogTsNs = time.Now().UnixNano()
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
-		if resp.EventNotification.NewEntry != nil {
-			if *option.storageClass == "" {
-				delete(resp.EventNotification.NewEntry.Extended, s3_constants.AmzStorageClass)
-			} else {
-				resp.EventNotification.NewEntry.Extended[s3_constants.AmzStorageClass] = []byte(*option.storageClass)
-			}
-		}
-
 		processor.AddSyncJob(resp)
 		return nil
 	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
@@ -175,10 +169,10 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
 				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
-				return client.WriteDirectory(dest, message.NewEntry)
+				return client.WriteDirectory(dest, remoteWriteEntry(message.NewEntry, *option.storageClass))
 			}
 			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
-			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, remoteWriteEntry(message.NewEntry, *option.storageClass), dest)
 			if errors.Is(writeErr, errSuperseded) {
 				glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
 				return nil
@@ -213,7 +207,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return client.DeleteFile(dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
-			return processUpdateEvent(option, filerSource, client, mountedDir, remoteStorageMountLocation, resp)
+			return processUpdateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp)
 		}
 
 		return nil
@@ -224,6 +218,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 func processUpdateEvent(
 	filerClient filer_pb.FilerClient,
 	filerSource filer_pb.FilerClient,
+	storageClass string,
 	client remote_storage.RemoteStorageClient,
 	mountedDir string,
 	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
@@ -244,7 +239,7 @@ func processUpdateEvent(
 		return nil
 	}
 	if message.NewEntry.IsDirectory {
-		return client.WriteDirectory(dest, message.NewEntry)
+		return client.WriteDirectory(dest, remoteWriteEntry(message.NewEntry, storageClass))
 	}
 	if isMetadataOnlyUpdate(resp.Directory, message) {
 		remoteEntry, err := liveRemoteEntry(filerClient, message.NewParentPath, message.NewEntry)
@@ -257,7 +252,7 @@ func processUpdateEvent(
 		}
 		if remoteEntry != nil {
 			glog.V(2).Infof("update meta: %+v", resp)
-			return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
+			return client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass))
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
@@ -277,7 +272,7 @@ func processUpdateEvent(
 			}
 		}
 	}
-	remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, dest)
+	remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, remoteWriteEntry(message.NewEntry, storageClass), dest)
 	if errors.Is(writeErr, errSuperseded) {
 		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
 		return nil
@@ -417,16 +412,66 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 	return false
 }
 
+// remoteWriteEntry returns the entry as remote storage should see it: the
+// storage class attribute is dropped, or overridden by -storageClass. The
+// event entry is left untouched so updateLocalEntry still compares the entry
+// the filer stored.
+func remoteWriteEntry(entry *filer_pb.Entry, storageClass string) *filer_pb.Entry {
+	clone := proto.Clone(entry).(*filer_pb.Entry)
+	if storageClass == "" {
+		delete(clone.Extended, s3_constants.AmzStorageClass)
+	} else {
+		if clone.Extended == nil {
+			clone.Extended = map[string][]byte{}
+		}
+		clone.Extended[s3_constants.AmzStorageClass] = []byte(storageClass)
+	}
+	return clone
+}
+
+// updateLocalEntry stamps the entry an event described with its RemoteEntry.
+// The write carries IF_ENTRY_EQUAL over the event's entry: the filer deletes
+// every stored chunk absent from an updated entry, so a snapshot older than
+// the live entry (the file was rewritten while its upload was in flight, or
+// the event is a replay) would delete the live chunks. A failed precondition
+// means the filer moved past this event; the event that superseded it follows
+// in the log and stamps the current entry, so the stale stamp is skipped the
+// same way a superseded upload is.
 func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
+	expected := proto.Clone(entry).(*filer_pb.Entry)
 	entry.RemoteEntry = remoteEntry
-	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
+			Condition: ifEntryEqual(expected),
 		})
 		return err
 	})
+	if isFailedPrecondition(err) {
+		glog.Errorf("skipping stale stamp of %s: %v", util.NewFullPath(dir, entry.Name), err)
+		return nil
+	}
+	return err
+}
+
+// ifEntryEqual builds the precondition that the stored entry still equals the
+// one the event described: chunk fids, inline content, and metadata alike.
+func ifEntryEqual(entry *filer_pb.Entry) *filer_pb.WriteCondition {
+	return &filer_pb.WriteCondition{
+		Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: entry}},
+	}
+}
+
+// isFailedPrecondition reports a write condition the filer refused, through
+// any wrapping WithFilerClient added.
+func isFailedPrecondition(err error) bool {
+	if err == nil {
+		return false
+	}
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.FailedPrecondition
 }
 
 func isMultipartUploadFile(dir string, name string) bool {

@@ -662,6 +662,32 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	fullpath := util.Join(req.Directory, req.Entry.Name)
 
+	// A conditional or preconditioned update is a read-then-write that the
+	// per-path lock below only makes atomic on this filer. Route it to the
+	// entry's ring owner so one filer's lock arbitrates every writer
+	// cluster-wide; is_moved bounds this to one hop.
+	if !req.IsMoved && (conditionIsSet(req.Condition) || len(req.ExpectedExtended) > 0) {
+		var ownerResp *filer_pb.UpdateEntryResponse
+		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(fullpath)), func(owner pb.ServerAddress) error {
+			glog.V(2).InfofCtx(ctx, "UpdateEntry %s: forwarding to owner %s", fullpath, owner)
+			req.IsMoved = true
+			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				forwarded, e := client.UpdateEntry(ctx, req)
+				if e != nil {
+					return e
+				}
+				ownerResp = forwarded
+				return nil
+			})
+		})
+		if handled {
+			if forwardErr != nil {
+				return &filer_pb.UpdateEntryResponse{}, forwardErr
+			}
+			return ownerResp, nil
+		}
+	}
+
 	// Serialize concurrent mutations to the same path on this filer so the
 	// read (preconditions, garbage diff) and the write are atomic. Callers
 	// route a key's writes to this owner filer, making this local lock

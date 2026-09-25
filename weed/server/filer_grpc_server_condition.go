@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/protobuf/proto"
 )
 
 // conditionIsSet reports whether a condition asks for any check at all.
@@ -82,6 +83,14 @@ func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bo
 		return deadline <= time.Now().Unix()
 	case filer_pb.WriteCondition_IF_CHUNKS_EQUAL:
 		return chunkFidsEqual(current, c.Fids)
+	case filer_pb.WriteCondition_IF_ENTRY_EQUAL:
+		if !exists || c.ExpectedEntry == nil {
+			return !exists && c.ExpectedEntry == nil
+		}
+		// Normalize the expected entry the way FindEntry normalizes the stored
+		// one (e.g. FileSize grows to the chunk extent), or an unchanged entry
+		// can compare unequal.
+		return proto.Equal(current.ToProtoEntry(), filer.FromPbEntry("", c.ExpectedEntry).ToProtoEntry())
 	default:
 		// An unrecognized clause kind (e.g. from a newer client) must not be
 		// treated as satisfied, which would silently bypass the guard. Fail

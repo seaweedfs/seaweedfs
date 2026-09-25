@@ -281,6 +281,7 @@ message WriteCondition {
         IF_EXTENDED_NOT_EQUAL = 7; // fail if present and extended[ext_key] == ext_value
         IF_EXTENDED_TIME_ELAPSED = 8; // fail if present and extended[ext_key] (unix seconds) is in the future
         IF_CHUNKS_EQUAL       = 9; // fail unless the stored chunk fid multiset equals fids (absent entry = no chunks)
+        IF_ENTRY_EQUAL        = 10; // fail unless the stored entry equals expected_entry
     }
     // Clause is one primitive comparison. IF_ETAG_MATCH holds when the current
     // entry's ETag equals any value in etags; IF_ETAG_NOT_MATCH holds when it
@@ -309,6 +310,7 @@ message WriteCondition {
         string gate_key = 7;       // IF_EXTENDED_TIME_ELAPSED: only enforce when extended[gate_key] == gate_value
         string gate_value = 8;     // gate value (e.g. retention mode COMPLIANCE for governance bypass)
         repeated string fids = 9;  // chunk fid strings for IF_CHUNKS_EQUAL
+        Entry expected_entry = 10; // whole-entry comparison for IF_ENTRY_EQUAL
     }
     repeated Clause clauses = 1;   // all must hold (logical AND)
 }
@@ -477,6 +479,7 @@ message UpdateEntryRequest {
     // the write, under the filer's per-path lock. The caller must route the
     // key's writes to this entry's owner filer for the check to be authoritative.
     WriteCondition condition = 6;
+    bool is_moved = 7;             // set on a forwarded request so the owner applies it locally
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
