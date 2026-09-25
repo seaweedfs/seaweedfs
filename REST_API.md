@@ -142,12 +142,14 @@ curl -X DELETE "http://localhost:8888/dir/?recursive=true"
 ### Tagging
 
 Tags are carried as `Seaweed-`-prefixed request headers, not query
-parameters; `?tagging` selects the tagging handler and `?tagging=k1,k2`
-lists the keys to remove.
+parameters; `?tagging` selects the tagging handler and `?tagging=K1,K2`
+lists the keys to remove. Header names are canonicalized on write
+(`Seaweed-k1` is stored as `Seaweed-K1`), and the delete list is matched
+case-sensitively against the stored names.
 
 ```bash
 curl -X PUT -H "Seaweed-k1: v1" -H "Seaweed-k2: v2" "http://localhost:8888/dir/file.jpg?tagging"
-curl -X DELETE "http://localhost:8888/dir/file.jpg?tagging=k1,k2"
+curl -X DELETE "http://localhost:8888/dir/file.jpg?tagging=K1,K2"
 ```
 
 ### Read by file id
