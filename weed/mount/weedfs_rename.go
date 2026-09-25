@@ -266,10 +266,21 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 				oldPathAlreadyLocked = true
 			}
 		}
+		// Same for the target: a handle open on it already holds a lock on
+		// newPath, and re-acquiring our own lock would wait on itself.
+		newPathAlreadyLocked := false
+		if targetInode, found := wfs.inodeToPath.GetInode(newPath); found {
+			if fh, ok := wfs.fhMap.FindFileHandle(targetInode); ok && fh.dlmLock != nil {
+				newPathAlreadyLocked = true
+			}
+		}
 
 		// Determine which paths need new DLM locks
-		pathsToLock := []string{string(newPath)}
-		if !oldPathAlreadyLocked {
+		pathsToLock := []string{}
+		if !newPathAlreadyLocked {
+			pathsToLock = append(pathsToLock, string(newPath))
+		}
+		if !oldPathAlreadyLocked && string(oldPath) != string(newPath) {
 			pathsToLock = append(pathsToLock, string(oldPath))
 		}
 		// Sort for consistent lock ordering
