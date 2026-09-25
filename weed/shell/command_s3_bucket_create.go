@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -112,11 +113,16 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 			entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(s3_constants.ObjectLockEnabled)
 		}
 
-		if _, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		createErr := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 			Directory: filerBucketsPath,
 			Entry:     entry,
-		}); err != nil {
-			return err
+			OExcl:     true,
+		})
+		if errors.Is(createErr, filer_pb.ErrEntryAlreadyExists) {
+			return fmt.Errorf("bucket %s already exists", *bucketName)
+		}
+		if createErr != nil {
+			return createErr
 		}
 
 		fmt.Fprintln(writer, "created bucket", *bucketName)

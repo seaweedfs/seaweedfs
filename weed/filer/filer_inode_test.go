@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,6 +100,31 @@ func TestCreateEntryAssignsInodesToAutoCreatedParents(t *testing.T) {
 		require.NotNil(t, stored, path)
 		assert.NotZero(t, stored.Attr.Inode, path)
 	}
+}
+
+func TestCreateEntryOExclPreservesExistingEntry(t *testing.T) {
+	f, store := newTestFilerWithStubStore()
+
+	original := &Entry{
+		FullPath: util.FullPath("/buckets/my-bucket"),
+		Attr:     Attr{Mode: os.ModeDir | 0o777},
+		Extended: map[string][]byte{
+			"lifecycle": []byte(`<LifecycleConfiguration/>`),
+			"owner":     []byte("alice"),
+		},
+	}
+	require.NoError(t, store.InsertEntry(context.Background(), original))
+
+	replacement := &Entry{
+		FullPath: util.FullPath("/buckets/my-bucket"),
+		Attr:     Attr{Mode: os.ModeDir | 0o777},
+	}
+	err := f.CreateEntry(context.Background(), replacement, original, true, false, nil, false, f.MaxFilenameLength)
+	require.ErrorIs(t, err, filer_pb.ErrEntryAlreadyExists)
+
+	stored, findErr := store.FindEntry(context.Background(), original.FullPath)
+	require.NoError(t, findErr)
+	assert.Equal(t, original.Extended, stored.Extended)
 }
 
 func TestUpdateEntryPreservesExistingInode(t *testing.T) {
