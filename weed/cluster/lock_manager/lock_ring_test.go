@@ -96,3 +96,20 @@ func TestLockRing_VersionRejectsStale(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 1, len(r.GetSnapshot()))
 }
+
+func TestLockRing_Reset(t *testing.T) {
+	r := NewLockRing(100 * time.Millisecond)
+
+	// A high version accepted from a former leader must not reject the new
+	// leader's view once the client has moved masters.
+	ok := r.SetSnapshot([]pb.ServerAddress{"a:1", "b:2"}, 100)
+	assert.True(t, ok)
+
+	r.Reset()
+	assert.Equal(t, int64(0), r.Version())
+	assert.Equal(t, 0, len(r.GetSnapshot()))
+
+	ok = r.SetSnapshot([]pb.ServerAddress{"c:1"}, 50)
+	assert.True(t, ok, "lower version from a different master must apply after reset")
+	assert.Equal(t, 1, len(r.GetSnapshot()))
+}

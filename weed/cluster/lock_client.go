@@ -69,6 +69,18 @@ func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
 	lc.ring = newRing
 }
 
+// ResetRing drops the ring view entirely so the first update from a different
+// master applies unconditionally: ring versions are per-master monotonic and
+// a high version accepted from a former leader must not reject the new
+// leader's snapshot. Routing falls back to the seed filer until then.
+func (lc *LockClient) ResetRing() {
+	lc.ringMu.Lock()
+	defer lc.ringMu.Unlock()
+	lc.ring = nil
+	lc.priorRing = nil
+	lc.ringVersion = 0
+}
+
 // hostForKey returns the filer that should own key per the current ring view,
 // falling back to the seed filer when no view has been received yet.
 func (lc *LockClient) hostForKey(key string) pb.ServerAddress {

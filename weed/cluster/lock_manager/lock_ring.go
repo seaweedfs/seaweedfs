@@ -74,6 +74,18 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 	return true
 }
 
+// Reset returns the ring to its bootstrap state so the first update from a
+// different master always applies: ring versions are per-master monotonic,
+// and a high version accepted from a former leader must not reject the new
+// leader's view.
+func (r *LockRing) Reset() {
+	r.Lock()
+	defer r.Unlock()
+	r.version = 0
+	r.snapshots = nil
+	r.Ring.SetServers(nil)
+}
+
 // Version returns the current ring version.
 func (r *LockRing) Version() int64 {
 	r.RLock()

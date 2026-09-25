@@ -152,6 +152,23 @@ func TestLockClientPriorOwnerForKeyExpires(t *testing.T) {
 	}
 }
 
+// A master change resets the ring so the new leader's (lower-versioned)
+// snapshot applies — versions are only comparable within one master's stream.
+func TestLockClientResetRing(t *testing.T) {
+	lc := NewLockClient(nil, "seed:8888")
+
+	lc.SetRing([]pb.ServerAddress{"filer-a:8888", "filer-b:8888"}, 100)
+	lc.ResetRing()
+
+	if got := lc.hostForKey("k"); got != "seed:8888" {
+		t.Fatalf("expected seed fallback after reset, got %q", got)
+	}
+	lc.SetRing([]pb.ServerAddress{"filer-z:8888"}, 50)
+	if got := lc.hostForKey("k"); got != "filer-z:8888" {
+		t.Fatalf("lower version from new master not applied, got %q", got)
+	}
+}
+
 // LiveLock.generation is a fencing token written and read with 64-bit atomic
 // operations. On 32-bit platforms (GOARCH=386 and GOARCH=arm) a 64-bit atomic
 // op requires an 8-byte-aligned address, which Go only guarantees for the

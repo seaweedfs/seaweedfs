@@ -225,6 +225,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 				}
 				objectWriteLockClient.SetRing(servers, update.Version)
 			})
+			masterClient.SetOnMasterChangeFn(func(previous, current pb.ServerAddress) {
+				objectWriteLockClient.ResetRing()
+			})
 		}
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())
