@@ -445,7 +445,21 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				// stopping the lock during migration. Acquire before
 				// releasing: a failed migration keeps the old lock rather
 				// than leaving the handle unlocked.
-				if wfs.lockClient != nil {
+				if wfs.lockClient != nil && oldPath != newPath {
+					// For a rename onto an open file, the replaced target's
+					// handle may still own the lock on newPath. Claim it before
+					// locking fh so that handle's close cannot drop the
+					// renamed path's protection.
+					var targetLock *cluster.LiveLock
+					if fh.dlmLock != nil && newPath == renameNewPath {
+						if targetFh, ok := wfs.fhMap.FindFileHandle(targetInode); ok && targetFh != fh {
+							targetFhLock := wfs.fhLockTable.AcquireLock("renameDLM", targetFh.fh, util.ExclusiveLock)
+							targetLock = targetFh.dlmLock
+							targetFh.dlmLock = nil
+							wfs.fhLockTable.ReleaseLock(targetFh.fh, targetFhLock)
+						}
+					}
+
 					fhActiveLock := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
 					if fh.dlmLock != nil {
 						var newLock *cluster.LiveLock
@@ -455,16 +469,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 							// until this handle is released.
 							newLock = *renameNewPathLock
 							*renameNewPathLock = nil
-						} else if newPath == renameNewPath {
-							// No rename-held lock: the replaced target's handle
-							// still owns the lock on this path. Move it over so
-							// that handle's close cannot drop protection.
-							if targetFh, ok := wfs.fhMap.FindFileHandle(targetInode); ok && targetFh != fh {
-								targetFhLock := wfs.fhLockTable.AcquireLock("renameDLM", targetFh.fh, util.ExclusiveLock)
-								newLock = targetFh.dlmLock
-								targetFh.dlmLock = nil
-								wfs.fhLockTable.ReleaseLock(targetFh.fh, targetFhLock)
-							}
+						} else if targetLock != nil {
+							newLock = targetLock
+							targetLock = nil
 						} else {
 							owner := fmt.Sprintf("mount-%d", wfs.signature)
 							newLock = wfs.lockClient.NewBlockingLongLivedLock(
@@ -480,6 +487,10 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 						}
 					}
 					wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+					if targetLock != nil {
+						// fh was released mid-migration; do not leak the lock
+						targetLock.Stop()
+					}
 				}
 			}
 			// invalidate attr and data
