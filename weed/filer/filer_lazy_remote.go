@@ -165,10 +165,10 @@ func (f *Filer) retractLazyRemoteEntry(ctx context.Context, entry *Entry) {
 	if findErr != nil || existing == nil {
 		return
 	}
-	sameEntry := existing.IsDirectory() == entry.IsDirectory() &&
-		((entry.Remote != nil && existing.Remote != nil && proto.Equal(existing.Remote, entry.Remote)) ||
-			(entry.Remote == nil && existing.Remote == nil && existing.Attr.Crtime.Equal(entry.Attr.Crtime)))
-	if !sameEntry {
+	// The stored entry must still be exactly what this read materialized —
+	// an intervening write (appended chunks, touched attributes) means a
+	// real update owns the path now.
+	if !proto.Equal(existing.ToProtoEntry(), entry.ToProtoEntry()) {
 		return
 	}
 	if err := f.doDeleteEntryMetaAndData(ctx, existing, false, false, nil); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
