@@ -77,7 +77,9 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
 			string(path), owner, lock_manager.LiveLockTTL,
 		)
-		glog.V(1).Infof("DLM lock acquired for %s", path)
+		if fileHandle.dlmLock != nil {
+			glog.V(1).Infof("DLM lock acquired for %s", path)
+		}
 	}
 	return fileHandle, fuse.OK
 }

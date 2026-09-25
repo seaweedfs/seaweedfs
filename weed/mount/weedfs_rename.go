@@ -330,7 +330,9 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 		for _, p := range pathsToLock {
 			dlmLock := wfs.lockClient.NewBlockingLongLivedLock(p, owner, lock_manager.LiveLockTTL)
-			defer dlmLock.Stop()
+			if dlmLock != nil {
+				defer dlmLock.Stop()
+			}
 		}
 		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
 	}
@@ -420,7 +422,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 						fh.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
 							string(newPath), owner, lock_manager.LiveLockTTL,
 						)
-						glog.V(1).Infof("DLM lock migrated from %s to %s", oldPath, newPath)
+						if fh.dlmLock != nil {
+							glog.V(1).Infof("DLM lock migrated from %s to %s", oldPath, newPath)
+						}
 					}
 					wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 				}

@@ -130,7 +130,9 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
 			string(entryFullPath), owner, lock_manager.LiveLockTTL,
 		)
-		glog.V(1).Infof("DLM lock acquired for new file %s", entryFullPath)
+		if fileHandle.dlmLock != nil {
+			glog.V(1).Infof("DLM lock acquired for new file %s", entryFullPath)
+		}
 	}
 
 	out.Fh = uint64(fileHandle.fh)

@@ -1,13 +1,18 @@
 package cluster
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // The gateway must resolve a lock key to the same primary the filers do,
@@ -166,6 +171,47 @@ func TestLockClientResetRing(t *testing.T) {
 	lc.SetRing([]pb.ServerAddress{"filer-z:8888"}, 50)
 	if got := lc.hostForKey("k"); got != "filer-z:8888" {
 		t.Fatalf("lower version from new master not applied, got %q", got)
+	}
+}
+
+type noLockServerFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (s *noLockServerFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	return &filer_pb.LockResponse{Error: lock_manager.NoLockServerError.Error()}, nil
+}
+
+// When every filer reports an empty lock ring, lock acquisition must fail
+// after a bounded period instead of hanging the write forever.
+func TestNewShortLivedLockFailsFastOnNoLockServer(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &noLockServerFiler{})
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	// "host:httpPort.grpcPort" dials the fake filer's port directly.
+	lc := NewLockClient(dialOption, pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	lc.noLockServerRetryPeriod = 200 * time.Millisecond
+
+	start := time.Now()
+	lock := lc.NewShortLivedLock("test-key", "test-owner")
+	elapsed := time.Since(start)
+
+	if lock != nil {
+		t.Fatal("expected nil lock when no lock server exists")
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("lock acquisition took %v, expected fail-fast", elapsed)
 	}
 }
 
