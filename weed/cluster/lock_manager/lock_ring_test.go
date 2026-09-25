@@ -97,6 +97,25 @@ func TestLockRing_VersionRejectsStale(t *testing.T) {
 	assert.Equal(t, 1, len(r.GetSnapshot()))
 }
 
+func TestLockRing_SetSnapshotUnchangedOnlyBumpsVersion(t *testing.T) {
+	r := NewLockRing(100 * time.Millisecond)
+	callbacks := 0
+	r.SetTakeSnapshotCallback(func(snapshot []pb.ServerAddress) { callbacks++ })
+
+	assert.True(t, r.SetSnapshot([]pb.ServerAddress{"a:1", "b:2"}, 100))
+	assert.Equal(t, 1, callbacks)
+
+	// A periodic rebroadcast with the same members refreshes the version
+	// without a new snapshot or another topology-change callback.
+	assert.True(t, r.SetSnapshot([]pb.ServerAddress{"b:2", "a:1"}, 200))
+	assert.Equal(t, int64(200), r.Version())
+	assert.Equal(t, 1, r.GetSnapshotCount())
+	assert.Equal(t, 1, callbacks, "unchanged ring must not fire the topology callback")
+
+	assert.True(t, r.SetSnapshot([]pb.ServerAddress{"a:1", "b:2", "c:3"}, 300))
+	assert.Equal(t, 2, callbacks)
+}
+
 func TestLockRing_Reset(t *testing.T) {
 	r := NewLockRing(100 * time.Millisecond)
 

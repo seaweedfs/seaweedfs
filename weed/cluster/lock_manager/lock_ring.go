@@ -1,6 +1,7 @@
 package lock_manager
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -53,6 +54,14 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 		glog.V(0).Infof("LockRing: rejecting stale update v%d (current v%d)", version, r.version)
 		r.Unlock()
 		return false
+	}
+	// An unchanged member list is only a version refresh: installing it as a
+	// new snapshot would run the topology-change callback and restart the
+	// prior-owner window on every periodic rebroadcast.
+	if len(r.snapshots) > 0 && slices.Equal(servers, r.snapshots[0].servers) {
+		r.version = version
+		r.Unlock()
+		return true
 	}
 	r.version = version
 	// Update the ring while holding the lock so version and ring state

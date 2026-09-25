@@ -130,6 +130,19 @@ func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
 	lrm.emit(filerGroup)
 }
 
+// rebroadcast re-sends the current ring unless a membership broadcast is
+// still stabilizing — emitting mid-window would publish an intermediate
+// topology that the pending timer immediately replaces.
+func (lrm *LockRingManager) rebroadcast(filerGroup FilerGroupName) {
+	lrm.mu.Lock()
+	_, pending := lrm.pendingTimer[filerGroup]
+	lrm.mu.Unlock()
+	if pending {
+		return
+	}
+	lrm.emit(filerGroup)
+}
+
 func (lrm *LockRingManager) emit(filerGroup FilerGroupName) {
 	lrm.mu.Lock()
 	update := lrm.nextBroadcastUpdate(filerGroup)
@@ -176,7 +189,7 @@ func (lrm *LockRingManager) nextBroadcastUpdate(filerGroup FilerGroupName) *mast
 		timer.Stop()
 	}
 	lrm.rebroadcastTimer[filerGroup] = time.AfterFunc(lrm.rebroadcastInterval, func() {
-		lrm.emit(filerGroup)
+		lrm.rebroadcast(filerGroup)
 	})
 	return update
 }

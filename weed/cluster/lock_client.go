@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,7 @@ type LockClient struct {
 	// correct: the filer forwards to the real primary as a fallback.
 	ringMu      sync.RWMutex
 	ring        *lock_manager.HashRing
+	ringServers []pb.ServerAddress
 	ringVersion int64
 
 	// priorRing is the ring before the most recent change, kept for priorWindow so a
@@ -67,10 +69,16 @@ func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
 		return
 	}
 	lc.ringVersion = version
+	sorted := slices.Clone(servers)
+	slices.Sort(sorted)
+	if slices.Equal(sorted, lc.ringServers) {
+		return
+	}
+	lc.ringServers = sorted
 	// Build a fresh ring (not an in-place mutation) so the outgoing ring survives as
 	// priorRing with its own servers for the cooling-off window.
 	newRing := lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
-	newRing.SetServers(servers)
+	newRing.SetServers(sorted)
 	if lc.ring != nil {
 		lc.priorRing = lc.ring
 		lc.ringChangedAt = time.Now()

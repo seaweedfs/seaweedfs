@@ -278,6 +278,46 @@ func TestLockRingManager_PeriodicRebroadcast(t *testing.T) {
 	mu.Unlock()
 }
 
+func TestLockRingManager_RebroadcastDefersToPendingStabilization(t *testing.T) {
+	var mu sync.Mutex
+	var broadcasts []*master_pb.LockRingUpdate
+
+	lrm := NewLockRingManager(func(resp *master_pb.KeepConnectedResponse) {
+		mu.Lock()
+		if resp.LockRingUpdate != nil {
+			broadcasts = append(broadcasts, resp.LockRingUpdate)
+		}
+		mu.Unlock()
+	})
+	lrm.stabilizeDelay = 100 * time.Millisecond
+	lrm.rebroadcastInterval = 30 * time.Millisecond
+
+	group := FilerGroupName("default")
+	lrm.AddServer(group, "filer1:8888")
+	lrm.FlushPending(group)
+
+	mu.Lock()
+	require.Len(t, broadcasts, 1)
+	mu.Unlock()
+
+	// A membership change just before the periodic tick: the rebroadcast must
+	// not publish the unsettled ring ahead of the stabilization timer.
+	lrm.RemoveServer(group, "filer1:8888")
+	lrm.AddServer(group, "filer2:8888")
+	time.Sleep(2 * lrm.rebroadcastInterval)
+
+	mu.Lock()
+	assert.Len(t, broadcasts, 1, "rebroadcast during stabilization should be deferred")
+	mu.Unlock()
+
+	time.Sleep(2 * lrm.stabilizeDelay)
+
+	mu.Lock()
+	require.GreaterOrEqual(t, len(broadcasts), 2)
+	assert.Equal(t, []string{"filer2:8888"}, broadcasts[1].Servers)
+	mu.Unlock()
+}
+
 func TestLockRingManager_GetLastUpdateReturnsBroadcastState(t *testing.T) {
 	lrm := NewLockRingManager(nil)
 
