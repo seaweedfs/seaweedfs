@@ -1388,7 +1388,10 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		StorageClass:     aws.String("STANDARD"),
 	}
 
-	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
+	// Part files are "%04d_<uuid>.part" (legacy "%04d.part"). '_' sorts after '.',
+	// so an exclusive start at "%04d.part" still returns the marker part and
+	// max-parts=1 never advances. The next part number is past both name shapes.
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d", *input.PartNumberMarker+1), true, uint32(*input.MaxParts))
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.

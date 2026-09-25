@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -40,11 +41,27 @@ func (f *fakePartsFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream fi
 	if f.uploadEntry == nil || req.Directory != f.uploadsDir+"/"+f.uploadEntry.Name {
 		return status.Errorf(codes.Internal, "unexpected listing of %s", req.Directory)
 	}
-	// most stores list a missing directory as empty rather than erroring, which
-	// is exactly the behavior under test
-	for _, entry := range f.parts {
+	// Honor the same start/limit rules as the filer. An empty part list is an
+	// empty stream, which is how a store lists a directory with no children.
+	parts := append([]*filer_pb.Entry(nil), f.parts...)
+	sort.Slice(parts, func(i, j int) bool { return parts[i].Name < parts[j].Name })
+	var sent uint32
+	for _, entry := range parts {
+		name := entry.Name
+		if req.StartFromFileName != "" {
+			if name < req.StartFromFileName {
+				continue
+			}
+			if name == req.StartFromFileName && !req.InclusiveStartFrom {
+				continue
+			}
+		}
 		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
 			return err
+		}
+		sent++
+		if req.Limit > 0 && sent >= req.Limit {
+			return nil
 		}
 	}
 	return nil
@@ -149,4 +166,57 @@ func TestListPartsOpenUploadListsParts(t *testing.T) {
 	if *output.Part[0].PartNumber != 1 || *output.Part[0].Size != 5 {
 		t.Fatalf("part[0] = %d/%d, want 1/5", *output.Part[0].PartNumber, *output.Part[0].Size)
 	}
+}
+
+// S3 part-number-marker is exclusive. Part objects are stored as
+// NNNN_<uuid>.part, which sorts after the NNNN.part prefix, so a page of
+// max-parts=1 must advance to the next part number instead of repeating it.
+func TestListPartsPartNumberMarkerIsExclusive(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partEntry("0001_11111111-1111-1111-1111-111111111111.part", 5),
+			partEntry("0002_22222222-2222-2222-2222-222222222222.part", 5),
+			partEntry("0003_33333333-3333-3333-3333-333333333333.part", 5),
+		},
+	})
+
+	input := listPartsInput("open-upload")
+	input.PartNumberMarker = aws.Int64(1)
+	input.MaxParts = aws.Int64(1)
+	output, code := s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if len(output.Part) != 1 || output.Part[0].PartNumber == nil || *output.Part[0].PartNumber != 2 {
+		t.Fatalf("parts = %v, want [2]", partNumbers(output))
+	}
+	if output.IsTruncated == nil || !*output.IsTruncated {
+		t.Fatal("IsTruncated = false, want true")
+	}
+	if output.NextPartNumberMarker == nil || *output.NextPartNumberMarker != 2 {
+		t.Fatalf("NextPartNumberMarker = %v, want 2", output.NextPartNumberMarker)
+	}
+
+	input.MaxParts = aws.Int64(1000)
+	output, code = s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 2 || got[0] != 2 || got[1] != 3 {
+		t.Fatalf("parts = %v, want [2 3]", got)
+	}
+}
+
+func partNumbers(output *ListPartsResult) []int64 {
+	if output == nil {
+		return nil
+	}
+	nums := make([]int64, len(output.Part))
+	for i, part := range output.Part {
+		if part.PartNumber != nil {
+			nums[i] = *part.PartNumber
+		}
+	}
+	return nums
 }
