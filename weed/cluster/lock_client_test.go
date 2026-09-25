@@ -157,7 +157,7 @@ func TestLockClientPriorOwnerForKeyExpires(t *testing.T) {
 	}
 }
 
-// A master change resets the ring so the new leader's (lower-versioned)
+// A master change clears the version gate so the new leader's (lower-versioned)
 // snapshot applies — versions are only comparable within one master's stream.
 func TestLockClientResetRing(t *testing.T) {
 	lc := NewLockClient(nil, "seed:8888")
@@ -165,8 +165,10 @@ func TestLockClientResetRing(t *testing.T) {
 	lc.SetRing([]pb.ServerAddress{"filer-a:8888", "filer-b:8888"}, 100)
 	lc.ResetRing()
 
-	if got := lc.hostForKey("k"); got != "seed:8888" {
-		t.Fatalf("expected seed fallback after reset, got %q", got)
+	// The last ring keeps routing during the gap; only version acceptance
+	// is reset so the new leader's (lower-versioned) snapshot applies.
+	if got := lc.hostForKey("k"); got == "seed:8888" {
+		t.Fatal("expected the previous ring to keep routing after reset")
 	}
 	lc.SetRing([]pb.ServerAddress{"filer-z:8888"}, 50)
 	if got := lc.hostForKey("k"); got != "filer-z:8888" {

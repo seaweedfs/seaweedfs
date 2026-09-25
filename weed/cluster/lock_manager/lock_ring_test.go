@@ -107,7 +107,10 @@ func TestLockRing_Reset(t *testing.T) {
 
 	r.Reset()
 	assert.Equal(t, int64(0), r.Version())
-	assert.Equal(t, 0, len(r.GetSnapshot()))
+	// The operational ring survives the reset: writes keep routing to the
+	// last known owner until the new leader's snapshot arrives.
+	assert.Equal(t, 2, len(r.GetSnapshot()))
+	assert.NotEqual(t, "", string(r.GetPrimary("key")))
 
 	ok = r.SetSnapshot([]pb.ServerAddress{"c:1"}, 50)
 	assert.True(t, ok, "lower version from a different master must apply after reset")

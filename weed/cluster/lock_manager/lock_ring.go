@@ -74,16 +74,17 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 	return true
 }
 
-// Reset returns the ring to its bootstrap state so the first update from a
-// different master always applies: ring versions are per-master monotonic,
-// and a high version accepted from a former leader must not reject the new
-// leader's view.
+// Reset clears only the version gate so the first update from a different
+// master always applies: ring versions are per-master monotonic, and a high
+// version accepted from a former leader must not reject the new leader's
+// view. The ring itself stays installed — writes keep routing to the last
+// known owner during the gap instead of every filer treating itself as the
+// owner, and the arriving snapshot transitions off it with the usual
+// prior-owner window.
 func (r *LockRing) Reset() {
 	r.Lock()
 	defer r.Unlock()
 	r.version = 0
-	r.snapshots = nil
-	r.Ring.SetServers(nil)
 }
 
 // Version returns the current ring version.

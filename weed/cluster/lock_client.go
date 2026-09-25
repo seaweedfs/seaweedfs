@@ -78,15 +78,15 @@ func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
 	lc.ring = newRing
 }
 
-// ResetRing drops the ring view entirely so the first update from a different
-// master applies unconditionally: ring versions are per-master monotonic and
-// a high version accepted from a former leader must not reject the new
-// leader's snapshot. Routing falls back to the seed filer until then.
+// ResetRing clears only the version gate so the first update from a
+// different master applies unconditionally: ring versions are per-master
+// monotonic and a high version accepted from a former leader must not
+// reject the new leader's snapshot. The last ring keeps routing during the
+// gap rather than falling back to the seed filer, and the arriving ring
+// becomes the prior ring for the cooling-off window.
 func (lc *LockClient) ResetRing() {
 	lc.ringMu.Lock()
 	defer lc.ringMu.Unlock()
-	lc.ring = nil
-	lc.priorRing = nil
 	lc.ringVersion = 0
 }
 
