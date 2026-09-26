@@ -804,28 +804,29 @@ fn collect_heartbeat_with_snapshot(
     master_pb::Heartbeat,
     Vec<master_pb::VolumeInformationMessage>,
 ) {
-    let (mut ec_shards, expired_ec) = state.store.read().unwrap().find_expired_ec_volumes();
+    let (_, expired_ec) = state.store.read().unwrap().find_expired_ec_volumes();
     let mut deleted_ec_shards = Vec::new();
     if !expired_ec.is_empty() {
-        let (deleted, still_held) = state
+        deleted_ec_shards = state
             .store
             .write()
             .unwrap()
-            .remove_expired_ec_volumes(expired_ec);
-        deleted_ec_shards = deleted;
-        ec_shards.extend(still_held);
+            .remove_expired_ec_volumes(expired_ec)
+            .0;
+    }
+    #[cfg(test)]
+    {
+        let store_id = state.store.read().unwrap().id.clone();
+        read_phase_hook::park(read_phase_hook::Point::BeforeVolumePass, &store_id);
     }
     let (heartbeat, volumes, actions) = {
         let store = state.store.read().unwrap();
         #[cfg(test)]
-        read_phase_hook::park(&store.id);
-        build_heartbeat_with_ec_status(
-            config,
-            &store,
-            deleted_ec_shards,
-            ec_shards.is_empty(),
-            true,
-        )
+        read_phase_hook::park(read_phase_hook::Point::VolumePass, &store.id);
+        // Taken with the volume list: a shard mounted since the EC phase must
+        // not go out as "no EC shards", which clears it on the master.
+        let has_no_ec_shards = !has_reportable_ec_shards(&store);
+        build_heartbeat_with_ec_status(config, &store, deleted_ec_shards, has_no_ec_shards, true)
     };
     apply_volume_actions(state, actions);
     (heartbeat, volumes)
@@ -899,21 +900,35 @@ mod read_phase_hook {
     use std::sync::mpsc::Receiver;
     use tokio::sync::oneshot::Sender;
 
-    type Park = (String, Sender<()>, Receiver<()>);
-    static ARMED: Mutex<Option<Park>> = Mutex::new(None);
-
-    /// Parks the next pass over the store with this id inside its read phase,
-    /// announcing itself on `entered` and waiting until `release` is dropped.
-    pub(super) fn arm(store_id: &str, entered: Sender<()>, release: Receiver<()>) {
-        *ARMED.lock().unwrap() = Some((store_id.to_string(), entered, release));
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Point {
+        /// Between the EC phase and the volume pass, holding no lock.
+        BeforeVolumePass,
+        /// Inside the volume pass, holding the store read lock.
+        VolumePass,
     }
 
-    pub(super) fn park(store_id: &str) {
-        let armed = ARMED
+    type Park = (Point, String, Sender<()>, Receiver<()>);
+    static ARMED: Mutex<Vec<Park>> = Mutex::new(Vec::new());
+
+    /// Parks the next pass over the store with this id at `point`, announcing
+    /// itself on `entered` and waiting until `release` is dropped.
+    pub(super) fn arm(point: Point, store_id: &str, entered: Sender<()>, release: Receiver<()>) {
+        ARMED
             .lock()
             .unwrap()
-            .take_if(|(id, _, _)| !id.is_empty() && id == store_id);
-        if let Some((_, entered, release)) = armed {
+            .push((point, store_id.to_string(), entered, release));
+    }
+
+    pub(super) fn park(point: Point, store_id: &str) {
+        let armed = {
+            let mut armed = ARMED.lock().unwrap();
+            armed
+                .iter()
+                .position(|(p, id, _, _)| *p == point && !id.is_empty() && id == store_id)
+                .map(|i| armed.swap_remove(i))
+        };
+        if let Some((_, _, entered, release)) = armed {
             let _ = entered.send(());
             let _ = release.recv();
         }
@@ -958,6 +973,18 @@ fn collect_location_metadata(
         })
         .collect();
     (location_uuids, disk_tags)
+}
+
+/// Whether a heartbeat would report any EC shard: Go's non-empty
+/// `ecVolumeMessages` from `deleteExpiredEcVolumes`.
+fn has_reportable_ec_shards(store: &Store) -> bool {
+    store.locations.iter().any(|loc| {
+        loc.ec_volumes().any(|(_, ec_vol)| {
+            !ec_vol.is_time_to_destroy()
+                && !ec_vol.should_quarantine()
+                && ec_vol.shards.iter().any(Option::is_some)
+        })
+    })
 }
 
 #[cfg(test)]
@@ -2124,7 +2151,12 @@ mod tests {
 
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-        read_phase_hook::arm("heartbeat-read-phase-park", entered_tx, release_rx);
+        read_phase_hook::arm(
+            read_phase_hook::Point::VolumePass,
+            "heartbeat-read-phase-park",
+            entered_tx,
+            release_rx,
+        );
         let collection = {
             let state = state.clone();
             tokio::spawn(async move {
@@ -2243,6 +2275,49 @@ mod tests {
         assert!(
             !fresh.is_no_write_or_delete(),
             "a fresh copy was quarantined"
+        );
+    }
+
+    // A shard mounted after the EC phase is held when the volume list is
+    // taken; reporting "no EC shards" alongside it would clear it on the master.
+    #[tokio::test]
+    async fn test_ec_shard_mounted_after_the_ec_phase_is_not_reported_absent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let mut store = reporting_store(dir, 1);
+        store.id = "heartbeat-ec-mount-between-passes".to_string();
+        let state = test_state_with_store(store);
+        std::fs::write(format!("{}/ec_mount_race_73.ec00", dir), b"shard").unwrap();
+        std::fs::write(format!("{}/ec_mount_race_73.ecx", dir), [0u8; 16]).unwrap();
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        read_phase_hook::arm(
+            read_phase_hook::Point::BeforeVolumePass,
+            "heartbeat-ec-mount-between-passes",
+            entered_tx,
+            release_rx,
+        );
+        let collection = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                off_runtime(&test_config(), &state, collect_heartbeat_with_snapshot).await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(10), entered_rx)
+            .await
+            .expect("the pass never finished its EC phase")
+            .unwrap();
+
+        state.store.write().unwrap().locations[0]
+            .mount_ec_shards(VolumeId(73), "ec_mount_race", &[0], "")
+            .unwrap();
+        drop(release_tx);
+        let (heartbeat, _) = collection.await.unwrap().unwrap();
+
+        assert!(
+            !heartbeat.has_no_ec_shards,
+            "a mounted EC shard was reported absent"
         );
     }
 
