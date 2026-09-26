@@ -114,6 +114,67 @@ func TestResolveS3Action_AttributesBeforeVersionId(t *testing.T) {
 	}
 }
 
+func TestResolveS3Action_ObjectLockActionsIgnoreRequestShape(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		method     string
+		baseAction string
+		object     string
+		want       string
+	}{
+		{
+			name:       "bypass on versioned delete",
+			query:      "versionId=abc123",
+			method:     http.MethodDelete,
+			baseAction: s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION,
+			object:     "key",
+			want:       s3_constants.S3_ACTION_BYPASS_GOVERNANCE,
+		},
+		{
+			name:       "bypass on batch delete",
+			query:      "delete",
+			method:     http.MethodPost,
+			baseAction: s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION,
+			object:     "key",
+			want:       s3_constants.S3_ACTION_BYPASS_GOVERNANCE,
+		},
+		{
+			name:       "get retention with versionId",
+			query:      "retention&versionId=abc123",
+			method:     http.MethodGet,
+			baseAction: s3_constants.ACTION_GET_OBJECT_RETENTION,
+			object:     "key",
+			want:       s3_constants.S3_ACTION_GET_OBJECT_RETENTION,
+		},
+		{
+			name:       "get legal hold with versionId",
+			query:      "legal-hold&versionId=abc123",
+			method:     http.MethodGet,
+			baseAction: s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD,
+			object:     "key",
+			want:       s3_constants.S3_ACTION_GET_OBJECT_LEGAL_HOLD,
+		},
+		{
+			name:       "put retention with versionId",
+			query:      "retention&versionId=abc123",
+			method:     http.MethodPut,
+			baseAction: s3_constants.ACTION_PUT_OBJECT_RETENTION,
+			object:     "key",
+			want:       s3_constants.S3_ACTION_PUT_OBJECT_RETENTION,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/"+tt.object+"?"+tt.query, nil)
+			if got := ResolveS3Action(r, tt.baseAction, "bucket", tt.object); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // Bucket subresources registered with ACTION_ADMIN must resolve to their own
 // S3 actions so a policy granting one of them does not need s3:*, and so no
 // broader grant sweeps them in.

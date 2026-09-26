@@ -33,6 +33,20 @@ func ResolveS3Action(r *http.Request, baseAction string, bucket string, object s
 		return baseAction
 	}
 
+	// Object Lock actions are checked on top of another operation's request
+	// shape (e.g. BypassGovernanceRetention on a versioned DELETE), so the
+	// shape must not re-derive them.
+	switch baseAction {
+	case s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION,
+		s3_constants.ACTION_GET_OBJECT_RETENTION,
+		s3_constants.ACTION_PUT_OBJECT_RETENTION,
+		s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD,
+		s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD,
+		s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG,
+		s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
+		return mapBaseActionToS3Format(baseAction)
+	}
+
 	if r == nil || r.URL == nil {
 		// No HTTP context available: fall back to coarse-grained mapping
 		// This ensures consistent behavior and avoids returning empty strings

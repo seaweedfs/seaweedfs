@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -44,6 +45,38 @@ func TestGovernanceBypassUsesDedicatedAuthorization(t *testing.T) {
 			iam.identities[0].Account = &Account{Id: "test-account"}
 			s3a := &S3ApiServer{iam: iam}
 			req := httptest.NewRequest(http.MethodDelete, "http://localhost:8333/test-bucket/test-object", nil)
+			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket", "object": "test-object"})
+			require.NoError(t, signRawHTTPRequest(context.Background(), req,
+				"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1"))
+
+			if got := s3a.checkGovernanceBypassPermission(req, "test-bucket", "/test-object"); got != tc.allowed {
+				t.Errorf("checkGovernanceBypassPermission() = %v, want %v", got, tc.allowed)
+			}
+		})
+	}
+}
+
+func TestGovernanceBypassChecksBypassActionOnVersionedDelete(t *testing.T) {
+	arn := "arn:aws:s3:::test-bucket/test-object"
+	for _, tc := range []struct {
+		name         string
+		policyAction string
+		allowed      bool
+	}{
+		{"bypass permission", "s3:BypassGovernanceRetention", true},
+		{"delete version only", "s3:DeleteObjectVersion", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			iam := newTestIAM()
+			iam.identities[0].Actions = nil
+			iam.identities[0].Account = &Account{Id: "test-account"}
+			iam.policyEngine = NewBucketPolicyEngine()
+			policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"%s","Resource":"%s"}]}`,
+				tc.policyAction, arn)
+			require.NoError(t, iam.policyEngine.engine.SetBucketPolicy("test-bucket", policy))
+			s3a := &S3ApiServer{iam: iam}
+
+			req := httptest.NewRequest(http.MethodDelete, "http://localhost:8333/test-bucket/test-object?versionId=v1", nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket", "object": "test-object"})
 			require.NoError(t, signRawHTTPRequest(context.Background(), req,
 				"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1"))
