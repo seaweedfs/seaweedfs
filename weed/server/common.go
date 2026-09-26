@@ -288,26 +288,32 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 	}
 }
 
-// countedWriter marks the response committed as soon as writeFn buffers any
-// bytes — the deferred flush will emit them as the start of a 200 response
-// even if the stream fails afterwards.
-type countedWriter struct {
-	io.Writer
-	n int
+// responseBodyTracker records how many bytes have reached the ResponseWriter.
+// Bytes still sitting in the pooled bufio.Writer do not count: the status line
+// is not committed until the buffer flushes.
+type responseBodyTracker struct {
+	http.ResponseWriter
+	written int64
 }
 
-func (w *countedWriter) Write(p []byte) (int, error) {
-	n, err := w.Writer.Write(p)
-	w.n += n
+func (t *responseBodyTracker) Write(p []byte) (int, error) {
+	n, err := t.ResponseWriter.Write(p)
+	t.written += int64(n)
 	return n, err
 }
 
 func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, prepareWriteFn func(offset int64, size int64) (filer.DoStreamContent, error)) error {
 	rangeReq := r.Header.Get("Range")
+	sink := &responseBodyTracker{ResponseWriter: w}
 	bufferedWriter := writePool.Get().(*bufio.Writer)
-	bufferedWriter.Reset(w)
+	bufferedWriter.Reset(sink)
+	discardBuffered := false
 	defer func() {
-		bufferedWriter.Flush()
+		if discardBuffered {
+			bufferedWriter.Reset(io.Discard)
+		} else {
+			bufferedWriter.Flush()
+		}
 		writePool.Put(bufferedWriter)
 	}()
 
@@ -318,15 +324,15 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 			writePrepareWriteFnErr(w, err)
 			return fmt.Errorf("ProcessRangeRequest: %w", err)
 		}
-		cw := &countedWriter{Writer: bufferedWriter}
-		if err = writeFn(cw); err != nil {
-			if cw.n > 0 {
-				// Headers and declared Content-Length are already sent; the only
-				// signal left is a failed transfer — appending error text could
-				// fill the missing bytes and look complete.
+		if err = writeFn(bufferedWriter); err != nil {
+			glog.Errorf("ProcessRangeRequest: %v", err)
+			// Drop the unflushed tail: flushing it would finish a 200 whose
+			// Content-Length is already set, delivering corrupt bytes as a
+			// complete body.
+			discardBuffered = true
+			if sink.written > 0 {
 				panic(http.ErrAbortHandler)
 			}
-			glog.Errorf("ProcessRangeRequest: %v", err)
 			w.Header().Del("Content-Length")
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("ProcessRangeRequest: %w", err)
@@ -380,7 +386,9 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		err = writeFn(bufferedWriter)
 		if err != nil {
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
-			// WriteHeader was already called; abort rather than pad the body.
+			// WriteHeader was already called: drop the unflushed tail and
+			// abort so the client does not read corrupt bytes as a full body.
+			discardBuffered = true
 			panic(http.ErrAbortHandler)
 		}
 		return nil
@@ -433,7 +441,8 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	w.WriteHeader(http.StatusPartialContent)
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
 		glog.Errorf("ProcessRangeRequest err: %v", err)
-		// WriteHeader was already called; abort rather than pad the body.
+		// WriteHeader was already called: drop the unflushed tail and abort.
+		discardBuffered = true
 		panic(http.ErrAbortHandler)
 	}
 	return nil

@@ -1597,16 +1597,20 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
-        if req.only_empty {
+        if req.only_empty || req.only_garbage {
             let (_, vol) = store.find_volume(vid).ok_or_else(|| {
                 Status::from(crate::storage::volume::VolumeError::VolumeNotFound(vid))
             })?;
-            if vol.file_count() > 0 {
+            let empty_ok = req.only_empty && vol.file_count() == 0;
+            let garbage_ok = req.only_garbage
+                && vol.content_size() > 0
+                && vol.deleted_size() >= vol.content_size();
+            if !empty_ok && !garbage_ok {
                 return Err(Status::from(crate::storage::volume::VolumeError::NotEmpty));
             }
         }
         store
-            .delete_volume(vid, req.only_empty, req.keep_remote_data)
+            .delete_volume(vid, req.only_empty, req.only_garbage, req.keep_remote_data)
             .map_err(|e| crate::server::status_with_context(&format!("delete volume {vid}"), e))?;
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))
@@ -1903,7 +1907,7 @@ impl VolumeServer for VolumeGrpcService {
             let mut store = self.state.store.write().unwrap();
             // keep remote data: the inbound copy carries a .vif that may point
             // at the same cloud-tier object the existing volume references.
-            store.delete_volume(vid, false, true).map_err(|e| {
+            store.delete_volume(vid, false, false, true).map_err(|e| {
                 Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
             })?;
             drop(store);
@@ -2224,7 +2228,7 @@ impl VolumeServer for VolumeGrpcService {
                 // false would delete the source's remote data.
                 if mounted {
                     let mut store = state.store.write().unwrap();
-                    let _ = store.delete_volume(vid, false, true);
+                    let _ = store.delete_volume(vid, false, false, true);
                     state.volume_state_notify.notify_one();
                 }
                 let _ = std::fs::remove_file(format!("{}.dat", data_base_name));
@@ -7115,7 +7119,7 @@ mod tests {
         let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
         {
             let mut store = dest_service.state.store.write().unwrap();
-            store.delete_volume(VolumeId(1), false, false).unwrap();
+            store.delete_volume(VolumeId(1), false, false, false).unwrap();
             // available_space is filled in by the periodic disk check, which
             // does not run in a unit test; without it VolumeCopy finds no
             // location with room and never gets as far as copying.
@@ -7262,7 +7266,7 @@ mod tests {
         let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
         {
             let mut store = dest_service.state.store.write().unwrap();
-            store.delete_volume(VolumeId(1), false, false).unwrap();
+            store.delete_volume(VolumeId(1), false, false, false).unwrap();
             for loc in &store.locations {
                 loc.check_disk_space();
             }
@@ -9252,6 +9256,7 @@ mod tests {
             .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
                 volume_id: 4242,
                 only_empty: false,
+                only_garbage: false,
                 keep_remote_data: false,
             }))
             .await
@@ -9267,6 +9272,7 @@ mod tests {
             .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
                 volume_id: 1,
                 only_empty: true,
+                only_garbage: false,
                 keep_remote_data: false,
             }))
             .await
@@ -9283,6 +9289,94 @@ mod tests {
                 .is_some(),
             "refused delete must leave the volume mounted"
         );
+    }
+
+    #[tokio::test]
+    async fn volume_delete_only_garbage_deletes_a_fully_deleted_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = service.state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.delete_needle(&mut Needle {
+                id: NeedleId(11),
+                cookie: Cookie(0x3344),
+                ..Needle::default()
+            })
+            .unwrap();
+            vol.sync_to_disk().unwrap();
+        }
+
+        service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: false,
+                only_garbage: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect("a fully deleted volume is garbage and must delete");
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_none(),
+            "the garbage volume must be gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn volume_delete_only_garbage_refuses_a_volume_with_live_needles() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let err = service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: false,
+                only_garbage: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect_err("only_garbage must refuse a volume holding a live needle");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_some(),
+            "refused delete must leave the volume mounted"
+        );
+    }
+
+    #[tokio::test]
+    async fn volume_delete_empty_or_garbage_uses_either_check() {
+        // Both flags set, volume fully deleted: the garbage check passes even
+        // though the empty check would not.
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = service.state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.delete_needle(&mut Needle {
+                id: NeedleId(11),
+                cookie: Cookie(0x3344),
+                ..Needle::default()
+            })
+            .unwrap();
+            vol.sync_to_disk().unwrap();
+        }
+        service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: true,
+                only_garbage: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect("a fully deleted volume deletes under either check");
     }
 
     // A collection or ext carrying a separator or ".." is folded into a path

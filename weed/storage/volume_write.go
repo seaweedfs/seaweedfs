@@ -139,20 +139,18 @@ var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
 // Destroy removes everything related to this volume. When keepRemoteData is
 // true the cloud-tier object backing the volume is left intact — used by
 // moves where another server is taking over the same .vif.
-func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
+func (v *Volume) Destroy(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (err error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+	return v.destroyLocked(onlyEmpty, onlyGarbage, keepRemoteData)
+}
 
-	if onlyEmpty {
-		isEmpty, e := v.doIsEmpty()
-		if e != nil {
-			err = fmt.Errorf("failed to read isEmpty %v", e)
-			return
-		}
-		if !isEmpty {
-			err = ErrVolumeNotEmpty
-			return
-		}
+// destroyLocked is Destroy for callers already holding dataFileAccessLock,
+// e.g. a guarded multi-copy delete that pins every copy under one lock span
+// so validation and removal cannot be split by a write.
+func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (err error) {
+	if err = v.checkDeletableLocked(onlyEmpty, onlyGarbage); err != nil {
+		return
 	}
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
@@ -176,6 +174,27 @@ func (v *Volume) Destroy(onlyEmpty bool, keepRemoteData bool) (err error) {
 	removeVolumeFiles(v.DataFileName(), keepVif)
 	removeVolumeFiles(v.IndexFileName(), keepVif)
 	return
+}
+
+// checkDeletableLocked enforces the guards Destroy applies before removing
+// any file: either enabled check may pass, since a volume with no live data
+// qualifies whether it reads empty or as all garbage.
+func (v *Volume) checkDeletableLocked(onlyEmpty bool, onlyGarbage bool) (err error) {
+	if !onlyEmpty && !onlyGarbage {
+		return nil
+	}
+	emptyOk := false
+	if onlyEmpty {
+		isEmpty, e := v.doIsEmpty()
+		if e != nil {
+			return fmt.Errorf("failed to read isEmpty %v", e)
+		}
+		emptyOk = isEmpty
+	}
+	if !emptyOk && !(onlyGarbage && v.doIsGarbage()) {
+		return ErrVolumeNotEmpty
+	}
+	return nil
 }
 
 // sharesVifWithEcVolume reports whether an EC volume for this volume id lives

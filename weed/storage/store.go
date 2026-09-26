@@ -590,7 +590,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			// delete expired volumes.
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid, false, false)
+				found, err := location.deleteVolumeById(vid, false, false, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
@@ -1126,10 +1126,13 @@ func RenameOrCopyFile(src, dst string) error {
 	return nil
 }
 
-func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
+func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
 	// Delete every copy of the volume id across disks, not just the first match, so
 	// a stale twin (e.g. a re-attached disk; NewStore has no cross-disk duplicate
 	// guard) cannot survive a delete and re-register as the volume's content.
+	if onlyEmpty || onlyGarbage {
+		return s.deleteVolumeGuarded(i, onlyEmpty, onlyGarbage, keepRemoteData)
+	}
 	deletedAny := false
 	var errs []error
 	for _, location := range s.Locations {
@@ -1146,7 +1149,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 			DiskType:         string(location.DiskType),
 			DiskId:           v.diskId,
 		}
-		err := location.DeleteVolume(i, onlyEmpty, keepRemoteData)
+		err := location.DeleteVolume(i, onlyEmpty, onlyGarbage, keepRemoteData)
 		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d disk_id:%d", i, v.diskId)
 			s.DeletedVolumesChan <- &message
@@ -1163,6 +1166,81 @@ func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool, keepRemoteData b
 			glog.Errorf("DeleteVolume %d: %v", i, err)
 			errs = append(errs, err)
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("DeleteVolume %d failed on some disks: %w", i, errors.Join(errs...))
+	}
+	if !deletedAny {
+		return fmt.Errorf("delete volume %d not found on disk: %w", i, ErrVolumeNotFound)
+	}
+	return nil
+}
+
+// deleteVolumeGuarded removes a volume only when every duplicate copy passes
+// the emptiness guards. Each copy's locks are held across validation and
+// removal, so a write or mount cannot slip between the check on one copy and
+// the destroy of another and leave a partial delete.
+func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
+	var lockedLocations []*DiskLocation
+	var lockedVolumes []*Volume
+	unlockAll := func() {
+		for _, v := range lockedVolumes {
+			v.dataFileAccessLock.Unlock()
+		}
+		for _, location := range lockedLocations {
+			location.volumesLock.Unlock()
+		}
+		lockedVolumes, lockedLocations = nil, nil
+	}
+	defer unlockAll()
+	for _, location := range s.Locations {
+		location.volumesLock.Lock()
+		if v, ok := location.volumes[i]; ok {
+			v.dataFileAccessLock.Lock()
+			lockedLocations = append(lockedLocations, location)
+			lockedVolumes = append(lockedVolumes, v)
+		} else {
+			location.volumesLock.Unlock()
+		}
+	}
+
+	for _, v := range lockedVolumes {
+		if err := v.checkDeletableLocked(onlyEmpty, onlyGarbage); err != nil {
+			return fmt.Errorf("DeleteVolume %d: %w", i, err)
+		}
+	}
+
+	deletedAny := false
+	var errs []error
+	var deletedMessages []*master_pb.VolumeShortInformationMessage
+	for _, location := range lockedLocations {
+		v := location.volumes[i]
+		message := &master_pb.VolumeShortInformationMessage{
+			Id:               uint32(v.Id),
+			Collection:       v.Collection,
+			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+			Version:          uint32(v.Version()),
+			Ttl:              v.Ttl.ToUint32(),
+			DiskType:         string(location.DiskType),
+			DiskId:           v.diskId,
+		}
+		if err := v.destroyLocked(onlyEmpty, onlyGarbage, keepRemoteData); err != nil {
+			// A real failure on one disk must not be masked by another copy's
+			// success: a stale copy left on the failing disk would re-register.
+			glog.Errorf("DeleteVolume %d: %v", i, err)
+			errs = append(errs, err)
+			continue
+		}
+		delete(location.volumes, i)
+		glog.V(0).Infof("DeleteVolume %d disk_id:%d", i, v.diskId)
+		deletedMessages = append(deletedMessages, message)
+		deletedAny = true
+	}
+	// Send after the locks are released: a full channel would otherwise block
+	// here while the draining heartbeat loop waits on these same locks.
+	unlockAll()
+	for _, m := range deletedMessages {
+		s.DeletedVolumesChan <- m
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("DeleteVolume %d failed on some disks: %w", i, errors.Join(errs...))

@@ -1468,8 +1468,11 @@ type VolumeDeleteRequest struct {
 	// when true, do not remove the cloud-tier object backing the volume.
 	// used for moves where another server is taking over the same .vif.
 	KeepRemoteData bool `protobuf:"varint,3,opt,name=keep_remote_data,json=keepRemoteData,proto3" json:"keep_remote_data,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// when true, delete only if every needle is deleted: the volume held
+	// data once but nothing is live anymore.
+	OnlyGarbage   bool `protobuf:"varint,4,opt,name=only_garbage,json=onlyGarbage,proto3" json:"only_garbage,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VolumeDeleteRequest) Reset() {
@@ -1519,6 +1522,13 @@ func (x *VolumeDeleteRequest) GetOnlyEmpty() bool {
 func (x *VolumeDeleteRequest) GetKeepRemoteData() bool {
 	if x != nil {
 		return x.KeepRemoteData
+	}
+	return false
+}
+
+func (x *VolumeDeleteRequest) GetOnlyGarbage() bool {
+	if x != nil {
+		return x.OnlyGarbage
 	}
 	return false
 }
@@ -7324,12 +7334,13 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x15VolumeUnmountResponse\"<\n" +
 	"\x1dVolumeConsolidateIndexRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\" \n" +
-	"\x1eVolumeConsolidateIndexResponse\"{\n" +
+	"\x1eVolumeConsolidateIndexResponse\"\x9e\x01\n" +
 	"\x13VolumeDeleteRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1d\n" +
 	"\n" +
 	"only_empty\x18\x02 \x01(\bR\tonlyEmpty\x12(\n" +
-	"\x10keep_remote_data\x18\x03 \x01(\bR\x0ekeepRemoteData\"\x16\n" +
+	"\x10keep_remote_data\x18\x03 \x01(\bR\x0ekeepRemoteData\x12!\n" +
+	"\fonly_garbage\x18\x04 \x01(\bR\vonlyGarbage\"\x16\n" +
 	"\x14VolumeDeleteResponse\"q\n" +
 	"\x19VolumeMarkReadonlyRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x18\n" +

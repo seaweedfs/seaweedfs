@@ -114,8 +114,8 @@ func tailVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId ne
 // deleteVolume removes the volume from sourceVolumeServer. When keepRemoteData
 // is true, the cloud-tier object backing the volume is left intact — used on
 // the source side of a move where another server is taking over the same .vif.
-func deleteVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, onlyEmpty bool, keepRemoteData bool) (err error) {
-	return volume_move.NewMover(grpcDialOption).DeleteVolume(ctx, volumeId, sourceVolumeServer, onlyEmpty, keepRemoteData)
+func deleteVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (err error) {
+	return volume_move.NewMover(grpcDialOption).DeleteVolume(ctx, volumeId, sourceVolumeServer, onlyEmpty, onlyGarbage, keepRemoteData)
 }
 
 func markVolumeWritable(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, writable, persist bool) (err error) {

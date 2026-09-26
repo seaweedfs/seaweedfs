@@ -220,6 +220,85 @@ func (c *countingReadCloser) Close() error {
 	return nil
 }
 
+// A write error after the body has flushed must not complete as 200 with the
+// full Content-Length: the unflushed tail is discarded and the connection
+// aborted mid-body.
+func TestProcessRangeRequestWriteErrorAfterBodyStarted(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 200*1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = ProcessRangeRequest(r, w, int64(len(payload)), "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+			return func(writer io.Writer) error {
+				// Page-sized writes, as readNeedleDataInto does. The tail sits
+				// in the 128KiB buffer; flushing it would finish the 200.
+				for off := 0; off < len(payload); off += 4096 {
+					end := off + 4096
+					if end > len(payload) {
+						end = len(payload)
+					}
+					if _, werr := writer.Write(payload[off:end]); werr != nil {
+						return werr
+					}
+				}
+				return errors.New("ReadNeedleData checksum mismatch")
+			}, nil
+		})
+	}))
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want the committed 200", resp.StatusCode)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr == nil {
+		t.Fatalf("body completed with %d bytes; the erroring tail must abort it", len(body))
+	}
+}
+
+func TestProcessRangeRequestWriteErrorBeforeBody(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/test.bin", nil)
+	w := httptest.NewRecorder()
+	err := ProcessRangeRequest(r, w, 100, "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			return errors.New("ReadNeedleData checksum mismatch")
+		}, nil
+	})
+	if err == nil {
+		t.Fatal("expected write error")
+	}
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500, body %q", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "checksum") {
+		t.Fatalf("body %q, want the checksum error", w.Body.String())
+	}
+}
+
+func TestProcessRangeRequestLargeBody(t *testing.T) {
+	payload := bytes.Repeat([]byte("y"), 200*1024)
+	r := httptest.NewRequest(http.MethodGet, "/test.bin", nil)
+	w := httptest.NewRecorder()
+	err := ProcessRangeRequest(r, w, int64(len(payload)), "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			_, werr := writer.Write(payload)
+			return werr
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", w.Code)
+	}
+	if !bytes.Equal(w.Body.Bytes(), payload) {
+		t.Fatalf("body len %d, want %d", w.Body.Len(), len(payload))
+	}
+}
+
 func TestProcessRangeRequestRanges(t *testing.T) {
 	data := []byte("0123456789")
 	serve := func(rangeHeader string) (*httptest.ResponseRecorder, error) {
@@ -261,53 +340,6 @@ func TestProcessRangeRequestRanges(t *testing.T) {
 		if tt.wantBody != "" && w.Body.String() != tt.wantBody {
 			t.Errorf("%s: body %q, want %q", tt.rangeHeader, w.Body.String(), tt.wantBody)
 		}
-	}
-}
-
-// Once body bytes are committed, a stream failure must abort the transfer:
-// http.Error's text could exactly fill the withheld bytes of the declared
-// Content-Length and look like a complete body.
-func TestProcessRangeRequestAbortsCommittedResponseOnStreamError(t *testing.T) {
-	data := []byte("0123456789")
-	serve := func() (*httptest.ResponseRecorder, interface{}) {
-		r := httptest.NewRequest(http.MethodGet, "/test.txt", nil)
-		w := httptest.NewRecorder()
-		var panicVal interface{}
-		func() {
-			defer func() { panicVal = recover() }()
-			_ = ProcessRangeRequest(r, w, int64(len(data)), "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
-				return func(writer io.Writer) error {
-					_, _ = writer.Write(data[:4])
-					return errors.New("needle checksum mismatch")
-				}, nil
-			})
-		}()
-		return w, panicVal
-	}
-
-	w, panicVal := serve()
-	if panicVal != http.ErrAbortHandler {
-		t.Fatalf("panic = %v, want http.ErrAbortHandler", panicVal)
-	}
-	if w.Body.Len() >= len(data) {
-		t.Errorf("body has %d bytes, want fewer than %d for a failed transfer", w.Body.Len(), len(data))
-	}
-}
-
-// A failure before any byte reaches the client still answers a proper 500.
-func TestProcessRangeRequestErrorsBeforeCommit(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/test.txt", nil)
-	w := httptest.NewRecorder()
-	err := ProcessRangeRequest(r, w, 10, "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
-		return func(writer io.Writer) error {
-			return errors.New("volume not found")
-		}, nil
-	})
-	if err == nil {
-		t.Fatal("want error")
-	}
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status %d, want 500", w.Code)
 	}
 }
 

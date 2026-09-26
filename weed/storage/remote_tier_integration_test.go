@@ -343,7 +343,7 @@ func TestRemoteTier_Move_KeepsRemoteObject(t *testing.T) {
 	v := reloadVolume(t, dir, vid)
 	require.True(t, v.HasRemoteFile())
 
-	require.NoError(t, v.Destroy(false, true))
+	require.NoError(t, v.Destroy(false, false, true))
 
 	require.True(t, b.objectExists(key), "Destroy(keepRemoteData=true) must not delete remote object")
 	require.Empty(t, b.deleteHistory(), "no DeleteFile call expected on a move-style destroy")
@@ -363,7 +363,7 @@ func TestRemoteTier_RealDelete_RemovesRemoteObject(t *testing.T) {
 	v := reloadVolume(t, dir, vid)
 	require.True(t, v.HasRemoteFile())
 
-	require.NoError(t, v.Destroy(false, false))
+	require.NoError(t, v.Destroy(false, false, false))
 
 	require.False(t, b.objectExists(key), "Destroy(keepRemoteData=false) must delete remote object")
 	require.Equal(t, []string{key}, b.deleteHistory())

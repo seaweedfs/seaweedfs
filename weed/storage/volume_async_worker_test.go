@@ -52,7 +52,7 @@ func TestDurableWriteAfterDestroyWritesInline(t *testing.T) {
 	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, true, false)
 	require.NoError(t, err)
 
-	require.NoError(t, v.Destroy(false, false))
+	require.NoError(t, v.Destroy(false, false, false))
 	require.Nil(t, v.asyncRequestsChan)
 	require.False(t, v.asyncRequestAppend(needle.NewAsyncRequest(newRandomNeedle(2), true)))
 

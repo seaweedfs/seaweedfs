@@ -210,7 +210,9 @@ impl http_body::Body for StreamingBody {
                                                 std::io::ErrorKind::InvalidData,
                                                 format!(
                                                     "needle data checksum {} expected {} for needle {}",
-                                                    self.crc.0, self.expected_checksum, self.needle_id
+                                                    self.crc.0,
+                                                    self.expected_checksum,
+                                                    self.needle_id
                                                 ),
                                             ),
                                         )));
@@ -4687,9 +4689,7 @@ mod tests {
 
         let control = Arc::new(crate::storage::volume::DataFileAccessControl::default());
         let mk_body = |expected_checksum: u32, file: &std::fs::File| StreamingBody {
-            source: crate::storage::volume::NeedleStreamSource::Local(
-                file.try_clone().unwrap(),
-            ),
+            source: crate::storage::volume::NeedleStreamSource::Local(file.try_clone().unwrap()),
             data_offset: 0,
             data_size: data.len() as u32,
             pos: 0,
