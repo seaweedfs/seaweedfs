@@ -604,7 +604,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	}
 
 	// 4. Calculate session duration
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds)
+	sessionDuration := s.CalculateSessionDuration(request.DurationSeconds)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	// 5. Generate session ID and credentials
@@ -769,7 +769,7 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string,
 	durationSeconds *int64, providerName, subject string) (*AssumeRoleResponse, error) {
 
-	sessionDuration := s.calculateSessionDuration(durationSeconds)
+	sessionDuration := s.CalculateSessionDuration(durationSeconds)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	sessionId, err := GenerateSessionId()
@@ -1120,11 +1120,11 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	return nil
 }
 
-// calculateSessionDuration returns the requested DurationSeconds, or the
+// CalculateSessionDuration returns the requested DurationSeconds, or the
 // configured TokenDuration default, capped at MaxSessionLength. The source
 // token's exp deliberately plays no part: per AWS semantics the session
 // outlives the (already verified) web identity token.
-func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Duration {
+func (s *STSService) CalculateSessionDuration(durationSeconds *int64) time.Duration {
 	var duration time.Duration
 	if durationSeconds != nil {
 		duration = time.Duration(*durationSeconds) * time.Second
