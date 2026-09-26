@@ -112,9 +112,10 @@ func copyRoleDefinition(original *RoleDefinition) *RoleDefinition {
 	}
 
 	copied := &RoleDefinition{
-		RoleName:    original.RoleName,
-		RoleArn:     original.RoleArn,
-		Description: original.Description,
+		RoleName:           original.RoleName,
+		RoleArn:            original.RoleArn,
+		Description:        original.Description,
+		MaxSessionDuration: original.MaxSessionDuration,
 	}
 
 	// Deep copy trust policy if it exists
