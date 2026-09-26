@@ -190,6 +190,23 @@ func (cs *CompactMapSegment) delete(key types.NeedleId) types.Size {
 	return types.Size(0)
 }
 
+// remove erases a map entry entirely, returning whether it existed.
+func (cs *CompactMapSegment) remove(key types.NeedleId) bool {
+	i, found := cs.bsearchKey(key)
+	if !found {
+		return false
+	}
+	copy(cs.list[i:], cs.list[i+1:])
+	cs.list = cs.list[:len(cs.list)-1]
+	if len(cs.list) == 0 {
+		cs.firstKey, cs.lastKey = MaxCompactKey, 0
+	} else {
+		cs.firstKey = cs.list[0].key
+		cs.lastKey = cs.list[len(cs.list)-1].key
+	}
+	return true
+}
+
 func NewCompactMap() *CompactMap {
 	return &CompactMap{
 		segments: map[Chunk]*CompactMapSegment{},
@@ -271,6 +288,20 @@ func (cm *CompactMap) Delete(key types.NeedleId) types.Size {
 		return types.Size(0)
 	}
 	return cs.delete(key)
+}
+
+// Remove erases a map entry entirely, returning whether it existed. Unlike
+// Delete it leaves no tombstoned entry behind.
+func (cm *CompactMap) Remove(key types.NeedleId) bool {
+	cm.Lock()
+	defer cm.Unlock()
+
+	chunk := Chunk(key / SegmentChunkSize)
+	cs, ok := cm.segments[chunk]
+	if !ok {
+		return false
+	}
+	return cs.remove(key)
 }
 
 // AscendingVisit runs a function on all entries, in ascending key order. Returns any errors hit while visiting.

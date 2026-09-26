@@ -57,6 +57,7 @@ type MasterOptions struct {
 	fileSizeLimitMB            *int
 	volumePreallocate          *bool
 	maxParallelVacuumPerServer *int
+	vacuumIntervalSeconds      *int
 	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
@@ -93,6 +94,7 @@ func init() {
 	m.fileSizeLimitMB = cmdMaster.Flag.Int("fileSizeLimitMB", 256, "limit the file size accepted by /submit, should match the volume servers' -fileSizeLimitMB (-volume.fileSizeLimitMB under weed server or weed mini, which set this for you)")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	m.maxParallelVacuumPerServer = cmdMaster.Flag.Int("maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel per volume server")
+	m.vacuumIntervalSeconds = cmdMaster.Flag.Int("vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "", "Default replication type if not specified.")
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
@@ -473,6 +475,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		FileSizeLimitMB:            *m.fileSizeLimitMB,
 		VolumePreallocate:          *m.volumePreallocate,
 		MaxParallelVacuumPerServer: *m.maxParallelVacuumPerServer,
+		VacuumIntervalSeconds:      *m.vacuumIntervalSeconds,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,

@@ -385,19 +385,25 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 	rackKeys := sortedKeys(racks)
 
 	type pending struct {
-		shardID int
-		src     *Node
+		shardID       int
+		src           *Node
+		avoidDataRack bool
 	}
 	var toMove []pending
 	for _, rackID := range rackKeys {
 		shards := append([]int(nil), shardsPerRack[rackID]...)
-		if len(shards) <= maxPerRack {
-			continue
-		}
 		sort.Ints(shards)
-		for i := 0; i < len(shards)-maxPerRack; i++ {
+		overflow := max(0, len(shards)-maxPerRack)
+		for i := 0; i < len(shards); i++ {
+			// A parity shard can fit the per-type cap yet share a rack with
+			// data while a data-free rack is empty; such candidates may only
+			// move to a rack without data.
+			avoidDataRack := i >= overflow
+			if avoidDataRack && !antiAffinity[rackID] {
+				continue
+			}
 			if src := nodeInRackHoldingShard(nodes, rackID, vk, shards[i]); src != nil {
-				toMove = append(toMove, pending{shards[i], src})
+				toMove = append(toMove, pending{shards[i], src, avoidDataRack})
 			}
 		}
 	}
@@ -405,7 +411,10 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 	var moves []*move
 	for _, pm := range toMove {
 		destRack, ok := pickTarget(rackKeys, shardsPerRack, maxPerRack, antiAffinity,
-			func(r string) bool { return racks[r].freeSlots > 0 },
+			func(r string) bool {
+				return r != pm.src.rack && racks[r].freeSlots > 0 &&
+					(!pm.avoidDataRack || !antiAffinity[r])
+			},
 			func(r string) bool {
 				if rp == nil {
 					return true

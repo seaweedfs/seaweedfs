@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -40,6 +43,21 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 
 	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(p)
 	if remoteLoc == nil {
+		return nil, nil
+	}
+
+	// A startup tombstone rebuild may still be replaying the meta log; wait
+	// for it so a pending delete cannot resurrect here.
+	if done := f.remoteTombstonesDone.Load(); done != nil {
+		select {
+		case <-*done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	if f.isRemoteDeletionPending(ctx, p, mountDir) {
+		glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted locally, remote delete pending", p)
 		return nil, nil
 	}
 
@@ -103,10 +121,27 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		persistBaseCtx, cancelPersist := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancelPersist()
 		persistCtx := context.WithValue(persistBaseCtx, lazyFetchContextKey{}, true)
+		// A delete may have landed while StatFile was in flight; re-check so
+		// the fetched object cannot resurrect a path whose delete is pending.
+		if f.isRemoteDeletionPending(persistCtx, p, mountDir) {
+			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted during remote stat", p)
+			return lazyFetchResult{nil}, nil
+		}
 		saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
 			f.lazyFetchGroup.Forget(key)
+			return lazyFetchResult{entry}, nil
+		}
+
+		// A delete records its tombstone before removing the entry, so a
+		// tombstone visible now means the insert raced a delete that already
+		// ran: retract the persisted entry so the path stays deleted.
+		if f.isRemoteDeletionPending(persistCtx, p, mountDir) {
+			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted while persisting", p)
+			f.lazyFetchGroup.Forget(key)
+			f.retractLazyRemoteEntry(persistCtx, entry)
+			return lazyFetchResult{nil}, nil
 		}
 
 		return lazyFetchResult{entry}, nil
@@ -120,6 +155,25 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, fmt.Errorf("maybeLazyFetchFromRemote: unexpected singleflight result type %T for %s", val, p)
 	}
 	return result.entry, nil
+}
+
+// retractLazyRemoteEntry deletes the entry at entry.FullPath only when it is
+// still the entry a lazy remote read just materialized — a concurrent write
+// may have replaced it, and deleting by path alone would take that write down.
+func (f *Filer) retractLazyRemoteEntry(ctx context.Context, entry *Entry) {
+	existing, findErr := f.FindEntry(ctx, entry.FullPath)
+	if findErr != nil || existing == nil {
+		return
+	}
+	// The stored entry must still be exactly what this read materialized —
+	// an intervening write (appended chunks, touched attributes) means a
+	// real update owns the path now.
+	if !proto.Equal(existing.ToProtoEntry(), entry.ToProtoEntry()) {
+		return
+	}
+	if err := f.doDeleteEntryMetaAndData(ctx, existing, false, false, nil); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Warningf("retractLazyRemoteEntry %s: %v", entry.FullPath, err)
+	}
 }
 
 func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, error) {

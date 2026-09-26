@@ -22,6 +22,10 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
+	if err := v.UnavailableError(); err != nil {
+		return 0, err
+	}
+
 	if v.nm == nil {
 		glog.V(0).Infof("volume %d: needle map not loaded; read returns not-found", v.Id)
 		return -1, ErrorNotFound
@@ -89,6 +93,11 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (err error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
+
+	if err := v.UnavailableError(); err != nil {
+		return err
+	}
+
 	// read deleted needle meta data
 	if size < 0 {
 		size = 0
@@ -113,6 +122,12 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 
 	if readOption.HasSlowRead {
 		v.dataFileAccessLock.RLock()
+	}
+	if err := v.UnavailableError(); err != nil {
+		if readOption.HasSlowRead {
+			v.dataFileAccessLock.RUnlock()
+		}
+		return err
 	}
 	if v.nm == nil {
 		if readOption.HasSlowRead {
@@ -156,6 +171,10 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 
 		if readOption.HasSlowRead {
 			v.dataFileAccessLock.RLock()
+			if err := v.UnavailableError(); err != nil {
+				v.dataFileAccessLock.RUnlock()
+				return err
+			}
 		}
 		// possibly re-read needle offset if volume is compacted
 		if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
@@ -242,6 +261,10 @@ func (v *Volume) ReadNeedleBlob(offset int64, size Size) ([]byte, error) {
 
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
+
+	if err := v.UnavailableError(); err != nil {
+		return nil, err
+	}
 
 	blob, err := needle.ReadNeedleBlob(v.DataBackend, offset, size, v.Version())
 	v.checkReadWriteError(err)

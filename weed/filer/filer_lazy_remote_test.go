@@ -34,6 +34,7 @@ type stubFilerStore struct {
 	entries         map[string]*Entry
 	kv              map[string][]byte
 	insertErr       error
+	findErr         error
 	deleteErrByPath map[string]error
 }
 
@@ -174,6 +175,9 @@ func (s *stubFilerStore) UpdateEntry(_ context.Context, entry *Entry) error {
 func (s *stubFilerStore) FindEntry(_ context.Context, p util.FullPath) (*Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
 	if e, ok := s.entries[string(p)]; ok {
 		return e, nil
 	}
@@ -279,6 +283,7 @@ func newTestFiler(t *testing.T, store *stubFilerStore, rs *FilerRemoteStorage) *
 		MasterClient:        mc,
 		FileIdDeletionQueue: util.NewUnboundedQueue(),
 		deletionQuit:        make(chan struct{}),
+		remoteTombstones:    newRemoteDeletionTombstones(),
 		LocalMetaLogBuffer: log_buffer.NewLogBuffer("test", time.Minute,
 			func(*log_buffer.LogBuffer, time.Time, time.Time, []byte, int64, int64) {}, nil, func() {}),
 	}

@@ -21,6 +21,7 @@ One `weed` binary serves an S3 object store, a POSIX file system, and a lakehous
 
 - [Download Binaries for different platforms](https://github.com/seaweedfs/seaweedfs/releases/latest)
 - [Wiki Documentation](https://github.com/seaweedfs/seaweedfs/wiki)
+- [HTTP REST API](REST_API.md) for the filer, master, and volume servers
 - Community: [Slack](https://join.slack.com/t/seaweedfs/shared_invite/enQtMzI4MTMwMjU2MzA3LTEyYzZmZWYzOGQ3MDJlZWMzYmI0OTE4OTJiZjJjODBmMzUxNmYwODg0YjY3MTNlMjBmZDQ1NzQ5NDJhZWI2ZmY), [Twitter](https://twitter.com/SeaweedFS), [Telegram](https://t.me/Seaweedfs), [Reddit](https://www.reddit.com/r/SeaweedFS/), [Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [SeaweedFS White Paper](https://github.com/seaweedfs/seaweedfs/wiki/SeaweedFS_Architecture.pdf) and introduction slides: [2025.5](https://docs.google.com/presentation/d/1tdkp45J01oRV68dIm4yoTXKJDof-EhainlA0LMXexQE/edit?usp=sharing), [2021.5](https://docs.google.com/presentation/d/1DcxKWlINc-HNCjhYeERkpGXXm6nTCES8mi2W5G0Z4Ts/edit?usp=sharing), [2019.3](https://www.slideshare.net/chrislusf/seaweedfs-introduction)
 

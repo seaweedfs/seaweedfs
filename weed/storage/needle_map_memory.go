@@ -71,6 +71,14 @@ func (nm *NeedleMap) Delete(key NeedleId, offset Offset) error {
 	nm.logDelete(deletedBytes)
 	return nm.appendToIndexFile(key, offset, TombstoneFileSize)
 }
+func (nm *NeedleMap) removeMapping(key NeedleId) error {
+	nm.m.Remove(NeedleId(key))
+	return nil
+}
+func (nm *NeedleMap) restoreMapping(key NeedleId, offset Offset, size Size) error {
+	nm.m.Set(NeedleId(key), offset, size)
+	return nil
+}
 func (nm *NeedleMap) Close() {
 	if nm.indexFile == nil {
 		return

@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -72,10 +73,26 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		return code
 	}
 
+	// Acquire the DLM lock before the filer create: a lock failure after an
+	// eager create would return EAGAIN while the file stays persisted.
+	var dlmLock *cluster.LiveLock
+	if wfs.lockClient != nil {
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+		dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+			string(entryFullPath), owner, lock_manager.LiveLockTTL,
+		)
+		if dlmLock == nil {
+			return fuse.Status(syscall.EAGAIN)
+		}
+	}
+
 	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, !wfs.option.EagerFilerCreate, true)
 	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
 		// Race: another process created the file between our check and create.
-		// Reopen the winner's entry.
+		// Reopen the winner's entry; AcquireHandle takes its own lock.
+		if dlmLock != nil {
+			dlmLock.Stop()
+		}
 		newEntry, _, code = wfs.maybeLoadEntry(entryFullPath)
 		if code != fuse.OK {
 			return code
@@ -100,6 +117,9 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		out.OpenFlags = 0
 		return fuse.OK
 	} else if code != fuse.OK {
+		if dlmLock != nil {
+			dlmLock.Stop()
+		}
 		return code
 	} else {
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
@@ -122,15 +142,15 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// persisted the entry, so its handle starts clean.
 	fileHandle.dirtyMetadata = !wfs.option.EagerFilerCreate
 
-	// Acquire DLM lock for new file creation (Create bypasses AcquireHandle
-	// so we must acquire the lock here). Always lock on Create since file
-	// creation is inherently a write operation.
-	if wfs.lockClient != nil && fileHandle.dlmLock == nil {
-		owner := fmt.Sprintf("mount-%d", wfs.signature)
-		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
-			string(entryFullPath), owner, lock_manager.LiveLockTTL,
-		)
-		glog.V(1).Infof("DLM lock acquired for new file %s", entryFullPath)
+	// Create bypasses AcquireHandle, so attach the lock acquired above.
+	// A surviving handle may already hold one; ours is redundant then.
+	if dlmLock != nil {
+		if fileHandle.dlmLock == nil {
+			fileHandle.dlmLock = dlmLock
+			glog.V(1).Infof("DLM lock acquired for new file %s", entryFullPath)
+		} else {
+			dlmLock.Stop()
+		}
 	}
 
 	out.Fh = uint64(fileHandle.fh)

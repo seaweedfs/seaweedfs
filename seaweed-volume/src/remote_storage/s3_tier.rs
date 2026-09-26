@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
+use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
@@ -119,7 +120,12 @@ impl S3TierBackend {
             )
             .send()
             .await
-            .map_err(|e| format!("failed to create multipart upload: {}", e))?;
+            .map_err(|e| {
+                format!(
+                    "failed to create multipart upload: {}",
+                    DisplayErrorContext(&e)
+                )
+            })?;
 
         let upload_id = create_resp
             .upload_id()
@@ -183,7 +189,12 @@ impl S3TierBackend {
                     .send()
                     .await
                     .map_err(|e| {
-                        format!("failed to upload part {} at offset {}: {}", pn, off, e)
+                        format!(
+                            "failed to upload part {} at offset {}: {}",
+                            pn,
+                            off,
+                            DisplayErrorContext(&e)
+                        )
                     })?;
 
                 let e_tag = upload_part_resp.e_tag().unwrap_or_default().to_string();
@@ -236,7 +247,12 @@ impl S3TierBackend {
                 .multipart_upload(completed_upload)
                 .send()
                 .await
-                .map_err(|e| format!("failed to complete multipart upload: {}", e))?;
+                .map_err(|e| {
+                    format!(
+                        "failed to complete multipart upload: {}",
+                        DisplayErrorContext(&e)
+                    )
+                })?;
 
             Ok::<(), String>(())
         }
@@ -293,7 +309,7 @@ impl S3TierBackend {
             .key(key)
             .send()
             .await
-            .map_err(|e| format!("failed to head object {}: {}", key, e))?;
+            .map_err(|e| format!("failed to head object {}: {}", key, DisplayErrorContext(&e)))?;
 
         let file_size = head_resp.content_length().unwrap_or(0) as u64;
 
@@ -356,7 +372,14 @@ impl S3TierBackend {
                     .range(&range)
                     .send()
                     .await
-                    .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+                    .map_err(|e| {
+                        format!(
+                            "failed to get object {} range {}: {}",
+                            key,
+                            range,
+                            DisplayErrorContext(&e)
+                        )
+                    })?;
 
                 let body = get_resp
                     .body
@@ -431,7 +454,14 @@ impl S3TierBackend {
             .range(&range)
             .send()
             .await
-            .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+            .map_err(|e| {
+                format!(
+                    "failed to get object {} range {}: {}",
+                    key,
+                    range,
+                    DisplayErrorContext(&e)
+                )
+            })?;
 
         let body = resp
             .body
@@ -449,7 +479,13 @@ impl S3TierBackend {
             .key(key)
             .send()
             .await
-            .map_err(|e| format!("failed to delete object {}: {}", key, e))?;
+            .map_err(|e| {
+                format!(
+                    "failed to delete object {}: {}",
+                    key,
+                    DisplayErrorContext(&e)
+                )
+            })?;
         Ok(())
     }
 
@@ -464,7 +500,13 @@ impl S3TierBackend {
                 .key(&key)
                 .send()
                 .await
-                .map_err(|e| format!("failed to delete object {}: {}", key, e))?;
+                .map_err(|e| {
+                    format!(
+                        "failed to delete object {}: {}",
+                        key,
+                        DisplayErrorContext(&e)
+                    )
+                })?;
             Ok(())
         })
     }
@@ -488,7 +530,14 @@ impl S3TierBackend {
                 .range(&range)
                 .send()
                 .await
-                .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+                .map_err(|e| {
+                    format!(
+                        "failed to get object {} range {}: {}",
+                        key,
+                        range,
+                        DisplayErrorContext(&e)
+                    )
+                })?;
 
             let body = resp
                 .body
@@ -555,18 +604,192 @@ pub fn global_s3_tier_registry() -> &'static RwLock<S3TierRegistry> {
     GLOBAL_S3_TIER_REGISTRY.get_or_init(|| RwLock::new(S3TierRegistry::new()))
 }
 
+/// The one process-wide runtime for tiered-S3 I/O issued from synchronous
+/// storage code. A per-call runtime tore down the SDK's pooled connections
+/// after every 64 KiB chunk, re-dialing TLS per read; a long-lived runtime
+/// keeps the pool warm.
+///
+/// Built on first use. A build failure is returned, not cached or panicked:
+/// callers sit inside `Volume::destroy` and needle reads, whose own error
+/// paths must run, and a later call may succeed.
+static TIER_RUNTIME: std::sync::Mutex<Option<tokio::runtime::Runtime>> =
+    std::sync::Mutex::new(None);
+
+fn tier_handle() -> Result<tokio::runtime::Handle, String> {
+    let mut slot = TIER_RUNTIME
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if slot.is_none() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("tier-io")
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to build the tier I/O tokio runtime: {}", e))?;
+        *slot = Some(runtime);
+    }
+    Ok(slot.as_ref().expect("just initialised").handle().clone())
+}
+
+/// Run `future` on the tier runtime and block the calling thread until it
+/// finishes. The caller may be a worker of *another* tokio runtime, so this
+/// waits on a channel rather than `Handle::block_on`, which panics when
+/// called from inside any runtime context.
 fn block_on_tier_future<F, T>(future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>> + Send + 'static,
     T: Send + 'static,
 {
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("failed to build tokio runtime: {}", e))?;
-        runtime.block_on(future)
-    })
-    .join()
-    .map_err(|_| "tier runtime thread panicked".to_string())?
+    let handle = tier_handle()?;
+    let task = handle.spawn(future);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    handle.spawn(async move {
+        // The receiver only goes away if the caller was unwound; nothing to
+        // report then.
+        let _ = tx.send(task.await);
+    });
+    match rx.recv() {
+        Ok(Ok(result)) => result,
+        Ok(Err(join_error)) => Err(describe_join_error(join_error)),
+        Err(_) => Err("tier I/O runtime dropped the task before it finished".to_string()),
+    }
+}
+
+/// Turn a `JoinError` into a message that keeps the panic payload, so an
+/// SDK panic surfaces as "boom" rather than a fixed "thread panicked".
+fn describe_join_error(join_error: tokio::task::JoinError) -> String {
+    if join_error.is_panic() {
+        let payload = join_error.into_panic();
+        let message = if let Some(s) = payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "non-string panic payload".to_string()
+        };
+        format!("tier I/O task panicked: {}", message)
+    } else {
+        format!("tier I/O task failed: {}", join_error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use tokio::runtime::Handle;
+
+    fn probe() -> Result<(tokio::runtime::Id, Option<String>), String> {
+        block_on_tier_future(async {
+            Ok((
+                Handle::current().id(),
+                std::thread::current().name().map(str::to_string),
+            ))
+        })
+    }
+
+    #[test]
+    fn block_on_tier_future_reuses_one_runtime() {
+        let (first_runtime, first_thread) = probe().expect("first call");
+        let (second_runtime, second_thread) = probe().expect("second call");
+        assert_eq!(
+            first_runtime, second_runtime,
+            "each call must run on the same long-lived tier runtime"
+        );
+        assert_eq!(first_thread.as_deref(), Some("tier-io"));
+        assert_eq!(second_thread.as_deref(), Some("tier-io"));
+
+        let mut runtimes = HashSet::new();
+        for _ in 0..20 {
+            let (id, _) = probe().expect("probe");
+            runtimes.insert(id);
+        }
+        assert_eq!(runtimes.len(), 1);
+    }
+
+    #[test]
+    fn block_on_tier_future_returns_the_value_and_the_error() {
+        assert_eq!(block_on_tier_future(async { Ok(7u32) }), Ok(7));
+        assert_eq!(
+            block_on_tier_future::<_, u32>(async { Err("nope".to_string()) }),
+            Err("nope".to_string())
+        );
+    }
+
+    #[test]
+    fn block_on_tier_future_works_from_a_std_thread() {
+        let (id, _) = std::thread::spawn(probe)
+            .join()
+            .expect("probe thread")
+            .expect("probe");
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn block_on_tier_future_works_from_spawn_blocking() {
+        let (id, _) = tokio::task::spawn_blocking(probe)
+            .await
+            .expect("spawn_blocking")
+            .expect("probe");
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
+        assert_ne!(id, Handle::current().id());
+    }
+
+    // Called straight from another runtime's async context: the case that
+    // would panic with `Handle::block_on` ("Cannot start a runtime from
+    // within a runtime").
+    #[tokio::test]
+    async fn block_on_tier_future_works_from_a_current_thread_runtime() {
+        let (id, _) = probe().expect("probe");
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
+        assert_ne!(id, Handle::current().id());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn block_on_tier_future_works_from_a_multi_thread_runtime_worker() {
+        let (id, _) = probe().expect("probe");
+        assert_eq!(id, tier_handle().expect("tier runtime").id());
+        assert_ne!(id, Handle::current().id());
+    }
+
+    #[test]
+    fn block_on_tier_future_reports_the_panic_payload() {
+        let err = block_on_tier_future::<_, ()>(async {
+            if std::hint::black_box(true) {
+                panic!("boom {}", 42);
+            }
+            Ok(())
+        })
+        .expect_err("a panicking future must be an error");
+        assert!(err.contains("boom 42"), "got: {err}");
+        assert!(err.contains("panicked"), "got: {err}");
+    }
+
+    #[test]
+    fn block_on_tier_future_reports_a_str_panic_payload() {
+        let err = block_on_tier_future::<_, ()>(async {
+            if std::hint::black_box(true) {
+                panic!("static boom");
+            }
+            Ok(())
+        })
+        .expect_err("a panicking future must be an error");
+        assert!(err.contains("static boom"), "got: {err}");
+    }
+
+    #[test]
+    fn backend_name_to_type_id_splits_on_dot() {
+        assert_eq!(
+            backend_name_to_type_id("s3"),
+            ("s3".to_string(), "default".to_string())
+        );
+        assert_eq!(
+            backend_name_to_type_id("s3.eu"),
+            ("s3".to_string(), "eu".to_string())
+        );
+        assert_eq!(
+            backend_name_to_type_id("s3.a.b"),
+            (String::new(), String::new())
+        );
+    }
 }

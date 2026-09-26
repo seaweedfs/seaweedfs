@@ -157,6 +157,9 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 tempfile = "3"
+# Already a transitive dependency of aws-sdk-s3 at a single locked version;
+# needed directly only for the canned HttpClient in remote_storage::s3 tests.
+aws-smithy-runtime-api = "1"
 
 [build-dependencies]
 tonic-prost-build = "0.14"

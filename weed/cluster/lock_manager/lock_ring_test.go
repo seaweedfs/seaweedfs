@@ -96,3 +96,42 @@ func TestLockRing_VersionRejectsStale(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 1, len(r.GetSnapshot()))
 }
+
+func TestLockRing_SetSnapshotUnchangedOnlyBumpsVersion(t *testing.T) {
+	r := NewLockRing(100 * time.Millisecond)
+	callbacks := 0
+	r.SetTakeSnapshotCallback(func(snapshot []pb.ServerAddress) { callbacks++ })
+
+	assert.True(t, r.SetSnapshot([]pb.ServerAddress{"a:1", "b:2"}, 100))
+	assert.Equal(t, 1, callbacks)
+
+	// A periodic rebroadcast with the same members refreshes the version
+	// without a new snapshot or another topology-change callback.
+	assert.True(t, r.SetSnapshot([]pb.ServerAddress{"b:2", "a:1"}, 200))
+	assert.Equal(t, int64(200), r.Version())
+	assert.Equal(t, 1, r.GetSnapshotCount())
+	assert.Equal(t, 1, callbacks, "unchanged ring must not fire the topology callback")
+
+	assert.True(t, r.SetSnapshot([]pb.ServerAddress{"a:1", "b:2", "c:3"}, 300))
+	assert.Equal(t, 2, callbacks)
+}
+
+func TestLockRing_Reset(t *testing.T) {
+	r := NewLockRing(100 * time.Millisecond)
+
+	// A high version accepted from a former leader must not reject the new
+	// leader's view once the client has moved masters.
+	ok := r.SetSnapshot([]pb.ServerAddress{"a:1", "b:2"}, 100)
+	assert.True(t, ok)
+
+	r.Reset()
+	assert.Equal(t, int64(0), r.Version())
+	// The operational ring survives the reset: writes keep routing to the
+	// last known owner until the new leader's snapshot arrives.
+	assert.Equal(t, 2, len(r.GetSnapshot()))
+	assert.NotEqual(t, "", string(r.GetPrimary("key")))
+
+	ok = r.SetSnapshot([]pb.ServerAddress{"c:1"}, 50)
+	assert.True(t, ok, "lower version from a different master must apply after reset")
+	assert.Equal(t, 1, len(r.GetSnapshot()))
+}

@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,7 @@ type LockClient struct {
 	// correct: the filer forwards to the real primary as a fallback.
 	ringMu      sync.RWMutex
 	ring        *lock_manager.HashRing
+	ringServers []pb.ServerAddress
 	ringVersion int64
 
 	// priorRing is the ring before the most recent change, kept for priorWindow so a
@@ -35,15 +37,24 @@ type LockClient struct {
 	priorRing     *lock_manager.HashRing
 	ringChangedAt time.Time
 	priorWindow   time.Duration
+
+	// noLockServerRetryPeriod bounds retries when every filer reports "no
+	// lock server found": an empty lock ring is a systemic fault that waiting
+	// on a lock holder cannot resolve, unlike ordinary contention. The bound
+	// is long enough to ride out a master leader change (ring reset + fresh
+	// snapshot) but short enough that a write fails instead of hanging
+	// forever.
+	noLockServerRetryPeriod time.Duration
 }
 
 func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *LockClient {
 	return &LockClient{
-		grpcDialOption:  grpcDialOption,
-		maxLockDuration: 5 * time.Second,
-		sleepDuration:   2473 * time.Millisecond,
-		seedFiler:       seedFiler,
-		priorWindow:     5 * time.Second,
+		grpcDialOption:          grpcDialOption,
+		maxLockDuration:         5 * time.Second,
+		sleepDuration:           2473 * time.Millisecond,
+		seedFiler:               seedFiler,
+		priorWindow:             5 * time.Second,
+		noLockServerRetryPeriod: 15 * time.Second,
 	}
 }
 
@@ -58,15 +69,33 @@ func (lc *LockClient) SetRing(servers []pb.ServerAddress, version int64) {
 		return
 	}
 	lc.ringVersion = version
+	sorted := slices.Clone(servers)
+	slices.Sort(sorted)
+	if slices.Equal(sorted, lc.ringServers) {
+		return
+	}
+	lc.ringServers = sorted
 	// Build a fresh ring (not an in-place mutation) so the outgoing ring survives as
 	// priorRing with its own servers for the cooling-off window.
 	newRing := lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
-	newRing.SetServers(servers)
+	newRing.SetServers(sorted)
 	if lc.ring != nil {
 		lc.priorRing = lc.ring
 		lc.ringChangedAt = time.Now()
 	}
 	lc.ring = newRing
+}
+
+// ResetRing clears only the version gate so the first update from a
+// different master applies unconditionally: ring versions are per-master
+// monotonic and a high version accepted from a former leader must not
+// reject the new leader's snapshot. The last ring keeps routing during the
+// gap rather than falling back to the seed filer, and the arriving ring
+// becomes the prior ring for the cooling-off window.
+func (lc *LockClient) ResetRing() {
+	lc.ringMu.Lock()
+	defer lc.ringMu.Unlock()
+	lc.ringVersion = 0
 }
 
 // hostForKey returns the filer that should own key per the current ring view,
@@ -133,7 +162,9 @@ type LiveLock struct {
 	consecutiveFailures int // Track connection failures to trigger fallback
 }
 
-// NewShortLivedLock creates a lock with a 5-second duration
+// NewShortLivedLock creates a lock with a 5-second duration.
+// It returns nil when the lock cannot be acquired because no lock server
+// exists; ordinary contention is still waited out.
 func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
@@ -144,7 +175,10 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 		self:           owner,
 		lc:             lc,
 	}
-	lock.retryUntilLocked(5 * time.Second)
+	if err := lock.retryUntilLocked(5 * time.Second); err != nil {
+		glog.Warningf("create lock %s: %v", key, err)
+		return nil
+	}
 	return
 }
 
@@ -167,7 +201,10 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 		lockTTL:        lockTTL,
 	}
 	// Block until acquired
-	lock.retryUntilLocked(lockTTL)
+	if err := lock.retryUntilLocked(lockTTL); err != nil {
+		glog.Warningf("create lock %s: %v", key, err)
+		return nil
+	}
 	// Start renewal goroutine using a ticker for interruptible sleep
 	lock.renewalDone = make(chan struct{})
 	go func() {
@@ -266,12 +303,31 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 // several seconds): when a holder on another mount releases the lock, the
 // waiter must pick it up promptly, otherwise cross-mount write handoff stalls
 // long enough to time out clients.
-func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
+func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) error {
+	var unavailableSince time.Time
 	for lock.renewToken == "" {
-		if err := lock.AttemptToLock(lockDuration); err != nil {
-			glog.V(1).Infof("create lock %s: %v", lock.key, err)
+		err := lock.AttemptToLock(lockDuration)
+		if err == nil {
+			unavailableSince = time.Time{}
+			continue
+		}
+		glog.V(1).Infof("create lock %s: %v", lock.key, err)
+		if strings.Contains(err.Error(), "lock already owned") {
+			// Ordinary contention: a reachable server holds the lock, so
+			// waiting is the point and has no bound.
+			unavailableSince = time.Time{}
+			continue
+		}
+		// Anything else — "no lock server found", a dead ring member refusing
+		// connections — is a systemic fault waiting cannot fix; give up once
+		// it persists past the retry period.
+		if unavailableSince.IsZero() {
+			unavailableSince = time.Now()
+		} else if time.Since(unavailableSince) > lock.lc.noLockServerRetryPeriod {
+			return err
 		}
 	}
+	return nil
 }
 
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {

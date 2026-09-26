@@ -935,6 +935,9 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
+	if err := v.UnavailableError(); err != nil {
+		return fmt.Errorf("volume %d cannot be marked writable: %w", i, err)
+	}
 	// If the volume booted with .vif ReadOnly=true, .idx is opened O_RDONLY
 	// and v.nm is a SortedFileNeedleMap that rejects Put. Swap to writable
 	// form before flipping the flag so the next write doesn't race past a
@@ -943,6 +946,10 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 		return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 	}
 	v.noWriteLock.Lock()
+	if v.ioUnavailable {
+		v.noWriteLock.Unlock()
+		return fmt.Errorf("volume %d cannot be marked writable: %w", i, v.UnavailableError())
+	}
 	prevNoWriteOrDelete := v.noWriteOrDelete
 	prevNoWriteCanDelete := v.noWriteCanDelete
 	v.noWriteOrDelete = false
