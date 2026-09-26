@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
+use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
@@ -119,7 +120,12 @@ impl S3TierBackend {
             )
             .send()
             .await
-            .map_err(|e| format!("failed to create multipart upload: {}", e))?;
+            .map_err(|e| {
+                format!(
+                    "failed to create multipart upload: {}",
+                    DisplayErrorContext(&e)
+                )
+            })?;
 
         let upload_id = create_resp
             .upload_id()
@@ -183,7 +189,12 @@ impl S3TierBackend {
                     .send()
                     .await
                     .map_err(|e| {
-                        format!("failed to upload part {} at offset {}: {}", pn, off, e)
+                        format!(
+                            "failed to upload part {} at offset {}: {}",
+                            pn,
+                            off,
+                            DisplayErrorContext(&e)
+                        )
                     })?;
 
                 let e_tag = upload_part_resp.e_tag().unwrap_or_default().to_string();
@@ -236,7 +247,12 @@ impl S3TierBackend {
                 .multipart_upload(completed_upload)
                 .send()
                 .await
-                .map_err(|e| format!("failed to complete multipart upload: {}", e))?;
+                .map_err(|e| {
+                    format!(
+                        "failed to complete multipart upload: {}",
+                        DisplayErrorContext(&e)
+                    )
+                })?;
 
             Ok::<(), String>(())
         }
@@ -293,7 +309,7 @@ impl S3TierBackend {
             .key(key)
             .send()
             .await
-            .map_err(|e| format!("failed to head object {}: {}", key, e))?;
+            .map_err(|e| format!("failed to head object {}: {}", key, DisplayErrorContext(&e)))?;
 
         let file_size = head_resp.content_length().unwrap_or(0) as u64;
 
@@ -356,7 +372,14 @@ impl S3TierBackend {
                     .range(&range)
                     .send()
                     .await
-                    .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+                    .map_err(|e| {
+                        format!(
+                            "failed to get object {} range {}: {}",
+                            key,
+                            range,
+                            DisplayErrorContext(&e)
+                        )
+                    })?;
 
                 let body = get_resp
                     .body
@@ -431,7 +454,14 @@ impl S3TierBackend {
             .range(&range)
             .send()
             .await
-            .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+            .map_err(|e| {
+                format!(
+                    "failed to get object {} range {}: {}",
+                    key,
+                    range,
+                    DisplayErrorContext(&e)
+                )
+            })?;
 
         let body = resp
             .body
@@ -449,7 +479,13 @@ impl S3TierBackend {
             .key(key)
             .send()
             .await
-            .map_err(|e| format!("failed to delete object {}: {}", key, e))?;
+            .map_err(|e| {
+                format!(
+                    "failed to delete object {}: {}",
+                    key,
+                    DisplayErrorContext(&e)
+                )
+            })?;
         Ok(())
     }
 
@@ -464,7 +500,13 @@ impl S3TierBackend {
                 .key(&key)
                 .send()
                 .await
-                .map_err(|e| format!("failed to delete object {}: {}", key, e))?;
+                .map_err(|e| {
+                    format!(
+                        "failed to delete object {}: {}",
+                        key,
+                        DisplayErrorContext(&e)
+                    )
+                })?;
             Ok(())
         })
     }
@@ -488,7 +530,14 @@ impl S3TierBackend {
                 .range(&range)
                 .send()
                 .await
-                .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+                .map_err(|e| {
+                    format!(
+                        "failed to get object {} range {}: {}",
+                        key,
+                        range,
+                        DisplayErrorContext(&e)
+                    )
+                })?;
 
             let body = resp
                 .body
