@@ -118,6 +118,10 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 		if cached := fs.ringPeerIPs.Load(); cached != nil && cached.members == key && time.Now().Before(cached.expires) {
 			return cached.ips, nil
 		}
+		// Shared by every caller waiting on this key: the lookup outlives the
+		// first request's cancellation, bounded by its own deadline.
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
 		var ips []net.IP
 		failed := false
 		for _, member := range members {
@@ -129,7 +133,7 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 				ips = append(ips, ip)
 				continue
 			}
-			found, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			found, err := net.DefaultResolver.LookupIP(lookupCtx, "ip", host)
 			if err != nil {
 				failed = true
 				continue
