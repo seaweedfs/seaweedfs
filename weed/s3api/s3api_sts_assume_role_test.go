@@ -241,3 +241,30 @@ func newTestSTSIntegrationManager(t *testing.T) *integration.IAMManager {
 	require.NoError(t, manager.Initialize(config, func() string { return "" }))
 	return manager
 }
+
+// AssumeRole derives its session length from the same default-then-cap rule as
+// the service layer (#11473): an omitted DurationSeconds yields TokenDuration,
+// and either path is capped at MaxSessionLength.
+func TestPrepareSTSCredentialsHonorsConfiguredDurations(t *testing.T) {
+	stsService := sts.NewSTSService()
+	require.NoError(t, stsService.Initialize(&sts.STSConfig{
+		TokenDuration:    sts.FlexibleDuration{Duration: 15 * time.Minute},
+		MaxSessionLength: sts.FlexibleDuration{Duration: 20 * time.Minute},
+		Issuer:           "test-issuer",
+		SigningKey:       []byte("test-signing-key-at-least-32-bytes-long-for-security"),
+	}))
+	stsHandlers := NewSTSHandlers(stsService, nil)
+	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/test-role", defaultAccountID)
+
+	expiresIn := func(durationSeconds *int64) time.Duration {
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(context.Background(), roleArn, "test-session", durationSeconds, "", nil)
+		require.NoError(t, err)
+		exp, err := time.Parse(time.RFC3339, stsCreds.Expiration)
+		require.NoError(t, err)
+		return time.Until(exp)
+	}
+
+	oneHour := int64(3600)
+	assert.InDelta(t, (15 * time.Minute).Seconds(), expiresIn(nil).Seconds(), 60)
+	assert.InDelta(t, (20 * time.Minute).Seconds(), expiresIn(&oneHour).Seconds(), 60)
+}

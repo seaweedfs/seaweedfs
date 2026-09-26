@@ -834,9 +834,10 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSessionName string,
 	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
-	// Calculate duration
-	duration := time.Hour // Default 1 hour
-	if durationSeconds != nil {
+	duration := time.Hour
+	if h.stsService != nil && h.stsService.Config != nil {
+		duration = h.stsService.CalculateSessionDuration(durationSeconds)
+	} else if durationSeconds != nil {
 		duration = time.Duration(*durationSeconds) * time.Second
 	}
 
