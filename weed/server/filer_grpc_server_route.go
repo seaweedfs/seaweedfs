@@ -122,10 +122,8 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 		// Shared by every caller waiting on this key: the lookups outlive the
 		// first request's cancellation, and run in parallel so one slow member
 		// cannot starve the rest of the shared deadline.
-		var wg sync.WaitGroup
-		var mu sync.Mutex
 		var ips []net.IP
-		failed := false
+		var hosts []string
 		for _, member := range members {
 			host, _, err := net.SplitHostPort(string(member))
 			if err != nil {
@@ -135,6 +133,12 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 				ips = append(ips, ip)
 				continue
 			}
+			hosts = append(hosts, host)
+		}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		failed := false
+		for _, host := range hosts {
 			wg.Add(1)
 			go func(host string) {
 				defer wg.Done()
