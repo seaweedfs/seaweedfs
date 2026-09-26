@@ -699,26 +699,15 @@ impl Store {
         vol.read_needle_opt(n, read_deleted)
     }
 
-    /// Read needle metadata and return streaming info for large file reads.
-    pub fn read_volume_needle_stream_info(
+    /// Resolve a needle read under this guard, to run after it is released.
+    pub(crate) fn needle_read_plan(
         &self,
         vid: VolumeId,
-        n: &mut Needle,
+        id: NeedleId,
         read_deleted: bool,
-    ) -> Result<crate::storage::volume::NeedleStreamInfo, VolumeError> {
+    ) -> Result<crate::storage::volume::NeedleReadPlan, VolumeError> {
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
-        vol.read_needle_stream_info(n, read_deleted)
-    }
-
-    /// Re-lookup a needle's data-file offset after compaction may have moved it.
-    /// Returns `(new_data_file_offset, current_compaction_revision)`.
-    pub fn re_lookup_needle_data_offset(
-        &self,
-        vid: VolumeId,
-        needle_id: NeedleId,
-    ) -> Result<(u64, u16), VolumeError> {
-        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
-        vol.re_lookup_needle_data_offset(needle_id)
+        vol.needle_read_plan(id, read_deleted)
     }
 
     /// Write a needle to a volume. With `fsync` the volume flushes its .dat
