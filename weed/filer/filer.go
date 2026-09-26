@@ -181,6 +181,10 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		glog.V(0).Infof("LockRing: applying master ring update v%d: %v", update.Version, servers)
 		f.Dlm.LockRing.SetSnapshot(servers, update.Version)
 	})
+	f.MasterClient.SetOnMasterChangeFn(func(previous, current pb.ServerAddress) {
+		glog.V(0).Infof("LockRing: master changed %s -> %s, resetting ring", previous, current)
+		f.Dlm.LockRing.Reset()
+	})
 
 	// Subscribe to the local filer first: its events reach the aggregated
 	// buffer only through this subscription, and the peer watermarks must

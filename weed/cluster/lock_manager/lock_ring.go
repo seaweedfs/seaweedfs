@@ -1,6 +1,7 @@
 package lock_manager
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -54,6 +55,14 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 		r.Unlock()
 		return false
 	}
+	// An unchanged member list is only a version refresh: installing it as a
+	// new snapshot would run the topology-change callback and restart the
+	// prior-owner window on every periodic rebroadcast.
+	if len(r.snapshots) > 0 && slices.Equal(servers, r.snapshots[0].servers) {
+		r.version = version
+		r.Unlock()
+		return true
+	}
 	r.version = version
 	// Update the ring while holding the lock so version and ring state
 	// are always consistent — prevents a concurrent SetSnapshot from
@@ -72,6 +81,19 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 		r.compactSnapshots()
 	}()
 	return true
+}
+
+// Reset clears only the version gate so the first update from a different
+// master always applies: ring versions are per-master monotonic, and a high
+// version accepted from a former leader must not reject the new leader's
+// view. The ring itself stays installed — writes keep routing to the last
+// known owner during the gap instead of every filer treating itself as the
+// owner, and the arriving snapshot transitions off it with the usual
+// prior-owner window.
+func (r *LockRing) Reset() {
+	r.Lock()
+	defer r.Unlock()
+	r.version = 0
 }
 
 // Version returns the current ring version.

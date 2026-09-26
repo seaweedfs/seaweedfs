@@ -816,6 +816,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 
 	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
 	lock := lockClient.NewShortLivedLock(string(fullpath), string(fs.option.Host))
+	if lock == nil {
+		return nil, fmt.Errorf("failed to acquire lock for %s", fullpath)
+	}
 	defer lock.StopShortLivedLock()
 
 	// The cluster lock serializes appenders across filers; the path lock makes

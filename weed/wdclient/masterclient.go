@@ -150,6 +150,7 @@ type MasterClient struct {
 	clientHost           pb.ServerAddress
 	rack                 string
 	currentMaster        pb.ServerAddress
+	lastServedMaster     pb.ServerAddress
 	currentMasterLock    sync.RWMutex
 	masters              pb.ServerDiscovery
 	grpcDialOption       grpc.DialOption
@@ -158,6 +159,8 @@ type MasterClient struct {
 	OnPeerUpdateLock     sync.RWMutex
 	OnLockRingUpdate     func(update *master_pb.LockRingUpdate)
 	OnLockRingUpdateLock sync.RWMutex
+	OnMasterChange       func(previous, current pb.ServerAddress)
+	OnMasterChangeLock   sync.RWMutex
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
@@ -190,6 +193,12 @@ func (mc *MasterClient) SetOnLockRingUpdateFn(fn func(update *master_pb.LockRing
 	mc.OnLockRingUpdateLock.Lock()
 	mc.OnLockRingUpdate = fn
 	mc.OnLockRingUpdateLock.Unlock()
+}
+
+func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerAddress)) {
+	mc.OnMasterChangeLock.Lock()
+	mc.OnMasterChange = fn
+	mc.OnMasterChangeLock.Unlock()
 }
 
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
@@ -280,7 +289,14 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			// Still need to reset cache to ensure we don't use stale data from previous master
 			mc.resetVidMap()
 		}
-		mc.setCurrentMaster(master)
+		if previous := mc.markServingMaster(master); previous != "" {
+			mc.OnMasterChangeLock.RLock()
+			if mc.OnMasterChange != nil {
+				glog.V(0).Infof("%s.%s masterClient master changed %s -> %s", mc.FilerGroup, mc.clientType, previous, master)
+				mc.OnMasterChange(previous, master)
+			}
+			mc.OnMasterChangeLock.RUnlock()
+		}
 
 		for {
 			resp, err := stream.Recv()
@@ -498,6 +514,21 @@ func (mc *MasterClient) setCurrentMaster(master pb.ServerAddress) {
 	mc.currentMasterLock.Lock()
 	mc.currentMaster = master
 	mc.currentMasterLock.Unlock()
+}
+
+// markServingMaster records the master now serving this client and returns
+// the previously served one when it differs. Unlike currentMaster,
+// lastServedMaster survives the disconnected gap between reconnect attempts,
+// so a leader change is still detected.
+func (mc *MasterClient) markServingMaster(master pb.ServerAddress) (previous pb.ServerAddress) {
+	mc.currentMasterLock.Lock()
+	defer mc.currentMasterLock.Unlock()
+	if mc.lastServedMaster != "" && !mc.lastServedMaster.Equals(master) {
+		previous = mc.lastServedMaster
+	}
+	mc.currentMaster = master
+	mc.lastServedMaster = master
+	return
 }
 
 // GetMaster returns the current master address, blocking until connected.

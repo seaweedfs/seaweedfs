@@ -2,6 +2,7 @@ package mount
 
 import (
 	"fmt"
+	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -77,6 +78,12 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
 			string(path), owner, lock_manager.LiveLockTTL,
 		)
+		if fileHandle.dlmLock == nil {
+			// No lock server is reachable: proceeding would silently drop
+			// cross-mount write serialization, so fail the open instead.
+			wfs.fhMap.ReleaseByHandle(fileHandle.fh)
+			return nil, fuse.Status(syscall.EAGAIN)
+		}
 		glog.V(1).Infof("DLM lock acquired for %s", path)
 	}
 	return fileHandle, fuse.OK
