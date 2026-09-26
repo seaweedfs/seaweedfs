@@ -144,6 +144,34 @@ func TestAuditRequesterIdentityEmptyForNonFederatedSession(t *testing.T) {
 	assert.Empty(t, log.RequesterIdentity, "non-federated session must not surface the session id as a requester_identity")
 }
 
+// Authentication resolves the identity before the policy verdict, so a denied
+// request still has a requester and the audit entry must name it. See issue
+// #11474.
+func TestAuditRequesterForDeniedRequest(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+
+	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodDelete, "http://s3/test/bucket/obj", nil))
+
+	identity := &Identity{Name: "alice", Account: &Account{Id: "alice"}}
+	rec := httptest.NewRecorder()
+	iam.handleAuthResult(rec, outer, identity, s3err.ErrAccessDenied, func(http.ResponseWriter, *http.Request) {
+		t.Error("denied request must not reach the handler")
+	})
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	log := s3err.GetAccessLog(outer, rec.Code, s3err.ErrAccessDenied)
+	assert.Equal(t, "alice", log.Requester, "denied request must still audit the requester")
+	assert.Equal(t, "arn:aws:iam::alice:user/alice", log.RequesterArn)
+
+	anonymous := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodDelete, "http://s3/test/bucket/obj", nil))
+	rec = httptest.NewRecorder()
+	iam.handleAuthResult(rec, anonymous, nil, s3err.ErrAccessDenied, func(http.ResponseWriter, *http.Request) {
+		t.Error("denied request must not reach the handler")
+	})
+	log = s3err.GetAccessLog(anonymous, rec.Code, s3err.ErrAccessDenied)
+	assert.Empty(t, log.Requester, "unauthenticated denial must not attribute a requester")
+}
+
 // A JWT-authenticated identity carries no PrincipalArn of its own — the auth
 // layer hands the principal over in a request header — so the audit entry has to
 // resolve the ARN the same way policy evaluation does.

@@ -1631,11 +1631,12 @@ func recordIdentityInContext(r *http.Request, identity *Identity) context.Contex
 }
 
 func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *http.Request, identity *Identity, errCode s3err.ErrorCode, f http.HandlerFunc) {
+	// Store the authenticated identity in request context (secure, cannot be spoofed)
+	// even on the deny path so audit records for rejected requests keep requester attribution
+	if identity != nil && identity.Name != "" {
+		r = r.WithContext(recordIdentityInContext(r, identity))
+	}
 	if errCode == s3err.ErrNone {
-		// Store the authenticated identity in request context (secure, cannot be spoofed)
-		if identity != nil && identity.Name != "" {
-			r = r.WithContext(recordIdentityInContext(r, identity))
-		}
 		f(w, r)
 		return
 	}
