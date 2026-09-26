@@ -225,6 +225,17 @@ func (v *Volume) doIsEmpty() (bool, error) {
 	return true, nil
 }
 
+// doIsGarbage reports whether every byte ever written is already deleted —
+// the same all-garbage state vacuum measures, checked against the byte
+// counters because the count counters drift on reload.
+func (v *Volume) doIsGarbage() bool {
+	if v.nm == nil {
+		return false
+	}
+	contentSize := v.nm.ContentSize()
+	return contentSize > 0 && v.nm.DeletedSize() >= contentSize
+}
+
 func (v *Volume) DeletedSize() uint64 {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()

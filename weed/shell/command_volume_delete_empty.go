@@ -32,6 +32,9 @@ func (c *commandVolumeDeleteEmpty) Help() string {
 	volume.deleteEmpty -collectionPattern=important* -quietFor=24h -apply
 
 	This command deletes all empty volumes from one volume server.
+	A volume with no live needles left is empty too, even when its
+	.dat file is still large: compacting it first would only rewrite
+	bytes that are all deleted already.
 
 `
 }
@@ -79,8 +82,11 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 				if isEmptyVolumeDeleteCandidate(v, quietSeconds, nowUnixSeconds, collectionMatcher) {
 					if *applyBalancing {
 						log.Printf("deleting empty volume %d from %s", v.Id, dn.Id)
+						onlyGarbage := v.FileCount > 0 && v.FileCount <= v.DeleteCount
+						// onlyEmpty stays set so a pre-upgrade server checks
+						// emptiness and refuses instead of deleting unseen.
 						if deleteErr := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id),
-							pb.NewServerAddressFromDataNode(dn), true, false); deleteErr != nil {
+							pb.NewServerAddressFromDataNode(dn), true, onlyGarbage, false); deleteErr != nil {
 							err = deleteErr
 						}
 						continue
@@ -97,7 +103,11 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 
 func isEmptyVolumeDeleteCandidate(v *master_pb.VolumeInformationMessage, quietSeconds, nowUnixSeconds int64, collectionMatcher *wildcard.CollectionMatcher) bool {
 	return collectionMatcher.Matches(v.Collection) &&
-		v.Size <= super_block.SuperBlockSize &&
+		// A remote-backed replica shares its cloud object with the others, so
+		// deleting one cannot drop it without hurting the survivors.
+		v.RemoteStorageName == "" &&
+		(!v.ReadOnly || v.ReadOnlyCanDelete) &&
+		(v.Size <= super_block.SuperBlockSize || v.FileCount > 0 && v.FileCount <= v.DeleteCount) &&
 		v.ModifiedAtSecond > 0 &&
 		v.ModifiedAtSecond+quietSeconds < nowUnixSeconds
 }

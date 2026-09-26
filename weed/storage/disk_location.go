@@ -461,7 +461,7 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (dele
 	wg.Add(2)
 	go func() {
 		for k, v := range delVolsMap {
-			if err := v.Destroy(false, false); err != nil {
+			if err := v.Destroy(false, false, false); err != nil {
 				errChain <- err
 			} else {
 				l.volumesLock.Lock()
@@ -497,12 +497,12 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (dele
 	return
 }
 
-func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool, keepRemoteData bool) (found bool, e error) {
+func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) (found bool, e error) {
 	v, ok := l.volumes[vid]
 	if !ok {
 		return
 	}
-	e = v.Destroy(onlyEmpty, keepRemoteData)
+	e = v.Destroy(onlyEmpty, onlyGarbage, keepRemoteData)
 	if e != nil {
 		return
 	}
@@ -528,7 +528,7 @@ func (l *DiskLocation) LoadVolume(diskId uint32, vid needle.VolumeId, needleMapK
 
 var ErrVolumeNotFound = fmt.Errorf("volume not found")
 
-func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool, keepRemoteData bool) error {
+func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
 	l.volumesLock.Lock()
 	defer l.volumesLock.Unlock()
 
@@ -536,7 +536,7 @@ func (l *DiskLocation) DeleteVolume(vid needle.VolumeId, onlyEmpty bool, keepRem
 	if !ok {
 		return ErrVolumeNotFound
 	}
-	_, err := l.deleteVolumeById(vid, onlyEmpty, keepRemoteData)
+	_, err := l.deleteVolumeById(vid, onlyEmpty, onlyGarbage, keepRemoteData)
 	return err
 }
 

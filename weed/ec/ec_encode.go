@@ -43,7 +43,7 @@ func markVolumeReplicaWritable(ctx context.Context, grpcDialOption grpc.DialOpti
 // deleteVolume removes the volume from sourceVolumeServer via the canonical
 // volume_move helper.
 func deleteVolume(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, onlyEmpty bool, keepRemoteData bool) (err error) {
-	return volume_move.NewMover(grpcDialOption).DeleteVolume(ctx, volumeId, sourceVolumeServer, onlyEmpty, keepRemoteData)
+	return volume_move.NewMover(grpcDialOption).DeleteVolume(ctx, volumeId, sourceVolumeServer, onlyEmpty, false, keepRemoteData)
 }
 
 func ChunkVolumeIds(volumeIds []needle.VolumeId, batchSize int) [][]needle.VolumeId {

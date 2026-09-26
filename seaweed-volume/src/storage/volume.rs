@@ -4424,8 +4424,19 @@ impl Volume {
     /// Destroy removes everything related to this volume. When keep_remote_data
     /// is true the cloud-tier object backing the volume is left intact — used
     /// by moves where another server is taking over the same .vif.
-    pub fn destroy(&mut self, only_empty: bool, keep_remote_data: bool) -> Result<(), VolumeError> {
-        if only_empty && self.file_count() > 0 {
+    pub fn destroy(
+        &mut self,
+        only_empty: bool,
+        only_garbage: bool,
+        keep_remote_data: bool,
+    ) -> Result<(), VolumeError> {
+        // Either enabled check may pass: a volume with no live data qualifies
+        // whether it reads empty or as all garbage. Byte counters, not counts:
+        // index rows and live tallies drift apart on reload.
+        let empty_ok = only_empty && self.file_count() == 0;
+        let garbage_ok =
+            only_garbage && self.content_size() > 0 && self.deleted_size() >= self.content_size();
+        if (only_empty || only_garbage) && !empty_ok && !garbage_ok {
             return Err(VolumeError::NotEmpty);
         }
         if self.is_compacting {
@@ -5238,7 +5249,7 @@ mod tests {
         let plan = v.dat_scan_plan(sb_size).unwrap();
         let dat_path = v.file_name(".dat");
 
-        v.destroy(false, false).unwrap();
+        v.destroy(false, false, false).unwrap();
         assert!(
             !Path::new(&dat_path).exists(),
             "precondition: destroy removed .dat"
@@ -6995,7 +7006,7 @@ mod tests {
             dat_path = v.file_name(".dat");
             idx_path = v.file_name(".idx");
             assert!(Path::new(&dat_path).exists());
-            v.destroy(false, false).unwrap();
+            v.destroy(false, false, false).unwrap();
         }
 
         assert!(!Path::new(&dat_path).exists());
@@ -8789,7 +8800,7 @@ mod tests {
         assert!(std::path::Path::new(&idx_path).exists());
 
         // Destroy the volume
-        v.destroy(false, false).unwrap();
+        v.destroy(false, false, false).unwrap();
 
         // .dat and .idx should be gone
         assert!(
@@ -8842,7 +8853,7 @@ mod tests {
         assert!(std::path::Path::new(&dat_path).exists());
         assert!(std::path::Path::new(&idx_path).exists());
 
-        v.destroy(false, false).unwrap();
+        v.destroy(false, false, false).unwrap();
 
         assert!(
             !std::path::Path::new(&dat_path).exists(),
@@ -8881,7 +8892,7 @@ mod tests {
         let ecx_path = format!("{}/1.ecx", dir);
         std::fs::write(&ecx_path, b"ec-index").unwrap();
 
-        v.destroy(false, false).unwrap();
+        v.destroy(false, false, false).unwrap();
 
         let dat_path = format!("{}/1.dat", dir);
         let idx_path = format!("{}/1.idx", dir);
