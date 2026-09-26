@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -257,5 +258,42 @@ func TestSetVolumeReadOnly_PreservesPending(t *testing.T) {
 	}
 	if p := vl.GetPendingSize(1); p != 5000 {
 		t.Errorf("expected 5000 pending (not drained), got %d", p)
+	}
+}
+
+// A heartbeat landing mid-delete re-evaluates writability; a marked volume
+// must stay out of the writable list until the sweep finishes with it.
+func TestMarkDeletingKeepsVolumeUnwritableAcrossHeartbeats(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":1000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	if writable, _ := vl.GetWritableVolumeCount(); writable != 1 {
+		t.Fatalf("volume not writable before mark, got %d", writable)
+	}
+
+	vl.MarkDeleting(1)
+
+	vl.EnsureCorrectWritables(&storage.VolumeInfo{Id: 1})
+	if writable, _ := vl.GetWritableVolumeCount(); writable != 0 {
+		t.Fatal("marked volume became writable again")
+	}
+
+	vl.UnmarkDeleting(1)
+	vl.EnsureCorrectWritables(&storage.VolumeInfo{Id: 1})
+	if writable, _ := vl.GetWritableVolumeCount(); writable != 1 {
+		t.Fatal("unmarked volume did not become writable")
 	}
 }

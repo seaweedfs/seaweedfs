@@ -407,9 +407,9 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 		if !eligible {
 			continue
 		}
-		// stop new assignments and let pending writes finish before deleting,
-		// the same drain the compact pass uses
-		vl.DrainAndRemoveFromWritable(vid)
+		// keep the volume out of assignments for the whole delete: a heartbeat
+		// landing mid-delete must not re-add it while replicas are dropping
+		vl.MarkDeleting(vid)
 		remaining := 0
 		kept := locationList.list[:0]
 		for _, dn := range locationList.list {
@@ -426,6 +426,7 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 			kept = append(kept, dn)
 			remaining++
 		}
+		vl.UnmarkDeleting(vid)
 		locationList.list = kept
 		if remaining == 0 {
 			delete(todoVolumeMap, vid)

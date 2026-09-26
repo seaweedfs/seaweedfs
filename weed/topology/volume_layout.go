@@ -65,6 +65,7 @@ type VolumeLayout struct {
 	writableMembers  map[needle.VolumeId]struct{}
 	crowded          map[needle.VolumeId]struct{}
 	vacuumedVolumes  map[needle.VolumeId]time.Time
+	deletingVolumes  map[needle.VolumeId]struct{}
 	volumeSizeLimit  uint64
 	replicationAsMin bool
 	accessLock       sync.RWMutex
@@ -92,6 +93,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		writableMembers:  make(map[needle.VolumeId]struct{}),
 		crowded:          make(map[needle.VolumeId]struct{}),
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
+		deletingVolumes:  make(map[needle.VolumeId]struct{}),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
 		sizeTracking:     make(map[needle.VolumeId]*volumeSizeTracking),
@@ -553,6 +555,24 @@ func (vl *VolumeLayout) DrainAndRemoveFromWritable(vid needle.VolumeId) {
 	vl.waitForPendingDrain(context.Background(), vid)
 }
 
+// MarkDeleting pins a volume out of the writable list for the duration of a
+// sweep delete. DrainAndRemoveFromWritable alone is not enough here: unlike a
+// compaction the volume disappears, so a heartbeat landing mid-delete must not
+// re-add it and let a write reach a replica whose siblings are already gone.
+func (vl *VolumeLayout) MarkDeleting(vid needle.VolumeId) {
+	vl.accessLock.Lock()
+	vl.deletingVolumes[vid] = struct{}{}
+	vl.removeFromWritable(vid)
+	vl.accessLock.Unlock()
+	vl.waitForPendingDrain(context.Background(), vid)
+}
+
+func (vl *VolumeLayout) UnmarkDeleting(vid needle.VolumeId) {
+	vl.accessLock.Lock()
+	delete(vl.deletingVolumes, vid)
+	vl.accessLock.Unlock()
+}
+
 func (vl *VolumeLayout) isEmpty() bool {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
@@ -920,6 +940,9 @@ func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 	return false
 }
 func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
+	if _, ok := vl.deletingVolumes[vid]; ok {
+		return false
+	}
 	if _, ok := vl.writableMembers[vid]; ok {
 		return false
 	}
