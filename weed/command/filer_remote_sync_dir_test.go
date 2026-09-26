@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -684,7 +686,7 @@ func TestRenameWithInheritedRemoteEntryWritesNewKey(t *testing.T) {
 
 	remote := &recordingRemote{}
 	filerClient := &stubFilerClient{}
-	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatal(err)
 	}
 
@@ -731,7 +733,7 @@ func TestRenameRemoteOnlyEntrySkipsEmptyUpload(t *testing.T) {
 
 	remote := &recordingRemote{}
 	filerClient := &stubFilerClient{}
-	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatal(err)
 	}
 	if len(remote.writes) != 0 {
@@ -764,7 +766,7 @@ func TestRenameDeleteOldKeyFailureReturnsError(t *testing.T) {
 	deleteErr := errors.New("AccessDenied: Access Denied")
 	remote := &recordingRemote{deleteErr: deleteErr}
 	filerClient := &stubFilerClient{}
-	err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp)
+	err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp)
 	if !errors.Is(err, deleteErr) {
 		t.Errorf("err = %v, want the delete failure returned so the event is retried", err)
 	}
@@ -800,11 +802,81 @@ func TestRenameDeleteOldKeyNotFoundStillWrites(t *testing.T) {
 
 	remote := &recordingRemote{deleteErr: remote_storage.ErrRemoteObjectNotFound}
 	filerClient := &stubFilerClient{}
-	if err := processUpdateEvent(filerClient, filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
 		t.Fatalf("err = %v, want nil: an already-deleted old key must not block the write", err)
 	}
 	wantWrite := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dst/probe.bin"}
 	if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
 		t.Errorf("writes = %+v, want the new key %s written", remote.writes, remote_storage.FormatLocation(wantWrite))
+	}
+}
+
+func TestIfEntryEqualCarriesTheEventEntry(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name:    "f",
+		Content: []byte("inline"),
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: "3,01a"},
+			{Fid: &filer_pb.FileId{VolumeId: 4, FileKey: 0x2b, Cookie: 0x0c}},
+		},
+	}
+	cond := ifEntryEqual(entry)
+	if len(cond.Clauses) != 1 || cond.Clauses[0].Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+		t.Fatalf("condition = %v, want one IF_ENTRY_EQUAL clause", cond)
+	}
+	if got := cond.Clauses[0].ExpectedEntry; !proto.Equal(got, entry) {
+		t.Fatalf("expected_entry = %v, want %v", got, entry)
+	}
+}
+
+// The remote-bound entry loses (or gains) the storage class attribute while
+// the event entry keeps it, so IF_ENTRY_EQUAL still sees the entry the filer
+// stored — otherwise every stamp on an S3-written object reads as stale.
+func TestRemoteWriteEntryLeavesEventEntryUntouched(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 1},
+		Extended:   map[string][]byte{s3_constants.AmzStorageClass: []byte("STANDARD")},
+	}
+
+	stripped := remoteWriteEntry(entry, "")
+	if _, ok := stripped.Extended[s3_constants.AmzStorageClass]; ok {
+		t.Fatalf("remote entry still carries %s", s3_constants.AmzStorageClass)
+	}
+	if string(entry.Extended[s3_constants.AmzStorageClass]) != "STANDARD" {
+		t.Fatalf("event entry Extended mutated: %v", entry.Extended)
+	}
+
+	overridden := remoteWriteEntry(entry, "GLACIER")
+	if got := string(overridden.Extended[s3_constants.AmzStorageClass]); got != "GLACIER" {
+		t.Fatalf("override = %q, want GLACIER", got)
+	}
+	if string(entry.Extended[s3_constants.AmzStorageClass]) != "STANDARD" {
+		t.Fatalf("event entry Extended mutated: %v", entry.Extended)
+	}
+
+	bare := &filer_pb.Entry{Name: "g", Attributes: &filer_pb.FuseAttributes{Mtime: 1}}
+	if got := string(remoteWriteEntry(bare, "GLACIER").Extended[s3_constants.AmzStorageClass]); got != "GLACIER" {
+		t.Fatalf("override on nil Extended = %q, want GLACIER", got)
+	}
+}
+
+func TestIsFailedPrecondition(t *testing.T) {
+	refused := status.Error(codes.FailedPrecondition, "precondition failed: /buckets/b/f")
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"status", refused, true},
+		{"wrapped status", fmt.Errorf("update entry: %w", refused), true},
+		{"message only", errors.New("rpc error: code = FailedPrecondition desc = precondition failed: /f"), false},
+		{"other", status.Error(codes.Unavailable, "filer down"), false},
+	}
+	for _, c := range cases {
+		if got := isFailedPrecondition(c.err); got != c.want {
+			t.Errorf("%s: isFailedPrecondition = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

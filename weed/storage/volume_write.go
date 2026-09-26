@@ -16,6 +16,101 @@ var ErrorNotFound = errors.New("not found")
 var ErrorDeleted = errors.New("already deleted")
 var ErrorSizeMismatch = errors.New("size mismatch")
 
+type batchNeedleSnapshot struct {
+	id      NeedleId
+	found   bool
+	offset  Offset
+	size    Size
+	changed bool
+}
+
+func newBatchNeedleSnapshot(v *Volume, id NeedleId) *batchNeedleSnapshot {
+	snapshot := &batchNeedleSnapshot{id: id}
+	if element, found := v.nm.Get(id); found && element != nil {
+		snapshot.found = true
+		snapshot.offset = element.Offset
+		snapshot.size = element.Size
+	}
+	return snapshot
+}
+
+func (s *batchNeedleSnapshot) observeCurrent(v *Volume) {
+	element, found := v.nm.Get(s.id)
+	if found != s.found {
+		s.changed = true
+		return
+	}
+	if found && (element == nil || element.Offset != s.offset || element.Size != s.size) {
+		s.changed = true
+	}
+}
+
+func (v *Volume) restoreBatchNeedle(snapshot *batchNeedleSnapshot) error {
+	mapRollbacker, ok := v.nm.(batchMapRollbacker)
+	if !ok {
+		return fmt.Errorf("mapper %T cannot restore its mappings", v.nm)
+	}
+	if snapshot.found {
+		return mapRollbacker.restoreMapping(snapshot.id, snapshot.offset, snapshot.size)
+	}
+	// A plain Delete would leave a tombstoned entry whose stale offset makes
+	// the next write to this needle fail reading a header that no longer exists.
+	return mapRollbacker.removeMapping(snapshot.id)
+}
+
+func (v *Volume) rollbackBatch(end int64, indexEnd int64, snapshots []*batchNeedleSnapshot,
+	metricRollbacker batchMetricRollbacker, metrics batchMapMetricSnapshot) error {
+	var recoveryErrors []error
+	for _, snapshot := range snapshots {
+		if !snapshot.changed {
+			continue
+		}
+		if err := v.restoreBatchNeedle(snapshot); err != nil {
+			recoveryErrors = append(recoveryErrors,
+				fmt.Errorf("restore needle %d: %w", snapshot.id, err))
+		}
+	}
+
+	if len(recoveryErrors) == 0 {
+		rollbacker, ok := v.nm.(batchIndexRollbacker)
+		if !ok {
+			recoveryErrors = append(recoveryErrors,
+				fmt.Errorf("mapper %T cannot truncate its index", v.nm))
+		} else if err := rollbacker.truncateIndex(indexEnd); err != nil {
+			recoveryErrors = append(recoveryErrors,
+				fmt.Errorf("truncate index to %d: %w", indexEnd, err))
+		}
+	}
+
+	if len(recoveryErrors) == 0 {
+		if err := v.nm.Sync(); err != nil {
+			recoveryErrors = append(recoveryErrors,
+				fmt.Errorf("sync recovered index: %w", err))
+		}
+	}
+
+	if len(recoveryErrors) == 0 {
+		if err := v.DataBackend.Truncate(end); err != nil {
+			recoveryErrors = append(recoveryErrors,
+				fmt.Errorf("truncate %s to %d: %w", v.DataBackend.Name(), end, err))
+		} else if err := v.DataBackend.Sync(); err != nil {
+			recoveryErrors = append(recoveryErrors,
+				fmt.Errorf("sync truncated %s: %w", v.DataBackend.Name(), err))
+		}
+	}
+
+	if len(recoveryErrors) == 0 {
+		if metricRollbacker == nil {
+			recoveryErrors = append(recoveryErrors,
+				fmt.Errorf("mapper %T cannot restore its metrics", v.nm))
+		} else {
+			metricRollbacker.restoreBatchMetrics(metrics)
+		}
+	}
+
+	return errors.Join(recoveryErrors...)
+}
+
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
 func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
@@ -147,6 +242,8 @@ func removeVolumeFiles(filename string, keepVif bool) {
 	deleteAndLog("rdb")
 	// marker for damaged or incomplete volume
 	deleteAndLog("note")
+	// marker for a volume whose failed-batch recovery could not be verified
+	deleteAndLog("unavailable")
 }
 
 // asyncRequestAppend queues a request for the batch worker, starting it on the
@@ -165,6 +262,10 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+
+	if err := v.UnavailableError(); err != nil {
+		return 0, 0, false, err
+	}
 
 	// A caller can still hold the volume after it was closed or destroyed, which
 	// leaves both of these nil. Refuse the write rather than dereference them.
@@ -203,22 +304,35 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 // data we can vouch for, so they come back off the .dat and the needle map goes
 // back to what it pointed at before, rather than at an offset past the new end.
 func (v *Volume) rollbackUnflushedWrite(n *needle.Needle, offset uint64, end int64, priorOffset Offset, priorSize Size, hasPrior bool) {
+	var recoveryErr error
 	if te := v.DataBackend.Truncate(end); te != nil {
-		glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", v.DataBackend.Name(), end, te)
+		recoveryErr = fmt.Errorf("truncate %s back to %d: %w", v.DataBackend.Name(), end, te)
 	}
 	current, found := v.nm.Get(n.Id)
-	if !found || current.Offset.ToActualOffset() != int64(offset) {
-		// doWriteRequest kept an existing mapping at a higher offset
-		return
+	if found && current.Offset.ToActualOffset() == int64(offset) {
+		var err error
+		if hasPrior {
+			err = v.nm.Put(n.Id, priorOffset, priorSize)
+		} else {
+			// The tombstone must reach .idx so a replay forgets the needle, but
+			// the negated entry it leaves in memory points at truncated bytes
+			// and would fail the next write, so erase the mapping as well.
+			err = v.nm.Delete(n.Id, ToOffset(int64(offset)))
+			if err == nil {
+				if rb, ok := v.nm.(batchMapRollbacker); ok {
+					err = rb.removeMapping(n.Id)
+				} else {
+					err = fmt.Errorf("mapper %T cannot remove mapping", v.nm)
+				}
+			}
+		}
+		if err != nil {
+			recoveryErr = errors.Join(recoveryErr,
+				fmt.Errorf("roll back the index of needle %d in volume %d: %w", n.Id, v.Id, err))
+		}
 	}
-	var err error
-	if hasPrior {
-		err = v.nm.Put(n.Id, priorOffset, priorSize)
-	} else {
-		err = v.nm.Delete(n.Id, ToOffset(int64(offset)))
-	}
-	if err != nil {
-		glog.V(0).Infof("Failed to roll back the index of needle %d in volume %d: %v", n.Id, v.Id, err)
+	if recoveryErr != nil {
+		v.markIoUnavailable(recoveryErr)
 	}
 }
 
@@ -228,6 +342,10 @@ func (v *Volume) rollbackUnflushedWrite(n *needle.Needle, offset uint64, end int
 // paths only return once the .dat is on disk.
 func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, isStopping bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
+	if err := v.UnavailableError(); err != nil {
+		return 0, 0, false, err
+	}
+
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
 		n.Ttl = v.Ttl
@@ -307,6 +425,10 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
+	if err := v.UnavailableError(); err != nil {
+		return 0, err
+	}
+
 	if v.nm == nil {
 		return 0, nil
 	}
@@ -359,6 +481,75 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	return 0, nil
 }
 
+func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
+	end, e := int64(0), error(nil)
+	if unavailableErr := v.UnavailableError(); unavailableErr != nil {
+		e = unavailableErr
+	} else if v.nm == nil || v.DataBackend == nil {
+		e = fmt.Errorf("volume %d is closed", v.Id)
+	} else {
+		end, _, e = v.DataBackend.GetStat()
+	}
+	if e != nil {
+		for i := 0; i < len(currentRequests); i++ {
+			currentRequests[i].Complete(0, 0, false,
+				fmt.Errorf("cannot read current volume position: %v", e))
+		}
+		return
+	}
+
+	batchSnapshots := make(map[NeedleId]*batchNeedleSnapshot, len(currentRequests))
+	orderedSnapshots := make([]*batchNeedleSnapshot, 0, len(currentRequests))
+	metricRollbacker, _ := v.nm.(batchMetricRollbacker)
+	var batchMetrics batchMapMetricSnapshot
+	if metricRollbacker != nil {
+		batchMetrics = metricRollbacker.snapshotBatchMetrics()
+	}
+	indexEnd := int64(v.nm.IndexFileSize())
+	batchLastAppendAtNs := v.lastAppendAtNs
+	batchLastModifiedTsSeconds := v.lastModifiedTsSeconds
+	for i := 0; i < len(currentRequests); i++ {
+		needleID := currentRequests[i].N.Id
+		snapshot, found := batchSnapshots[needleID]
+		if !found {
+			snapshot = newBatchNeedleSnapshot(v, needleID)
+			batchSnapshots[needleID] = snapshot
+			orderedSnapshots = append(orderedSnapshots, snapshot)
+		}
+		if currentRequests[i].IsWriteRequest {
+			offset, size, isUnchanged, err := v.doWriteRequest(currentRequests[i].N, true)
+			currentRequests[i].UpdateResult(offset, uint64(size), isUnchanged, err)
+		} else {
+			size, err := v.doDeleteRequest(currentRequests[i].N)
+			currentRequests[i].UpdateResult(0, uint64(size), false, err)
+		}
+		snapshot.observeCurrent(v)
+	}
+
+	// if sync error the batch is not durable; restore it before another
+	// operation observes the volume
+	if syncErr := v.DataBackend.Sync(); syncErr != nil {
+		v.checkReadWriteError(syncErr)
+		v.lastAppendAtNs = batchLastAppendAtNs
+		v.lastModifiedTsSeconds = batchLastModifiedTsSeconds
+		batchErr := syncErr
+		if recoveryErr := v.rollbackBatch(end, indexEnd, orderedSnapshots, metricRollbacker, batchMetrics); recoveryErr != nil {
+			batchErr = errors.Join(syncErr, recoveryErr)
+			v.markIoUnavailable(batchErr)
+		}
+		for i := 0; i < len(currentRequests); i++ {
+			currentRequests[i].UpdateResult(0, 0, false, batchErr)
+		}
+	}
+
+	for i := 0; i < len(currentRequests); i++ {
+		currentRequests[i].Submit()
+	}
+}
+
 // startWorker returns the volume's batch-write channel, creating it and its
 // goroutine on first use, and nil once stopWorker has run.
 func (v *Volume) startWorker() chan *needle.AsyncRequest {
@@ -404,49 +595,7 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 			if len(currentRequests) == 0 {
 				continue
 			}
-			v.dataFileAccessLock.Lock()
-			end, e := int64(0), error(nil)
-			if v.nm == nil || v.DataBackend == nil {
-				e = fmt.Errorf("volume %d is closed", v.Id)
-			} else {
-				end, _, e = v.DataBackend.GetStat()
-			}
-			if e != nil {
-				for i := 0; i < len(currentRequests); i++ {
-					currentRequests[i].Complete(0, 0, false,
-						fmt.Errorf("cannot read current volume position: %v", e))
-				}
-				v.dataFileAccessLock.Unlock()
-				continue
-			}
-
-			for i := 0; i < len(currentRequests); i++ {
-				if currentRequests[i].IsWriteRequest {
-					offset, size, isUnchanged, err := v.doWriteRequest(currentRequests[i].N, true)
-					currentRequests[i].UpdateResult(offset, uint64(size), isUnchanged, err)
-				} else {
-					size, err := v.doDeleteRequest(currentRequests[i].N)
-					currentRequests[i].UpdateResult(0, uint64(size), false, err)
-				}
-			}
-
-			// if sync error, data is not reliable, we should mark the completed request as fail and rollback
-			if err := v.DataBackend.Sync(); err != nil {
-				// todo: this may generate dirty data or cause data inconsistent, may be weed need to panic?
-				if te := v.DataBackend.Truncate(end); te != nil {
-					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", v.DataBackend.Name(), end, te)
-				}
-				for i := 0; i < len(currentRequests); i++ {
-					if currentRequests[i].IsSucceed() {
-						currentRequests[i].UpdateResult(0, 0, false, err)
-					}
-				}
-			}
-
-			for i := 0; i < len(currentRequests); i++ {
-				currentRequests[i].Submit()
-			}
-			v.dataFileAccessLock.Unlock()
+			v.processBatch(currentRequests)
 		}
 	}()
 	return requests
@@ -471,6 +620,10 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+
+	if err := v.UnavailableError(); err != nil {
+		return err
+	}
 
 	// nm.Put on a read-only volume fails only after the blob is appended to .dat.
 	if v.IsReadOnly() {

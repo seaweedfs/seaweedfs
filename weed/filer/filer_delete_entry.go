@@ -68,6 +68,10 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return nil
 	}
 	isDeleteCollection := f.IsBucket(entry)
+	collectionName := ""
+	if isDeleteCollection {
+		collectionName = f.bucketCollection(ctx, entry.Name())
+	}
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
 		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
@@ -102,23 +106,33 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if isDeleteCollection {
-		collectionName := entry.Name()
-		// the entry is already gone: a caller that hung up must not leave the
-		// collection behind, so this cleanup outlives the request -- bounded all
-		// the same, or a master that is down parks this handler indefinitely and
-		// every client retry behind it parks another
-		collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
-		f.DoDeleteCollection(collectionCtx, collectionName)
-		cancelCollection()
+		if collectionName != "" {
+			// the entry is already gone: a caller that hung up must not leave the
+			// collection behind, so this cleanup outlives the request -- bounded all
+			// the same, or a master that is down parks this handler indefinitely and
+			// every client retry behind it parks another
+			collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
+			f.DoDeleteCollection(collectionCtx, collectionName)
+			cancelCollection()
+		}
 		// drop bucket-labeled series held by this process; the S3 gateway
 		// only cleans its own registry
-		stats.DeleteBucketMetrics(collectionName)
+		stats.DeleteBucketMetrics(entry.Name())
 	}
 
 	return nil
 }
 
 func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32, onHardLinkIdsFn OnHardLinkIdsFunc) (err error) {
+
+	var dirTombstoneTs int64
+	if isRecursive {
+		// Tombstone the directory before its children: when the store drops
+		// the subtree without listing it, or a child error aborts the walk,
+		// the ancestor tombstone still covers every descendant.
+		dirTombstoneTs = time.Now().UnixNano()
+		f.noteRemoteDeletion(entry.FullPath, true, dirTombstoneTs)
+	}
 
 	//collect all the chunks of this layer and delete them together at the end
 	var chunksToDelete []*filer_pb.FileChunk
@@ -129,6 +143,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		for {
 			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
 			if err != nil {
+				// nothing was deleted; a leftover tombstone would hide the
+				// still-existing remote children
+				f.unnoteRemoteDeletion(entry.FullPath, dirTombstoneTs)
 				glog.ErrorfCtx(ctx, "list folder %s: %v", entry.FullPath, err)
 				return fmt.Errorf("list folder %s: %v", entry.FullPath, err)
 			}
@@ -140,6 +157,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 			for _, sub := range entries {
 				lastFileName = sub.Name()
+				f.noteRemoteDeletion(sub.FullPath, sub.IsDirectory(), time.Now().UnixNano())
 				if sub.IsDirectory() {
 					subIsDeletingBucket := f.IsBucket(sub)
 					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil, onHardLinkIdsFn)
@@ -202,6 +220,8 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 		}
 	}
 
+	f.noteRemoteDeletion(entry.FullPath, entry.IsDirectory(), time.Now().UnixNano())
+
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 	}
@@ -220,6 +240,75 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 // the bucket delete, which pays this and then the gateway's own follow-up
 // DeleteCollection, still has retry budget left.
 const collectionDeleteTimeout = 15 * time.Second
+
+// bucketCollection resolves the collection a bucket's objects land in
+// through the same chain the write path uses -- a grouped gateway's explicit
+// collection, then the storage rules, then the bucket name -- and reports it
+// only when nothing outside the bucket can still route into it. A shared
+// collection must survive the bucket delete: dropping it removes volumes
+// other paths still write to. A listing failure keeps the collection, the
+// safe side of an unknown.
+func (f *Filer) bucketCollection(ctx context.Context, bucket string) (collection string) {
+	bucketDir := f.DirBucketsPath + "/" + bucket + "/"
+	resolve := func(dir, name string) string {
+		if f.MasterClient != nil {
+			if group := f.MasterClient.FilerGroup; group != "" {
+				return group + "_" + name
+			}
+		}
+		return util.Nvl(f.FilerConf.MatchStorageRule(dir).Collection, name)
+	}
+	collection = resolve(bucketDir, bucket)
+
+	// Rule-less writes outside buckets fall back to the filer's default
+	// collection, so a bucket resolving there shares it with them.
+	if collection == f.metaLogCollection {
+		return ""
+	}
+
+	// A rule whose prefix escapes the bucket can route other paths into the
+	// same collection, including prefixes nested under surviving buckets.
+	for _, rule := range f.FilerConf.ToProto().Locations {
+		prefix := strings.TrimSuffix(rule.LocationPrefix, "/") + "/"
+		if strings.HasPrefix(prefix, bucketDir) {
+			continue
+		}
+		if f.FilerConf.MatchStorageRule(prefix).Collection == collection {
+			return ""
+		}
+	}
+
+	siblings, err := f.listBuckets(ctx)
+	if err != nil {
+		glog.ErrorfCtx(ctx, "list buckets for collection check: %v", err)
+		return ""
+	}
+	for _, sibling := range siblings {
+		if sibling != bucket && resolve(f.DirBucketsPath+"/"+sibling+"/", sibling) == collection {
+			return ""
+		}
+	}
+	return collection
+}
+
+func (f *Filer) listBuckets(ctx context.Context) (buckets []string, err error) {
+	lastFileName := ""
+	for {
+		entries, _, listErr := f.ListDirectoryEntries(ctx, util.FullPath(f.DirBucketsPath), lastFileName, false, PaginationSize, "", "", "")
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, entry := range entries {
+			lastFileName = entry.Name()
+			if f.IsBucket(entry) {
+				buckets = append(buckets, entry.Name())
+			}
+		}
+		if len(entries) < PaginationSize {
+			return buckets, nil
+		}
+	}
+}
 
 func (f *Filer) DoDeleteCollection(ctx context.Context, collectionName string) (err error) {
 

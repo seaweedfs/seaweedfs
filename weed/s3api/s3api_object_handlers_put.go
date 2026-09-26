@@ -385,7 +385,11 @@ func (s3a *S3ApiServer) withObjectWriteLock(bucket, object string, preconditionF
 		return fn()
 	}
 
-	lock := s3a.newObjectWriteLock(bucket, object)
+	lock, err := s3a.newObjectWriteLock(bucket, object)
+	if err != nil {
+		glog.Warningf("withObjectWriteLock: %v", err)
+		return s3err.ErrServiceUnavailable
+	}
 	if lock == nil {
 		if errCode := runPrecondition(); errCode != s3err.ErrNone {
 			return errCode

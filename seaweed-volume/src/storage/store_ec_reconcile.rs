@@ -37,6 +37,7 @@ pub(crate) struct EcVolumeMissingIndex {
     pub data_dir: String,
 }
 
+#[cfg(test)]
 pub(crate) fn ec_local_ecx_path(dir: &str, collection: &str, vid: VolumeId) -> String {
     if collection.is_empty() {
         format!("{}/{}.ecx", dir, vid.0)
@@ -117,10 +118,9 @@ impl Store {
                     );
                     continue;
                 };
-                let local_ecx = ec_local_ecx_path(&loc.idx_directory, &key.collection, key.vid);
-                let local_ecx_in_data = ec_local_ecx_path(&loc.directory, &key.collection, key.vid);
-                let use_local_idx = std::path::Path::new(&local_ecx).exists()
-                    || std::path::Path::new(&local_ecx_in_data).exists();
+                // A 0-byte local stub is not a mirrored index (Go gates this fast
+                // path on HasEcxFileOnDisk); mount against the owner instead.
+                let use_local_idx = loc.has_ecx_file_on_disk(&key.collection, key.vid);
 
                 if !use_local_idx && owner.location == loc_idx && owner.idx_dir == loc.idx_directory
                 {
@@ -422,6 +422,12 @@ impl Store {
                     let Some(base) = name.strip_suffix(".ecx") else {
                         continue;
                     };
+                    // A 0-byte .ecx is a corrupt stub from a failed copy, not a
+                    // credible owner — skip it so the scan keeps looking for a
+                    // real index on a sibling disk (Go's indexEcxOwners).
+                    if !ent.metadata().is_ok_and(|m| m.len() > 0) {
+                        continue;
+                    }
                     let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
                         continue;
                     };
@@ -637,6 +643,34 @@ mod tests {
             serde_json::to_string(&vif).unwrap(),
         )
         .unwrap();
+    }
+
+    /// A 0-byte `.ecx` is not a credible owner (Go's indexEcxOwners skips
+    /// it): picking the stub would hide the valid index on the sibling disk.
+    #[test]
+    fn test_index_ecx_owners_skips_zero_byte_stub() {
+        let (store, _tmp) = make_test_store(2, None);
+        let d0 = store.locations[0].directory.clone();
+        let d1 = store.locations[1].directory.clone();
+        std::fs::write(ec_local_ecx_path(&d0, "pics", VolumeId(7)), b"").unwrap();
+        write_index_files(&d1, "pics", 7, 10, 4);
+
+        let owners = store.index_ecx_owners();
+        let owner = owners
+            .get(&EcKey {
+                collection: "pics".to_string(),
+                vid: VolumeId(7),
+            })
+            .expect("the valid .ecx on disk 1 must be indexed");
+        assert_eq!(owner.location, 1);
+        assert_eq!(owner.idx_dir, d1);
+
+        // A stub with no real index anywhere owns nothing.
+        std::fs::write(ec_local_ecx_path(&d0, "pics", VolumeId(8)), b"").unwrap();
+        assert!(!store.index_ecx_owners().contains_key(&EcKey {
+            collection: "pics".to_string(),
+            vid: VolumeId(8),
+        }));
     }
 
     /// An empty `.dat` (<= a superblock, i.e. zero needles) for an EC volume
@@ -969,6 +1003,56 @@ mod tests {
             ev0.has_shard(12),
             "shard 12 missing from dir0 after reconcile"
         );
+    }
+
+    /// dir0 holds orphan shards next to a 0-byte `.ecx` stub from a failed
+    /// copy; the real index is on dir1. The stub must not count as a
+    /// locally-mirrored index (Go gates that fast path on HasEcxFileOnDisk),
+    /// or the shards get registered against an empty index.
+    #[test]
+    fn test_reconcile_ignores_zero_byte_local_ecx_stub() {
+        let tmp = TempDir::new().unwrap();
+        let dir0 = tmp.path().join("data0");
+        let dir1 = tmp.path().join("data1");
+        std::fs::create_dir_all(&dir0).unwrap();
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        let collection = "grafana-loki";
+        let vid = 1094u32;
+
+        write_shard(dir0.to_str().unwrap(), collection, vid, 0);
+        write_shard(dir1.to_str().unwrap(), collection, vid, 1);
+        write_index_files(dir1.to_str().unwrap(), collection, vid, 10, 4);
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for dir in [&dir0, &dir1] {
+            store
+                .add_location(
+                    dir.to_str().unwrap(),
+                    dir.to_str().unwrap(),
+                    100,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        // Plant the stub after the startup scan so only the reconcile decision
+        // is under test, then drop dir0's mount and reconcile again.
+        store.locations[0].remove_ec_volume(VolumeId(vid));
+        std::fs::write(
+            ec_local_ecx_path(dir0.to_str().unwrap(), collection, VolumeId(vid)),
+            b"",
+        )
+        .unwrap();
+
+        store.reconcile_ec_shards_across_disks();
+
+        let ev0 = store.locations[0]
+            .find_ec_volume(VolumeId(vid))
+            .expect("dir0's shard must be mounted against the owner's index");
+        assert!(ev0.has_shard(0));
+        assert_eq!(ev0.ecx_actual_dir(), dir1.to_str().unwrap());
     }
 
     /// PR 9244 review case: idx_directory is configured but the

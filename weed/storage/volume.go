@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -33,6 +35,8 @@ type Volume struct {
 	needleMapKind      NeedleMapKind
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	ioUnavailable      bool
+	ioUnavailableError string
 	noWriteLock        sync.RWMutex
 	hasRemoteFile      atomic.Bool // if the volume is tiered: data lives in a remote backend
 	MemoryMapMaxSizeMb uint32
@@ -455,7 +459,7 @@ func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMes
 	// disk-path operation can ever succeed. Skip remote-tiered volumes, whose .dat
 	// legitimately lives in cloud storage. Only a present .dat is cached for 30s; a
 	// missing one is re-checked every heartbeat so the volume stays suppressed until
-	// the file returns. See github.com/seaweedfs/seaweedfs/issues/10004
+	// the file returns.
 	if fileCount > 0 && !v.HasRemoteFile() {
 		const diskCheckIntervalNs = 30 * int64(time.Second)
 		now := time.Now().UnixNano()
@@ -511,11 +515,87 @@ func (v *Volume) IsReadOnly() bool {
 func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow bool) {
 	v.noWriteLock.RLock()
 	noWriteOrDelete, noWriteCanDelete = v.noWriteOrDelete, v.noWriteCanDelete
+	if v.ioUnavailable {
+		noWriteOrDelete = true
+	}
 	v.noWriteLock.RUnlock()
 	// The location is attached when the volume joins a disk location, which is
 	// after NewVolume hands it back.
 	diskSpaceLow = v.location != nil && v.location.isDiskSpaceLow.Load()
 	return noWriteOrDelete || noWriteCanDelete || diskSpaceLow, noWriteOrDelete, noWriteCanDelete, diskSpaceLow
+}
+
+var errVolumeUnavailable = errors.New("volume unavailable")
+
+func (v *Volume) UnavailableError() error {
+	v.noWriteLock.RLock()
+	unavailable := v.ioUnavailable
+	reason := v.ioUnavailableError
+	v.noWriteLock.RUnlock()
+	if !unavailable {
+		return nil
+	}
+	if reason == "" {
+		return fmt.Errorf("volume %d is unavailable: %w", v.Id, errVolumeUnavailable)
+	}
+	return fmt.Errorf("volume %d is unavailable: %s: %w", v.Id, reason, errVolumeUnavailable)
+}
+
+func (v *Volume) markIoUnavailable(err error) {
+	v.noWriteLock.Lock()
+	v.noWriteOrDelete = true
+	v.ioUnavailable = true
+	v.ioUnavailableError = err.Error()
+	v.noWriteLock.Unlock()
+	v.markIoQuarantined()
+
+	if persistErr := v.persistUnavailable(err.Error()); persistErr != nil {
+		glog.Warningf("volume %d: failed to persist unavailable marker: %v", v.Id, persistErr)
+	}
+	if v.volumeInfo != nil {
+		if persistErr := v.PersistReadOnly(true, false); persistErr != nil {
+			glog.Warningf("volume %d: failed to persist unavailable state: %v", v.Id, persistErr)
+		}
+	}
+	glog.Errorf("volume %d entered unavailable state after failed recovery: %v", v.Id, err)
+}
+
+// persistUnavailable records the failed-recovery state so a reload keeps the
+// volume unavailable instead of serving an unverified .dat/index pair.
+func (v *Volume) persistUnavailable(reason string) error {
+	marker := v.FileName(".unavailable")
+	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(reason); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return util.FsyncDir(v.dir)
+}
+
+// restoreUnavailable re-arms the in-memory state the .unavailable marker
+// recorded. The marker is deleted manually once the volume pair is verified.
+func (v *Volume) restoreUnavailable() {
+	reason, err := os.ReadFile(v.FileName(".unavailable"))
+	if err != nil {
+		return
+	}
+	v.noWriteLock.Lock()
+	v.noWriteOrDelete = true
+	v.ioUnavailable = true
+	v.ioUnavailableError = strings.TrimSpace(string(reason))
+	v.noWriteLock.Unlock()
+	v.markIoQuarantined()
+	glog.Warningf("volume %d is unavailable: %s", v.Id, v.ioUnavailableError)
 }
 
 func (v *Volume) PersistReadOnly(readOnly bool, canDelete bool) error {

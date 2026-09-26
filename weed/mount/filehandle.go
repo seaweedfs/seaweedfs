@@ -211,6 +211,9 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (fh *FileHandle) ReleaseHandle() {
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("ReleaseHandle", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+
 	// Release distributed lock before cleaning up, so other mounts can
 	// proceed as soon as this handle is done flushing.
 	if fh.dlmLock != nil {
@@ -218,9 +221,6 @@ func (fh *FileHandle) ReleaseHandle() {
 		fh.dlmLock = nil
 		glog.V(1).Infof("DLM lock released for inode %d", fh.inode)
 	}
-
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("ReleaseHandle", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	if fh.entryChunkGroup != nil {
 		_ = fh.entryChunkGroup.Close()
