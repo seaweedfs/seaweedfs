@@ -90,6 +90,9 @@ pub enum VolumeError {
 
     #[error("streaming from remote-backed volume requires buffered fallback")]
     StreamingUnsupported,
+
+    #[error(transparent)]
+    Tier(#[from] crate::remote_storage::s3_tier::TierError),
 }
 
 /// Returns true when a needle read failed because the on-disk bytes are

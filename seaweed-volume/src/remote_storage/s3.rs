@@ -209,7 +209,7 @@ impl RemoteStorageClient for S3RemoteStorageClient {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use aws_sdk_s3::config::http::{HttpRequest, HttpResponse};
     use aws_sdk_s3::config::retry::RetryConfig;
@@ -224,9 +224,9 @@ mod tests {
     /// so the error-mapping paths can be exercised without a network or a
     /// running S3 server.
     #[derive(Debug, Clone)]
-    struct CannedResponse {
-        status: u16,
-        body: &'static str,
+    pub(crate) struct CannedResponse {
+        pub(crate) status: u16,
+        pub(crate) body: &'static str,
     }
 
     impl HttpConnector for CannedResponse {
@@ -272,7 +272,7 @@ mod tests {
         }
     }
 
-    const NO_SUCH_KEY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    pub(crate) const NO_SUCH_KEY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Key>dir/missing</Key></Error>"#;
 
     const NOT_FOUND_BODY: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
