@@ -149,21 +149,30 @@ func TestAuditRequesterIdentityEmptyForNonFederatedSession(t *testing.T) {
 // #11474.
 func TestAuditRequesterForDeniedRequest(t *testing.T) {
 	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "read_only_user",
+			Credentials: []*iam_pb.Credential{{AccessKey: "readonly_access_key", SecretKey: "readonly_secret_key"}},
+			Actions:     []string{"Read", "List"},
+		}},
+	}))
 
-	outer := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodDelete, "http://s3/test/bucket/obj", nil))
+	denied, err := newTestRequest(http.MethodDelete, "http://s3/bucket/obj", 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, signRequestV4(denied, "readonly_access_key", "readonly_secret_key"))
+	denied = s3_constants.EnsureIdentityHolder(denied)
 
-	identity := &Identity{Name: "alice", Account: &Account{Id: "alice"}}
 	rec := httptest.NewRecorder()
-	iam.handleAuthResult(rec, outer, identity, s3err.ErrAccessDenied, func(http.ResponseWriter, *http.Request) {
+	iam.Auth(func(http.ResponseWriter, *http.Request) {
 		t.Error("denied request must not reach the handler")
-	})
+	}, s3_constants.ACTION_WRITE)(rec, denied)
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
-	log := s3err.GetAccessLog(outer, rec.Code, s3err.ErrAccessDenied)
-	assert.Equal(t, "alice", log.Requester, "denied request must still audit the requester")
-	assert.Equal(t, "arn:aws:iam::alice:user/alice", log.RequesterArn)
+	log := s3err.GetAccessLog(denied, rec.Code, s3err.ErrAccessDenied)
+	assert.Equal(t, "read_only_user", log.Requester, "denied request must still audit the requester")
+	assert.Equal(t, "arn:aws:iam::"+defaultAccountID+":user/read_only_user", log.RequesterArn)
 
-	anonymous := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodDelete, "http://s3/test/bucket/obj", nil))
+	anonymous := s3_constants.EnsureIdentityHolder(httptest.NewRequest(http.MethodDelete, "http://s3/bucket/obj", nil))
 	rec = httptest.NewRecorder()
 	iam.handleAuthResult(rec, anonymous, nil, s3err.ErrAccessDenied, func(http.ResponseWriter, *http.Request) {
 		t.Error("denied request must not reach the handler")

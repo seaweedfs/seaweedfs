@@ -1565,7 +1565,10 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 			return
 		}
 
-		identity, errCode := iam.authRequest(r, action)
+		// authRequestWithAuthType keeps the resolved identity when authN
+		// succeeds but authZ denies, so the denied request still audits its
+		// requester; a failed authN resolves no identity at all.
+		identity, errCode, _ := iam.authRequestWithAuthType(r, action)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
