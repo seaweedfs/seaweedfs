@@ -268,3 +268,37 @@ func TestPrepareSTSCredentialsHonorsConfiguredDurations(t *testing.T) {
 	assert.InDelta(t, (15 * time.Minute).Seconds(), expiresIn(nil).Seconds(), 60)
 	assert.InDelta(t, (20 * time.Minute).Seconds(), expiresIn(&oneHour).Seconds(), 60)
 }
+
+// A named role's MaxSessionDuration bounds the session however DurationSeconds
+// was resolved, matching the SDK paths' capDurationByRole.
+func TestPrepareSTSCredentialsCapsAtRoleMaxDuration(t *testing.T) {
+	ctx := context.Background()
+	manager := newTestSTSIntegrationManager(t)
+	require.NoError(t, manager.CreateRole(ctx, "", "ShortLivedRole", &integration.RoleDefinition{
+		RoleName:           "ShortLivedRole",
+		MaxSessionDuration: 3600,
+	}))
+
+	stsService := sts.NewSTSService()
+	require.NoError(t, stsService.Initialize(&sts.STSConfig{
+		TokenDuration:    sts.FlexibleDuration{Duration: 2 * time.Hour},
+		MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+		Issuer:           "test-issuer",
+		SigningKey:       []byte("test-signing-key-at-least-32-bytes-long-for-security"),
+	}))
+	iam := &IdentityAccessManagement{iamIntegration: NewS3IAMIntegration(manager, "")}
+	stsHandlers := NewSTSHandlers(stsService, iam)
+	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/ShortLivedRole", defaultAccountID)
+
+	expiresIn := func(durationSeconds *int64) time.Duration {
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", durationSeconds, "", nil)
+		require.NoError(t, err)
+		exp, err := time.Parse(time.RFC3339, stsCreds.Expiration)
+		require.NoError(t, err)
+		return time.Until(exp)
+	}
+
+	twoHours := int64(7200)
+	assert.InDelta(t, float64(3600), expiresIn(nil).Seconds(), 60, "omitted duration resolves to the 2h default but the role caps it at 1h")
+	assert.InDelta(t, float64(3600), expiresIn(&twoHours).Seconds(), 60, "explicit duration above the role max is capped")
+}

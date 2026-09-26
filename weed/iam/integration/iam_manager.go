@@ -942,7 +942,7 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	// Apply role-level MaxSessionDuration cap. The STS service still applies
 	// the global MaxSessionLength and the source-token-expiry cap on top of
 	// this; per-role takes precedence whenever it is the tightest bound.
-	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration)
+	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration, m.defaultTokenDurationSeconds())
 
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
@@ -1005,22 +1005,26 @@ func extractIssuerFromJWT(token string) (string, error) {
 	return iss, nil
 }
 
-// capDurationByRole returns the requested duration clamped to the role's
-// MaxSessionDuration. A nil requested duration is left nil so the STS
-// service's CalculateSessionDuration applies the global default (typically
-// 1 hour) — substituting the role's max here would silently mint a 12h
-// session for any caller who omitted DurationSeconds, which AWS does not
-// do. The role-max upper bound still applies in the downstream cap chain
-// once the request has a concrete duration.
-func capDurationByRole(requested *int64, roleMax int64) *int64 {
-	if roleMax <= 0 || requested == nil {
-		return requested
+// capDurationByRole returns the session duration clamped to the role's
+// MaxSessionDuration. An omitted DurationSeconds resolves to the configured
+// default first, so the role bound caps defaults and explicit values alike —
+// a shorter role max must not yield a longer session than the role allows.
+func capDurationByRole(requested *int64, roleMax, defaultSec int64) *int64 {
+	d := defaultSec
+	if requested != nil {
+		d = *requested
 	}
-	if *requested > roleMax {
-		v := roleMax
-		return &v
+	if roleMax > 0 && d > roleMax {
+		d = roleMax
 	}
-	return requested
+	return &d
+}
+
+func (m *IAMManager) defaultTokenDurationSeconds() int64 {
+	if m.stsService == nil || m.stsService.Config == nil {
+		return sts.DefaultTokenDuration
+	}
+	return int64(m.stsService.Config.TokenDuration.Duration / time.Second)
 }
 
 // AssumeRoleWithCredentials assumes a role using credentials (LDAP)
@@ -1044,7 +1048,7 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	}
 
 	// Apply role-level MaxSessionDuration cap.
-	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration)
+	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration, m.defaultTokenDurationSeconds())
 
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithCredentials(ctx, request)
