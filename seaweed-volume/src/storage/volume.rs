@@ -606,6 +606,9 @@ pub struct NeedleStreamInfo {
     /// streaming, the needle's disk offset must be re-read from the needle map because
     /// compaction may have moved the needle to a different location.
     pub compaction_revision: u16,
+    /// Checksum stored in the needle tail, verified once the last chunk has
+    /// been read — before that frame is emitted.
+    pub checksum: u32,
 }
 
 #[derive(Clone)]
@@ -1811,6 +1814,7 @@ impl Volume {
             volume_id: self.id,
             needle_id: n.id,
             compaction_revision: self.super_block.compaction_revision,
+            checksum: n.checksum.0,
         })
     }
 
