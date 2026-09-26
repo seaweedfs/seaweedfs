@@ -231,6 +231,10 @@ func (fs *FilerServer) fixFilePath(ctx context.Context, r *http.Request, fileNam
 }
 
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
+	return fs.saveMetaDataWithSaveFunc(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, content, fs.saveAsChunk(ctx, so))
+}
+
+func (fs *FilerServer) saveMetaDataWithSaveFunc(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte, saveFunc filer.SaveDataAsChunkFunctionType) (filerResult *FilerPostResult, replyerr error) {
 
 	// detect file mode
 	modeStr := r.URL.Query().Get("mode")
@@ -272,10 +276,14 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 		newChunks = append(entry.GetChunks(), fileChunks...)
 
-		// TODO
 		if len(entry.Content) > 0 {
-			replyerr = fmt.Errorf("append to small file is not supported yet")
-			return
+			inlineChunk, saveErr := saveFunc(bytes.NewReader(entry.Content), fileName, 0, time.Now().UnixNano(), uint64(len(entry.Content)))
+			if saveErr != nil {
+				replyerr = fmt.Errorf("save inline content as chunk: %w", saveErr)
+				return
+			}
+			entry.Content = nil
+			newChunks = append([]*filer_pb.FileChunk{inlineChunk}, newChunks...)
 		}
 
 	} else {
