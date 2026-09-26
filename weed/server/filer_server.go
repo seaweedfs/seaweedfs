@@ -311,6 +311,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.LoadRemoteStorageConfAndMapping()
 
+	fs.filer.RebuildRemoteDeletionTombstones(context.Background())
+
 	grace.OnReload(fs.Reload)
 
 	fs.SetupDlmReplication()

@@ -56,6 +56,14 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		}
 	}
 
+	if done := f.remoteTombstonesDone.Load(); done != nil {
+		select {
+		case <-*done:
+		case <-ctx.Done():
+			return
+		}
+	}
+
 	// Lazy listing is opt-in: disabled when TTL is 0
 	if remoteLoc.ListingCacheTtlSeconds <= 0 {
 		return
@@ -106,6 +114,10 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 
 			// Skip entries that exist locally without a RemoteEntry (local-only uploads)
 			if existingEntry != nil && existingEntry.Remote == nil {
+				return nil
+			}
+
+			if existingEntry == nil && f.isRemoteDeletionPending(persistCtx, childPath, mountDir) {
 				return nil
 			}
 
@@ -161,6 +173,9 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 				}
 				if saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
 					glog.Warningf("maybeLazyListFromRemote: persist %s: %v", childPath, saveErr)
+				} else if f.isRemoteDeletionPending(persistCtx, childPath, mountDir) {
+					// a delete landed between the check above and the insert
+					f.retractLazyRemoteEntry(persistCtx, entry)
 				}
 			}
 			return nil
