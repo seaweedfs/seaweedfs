@@ -123,7 +123,9 @@ func (vp *ViperProxy) GetInt(key string) int {
 func (vp *ViperProxy) GetStringSlice(key string) []string {
 	vp.Lock()
 	defer vp.Unlock()
-	return vp.v.GetStringSlice(key)
+	// a []string value comes back uncast — the same shared subtree issue
+	// GetStringMap has, so hand the caller a copy
+	return append([]string(nil), vp.v.GetStringSlice(key)...)
 }
 
 func (vp *ViperProxy) GetStringMap(key string) map[string]interface{} {
