@@ -163,6 +163,28 @@ func TestResolveS3Action_ObjectLockActionsIgnoreRequestShape(t *testing.T) {
 			object:     "key",
 			want:       s3_constants.S3_ACTION_PUT_OBJECT_RETENTION,
 		},
+		{
+			name:       "put legal hold with versionId",
+			query:      "legal-hold&versionId=abc123",
+			method:     http.MethodPut,
+			baseAction: s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD,
+			object:     "key",
+			want:       s3_constants.S3_ACTION_PUT_OBJECT_LEGAL_HOLD,
+		},
+		{
+			name:       "get bucket object lock config",
+			query:      "object-lock",
+			method:     http.MethodGet,
+			baseAction: s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG,
+			want:       s3_constants.S3_ACTION_GET_BUCKET_OBJECT_LOCK,
+		},
+		{
+			name:       "put bucket object lock config",
+			query:      "object-lock",
+			method:     http.MethodPut,
+			baseAction: s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG,
+			want:       s3_constants.S3_ACTION_PUT_BUCKET_OBJECT_LOCK,
+		},
 	}
 
 	for _, tt := range tests {
