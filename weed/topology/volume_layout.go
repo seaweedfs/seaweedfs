@@ -570,6 +570,12 @@ func (vl *VolumeLayout) MarkDeleting(vid needle.VolumeId) {
 func (vl *VolumeLayout) UnmarkDeleting(vid needle.VolumeId) {
 	vl.accessLock.Lock()
 	delete(vl.deletingVolumes, vid)
+	// Re-run the standard writable gate so a surviving volume regains
+	// assignment immediately; digest heartbeats only re-report changed
+	// volumes, so waiting on them could strand it unwritable indefinitely.
+	if !vl.vid2location[vid].AnyOversized() && vl.enoughCopies(vid) && vl.isAllWritable(vid) {
+		vl.setVolumeWritable(vid)
+	}
 	vl.accessLock.Unlock()
 }
 

@@ -292,8 +292,7 @@ func TestMarkDeletingKeepsVolumeUnwritableAcrossHeartbeats(t *testing.T) {
 	}
 
 	vl.UnmarkDeleting(1)
-	vl.EnsureCorrectWritables(&storage.VolumeInfo{Id: 1})
 	if writable, _ := vl.GetWritableVolumeCount(); writable != 1 {
-		t.Fatal("unmarked volume did not become writable")
+		t.Fatal("unmarked volume did not regain writability without a heartbeat")
 	}
 }
