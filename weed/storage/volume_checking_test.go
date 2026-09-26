@@ -182,8 +182,7 @@ func TestScrubVolumeData_IgnoresOffset0Tombstone(t *testing.T) {
 
 // A live needle whose header id no longer matches the index key must be
 // reported. ReadData only checks the body CRC, which does not cover the
-// header, so cookie/id damage is otherwise a clean scrub while reads 404
-// (#11460).
+// header, so cookie/id damage is otherwise a clean scrub while reads 404.
 func TestScrubVolumeDataChecksLiveNeedleHeaderId(t *testing.T) {
 	dir := t.TempDir()
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
