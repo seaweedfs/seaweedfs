@@ -40,6 +40,10 @@ func LoadSecurityConfiguration() {
 }
 
 func LoadConfiguration(configFileName string, required bool) (loaded bool) {
+	// MergeInConfig mutates the shared viper that ViperProxy serializes;
+	// take the same lock so a merge cannot race a reader or SetDefault.
+	vp.Lock()
+	defer vp.Unlock()
 
 	// find a filer store
 	viper.SetConfigName(configFileName)                                   // name of config file (without extension)
