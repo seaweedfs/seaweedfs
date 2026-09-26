@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -87,11 +88,16 @@ func (fs *FilerServer) movedFromPeer(ctx context.Context, isMoved bool) bool {
 	return false
 }
 
-// ringPeerIPs caches resolved member addresses of one ring membership.
+// ringPeerIPs caches resolved member addresses of one ring membership. A
+// member's hostname may re-resolve under the same ring address, so the cache
+// expires rather than trusting the resolution forever.
 type ringPeerIPs struct {
 	members string
 	ips     []net.IP
+	expires time.Time
 }
+
+const ringPeerIPTTL = 5 * time.Minute
 
 // ringMemberIPs returns the ring members' addresses as IPs. Members can
 // advertise hostnames, so resolution is cached per membership to keep DNS off
@@ -105,7 +111,7 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 		sb.WriteByte(' ')
 	}
 	key := sb.String()
-	if cached := fs.ringPeerIPs.Load(); cached != nil && cached.members == key {
+	if cached := fs.ringPeerIPs.Load(); cached != nil && cached.members == key && time.Now().Before(cached.expires) {
 		return cached.ips
 	}
 	var ips []net.IP
@@ -127,7 +133,7 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 		ips = append(ips, found...)
 	}
 	if resolved {
-		fs.ringPeerIPs.Store(&ringPeerIPs{members: key, ips: ips})
+		fs.ringPeerIPs.Store(&ringPeerIPs{members: key, ips: ips, expires: time.Now().Add(ringPeerIPTTL)})
 	}
 	return ips
 }
