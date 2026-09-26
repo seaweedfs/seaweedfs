@@ -225,7 +225,13 @@ impl Store {
     /// Find a free location matching a predicate.
     /// Matches Go's Store.FindFreeLocation: picks the matching location with the
     /// most remaining volume capacity, while skipping low-disk locations.
-    pub fn find_free_location_predicate<F>(&self, pred: F) -> Option<usize>
+    /// `replace_vid` names a volume about to be replaced: the slot it holds on
+    /// a location counts as free there.
+    pub fn find_free_location_predicate<F>(
+        &self,
+        pred: F,
+        replace_vid: Option<VolumeId>,
+    ) -> Option<usize>
     where
         F: Fn(&DiskLocation) -> bool,
     {
@@ -241,8 +247,12 @@ impl Store {
             let effective_free = if max == 0 {
                 i64::MAX
             } else {
-                let free_count = (max - loc.volumes_len() as i64) * DATA_SHARDS_COUNT as i64
-                    - loc.ec_shard_count() as i64;
+                let mut free_slots = max - loc.volumes_len() as i64;
+                if replace_vid.is_some_and(|vid| loc.find_volume(vid).is_some()) {
+                    free_slots += 1;
+                }
+                let free_count =
+                    free_slots * DATA_SHARDS_COUNT as i64 - loc.ec_shard_count() as i64;
                 free_count / DATA_SHARDS_COUNT as i64
             };
             if effective_free <= 0 {
@@ -2352,7 +2362,7 @@ mod tests {
             .unwrap();
 
         let selected =
-            store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive);
+            store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive, None);
         assert_eq!(selected, Some(1));
 
         store.locations[1]
@@ -2360,7 +2370,7 @@ mod tests {
             .store(true, Ordering::Relaxed);
 
         let selected =
-            store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive);
+            store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive, None);
         assert_eq!(selected, Some(0));
     }
 
