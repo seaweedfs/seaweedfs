@@ -163,10 +163,21 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	}
 
 	buf := mem.Allocate(min(readOption.ReadBufferSize, int(size)))
-	defer mem.Free(buf)
+	// A full-needle read holds the last page back in `pending` until the CRC
+	// matches; `spare` is a second buffer swapped in so the held page is not
+	// overwritten while streaming.
+	var spare []byte
+	defer func() {
+		mem.Free(buf)
+		if spare != nil {
+			mem.Free(spare)
+		}
+	}()
 
 	// read needle data
 	crc := needle.CRC(0)
+	var pending []byte
+	checkCRC := offset == 0 && size == int64(n.DataSize)
 	for x := offset; x < offset+size; x += int64(len(buf)) {
 
 		if readOption.HasSlowRead {
@@ -212,9 +223,22 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		toWrite := min(count, int(offset+size-x))
 		if toWrite > 0 {
 			crc = crc.Update(buf[0:toWrite])
-			// Note: CRC validation happens after the loop completes (see below)
-			// to avoid performance overhead in the hot read path
-			if _, err = writer.Write(buf[0:toWrite]); err != nil {
+			// The CRC is known only after the last byte; hold each page until
+			// the next one is read so a bad needle is never fully written.
+			if checkCRC {
+				if pending != nil {
+					if _, err = writer.Write(pending); err != nil {
+						return fmt.Errorf("ReadNeedleData write: %w", err)
+					}
+				}
+				pending = buf[:toWrite]
+				if x+int64(len(buf)) < offset+size {
+					if spare == nil {
+						spare = mem.Allocate(len(buf))
+					}
+					buf, spare = spare, buf
+				}
+			} else if _, err = writer.Write(buf[0:toWrite]); err != nil {
 				return fmt.Errorf("ReadNeedleData write: %w", err)
 			}
 		}
@@ -234,12 +258,18 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	// we still return that error to the caller, but the disk itself
 	// produced clean bytes.
 	v.checkReadWriteError(nil)
-	if offset == 0 && size == int64(n.DataSize) && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
+	if checkCRC && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
 		// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
 		// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
 		// and switch appeared in version 3.09.
+		// pending is the last page and is intentionally not written.
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
+	}
+	if pending != nil {
+		if _, err = writer.Write(pending); err != nil {
+			return fmt.Errorf("ReadNeedleData write: %w", err)
+		}
 	}
 	return nil
 
