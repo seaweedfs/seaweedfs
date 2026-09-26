@@ -2974,7 +2974,9 @@ impl Volume {
                         "failed to read needle {} on volume {}: {}",
                         needle_id.0, self.id.0, e
                     ));
-                } else if size.is_deleted() && n.id != needle_id {
+                } else if n.id != needle_id {
+                    // The body CRC does not cover cookie+id, so a live needle
+                    // with a damaged header still reads and must be compared.
                     broken.push(format!(
                         "index key {} does not match needle's Id {} on volume {}",
                         needle_id.0, n.id.0, self.id.0
@@ -6386,6 +6388,53 @@ mod tests {
             id
         );
         found
+    }
+
+    /// Mirror of Go's TestScrubVolumeDataChecksLiveNeedleHeaderId: a live
+    /// needle whose on-disk id no longer matches the .idx key still reads (the
+    /// body CRC does not cover the header), so scrub must compare ids itself.
+    #[test]
+    fn test_scrub_checks_live_needle_header_id() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            data: b"needle data".to_vec(),
+            data_size: 11,
+            ..Needle::default()
+        };
+        let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+
+        let (_count, broken) = v.scrub().unwrap();
+        assert!(
+            broken.is_empty(),
+            "healthy live needle must pass scrub, got {:?}",
+            broken
+        );
+
+        let mut id_bytes = [0u8; NEEDLE_ID_SIZE];
+        NeedleId(99).to_bytes(&mut id_bytes);
+        let mut dat = OpenOptions::new()
+            .write(true)
+            .open(v.file_name(".dat"))
+            .unwrap();
+        dat.seek(SeekFrom::Start(offset + COOKIE_SIZE as u64))
+            .unwrap();
+        dat.write_all(&id_bytes).unwrap();
+        dat.sync_all().unwrap();
+
+        let (_count, broken) = v.scrub().unwrap();
+        assert!(
+            broken
+                .iter()
+                .any(|e| e.contains("does not match needle's Id")),
+            "scrub should report the live needle's corrupted Id, got {:?}",
+            broken
+        );
     }
 
     #[test]
