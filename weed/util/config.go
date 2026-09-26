@@ -131,16 +131,24 @@ func (vp *ViperProxy) GetStringMap(key string) map[string]interface{} {
 func deepCopyStringMap(m map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(m))
 	for k, v := range m {
-		switch nested := v.(type) {
-		case map[string]interface{}:
-			out[k] = deepCopyStringMap(nested)
-		case []interface{}:
-			out[k] = append([]interface{}(nil), nested...)
-		default:
-			out[k] = v
-		}
+		out[k] = deepCopyValue(v)
 	}
 	return out
+}
+
+func deepCopyValue(v interface{}) interface{} {
+	switch nested := v.(type) {
+	case map[string]interface{}:
+		return deepCopyStringMap(nested)
+	case []interface{}:
+		out := make([]interface{}, len(nested))
+		for i, item := range nested {
+			out[i] = deepCopyValue(item)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func (vp *ViperProxy) GetUint32(key string) uint32 {
