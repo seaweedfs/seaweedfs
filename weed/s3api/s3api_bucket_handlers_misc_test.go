@@ -350,4 +350,16 @@ func TestAuthWithPublicReadHonorsPolicyDeny(t *testing.T) {
 	setPolicy(allowList)
 	rr = serve()
 	require.True(t, called, "explicit Allow must still permit anonymous listing")
+
+	// Object requests defer to the handler's phase-2 recheck, which evaluates
+	// tag conditions against the fetched entry — a tag-conditional Deny must
+	// not terminate them here on a missing value.
+	tagDeny := fmt.Sprintf(`{"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"%s/*","Condition":{"StringNotEquals":{"s3:ExistingObjectTag/classification":"public"}}}`, arn)
+	setPolicy(tagDeny)
+	called = false
+	rr = httptest.NewRecorder()
+	objectReq := newBucketRequest(http.MethodGet, bucket, "", "")
+	objectReq = mux.SetURLVars(objectReq, map[string]string{"bucket": bucket, "object": "secret/x"})
+	s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) { called = true }, s3_constants.ACTION_READ)(rr, objectReq)
+	require.True(t, called, "anonymous object request on a public bucket must reach the handler's tag-aware recheck")
 }
