@@ -55,6 +55,39 @@ func TestGovernanceBypassUsesDedicatedAuthorization(t *testing.T) {
 	}
 }
 
+// The bypass check authorizes against a synthetic request shaped like the
+// real one; DELETE ?versionId used to re-resolve to s3:DeleteObjectVersion,
+// so the delete-version grant silently satisfied the bypass check.
+func TestGovernanceBypassDoesNotInheritDeleteObjectVersion(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.PutPolicy("DeleteVersions",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:DeleteObject","s3:DeleteObjectVersion"],"Resource":"arn:aws:s3:::worm/*"}]}`))
+	require.NoError(t, iam.PutPolicy("BypassGovernance",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:DeleteObject","s3:DeleteObjectVersion","s3:BypassGovernanceRetention"],"Resource":"arn:aws:s3:::worm/*"}]}`))
+	s3a := &S3ApiServer{iam: iam}
+
+	req := httptest.NewRequest(http.MethodDelete, "http://localhost:8333/worm/doc.txt?versionId=abc123", nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": "worm", "object": "doc.txt"})
+
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), &Identity{
+		Name:        "deleter",
+		PolicyNames: []string{"DeleteVersions"},
+		Account:     &Account{Id: "test-account"},
+	}))
+	if s3a.checkGovernanceBypassPermission(req, "worm", "/doc.txt") {
+		t.Fatal("s3:DeleteObjectVersion alone satisfied the governance bypass check")
+	}
+
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), &Identity{
+		Name:        "breaker",
+		PolicyNames: []string{"BypassGovernance"},
+		Account:     &Account{Id: "test-account"},
+	}))
+	if !s3a.checkGovernanceBypassPermission(req, "worm", "/doc.txt") {
+		t.Fatal("s3:BypassGovernanceRetention did not satisfy the governance bypass check")
+	}
+}
+
 func TestGovernanceBypassUsesBodyObjectKey(t *testing.T) {
 	iam := newTestIAM()
 	iam.identities[0].Actions = []Action{

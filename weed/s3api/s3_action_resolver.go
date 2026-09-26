@@ -33,6 +33,22 @@ func ResolveS3Action(r *http.Request, baseAction string, bucket string, object s
 		return baseAction
 	}
 
+	// Dedicated object-lock actions already name the operation — a query
+	// parameter must not re-map them. In particular the governance-bypass
+	// check authorizes against a synthetic DELETE ?versionId request, whose
+	// shape would otherwise resolve to s3:DeleteObjectVersion and satisfy
+	// the bypass check with the delete-version permission alone.
+	switch baseAction {
+	case s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION,
+		s3_constants.ACTION_GET_OBJECT_RETENTION,
+		s3_constants.ACTION_PUT_OBJECT_RETENTION,
+		s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD,
+		s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD,
+		s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG,
+		s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
+		return mapBaseActionToS3Format(baseAction)
+	}
+
 	if r == nil || r.URL == nil {
 		// No HTTP context available: fall back to coarse-grained mapping
 		// This ensures consistent behavior and avoids returning empty strings
