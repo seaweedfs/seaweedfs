@@ -87,9 +87,6 @@ pub enum VolumeError {
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
-
-    #[error("streaming from remote-backed volume requires buffered fallback")]
-    StreamingUnsupported,
 }
 
 /// Returns true when a needle read failed because the on-disk bytes are
@@ -433,6 +430,45 @@ impl Drop for DataFileWriteLease {
     }
 }
 
+/// Test seam: a hook sees (and may park) every data read of its needle.
+#[cfg(test)]
+pub(crate) mod needle_read_hook {
+    use super::NeedleId;
+    use std::sync::{Arc, Mutex};
+
+    type Hook = Arc<dyn Fn(usize) + Send + Sync>;
+    static HOOKS: Mutex<Vec<(NeedleId, Hook)>> = Mutex::new(Vec::new());
+
+    pub(crate) struct Registration(NeedleId);
+
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            HOOKS.lock().unwrap().retain(|(id, _)| *id != self.0);
+        }
+    }
+
+    /// Needle ids are the key, so tests running in parallel must use distinct ones.
+    pub(crate) fn register(
+        id: NeedleId,
+        hook: impl Fn(usize) + Send + Sync + 'static,
+    ) -> Registration {
+        HOOKS.lock().unwrap().push((id, Arc::new(hook)));
+        Registration(id)
+    }
+
+    pub(crate) fn fire(id: NeedleId, len: usize) {
+        let hook = HOOKS
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(hook_id, _)| *hook_id == id)
+            .map(|(_, hook)| hook.clone());
+        if let Some(hook) = hook {
+            hook(len);
+        }
+    }
+}
+
 /// Information needed to stream needle data directly from the dat file
 /// without loading the entire payload into memory.
 pub(crate) enum NeedleStreamSource {
@@ -589,6 +625,128 @@ impl DatScanPlan {
     }
 }
 
+/// A needle read resolved under a store guard and run after it is released;
+/// the handle pins the inode, as for `DatScanPlan`. It takes no data-file
+/// lease: writers wait for one while holding the store write lock.
+pub(crate) struct NeedleReadPlan {
+    source: NeedleStreamSource,
+    offset: i64,
+    size: Size,
+    version: Version,
+    volume_id: VolumeId,
+    needle_id: NeedleId,
+    compaction_revision: u16,
+    data_file_access_control: Arc<DataFileAccessControl>,
+    io_errors: Arc<IoErrorTracker>,
+}
+
+impl NeedleReadPlan {
+    /// The needle's size in the index.
+    pub(crate) fn size(&self) -> Size {
+        self.size
+    }
+
+    /// Read the whole needle and verify its checksum.
+    pub(crate) fn read_full(&mut self, n: &mut Needle) -> Result<(), VolumeError> {
+        let (source, size, version) = (&self.source, self.size, self.version);
+        let result = with_offset_retry(&mut self.offset, |off| {
+            Volume::read_needle_blob_and_parse(
+                |buf, at| Ok(source.read_exact_at(buf, at)?),
+                n,
+                off,
+                size,
+                version,
+            )
+        });
+        match &result {
+            Ok(()) => self.io_errors.check_read_write_error(None),
+            Err(VolumeError::Io(e)) => self.io_errors.check_read_write_error(Some(e)),
+            Err(_) => {}
+        }
+        result?;
+        if needle_expired(n) {
+            return Err(VolumeError::NotFound);
+        }
+        Ok(())
+    }
+
+    /// Read only the needle's metadata, skipping the payload.
+    pub(crate) fn read_meta(&mut self, n: &mut Needle) -> Result<(), VolumeError> {
+        let (source, size, version) = (&self.source, self.size, self.version);
+        let read_at = |buf: &mut [u8], at: u64| Ok(source.read_exact_at(buf, at)?);
+        with_offset_retry(&mut self.offset, |off| {
+            if version == VERSION_1 {
+                // A V1 body is all data, so its "meta" is the whole record.
+                let mut buf = vec![0u8; get_actual_size(size, version) as usize];
+                #[cfg(test)]
+                needle_read_hook::fire(n.id, buf.len());
+                read_at(&mut buf, off as u64)?;
+                Ok(n.read_bytes_meta_only(&buf, off, size, version)?)
+            } else {
+                Volume::read_needle_meta_blob_and_parse(read_at, n, off, size, version)
+            }
+        })?;
+        if needle_expired(n) {
+            return Err(VolumeError::NotFound);
+        }
+        Ok(())
+    }
+
+    /// For a reply served from the data file, after `read_meta` filled `n`.
+    pub(crate) fn into_stream_info(self, n: &Needle) -> NeedleStreamInfo {
+        // V1 data starts right after the header, V2/V3 after the DataSize field.
+        let data_file_offset = if self.version == VERSION_1 {
+            self.offset as u64 + NEEDLE_HEADER_SIZE as u64
+        } else {
+            self.offset as u64 + NEEDLE_HEADER_SIZE as u64 + DATA_SIZE_SIZE as u64
+        };
+        NeedleStreamInfo {
+            source: self.source,
+            data_file_offset,
+            data_size: n.data_size,
+            data_file_access_control: self.data_file_access_control,
+            volume_id: self.volume_id,
+            needle_id: self.needle_id,
+            compaction_revision: self.compaction_revision,
+            checksum: n.checksum.0,
+        }
+    }
+}
+
+/// Run `read` at `offset`, retrying past the 32 GiB wrap of 4-byte offsets
+/// on a size mismatch, and leave `offset` where the needle parsed.
+fn with_offset_retry(
+    offset: &mut i64,
+    mut read: impl FnMut(i64) -> Result<(), VolumeError>,
+) -> Result<(), VolumeError> {
+    match read(*offset) {
+        #[cfg(not(feature = "5bytes"))]
+        Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+            if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+        {
+            *offset += MAX_POSSIBLE_VOLUME_SIZE as i64;
+            read(*offset)
+        }
+        result => result,
+    }
+}
+
+fn needle_expired(n: &Needle) -> bool {
+    let Some(ttl) = n.ttl.as_ref().filter(|_| n.has_ttl()) else {
+        return false;
+    };
+    let ttl_minutes = ttl.minutes();
+    if ttl_minutes == 0 || !n.has_last_modified_date() {
+        return false;
+    }
+    let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
+    let now_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    now_ns >= expire_at_ns
+}
+
 pub struct NeedleStreamInfo {
     /// Stream source for the dat file, local or remote.
     pub(crate) source: NeedleStreamSource,
@@ -706,7 +864,7 @@ pub struct Volume {
 
     /// Consecutive storage-media errors and the quarantine they lead to,
     /// for volume health monitoring.
-    io_errors: IoErrorTracker,
+    io_errors: Arc<IoErrorTracker>,
 
     /// Protobuf VolumeInfo for tiered storage (.vif file).
     ///
@@ -791,7 +949,7 @@ impl Volume {
             last_compact_revision: 0,
             is_compacting: false,
             compaction_byte_per_second: 0,
-            io_errors: IoErrorTracker::default(),
+            io_errors: Arc::default(),
             volume_info: PbVolumeInfo::default(),
         };
 
@@ -831,7 +989,7 @@ impl Volume {
             last_compact_revision: 0,
             is_compacting: false,
             compaction_byte_per_second: 0,
-            io_errors: IoErrorTracker::default(),
+            io_errors: Arc::default(),
             volume_info: PbVolumeInfo::default(),
         }
     }
@@ -1485,21 +1643,8 @@ impl Volume {
             Err(e) => return Err(e),
         }
 
-        // TTL expiry check
-        if n.has_ttl()
-            && let Some(ref ttl) = n.ttl
-        {
-            let ttl_minutes = ttl.minutes();
-            if ttl_minutes > 0 && n.has_last_modified_date() {
-                let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
-                let now_ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64;
-                if now_ns >= expire_at_ns {
-                    return Err(VolumeError::NotFound);
-                }
-            }
+        if needle_expired(n) {
+            return Err(VolumeError::NotFound);
         }
 
         Ok(n.data_size as i32)
@@ -1527,27 +1672,21 @@ impl Volume {
         size: Size,
         _read_option: &mut ReadOption,
     ) -> Result<(), VolumeError> {
-        match self.read_needle_blob_and_parse(n, offset, size) {
-            Ok(()) => Ok(()),
-            #[cfg(not(feature = "5bytes"))]
-            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
-                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
-            {
-                // Double-read: in 4-byte offset mode, the actual data may be
-                // beyond 32GB due to offset wrapping. Retry at offset + 32GB.
-                self.read_needle_blob_and_parse(n, offset + MAX_POSSIBLE_VOLUME_SIZE as i64, size)
-            }
-            Err(e) => Err(e),
-        }
+        let read_at = |buf: &mut [u8], at: u64| self.read_exact_at_backend(buf, at);
+        let version = self.version();
+        let mut offset = offset;
+        with_offset_retry(&mut offset, |off| {
+            Self::read_needle_blob_and_parse(read_at, n, off, size, version)
+        })
     }
 
     fn read_needle_blob_and_parse(
-        &self,
+        read_at: impl Fn(&mut [u8], u64) -> Result<(), VolumeError>,
         n: &mut Needle,
         offset: i64,
         size: Size,
+        version: Version,
     ) -> Result<(), VolumeError> {
-        let version = self.version();
         // Storage guard: negativity-only (Go parity — storage allocates what the
         // index says). Size(0) and >1GiB map sizes must still read; only
         // negative wraps/panics. Transport cap lives in RPC handlers only.
@@ -1560,7 +1699,9 @@ impl Volume {
         let actual_size = get_actual_size(size, version);
 
         let mut buf = vec![0u8; actual_size as usize];
-        self.read_exact_at_backend(&mut buf, offset as u64)?;
+        #[cfg(test)]
+        needle_read_hook::fire(n.id, buf.len());
+        read_at(&mut buf, offset as u64)?;
 
         n.read_bytes(&buf, offset, size, version)?;
         Ok(())
@@ -1616,35 +1757,28 @@ impl Volume {
         size: Size,
     ) -> Result<(), VolumeError> {
         let normalized_size = if size.is_deleted() { Size(0) } else { size };
-        match self.read_needle_meta_blob_and_parse(n, offset, normalized_size) {
-            Ok(()) => Ok(()),
-            #[cfg(not(feature = "5bytes"))]
-            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
-                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
-            {
-                self.read_needle_meta_blob_and_parse(
-                    n,
-                    offset + MAX_POSSIBLE_VOLUME_SIZE as i64,
-                    normalized_size,
-                )
-            }
-            Err(e) => Err(e),
-        }
+        let read_at = |buf: &mut [u8], at: u64| self.read_exact_at_backend(buf, at);
+        let version = self.version();
+        let mut offset = offset;
+        with_offset_retry(&mut offset, |off| {
+            Self::read_needle_meta_blob_and_parse(read_at, n, off, normalized_size, version)
+        })
     }
 
     fn read_needle_meta_blob_and_parse(
-        &self,
+        read_at: impl Fn(&mut [u8], u64) -> Result<(), VolumeError>,
         n: &mut Needle,
         offset: i64,
         size: Size,
+        version: Version,
     ) -> Result<(), VolumeError> {
-        let version = self.version();
-
         // Step 1: Read only the first 20 bytes (header + DataSize).
         // Matches Go's ReadNeedleMeta which reads NeedleHeaderSize+DataSizeSize first.
         const HEADER_PREFIX: usize = NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE; // 20
         let mut header_buf = [0u8; HEADER_PREFIX];
-        self.read_exact_at_backend(&mut header_buf, offset as u64)?;
+        #[cfg(test)]
+        needle_read_hook::fire(n.id, header_buf.len());
+        read_at(&mut header_buf, offset as u64)?;
 
         // Parse header to get the needle's Size field for validation
         let (_, _, found_size) = Needle::parse_header(&header_buf);
@@ -1673,7 +1807,9 @@ impl Volume {
                 )));
             }
             let mut meta_buf = vec![0u8; meta_size as usize];
-            self.read_exact_at_backend(&mut meta_buf, (offset + NEEDLE_HEADER_SIZE as i64) as u64)?;
+            #[cfg(test)]
+            needle_read_hook::fire(n.id, meta_buf.len());
+            read_at(&mut meta_buf, (offset + NEEDLE_HEADER_SIZE as i64) as u64)?;
             n.read_paged_meta(&header_buf, &meta_buf, offset, size, version)?;
         } else {
             // V2/V3: extract DataSize from bytes 16..20
@@ -1703,119 +1839,77 @@ impl Volume {
 
             // Step 3: Read only the meta tail (skip the data payload entirely)
             let mut meta_buf = vec![0u8; meta_size as usize];
-            self.read_exact_at_backend(&mut meta_buf, start_offset as u64)?;
+            #[cfg(test)]
+            needle_read_hook::fire(n.id, meta_buf.len());
+            read_at(&mut meta_buf, start_offset as u64)?;
             n.read_paged_meta(&header_buf, &meta_buf, offset, size, version)?;
         }
 
         Ok(())
     }
 
-    /// Read needle metadata (header + flags/name/mime/etc) without loading the data payload,
-    /// and return a `NeedleStreamInfo` that can be used to stream data directly from the dat file.
-    ///
-    /// This is used for large needles to avoid loading the entire payload into memory.
-    pub fn read_needle_stream_info(
+    /// Resolve a needle read under the caller's store guard, without data I/O.
+    pub(crate) fn needle_read_plan(
         &self,
-        n: &mut Needle,
+        id: NeedleId,
         read_deleted: bool,
-    ) -> Result<NeedleStreamInfo, VolumeError> {
-        let _guard = self.data_file_access_control.read_lock();
+    ) -> Result<NeedleReadPlan, VolumeError> {
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
         let nm = self.nm_or_not_found()?;
-        let nv = nm.get(n.id)?.ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(id)?.ok_or(VolumeError::NotFound)?;
 
         if nv.offset.is_zero() {
             return Err(VolumeError::NotFound);
         }
 
-        let mut read_size = nv.size;
-        if read_size.is_deleted() {
-            if read_deleted && !read_size.is_tombstone() {
-                debug!("reading deleted {}", n.id);
+        let mut size = nv.size;
+        if size.is_deleted() {
+            if read_deleted && !size.is_tombstone() {
+                debug!("reading deleted {}", id);
                 crate::metrics::HANDLER_COUNTER
                     .with_label_values(&[crate::metrics::READ_DELETED_NEEDLE])
                     .inc();
-                read_size = Size(-read_size.0);
+                size = Size(-size.0);
             } else {
                 return Err(VolumeError::Deleted);
             }
         }
-        if read_size.0 == 0 {
+        if size.0 == 0 {
             return Err(VolumeError::NotFound);
         }
 
-        #[cfg_attr(feature = "5bytes", allow(unused_mut))]
-        let mut offset = nv.offset.to_actual_offset();
-        let version = self.version();
-        let actual_size = get_actual_size(read_size, version);
-
-        // Read the full needle bytes (including data) for metadata parsing.
-        // We use read_bytes_meta_only which skips copying the data payload.
-        #[cfg_attr(feature = "5bytes", allow(unused_mut))]
-        let mut read_and_parse = |off: i64| -> Result<(), VolumeError> {
-            let mut buf = vec![0u8; actual_size as usize];
-            self.read_exact_at_backend(&mut buf, off as u64)?;
-            n.read_bytes_meta_only(&buf, off, read_size, version)?;
-            Ok(())
-        };
-
-        match read_and_parse(offset) {
-            Ok(()) => {}
-            #[cfg(not(feature = "5bytes"))]
-            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
-                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
-            {
-                offset += MAX_POSSIBLE_VOLUME_SIZE as i64;
-                read_and_parse(offset)?;
-            }
-            Err(e) => return Err(e),
-        }
-
-        // TTL expiry check
-        if n.has_ttl()
-            && let Some(ref ttl) = n.ttl
-        {
-            let ttl_minutes = ttl.minutes();
-            if ttl_minutes > 0 && n.has_last_modified_date() {
-                let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
-                let now_ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64;
-                if now_ns >= expire_at_ns {
-                    return Err(VolumeError::NotFound);
-                }
-            }
-        }
-
-        // For V1, data starts right after the header
-        // For V2/V3, data starts at header + 4 (DataSize field)
-        let data_file_offset = if version == VERSION_1 {
-            offset as u64 + NEEDLE_HEADER_SIZE as u64
-        } else {
-            offset as u64 + NEEDLE_HEADER_SIZE as u64 + 4 // skip DataSize (4 bytes)
-        };
-
-        let source = match (self.dat_file.as_ref(), self.remote_dat_file.as_ref()) {
-            (Some(dat_file), _) => {
-                NeedleStreamSource::Local(dat_file.try_clone().map_err(VolumeError::Io)?)
-            }
-            (None, Some(remote_dat_file)) => NeedleStreamSource::Remote(remote_dat_file.clone()),
-            (None, None) => return Err(VolumeError::StreamingUnsupported),
-        };
-
-        Ok(NeedleStreamInfo {
-            source,
-            data_file_offset,
-            data_size: n.data_size,
-            data_file_access_control: self.data_file_access_control.clone(),
+        Ok(NeedleReadPlan {
+            source: self.read_source()?,
+            offset: nv.offset.to_actual_offset(),
+            size,
+            version: self.version(),
             volume_id: self.id,
-            needle_id: n.id,
+            needle_id: id,
             compaction_revision: self.super_block.compaction_revision,
-            checksum: n.checksum.0,
+            data_file_access_control: self.data_file_access_control.clone(),
+            io_errors: self.io_errors.clone(),
         })
+    }
+
+    /// A read handle on the data backend that stays valid without the guard.
+    fn read_source(&self) -> Result<NeedleStreamSource, VolumeError> {
+        if self.dat_file.is_some() {
+            // A fresh open, not `try_clone`: a duplicated handle shares the
+            // file position, and on Windows `read_exact_at` goes through
+            // `seek_read`, which moves it under a concurrent append. Opened
+            // while the caller's guard excludes a vacuum swap, the path names
+            // the inode `dat_file` holds.
+            Ok(NeedleStreamSource::Local(open_volume_file(
+                OpenOptions::new().read(true),
+                self.file_name(".dat"),
+            )?))
+        } else if let Some(remote) = self.remote_dat_file() {
+            Ok(NeedleStreamSource::Remote(remote))
+        } else {
+            Err(VolumeError::Io(io::Error::other("dat file not open")))
+        }
     }
 
     /// Re-lookup a needle's data-file offset after compaction may have moved it.
@@ -3018,23 +3112,8 @@ impl Volume {
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
-        let source = if self.dat_file.is_some() {
-            // A fresh open, not `try_clone`: a duplicated handle shares the
-            // file position, and on Windows `read_exact_at` goes through
-            // `seek_read`, which moves it under a concurrent append. Opened
-            // while the caller's guard excludes a vacuum swap, the path names
-            // the inode `dat_file` holds.
-            NeedleStreamSource::Local(open_volume_file(
-                OpenOptions::new().read(true),
-                self.file_name(".dat"),
-            )?)
-        } else if let Some(remote) = self.remote_dat_file() {
-            NeedleStreamSource::Remote(remote)
-        } else {
-            return Err(VolumeError::Io(io::Error::other("dat file not open")));
-        };
         Ok(DatScanPlan {
-            source,
+            source: self.read_source()?,
             version: self.version(),
             from: from_offset,
             end: self.current_dat_file_size()?,
@@ -7546,7 +7625,9 @@ mod tests {
             cookie: Cookie(0xDEADBEEF),
             ..Needle::default()
         };
-        let info = v.read_needle_stream_info(&mut read_n, false).unwrap();
+        let mut plan = v.needle_read_plan(NeedleId(42), false).unwrap();
+        plan.read_meta(&mut read_n).unwrap();
+        let info = plan.into_stream_info(&read_n);
 
         assert_eq!(info.volume_id, VolumeId(1));
         assert_eq!(info.needle_id, NeedleId(42));
@@ -8812,7 +8893,9 @@ mod tests {
             id: NeedleId(7),
             ..Needle::default()
         };
-        let info = v.read_needle_stream_info(&mut meta, false).unwrap();
+        let mut plan = v.needle_read_plan(NeedleId(7), false).unwrap();
+        plan.read_meta(&mut meta).unwrap();
+        let info = plan.into_stream_info(&meta);
         assert!(matches!(info.source, NeedleStreamSource::Remote(_)));
         let mut streamed = vec![0u8; info.data_size as usize];
         info.source
