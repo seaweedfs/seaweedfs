@@ -6085,6 +6085,10 @@ fn run_vacuum_compact(
     let compact_start = std::time::Instant::now();
     let next_report = std::sync::atomic::AtomicI64::new(report_interval);
     let progress = |processed: i64| {
+        // A copy nobody waits for would keep refusing unmount/delete/cleanup.
+        if tx.is_closed() {
+            return false;
+        }
         let target = next_report.load(std::sync::atomic::Ordering::Relaxed);
         if processed > target {
             let resp = volume_server_pb::VacuumVolumeCompactResponse {
@@ -7847,6 +7851,39 @@ mod tests {
         };
         store.read_volume_needle(vid, &mut n).unwrap();
         assert_eq!(n.data, b"late-write");
+    }
+
+    #[test]
+    fn test_vacuum_compact_stops_when_the_client_is_gone_before_a_report() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let vid = VolumeId(1);
+        let cpd = {
+            let mut store = service.state.store.write().unwrap();
+            for i in 100..110u64 {
+                let data = format!("data-{i}");
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data_size: data.len() as u32,
+                    data: data.into_bytes(),
+                    ..Needle::default()
+                };
+                store.write_volume_needle(vid, &mut n, true).unwrap();
+            }
+            store.find_volume(vid).unwrap().1.file_name(".cpd")
+        };
+
+        // The client is gone and no report is due for 128 MiB.
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+        run_vacuum_compact(&service.state, vid, 0, COMPACT_REPORT_INTERVAL, &tx);
+
+        assert!(
+            !std::path::Path::new(&cpd).exists(),
+            "the copy ran to the end after its client disconnected"
+        );
+        let store = service.state.store.read().unwrap();
+        assert!(!store.find_volume(vid).unwrap().1.is_compacting());
     }
 
     // VolumeConfigure unmounts, rewrites the super block and remounts. While
