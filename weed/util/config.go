@@ -96,6 +96,12 @@ func (vp *ViperProxy) SetDefault(key string, value interface{}) {
 	vp.v.SetDefault(key, value)
 }
 
+func (vp *ViperProxy) AutomaticEnv() {
+	vp.Lock()
+	defer vp.Unlock()
+	vp.v.AutomaticEnv()
+}
+
 func (vp *ViperProxy) GetString(key string) string {
 	vp.Lock()
 	defer vp.Unlock()
