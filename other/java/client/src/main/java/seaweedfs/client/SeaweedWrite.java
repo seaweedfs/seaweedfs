@@ -144,6 +144,7 @@ public class SeaweedWrite {
 
             entry.clearChunks();
             entry.addAllChunks(chunks);
+            ExtendedFormatUtil.addKeyPrefix(entry);
             filerClient.getBlockingStub().createEntry(
                     FilerProto.CreateEntryRequest.newBuilder()
                             .setDirectory(parentDirectory)
