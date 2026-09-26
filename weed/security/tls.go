@@ -161,7 +161,7 @@ func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption
 			v.Set(key, filepath.Join(configDir, p))
 		}
 	}
-	return LoadClientTLS(&util.ViperProxy{Viper: v}, component), nil
+	return LoadClientTLS(util.NewViperProxy(v), component), nil
 }
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
