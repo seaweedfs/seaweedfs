@@ -4566,6 +4566,13 @@ impl Volume {
     pub(crate) fn set_last_modified_ts_for_test(&mut self, ts_seconds: u64) {
         self.last_modified_ts_seconds = ts_seconds;
     }
+
+    #[cfg(test)]
+    pub(crate) fn add_file_count_for_test(&self, delta: i64) {
+        if let Some(nm) = self.nm.as_ref() {
+            nm.add_file_count_for_test(delta);
+        }
+    }
 }
 
 // ============================================================================

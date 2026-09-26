@@ -1892,6 +1892,26 @@ impl VolumeServer for VolumeGrpcService {
 
         let mut client = volume_server_client(channel);
 
+        // The source's record counts before and after the copy decide whether
+        // the copied replica's counts can be checked. Without the "before"
+        // snapshot the check is skipped, not the copy.
+        let source_status_before = match client
+            .volume_status(volume_server_pb::VolumeStatusRequest {
+                volume_id: req.volume_id,
+            })
+            .await
+        {
+            Ok(resp) => Some(resp.into_inner()),
+            Err(e) => {
+                tracing::warn!(
+                    "failed to read source volume {} status before copy; skip record count validation: {}",
+                    vid,
+                    e
+                );
+                None
+            }
+        };
+
         // Get file status from source
         let vol_info = client
             .read_volume_file_status(volume_server_pb::ReadVolumeFileStatusRequest {
@@ -1900,19 +1920,6 @@ impl VolumeServer for VolumeGrpcService {
             .await
             .map_err(|e| Status::internal(format!("read volume file status failed, {}", e)))?
             .into_inner();
-
-        // Source is reachable and holds the volume: only now is it safe to drop
-        // an existing local replica before overwriting its files.
-        if had_existing_volume {
-            let mut store = self.state.store.write().unwrap();
-            // keep remote data: the inbound copy carries a .vif that may point
-            // at the same cloud-tier object the existing volume references.
-            store.delete_volume(vid, false, false, true).map_err(|e| {
-                Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
-            })?;
-            drop(store);
-            self.state.volume_state_notify.notify_one();
-        }
 
         let requested_disk_type = if !req.disk_type.is_empty() {
             DiskType::from_string(&req.disk_type)
@@ -1933,24 +1940,44 @@ impl VolumeServer for VolumeGrpcService {
         };
 
         // Find a free disk location using Go's Store.FindFreeLocation semantics.
+        // The slot of the replica being replaced counts as free.
         let (data_base, idx_base, selected_disk_type) = {
-            let store = self.state.store.read().unwrap();
-            let Some(loc_idx) = store.find_free_location_predicate(|loc| {
-                loc.disk_type == requested_disk_type
-                    && loc.available_space.load(Ordering::Relaxed) > needed_space
-            }) else {
+            let mut store = self.state.store.write().unwrap();
+            let Some(loc_idx) = store.find_free_location_predicate(
+                |loc| {
+                    loc.disk_type == requested_disk_type
+                        && loc.available_space.load(Ordering::Relaxed) > needed_space
+                },
+                Some(vid),
+            ) else {
                 return Err(Status::internal(format!(
                     "no space left {}",
                     requested_disk_type.readable_string()
                 )));
             };
             let loc = &store.locations[loc_idx];
-            (
+            let selected = (
                 loc.directory.clone(),
                 loc.idx_directory.clone(),
                 loc.disk_type.clone(),
-            )
+            );
+
+            // Source is reachable and a destination is reserved: only now is
+            // it safe to drop an existing local replica before overwriting its
+            // files.
+            if had_existing_volume {
+                // keep remote data: the inbound copy carries a .vif that may
+                // point at the same cloud-tier object the existing volume
+                // references.
+                store.delete_volume(vid, false, false, true).map_err(|e| {
+                    Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
+                })?;
+            }
+            selected
         };
+        if had_existing_volume {
+            self.state.volume_state_notify.notify_one();
+        }
 
         let data_base_name =
             crate::storage::volume::volume_file_name(&data_base, &vol_info.collection, vid);
@@ -2127,6 +2154,28 @@ impl VolumeServer for VolumeGrpcService {
                     )));
                 }
 
+                // Go passes stream.Context() here, so a departing caller
+                // cancels the call. Race it against the response channel the
+                // same way: a stalled source would otherwise hold the copied,
+                // unmounted files past the caller.
+                let source_status_after = tokio::select! {
+                    res = client.volume_status(volume_server_pb::VolumeStatusRequest {
+                        volume_id: req.volume_id,
+                    }) => res.map_err(|e| {
+                        Status::internal(format!(
+                            "read source volume {} status after copy failed: {}",
+                            vid, e
+                        ))
+                    })?
+                    .into_inner(),
+                    _ = tx.closed() => {
+                        return Err(Status::cancelled(format!(
+                            "volume {} copy cancelled by caller",
+                            vid
+                        )));
+                    }
+                };
+
                 // Verify file sizes
                 if !has_remote_dat {
                     let dat_path = format!("{}.dat", data_base_name);
@@ -2160,14 +2209,42 @@ impl VolumeServer for VolumeGrpcService {
                     )));
                 }
 
-                // Mount the volume
+                let validate_counts =
+                    copy_counts_stable(source_status_before.as_ref(), &source_status_after);
+                if !validate_counts {
+                    tracing::debug!(
+                        "source volume {} changed during copy; skip record count validation",
+                        vid
+                    );
+                }
+
+                // Mount and validate the volume under one store lock, so a
+                // replica that fails validation is unloaded before the next
+                // heartbeat can announce it.
                 {
                     let mut store = state.store.write().unwrap();
                     store
                         .mount_volume(vid, &vol_info.collection, selected_disk_type)
                         .map_err(|e| {
-                            Status::internal(format!("failed to mount volume {}: {}", vid, e))
+                            Status::internal(format!(
+                                "failed to mount or validate volume {}: {}",
+                                vid, e
+                            ))
                         })?;
+                    if validate_counts
+                        && let Some((_, v)) = store.find_volume(vid)
+                        && let Err(e) = check_copy_counts(
+                            &source_status_after,
+                            v.file_count() as u64,
+                            v.deleted_count() as u64,
+                        )
+                    {
+                        store.unmount_volume(vid);
+                        return Err(Status::internal(format!(
+                            "failed to mount or validate volume {}: {}",
+                            vid, e
+                        )));
+                    }
                     mounted = true;
                 }
                 state.volume_state_notify.notify_one();
@@ -2570,7 +2647,7 @@ impl VolumeServer for VolumeGrpcService {
                                                 .map(|m| m.len() > 0)
                                                 .unwrap_or(false)
                                         })
-                                }) {
+                                }, None) {
                                     Some(i) => {
                                         let dir = store.locations[i].directory.clone();
                                         drop(store);
@@ -5841,6 +5918,40 @@ where
     Ok(modified_ts_ns)
 }
 
+/// Compare a copied replica's record counts with the source's.
+fn check_copy_counts(
+    origin: &volume_server_pb::VolumeStatusResponse,
+    target_file_count: u64,
+    target_deleted_count: u64,
+) -> Result<(), String> {
+    if origin.file_count != target_file_count {
+        return Err(format!(
+            "target file count [{}] is not same as origin file count [{}]",
+            target_file_count, origin.file_count
+        ));
+    }
+    if origin.file_deleted_count != target_deleted_count {
+        return Err(format!(
+            "target deleted count [{}] is not same as origin deleted count [{}]",
+            target_deleted_count, origin.file_deleted_count
+        ));
+    }
+    Ok(())
+}
+
+/// A writable source may take writes or deletes while its files are copied;
+/// then the before/after counts do not describe one snapshot and a strict
+/// count check would report a false mismatch.
+fn copy_counts_stable(
+    before: Option<&volume_server_pb::VolumeStatusResponse>,
+    after: &volume_server_pb::VolumeStatusResponse,
+) -> bool {
+    before.is_some_and(|before| {
+        before.file_count == after.file_count
+            && before.file_deleted_count == after.file_deleted_count
+    })
+}
+
 /// Verify that a copied file has the expected size.
 fn check_copy_file_size(path: &str, expected: u64) -> Result<(), Status> {
     match std::fs::metadata(path) {
@@ -7320,6 +7431,279 @@ mod tests {
                 dest_file(ext)
             );
         }
+    }
+
+    /// Run a VolumeCopy of volume 1 from `port` to completion and return its
+    /// terminal result: the final response, or the error that ended the copy.
+    async fn run_volume_copy(
+        dest: &VolumeGrpcService,
+        port: u16,
+    ) -> Result<volume_server_pb::VolumeCopyResponse, Status> {
+        let mut stream = dest
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await?
+            .into_inner();
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let mut last = None;
+            while let Some(msg) = stream.next().await {
+                last = Some(msg?);
+            }
+            last.ok_or_else(|| Status::internal("copy stream ended without a response"))
+        })
+        .await
+        .expect("volume copy must finish")
+    }
+
+    // A replica that is about to be replaced must survive a copy that has
+    // nowhere to land: deleting it before a destination disk is reserved
+    // loses the only local copy when no disk qualifies.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_without_free_disk_keeps_existing_replica() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        // available_space stays 0 without check_disk_space, so no disk has room.
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        let dest_dat = format!("{}/1.dat", dest_tmp.path().to_str().unwrap());
+
+        let err = run_volume_copy(&dest_service, port)
+            .await
+            .expect_err("a copy with no free disk must fail");
+        assert!(err.message().contains("no space left"), "{err:?}");
+
+        let store = dest_service.state.store.read().unwrap();
+        let (_, vol) = store
+            .find_volume(VolumeId(1))
+            .expect("the existing replica must still be mounted");
+        assert_eq!(vol.file_count(), 1, "the existing replica must be intact");
+        assert!(std::path::Path::new(&dest_dat).exists());
+    }
+
+    // Replacing a replica on a disk whose only slot it occupies must succeed:
+    // the slot the replica frees counts as free when choosing a destination.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_replaces_existing_replica_in_its_own_slot() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, _dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let store = dest_service.state.store.read().unwrap();
+            for loc in &store.locations {
+                loc.max_volume_count.store(1, Ordering::Relaxed);
+                loc.check_disk_space();
+            }
+        }
+
+        let resp = run_volume_copy(&dest_service, port)
+            .await
+            .expect("replacing a replica in its own slot must succeed");
+        assert!(resp.last_append_at_ns > 0);
+
+        let store = dest_service.state.store.read().unwrap();
+        let (_, vol) = store
+            .find_volume(VolumeId(1))
+            .expect("the copied replica must be mounted");
+        assert_eq!(
+            vol.file_count(),
+            2,
+            "the replica must hold the source's needles"
+        );
+    }
+
+    // A copy whose record counts disagree with a stable source must be
+    // rejected, left unmounted, and cleaned off disk, even though the .dat and
+    // .idx sizes match.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_rejects_record_count_mismatch() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        {
+            let store = source_service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            vol.add_file_count_for_test(1);
+        }
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store.delete_volume(VolumeId(1), false, false, false).unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_dir = dest_tmp.path().to_str().unwrap().to_string();
+
+        let err = run_volume_copy(&dest_service, port)
+            .await
+            .expect_err("a copy with mismatched record counts must fail");
+        assert!(err.message().contains("file count"), "{err:?}");
+
+        assert!(
+            dest_service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_none(),
+            "a replica that failed count validation must not stay mounted"
+        );
+        for ext in [".dat", ".idx", ".vif", ".note"] {
+            let path = format!("{}/1{}", dest_dir, ext);
+            assert!(
+                !std::path::Path::new(&path).exists(),
+                "rejected copy left {} behind",
+                path
+            );
+        }
+    }
+
+    /// Lets the first VolumeStatus call through and never answers the ones
+    /// after it, so the source stalls exactly at VolumeCopy's post-copy status
+    /// read.
+    #[derive(Clone)]
+    struct StallLaterVolumeStatus<S> {
+        inner: S,
+        status_calls: Arc<std::sync::atomic::AtomicUsize>,
+        stalled: Arc<tokio::sync::Notify>,
+    }
+
+    impl<S, B> tower::Service<tonic::codegen::http::Request<B>> for StallLaterVolumeStatus<S>
+    where
+        S: tower::Service<tonic::codegen::http::Request<B>>,
+        S::Future: Send + 'static,
+        S::Response: 'static,
+        S::Error: 'static,
+    {
+        type Response = S::Response;
+        type Error = S::Error;
+        type Future = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<S::Response, S::Error>> + Send>,
+        >;
+
+        fn poll_ready(
+            &mut self,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: tonic::codegen::http::Request<B>) -> Self::Future {
+            if req.uri().path() == "/volume_server_pb.VolumeServer/VolumeStatus"
+                && self.status_calls.fetch_add(1, Ordering::SeqCst) >= 1
+            {
+                self.stalled.notify_one();
+                return Box::pin(std::future::pending());
+            }
+            Box::pin(self.inner.call(req))
+        }
+    }
+
+    // A source that stalls on the post-copy status read must not hold the
+    // copied files once the caller is gone: the old replica is already
+    // deleted and the new one is unmounted, so the task has to notice the
+    // departed caller and clean up like any other failed copy.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_stalled_final_status_cleans_up_when_caller_leaves() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let stalled = Arc::new(tokio::sync::Notify::new());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let stalled = stalled.clone();
+            let status_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            tokio::spawn(async move {
+                let _ = tonic::transport::Server::builder()
+                    .layer(tower::layer::layer_fn(move |inner| {
+                        StallLaterVolumeStatus {
+                            inner,
+                            status_calls: status_calls.clone(),
+                            stalled: stalled.clone(),
+                        }
+                    }))
+                    .add_service(
+                        crate::pb::volume_server_pb::volume_server_server::VolumeServerServer::new(
+                            source_service,
+                        ),
+                    )
+                    .serve_with_incoming_shutdown(
+                        tokio_stream::wrappers::TcpListenerStream::new(listener),
+                        async {
+                            let _ = shutdown_rx.await;
+                        },
+                    )
+                    .await;
+            });
+        }
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store.delete_volume(VolumeId(1), false, false, false).unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_file = |ext: &str| format!("{}/1{}", dest_tmp.path().to_str().unwrap(), ext);
+
+        let response = dest_service
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(30), stalled.notified())
+            .await
+            .expect("the copy must reach the post-copy status read");
+        assert!(
+            std::path::Path::new(&dest_file(".dat")).exists(),
+            "the files must be copied before the post-copy status read"
+        );
+
+        drop(response);
+
+        let mut cleaned = false;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if [".dat", ".idx", ".vif", ".note"]
+                .iter()
+                .all(|ext| !std::path::Path::new(&dest_file(ext)).exists())
+            {
+                cleaned = true;
+                break;
+            }
+        }
+        assert!(
+            cleaned,
+            "a copy stalled on the source's final status left its files behind"
+        );
+        assert!(
+            dest_service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_none(),
+            "an abandoned copy must not be mounted"
+        );
     }
 
     // copy_file must stream the whole .dat in 2MB chunks (not buffer it) and
