@@ -300,6 +300,9 @@ func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (ui
 	}
 	scanEveryWrite := v.SuperBlock.CompactionRevision > 0
 	entryBudget := vacuumedLastWriteScanEntries
+	if scanEveryWrite && !affordableVacuumedScan(indexFile, indexSize, v.Id, v.FileName(".dat")) {
+		return 0, nil
+	}
 	var lastWriteAppendAtNs uint64
 	block := make([]byte, types.NeedleMapEntrySize*idx.RowsToRead)
 	for end := indexSize; end > 0; {
@@ -338,6 +341,60 @@ func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (ui
 		end = start
 	}
 	return lastWriteAppendAtNs, nil
+}
+
+// affordableVacuumedScan reports whether a vacuumed volume's recovery scan fits
+// its budget. A vacuumed volume must take the maximum over every write it
+// indexes, so a volume holding more live needles than vacuumedLastWriteScanEntries
+// would spend up to two random .dat reads per needle and then give up, keeping
+// the .dat mtime anyway. Counting the live .idx entries first is one short
+// sequential pass over a small file, and it skips the scan before any .dat I/O
+// when the scan provably cannot succeed.
+func affordableVacuumedScan(indexFile *os.File, indexSize int64, volumeId needle.VolumeId, datFileName string) bool {
+	liveEntries, err := countLiveIndexEntries(indexFile, indexSize, vacuumedLastWriteScanEntries)
+	if err != nil {
+		glog.Warningf("volume %d count live entries in %s: %v", volumeId, indexFile.Name(), err)
+		return true
+	}
+	if liveEntries > vacuumedLastWriteScanEntries {
+		glog.V(0).Infof("volume %d: more than %d needles to scan for its last write, keeping the %s mtime",
+			volumeId, vacuumedLastWriteScanEntries, datFileName)
+		return false
+	}
+	return true
+}
+
+// countLiveIndexEntries counts the .idx entries describing a live needle,
+// stopping early once the count passes limit. Tombstones and zero offsets are
+// skipped exactly as findLastWriteAppendAtNs skips them.
+func countLiveIndexEntries(indexFile *os.File, indexSize int64, limit int) (int, error) {
+	count := 0
+	block := make([]byte, types.NeedleMapEntrySize*idx.RowsToRead)
+	for start := int64(0); start < indexSize; {
+		end := start + int64(len(block))
+		if end > indexSize {
+			end = indexSize
+		}
+		entries := block[:end-start]
+		readCount, err := indexFile.ReadAt(entries, start)
+		if err == io.EOF && readCount == len(entries) {
+			err = nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("read %s at %d: %v", indexFile.Name(), start, err)
+		}
+		for i := 0; i+types.NeedleMapEntrySize <= len(entries); i += types.NeedleMapEntrySize {
+			_, offset, size := idx.IdxFileEntry(entries[i : i+types.NeedleMapEntrySize])
+			if offset.IsZero() || size.IsDeleted() {
+				continue
+			}
+			if count++; count > limit {
+				return count, nil
+			}
+		}
+		start = end
+	}
+	return count, nil
 }
 
 // findNeedleOffset returns the .dat offset holding the needle an .idx entry

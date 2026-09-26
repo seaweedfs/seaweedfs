@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// countingBackend counts Sync calls and can be made to fail them.
+// countingBackend counts Sync calls and can be made to fail them. It also
+// counts random reads, so recovery paths can prove they declined before
+// touching the .dat.
 type countingBackend struct {
 	backend.BackendStorageFile
 	syncCount     int
@@ -19,6 +21,12 @@ type countingBackend struct {
 	syncErrOnce   bool
 	truncateErr   error
 	truncateCount int
+	readCount     int
+}
+
+func (b *countingBackend) ReadAt(p []byte, off int64) (int, error) {
+	b.readCount++
+	return b.BackendStorageFile.ReadAt(p, off)
 }
 
 func (b *countingBackend) Sync() error {

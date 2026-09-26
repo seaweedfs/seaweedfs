@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -196,6 +197,68 @@ func TestVolumeTtlClockDeclinesUnaffordableScan(t *testing.T) {
 	}
 	if reloaded.expired(contentSize, 1024*1024) {
 		t.Error("declining the scan must leave the volume on its mtime, not expire it")
+	}
+}
+
+// TestVolumeTtlClockSkipsUnaffordableScanWithoutDatReads is the regression test
+// for https://github.com/seaweedfs/seaweedfs/issues/11469: a vacuumed volume
+// holding more live needles than the scan budget must decline recovery before
+// doing any .dat I/O, instead of spending up to two random reads per needle
+// and then keeping the mtime anyway.
+func TestVolumeTtlClockSkipsUnaffordableScanWithoutDatReads(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 5; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+	if v.SuperBlock.CompactionRevision == 0 {
+		t.Fatal("vacuum must bump CompactionRevision for this test to exercise the vacuumed path")
+	}
+
+	indexFile, err := os.Open(v.FileName(".idx"))
+	if err != nil {
+		t.Fatalf("open .idx: %v", err)
+	}
+	defer indexFile.Close()
+	indexStat, err := indexFile.Stat()
+	if err != nil {
+		t.Fatalf("stat .idx: %v", err)
+	}
+
+	var reads countingBackend
+	reads.BackendStorageFile = v.DataBackend
+	v.DataBackend = &reads
+
+	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
+	vacuumedLastWriteScanEntries = 2
+
+	appendAtNs, err := findLastWriteAppendAtNs(v, indexFile, indexStat.Size())
+	if err != nil {
+		t.Fatalf("recover last write: %v", err)
+	}
+	if appendAtNs != 0 {
+		t.Errorf("over-budget scan must decline with 0, got %d", appendAtNs)
+	}
+	if got := reads.readCount; got != 0 {
+		t.Errorf("over-budget scan did %d .dat reads before declining, want 0", got)
 	}
 }
 
