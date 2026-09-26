@@ -356,7 +356,7 @@ func affordableVacuumedScan(indexFile *os.File, indexSize int64, volumeId needle
 		glog.Warningf("volume %d count live entries in %s: %v", volumeId, indexFile.Name(), err)
 		return true
 	}
-	if liveEntries > vacuumedLastWriteScanEntries {
+	if liveEntries >= vacuumedLastWriteScanEntries {
 		glog.V(0).Infof("volume %d: more than %d needles to scan for its last write, keeping the %s mtime",
 			volumeId, vacuumedLastWriteScanEntries, datFileName)
 		return false
