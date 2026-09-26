@@ -2154,18 +2154,27 @@ impl VolumeServer for VolumeGrpcService {
                     )));
                 }
 
-                let source_status_after = client
-                    .volume_status(volume_server_pb::VolumeStatusRequest {
+                // Go passes stream.Context() here, so a departing caller
+                // cancels the call. Race it against the response channel the
+                // same way: a stalled source would otherwise hold the copied,
+                // unmounted files past the caller.
+                let source_status_after = tokio::select! {
+                    res = client.volume_status(volume_server_pb::VolumeStatusRequest {
                         volume_id: req.volume_id,
-                    })
-                    .await
-                    .map_err(|e| {
+                    }) => res.map_err(|e| {
                         Status::internal(format!(
                             "read source volume {} status after copy failed: {}",
                             vid, e
                         ))
                     })?
-                    .into_inner();
+                    .into_inner(),
+                    _ = tx.closed() => {
+                        return Err(Status::cancelled(format!(
+                            "volume {} copy cancelled by caller",
+                            vid
+                        )));
+                    }
+                };
 
                 // Verify file sizes
                 if !has_remote_dat {
@@ -7556,6 +7565,145 @@ mod tests {
                 path
             );
         }
+    }
+
+    /// Lets the first VolumeStatus call through and never answers the ones
+    /// after it, so the source stalls exactly at VolumeCopy's post-copy status
+    /// read.
+    #[derive(Clone)]
+    struct StallLaterVolumeStatus<S> {
+        inner: S,
+        status_calls: Arc<std::sync::atomic::AtomicUsize>,
+        stalled: Arc<tokio::sync::Notify>,
+    }
+
+    impl<S, B> tower::Service<tonic::codegen::http::Request<B>> for StallLaterVolumeStatus<S>
+    where
+        S: tower::Service<tonic::codegen::http::Request<B>>,
+        S::Future: Send + 'static,
+        S::Response: 'static,
+        S::Error: 'static,
+    {
+        type Response = S::Response;
+        type Error = S::Error;
+        type Future = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<S::Response, S::Error>> + Send>,
+        >;
+
+        fn poll_ready(
+            &mut self,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: tonic::codegen::http::Request<B>) -> Self::Future {
+            if req.uri().path() == "/volume_server_pb.VolumeServer/VolumeStatus"
+                && self.status_calls.fetch_add(1, Ordering::SeqCst) >= 1
+            {
+                self.stalled.notify_one();
+                return Box::pin(std::future::pending());
+            }
+            Box::pin(self.inner.call(req))
+        }
+    }
+
+    // A source that stalls on the post-copy status read must not hold the
+    // copied files once the caller is gone: the old replica is already
+    // deleted and the new one is unmounted, so the task has to notice the
+    // departed caller and clean up like any other failed copy.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_stalled_final_status_cleans_up_when_caller_leaves() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let stalled = Arc::new(tokio::sync::Notify::new());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let stalled = stalled.clone();
+            let status_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            tokio::spawn(async move {
+                let _ = tonic::transport::Server::builder()
+                    .layer(tower::layer::layer_fn(move |inner| {
+                        StallLaterVolumeStatus {
+                            inner,
+                            status_calls: status_calls.clone(),
+                            stalled: stalled.clone(),
+                        }
+                    }))
+                    .add_service(
+                        crate::pb::volume_server_pb::volume_server_server::VolumeServerServer::new(
+                            source_service,
+                        ),
+                    )
+                    .serve_with_incoming_shutdown(
+                        tokio_stream::wrappers::TcpListenerStream::new(listener),
+                        async {
+                            let _ = shutdown_rx.await;
+                        },
+                    )
+                    .await;
+            });
+        }
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store.delete_volume(VolumeId(1), false, false, false).unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_file = |ext: &str| format!("{}/1{}", dest_tmp.path().to_str().unwrap(), ext);
+
+        let response = dest_service
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(30), stalled.notified())
+            .await
+            .expect("the copy must reach the post-copy status read");
+        assert!(
+            std::path::Path::new(&dest_file(".dat")).exists(),
+            "the files must be copied before the post-copy status read"
+        );
+
+        drop(response);
+
+        let mut cleaned = false;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if [".dat", ".idx", ".vif", ".note"]
+                .iter()
+                .all(|ext| !std::path::Path::new(&dest_file(ext)).exists())
+            {
+                cleaned = true;
+                break;
+            }
+        }
+        assert!(
+            cleaned,
+            "a copy stalled on the source's final status left its files behind"
+        );
+        assert!(
+            dest_service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_none(),
+            "an abandoned copy must not be mounted"
+        );
     }
 
     // copy_file must stream the whole .dat in 2MB chunks (not buffer it) and
