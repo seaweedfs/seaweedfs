@@ -45,13 +45,14 @@ const (
 )
 
 type MasterOption struct {
-	Master                     pb.ServerAddress
-	MetaFolder                 string
-	VolumeSizeLimitMB          uint32
-	FileSizeLimitMB            int
-	VolumePreallocate          bool
-	MaxParallelVacuumPerServer int
-	VacuumIntervalSeconds      int
+	Master                        pb.ServerAddress
+	MetaFolder                    string
+	VolumeSizeLimitMB             uint32
+	FileSizeLimitMB               int
+	VolumePreallocate             bool
+	MaxParallelVacuumPerServer    int
+	VacuumIntervalSeconds         int
+	VacuumDeleteEmptyAfterSeconds int
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
 	GarbageThreshold        float64
@@ -204,6 +205,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
 		time.Duration(ms.option.VacuumIntervalSeconds)*time.Second,
+		time.Duration(ms.option.VacuumDeleteEmptyAfterSeconds)*time.Second,
 	)
 
 	ms.ProcessGrowRequest()
