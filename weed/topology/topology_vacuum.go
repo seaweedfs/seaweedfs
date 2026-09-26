@@ -411,18 +411,22 @@ func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *Volume
 		// the same drain the compact pass uses
 		vl.DrainAndRemoveFromWritable(vid)
 		remaining := 0
+		kept := locationList.list[:0]
 		for _, dn := range locationList.list {
 			v, err := dn.GetVolumesById(vid)
 			if err == nil {
 				onlyGarbage := v.FileCount > 0 && v.FileCount <= v.DeleteCount
 				glog.V(0).Infof("deleting empty volume %d on %s", vid, dn.ServerAddress())
-				err = t.deleteEmptyVolume(grpcDialOption, dn, vid, onlyGarbage)
+				if err = t.deleteEmptyVolume(grpcDialOption, dn, vid, onlyGarbage); err == nil {
+					t.UnRegisterVolumeLayout(v, dn)
+					continue
+				}
 			}
-			if err != nil {
-				glog.Warningf("delete empty volume %d on %s: %v", vid, dn.ServerAddress(), err)
-				remaining++
-			}
+			glog.Warningf("delete empty volume %d on %s: %v", vid, dn.ServerAddress(), err)
+			kept = append(kept, dn)
+			remaining++
 		}
+		locationList.list = kept
 		if remaining == 0 {
 			delete(todoVolumeMap, vid)
 		}
