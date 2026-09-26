@@ -137,11 +137,13 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 // caller-controlled: applying it would evaluate a conditional mutation under a
 // non-owner's lock, and re-forwarding a claimed hop can cycle while rings
 // disagree — so an unverifiable marker on a non-owner is refused instead.
+// PermissionDenied keeps the refusal distinct from a write condition's
+// FailedPrecondition, which callers use to detect a stale stamp.
 // owner=="" means this filer is the serialization point and the request can
 // be applied locally.
 func (fs *FilerServer) checkMovedMarker(ctx context.Context, isMoved bool, owner pb.ServerAddress) error {
-	if !isMoved || fs.movedFromPeer(ctx, isMoved) || owner == "" || owner == fs.option.Host {
+	if !isMoved || owner == "" || owner == fs.option.Host || fs.movedFromPeer(ctx, isMoved) {
 		return nil
 	}
-	return status.Errorf(codes.FailedPrecondition, "is_moved not sent by a ring member; the key's owner is %s", owner)
+	return status.Errorf(codes.PermissionDenied, "is_moved not sent by a ring member; the key's owner is %s", owner)
 }

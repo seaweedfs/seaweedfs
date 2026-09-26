@@ -128,7 +128,7 @@ func TestCreateEntryMovedFromClientIsNotTrusted(t *testing.T) {
 	req := createReq(name, true)
 	req.IsMoved = true
 	_, err := fs.CreateEntry(context.Background(), req)
-	if status.Code(err) != codes.FailedPrecondition {
+	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("a forged is_moved must be refused, got err=%v", err)
 	}
 	if _, found := store.entries[string(util.NewFullPath("/test", name))]; found {
