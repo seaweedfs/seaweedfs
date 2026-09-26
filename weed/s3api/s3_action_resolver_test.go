@@ -212,6 +212,47 @@ func TestResolveS3Action_Quota(t *testing.T) {
 	}
 }
 
+// Dedicated object-lock actions already name the operation being authorized;
+// competing query parameters must not re-map them. Notably the synthetic
+// DELETE ?versionId request behind the governance-bypass check must stay
+// s3:BypassGovernanceRetention rather than resolving to s3:DeleteObjectVersion.
+func TestResolveS3ActionDedicatedObjectLockActions(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		object     string
+		query      string
+		baseAction string
+		want       string
+	}{
+		{"bypass on versioned delete shape", http.MethodDelete, "key", "versionId=abc123",
+			s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, s3_constants.S3_ACTION_BYPASS_GOVERNANCE},
+		{"bypass on batch delete shape", http.MethodPost, "", "delete",
+			s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION, s3_constants.S3_ACTION_BYPASS_GOVERNANCE},
+		{"get retention with versionId", http.MethodGet, "key", "retention&versionId=abc123",
+			s3_constants.ACTION_GET_OBJECT_RETENTION, s3_constants.S3_ACTION_GET_OBJECT_RETENTION},
+		{"put retention with versionId", http.MethodPut, "key", "retention&versionId=abc123",
+			s3_constants.ACTION_PUT_OBJECT_RETENTION, s3_constants.S3_ACTION_PUT_OBJECT_RETENTION},
+		{"get legal hold with versionId", http.MethodGet, "key", "legal-hold&versionId=abc123",
+			s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD, s3_constants.S3_ACTION_GET_OBJECT_LEGAL_HOLD},
+		{"put legal hold with versionId", http.MethodPut, "key", "legal-hold&versionId=abc123",
+			s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD, s3_constants.S3_ACTION_PUT_OBJECT_LEGAL_HOLD},
+		{"get object-lock config", http.MethodGet, "", "object-lock&versioning",
+			s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG, s3_constants.S3_ACTION_GET_BUCKET_OBJECT_LOCK},
+		{"put object-lock config", http.MethodPut, "", "object-lock",
+			s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG, s3_constants.S3_ACTION_PUT_BUCKET_OBJECT_LOCK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest(tt.method, "http://localhost/bucket/"+tt.object+"?"+tt.query, nil)
+			if got := ResolveS3Action(r, tt.baseAction, "bucket", tt.object); got != tt.want {
+				t.Errorf("ResolveS3Action() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // A base action naming another service carries no S3 request shape, so a query
 // parameter on the request must not redirect it to an S3 action.
 func TestResolveS3ActionKeepsNonS3Service(t *testing.T) {
