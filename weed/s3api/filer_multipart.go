@@ -1388,7 +1388,15 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		StorageClass:     aws.String("STANDARD"),
 	}
 
-	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
+	// part files are "%04d_<uuid>.part" (legacy "%04d.part"). '_' sorts after
+	// '.', so an exclusive start at "%04d.part" still returns the marker part
+	// and a page of max-parts=1 never advances. The next part number sorts
+	// past both name shapes of the marker part.
+	if *input.PartNumberMarker >= math.MaxInt64 {
+		output.IsTruncated = aws.Bool(false)
+		return output, s3err.ErrNone
+	}
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d", *input.PartNumberMarker+1), true, uint32(*input.MaxParts))
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.
@@ -1411,6 +1419,10 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
+			// the marker is exclusive even if a store ignores startFrom
+			if partNumber <= int(*input.PartNumberMarker) {
+				continue
+			}
 
 			partETag := getEtagFromEntry(entry)
 			part := &s3.Part{
@@ -1426,6 +1438,12 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
 			}
 		}
+	}
+
+	// a page that surfaced no parts has no next page to claim
+	if len(output.Part) == 0 {
+		output.IsTruncated = aws.Bool(false)
+		output.NextPartNumberMarker = nil
 	}
 
 	glog.V(2).Infof("listObjectParts: Returning %d parts for uploadId=%s", len(output.Part), *input.UploadId)
