@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,6 +133,76 @@ func TestReadNeedMetaWithDeletesThenWrites(t *testing.T) {
 			assert.Equal(t, expectedLastUpdateTime, actualLastModifiedTime, "The two words should be the same.")
 		}
 		expectedLastUpdateTime += 2000
+	}
+}
+
+// A whole-needle read that fails its checksum must not finish writing the
+// response: the final chunk is held back, so the body ends short of the
+// declared length and the reader sees a failed transfer instead of corrupted
+// bytes that look complete.
+func TestReadNeedleDataInto_ChecksumFailureHoldsBackLastChunk(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	write := func(id uint64) (*needle.Needle, uint64) {
+		n := new(needle.Needle)
+		n.Id = types.Uint64ToNeedleId(id)
+		n.Data = make([]byte, PagedReadLimit+4096)
+		rand.Read(n.Data)
+		n.Checksum = needle.NewCRC(n.Data)
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", id, err)
+		}
+		return n, offset
+	}
+	meta := func(id uint64) (*needle.Needle, *ReadOption) {
+		readN := new(needle.Needle)
+		readN.Id = types.Uint64ToNeedleId(id)
+		readOption := &ReadOption{AttemptMetaOnly: true, ReadBufferSize: 64 * 1024}
+		if _, err := v.readNeedle(readN, readOption, nil); err != nil {
+			t.Fatalf("meta read needle %d: %v", id, err)
+		}
+		return readN, readOption
+	}
+
+	good, _ := write(1)
+	_, badOffset := write(2)
+	goodReadN, readOption := meta(1)
+	badReadN, _ := meta(2)
+
+	// damage one byte inside the bad needle's data region on disk:
+	// v3 needle layout is header (NeedleHeaderSize) + DataSize (4) + data
+	dataOffset := int64(badOffset) + int64(types.NeedleHeaderSize+4)
+	one := make([]byte, 1)
+	if _, err := v.DataBackend.ReadAt(one, dataOffset); err != nil {
+		t.Fatalf("read dat: %v", err)
+	}
+	one[0] ^= 0xff
+	if _, err := v.DataBackend.WriteAt(one, dataOffset); err != nil {
+		t.Fatalf("corrupt dat: %v", err)
+	}
+
+	var goodOut bytes.Buffer
+	if err := v.readNeedleDataInto(goodReadN, readOption, &goodOut, 0, int64(goodReadN.DataSize)); err != nil {
+		t.Fatalf("read good needle: %v", err)
+	}
+	if !bytes.Equal(goodOut.Bytes(), good.Data) {
+		t.Fatalf("good needle data mismatch: got %d bytes", goodOut.Len())
+	}
+
+	var badOut bytes.Buffer
+	err = v.readNeedleDataInto(badReadN, readOption, &badOut, 0, int64(badReadN.DataSize))
+	if err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("want checksum error, got %v", err)
+	}
+	if int64(badOut.Len()) >= int64(badReadN.DataSize) {
+		t.Fatalf("corrupted read delivered %d bytes, want fewer than %d", badOut.Len(), badReadN.DataSize)
 	}
 }
 

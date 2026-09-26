@@ -162,6 +162,15 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		actualOffset += int64(MaxPossibleVolumeSize)
 	}
 
+	// Only a whole-needle read can verify the checksum; a range read sees too
+	// little of the data. The checksum can only be computed once every byte is
+	// read, which is after the response status has already gone out, so the
+	// last chunk is held back: on a mismatch it is never written, the response
+	// ends short of its declared Content-Length, and the reader sees a failed
+	// transfer it can retry against another replica.
+	checkCRC := offset == 0 && size == int64(n.DataSize)
+	var held []byte
+
 	buf := mem.Allocate(min(readOption.ReadBufferSize, int(size)))
 	defer mem.Free(buf)
 
@@ -212,9 +221,9 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		toWrite := min(count, int(offset+size-x))
 		if toWrite > 0 {
 			crc = crc.Update(buf[0:toWrite])
-			// Note: CRC validation happens after the loop completes (see below)
-			// to avoid performance overhead in the hot read path
-			if _, err = writer.Write(buf[0:toWrite]); err != nil {
+			if checkCRC && x+int64(toWrite) == offset+size {
+				held = buf[0:toWrite]
+			} else if _, err = writer.Write(buf[0:toWrite]); err != nil {
 				return fmt.Errorf("ReadNeedleData write: %w", err)
 			}
 		}
@@ -234,12 +243,17 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	// we still return that error to the caller, but the disk itself
 	// produced clean bytes.
 	v.checkReadWriteError(nil)
-	if offset == 0 && size == int64(n.DataSize) && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
+	if checkCRC && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
 		// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
 		// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
 		// and switch appeared in version 3.09.
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
+	}
+	if len(held) > 0 {
+		if _, err = writer.Write(held); err != nil {
+			return fmt.Errorf("ReadNeedleData write: %w", err)
+		}
 	}
 	return nil
 
