@@ -30,8 +30,8 @@ func TestCalculateSessionDuration(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := svc.calculateSessionDuration(tc.durationSeconds); got != tc.want {
-				t.Errorf("calculateSessionDuration(%v) = %v, want %v", tc.durationSeconds, got, tc.want)
+			if got := svc.CalculateSessionDuration(tc.durationSeconds); got != tc.want {
+				t.Errorf("CalculateSessionDuration(%v) = %v, want %v", tc.durationSeconds, got, tc.want)
 			}
 		})
 	}

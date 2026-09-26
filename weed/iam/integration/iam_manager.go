@@ -1007,7 +1007,7 @@ func extractIssuerFromJWT(token string) (string, error) {
 
 // capDurationByRole returns the requested duration clamped to the role's
 // MaxSessionDuration. A nil requested duration is left nil so the STS
-// service's calculateSessionDuration applies the global default (typically
+// service's CalculateSessionDuration applies the global default (typically
 // 1 hour) — substituting the role's max here would silently mint a 12h
 // session for any caller who omitted DurationSeconds, which AWS does not
 // do. The role-max upper bound still applies in the downstream cap chain
