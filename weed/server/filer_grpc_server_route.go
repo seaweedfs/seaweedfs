@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -118,10 +119,11 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 		if cached := fs.ringPeerIPs.Load(); cached != nil && cached.members == key && time.Now().Before(cached.expires) {
 			return cached.ips, nil
 		}
-		// Shared by every caller waiting on this key: the lookup outlives the
-		// first request's cancellation, bounded by its own deadline.
-		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
+		// Shared by every caller waiting on this key: the lookups outlive the
+		// first request's cancellation, and run in parallel so one slow member
+		// cannot starve the rest of the shared deadline.
+		var wg sync.WaitGroup
+		var mu sync.Mutex
 		var ips []net.IP
 		failed := false
 		for _, member := range members {
@@ -133,13 +135,22 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 				ips = append(ips, ip)
 				continue
 			}
-			found, err := net.DefaultResolver.LookupIP(lookupCtx, "ip", host)
-			if err != nil {
-				failed = true
-				continue
-			}
-			ips = append(ips, found...)
+			wg.Add(1)
+			go func(host string) {
+				defer wg.Done()
+				lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+				defer cancel()
+				found, err := net.DefaultResolver.LookupIP(lookupCtx, "ip", host)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					failed = true
+					return
+				}
+				ips = append(ips, found...)
+			}(host)
 		}
+		wg.Wait()
 		if !failed {
 			fs.ringPeerIPs.Store(&ringPeerIPs{members: key, ips: ips, expires: time.Now().Add(ringPeerIPTTL)})
 		}
