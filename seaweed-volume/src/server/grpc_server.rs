@@ -6050,9 +6050,9 @@ fn tail_pass(
 }
 
 /// Stream the live needles of one volume in .dat order, one at a time and
-/// without holding the store lock while reading or sending. Liveness is checked
-/// against the needle map per record, and the scan follows appends made while
-/// it ran. `Err(None)` means the receiver hung up.
+/// without holding the store lock while reading or waiting for channel space.
+/// Liveness is checked against the needle map per record, and the scan follows
+/// appends made while it ran. `Err(None)` means the receiver hung up.
 fn read_all_needles_of_volume(
     state: &VolumeServerState,
     vid: VolumeId,
@@ -6079,14 +6079,20 @@ fn read_all_needles_of_volume(
             if record.size.0 <= 0 {
                 return Ok(ControlFlow::Continue(()));
             }
-            let live = {
-                let store = state.store.read().unwrap();
-                match store.find_volume(vid) {
-                    Some((_, v)) => v
-                        .is_live_in_plan(&plan, record.id, record.offset)
-                        .map_err(internal),
-                    None => Err(not_found()),
-                }
+            // A stale copy's parse error must not fail the stream.
+            let parsed = record.parse();
+            // Wait for channel space before the liveness check, then enqueue
+            // under the guard, so no overwrite can land between the two.
+            let Ok(permit) = futures::executor::block_on(tx.reserve()) else {
+                client_gone = true;
+                return Ok(ControlFlow::Break(()));
+            };
+            let store = state.store.read().unwrap();
+            let live = match store.find_volume(vid) {
+                Some((_, v)) => v
+                    .is_live_in_plan(&plan, record.id, record.offset)
+                    .map_err(internal),
+                None => Err(not_found()),
             };
             match live {
                 Ok(true) => {}
@@ -6096,7 +6102,7 @@ fn read_all_needles_of_volume(
                     return Ok(ControlFlow::Break(()));
                 }
             }
-            let n = record.parse()?;
+            let n = parsed?;
             let compressed = n.is_compressed();
             let msg = volume_server_pb::ReadAllNeedlesResponse {
                 volume_id: vid.0,
@@ -6109,10 +6115,7 @@ fn read_all_needles_of_volume(
                 name: n.name,
                 mime: n.mime,
             };
-            if tx.blocking_send(Ok(msg)).is_err() {
-                client_gone = true;
-                return Ok(ControlFlow::Break(()));
-            }
+            permit.send(Ok(msg));
             Ok(ControlFlow::Continue(()))
         });
         if client_gone {
@@ -7665,10 +7668,11 @@ mod tests {
         }
     }
 
-    // A client that stops reading parks the scan in a channel send. The store
-    // lock must not be held there, or needle writes and the heartbeat, which
-    // take store.write(), stall behind it. A needle overwritten meanwhile is
-    // streamed once, as its new copy, the way Go's scan reads on to EOF.
+    // A client that stops reading parks the scan waiting for channel space. The
+    // store lock must not be held there, or needle writes and the heartbeat,
+    // which take store.write(), stall behind it. A needle overwritten before the
+    // scan reaches it is streamed once, as its new copy, the way Go's scan reads
+    // on to EOF.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_read_all_needles_releases_the_store_lock_while_parked() {
         let (service, _tmp) = make_local_service_with_volume("", None);
@@ -7695,6 +7699,50 @@ mod tests {
         want.push(138);
         assert_eq!(got, want);
         assert_eq!(needles.last().unwrap().needle_blob, b"overwritten");
+    }
+
+    // The record the scan is parked on is checked for liveness only once it has
+    // channel space, so overwriting it meanwhile streams it once, as its new
+    // copy, not the old copy followed by the new one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_all_needles_skips_a_record_overwritten_while_parked() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        for id in 100..104 {
+            write_volume_needle(&service, id, b"old");
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let state = service.state.clone();
+        let producer = tokio::task::spawn_blocking(move || {
+            read_all_needles_of_volume(&state, VolumeId(1), &tx).map_err(|e| e.map(|s| s.code()))
+        });
+        // Needle 11 fills the channel and the scan parks on needle 100.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while rx.len() < rx.max_capacity() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the scan never filled the channel"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        // Lets a scan that checks before waiting reach its wait; the fixed
+        // order is correct under any timing.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        write_volume_needle(&service, 100, b"new");
+
+        let mut got = Vec::new();
+        while let Some(item) = rx.recv().await {
+            let n = item.unwrap();
+            got.push((n.needle_id, n.needle_blob));
+        }
+        assert_eq!(producer.await.unwrap(), Ok(()));
+        let want: Vec<(u64, Vec<u8>)> = vec![
+            (11, b"ec-generate".to_vec()),
+            (101, b"old".to_vec()),
+            (102, b"old".to_vec()),
+            (103, b"old".to_vec()),
+            (100, b"new".to_vec()),
+        ];
+        assert_eq!(got, want);
     }
 
     // After a vacuum commit the needle map describes the new .dat, not the
