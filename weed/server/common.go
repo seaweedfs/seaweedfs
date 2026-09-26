@@ -288,24 +288,6 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 	}
 }
 
-// committedWriter tracks whether anything reached the client, so a stream
-// failure after commit can abort the transfer instead of writing an error
-// body that might exactly fill the missing bytes of a declared Content-Length.
-type committedWriter struct {
-	http.ResponseWriter
-	committed bool
-}
-
-func (w *committedWriter) WriteHeader(statusCode int) {
-	w.committed = true
-	w.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (w *committedWriter) Write(p []byte) (int, error) {
-	w.committed = true
-	return w.ResponseWriter.Write(p)
-}
-
 // countedWriter marks the response committed as soon as writeFn buffers any
 // bytes — the deferred flush will emit them as the start of a 200 response
 // even if the stream fails afterwards.
@@ -321,8 +303,6 @@ func (w *countedWriter) Write(p []byte) (int, error) {
 }
 
 func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, prepareWriteFn func(offset int64, size int64) (filer.DoStreamContent, error)) error {
-	tw := &committedWriter{ResponseWriter: w}
-	w = tw
 	rangeReq := r.Header.Get("Range")
 	bufferedWriter := writePool.Get().(*bufio.Writer)
 	bufferedWriter.Reset(w)
@@ -340,7 +320,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		}
 		cw := &countedWriter{Writer: bufferedWriter}
 		if err = writeFn(cw); err != nil {
-			if tw.committed || cw.n > 0 {
+			if cw.n > 0 {
 				// Headers and declared Content-Length are already sent; the only
 				// signal left is a failed transfer — appending error text could
 				// fill the missing bytes and look complete.
