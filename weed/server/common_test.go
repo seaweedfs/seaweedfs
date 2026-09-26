@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -260,6 +261,53 @@ func TestProcessRangeRequestRanges(t *testing.T) {
 		if tt.wantBody != "" && w.Body.String() != tt.wantBody {
 			t.Errorf("%s: body %q, want %q", tt.rangeHeader, w.Body.String(), tt.wantBody)
 		}
+	}
+}
+
+// Once body bytes are committed, a stream failure must abort the transfer:
+// http.Error's text could exactly fill the withheld bytes of the declared
+// Content-Length and look like a complete body.
+func TestProcessRangeRequestAbortsCommittedResponseOnStreamError(t *testing.T) {
+	data := []byte("0123456789")
+	serve := func() (*httptest.ResponseRecorder, interface{}) {
+		r := httptest.NewRequest(http.MethodGet, "/test.txt", nil)
+		w := httptest.NewRecorder()
+		var panicVal interface{}
+		func() {
+			defer func() { panicVal = recover() }()
+			_ = ProcessRangeRequest(r, w, int64(len(data)), "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
+				return func(writer io.Writer) error {
+					_, _ = writer.Write(data[:4])
+					return errors.New("needle checksum mismatch")
+				}, nil
+			})
+		}()
+		return w, panicVal
+	}
+
+	w, panicVal := serve()
+	if panicVal != http.ErrAbortHandler {
+		t.Fatalf("panic = %v, want http.ErrAbortHandler", panicVal)
+	}
+	if w.Body.Len() >= len(data) {
+		t.Errorf("body has %d bytes, want fewer than %d for a failed transfer", w.Body.Len(), len(data))
+	}
+}
+
+// A failure before any byte reaches the client still answers a proper 500.
+func TestProcessRangeRequestErrorsBeforeCommit(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/test.txt", nil)
+	w := httptest.NewRecorder()
+	err := ProcessRangeRequest(r, w, 10, "text/plain", func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			return errors.New("volume not found")
+		}, nil
+	})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status %d, want 500", w.Code)
 	}
 }
 
