@@ -21,6 +21,7 @@ use super::volume_server::{VolumeServerState, normalize_outgoing_http_url, to_ht
 use crate::config::ReadMode;
 use crate::metrics;
 use crate::pb::volume_server_pb;
+use crate::storage::needle::CRC;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
 
@@ -167,6 +168,10 @@ struct StreamingBody {
     /// Compaction revision at the time of the initial read; if the volume's revision
     /// changes between chunks, the needle may have moved and we must re-lookup its offset.
     compaction_revision: u16,
+    /// Checksum stored in the needle tail.
+    expected_checksum: u32,
+    /// Running checksum over the emitted data.
+    crc: CRC,
 }
 
 impl http_body::Body for StreamingBody {
@@ -187,7 +192,32 @@ impl http_body::Body for StreamingBody {
                         match result {
                             Ok(Ok(chunk)) => {
                                 let len = chunk.len();
+                                self.crc = self.crc.update(&chunk);
                                 self.pos += len;
+                                // The last frame is held back until the checksum verifies
+                                // (Go parity: readNeedleDataInto). On a mismatch it is
+                                // never emitted, so the response ends short of the declared
+                                // Content-Length and the reader sees a failed transfer.
+                                if self.pos >= self.data_size as usize {
+                                    let ok = self.expected_checksum == self.crc.0
+                                        || self.expected_checksum == self.crc.legacy_value();
+                                    if !ok {
+                                        metrics::HANDLER_COUNTER
+                                            .with_label_values(&[metrics::ERROR_CRC])
+                                            .inc();
+                                        return std::task::Poll::Ready(Some(Err(
+                                            std::io::Error::new(
+                                                std::io::ErrorKind::InvalidData,
+                                                format!(
+                                                    "needle data checksum {} expected {} for needle {}",
+                                                    self.crc.0,
+                                                    self.expected_checksum,
+                                                    self.needle_id
+                                                ),
+                                            ),
+                                        )));
+                                    }
+                                }
                                 return std::task::Poll::Ready(Some(Ok(http_body::Frame::data(
                                     chunk,
                                 ))));
@@ -1512,6 +1542,8 @@ async fn get_or_head_handler_inner(
             volume_id: info.volume_id,
             needle_id: info.needle_id,
             compaction_revision: info.compaction_revision,
+            expected_checksum: info.checksum,
+            crc: CRC(0),
         };
 
         let body = Body::new(streaming);
@@ -4582,5 +4614,128 @@ mod tests {
         assert_eq!(locations[0].grpc_port, 5311);
 
         server.abort();
+    }
+
+    fn streaming_test_state() -> Arc<VolumeServerState> {
+        use crate::security::{Guard, SigningKey};
+        use crate::server::volume_server::RuntimeMetricsConfig;
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::store::Store;
+        use std::sync::RwLock;
+        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
+
+        Arc::new(VolumeServerState {
+            store: RwLock::new(Store::new(NeedleMapKind::InMemory)),
+            guard: RwLock::new(Guard::new(
+                &[],
+                SigningKey(vec![]),
+                0,
+                SigningKey(vec![]),
+                0,
+            )),
+            is_stopping: RwLock::new(false),
+            maintenance: AtomicBool::new(false),
+            state_version: AtomicU32::new(0),
+            concurrent_upload_limit: 0,
+            concurrent_download_limit: 0,
+            inflight_upload_data_timeout: std::time::Duration::ZERO,
+            inflight_download_data_timeout: std::time::Duration::ZERO,
+            inflight_upload_bytes: AtomicI64::new(0),
+            inflight_download_bytes: AtomicI64::new(0),
+            upload_notify: tokio::sync::Notify::new(),
+            download_notify: tokio::sync::Notify::new(),
+            data_center: String::new(),
+            rack: String::new(),
+            file_size_limit_bytes: 0,
+            maintenance_byte_per_second: 0,
+            is_heartbeating: AtomicBool::new(false),
+            has_master: false,
+            pre_stop_seconds: 0,
+            volume_state_notify: tokio::sync::Notify::new(),
+            write_queue: std::sync::OnceLock::new(),
+            read_mode: crate::config::ReadMode::Local,
+            allow_untrusted_remote_endpoints: false,
+            master_url: String::new(),
+            master_urls: Vec::new(),
+            seed_master_set: std::collections::HashSet::new(),
+            current_master_url: tokio::sync::RwLock::new(String::new()),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
+            outgoing_grpc_tls: None,
+            metrics_runtime: RwLock::new(RuntimeMetricsConfig::default()),
+            metrics_notify: tokio::sync::Notify::new(),
+            fix_jpg_orientation: false,
+            has_slow_read: false,
+            read_buffer_size_bytes: 4 * 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
+            state_file_path: String::new(),
+        })
+    }
+
+    /// Go's readNeedleDataInto holds back the last chunk of a whole-needle read
+    /// until the checksum verifies; a streamed needle that fails its CRC must
+    /// likewise end short of the declared length instead of looking complete.
+    #[tokio::test]
+    async fn test_streaming_body_checksum_failure_drops_last_chunk() {
+        use futures::StreamExt;
+        use std::io::Write;
+
+        let data: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&data).unwrap();
+        let file = tmp.reopen().unwrap();
+
+        let control = Arc::new(crate::storage::volume::DataFileAccessControl::default());
+        let mk_body = |expected_checksum: u32, file: &std::fs::File| StreamingBody {
+            source: crate::storage::volume::NeedleStreamSource::Local(file.try_clone().unwrap()),
+            data_offset: 0,
+            data_size: data.len() as u32,
+            pos: 0,
+            chunk_size: 4096,
+            data_file_access_control: control.clone(),
+            hold_read_lock_for_stream: true,
+            _held_read_lease: None,
+            pending: None,
+            state: None,
+            tracked_bytes: 0,
+            server_state: streaming_test_state(),
+            volume_id: VolumeId(1),
+            needle_id: NeedleId(7),
+            compaction_revision: 0,
+            expected_checksum,
+            crc: CRC(0),
+        };
+
+        // Healthy needle: every byte is delivered.
+        let body = Body::new(mk_body(CRC::new(&data).0, &file));
+        let mut stream = body.into_data_stream();
+        let mut got = 0usize;
+        while let Some(item) = stream.next().await {
+            got += item.expect("healthy stream errored").len();
+        }
+        assert_eq!(got, data.len());
+
+        // Corrupted needle: the last chunk fails the checksum and is never
+        // emitted — the body ends short of the data size.
+        let body = Body::new(mk_body(CRC::new(&data).0 ^ 0xff, &file));
+        let mut stream = body.into_data_stream();
+        let mut got = 0usize;
+        let mut saw_err = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(bytes) => got += bytes.len(),
+                Err(e) => {
+                    assert!(
+                        e.to_string().contains("checksum"),
+                        "unexpected stream error: {e}"
+                    );
+                    saw_err = true;
+                }
+            }
+        }
+        assert!(saw_err, "corrupted stream must fail");
+        assert!(got < data.len(), "delivered {got} of {} bytes", data.len());
     }
 }
