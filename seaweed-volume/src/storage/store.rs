@@ -710,17 +710,6 @@ impl Store {
         vol.needle_read_plan(id, read_deleted)
     }
 
-    /// Re-lookup a needle's data-file offset after compaction may have moved it.
-    /// Returns `(new_data_file_offset, current_compaction_revision)`.
-    pub fn re_lookup_needle_data_offset(
-        &self,
-        vid: VolumeId,
-        needle_id: NeedleId,
-    ) -> Result<(u64, u16), VolumeError> {
-        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
-        vol.re_lookup_needle_data_offset(needle_id)
-    }
-
     /// Write a needle to a volume. With `fsync` the volume flushes its .dat
     /// before returning, so the caller can ack a durable write.
     pub fn write_volume_needle(

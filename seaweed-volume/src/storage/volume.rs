@@ -477,13 +477,6 @@ pub(crate) enum NeedleStreamSource {
 }
 
 impl NeedleStreamSource {
-    pub(crate) fn clone_for_read(&self) -> io::Result<Self> {
-        match self {
-            NeedleStreamSource::Local(file) => Ok(NeedleStreamSource::Local(file.try_clone()?)),
-            NeedleStreamSource::Remote(remote) => Ok(NeedleStreamSource::Remote(remote.clone())),
-        }
-    }
-
     pub(crate) fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
         match self {
             NeedleStreamSource::Local(file) => read_exact_at(file, buf, offset),
@@ -633,9 +626,7 @@ pub(crate) struct NeedleReadPlan {
     offset: i64,
     size: Size,
     version: Version,
-    volume_id: VolumeId,
     needle_id: NeedleId,
-    compaction_revision: u16,
     data_file_access_control: Arc<DataFileAccessControl>,
     io_errors: Arc<IoErrorTracker>,
 }
@@ -705,9 +696,7 @@ impl NeedleReadPlan {
             data_file_offset,
             data_size: n.data_size,
             data_file_access_control: self.data_file_access_control,
-            volume_id: self.volume_id,
             needle_id: self.needle_id,
-            compaction_revision: self.compaction_revision,
             checksum: n.checksum.0,
         }
     }
@@ -756,14 +745,7 @@ pub struct NeedleStreamInfo {
     pub data_size: u32,
     /// Per-volume file access lock used to match Go's slow-read behavior.
     pub data_file_access_control: Arc<DataFileAccessControl>,
-    /// Volume ID — used to re-lookup needle offset if compaction occurs during streaming.
-    pub volume_id: VolumeId,
-    /// Needle ID — used to re-lookup needle offset if compaction occurs during streaming.
     pub needle_id: NeedleId,
-    /// Compaction revision at the time of the initial read. If this changes during
-    /// streaming, the needle's disk offset must be re-read from the needle map because
-    /// compaction may have moved the needle to a different location.
-    pub compaction_revision: u16,
     /// Checksum stored in the needle tail, verified once the last chunk has
     /// been read — before that frame is emitted.
     pub checksum: u32,
@@ -1885,9 +1867,7 @@ impl Volume {
             offset: nv.offset.to_actual_offset(),
             size,
             version: self.version(),
-            volume_id: self.id,
             needle_id: id,
-            compaction_revision: self.super_block.compaction_revision,
             data_file_access_control: self.data_file_access_control.clone(),
             io_errors: self.io_errors.clone(),
         })
@@ -1910,39 +1890,6 @@ impl Volume {
         } else {
             Err(VolumeError::Io(io::Error::other("dat file not open")))
         }
-    }
-
-    /// Re-lookup a needle's data-file offset after compaction may have moved it.
-    ///
-    /// Returns `(new_data_file_offset, current_compaction_revision)` or an error
-    /// if the needle is no longer present / has been deleted.
-    ///
-    /// This matches Go's `readNeedleDataInto` behaviour: when the volume's
-    /// `CompactionRevision` changes between streaming chunks, the needle offset
-    /// is re-read from the needle map because compaction may have relocated it.
-    pub fn re_lookup_needle_data_offset(
-        &self,
-        needle_id: NeedleId,
-    ) -> Result<(u64, u16), VolumeError> {
-        let nm = self.nm_or_not_found()?;
-        let nv = nm.get(needle_id)?.ok_or(VolumeError::NotFound)?;
-        if nv.offset.is_zero() {
-            return Err(VolumeError::NotFound);
-        }
-        if nv.size.is_deleted() {
-            return Err(VolumeError::Deleted);
-        }
-
-        let offset = nv.offset.to_actual_offset();
-        let version = self.version();
-
-        let data_file_offset = if version == VERSION_1 {
-            offset as u64 + NEEDLE_HEADER_SIZE as u64
-        } else {
-            offset as u64 + NEEDLE_HEADER_SIZE as u64 + 4 // skip DataSize (4 bytes)
-        };
-
-        Ok((data_file_offset, self.super_block.compaction_revision))
     }
 
     // ---- Write ----
@@ -7527,83 +7474,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compaction_revision_relookup() {
-        // Verifies that re_lookup_needle_data_offset returns the correct data offset
-        // and compaction revision, and that after compaction the offset changes.
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        let mut v = make_test_volume(dir);
-
-        // Write two needles
-        let mut n1 = Needle {
-            id: NeedleId(1),
-            cookie: Cookie(0xAABBCCDD),
-            data: b"first-needle-data".to_vec(),
-            data_size: 17,
-            ..Needle::default()
-        };
-        v.write_needle(&mut n1, true, false).unwrap();
-
-        let mut n2 = Needle {
-            id: NeedleId(2),
-            cookie: Cookie(0x11223344),
-            data: b"second-needle-data".to_vec(),
-            data_size: 18,
-            ..Needle::default()
-        };
-        v.write_needle(&mut n2, true, false).unwrap();
-
-        // Get initial revision and offset for needle 1
-        let initial_rev = v.super_block.compaction_revision;
-        let (initial_offset, rev) = v.re_lookup_needle_data_offset(NeedleId(1)).unwrap();
-        assert_eq!(rev, initial_rev);
-        assert!(initial_offset > 0, "data offset should be positive");
-
-        // Delete needle 2 so compaction removes it
-        let mut del_n2 = Needle {
-            id: NeedleId(2),
-            cookie: Cookie(0x11223344),
-            ..Needle::default()
-        };
-        v.delete_needle(&mut del_n2).unwrap();
-
-        // Compact the volume — this increments compaction_revision and may move needles
-        v.compact_by_index(0, 0, |_| true).unwrap();
-        v.commit_compact().unwrap();
-
-        // After compaction, the revision should have changed
-        let new_rev = v.super_block.compaction_revision;
-        assert_eq!(
-            new_rev,
-            initial_rev + 1,
-            "compaction should increment revision"
-        );
-
-        // Re-lookup needle 1 — should still be found with the new revision
-        let (new_offset, relookup_rev) = v.re_lookup_needle_data_offset(NeedleId(1)).unwrap();
-        assert_eq!(relookup_rev, new_rev);
-        assert!(new_offset > 0, "data offset should still be positive");
-
-        // The data should still be readable correctly after compaction
-        let mut read_n1 = Needle {
-            id: NeedleId(1),
-            ..Needle::default()
-        };
-        v.read_needle(&mut read_n1).unwrap();
-        assert_eq!(read_n1.data, b"first-needle-data");
-
-        // Deleted needle should not be found
-        let result = v.re_lookup_needle_data_offset(NeedleId(2));
-        assert!(
-            result.is_err(),
-            "deleted needle should not be found after compaction"
-        );
-    }
-
-    #[test]
-    fn test_stream_info_includes_compaction_revision() {
-        // Verifies that NeedleStreamInfo carries the volume's compaction revision
-        // so that StreamingBody can detect when compaction has occurred.
+    fn test_stream_info_locates_needle_data() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = make_test_volume(dir);
@@ -7629,9 +7500,7 @@ mod tests {
         plan.read_meta(&mut read_n).unwrap();
         let info = plan.into_stream_info(&read_n);
 
-        assert_eq!(info.volume_id, VolumeId(1));
         assert_eq!(info.needle_id, NeedleId(42));
-        assert_eq!(info.compaction_revision, v.super_block.compaction_revision);
         assert_eq!(info.data_size, data.len() as u32);
         assert!(info.data_file_offset > 0);
     }
