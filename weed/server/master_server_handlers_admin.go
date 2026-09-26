@@ -61,7 +61,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	// glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.option.MaxParallelVacuumPerServer, 0, "", ms.preallocateSize, false)
+	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.option.MaxParallelVacuumPerServer, 0, "", ms.preallocateSize, false, 0)
 	ms.dirStatusHandler(w, r)
 }
 
