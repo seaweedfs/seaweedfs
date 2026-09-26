@@ -194,11 +194,12 @@ func NewUploaderWithHttpClient(httpClient HTTPClient) *Uploader {
 	}
 }
 
-func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, err error), uploadOption *UploadOption, data []byte) (fileId string, uploadResult *UploadResult, err error) {
+func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, fsync bool, err error), uploadOption *UploadOption, data []byte) (fileId string, uploadResult *UploadResult, err error) {
 	doUploadFunc := func() error {
 		var host string
 		var auth security.EncodedJwt
-		fileId, host, auth, err = assignFn()
+		var fsync bool
+		fileId, host, auth, fsync, err = assignFn()
 		if err != nil {
 			return err
 		}
@@ -208,6 +209,9 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			genUrl = func(host, fileId string) string { return fmt.Sprintf("http://%s/%s", host, fileId) }
 		}
 		uploadOption.UploadUrl = genUrl(host, fileId)
+		if fsync {
+			uploadOption.UploadUrl = util_http.AppendQueryParameter(uploadOption.UploadUrl, "fsync", "true")
+		}
 		uploadOption.Jwt = auth
 		if util_http.IsProxyChunkUrl(uploadOption.UploadUrl) {
 			// The request addresses the filer, which authorizes it and mints the
@@ -263,7 +267,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 		uploadOption.Md5 = base64.StdEncoding.EncodeToString(digest[:])
 	}
 
-	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {
+	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, fsync bool, err error) {
 		// grpc assign volume
 		if grpcAssignErr := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			assignCtx, assignCancel := context.WithTimeout(context.Background(), assignVolumeTimeout)
@@ -278,6 +282,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 			}
 
 			fileId, auth = resp.FileId, security.EncodedJwt(resp.Auth)
+			fsync = resp.Fsync
 			loc := resp.Location
 			host = filerClient.AdjustedUrl(loc)
 
