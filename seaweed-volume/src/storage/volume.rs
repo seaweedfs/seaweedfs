@@ -116,6 +116,59 @@ fn exceeds_expected_compacted_size(expected_live_bytes: u64, dst_dat_size: u64) 
     expected_live_bytes > dst_dat_size
 }
 
+/// Read and parse the needle at `offset` through `read_at`.
+fn read_needle_with(
+    read_at: impl Fn(&mut [u8], u64) -> Result<(), VolumeError>,
+    n: &mut Needle,
+    offset: i64,
+    size: Size,
+    version: Version,
+) -> Result<(), VolumeError> {
+    match parse_needle_at(&read_at, n, offset, size, version) {
+        Ok(()) => Ok(()),
+        #[cfg(not(feature = "5bytes"))]
+        Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+            if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+        {
+            // Double-read: in 4-byte offset mode, the actual data may be
+            // beyond 32GB due to offset wrapping. Retry at offset + 32GB.
+            parse_needle_at(
+                &read_at,
+                n,
+                offset + MAX_POSSIBLE_VOLUME_SIZE as i64,
+                size,
+                version,
+            )
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn parse_needle_at(
+    read_at: &impl Fn(&mut [u8], u64) -> Result<(), VolumeError>,
+    n: &mut Needle,
+    offset: i64,
+    size: Size,
+    version: Version,
+) -> Result<(), VolumeError> {
+    // Storage guard: negativity-only (Go parity — storage allocates what the
+    // index says). Size(0) and >1GiB map sizes must still read; only
+    // negative wraps/panics. Transport cap lives in RPC handlers only.
+    if size.0 < 0 {
+        return Err(VolumeError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid needle size {}", size.0),
+        )));
+    }
+    let actual_size = get_actual_size(size, version);
+
+    let mut buf = vec![0u8; actual_size as usize];
+    read_at(&mut buf, offset as u64)?;
+
+    n.read_bytes(&buf, offset, size, version)?;
+    Ok(())
+}
+
 // ============================================================================
 // VolumeInfo (.vif persistence)
 // ============================================================================
@@ -589,6 +642,231 @@ impl DatScanPlan {
     }
 }
 
+/// Holds `Volume::is_compacting` set; dropping it clears the flag.
+struct CompactionClaim(Arc<AtomicBool>);
+
+impl CompactionClaim {
+    fn try_claim(flag: &Arc<AtomicBool>) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| CompactionClaim(flag.clone()))
+    }
+}
+
+impl Drop for CompactionClaim {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// A compaction copy that runs off the store lock: `.dat`/`.idx` are
+/// append-only below `idx_size`, and `makeup_diff` replays what lands after.
+pub(crate) struct CompactionJob {
+    id: VolumeId,
+    src_dat: NeedleStreamSource,
+    src_idx: File,
+    idx_size: u64,
+    cpd_path: String,
+    cpx_path: String,
+    version: Version,
+    super_block: SuperBlock,
+    io_errors: Arc<IoErrorTracker>,
+    _claim: CompactionClaim,
+}
+
+impl CompactionJob {
+    pub(crate) fn run<F>(self, progress_fn: F) -> Result<(), VolumeError>
+    where
+        F: Fn(i64) -> bool,
+    {
+        let cpd_path = &self.cpd_path;
+        let cpx_path = &self.cpx_path;
+        let version = self.version;
+
+        // Write new super block with incremented compaction revision
+        let mut new_sb = self.super_block.clone();
+        new_sb.compaction_revision += 1;
+        let sb_bytes = new_sb.to_bytes();
+
+        let mut dst = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(cpd_path)?;
+        dst.write_all(&sb_bytes)?;
+        let mut new_offset = sb_bytes.len() as i64;
+
+        // Build new index in memory
+        let mut new_nm = CompactNeedleMap::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let entries = self.live_entries()?;
+
+        let mut skipped_needles: u64 = 0;
+        let mut skipped_data_bytes: u64 = 0;
+        let mut expected_live_bytes: u64 = 0;
+        for (id, offset, size) in entries {
+            // Progress callback
+            if !progress_fn(offset.to_actual_offset()) {
+                // Interrupted
+                let _ = fs::remove_file(cpd_path);
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "compaction interrupted",
+                )));
+            }
+
+            // Read needle from source
+            let mut n = Needle {
+                id,
+                ..Needle::default()
+            };
+            let read = read_needle_with(
+                |buf, at| self.src_dat.read_exact_at(buf, at).map_err(VolumeError::Io),
+                &mut n,
+                offset.to_actual_offset(),
+                size,
+                version,
+            );
+            if let Err(e) = read {
+                // Record EIO for health monitoring (parity with Go's checkReadWriteError).
+                if let VolumeError::Io(ref io_err) = e {
+                    self.io_errors.check_read_write_error(Some(io_err));
+                }
+                // Only drop the entry when the failure is one of the well-
+                // known permanent-corruption shapes. A transient disk fault,
+                // a tiered-read timeout, or a Windows hardware error (which
+                // surfaces as a generic Io rather than UnexpectedEof) must
+                // abort so an operator notices, rather than silently
+                // compacting away data that might come back on retry.
+                if !is_skippable_needle_read_error(&e) {
+                    return Err(VolumeError::Io(io::Error::other(format!(
+                        "cannot hydrate needle from file: {}",
+                        e
+                    ))));
+                }
+                skipped_needles += 1;
+                if size.is_valid() {
+                    skipped_data_bytes += size.0 as u64;
+                }
+                warn!(
+                    volume_id = self.id.0,
+                    key = id.0,
+                    offset = offset.to_actual_offset(),
+                    size = size.0,
+                    error = %e,
+                    "vacuum: dropping unreadable needle"
+                );
+                continue;
+            }
+
+            // Skip TTL-expired needles using the volume's TTL (matches Go's volume_vacuum.go)
+            if n.has_ttl() {
+                let ttl_minutes = self.super_block.ttl.minutes();
+                if ttl_minutes > 0 && n.last_modified > 0 {
+                    let expire_at = n.last_modified + (ttl_minutes as u64) * 60;
+                    if now >= expire_at {
+                        continue;
+                    }
+                }
+            }
+
+            // Tally the live bytes from the frozen snapshot this loop copied
+            // from, not the live needle map. Unreadable needles return before
+            // this point, so no further skipped-byte adjustment is needed.
+            expected_live_bytes += size.0 as u64;
+
+            // Write needle to destination
+            let bytes = n.write_bytes(version);
+            dst.write_all(&bytes)?;
+
+            // Update new index
+            new_nm.put(id, Offset::from_actual_offset(new_offset), n.size)?;
+            new_offset += bytes.len() as i64;
+        }
+
+        if skipped_needles > 0 {
+            warn!(
+                volume_id = self.id.0,
+                skipped_needles,
+                skipped_data_bytes,
+                "vacuum: dropped unreadable index entries during compaction"
+            );
+        }
+
+        dst.sync_all()?;
+
+        if self.super_block.ttl.is_empty() {
+            let dst_dat_size = dst.metadata()?.len();
+            if exceeds_expected_compacted_size(expected_live_bytes, dst_dat_size) {
+                let _ = fs::remove_file(cpd_path);
+                let _ = fs::remove_file(cpx_path);
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "volume {} unexpected new data size: {} does not match expected live content size {} from the pre-compaction snapshot",
+                        self.id.0, dst_dat_size, expected_live_bytes
+                    ),
+                )));
+            }
+        }
+
+        // Save new index
+        new_nm.save_to_idx(cpx_path)?;
+
+        Ok(())
+    }
+
+    /// Replay `.idx` up to the recorded size, as Go's `LoadFromIdx` does, and
+    /// return the live entries in `.dat` order. A short read fails: treating
+    /// it as the whole index would compact away every needle past it.
+    fn live_entries(&self) -> Result<Vec<(NeedleId, Offset, Size)>, VolumeError> {
+        let rows = self.idx_size / NEEDLE_MAP_ENTRY_SIZE as u64;
+        let mut snapshot = CompactNeedleMap::new();
+        let mut seen = 0u64;
+        // Rows past the recorded size are makeup_diff's; do not read them.
+        let mut reader = io::BufReader::new((&self.src_idx).take(self.idx_size));
+        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        while seen < rows {
+            match reader.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+            let (key, offset, size) = idx_entry_from_bytes(&buf);
+            if offset.is_zero() || size.is_deleted() {
+                snapshot.delete(key, offset)?;
+            } else {
+                snapshot.put(key, offset, size)?;
+            }
+            seen += 1;
+        }
+        if seen < rows {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!(
+                    "volume {} index has {} entries, expected {}",
+                    self.id.0, seen, rows
+                ),
+            )));
+        }
+
+        let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
+        let _ = snapshot.ascending_visit(|id, nv| {
+            if !nv.offset.is_zero() && !nv.size.is_deleted() {
+                entries.push((id, nv.offset, nv.size));
+            }
+            Ok::<(), std::convert::Infallible>(())
+        });
+        entries.sort_by_key(|(_, offset, _)| *offset);
+        Ok(entries)
+    }
+}
+
 pub struct NeedleStreamInfo {
     /// Stream source for the dat file, local or remote.
     pub(crate) source: NeedleStreamSource,
@@ -699,14 +977,15 @@ pub struct Volume {
     last_compact_index_offset: u64,
     last_compact_revision: u16,
 
-    is_compacting: bool,
+    /// Shared with an in-flight `CompactionJob`, which runs off the store lock.
+    is_compacting: Arc<AtomicBool>,
 
     /// Compaction speed limit in bytes per second (0 = unlimited).
     pub compaction_byte_per_second: i64,
 
     /// Consecutive storage-media errors and the quarantine they lead to,
     /// for volume health monitoring.
-    io_errors: IoErrorTracker,
+    io_errors: Arc<IoErrorTracker>,
 
     /// Protobuf VolumeInfo for tiered storage (.vif file).
     ///
@@ -789,9 +1068,9 @@ impl Volume {
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
-            is_compacting: false,
+            is_compacting: Arc::new(AtomicBool::new(false)),
             compaction_byte_per_second: 0,
-            io_errors: IoErrorTracker::default(),
+            io_errors: Arc::default(),
             volume_info: PbVolumeInfo::default(),
         };
 
@@ -829,16 +1108,23 @@ impl Volume {
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
-            is_compacting: false,
+            is_compacting: Arc::new(AtomicBool::new(false)),
             compaction_byte_per_second: 0,
-            io_errors: IoErrorTracker::default(),
+            io_errors: Arc::default(),
             volume_info: PbVolumeInfo::default(),
         }
     }
 
     /// Returns true if the volume is currently being compacted.
     pub fn is_compacting(&self) -> bool {
-        self.is_compacting
+        self.is_compacting.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn compacting_error(&self) -> VolumeError {
+        VolumeError::Io(io::Error::other(format!(
+            "volume {} is compacting",
+            self.id
+        )))
     }
 
     // ---- File naming (matching Go) ----
@@ -1527,43 +1813,13 @@ impl Volume {
         size: Size,
         _read_option: &mut ReadOption,
     ) -> Result<(), VolumeError> {
-        match self.read_needle_blob_and_parse(n, offset, size) {
-            Ok(()) => Ok(()),
-            #[cfg(not(feature = "5bytes"))]
-            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
-                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
-            {
-                // Double-read: in 4-byte offset mode, the actual data may be
-                // beyond 32GB due to offset wrapping. Retry at offset + 32GB.
-                self.read_needle_blob_and_parse(n, offset + MAX_POSSIBLE_VOLUME_SIZE as i64, size)
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    fn read_needle_blob_and_parse(
-        &self,
-        n: &mut Needle,
-        offset: i64,
-        size: Size,
-    ) -> Result<(), VolumeError> {
-        let version = self.version();
-        // Storage guard: negativity-only (Go parity — storage allocates what the
-        // index says). Size(0) and >1GiB map sizes must still read; only
-        // negative wraps/panics. Transport cap lives in RPC handlers only.
-        if size.0 < 0 {
-            return Err(VolumeError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid needle size {}", size.0),
-            )));
-        }
-        let actual_size = get_actual_size(size, version);
-
-        let mut buf = vec![0u8; actual_size as usize];
-        self.read_exact_at_backend(&mut buf, offset as u64)?;
-
-        n.read_bytes(&buf, offset, size, version)?;
-        Ok(())
+        read_needle_with(
+            |buf, at| self.read_exact_at_backend(buf, at),
+            n,
+            offset,
+            size,
+            self.version(),
+        )
     }
 
     /// Read raw needle blob at a specific offset.
@@ -1577,7 +1833,7 @@ impl Volume {
 
     fn read_needle_blob_unlocked(&self, offset: i64, size: Size) -> Result<Vec<u8>, VolumeError> {
         let version = self.version();
-        // Storage guard: negativity-only (Go parity). See read_needle_blob_and_parse.
+        // Storage guard: negativity-only (Go parity). See parse_needle_at.
         if size.0 < 0 {
             return Err(VolumeError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -3412,7 +3668,7 @@ impl Volume {
 
     /// Throttle IO during compaction to avoid saturating disk.
     pub fn maybe_throttle_compaction(&self, bytes_written: u64) {
-        if self.compaction_byte_per_second <= 0 || !self.is_compacting {
+        if self.compaction_byte_per_second <= 0 || !self.is_compacting() {
             return;
         }
         // Simple throttle: sleep based on bytes written vs allowed rate
@@ -3611,7 +3867,7 @@ impl Volume {
         if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
         }
-        // Storage guard: negativity-only (Go parity). See read_needle_blob_and_parse.
+        // Storage guard: negativity-only (Go parity). See parse_needle_at.
         if size.0 < 0 {
             return Err(VolumeError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -3816,195 +4072,70 @@ impl Volume {
     where
         F: Fn(i64) -> bool,
     {
-        if self.is_compacting {
-            return Ok(()); // already compacting
+        match self.begin_compact_by_index()? {
+            Some(job) => job.run(progress_fn),
+            None => Ok(()), // already compacting
         }
-        self.is_compacting = true;
-
-        let result = self.do_compact_by_index(progress_fn);
-
-        self.is_compacting = false;
-        result
     }
 
-    fn do_compact_by_index<F>(&mut self, progress_fn: F) -> Result<(), VolumeError>
-    where
-        F: Fn(i64) -> bool,
-    {
-        // Guard against nil needle map (matches Go's nil check before compaction sync)
-        if self.nm.is_none() {
+    /// Claim the compaction, record the `makeup_diff` watermark, and open the
+    /// sources the copy reads, so the caller can run the copy after dropping
+    /// its store guard. `None` means a compaction is already running.
+    pub(crate) fn begin_compact_by_index(&mut self) -> Result<Option<CompactionJob>, VolumeError> {
+        let Some(claim) = CompactionClaim::try_claim(&self.is_compacting) else {
+            return Ok(None);
+        };
+
+        // Guard against nil needle map (matches Go's nil check)
+        let Some(nm) = self.nm.as_ref() else {
             return Err(VolumeError::Io(io::Error::other(format!(
                 "volume {} needle map is nil",
                 self.id
             ))));
+        };
+        if let Some(e) = self.unavailable_error() {
+            return Err(e);
         }
+        let idx_size = nm.index_file_size();
+
+        // Fresh opens, not `try_clone`: see `dat_scan_plan`.
+        let src_dat = if self.dat_file.is_some() {
+            NeedleStreamSource::Local(open_volume_file(
+                OpenOptions::new().read(true),
+                self.file_name(".dat"),
+            )?)
+        } else if let Some(remote) = self.remote_dat_file() {
+            NeedleStreamSource::Remote(remote)
+        } else {
+            return Err(VolumeError::Io(io::Error::other("dat file not open")));
+        };
+        let src_idx = open_volume_file(OpenOptions::new().read(true), self.file_name(".idx"))?;
 
         // Record state before compaction for makeupDiff
-        self.last_compact_index_offset = self.nm.as_ref().map_or(0, |nm| nm.index_file_size());
+        self.last_compact_index_offset = idx_size;
         self.last_compact_revision = self.super_block.compaction_revision;
 
-        // Sync current data
-        self.sync_to_disk()?;
-
-        let cpd_path = self.file_name(".cpd");
-        let cpx_path = self.file_name(".cpx");
-        let version = self.version();
-
-        // Write new super block with incremented compaction revision
-        let mut new_sb = self.super_block.clone();
-        new_sb.compaction_revision += 1;
-        let sb_bytes = new_sb.to_bytes();
-
-        let mut dst = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&cpd_path)?;
-        dst.write_all(&sb_bytes)?;
-        let mut new_offset = sb_bytes.len() as i64;
-
-        // Build new index in memory
-        let mut new_nm = CompactNeedleMap::new();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        // Collect live entries from needle map (sorted ascending)
-        let nm = self.nm.as_ref().ok_or(VolumeError::NotInitialized)?;
-        let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
-        for (id, nv) in nm.iter_entries().map_err(VolumeError::Io)? {
-            if nv.offset.is_zero() || nv.size.is_deleted() {
-                continue;
-            }
-            entries.push((id, nv.offset, nv.size));
-        }
-        entries.sort_by_key(|(_, offset, _)| *offset);
-
-        let mut skipped_needles: u64 = 0;
-        let mut skipped_data_bytes: u64 = 0;
-        let mut expected_live_bytes: u64 = 0;
-        for (id, offset, size) in entries {
-            // Progress callback
-            if !progress_fn(offset.to_actual_offset()) {
-                // Interrupted
-                let _ = fs::remove_file(&cpd_path);
-                return Err(VolumeError::Io(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "compaction interrupted",
-                )));
-            }
-
-            // Read needle from source
-            let mut n = Needle {
-                id,
-                ..Needle::default()
-            };
-            match self.read_needle_data_at(&mut n, offset.to_actual_offset(), size) {
-                Ok(()) => {}
-                Err(e) => {
-                    // Record EIO for health monitoring (parity with Go's checkReadWriteError).
-                    if let VolumeError::Io(ref io_err) = e {
-                        self.check_read_write_error(Some(io_err));
-                    }
-                    // Only drop the entry when the failure is one of the well-
-                    // known permanent-corruption shapes. A transient disk fault,
-                    // a tiered-read timeout, or a Windows hardware error (which
-                    // surfaces as a generic Io rather than UnexpectedEof) must
-                    // abort so an operator notices, rather than silently
-                    // compacting away data that might come back on retry.
-                    if !is_skippable_needle_read_error(&e) {
-                        return Err(VolumeError::Io(io::Error::other(format!(
-                            "cannot hydrate needle from file: {}",
-                            e
-                        ))));
-                    }
-                    skipped_needles += 1;
-                    if size.is_valid() {
-                        skipped_data_bytes += size.0 as u64;
-                    }
-                    warn!(
-                        volume_id = self.id.0,
-                        key = id.0,
-                        offset = offset.to_actual_offset(),
-                        size = size.0,
-                        error = %e,
-                        "vacuum: dropping unreadable needle"
-                    );
-                    continue;
-                }
-            }
-
-            // Skip TTL-expired needles using the volume's TTL (matches Go's volume_vacuum.go)
-            if n.has_ttl() {
-                let ttl_minutes = self.super_block.ttl.minutes();
-                if ttl_minutes > 0 && n.last_modified > 0 {
-                    let expire_at = n.last_modified + (ttl_minutes as u64) * 60;
-                    if now >= expire_at {
-                        continue;
-                    }
-                }
-            }
-
-            // Tally the live bytes from the frozen snapshot this loop copied
-            // from, not the live needle map. Unreadable needles return before
-            // this point, so no further skipped-byte adjustment is needed.
-            expected_live_bytes += size.0 as u64;
-
-            // Write needle to destination
-            let bytes = n.write_bytes(version);
-            dst.write_all(&bytes)?;
-
-            // Update new index
-            new_nm.put(id, Offset::from_actual_offset(new_offset), n.size)?;
-            new_offset += bytes.len() as i64;
-        }
-
-        if skipped_needles > 0 {
-            warn!(
-                volume_id = self.id.0,
-                skipped_needles,
-                skipped_data_bytes,
-                "vacuum: dropped unreadable index entries during compaction"
-            );
-        }
-
-        dst.sync_all()?;
-
-        if self.super_block.ttl.is_empty() {
-            let dst_dat_size = dst.metadata()?.len();
-            if exceeds_expected_compacted_size(expected_live_bytes, dst_dat_size) {
-                let _ = fs::remove_file(&cpd_path);
-                let _ = fs::remove_file(&cpx_path);
-                return Err(VolumeError::Io(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    format!(
-                        "volume {} unexpected new data size: {} does not match expected live content size {} from the pre-compaction snapshot",
-                        self.id.0, dst_dat_size, expected_live_bytes
-                    ),
-                )));
-            }
-        }
-
-        // Save new index
-        new_nm.save_to_idx(&cpx_path)?;
-
-        Ok(())
+        Ok(Some(CompactionJob {
+            id: self.id,
+            src_dat,
+            src_idx,
+            idx_size,
+            cpd_path: self.file_name(".cpd"),
+            cpx_path: self.file_name(".cpx"),
+            version: self.version(),
+            super_block: self.super_block.clone(),
+            io_errors: self.io_errors.clone(),
+            _claim: claim,
+        }))
     }
 
     /// Commit a previously completed compaction: swap .cpd/.cpx to .dat/.idx and reload.
     /// Matches Go's isCompactionInProgress CompareAndSwap guard.
     pub fn commit_compact(&mut self) -> Result<(), VolumeError> {
-        if self.is_compacting {
+        let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
             return Ok(()); // already compacting, silently skip (matches Go)
-        }
-        self.is_compacting = true;
-
-        let result = self.do_commit_compact();
-
-        self.is_compacting = false;
-        result
+        };
+        self.do_commit_compact()
     }
 
     fn do_commit_compact(&mut self) -> Result<(), VolumeError> {
@@ -4174,6 +4305,10 @@ impl Volume {
 
     /// Clean up leftover compaction files (.cpd, .cpx).
     pub fn cleanup_compact(&self) -> Result<(), VolumeError> {
+        // An in-flight copy is still writing .cpd/.cpx.
+        if self.is_compacting() {
+            return Err(self.compacting_error());
+        }
         // Refuse to unlink .cpd/.cpx while a .cpc marker exists: those temp files
         // are the only inputs reconcile can roll forward to, so removing them
         // mid-commit would strand a decided swap.
@@ -4378,6 +4513,10 @@ impl Volume {
     /// or nothing is co-located to move, and is used to pull an index a decode
     /// or reconstruct left beside the data back into the configured `-dir.idx`.
     pub fn relocate_index_to(&mut self, new_idx_dir: &str) -> Result<(), VolumeError> {
+        // Moving .idx would strand the .cpx an in-flight copy writes beside it.
+        if self.is_compacting() {
+            return Err(self.compacting_error());
+        }
         let _guard = self.data_file_access_control.write_lock();
 
         if self.dir_idx == new_idx_dir {
@@ -4447,11 +4586,8 @@ impl Volume {
         if (only_empty || only_garbage) && !empty_ok && !garbage_ok {
             return Err(VolumeError::NotEmpty);
         }
-        if self.is_compacting {
-            return Err(VolumeError::Io(io::Error::other(format!(
-                "volume {} is compacting",
-                self.id
-            ))));
+        if self.is_compacting() {
+            return Err(self.compacting_error());
         }
 
         let (storage_name, storage_key) = self.remote_storage_name_key();
@@ -7889,23 +8025,24 @@ mod tests {
             .remove("s3.vif_tierdown_test");
     }
 
-    // A .sdx that cannot be read end to end must abort compaction. Treating the
-    // short scan as the complete live set would commit a volume missing every
-    // needle past the truncation.
+    // An .idx that cannot be read up to the recorded size must abort
+    // compaction. Treating the short scan as the complete live set would
+    // commit a volume missing every needle past the truncation.
     #[test]
-    fn test_compaction_aborts_on_unreadable_sorted_index() {
+    fn test_compaction_aborts_on_truncated_index() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let mut v = reload_as_tiered(dir, "vif_compact_test", 4);
-        let Some(NeedleMap::SortedFile(ref nm)) = v.nm else {
+        let Some(NeedleMap::SortedFile(_)) = v.nm else {
             panic!("tiered volume should search the on-disk .sdx");
         };
-        let sdx_path = nm.db_file_name().to_string();
 
-        let sdx = OpenOptions::new().write(true).open(&sdx_path).unwrap();
-        sdx.set_len(NEEDLE_MAP_ENTRY_SIZE as u64).unwrap();
-        drop(sdx);
-        crate::storage::needle_map::file_pool::pooled_index_files().discard(&sdx_path);
+        let idx = OpenOptions::new()
+            .write(true)
+            .open(v.file_name(".idx"))
+            .unwrap();
+        idx.set_len(NEEDLE_MAP_ENTRY_SIZE as u64).unwrap();
+        drop(idx);
 
         let err = v
             .compact_by_index(0, 0, |_| true)
@@ -7978,6 +8115,79 @@ mod tests {
         };
         v.read_needle(&mut probe).unwrap();
         assert_eq!(probe.data, b"still-readable");
+    }
+
+    // Compaction copies the .idx prefix index_file_size() reports. A read-only
+    // volume's map has no writer, so that must still be the loaded size, or the
+    // copy is empty and the commit drops every needle.
+    #[cfg(unix)]
+    fn check_read_only_compaction_keeps_needles(index_dir_writable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            for i in 1..=3u64 {
+                write_test_needle(&mut v, i, format!("data-{i}").as_bytes());
+            }
+            v.set_read_only_persist(false, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+        let idx_len = fs::metadata(format!("{dir}/1.idx")).unwrap().len();
+
+        let set_mode = |mode: u32| {
+            let mut perms = std::fs::metadata(tmp.path()).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(tmp.path(), perms).unwrap();
+        };
+        if !index_dir_writable {
+            set_mode(0o555);
+        }
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        );
+        set_mode(0o755);
+
+        let mut v = loaded.unwrap();
+        assert_eq!(
+            matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            index_dir_writable
+        );
+        assert_eq!(v.idx_file_size(), idx_len);
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+        for i in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                ..Needle::default()
+            };
+            v.read_needle(&mut n).unwrap();
+            assert_eq!(n.data, format!("data-{i}").as_bytes());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_compacting_a_read_only_volume_keeps_its_needles_sorted_index() {
+        check_read_only_compaction_keeps_needles(true);
+    }
+
+    // The .sdx could not be built, so the index fell back to memory.
+    #[test]
+    #[cfg(unix)]
+    fn test_compacting_a_read_only_volume_keeps_its_needles_in_memory_fallback() {
+        // root ignores the directory mode, so there is nothing to simulate.
+        // SAFETY: `geteuid` takes no arguments, reads no memory and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        check_read_only_compaction_keeps_needles(false);
     }
 
     // set_writable clears the read-only flags before it can know the .idx writer
