@@ -508,6 +508,10 @@ func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *h
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return true // Request was handled (with error)
 	} else if dirEntry != nil {
+		if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), dirEntry.Extended, handlerName); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return true // Request was handled (denied)
+		}
 		glog.V(2).Infof("%s: directory object %s/%s found, serving content", handlerName, bucket, object)
 		s3a.serveDirectoryContent(w, r, dirEntry)
 		return true // Request was handled successfully

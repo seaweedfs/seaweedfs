@@ -868,18 +868,24 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 
 		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
-		// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
+		// For anonymous requests, check if bucket allows public read via bucket policies or ACLs
 		if isAnonymous {
-			// First check ACL-based public access
+			// Loading the bucket config on a cache miss also refreshes the
+			// compiled policy, so a remotely deleted policy cannot leave a
+			// stale verdict in the engine.
 			isPublic := s3a.isBucketPublicRead(bucket)
 			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublicACL=%v", bucket, isPublic)
-			if isPublic {
+
+			// Object requests are re-evaluated inside Get/HeadObjectHandler
+			// once the entry is fetched, where tag conditions like
+			// s3:ExistingObjectTag/<key> can resolve correctly. Only
+			// bucket-level requests (List, HeadBucket) rely on this check alone.
+			if isPublic && object != "" {
 				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
 				handler(w, r)
 				return
 			}
 
-			// Check bucket policy for anonymous access using the policy engine
 			principal := "*" // Anonymous principal
 			// Evaluate bucket policy (objectEntry nil - not yet fetched)
 			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil, nil)
@@ -903,7 +909,13 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 					return
 				}
 			}
-			// No matching policy statement - fall through to check ACLs and then IAM auth
+
+			// No matching policy statement - fall back to the ACL grant
+			if isPublic {
+				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
+				handler(w, r)
+				return
+			}
 			glog.V(3).Infof("AuthWithPublicRead: no bucket policy match for %s, checking ACLs", bucket)
 		}
 
