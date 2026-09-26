@@ -220,6 +220,42 @@ func TestScrubVolumeDataChecksLocalDeletionTombstone(t *testing.T) {
 	}
 }
 
+// A live needle whose header id is damaged still reads clean — the data CRC
+// does not cover the header — so the scrub must catch it by comparing the
+// stored id with the index key, the same check already done for tombstones.
+func TestScrubVolumeDataChecksLiveNeedleId(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	const liveID = uint64(1)
+	offset, _, _, err := v.writeNeedle2(newRandomNeedle(liveID), true, false, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	syncVolumeFiles(t, v)
+
+	if errs := scrubVolumeErrors(t, v); len(errs) != 0 {
+		t.Fatalf("healthy needle must pass scrub, got %v", errs)
+	}
+
+	corruptedID := make([]byte, types.NeedleIdSize)
+	types.NeedleIdToBytes(corruptedID, types.Uint64ToNeedleId(99))
+	if _, err := v.DataBackend.WriteAt(corruptedID, int64(offset)+types.CookieSize); err != nil {
+		t.Fatalf("corrupt live needle ID: %v", err)
+	}
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync corrupted .dat: %v", err)
+	}
+
+	if errs := scrubVolumeErrors(t, v); !strings.Contains(fmt.Sprint(errs), "does not match needle's Id") {
+		t.Fatalf("scrub should report the corrupted live needle's Id, got %v", errs)
+	}
+}
+
 func TestScrubVolumeDataReportsTruncatedLocalDeletionTombstone(t *testing.T) {
 	dir := t.TempDir()
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
