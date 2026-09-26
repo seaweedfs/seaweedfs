@@ -601,6 +601,12 @@ impl DiskLocation {
         only_garbage: bool,
         keep_remote_data: bool,
     ) -> Result<(), VolumeError> {
+        // Refuse before removing: a refused destroy must leave it mounted.
+        if let Some(v) = self.volumes.get(&vid)
+            && v.is_compacting()
+        {
+            return Err(v.compacting_error());
+        }
         if let Some(mut v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])

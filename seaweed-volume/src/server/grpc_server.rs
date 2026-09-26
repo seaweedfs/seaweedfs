@@ -1153,47 +1153,7 @@ impl VolumeServer for VolumeGrpcService {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
         tokio::task::spawn_blocking(move || {
-            let compact_start = std::time::Instant::now();
-            let report_interval: i64 = 128 * 1024 * 1024;
-            let next_report = std::sync::atomic::AtomicI64::new(report_interval);
-
-            let tx_clone = tx.clone();
-            let result = {
-                let mut store = state.store.write().unwrap();
-                store.compact_volume(vid, preallocate, 0, |processed| {
-                    let target = next_report.load(std::sync::atomic::Ordering::Relaxed);
-                    if processed > target {
-                        let resp = volume_server_pb::VacuumVolumeCompactResponse {
-                            processed_bytes: processed,
-                            load_avg_1m: 0.0,
-                        };
-                        // If send fails (client disconnected), stop compaction
-                        if tx_clone.blocking_send(Ok(resp)).is_err() {
-                            return false;
-                        }
-                        next_report.store(
-                            processed + report_interval,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                    }
-                    true
-                })
-            };
-
-            let success = result.is_ok();
-            crate::metrics::VACUUMING_HISTOGRAM
-                .with_label_values(&["compact"])
-                .observe(compact_start.elapsed().as_secs_f64());
-            crate::metrics::VACUUMING_COMPACT_COUNTER
-                .with_label_values(&[if success { "true" } else { "false" }])
-                .inc();
-
-            if let Err(e) = result {
-                let _ = tx.blocking_send(Err(crate::server::status_with_context(
-                    &format!("compact volume {vid}"),
-                    e,
-                )));
-            }
+            run_vacuum_compact(&state, vid, preallocate, COMPACT_REPORT_INTERVAL, &tx);
         });
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -1564,7 +1524,10 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(request.into_inner().volume_id);
         let mut store = self.state.store.write().unwrap();
         // Go returns nil when volume is not found (idempotent unmount)
-        if store.unmount_volume(vid) {
+        let unmounted = store
+            .unmount_volume(vid)
+            .map_err(|e| crate::server::status_with_context(&format!("unmount volume {vid}"), e))?;
+        if unmounted {
             self.state.volume_state_notify.notify_one();
         }
         Ok(Response::new(volume_server_pb::VolumeUnmountResponse {}))
@@ -1710,8 +1673,12 @@ impl VolumeServer for VolumeGrpcService {
         let mut store = self.state.store.write().unwrap();
 
         // Unmount the volume (Go propagates unmount errors via resp.Error;
-        // Rust unmount_volume returns bool, so not-found falls through to configure_volume)
-        store.unmount_volume(vid);
+        // not-found falls through to configure_volume)
+        if let Err(e) = store.unmount_volume(vid) {
+            return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                error: format!("volume configure unmount {}: {}", vid, e),
+            }));
+        }
 
         // Modify the super block on disk (replica_placement byte)
         if let Err(e) = store.configure_volume(vid, rp) {
@@ -6103,6 +6070,66 @@ fn get_disk_usage(path: &str) -> (u64, u64) {
     }
 }
 
+/// Bytes compacted between two `VacuumVolumeCompact` progress reports.
+const COMPACT_REPORT_INTERVAL: i64 = 128 * 1024 * 1024;
+
+/// The blocking body of `vacuum_volume_compact`. The store lock is held only
+/// to start the job; the copy and its progress sends run without it.
+fn run_vacuum_compact(
+    state: &VolumeServerState,
+    vid: VolumeId,
+    preallocate: u64,
+    report_interval: i64,
+    tx: &tokio::sync::mpsc::Sender<Result<volume_server_pb::VacuumVolumeCompactResponse, Status>>,
+) {
+    let compact_start = std::time::Instant::now();
+    let next_report = std::sync::atomic::AtomicI64::new(report_interval);
+    let progress = |processed: i64| {
+        let target = next_report.load(std::sync::atomic::Ordering::Relaxed);
+        if processed > target {
+            let resp = volume_server_pb::VacuumVolumeCompactResponse {
+                processed_bytes: processed,
+                load_avg_1m: 0.0,
+            };
+            // If send fails (client disconnected), stop compaction
+            if tx.blocking_send(Ok(resp)).is_err() {
+                return false;
+            }
+            next_report.store(
+                processed + report_interval,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        true
+    };
+
+    let job = state
+        .store
+        .write()
+        .unwrap()
+        .begin_compact_volume(vid, preallocate);
+    let result = match job {
+        Ok(Some(job)) => job.run(progress),
+        Ok(None) => Ok(()), // already compacting
+        Err(e) => Err(e),
+    };
+
+    let success = result.is_ok();
+    crate::metrics::VACUUMING_HISTOGRAM
+        .with_label_values(&["compact"])
+        .observe(compact_start.elapsed().as_secs_f64());
+    crate::metrics::VACUUMING_COMPACT_COUNTER
+        .with_label_values(&[if success { "true" } else { "false" }])
+        .inc();
+
+    if let Err(e) = result {
+        let _ = tx.blocking_send(Err(crate::server::status_with_context(
+            &format!("compact volume {vid}"),
+            e,
+        )));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7750,6 +7777,78 @@ mod tests {
         }
     }
 
+    // The compaction copy must not hold the store lock: a progress send parked
+    // on a client that stops reading would otherwise stall every read, write
+    // and heartbeat on the node for the rest of the copy.
+    #[test]
+    fn test_vacuum_compact_releases_store_lock_while_progress_send_parks() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let vid = VolumeId(1);
+        let write = |store: &mut crate::storage::store::Store, id: u64, data: &[u8]| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(id as u32),
+                data_size: data.len() as u32,
+                data: data.to_vec(),
+                ..Needle::default()
+            };
+            store.write_volume_needle(vid, &mut n, true).unwrap();
+        };
+        {
+            let mut store = service.state.store.write().unwrap();
+            for i in 100..140u64 {
+                write(&mut store, i, format!("data-{i}").as_bytes());
+            }
+        }
+
+        // Report every needle into a one-slot channel nobody reads, so the
+        // copy parks in `blocking_send` after the first report.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let state = service.state.clone();
+        let copy = std::thread::spawn(move || run_vacuum_compact(&state, vid, 0, 0, &tx));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Ok(store) = service.state.store.try_read()
+                && store.find_volume(vid).unwrap().1.is_compacting()
+            {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                drop(rx);
+                panic!("the store lock stayed held while the compaction copy was parked");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        {
+            let mut store = service
+                .state
+                .store
+                .try_write()
+                .expect("the store write lock must be free while the copy is parked");
+            assert!(store.find_volume(vid).unwrap().1.is_compacting());
+            write(&mut store, 999, b"late-write");
+        }
+
+        let mut reports = 0;
+        while let Some(msg) = rx.blocking_recv() {
+            msg.expect("the compaction must succeed");
+            reports += 1;
+        }
+        copy.join().unwrap();
+        assert!(reports > 1, "every needle should have been reported");
+
+        let mut store = service.state.store.write().unwrap();
+        store.commit_compact_volume(vid).unwrap();
+        let mut n = Needle {
+            id: NeedleId(999),
+            cookie: Cookie(999),
+            ..Needle::default()
+        };
+        store.read_volume_needle(vid, &mut n).unwrap();
+        assert_eq!(n.data, b"late-write");
+    }
+
     // Regression test for comparing the wrong compaction-revision field.
     // last_compact_revision() is bookkeeping recorded just before a compaction
     // starts (for makeup-diff catch-up) and is intentionally left behind
@@ -8234,7 +8333,8 @@ mod tests {
                         .store
                         .write()
                         .unwrap()
-                        .unmount_volume(VolumeId(1)),
+                        .unmount_volume(VolumeId(1))
+                        .unwrap(),
                     "the volume must still be mounted when the lookup ran"
                 );
                 drop(park);

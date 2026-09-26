@@ -1778,7 +1778,7 @@ mod tests {
             1.0
         );
 
-        assert!(store.unmount_volume(VolumeId(21)));
+        assert!(store.unmount_volume(VolumeId(21)).unwrap());
         build_heartbeat(&test_config(), &mut store);
 
         assert_eq!(

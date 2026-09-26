@@ -18,7 +18,7 @@ use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
 use crate::storage::types::*;
-use crate::storage::volume::{VifVolumeInfo, VolumeError, VolumeSpec};
+use crate::storage::volume::{CompactionJob, VifVolumeInfo, VolumeError, VolumeSpec};
 
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
@@ -406,14 +406,20 @@ impl Store {
         Err(VolumeError::NotFound)
     }
 
-    /// Unload (unmount) a volume without deleting its files.
-    pub fn unmount_volume(&mut self, vid: VolumeId) -> bool {
+    /// Unload (unmount) a volume without deleting its files. Refused while
+    /// compacting, since a remount could start a second copy into .cpd.
+    pub fn unmount_volume(&mut self, vid: VolumeId) -> Result<bool, VolumeError> {
+        if let Some((_, v)) = self.find_volume(vid)
+            && v.is_compacting()
+        {
+            return Err(v.compacting_error());
+        }
         for loc in &mut self.locations {
             if loc.unload_volume(vid).is_some() {
-                return true;
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 
     /// Reports whether any local volume or EC shard is currently quarantined
@@ -1447,12 +1453,25 @@ impl Store {
         &mut self,
         vid: VolumeId,
         preallocate: u64,
-        max_bytes_per_second: i64,
+        _max_bytes_per_second: i64,
         progress_fn: F,
     ) -> Result<(), VolumeError>
     where
         F: Fn(i64) -> bool,
     {
+        match self.begin_compact_volume(vid, preallocate)? {
+            Some(job) => job.run(progress_fn),
+            None => Ok(()),
+        }
+    }
+
+    /// The part of `compact_volume` that needs the store: check free space and
+    /// start the compaction. The returned job runs without the store lock.
+    pub(crate) fn begin_compact_volume(
+        &mut self,
+        vid: VolumeId,
+        preallocate: u64,
+    ) -> Result<Option<CompactionJob>, VolumeError> {
         // Required space matches Go's CompactVolume check: the larger of the
         // requested preallocation and the estimated volume size.
         let (loc_idx, space_needed) = {
@@ -1476,7 +1495,7 @@ impl Store {
         let (_, v) = self
             .find_volume_mut(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
-        v.compact_by_index(preallocate, max_bytes_per_second, progress_fn)
+        v.begin_compact_by_index()
     }
 
     /// Commit a completed compaction: swap files and reload.
@@ -1776,7 +1795,7 @@ mod tests {
         store
             .write_volume_needle(VolumeId(7), &mut n, false)
             .unwrap();
-        assert!(store.unmount_volume(VolumeId(7)));
+        assert!(store.unmount_volume(VolumeId(7)).unwrap());
 
         store.mount_volume_by_id(VolumeId(7), Some("coll")).unwrap();
         assert!(store.find_volume(VolumeId(7)).is_some());
@@ -1818,7 +1837,7 @@ mod tests {
         store
             .write_volume_needle(VolumeId(9), &mut n, false)
             .unwrap();
-        assert!(store.unmount_volume(VolumeId(9)));
+        assert!(store.unmount_volume(VolumeId(9)).unwrap());
 
         // The hint is accepted and mounts the volume.
         store
@@ -1863,7 +1882,7 @@ mod tests {
         store
             .write_volume_needle(VolumeId(11), &mut n, false)
             .unwrap();
-        assert!(store.unmount_volume(VolumeId(11)));
+        assert!(store.unmount_volume(VolumeId(11)).unwrap());
 
         // Simulate an interrupted copy: drop a .note marker.
         let base = volume_file_name(dir, "coll", VolumeId(11));
@@ -1920,7 +1939,7 @@ mod tests {
         store
             .write_volume_needle(VolumeId(13), &mut n, false)
             .unwrap();
-        assert!(store.unmount_volume(VolumeId(13)));
+        assert!(store.unmount_volume(VolumeId(13)).unwrap());
 
         // No hint: the fallback scan finds the sidecar on disk 0 first (skip,
         // no .dat), then the real .dat on disk 1 (mount).
@@ -1975,7 +1994,7 @@ mod tests {
         store
             .write_volume_needle(VolumeId(15), &mut n, false)
             .unwrap();
-        assert!(store.unmount_volume(VolumeId(15)));
+        assert!(store.unmount_volume(VolumeId(15)).unwrap());
         // Clear the low-space flag so mount_volume_by_id considers disk 0.
         store.locations[0]
             .is_disk_space_low
@@ -2481,6 +2500,162 @@ mod tests {
         assert_eq!(v.file_count(), 2);
         assert_eq!(v.deleted_count(), 0);
         assert_eq!(v.dat_file_size().unwrap(), volume_size);
+    }
+
+    fn write_test_needle(store: &mut Store, vid: VolumeId, id: u64, data: &[u8]) {
+        let mut n = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(id as u32),
+            data_size: data.len() as u32,
+            data: data.to_vec(),
+            ..Needle::default()
+        };
+        store.write_volume_needle(vid, &mut n, true).unwrap();
+    }
+
+    fn read_test_needle(store: &Store, vid: VolumeId, id: u64) -> Result<Vec<u8>, VolumeError> {
+        let mut n = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(id as u32),
+            ..Needle::default()
+        };
+        store.read_volume_needle(vid, &mut n)?;
+        Ok(n.data)
+    }
+
+    /// While a compaction copy runs off the store lock, nothing may pull the
+    /// volume's files out from under it or start a second copy into .cpd.
+    #[test]
+    fn test_compaction_in_flight_guards_the_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let other = TempDir::new().unwrap();
+        let mut store = make_test_store(&[dir]);
+        let vid = VolumeId(1);
+        store
+            .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        for i in 1..=3u64 {
+            write_test_needle(&mut store, vid, i, format!("data-{i}").as_bytes());
+        }
+        let revision = {
+            let (_, v) = store.find_volume(vid).unwrap();
+            v.super_block.compaction_revision
+        };
+
+        let job = store
+            .begin_compact_volume(vid, 0)
+            .unwrap()
+            .expect("the first compaction claims the volume");
+
+        assert!(store.begin_compact_volume(vid, 0).unwrap().is_none());
+        assert!(store.unmount_volume(vid).is_err());
+        assert!(store.delete_volume(vid, false, false, false).is_err());
+        store.delete_collection("").unwrap();
+        assert!(store.cleanup_compact_volume(vid).is_err());
+        let (_, v) = store.find_volume_mut(vid).unwrap();
+        assert!(v.relocate_index_to(other.path().to_str().unwrap()).is_err());
+        // Go parity: a commit that finds the volume compacting is a no-op.
+        store.commit_compact_volume(vid).unwrap();
+
+        let (_, v) = store.find_volume(vid).expect("still mounted");
+        assert!(v.is_compacting());
+        assert_eq!(v.super_block.compaction_revision, revision);
+
+        job.run(|_| true).unwrap();
+        assert!(!store.find_volume(vid).unwrap().1.is_compacting());
+        store.commit_compact_volume(vid).unwrap();
+        let (_, v) = store.find_volume(vid).unwrap();
+        assert_eq!(v.super_block.compaction_revision, revision + 1);
+        assert!(store.unmount_volume(vid).unwrap());
+    }
+
+    /// Writes, overwrites and deletes that land while the copy is parked
+    /// off the store lock must all survive the commit via makeup_diff.
+    fn check_writes_during_compaction_survive_commit(kind: NeedleMapKind) {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = Store::new(kind);
+        store
+            .add_location(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        let vid = VolumeId(1);
+        store
+            .add_volume(vid, DiskType::HardDrive, &VolumeSpec::default())
+            .unwrap();
+        let (_, v) = store.find_volume(vid).unwrap();
+        assert_eq!(
+            v.live_meta_idx_size_for_test().is_some(),
+            kind == NeedleMapKind::Redb
+        );
+        for i in 1..=6u64 {
+            write_test_needle(&mut store, vid, i, format!("data-{i}").as_bytes());
+        }
+        let mut del = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(2),
+            ..Needle::default()
+        };
+        store.delete_volume_needle(vid, &mut del).unwrap();
+        let revision = {
+            let (_, v) = store.find_volume(vid).unwrap();
+            v.super_block.compaction_revision
+        };
+
+        let job = store.begin_compact_volume(vid, 0).unwrap().unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let copy = std::thread::spawn(move || {
+            job.run(move |_| {
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+                true
+            })
+        });
+        entered_rx.recv().unwrap();
+
+        write_test_needle(&mut store, vid, 99, b"late-write");
+        write_test_needle(&mut store, vid, 3, b"overwritten");
+        let mut del = Needle {
+            id: NeedleId(4),
+            cookie: Cookie(4),
+            ..Needle::default()
+        };
+        store.delete_volume_needle(vid, &mut del).unwrap();
+
+        drop(release_tx);
+        copy.join().unwrap().unwrap();
+        store.commit_compact_volume(vid).unwrap();
+
+        let (_, v) = store.find_volume(vid).unwrap();
+        assert_eq!(v.super_block.compaction_revision, revision + 1);
+        assert_eq!(read_test_needle(&store, vid, 99).unwrap(), b"late-write");
+        assert_eq!(read_test_needle(&store, vid, 3).unwrap(), b"overwritten");
+        assert!(read_test_needle(&store, vid, 4).is_err());
+        assert!(read_test_needle(&store, vid, 2).is_err());
+        for i in [1u64, 5, 6] {
+            assert_eq!(
+                read_test_needle(&store, vid, i).unwrap(),
+                format!("data-{i}").as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn test_writes_during_compaction_survive_commit_in_memory() {
+        check_writes_during_compaction_survive_commit(NeedleMapKind::InMemory);
+    }
+
+    #[test]
+    fn test_writes_during_compaction_survive_commit_redb() {
+        check_writes_during_compaction_survive_commit(NeedleMapKind::Redb);
     }
 
     /// Build a Store with N HDD disk locations under a single TempDir.
