@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/stretchr/testify/require"
 )
 
 func newMiscTestServer(t *testing.T, bucket string) *S3ApiServer {
@@ -307,4 +309,45 @@ func TestUploadMissingBucketAutoCreateDisabled(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAuthWithPublicReadHonorsPolicyDeny(t *testing.T) {
+	const bucket = "public-deny"
+	s3a := newMiscTestServer(t, bucket)
+	s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, IsPublicRead: true})
+	s3a.policyEngine = NewBucketPolicyEngine()
+
+	called := false
+	handler := s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) { called = true }, s3_constants.ACTION_LIST)
+	serve := func() *httptest.ResponseRecorder {
+		called = false
+		rr := httptest.NewRecorder()
+		handler(rr, newBucketRequest(http.MethodGet, bucket, "list-type=2", ""))
+		return rr
+	}
+	setPolicy := func(statements ...string) {
+		doc := `{"Version":"2012-10-17","Statement":[` + strings.Join(statements, ",") + `]}`
+		require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy(bucket, doc))
+	}
+	arn := fmt.Sprintf("arn:aws:s3:::%s", bucket)
+	denyList := fmt.Sprintf(`{"Effect":"Deny","Principal":"*","Action":"s3:ListBucket","Resource":"%s"}`, arn)
+	denyGet := fmt.Sprintf(`{"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"%s/*"}`, arn)
+	allowList := fmt.Sprintf(`{"Effect":"Allow","Principal":"*","Action":"s3:ListBucket","Resource":"%s"}`, arn)
+
+	setPolicy(denyList)
+	rr := serve()
+	require.False(t, called, "anonymous ListObjectsV2 reached the handler despite an explicit ListBucket Deny")
+	require.Equal(t, http.StatusForbidden, rr.Code)
+
+	setPolicy(denyGet)
+	rr = serve()
+	require.True(t, called, "an unrelated Deny must not block the ACL public-read grant")
+
+	setPolicy(denyList, allowList)
+	rr = serve()
+	require.False(t, called, "explicit Deny must beat a matching Allow")
+
+	setPolicy(allowList)
+	rr = serve()
+	require.True(t, called, "explicit Allow must still permit anonymous listing")
 }
