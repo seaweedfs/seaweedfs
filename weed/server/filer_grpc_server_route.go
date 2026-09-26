@@ -114,28 +114,34 @@ func (fs *FilerServer) ringMemberIPs(ctx context.Context) []net.IP {
 	if cached := fs.ringPeerIPs.Load(); cached != nil && cached.members == key && time.Now().Before(cached.expires) {
 		return cached.ips
 	}
-	var ips []net.IP
-	resolved := true
-	for _, member := range members {
-		host, _, err := net.SplitHostPort(string(member))
-		if err != nil {
-			continue
+	resolved, _, _ := fs.ringResolveGroup.Do(key, func() (any, error) {
+		if cached := fs.ringPeerIPs.Load(); cached != nil && cached.members == key && time.Now().Before(cached.expires) {
+			return cached.ips, nil
 		}
-		if ip := net.ParseIP(host); ip != nil {
-			ips = append(ips, ip)
-			continue
+		var ips []net.IP
+		failed := false
+		for _, member := range members {
+			host, _, err := net.SplitHostPort(string(member))
+			if err != nil {
+				continue
+			}
+			if ip := net.ParseIP(host); ip != nil {
+				ips = append(ips, ip)
+				continue
+			}
+			found, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			if err != nil {
+				failed = true
+				continue
+			}
+			ips = append(ips, found...)
 		}
-		found, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-		if err != nil {
-			resolved = false
-			continue
+		if !failed {
+			fs.ringPeerIPs.Store(&ringPeerIPs{members: key, ips: ips, expires: time.Now().Add(ringPeerIPTTL)})
 		}
-		ips = append(ips, found...)
-	}
-	if resolved {
-		fs.ringPeerIPs.Store(&ringPeerIPs{members: key, ips: ips, expires: time.Now().Add(ringPeerIPTTL)})
-	}
-	return ips
+		return ips, nil
+	})
+	return resolved.([]net.IP)
 }
 
 // checkMovedMarker refuses a request whose is_moved marker did not arrive from

@@ -138,7 +138,8 @@ type FilerServer struct {
 
 	// ringPeerIPs caches resolved ring member addresses per ring version so
 	// verifying a forwarded request's peer does not pay a DNS lookup per hop.
-	ringPeerIPs atomic.Pointer[ringPeerIPs]
+	ringPeerIPs      atomic.Pointer[ringPeerIPs]
+	ringResolveGroup singleflight.Group
 
 	// entryLockTable serializes mutations to the same entry path on this filer.
 	// CreateEntry takes it today; UpdateEntry and DeleteEntry are intended to take
