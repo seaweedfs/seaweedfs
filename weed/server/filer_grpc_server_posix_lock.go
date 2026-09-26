@@ -63,26 +63,31 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 		return &filer_pb.PosixLockResponse{}, fmt.Errorf("lock is required")
 	}
 
-	if !req.IsMoved && fs.filer.Dlm != nil {
+	if fs.filer.Dlm != nil {
 		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.Key); owner != "" && owner != fs.option.Host {
-			forwarded := &filer_pb.PosixLockRequest{
-				Key:     req.Key,
-				IsMoved: true,
-				Op:      req.Op,
-				Lock:    req.Lock,
-				Locks:   req.Locks,
-			}
-			glog.V(4).InfofCtx(ctx, "PosixLock %s op=%v: forwarding to owner %s", req.Key, req.Op, owner)
-			var resp *filer_pb.PosixLockResponse
-			err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				var e error
-				resp, e = client.PosixLock(ctx, forwarded)
-				return e
-			})
-			if err != nil {
+			if err := fs.checkMovedMarker(ctx, req.IsMoved, owner); err != nil {
 				return &filer_pb.PosixLockResponse{}, err
 			}
-			return resp, nil
+			if !req.IsMoved {
+				forwarded := &filer_pb.PosixLockRequest{
+					Key:     req.Key,
+					IsMoved: true,
+					Op:      req.Op,
+					Lock:    req.Lock,
+					Locks:   req.Locks,
+				}
+				glog.V(4).InfofCtx(ctx, "PosixLock %s op=%v: forwarding to owner %s", req.Key, req.Op, owner)
+				var resp *filer_pb.PosixLockResponse
+				err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+					var e error
+					resp, e = client.PosixLock(ctx, forwarded)
+					return e
+				})
+				if err != nil {
+					return &filer_pb.PosixLockResponse{}, err
+				}
+				return resp, nil
+			}
 		}
 	}
 

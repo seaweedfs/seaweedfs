@@ -205,7 +205,8 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	// upsert. Route it to the entry's ring owner so one filer's lock arbitrates
 	// every creator cluster-wide; is_moved bounds this to one hop. Plain creates
 	// are upserts either way and stay local.
-	if !req.IsMoved && (req.OExcl || conditionIsSet(req.Condition)) {
+	routed := req.OExcl || conditionIsSet(req.Condition)
+	if !req.IsMoved && routed {
 		fullpath := util.NewFullPath(req.Directory, req.Entry.Name)
 		// Held apart from the named resp, which the local path below writes into:
 		// a failed forward must not leave it nil.
@@ -227,6 +228,10 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 				return &filer_pb.CreateEntryResponse{}, forwardErr
 			}
 			return ownerResp, nil
+		}
+	} else if req.IsMoved && routed {
+		if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(entryRouteKey(util.NewFullPath(req.Directory, req.Entry.Name)))); err != nil {
+			return &filer_pb.CreateEntryResponse{}, err
 		}
 	}
 
@@ -321,6 +326,11 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	// serialization point — even when the caller's ring view was stale. is_moved
 	// bounds this to one hop: a forwarded transaction is applied locally, so two
 	// filers that disagree on the owner during a ring change cannot loop.
+	if req.RouteKey != "" {
+		if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(req.RouteKey)); err != nil {
+			return &filer_pb.ObjectTransactionResponse{Error: err.Error()}, nil
+		}
+	}
 	if req.RouteKey != "" && !req.IsMoved {
 		// Rebuild rather than copy the request struct (it carries a mutex); the
 		// pointer/slice fields are shared since the original is not mutated.
@@ -666,7 +676,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	// per-path lock below only makes atomic on this filer. Route it to the
 	// entry's ring owner so one filer's lock arbitrates every writer
 	// cluster-wide; is_moved bounds this to one hop.
-	if !req.IsMoved && (conditionIsSet(req.Condition) || len(req.ExpectedExtended) > 0) {
+	routed := conditionIsSet(req.Condition) || len(req.ExpectedExtended) > 0
+	if !req.IsMoved && routed {
 		var ownerResp *filer_pb.UpdateEntryResponse
 		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(fullpath)), func(owner pb.ServerAddress) error {
 			glog.V(2).InfofCtx(ctx, "UpdateEntry %s: forwarding to owner %s", fullpath, owner)
@@ -685,6 +696,10 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 				return &filer_pb.UpdateEntryResponse{}, forwardErr
 			}
 			return ownerResp, nil
+		}
+	} else if req.IsMoved && routed {
+		if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(entryRouteKey(util.FullPath(fullpath)))); err != nil {
+			return &filer_pb.UpdateEntryResponse{}, err
 		}
 	}
 

@@ -3,10 +3,14 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"net"
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -89,6 +93,14 @@ func TestCreateEntryPlainStaysLocal(t *testing.T) {
 	}
 }
 
+// ringPeerCtx simulates a request arriving over a connection from a ring
+// member, the provenance an is_moved marker needs before it is trusted.
+func ringPeerCtx() context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{
+		Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 49999},
+	})
+}
+
 // is_moved bounds forwarding to one hop: the owner applies it even if its own
 // ring view says someone else owns the key.
 func TestCreateEntryMovedAppliesLocally(t *testing.T) {
@@ -97,12 +109,59 @@ func TestCreateEntryMovedAppliesLocally(t *testing.T) {
 
 	req := createReq(name, true)
 	req.IsMoved = true
-	resp, err := fs.CreateEntry(context.Background(), req)
+	resp, err := fs.CreateEntry(ringPeerCtx(), req)
 	if err != nil || resp.Error != "" {
 		t.Fatalf("forwarded create must be applied locally, got err=%v resp=%v", err, resp.Error)
 	}
 	if _, found := store.entries[string(util.NewFullPath("/test", name))]; !found {
 		t.Fatal("forwarded create must reach the local store")
+	}
+}
+
+// A caller can set is_moved, but without a ring member's connection it is not
+// trusted: on a non-owner the request is refused rather than evaluated under
+// the wrong lock or forwarded again, where it could cycle while rings disagree.
+func TestCreateEntryMovedFromClientIsNotTrusted(t *testing.T) {
+	fs, store := createRouteServer(t)
+	name := peerOwnedName(t, fs)
+
+	req := createReq(name, true)
+	req.IsMoved = true
+	_, err := fs.CreateEntry(context.Background(), req)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("a forged is_moved must be refused, got err=%v", err)
+	}
+	if _, found := store.entries[string(util.NewFullPath("/test", name))]; found {
+		t.Fatal("a forged is_moved must not cause a local write")
+	}
+}
+
+// Forwarding an unlock to an unreachable owner must surface the RPC error, not
+// panic dereferencing the nil response of the failed call.
+func TestDistributedUnlockFailedForwardReturnsError(t *testing.T) {
+	fs, _ := createRouteServer(t)
+
+	var name string
+	for i := 0; i < 4000; i++ {
+		candidate := fmt.Sprintf("lock-%d", i)
+		if fs.filer.Dlm.LockRing.GetPrimary(candidate) != fs.option.Host {
+			name = candidate
+			break
+		}
+	}
+	if name == "" {
+		t.Skip("no lock owned by the peer")
+	}
+
+	resp, err := fs.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
+		Name:       name,
+		RenewToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("unlock forward should report via resp.Error, not err: %v", err)
+	}
+	if resp.Error == "" {
+		t.Fatal("a failed forward must surface an error")
 	}
 }
 

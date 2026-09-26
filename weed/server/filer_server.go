@@ -136,6 +136,11 @@ type FilerServer struct {
 	// chunks behind the first request's back.
 	tusActiveUploads sync.Map
 
+	// ringPeerIPs caches resolved ring member addresses per ring version so
+	// verifying a forwarded request's peer does not pay a DNS lookup per hop.
+	ringPeerIPs      atomic.Pointer[ringPeerIPs]
+	ringResolveGroup singleflight.Group
+
 	// entryLockTable serializes mutations to the same entry path on this filer.
 	// CreateEntry takes it today; UpdateEntry and DeleteEntry are intended to take
 	// it too as their callers route a key's writes to this node, making it the
