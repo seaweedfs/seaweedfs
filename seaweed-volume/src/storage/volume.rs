@@ -828,17 +828,23 @@ impl CompactionJob {
         let rows = self.idx_size / NEEDLE_MAP_ENTRY_SIZE as u64;
         let mut snapshot = CompactNeedleMap::new();
         let mut seen = 0u64;
-        idx::walk_index_file(&mut &self.src_idx, 0, |key, offset, size| {
-            if seen < rows {
-                seen += 1;
-                if offset.is_zero() || size.is_deleted() {
-                    snapshot.delete(key, offset)?;
-                } else {
-                    snapshot.put(key, offset, size)?;
-                }
+        // Rows past the recorded size are makeup_diff's; do not read them.
+        let mut reader = io::BufReader::new((&self.src_idx).take(self.idx_size));
+        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        while seen < rows {
+            match reader.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
             }
-            Ok(())
-        })?;
+            let (key, offset, size) = idx_entry_from_bytes(&buf);
+            if offset.is_zero() || size.is_deleted() {
+                snapshot.delete(key, offset)?;
+            } else {
+                snapshot.put(key, offset, size)?;
+            }
+            seen += 1;
+        }
         if seen < rows {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -8109,6 +8115,79 @@ mod tests {
         };
         v.read_needle(&mut probe).unwrap();
         assert_eq!(probe.data, b"still-readable");
+    }
+
+    // Compaction copies the .idx prefix index_file_size() reports. A read-only
+    // volume's map has no writer, so that must still be the loaded size, or the
+    // copy is empty and the commit drops every needle.
+    #[cfg(unix)]
+    fn check_read_only_compaction_keeps_needles(index_dir_writable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap().to_string();
+        {
+            let mut v = make_test_volume(&dir);
+            for i in 1..=3u64 {
+                write_test_needle(&mut v, i, format!("data-{i}").as_bytes());
+            }
+            v.set_read_only_persist(false, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+        let idx_len = fs::metadata(format!("{dir}/1.idx")).unwrap().len();
+
+        let set_mode = |mode: u32| {
+            let mut perms = std::fs::metadata(tmp.path()).unwrap().permissions();
+            perms.set_mode(mode);
+            std::fs::set_permissions(tmp.path(), perms).unwrap();
+        };
+        if !index_dir_writable {
+            set_mode(0o555);
+        }
+        let loaded = Volume::new(
+            &dir,
+            &dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        );
+        set_mode(0o755);
+
+        let mut v = loaded.unwrap();
+        assert_eq!(
+            matches!(v.nm, Some(NeedleMap::SortedFile(_))),
+            index_dir_writable
+        );
+        assert_eq!(v.idx_file_size(), idx_len);
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+        for i in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                ..Needle::default()
+            };
+            v.read_needle(&mut n).unwrap();
+            assert_eq!(n.data, format!("data-{i}").as_bytes());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_compacting_a_read_only_volume_keeps_its_needles_sorted_index() {
+        check_read_only_compaction_keeps_needles(true);
+    }
+
+    // The .sdx could not be built, so the index fell back to memory.
+    #[test]
+    #[cfg(unix)]
+    fn test_compacting_a_read_only_volume_keeps_its_needles_in_memory_fallback() {
+        // root ignores the directory mode, so there is nothing to simulate.
+        // SAFETY: `geteuid` takes no arguments, reads no memory and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        check_read_only_compaction_keeps_needles(false);
     }
 
     // set_writable clears the read-only flags before it can know the .idx writer

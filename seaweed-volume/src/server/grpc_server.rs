@@ -7849,6 +7849,52 @@ mod tests {
         assert_eq!(n.data, b"late-write");
     }
 
+    // VolumeConfigure unmounts, rewrites the super block and remounts. While
+    // a copy is in flight the unmount is refused, and configure must stop
+    // there rather than rewrite the .dat the copy is reading.
+    #[tokio::test]
+    async fn test_volume_configure_refused_while_compacting() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let vid = VolumeId(1);
+        let job = service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .begin_compact_volume(vid, 0)
+            .unwrap()
+            .unwrap();
+
+        let resp = service
+            .volume_configure(Request::new(volume_server_pb::VolumeConfigureRequest {
+                volume_id: vid.0,
+                replication: "001".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.error.contains("is compacting"), "{}", resp.error);
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(vid).expect("still mounted");
+            assert_eq!(v.super_block.replica_placement.to_string(), "000");
+        }
+
+        job.run(|_| true).unwrap();
+        let resp = service
+            .volume_configure(Request::new(volume_server_pb::VolumeConfigureRequest {
+                volume_id: vid.0,
+                replication: "001".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.error, "");
+        let store = service.state.store.read().unwrap();
+        let (_, v) = store.find_volume(vid).unwrap();
+        assert_eq!(v.super_block.replica_placement.to_string(), "001");
+    }
+
     // Regression test for comparing the wrong compaction-revision field.
     // last_compact_revision() is bookkeeping recorded just before a compaction
     // starts (for makeup-diff catch-up) and is intentionally left behind
