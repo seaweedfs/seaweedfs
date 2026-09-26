@@ -116,7 +116,7 @@ func (m *Mover) LiveMoveVolume(ctx context.Context, volumeId needle.VolumeId, so
 			if cleanupTarget {
 				// The target copy may be missing tailed entries; remove it so
 				// the source stays the only replica.
-				if dErr := m.DeleteVolume(cleanupCtx, volumeId, target, false, true); dErr != nil {
+				if dErr := m.DeleteVolume(cleanupCtx, volumeId, target, false, false, true); dErr != nil {
 					// Restoring the source while the stale target stays mounted
 					// risks divergent replicas; keep the source readonly. A
 					// re-run refuses while the copy exists, so name the fix.
@@ -232,7 +232,7 @@ func (m *Mover) LiveMoveVolume(ctx context.Context, volumeId needle.VolumeId, so
 	opts.Progress(90, fmt.Sprintf("deleting volume %d from %s", volumeId, source))
 	fmt.Fprintf(opts.Writer, "deleting volume %d from %s\n", volumeId, source)
 	sourceDeleteStarted = true
-	if err = m.DeleteVolume(ctx, volumeId, source, false, true); err != nil {
+	if err = m.DeleteVolume(ctx, volumeId, source, false, false, true); err != nil {
 		return fmt.Errorf("delete volume %d from %s: %v", volumeId, source, err)
 	}
 
@@ -415,11 +415,12 @@ func (m *Mover) ReadVolumeFileStatus(ctx context.Context, volumeId needle.Volume
 // DeleteVolume removes the volume from server. When keepRemoteData is true, the
 // cloud-tier object backing the volume is left intact — used on the source side
 // of a move where another server is taking over the same .vif.
-func (m *Mover) DeleteVolume(ctx context.Context, volumeId needle.VolumeId, server pb.ServerAddress, onlyEmpty bool, keepRemoteData bool) error {
+func (m *Mover) DeleteVolume(ctx context.Context, volumeId needle.VolumeId, server pb.ServerAddress, onlyEmpty bool, onlyGarbage bool, keepRemoteData bool) error {
 	return m.withClient(false, server, func(client volume_server_pb.VolumeServerClient) error {
 		_, deleteErr := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
 			VolumeId:       uint32(volumeId),
 			OnlyEmpty:      onlyEmpty,
+			OnlyGarbage:    onlyGarbage,
 			KeepRemoteData: keepRemoteData,
 		})
 		return deleteErr

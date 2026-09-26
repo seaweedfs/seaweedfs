@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
@@ -73,6 +74,11 @@ type Filer struct {
 	EmptyFolderCleanupDelay       time.Duration
 	persistedLogCache             *persistedLogCache
 	metaLogInflight               metaLogInflight
+	remoteTombstones              *remoteDeletionTombstones
+	// remoteTombstonesDone, when non-nil, is closed once the startup tombstone
+	// rebuild finishes; lazy remote reads wait on it so a pending delete
+	// cannot resurrect in the gap.
+	remoteTombstonesDone atomic.Pointer[chan struct{}]
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -88,6 +94,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		deletionQuit:        make(chan struct{}),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
 		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
+		remoteTombstones:    newRemoteDeletionTombstones(),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
@@ -173,6 +180,10 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		}
 		glog.V(0).Infof("LockRing: applying master ring update v%d: %v", update.Version, servers)
 		f.Dlm.LockRing.SetSnapshot(servers, update.Version)
+	})
+	f.MasterClient.SetOnMasterChangeFn(func(previous, current pb.ServerAddress) {
+		glog.V(0).Infof("LockRing: master changed %s -> %s, resetting ring", previous, current)
+		f.Dlm.LockRing.Reset()
 	})
 
 	// Subscribe to the local filer first: its events reach the aggregated

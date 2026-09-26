@@ -1597,16 +1597,20 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
-        if req.only_empty {
+        if req.only_empty || req.only_garbage {
             let (_, vol) = store.find_volume(vid).ok_or_else(|| {
                 Status::from(crate::storage::volume::VolumeError::VolumeNotFound(vid))
             })?;
-            if vol.file_count() > 0 {
+            let empty_ok = req.only_empty && vol.file_count() == 0;
+            let garbage_ok = req.only_garbage
+                && vol.content_size() > 0
+                && vol.deleted_size() >= vol.content_size();
+            if !empty_ok && !garbage_ok {
                 return Err(Status::from(crate::storage::volume::VolumeError::NotEmpty));
             }
         }
         store
-            .delete_volume(vid, req.only_empty, req.keep_remote_data)
+            .delete_volume(vid, req.only_empty, req.only_garbage, req.keep_remote_data)
             .map_err(|e| crate::server::status_with_context(&format!("delete volume {vid}"), e))?;
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))
@@ -1903,7 +1907,7 @@ impl VolumeServer for VolumeGrpcService {
             let mut store = self.state.store.write().unwrap();
             // keep remote data: the inbound copy carries a .vif that may point
             // at the same cloud-tier object the existing volume references.
-            store.delete_volume(vid, false, true).map_err(|e| {
+            store.delete_volume(vid, false, false, true).map_err(|e| {
                 Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
             })?;
             drop(store);
@@ -2224,7 +2228,7 @@ impl VolumeServer for VolumeGrpcService {
                 // false would delete the source's remote data.
                 if mounted {
                     let mut store = state.store.write().unwrap();
-                    let _ = store.delete_volume(vid, false, true);
+                    let _ = store.delete_volume(vid, false, false, true);
                     state.volume_state_notify.notify_one();
                 }
                 let _ = std::fs::remove_file(format!("{}.dat", data_base_name));
@@ -3760,15 +3764,18 @@ impl VolumeServer for VolumeGrpcService {
                 // listed shards, so a remote node retains no stale generation a fresh copy
                 // collides with. Echo the acknowledgement so the caller can tell a
                 // pre-upgrade server apart.
+                //
+                // Unload every disk holding the vid (Go's Store.UnloadEcVolume):
+                // each registration returns its descriptors and ec_shards gauge.
                 {
                     let mut store = self.state.store.write().unwrap();
-                    let _ = store.remove_ec_volume(vid);
+                    store.unload_ec_volume(vid);
                     for loc in &store.locations {
                         loc.remove_ec_volume_files_full_teardown(&req.collection, vid)
                             .map_err(|e| {
                                 Status::internal(format!(
-                                    "full teardown of ec volume {}: {}",
-                                    req.volume_id, e
+                                    "full teardown of ec volume {} on {}: {}",
+                                    req.volume_id, loc.directory, e
                                 ))
                             })?;
                     }
@@ -3794,13 +3801,13 @@ impl VolumeServer for VolumeGrpcService {
                         );
                         continue;
                     }
-                    store.locations[disk_id].remove_ec_volume(vid);
+                    store.locations[disk_id].unload_ec_volume(vid);
                     store.locations[disk_id]
                         .remove_ec_volume_files_full_teardown(&req.collection, vid)
                         .map_err(|e| {
                             Status::internal(format!(
-                                "fenced teardown of ec volume {}: {}",
-                                req.volume_id, e
+                                "fenced teardown of ec volume {} on {}: {}",
+                                req.volume_id, store.locations[disk_id].directory, e
                             ))
                         })?;
                 }
@@ -7112,7 +7119,7 @@ mod tests {
         let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
         {
             let mut store = dest_service.state.store.write().unwrap();
-            store.delete_volume(VolumeId(1), false, false).unwrap();
+            store.delete_volume(VolumeId(1), false, false, false).unwrap();
             // available_space is filled in by the periodic disk check, which
             // does not run in a unit test; without it VolumeCopy finds no
             // location with room and never gets as far as copying.
@@ -7259,7 +7266,7 @@ mod tests {
         let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
         {
             let mut store = dest_service.state.store.write().unwrap();
-            store.delete_volume(VolumeId(1), false, false).unwrap();
+            store.delete_volume(VolumeId(1), false, false, false).unwrap();
             for loc in &store.locations {
                 loc.check_disk_space();
             }
@@ -7990,6 +7997,166 @@ mod tests {
         );
     }
 
+    /// Blanket full teardown (`encode_ts_ns == 0`) on a split-disk volume:
+    /// like Go's Store.UnloadEcVolume, every disk unregisters its EcVolume
+    /// and returns its ec_shards gauge before the files are unlinked.
+    #[tokio::test]
+    async fn test_volume_ec_shards_delete_full_teardown_unloads_every_disk() {
+        let collection = "ecdel-blanket";
+        let vid = VolumeId(7060);
+        let gauge = crate::metrics::VOLUME_GAUGE.with_label_values(&[collection, "ec_shards"]);
+        let gauge_before_mount = gauge.get();
+
+        let (service, tmp) = SplitDiskEcFixture {
+            collection,
+            ..SplitDiskEcFixture::new(vid.0)
+        }
+        .build();
+        {
+            let store = service.state.store.read().unwrap();
+            assert_eq!(store.locations.len(), 2);
+            for (disk_id, loc) in store.locations.iter().enumerate() {
+                assert!(
+                    loc.has_ec_volume(vid),
+                    "fixture must mount the vid on disk {disk_id} for this to be meaningful"
+                );
+            }
+        }
+        assert_eq!(
+            gauge.get(),
+            gauge_before_mount + 2.0,
+            "fixture must account one shard per disk"
+        );
+
+        let resp = service
+            .volume_ec_shards_delete(Request::new(
+                volume_server_pb::VolumeEcShardsDeleteRequest {
+                    volume_id: vid.0,
+                    collection: collection.to_string(),
+                    shard_ids: Vec::new(),
+                    full_teardown: true,
+                    encode_ts_ns: 0,
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.full_teardown_done);
+
+        {
+            let store = service.state.store.read().unwrap();
+            for (disk_id, loc) in store.locations.iter().enumerate() {
+                assert!(
+                    !loc.has_ec_volume(vid),
+                    "blanket full teardown must unload the EcVolume on disk {disk_id}, \
+                     not just the first disk holding the vid"
+                );
+            }
+        }
+        assert_eq!(
+            gauge.get(),
+            gauge_before_mount,
+            "the ec_shards gauge must return to its pre-mount value"
+        );
+        for (dir, ext) in [("data0", ".ec00"), ("data1", ".ec01"), ("data1", ".ecx")] {
+            let path = tmp
+                .path()
+                .join(dir)
+                .join(format!("{}_{}{}", collection, vid.0, ext));
+            assert!(!path.exists(), "{} must be gone", path.display());
+        }
+    }
+
+    /// Fenced teardown (`encode_ts_ns != 0`) unloads only a disk whose
+    /// generation is strictly older than the request, as Go's
+    /// location.UnloadEcVolume does, returning the ec_shards gauge it held.
+    #[tokio::test]
+    async fn test_volume_ec_shards_delete_fenced_teardown_gives_back_gauge_for_older_disk() {
+        let collection = "ecdel-fenced";
+        let vid = VolumeId(7061);
+        let gauge = crate::metrics::VOLUME_GAUGE.with_label_values(&[collection, "ec_shards"]);
+        let gauge_before_mount = gauge.get();
+
+        // dir0 carries generation 100, dir1 generation 200: a fence at 150
+        // wipes dir0 alone.
+        let (service, tmp) = SplitDiskEcFixture {
+            collection,
+            dir0_encode_ts_ns: Some(100),
+            dir1_encode_ts_ns: 200,
+            ..SplitDiskEcFixture::new(vid.0)
+        }
+        .build();
+        {
+            let store = service.state.store.read().unwrap();
+            assert_eq!(
+                store.locations[0].ec_generation_ts_ns(collection, vid),
+                Some(100)
+            );
+            assert_eq!(
+                store.locations[1].ec_generation_ts_ns(collection, vid),
+                Some(200)
+            );
+            assert!(store.locations[0].has_ec_volume(vid));
+            assert!(store.locations[1].has_ec_volume(vid));
+        }
+        assert_eq!(
+            gauge.get(),
+            gauge_before_mount + 2.0,
+            "fixture must account one shard per disk"
+        );
+
+        let resp = service
+            .volume_ec_shards_delete(Request::new(
+                volume_server_pb::VolumeEcShardsDeleteRequest {
+                    volume_id: vid.0,
+                    collection: collection.to_string(),
+                    shard_ids: Vec::new(),
+                    full_teardown: true,
+                    encode_ts_ns: 150,
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.full_teardown_done);
+
+        {
+            let store = service.state.store.read().unwrap();
+            assert!(
+                !store.locations[0].has_ec_volume(vid),
+                "the strictly-older disk must be unloaded"
+            );
+            assert!(
+                store.locations[1].has_ec_volume(vid),
+                "the newer disk must be preserved"
+            );
+        }
+        assert_eq!(
+            gauge.get(),
+            gauge_before_mount + 1.0,
+            "fenced teardown must give back the ec_shards gauge for the older \
+             disk's shard and leave the preserved disk's shard counted"
+        );
+        let older_shard = tmp
+            .path()
+            .join("data0")
+            .join(format!("{}_{}.ec00", collection, vid.0));
+        assert!(
+            !older_shard.exists(),
+            "{} must be gone",
+            older_shard.display()
+        );
+        let newer_shard = tmp
+            .path()
+            .join("data1")
+            .join(format!("{}_{}.ec01", collection, vid.0));
+        assert!(
+            newer_shard.exists(),
+            "{} must survive",
+            newer_shard.display()
+        );
+    }
+
     /// REGRESSION: a node-wide scrub must survive a volume that legitimately
     /// disappears while it runs.
     ///
@@ -8334,6 +8501,9 @@ mod tests {
     /// field is a deliberate departure from it.
     struct SplitDiskEcFixture {
         vid_raw: u32,
+        /// Collection the files and mounted volume carry; the delete tests use
+        /// unique names so parallel tests under `""` share no gauge labels.
+        collection: &'static str,
         /// Which shard id each disk gets. Which disk holds the shard a needle
         /// actually spans is the whole difference between reaching one disk and
         /// reaching both, so the LOCAL/CHECKSUM tests move shard 0 to disk 1.
@@ -8377,6 +8547,7 @@ mod tests {
         fn new(vid_raw: u32) -> Self {
             SplitDiskEcFixture {
                 vid_raw,
+                collection: "",
                 dir0_shard_id: 0,
                 dir1_shard_id: 1,
                 dir0_encode_ts_ns: None,
@@ -8396,6 +8567,7 @@ mod tests {
     ) -> (VolumeGrpcService, TempDir) {
         let SplitDiskEcFixture {
             vid_raw,
+            collection,
             dir0_shard_id,
             dir1_shard_id,
             dir0_encode_ts_ns,
@@ -8409,6 +8581,17 @@ mod tests {
         let dir1 = tmp.path().join("data1");
         std::fs::create_dir_all(&dir0).unwrap();
         std::fs::create_dir_all(&dir1).unwrap();
+        let file = |dir: &std::path::Path, ext: &str| {
+            format!(
+                "{}{}",
+                crate::storage::volume::volume_file_name(
+                    dir.to_str().unwrap(),
+                    collection,
+                    VolumeId(vid_raw),
+                ),
+                ext
+            )
+        };
 
         let ec_vif = |encode_ts_ns: i64| crate::storage::volume::VifVolumeInfo {
             version: 3,
@@ -8423,20 +8606,20 @@ mod tests {
 
         // dir0: one shard, no .ecx.
         std::fs::write(
-            dir0.join(format!("{}.ec{:02}", vid_raw, dir0_shard_id)),
+            file(&dir0, &format!(".ec{:02}", dir0_shard_id)),
             b"shard data nonempty",
         )
         .unwrap();
         if let Some(ts) = dir0_encode_ts_ns {
             std::fs::write(
-                dir0.join(format!("{}.vif", vid_raw)),
+                file(&dir0, ".vif"),
                 serde_json::to_string(&ec_vif(ts)).unwrap(),
             )
             .unwrap();
         }
         // dir1: one shard plus the index files.
         std::fs::write(
-            dir1.join(format!("{}.ec{:02}", vid_raw, dir1_shard_id)),
+            file(&dir1, &format!(".ec{:02}", dir1_shard_id)),
             b"shard data nonempty",
         )
         .unwrap();
@@ -8453,10 +8636,10 @@ mod tests {
         } else {
             vec![0u8; 20]
         };
-        std::fs::write(dir1.join(format!("{}.ecx", vid_raw)), ecx).unwrap();
-        std::fs::write(dir1.join(format!("{}.ecj", vid_raw)), b"").unwrap();
+        std::fs::write(file(&dir1, ".ecx"), ecx).unwrap();
+        std::fs::write(file(&dir1, ".ecj"), b"").unwrap();
         std::fs::write(
-            dir1.join(format!("{}.vif", vid_raw)),
+            file(&dir1, ".vif"),
             serde_json::to_string(&ec_vif(dir1_encode_ts_ns)).unwrap(),
         )
         .unwrap();
@@ -8489,11 +8672,7 @@ mod tests {
                 SidecarPlacement::Dir1Only => vec![dir1.as_path()],
             };
             for d in sidecar_dirs {
-                let base = crate::storage::volume::volume_file_name(
-                    d.to_str().unwrap(),
-                    "",
-                    VolumeId(vid_raw),
-                );
+                let base = file(d, "");
                 ec_bitrot::save_bitrot_sidecar(&ec_bitrot::bitrot_sidecar_path(&base, 0), &prot)
                     .unwrap();
             }
@@ -9077,6 +9256,7 @@ mod tests {
             .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
                 volume_id: 4242,
                 only_empty: false,
+                only_garbage: false,
                 keep_remote_data: false,
             }))
             .await
@@ -9092,6 +9272,7 @@ mod tests {
             .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
                 volume_id: 1,
                 only_empty: true,
+                only_garbage: false,
                 keep_remote_data: false,
             }))
             .await
@@ -9108,6 +9289,94 @@ mod tests {
                 .is_some(),
             "refused delete must leave the volume mounted"
         );
+    }
+
+    #[tokio::test]
+    async fn volume_delete_only_garbage_deletes_a_fully_deleted_volume() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = service.state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.delete_needle(&mut Needle {
+                id: NeedleId(11),
+                cookie: Cookie(0x3344),
+                ..Needle::default()
+            })
+            .unwrap();
+            vol.sync_to_disk().unwrap();
+        }
+
+        service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: false,
+                only_garbage: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect("a fully deleted volume is garbage and must delete");
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_none(),
+            "the garbage volume must be gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn volume_delete_only_garbage_refuses_a_volume_with_live_needles() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let err = service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: false,
+                only_garbage: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect_err("only_garbage must refuse a volume holding a live needle");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_some(),
+            "refused delete must leave the volume mounted"
+        );
+    }
+
+    #[tokio::test]
+    async fn volume_delete_empty_or_garbage_uses_either_check() {
+        // Both flags set, volume fully deleted: the garbage check passes even
+        // though the empty check would not.
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = service.state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.delete_needle(&mut Needle {
+                id: NeedleId(11),
+                cookie: Cookie(0x3344),
+                ..Needle::default()
+            })
+            .unwrap();
+            vol.sync_to_disk().unwrap();
+        }
+        service
+            .volume_delete(Request::new(volume_server_pb::VolumeDeleteRequest {
+                volume_id: 1,
+                only_empty: true,
+                only_garbage: true,
+                keep_remote_data: false,
+            }))
+            .await
+            .expect("a fully deleted volume deletes under either check");
     }
 
     // A collection or ext carrying a separator or ".." is folded into a path

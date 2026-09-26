@@ -395,11 +395,12 @@ impl Store {
         &mut self,
         vid: VolumeId,
         only_empty: bool,
+        only_garbage: bool,
         keep_remote_data: bool,
     ) -> Result<(), VolumeError> {
         for loc in &mut self.locations {
             if loc.find_volume(vid).is_some() {
-                return loc.delete_volume(vid, only_empty, keep_remote_data);
+                return loc.delete_volume(vid, only_empty, only_garbage, keep_remote_data);
             }
         }
         Err(VolumeError::NotFound)

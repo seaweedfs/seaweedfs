@@ -36,6 +36,7 @@ type FilerRemoteStorage struct {
 	// whenever /etc/remote changes
 	mu                sync.RWMutex
 	rules             ptrie.Trie[*remote_pb.RemoteStorageLocation]
+	mountDirs         []util.FullPath
 	storageNameToConf map[string]*remote_pb.RemoteConf
 	// confValidator, when set, is applied to every RemoteConf as it is loaded
 	// from /etc/remote. A conf that fails is dropped from storageNameToConf so
@@ -87,11 +88,13 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 	// build into fresh containers so an unmounted directory disappears instead
 	// of lingering in the trie, which has no way to drop a key
 	rules := ptrie.New[*remote_pb.RemoteStorageLocation]()
+	var mountDirs []util.FullPath
 	storageNameToConf := make(map[string]*remote_pb.RemoteConf)
 
 	for _, entry := range entries {
 		if entry.Name() == REMOTE_STORAGE_MOUNT_FILE {
-			if err := loadRemoteStorageMountMapping(rules, entry.Content); err != nil {
+			mountDirs, err = loadRemoteStorageMountMapping(rules, entry.Content)
+			if err != nil {
 				return err
 			}
 			continue
@@ -117,27 +120,46 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 	}
 
 	rs.mu.Lock()
-	rs.rules, rs.storageNameToConf = rules, storageNameToConf
+	rs.rules, rs.mountDirs, rs.storageNameToConf = rules, mountDirs, storageNameToConf
 	rs.mu.Unlock()
 
 	return nil
 }
 
-func loadRemoteStorageMountMapping(rules ptrie.Trie[*remote_pb.RemoteStorageLocation], data []byte) (err error) {
+func loadRemoteStorageMountMapping(rules ptrie.Trie[*remote_pb.RemoteStorageLocation], data []byte) (mountDirs []util.FullPath, err error) {
 	mappings := &remote_pb.RemoteStorageMapping{}
 	if err := proto.Unmarshal(data, mappings); err != nil {
-		return fmt.Errorf("unmarshal %s/%s: %v", DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, err)
+		return nil, fmt.Errorf("unmarshal %s/%s: %v", DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, err)
 	}
 	for dir, storageLocation := range mappings.Mappings {
 		putDirectoryToRemoteStorage(rules, util.FullPath(dir), storageLocation)
+		mountDirs = append(mountDirs, util.FullPath(dir))
 	}
-	return nil
+	return mountDirs, nil
 }
 
 func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, loc *remote_pb.RemoteStorageLocation) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	putDirectoryToRemoteStorage(rs.rules, dir, loc)
+	found := false
+	for _, d := range rs.mountDirs {
+		if d == dir {
+			found = true
+			break
+		}
+	}
+	if !found {
+		rs.mountDirs = append(rs.mountDirs, dir)
+	}
+}
+
+// MountedDirectories returns the directories currently mapped to remote
+// storage, for callers that must reason about every mount rather than one path.
+func (rs *FilerRemoteStorage) MountedDirectories() []util.FullPath {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	return append([]util.FullPath(nil), rs.mountDirs...)
 }
 
 func putDirectoryToRemoteStorage(rules ptrie.Trie[*remote_pb.RemoteStorageLocation], dir util.FullPath, loc *remote_pb.RemoteStorageLocation) {

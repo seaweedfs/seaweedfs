@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -240,5 +241,84 @@ func TestScanVolumeFileFrom_StopsAtRecordThatCannotAdvance(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The CRC is known only after the last byte, so a full read must keep that
+// page unwritten when the checksum mismatches; otherwise the GET has already
+// committed a corrupt body.
+func TestReadNeedleDataIntoChecksumMismatchHoldsLastPage(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	// 2048 is two pages (one buffer swap), 3000 is three, and 2500 with a
+	// buffer larger than the needle is the single Write that used to commit
+	// the whole body before the CRC check.
+	cases := []struct {
+		name string
+		size int
+		page int
+	}{
+		{"two pages", 2048, 1024},
+		{"three pages", 3000, 1024},
+		{"one buffer", 2500, 4096},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := bytes.Repeat([]byte("abcdefghij"), (tc.size+9)/10)[:tc.size]
+			n := new(needle.Needle)
+			n.Data = append([]byte(nil), data...)
+			n.Checksum = needle.NewCRC(n.Data)
+			n.Id = types.Uint64ToNeedleId(uint64(i + 1))
+			offset, _, _, err := v.writeNeedle2(n, true, false, false)
+			if err != nil {
+				t.Fatalf("write needle: %v", err)
+			}
+			nv, ok := v.nm.Get(n.Id)
+			if !ok {
+				t.Fatal("needle missing from index")
+			}
+			actual := nv.Offset.ToActualOffset()
+
+			read := func() (bytes.Buffer, error) {
+				t.Helper()
+				meta := new(needle.Needle)
+				meta.Id = n.Id
+				if err := v.readNeedleMetaAt(meta, actual, int32(nv.Size)); err != nil {
+					t.Fatalf("read meta at %d size %d: %v", actual, nv.Size, err)
+				}
+				var buf bytes.Buffer
+				err := v.readNeedleDataInto(meta, &ReadOption{ReadBufferSize: tc.page}, &buf, 0, int64(meta.DataSize))
+				return buf, err
+			}
+
+			intact, err := read()
+			if err != nil {
+				t.Fatalf("intact read: %v", err)
+			}
+			if !bytes.Equal(intact.Bytes(), data) {
+				t.Fatalf("intact read len %d, want %d", intact.Len(), len(data))
+			}
+
+			dataOff := int64(offset) + types.NeedleHeaderSize + types.DataSizeSize
+			if _, err := v.DataBackend.WriteAt([]byte{0xff}, dataOff); err != nil {
+				t.Fatalf("damage needle: %v", err)
+			}
+			damaged, err := read()
+			if err == nil || !strings.Contains(err.Error(), "checksum") {
+				t.Fatalf("damaged read: got %v, want a checksum error", err)
+			}
+			held := len(data) % tc.page
+			if held == 0 {
+				held = tc.page
+			}
+			if damaged.Len() != len(data)-held {
+				t.Fatalf("damaged read wrote %d bytes, want %d with the last page held back", damaged.Len(), len(data)-held)
+			}
+		})
 	}
 }
