@@ -229,6 +229,19 @@ impl Store {
     where
         F: Fn(&DiskLocation) -> bool,
     {
+        self.find_free_location_replacing(pred, None)
+    }
+
+    /// `find_free_location_predicate` for a caller about to delete
+    /// `replace_vid` to make room: the location holding it counts its slot as free.
+    pub fn find_free_location_replacing<F>(
+        &self,
+        pred: F,
+        replace_vid: Option<VolumeId>,
+    ) -> Option<usize>
+    where
+        F: Fn(&DiskLocation) -> bool,
+    {
         use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
 
         let mut best: Option<(usize, i64)> = None;
@@ -241,7 +254,9 @@ impl Store {
             let effective_free = if max == 0 {
                 i64::MAX
             } else {
-                let free_count = (max - loc.volumes_len() as i64) * DATA_SHARDS_COUNT as i64
+                let replaced = replace_vid.is_some_and(|vid| loc.find_volume(vid).is_some());
+                let free_count = (max - loc.volumes_len() as i64 + replaced as i64)
+                    * DATA_SHARDS_COUNT as i64
                     - loc.ec_shard_count() as i64;
                 free_count / DATA_SHARDS_COUNT as i64
             };
@@ -2362,6 +2377,52 @@ mod tests {
         let selected =
             store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive);
         assert_eq!(selected, Some(0));
+    }
+
+    // VolumeCopy plans before it deletes the replica it replaces, so on a full
+    // disk only the location actually holding that replica may count it as free.
+    #[test]
+    fn test_find_free_location_replacing_credits_only_the_holding_location() {
+        let tmp1 = TempDir::new().unwrap();
+        let dir1 = tmp1.path().to_str().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let dir2 = tmp2.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for dir in [dir1, dir2] {
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    1,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        for vid in [81, 82] {
+            store
+                .add_volume(VolumeId(vid), DiskType::HardDrive, &VolumeSpec::default())
+                .unwrap();
+        }
+        let loc_of = |vid| store.find_volume(VolumeId(vid)).unwrap().0;
+        assert_ne!(loc_of(81), loc_of(82), "fixture must fill both locations");
+
+        let hdd = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.find_free_location_replacing(hdd, None), None);
+        assert_eq!(
+            store.find_free_location_replacing(hdd, Some(VolumeId(99))),
+            None
+        );
+        assert_eq!(
+            store.find_free_location_replacing(hdd, Some(VolumeId(81))),
+            Some(loc_of(81))
+        );
+        assert_eq!(
+            store.find_free_location_replacing(hdd, Some(VolumeId(82))),
+            Some(loc_of(82))
+        );
     }
 
     #[test]

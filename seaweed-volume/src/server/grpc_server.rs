@@ -1867,11 +1867,10 @@ impl VolumeServer for VolumeGrpcService {
             .connect_to_copy_source(vid, &req.source_data_node)
             .await?;
         let source = SourceVolumeStatus::fetch(&mut client, req.volume_id).await?;
-        if had_existing_volume {
-            self.delete_existing_replica(vid, &source)?;
-        }
-
         let dest = self.plan_copy_destination(&req, vid, &source)?;
+        if had_existing_volume {
+            self.delete_existing_replica(vid, &source, &dest)?;
+        }
         dest.write_note(vid, &req.source_data_node)?;
 
         let (tx, rx) =
@@ -5273,11 +5272,13 @@ impl VolumeGrpcService {
     /// Drops a pre-existing local replica before the copy overwrites its
     /// files. Deleting before the source is confirmed reachable destroys a
     /// healthy copy on a transient source outage (and, on retry, can lose the
-    /// volume entirely), so this takes the source's status as proof.
+    /// volume entirely), so this takes the source's status as proof. It also
+    /// takes the planned destination: with no room for the copy, keep the replica.
     fn delete_existing_replica(
         &self,
         vid: VolumeId,
         _source: &SourceVolumeStatus,
+        _dest: &CopyDestination,
     ) -> Result<(), Status> {
         let mut store = self.state.store.write().unwrap();
         delete_replica_keep_remote(&mut store, vid).map_err(|e| {
@@ -5312,12 +5313,16 @@ impl VolumeGrpcService {
         };
 
         // Find a free disk location using Go's Store.FindFreeLocation semantics.
+        // Runs before the existing replica is deleted, so its slot counts as free.
         let (data_base, idx_base, selected_disk_type) = {
             let store = self.state.store.read().unwrap();
-            let Some(loc_idx) = store.find_free_location_predicate(|loc| {
-                loc.disk_type == requested_disk_type
-                    && loc.available_space.load(Ordering::Relaxed) > needed_space
-            }) else {
+            let Some(loc_idx) = store.find_free_location_replacing(
+                |loc| {
+                    loc.disk_type == requested_disk_type
+                        && loc.available_space.load(Ordering::Relaxed) > needed_space
+                },
+                Some(vid),
+            ) else {
                 return Err(Status::internal(format!(
                     "no space left {}",
                     requested_disk_type.readable_string()
@@ -7481,6 +7486,97 @@ mod tests {
                 dest_file(ext)
             );
         }
+    }
+
+    fn volume_copy_request(port: u16) -> volume_server_pb::VolumeCopyRequest {
+        volume_server_pb::VolumeCopyRequest {
+            volume_id: 1,
+            collection: String::new(),
+            source_data_node: format!("127.0.0.1:1.{}", port),
+            disk_type: String::new(),
+            io_byte_per_second: 0,
+            replication: String::new(),
+            ttl: String::new(),
+        }
+    }
+
+    // With no room for the copy, VolumeCopy must fail before touching the
+    // existing replica: deleting it first leaves the node with neither.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_without_space_keeps_existing_replica() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, _dest_tmp) = make_local_service_with_volume("", None);
+        let (dat_path, note_path) = {
+            let store = dest_service.state.store.read().unwrap();
+            let loc = &store.locations[0];
+            loc.available_space.store(0, Ordering::Relaxed);
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            (v.file_name(".dat"), v.file_name(".note"))
+        };
+        let dat_before = std::fs::read(&dat_path).unwrap();
+
+        let err = match dest_service
+            .volume_copy(Request::new(volume_copy_request(port)))
+            .await
+        {
+            Ok(_) => panic!("VolumeCopy with no free location must fail"),
+            Err(e) => e,
+        };
+        assert!(
+            err.message().contains("no space left"),
+            "unexpected error: {}",
+            err
+        );
+
+        assert!(
+            dest_service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_some(),
+            "a failed VolumeCopy unmounted the existing replica"
+        );
+        assert_eq!(
+            std::fs::read(&dat_path).unwrap(),
+            dat_before,
+            "a failed VolumeCopy changed the existing replica's .dat"
+        );
+        assert!(!std::path::Path::new(&note_path).exists());
+    }
+
+    // A disk at its volume limit that holds the replica must still take the
+    // copy: the replica's own slot counts as free when planning.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_replaces_replica_on_a_full_disk() {
+        let (source_service, _source_tmp, dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, _dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let store = dest_service.state.store.read().unwrap();
+            let loc = &store.locations[0];
+            loc.max_volume_count.store(1, Ordering::Relaxed);
+            loc.check_disk_space();
+        }
+
+        let mut stream = dest_service
+            .volume_copy(Request::new(volume_copy_request(port)))
+            .await
+            .unwrap_or_else(|e| panic!("VolumeCopy onto a full disk failed: {}", e))
+            .into_inner();
+        while let Some(m) = stream.next().await {
+            m.unwrap();
+        }
+
+        let store = dest_service.state.store.read().unwrap();
+        let (_, v) = store
+            .find_volume(VolumeId(1))
+            .expect("copied volume must be mounted");
+        assert_eq!(v.dat_file_size().unwrap(), dat_bytes.len() as u64);
     }
 
     // copy_file must stream the whole .dat in 2MB chunks (not buffer it) and
