@@ -386,8 +386,10 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		err = writeFn(bufferedWriter)
 		if err != nil {
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
-			// Cannot call http.Error() here because WriteHeader was already called
-			return fmt.Errorf("ProcessRangeRequest range[0]: %w", err)
+			// WriteHeader was already called: drop the unflushed tail and
+			// abort so the client does not read corrupt bytes as a full body.
+			discardBuffered = true
+			panic(http.ErrAbortHandler)
 		}
 		return nil
 	}
@@ -439,8 +441,9 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	w.WriteHeader(http.StatusPartialContent)
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
 		glog.Errorf("ProcessRangeRequest err: %v", err)
-		// Cannot call http.Error() here because WriteHeader was already called
-		return fmt.Errorf("ProcessRangeRequest err: %w", err)
+		// WriteHeader was already called: drop the unflushed tail and abort.
+		discardBuffered = true
+		panic(http.ErrAbortHandler)
 	}
 	return nil
 }
