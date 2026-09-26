@@ -2974,7 +2974,11 @@ impl Volume {
                         "failed to read needle {} on volume {}: {}",
                         needle_id.0, self.id.0, e
                     ));
-                } else if size.is_deleted() && n.id != needle_id {
+                } else if n.id != needle_id {
+                    // The data CRC does not cover the header: a damaged needle id
+                    // still reads clean while every live-needle lookup on this
+                    // replica keeps finding the index key here. (Go parity:
+                    // the check covers live needles too, not just tombstones.)
                     broken.push(format!(
                         "index key {} does not match needle's Id {} on volume {}",
                         needle_id.0, n.id.0, self.id.0
@@ -6435,6 +6439,54 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("does not match needle's Id")),
             "scrub should report the corrupted tombstone's Id, got {:?}",
+            broken
+        );
+    }
+
+    #[test]
+    fn test_scrub_checks_live_needle_id() {
+        // Mirror of Go's TestScrubVolumeDataChecksLiveNeedleId: a live needle
+        // whose stored id is damaged still reads clean — the data CRC does not
+        // cover the header — so the scrub must catch it via the index key.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        write_test_needle(&mut v, 1, b"needle data");
+        v.sync_to_disk().unwrap();
+
+        let mut idx_file = File::open(v.file_name(".idx")).unwrap();
+        let mut live_offset = Offset::default();
+        idx::walk_index_file(&mut idx_file, 0, |key, offset, size| {
+            if key == NeedleId(1) && !offset.is_zero() && !size.is_deleted() {
+                live_offset = offset;
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        let (_count, broken) = v.scrub().unwrap();
+        assert!(broken.is_empty(), "healthy needle must pass, got {:?}", broken);
+
+        let mut id_bytes = [0u8; NEEDLE_ID_SIZE];
+        NeedleId(99).to_bytes(&mut id_bytes);
+        let mut dat = OpenOptions::new()
+            .write(true)
+            .open(v.file_name(".dat"))
+            .unwrap();
+        dat.seek(SeekFrom::Start(
+            live_offset.to_actual_offset() as u64 + COOKIE_SIZE as u64,
+        ))
+        .unwrap();
+        dat.write_all(&id_bytes).unwrap();
+        dat.sync_all().unwrap();
+
+        let (_count, broken) = v.scrub().unwrap();
+        assert!(
+            broken
+                .iter()
+                .any(|e| e.contains("does not match needle's Id")),
+            "scrub should report the corrupted live needle's Id, got {:?}",
             broken
         );
     }

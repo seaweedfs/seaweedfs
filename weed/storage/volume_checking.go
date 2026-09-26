@@ -92,7 +92,10 @@ func (v *Volume) scrubVolumeData(idxFile *os.File, idxFileSize int64) (int64, []
 		n := needle.Needle{}
 		if err := n.ReadData(v.DataBackend, offset.ToActualOffset(), physicalSize, version); err != nil {
 			errs = append(errs, fmt.Errorf("failed to read needle %d on volume %d: %v", id, v.Id, err))
-		} else if size.IsDeleted() && n.Id != id {
+		} else if n.Id != id {
+			// The data CRC does not cover the header: a damaged needle id still
+			// reads clean while every live-needle lookup on this replica keeps
+			// finding the index key here.
 			errs = append(errs, fmt.Errorf("index key %v does not match needle's Id %v on volume %d", id, n.Id, v.Id))
 		}
 
