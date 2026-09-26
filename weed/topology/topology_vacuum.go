@@ -276,7 +276,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	// Empty volumes hold their slots forever: deleting them here also spares
 	// compacting bytes that are all deleted already.
 	if deleteEmptyAfter > 0 {
-		t.deleteEmptyVolumes(grpcDialOption, todoVolumeMap, deleteEmptyAfter)
+		t.deleteEmptyVolumes(grpcDialOption, volumeLayout, todoVolumeMap, deleteEmptyAfter)
 	}
 
 	// limiter for each volume server
@@ -386,24 +386,39 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 	}
 }
 
-// deleteEmptyVolumes removes replica copies that have stayed empty and quiet
-// for quietPeriod, the same rule volume.deleteEmpty applies on demand. Copies
-// that still hold data or were written recently stay; only a vid whose every
-// copy is deleted leaves the sweep's work map.
-func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, todoVolumeMap map[needle.VolumeId]*VolumeLocationList, quietPeriod time.Duration) {
+// deleteEmptyVolumes removes a volume whose every replica copy has stayed
+// empty and quiet for quietPeriod, the same rule volume.deleteEmpty applies
+// on demand. A copy that still holds data or was written recently keeps the
+// whole volume: deleting only the empty copies would silently cut the
+// surviving copy's replica count. Fully deleted vids leave the sweep's work
+// map; anything else falls through to the normal compaction path.
+func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *VolumeLayout, todoVolumeMap map[needle.VolumeId]*VolumeLocationList, quietPeriod time.Duration) {
 	quietSeconds := int64(quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
 	for vid, locationList := range todoVolumeMap {
-		remaining := 0
+		eligible := true
 		for _, dn := range locationList.list {
 			v, err := dn.GetVolumesById(vid)
 			if err != nil || !isEmptyVolumeDeleteCandidate(v, quietSeconds, nowUnixSeconds) {
-				remaining++
-				continue
+				eligible = false
+				break
 			}
-			onlyGarbage := v.FileCount > 0 && v.FileCount <= v.DeleteCount
-			glog.V(0).Infof("deleting empty volume %d on %s", vid, dn.ServerAddress())
-			if err := t.deleteEmptyVolume(grpcDialOption, dn, vid, onlyGarbage); err != nil {
+		}
+		if !eligible {
+			continue
+		}
+		// stop new assignments and let pending writes finish before deleting,
+		// the same drain the compact pass uses
+		vl.DrainAndRemoveFromWritable(vid)
+		remaining := 0
+		for _, dn := range locationList.list {
+			v, err := dn.GetVolumesById(vid)
+			if err == nil {
+				onlyGarbage := v.FileCount > 0 && v.FileCount <= v.DeleteCount
+				glog.V(0).Infof("deleting empty volume %d on %s", vid, dn.ServerAddress())
+				err = t.deleteEmptyVolume(grpcDialOption, dn, vid, onlyGarbage)
+			}
+			if err != nil {
 				glog.Warningf("delete empty volume %d on %s: %v", vid, dn.ServerAddress(), err)
 				remaining++
 			}
@@ -418,7 +433,9 @@ func (t *Topology) deleteEmptyVolume(grpcDialOption grpc.DialOption, dn *DataNod
 	return operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		// onlyEmpty stays set so a pre-upgrade server checks emptiness and
 		// refuses instead of deleting a volume that changed since the report.
-		_, err := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
+		ctx, cancel := context.WithTimeout(context.Background(), allocateVolumeTimeout)
+		defer cancel()
+		_, err := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
 			VolumeId:    uint32(vid),
 			OnlyEmpty:   true,
 			OnlyGarbage: onlyGarbage,
