@@ -2974,7 +2974,11 @@ impl Volume {
                         "failed to read needle {} on volume {}: {}",
                         needle_id.0, self.id.0, e
                     ));
-                } else if size.is_deleted() && n.id != needle_id {
+                } else if n.id != needle_id {
+                    // The data CRC does not cover the header: a damaged needle id
+                    // still reads clean while every live-needle lookup on this
+                    // replica keeps finding the index key here. (Go parity:
+                    // the check covers live needles too, not just tombstones.)
                     broken.push(format!(
                         "index key {} does not match needle's Id {} on volume {}",
                         needle_id.0, n.id.0, self.id.0
