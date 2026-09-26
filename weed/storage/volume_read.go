@@ -163,10 +163,9 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	}
 
 	buf := mem.Allocate(min(readOption.ReadBufferSize, int(size)))
-	// spare holds the previous page while buf is reused. A full-needle read
-	// keeps the last page unwritten until the CRC matches, so a mismatch never
-	// hands that page to the HTTP writer (#11459). Free both after return:
-	// the two slices are swapped as pages are streamed.
+	// A full-needle read holds the last page back in `pending` until the CRC
+	// matches; `spare` is a second buffer swapped in so the held page is not
+	// overwritten while streaming.
 	var spare []byte
 	defer func() {
 		mem.Free(buf)
@@ -224,9 +223,8 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		toWrite := min(count, int(offset+size-x))
 		if toWrite > 0 {
 			crc = crc.Update(buf[0:toWrite])
-			// The CRC is known only after the last byte. Stream earlier pages,
-			// but keep this one until the check below so a bad needle is not
-			// fully written before the error is returned.
+			// The CRC is known only after the last byte; hold each page until
+			// the next one is read so a bad needle is never fully written.
 			if checkCRC {
 				if pending != nil {
 					if _, err = writer.Write(pending); err != nil {

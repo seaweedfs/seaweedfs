@@ -326,9 +326,9 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		}
 		if err = writeFn(bufferedWriter); err != nil {
 			glog.Errorf("ProcessRangeRequest: %v", err)
-			// Drop the unflushed tail. Flushing it can finish a body whose
-			// Content-Length is already set, so the client sees a complete 200
-			// of corrupt bytes (#11459).
+			// Drop the unflushed tail: flushing it would finish a 200 whose
+			// Content-Length is already set, delivering corrupt bytes as a
+			// complete body.
 			discardBuffered = true
 			if sink.written > 0 {
 				panic(http.ErrAbortHandler)

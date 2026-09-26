@@ -221,8 +221,8 @@ func (c *countingReadCloser) Close() error {
 }
 
 // A write error after the body has flushed must not complete as 200 with the
-// full Content-Length. The unflushed tail is discarded and the connection
-// aborted (#11459).
+// full Content-Length: the unflushed tail is discarded and the connection
+// aborted mid-body.
 func TestProcessRangeRequestWriteErrorAfterBodyStarted(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), 200*1024)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -247,12 +247,15 @@ func TestProcessRangeRequestWriteErrorAfterBodyStarted(t *testing.T) {
 
 	resp, err := srv.Client().Get(srv.URL)
 	if err != nil {
-		return
+		t.Fatalf("request: %v", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want the committed 200", resp.StatusCode)
+	}
 	body, readErr := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusOK && readErr == nil && len(body) == len(payload) {
-		t.Fatalf("write error after a full body completed as 200 with %d bytes", len(body))
+	if readErr == nil {
+		t.Fatalf("body completed with %d bytes; the erroring tail must abort it", len(body))
 	}
 }
 

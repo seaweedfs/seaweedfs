@@ -244,10 +244,9 @@ func TestScanVolumeFileFrom_StopsAtRecordThatCannotAdvance(t *testing.T) {
 	}
 }
 
-// A full read streams through a buffer smaller than the needle. The CRC is
-// known only after the last byte, so that page must stay unwritten when the
-// checksum does not match. Otherwise a volume GET has already committed the
-// corrupt body (#11459).
+// The CRC is known only after the last byte, so a full read must keep that
+// page unwritten when the checksum mismatches; otherwise the GET has already
+// committed a corrupt body.
 func TestReadNeedleDataIntoChecksumMismatchHoldsLastPage(t *testing.T) {
 	dir := t.TempDir()
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
