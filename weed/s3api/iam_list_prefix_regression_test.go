@@ -1,11 +1,17 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,6 +110,72 @@ func TestEvaluateIAMPolicies_ListBucketVersionsWithPrefix(t *testing.T) {
 	r := httptest.NewRequest("GET", "/"+bucket+"?versions&prefix=foo/", nil)
 	require.True(t, iam.evaluateIAMPolicies(r, identity, s3_constants.ACTION_LIST, bucket, "foo/"),
 		"s3:ListBucketVersions must still resolve when listing with a prefix")
+}
+
+// The IAM-integration authorizer must resolve the listing variant the same way
+// evaluateIAMPolicies does: a prefix promoted into the object argument is not
+// part of the request URL, so ?versions&prefix=... still resolves to
+// s3:ListBucketVersions and an s3:ListBucket grant must not cover it.
+func TestAuthorizeAction_ListVersionsWithPromotedPrefix(t *testing.T) {
+	const bucket = "test-bucket"
+
+	ctx := context.Background()
+	iamManager := integration.NewIAMManager()
+	require.NoError(t, iamManager.Initialize(&integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{DefaultEffect: "Deny", StoreType: "memory"},
+		Roles:  &integration.RoleStoreConfig{StoreType: "memory"},
+	}, func() string { return "localhost:8888" }))
+
+	require.NoError(t, iamManager.CreatePolicy(ctx, "", "ListBucketOnly", &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect:    "Allow",
+			Action:    []string{"s3:ListBucket"},
+			Resource:  []string{"arn:aws:s3:::" + bucket},
+			Condition: map[string]map[string]interface{}{"StringLike": {"s3:prefix": "b/*"}},
+		}},
+	}))
+	require.NoError(t, iamManager.CreatePolicy(ctx, "", "ListVersionsOnly", &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect:   "Allow",
+			Action:   []string{"s3:ListBucketVersions"},
+			Resource: []string{"arn:aws:s3:::" + bucket},
+		}},
+	}))
+
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
+	reader := &IAMIdentity{
+		Name:        "reader",
+		Principal:   "arn:aws:iam::000000000000:user/reader",
+		PolicyNames: []string{"ListBucketOnly"},
+	}
+
+	versionsReq := httptest.NewRequest("GET", "/"+bucket+"?versions&prefix=b/", nil)
+	// object carries the promoted prefix, matching authRequestWithAuthType
+	require.Equal(t, s3err.ErrAccessDenied,
+		s3iam.AuthorizeAction(ctx, reader, s3_constants.ACTION_LIST, bucket, "b/", versionsReq),
+		"an s3:ListBucket grant must not cover ?versions listing")
+
+	listReq := httptest.NewRequest("GET", "/"+bucket+"?list-type=2&prefix=b/", nil)
+	require.Equal(t, s3err.ErrNone,
+		s3iam.AuthorizeAction(ctx, reader, s3_constants.ACTION_LIST, bucket, "b/", listReq),
+		"s3:ListBucket with a matching s3:prefix still lists")
+
+	versionsReader := &IAMIdentity{
+		Name:        "versions-reader",
+		Principal:   "arn:aws:iam::000000000000:user/versions-reader",
+		PolicyNames: []string{"ListVersionsOnly"},
+	}
+	require.Equal(t, s3err.ErrNone,
+		s3iam.AuthorizeAction(ctx, versionsReader, s3_constants.ACTION_LIST, bucket, "b/", versionsReq),
+		"s3:ListBucketVersions allows the versions listing")
 }
 
 func mustPolicy(t *testing.T, doc map[string]any) string {

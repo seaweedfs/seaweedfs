@@ -3025,7 +3025,7 @@ func resolveS3AuthTarget(action Action, bucket, object string, r *http.Request) 
 		resourceObjectKey = ""
 	}
 	resourceArn = buildS3ResourceArn(bucket, resourceObjectKey)
-	s3Action = ResolveS3Action(r, string(action), bucket, object)
+	s3Action = ResolveS3Action(r, string(action), bucket, resourceObjectKey)
 	return
 }
 
