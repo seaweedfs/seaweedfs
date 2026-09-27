@@ -1754,11 +1754,11 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 }
 
 // isBucketListingRequest reports whether the request lists bucket contents:
-// the ACTION_LIST routes, and ListMultipartUploads (GET ?uploads at bucket
-// level), which the router registers under ACTION_READ. A real object in the
-// URL disqualifies the uploads shape, so GET /bucket/key?uploads stays an
-// object read. The object is read from the route vars so a prefix promoted
-// into the object does not hide the bucket-level shape.
+// the ACTION_LIST routes, and ListMultipartUploads (GET ?uploads), which the
+// router registers under ACTION_READ without an object-path constraint.
+// GET /bucket/key?uploads therefore also reaches the listing handler. Route
+// vars are used so a prefix promoted into the authorization object does not
+// hide the bucket-level shape.
 func isBucketListingRequest(r *http.Request, action Action) bool {
 	if action == s3_constants.ACTION_LIST {
 		return true
