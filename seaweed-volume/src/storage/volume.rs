@@ -476,6 +476,10 @@ pub(crate) struct DatScanPlan {
     version: Version,
     from: u64,
     end: u64,
+    /// The volume instance and revision the plan was taken from: after a
+    /// vacuum or a re-create, the needle map's offsets name another file.
+    owner: Arc<DataFileAccessControl>,
+    compaction_revision: u16,
 }
 
 /// One record visited by `DatScanPlan::scan`: the raw on-disk bytes and the
@@ -484,6 +488,24 @@ pub(crate) struct RawNeedle<'a> {
     pub header: &'a [u8],
     pub body: &'a [u8],
     pub append_at_ns: u64,
+}
+
+/// One record visited by `DatScanPlan::scan_records`, not yet parsed.
+pub(crate) struct DatRecord<'a> {
+    pub offset: u64,
+    pub id: NeedleId,
+    pub size: Size,
+    /// Header and body.
+    pub bytes: &'a [u8],
+    version: Version,
+}
+
+impl DatRecord<'_> {
+    pub(crate) fn parse(&self) -> Result<Needle, VolumeError> {
+        let mut n = Needle::default();
+        n.read_bytes(self.bytes, self.offset as i64, self.size, self.version)?;
+        Ok(n)
+    }
 }
 
 impl DatScanPlan {
@@ -499,6 +521,22 @@ impl DatScanPlan {
     pub(crate) fn scan(
         &self,
         mut visit: impl FnMut(RawNeedle<'_>) -> ControlFlow<()>,
+    ) -> Result<(), VolumeError> {
+        self.scan_records(|record| {
+            let append_at_ns = record.parse()?.append_at_ns;
+            Ok(visit(RawNeedle {
+                header: &record.bytes[..NEEDLE_HEADER_SIZE],
+                body: &record.bytes[NEEDLE_HEADER_SIZE..],
+                append_at_ns,
+            }))
+        })
+    }
+
+    /// `scan` without the parse: a visitor that skips a record never fails on
+    /// a body it did not need.
+    pub(crate) fn scan_records(
+        &self,
+        mut visit: impl FnMut(DatRecord<'_>) -> Result<ControlFlow<()>, VolumeError>,
     ) -> Result<(), VolumeError> {
         let mut offset = self.from;
         while offset + NEEDLE_HEADER_SIZE as u64 <= self.end {
@@ -552,17 +590,14 @@ impl DatScanPlan {
                 )
                 .map_err(|e| self.read_error(e, offset + NEEDLE_HEADER_SIZE as u64))?;
 
-            let append_at_ns = {
-                let mut n = Needle::default();
-                n.read_bytes(&record, offset as i64, size, self.version)?;
-                n.append_at_ns
+            let record = DatRecord {
+                offset,
+                id,
+                size,
+                bytes: &record,
+                version: self.version,
             };
-            let needle = RawNeedle {
-                header: &record[..NEEDLE_HEADER_SIZE],
-                body: &record[NEEDLE_HEADER_SIZE..],
-                append_at_ns,
-            };
-            if visit(needle).is_break() {
+            if visit(record)?.is_break() {
                 break;
             }
             offset += total_size;
@@ -2438,71 +2473,6 @@ impl Volume {
                 .as_secs()
     }
 
-    /// Read all live needles from the volume (for ReadAllNeedles streaming RPC).
-    pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
-        let _guard = self.data_file_access_control.read_lock();
-        if let Some(e) = self.unavailable_error() {
-            return Err(e);
-        }
-        let nm = self.nm_or_not_found()?;
-        let version = self.version();
-        let dat_size = self.current_dat_file_size()? as i64;
-        let mut needles = Vec::new();
-        let mut offset = self.super_block.block_size() as i64;
-
-        while offset < dat_size {
-            let mut header = [0u8; NEEDLE_HEADER_SIZE];
-            match self.read_exact_at_backend(&mut header, offset as u64) {
-                Ok(()) => {}
-                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e),
-            }
-
-            let (_cookie, key, size) = Needle::parse_header(&header);
-            if size.0 == 0 && key.is_empty() {
-                break;
-            }
-
-            let total_size = get_actual_size(size, version);
-            // A corrupt header can make the record length zero or negative;
-            // the scan cannot advance past it.
-            if total_size <= 0 {
-                return Err(VolumeError::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "corrupt needle header at offset {offset}: size {}, record length {total_size}",
-                        size.0
-                    ),
-                )));
-            }
-
-            if size.is_deleted() || size.0 <= 0 {
-                offset += total_size;
-                continue;
-            }
-
-            let Some(nv) = nm.get(key)? else {
-                offset += total_size;
-                continue;
-            };
-            if nv.offset.to_actual_offset() != offset {
-                offset += total_size;
-                continue;
-            }
-
-            let mut n = Needle {
-                id: key,
-                ..Needle::default()
-            };
-            let mut read_option = ReadOption::default();
-            self.read_needle_data_at_unlocked(&mut n, offset, size, &mut read_option)?;
-            needles.push(n);
-
-            offset += total_size;
-        }
-        Ok(needles)
-    }
-
     /// Check volume data integrity by verifying the last index entries against the .dat file.
     /// Matches Go's CheckVolumeDataIntegrity (volume_checking.go L117-141).
     /// Reads the last few index entries, verifies each needle header is readable and
@@ -3038,7 +3008,54 @@ impl Volume {
             version: self.version(),
             from: from_offset,
             end: self.current_dat_file_size()?,
+            owner: self.data_file_access_control.clone(),
+            compaction_revision: self.super_block.compaction_revision,
         })
+    }
+
+    /// Fail unless `plan` was taken from this volume at its current
+    /// compaction revision.
+    fn check_plan_source(&self, plan: &DatScanPlan) -> Result<(), VolumeError> {
+        if let Some(e) = self.unavailable_error() {
+            return Err(e);
+        }
+        if !Arc::ptr_eq(&plan.owner, &self.data_file_access_control)
+            || plan.compaction_revision != self.super_block.compaction_revision
+        {
+            return Err(VolumeError::Io(io::Error::other(format!(
+                "volume {} was compacted or replaced during the scan",
+                self.id
+            ))));
+        }
+        Ok(())
+    }
+
+    /// Whether the record of `key` at `offset` in `plan` is the one the
+    /// needle map points at now.
+    pub(crate) fn is_live_in_plan(
+        &self,
+        plan: &DatScanPlan,
+        key: NeedleId,
+        offset: u64,
+    ) -> Result<bool, VolumeError> {
+        self.check_plan_source(plan)?;
+        let nv = self.nm_or_not_found()?.get(key)?;
+        Ok(nv.is_some_and(|nv| nv.offset.to_actual_offset() == offset as i64))
+    }
+
+    /// A plan for the records appended since `plan` was taken, or `None` when
+    /// there are none. `next` is the offset after the last record the pass
+    /// visited; a pass that stopped short of its end bound is not continued.
+    pub(crate) fn dat_scan_plan_after(
+        &self,
+        plan: &DatScanPlan,
+        next: Option<u64>,
+    ) -> Result<Option<DatScanPlan>, VolumeError> {
+        self.check_plan_source(plan)?;
+        if next.unwrap_or(plan.from) != plan.end || self.current_dat_file_size()? <= plan.end {
+            return Ok(None);
+        }
+        self.dat_scan_plan(plan.end).map(Some)
     }
 
     /// Insert or update a needle index entry (for low-level blob writes).
@@ -5478,21 +5495,6 @@ mod tests {
     }
 
     #[test]
-    fn read_all_needles_fails_at_a_header_it_cannot_advance_past() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        let mut v = make_test_volume(dir);
-        write_test_needle(&mut v, 1, b"good");
-        append_corrupt_header(&v, -100);
-
-        let err = v.read_all_needles().unwrap_err();
-        assert!(
-            matches!(&err, VolumeError::Io(e) if e.kind() == io::ErrorKind::InvalidData),
-            "expected a corrupt-data error, got {err:?}"
-        );
-    }
-
-    #[test]
     fn test_volume_write_read() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
@@ -7067,50 +7069,6 @@ mod tests {
 
         assert!(!Path::new(&dat_path).exists());
         assert!(!Path::new(&idx_path).exists());
-    }
-
-    #[test]
-    fn test_read_all_needles_uses_dat_order_for_live_offsets() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().to_str().unwrap();
-        let mut v = make_test_volume(dir);
-
-        let mut first = Needle {
-            id: NeedleId(10),
-            cookie: Cookie(0x11223344),
-            data: b"first".to_vec(),
-            data_size: 5,
-            ..Needle::default()
-        };
-        v.write_needle(&mut first, true, false).unwrap();
-
-        let mut second = Needle {
-            id: NeedleId(20),
-            cookie: Cookie(0x55667788),
-            data: b"second".to_vec(),
-            data_size: 6,
-            ..Needle::default()
-        };
-        v.write_needle(&mut second, true, false).unwrap();
-
-        let mut first_overwrite = Needle {
-            id: NeedleId(10),
-            cookie: Cookie(0x11223344),
-            data: b"first-overwrite".to_vec(),
-            data_size: 15,
-            ..Needle::default()
-        };
-        v.write_needle(&mut first_overwrite, true, false).unwrap();
-
-        let needles = v.read_all_needles().unwrap();
-        let ids: Vec<u64> = needles.iter().map(|n| u64::from(n.id)).collect();
-        let bodies: Vec<&[u8]> = needles.iter().map(|n| n.data.as_slice()).collect();
-
-        assert_eq!(ids, vec![20, 10]);
-        assert_eq!(
-            bodies,
-            vec![b"second".as_slice(), b"first-overwrite".as_slice()]
-        );
     }
 
     #[test]
