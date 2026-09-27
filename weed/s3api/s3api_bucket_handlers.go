@@ -535,14 +535,14 @@ func (s3a *S3ApiServer) dirHasUserObjects(root string) (bool, error) {
 				if !entry.IsDirectory {
 					return true, nil
 				}
-				// Internal folders are skipped by object listing at every level,
-				// so a directory with a reserved name never counts — but a file
-				// with that name does.
-				if isReservedDirectoryName(entry.Name) {
-					continue
-				}
+				// An explicit directory object counts even under a reserved name.
 				if entry.IsDirectoryKeyObject() {
 					return true, nil
+				}
+				// Internal folders are skipped by object listing at every level,
+				// so a directory with a reserved name never counts.
+				if isReservedDirectoryName(entry.Name) {
+					continue
 				}
 				dirs = append(dirs, dir+"/"+entry.Name)
 			}

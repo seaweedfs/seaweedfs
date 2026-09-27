@@ -192,6 +192,18 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 			wantHasUser: false,
 		},
 		{
+			name: "directory object with a reserved name counts",
+			entriesByDir: map[string][]*filer_pb.Entry{
+				"/buckets/b": {
+					{Name: "data", IsDirectory: true},
+				},
+				"/buckets/b/data": {
+					{Name: s3_constants.MultipartUploadsFolder, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: s3_constants.FolderMimeType}},
+				},
+			},
+			wantHasUser: true,
+		},
+		{
 			name: "file with a reserved name counts",
 			entriesByDir: map[string][]*filer_pb.Entry{
 				"/buckets/b": {
