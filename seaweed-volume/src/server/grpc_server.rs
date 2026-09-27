@@ -4442,10 +4442,10 @@ impl VolumeServer for VolumeGrpcService {
                     })
                     .await
                     .map_err(|e| {
-                        Status::internal(format!(
-                            "backend {} copy file {}: {}",
-                            dest_backend_name, dat_path, e
-                        ))
+                        crate::server::status_with_context(
+                            &format!("backend {} copy file {}", dest_backend_name, dat_path),
+                            e.into(),
+                        )
                     })?;
 
                 // Deliberately no cancellation check here. Once the object is
@@ -4664,10 +4664,10 @@ impl VolumeServer for VolumeGrpcService {
                                 rm
                             );
                         }
-                        Status::internal(format!(
-                            "backend {} copy file {}: {}",
-                            storage_name_clone, dat_path, e
-                        ))
+                        crate::server::status_with_context(
+                            &format!("backend {} copy file {}", storage_name_clone, dat_path),
+                            e.into(),
+                        )
                     })?;
 
                 // Restore the .dat mtime so a reload computes TTL from real data age,
@@ -4796,10 +4796,13 @@ impl VolumeServer for VolumeGrpcService {
 
                 // Only the last replica to download deletes the shared remote object.
                 backend.delete_file(&storage_key).await.map_err(|e| {
-                    Status::internal(format!(
-                        "volume {} failed to delete remote file {}: {}",
-                        vid, storage_key, e
-                    ))
+                    crate::server::status_with_context(
+                        &format!(
+                            "volume {} failed to delete remote file {}",
+                            vid, storage_key
+                        ),
+                        e.into(),
+                    )
                 })?;
 
                 // Go does NOT send a final 100% progress message after download completion
@@ -6196,7 +6199,9 @@ fn run_vacuum_compact(
 mod tests {
     use super::*;
     use crate::config::MinFreeSpace;
-    use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig, global_s3_tier_registry};
+    use crate::remote_storage::s3_tier::{
+        S3TierBackend, S3TierConfig, TierError, global_s3_tier_registry,
+    };
     use crate::security::{Guard, SigningKey};
     use crate::server::grpc_client::GRPC_MAX_MESSAGE_SIZE;
     use crate::storage::needle_map::NeedleMapKind;
@@ -6870,6 +6875,88 @@ mod tests {
             .remove("s3.tier_down_delete");
     }
 
+    /// An S3 endpoint that answers every request 404 with no body.
+    fn spawn_s3_not_found_server() -> (String, tokio::sync::oneshot::Sender<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let app = axum::Router::new().fallback(axum::routing::any(|| async {
+                    axum::http::StatusCode::NOT_FOUND
+                }));
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let _ = ready_tx.send(());
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+                    .unwrap();
+            });
+        });
+        ready_rx.recv().unwrap();
+        (format!("http://{}", addr), shutdown_tx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_tier_move_from_remote_missing_object_is_not_found() {
+        let (service, tmp, shutdown_tx, _dat_bytes, _super_block_size, _delete_count) =
+            make_remote_only_service("tier_down_missing");
+        let (endpoint, missing_shutdown_tx) = spawn_s3_not_found_server();
+        global_s3_tier_registry().write().unwrap().register(
+            "s3.tier_down_missing".to_string(),
+            S3TierBackend::new(&S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint,
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            }),
+        );
+        let dat_path = format!("{}/1.dat", tmp.path().to_str().unwrap());
+
+        let mut stream = service
+            .volume_tier_move_dat_from_remote(Request::new(
+                volume_server_pb::VolumeTierMoveDatFromRemoteRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    keep_remote_dat_file: false,
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        let err = stream
+            .next()
+            .await
+            .expect("the stream must carry the failure")
+            .expect_err("a missing remote object must fail the tier-down");
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err:?}");
+        assert!(
+            err.message().starts_with(&format!(
+                "backend s3.tier_down_missing copy file {dat_path}: "
+            )),
+            "the message must keep its context: {err:?}"
+        );
+        assert!(!std::path::Path::new(&dat_path).exists());
+
+        let _ = shutdown_tx.send(());
+        let _ = missing_shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_down_missing");
+    }
+
     // The progress callback is the only thing a tier transfer polls, so it is
     // the only place a departing caller can be noticed. Go gives it an error
     // return for exactly this (s3_upload.go:99, s3_download.go:84); this checks
@@ -6889,7 +6976,10 @@ mod tests {
             .download_file(&dest, "remote-key", |_, _| Err("caller gone".to_string()))
             .await
             .expect_err("a failing progress callback must abort the download");
-        assert!(err.contains("caller gone"), "unexpected error: {}", err);
+        assert!(
+            matches!(&err, TierError::Aborted(m) if m == "caller gone"),
+            "unexpected error: {err:?}"
+        );
 
         drop(service);
         let _ = shutdown_tx.send(());
