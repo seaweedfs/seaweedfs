@@ -222,7 +222,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	// resource ARN stays at bucket level (matching AWS ListBucket semantics).
 	// See https://github.com/seaweedfs/seaweedfs/issues/8969
 	resourceObjectKey := objectKey
-	if action == "List" {
+	if isBucketListingRequest(r, action) {
 		listPrefix := r.URL.Query().Get("prefix")
 		if listPrefix != "" {
 			requestContext["s3:prefix"] = listPrefix
@@ -258,8 +258,10 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		}
 	}
 
-	// Determine the specific S3 action based on the HTTP request details
-	specificAction := ResolveS3Action(r, string(action), bucket, objectKey)
+	// Determine the specific S3 action based on the HTTP request details. The
+	// prefix promoted into objectKey is not part of the URL; resolve against
+	// the bucket-level object so ?versions keeps its own action.
+	specificAction := ResolveS3Action(r, string(action), bucket, resourceObjectKey)
 
 	// Create action request
 	actionRequest := &integration.ActionRequest{
