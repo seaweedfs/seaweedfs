@@ -162,7 +162,7 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 			wantHasUser: false,
 		},
 		{
-			name: "nested versions-named directory holding a file",
+			name: "nested versions-named directories are internal",
 			entriesByDir: map[string][]*filer_pb.Entry{
 				"/buckets/b": {
 					{Name: "logs", IsDirectory: true},
@@ -174,10 +174,10 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 					{Name: "v1", IsDirectory: false},
 				},
 			},
-			wantHasUser: true,
+			wantHasUser: false,
 		},
 		{
-			name: "nested uploads-named directory holding a file",
+			name: "nested uploads-named directories are internal",
 			entriesByDir: map[string][]*filer_pb.Entry{
 				"/buckets/b": {
 					{Name: "data", IsDirectory: true},
@@ -187,6 +187,18 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 				},
 				"/buckets/b/data/" + s3_constants.MultipartUploadsFolder: {
 					{Name: "part-1", IsDirectory: false},
+				},
+			},
+			wantHasUser: false,
+		},
+		{
+			name: "file with a reserved name counts",
+			entriesByDir: map[string][]*filer_pb.Entry{
+				"/buckets/b": {
+					{Name: "dir", IsDirectory: true},
+				},
+				"/buckets/b/dir": {
+					{Name: "data" + s3_constants.VersionsFolder, IsDirectory: false},
 				},
 			},
 			wantHasUser: true,

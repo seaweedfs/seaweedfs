@@ -532,12 +532,16 @@ func (s3a *S3ApiServer) dirHasUserObjects(root string) (bool, error) {
 				if entry.Name == "" || entry.Name == "." || entry.Name == ".." || strings.Contains(entry.Name, "/") {
 					continue
 				}
-				// Reserved folders are internal only at the bucket root; a
-				// deeper .uploads or *.versions name is a user key prefix.
-				if dir == root && isReservedDirectoryName(entry.Name) {
+				if !entry.IsDirectory {
+					return true, nil
+				}
+				// Internal folders are skipped by object listing at every level,
+				// so a directory with a reserved name never counts — but a file
+				// with that name does.
+				if isReservedDirectoryName(entry.Name) {
 					continue
 				}
-				if !entry.IsDirectory || entry.IsDirectoryKeyObject() {
+				if entry.IsDirectoryKeyObject() {
 					return true, nil
 				}
 				dirs = append(dirs, dir+"/"+entry.Name)
