@@ -1565,7 +1565,10 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 			return
 		}
 
-		identity, errCode := iam.authRequest(r, action)
+		// authRequestWithAuthType keeps the resolved identity when authN
+		// succeeds but authZ denies, so the denied request still audits its
+		// requester; a failed authN resolves no identity at all.
+		identity, errCode, _ := iam.authRequestWithAuthType(r, action)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
@@ -1631,11 +1634,12 @@ func recordIdentityInContext(r *http.Request, identity *Identity) context.Contex
 }
 
 func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *http.Request, identity *Identity, errCode s3err.ErrorCode, f http.HandlerFunc) {
+	// Store the authenticated identity in request context (secure, cannot be spoofed)
+	// even on the deny path so audit records for rejected requests keep requester attribution
+	if identity != nil && identity.Name != "" {
+		r = r.WithContext(recordIdentityInContext(r, identity))
+	}
 	if errCode == s3err.ErrNone {
-		// Store the authenticated identity in request context (secure, cannot be spoofed)
-		if identity != nil && identity.Name != "" {
-			r = r.WithContext(recordIdentityInContext(r, identity))
-		}
 		f(w, r)
 		return
 	}

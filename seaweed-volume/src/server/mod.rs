@@ -1,5 +1,6 @@
 use tonic::Status;
 
+use crate::remote_storage::s3_tier::TierError;
 use crate::storage::volume::VolumeError;
 
 #[cfg(unix)]
@@ -23,7 +24,9 @@ impl From<VolumeError> for Status {
     fn from(err: VolumeError) -> Self {
         let message = err.to_string();
         match err {
-            VolumeError::NotFound | VolumeError::VolumeNotFound(_) => Status::not_found(message),
+            VolumeError::NotFound
+            | VolumeError::VolumeNotFound(_)
+            | VolumeError::Tier(TierError::NotFound(_)) => Status::not_found(message),
             VolumeError::ReadOnly | VolumeError::NotEmpty => Status::failed_precondition(message),
             VolumeError::InsufficientSpace { .. } => Status::resource_exhausted(message),
             VolumeError::AlreadyExists => Status::already_exists(message),
@@ -77,6 +80,27 @@ mod tests {
         );
         assert_eq!(code(VolumeError::AlreadyExists), Code::AlreadyExists);
         assert_eq!(code(VolumeError::NotInitialized), Code::Internal);
+        assert_eq!(
+            code(TierError::NotFound("gone".into()).into()),
+            Code::NotFound
+        );
+        for tier in [
+            TierError::Io("io".into()),
+            TierError::RuntimeUnavailable("rt".into()),
+            TierError::Aborted("bye".into()),
+        ] {
+            assert_eq!(code(tier.into()), Code::Internal);
+        }
+
+        let status = status_with_context(
+            "backend s3.default copy file /data/1.dat",
+            TierError::NotFound("failed to head object k: NotFound".into()).into(),
+        );
+        assert_eq!(status.code(), Code::NotFound);
+        assert_eq!(
+            status.message(),
+            "backend s3.default copy file /data/1.dat: failed to head object k: NotFound"
+        );
 
         let status = status_with_context(
             "compact volume 7",

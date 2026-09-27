@@ -1153,47 +1153,7 @@ impl VolumeServer for VolumeGrpcService {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
         tokio::task::spawn_blocking(move || {
-            let compact_start = std::time::Instant::now();
-            let report_interval: i64 = 128 * 1024 * 1024;
-            let next_report = std::sync::atomic::AtomicI64::new(report_interval);
-
-            let tx_clone = tx.clone();
-            let result = {
-                let mut store = state.store.write().unwrap();
-                store.compact_volume(vid, preallocate, 0, |processed| {
-                    let target = next_report.load(std::sync::atomic::Ordering::Relaxed);
-                    if processed > target {
-                        let resp = volume_server_pb::VacuumVolumeCompactResponse {
-                            processed_bytes: processed,
-                            load_avg_1m: 0.0,
-                        };
-                        // If send fails (client disconnected), stop compaction
-                        if tx_clone.blocking_send(Ok(resp)).is_err() {
-                            return false;
-                        }
-                        next_report.store(
-                            processed + report_interval,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
-                    }
-                    true
-                })
-            };
-
-            let success = result.is_ok();
-            crate::metrics::VACUUMING_HISTOGRAM
-                .with_label_values(&["compact"])
-                .observe(compact_start.elapsed().as_secs_f64());
-            crate::metrics::VACUUMING_COMPACT_COUNTER
-                .with_label_values(&[if success { "true" } else { "false" }])
-                .inc();
-
-            if let Err(e) = result {
-                let _ = tx.blocking_send(Err(crate::server::status_with_context(
-                    &format!("compact volume {vid}"),
-                    e,
-                )));
-            }
+            run_vacuum_compact(&state, vid, preallocate, COMPACT_REPORT_INTERVAL, &tx);
         });
 
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -1564,7 +1524,10 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(request.into_inner().volume_id);
         let mut store = self.state.store.write().unwrap();
         // Go returns nil when volume is not found (idempotent unmount)
-        if store.unmount_volume(vid) {
+        let unmounted = store
+            .unmount_volume(vid)
+            .map_err(|e| crate::server::status_with_context(&format!("unmount volume {vid}"), e))?;
+        if unmounted {
             self.state.volume_state_notify.notify_one();
         }
         Ok(Response::new(volume_server_pb::VolumeUnmountResponse {}))
@@ -1710,8 +1673,12 @@ impl VolumeServer for VolumeGrpcService {
         let mut store = self.state.store.write().unwrap();
 
         // Unmount the volume (Go propagates unmount errors via resp.Error;
-        // Rust unmount_volume returns bool, so not-found falls through to configure_volume)
-        store.unmount_volume(vid);
+        // not-found falls through to configure_volume)
+        if let Err(e) = store.unmount_volume(vid) {
+            return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                error: format!("volume configure unmount {}: {}", vid, e),
+            }));
+        }
 
         // Modify the super block on disk (replica_placement byte)
         if let Err(e) = store.configure_volume(vid, rp) {
@@ -1892,6 +1859,26 @@ impl VolumeServer for VolumeGrpcService {
 
         let mut client = volume_server_client(channel);
 
+        // The source's record counts before and after the copy decide whether
+        // the copied replica's counts can be checked. Without the "before"
+        // snapshot the check is skipped, not the copy.
+        let source_status_before = match client
+            .volume_status(volume_server_pb::VolumeStatusRequest {
+                volume_id: req.volume_id,
+            })
+            .await
+        {
+            Ok(resp) => Some(resp.into_inner()),
+            Err(e) => {
+                tracing::warn!(
+                    "failed to read source volume {} status before copy; skip record count validation: {}",
+                    vid,
+                    e
+                );
+                None
+            }
+        };
+
         // Get file status from source
         let vol_info = client
             .read_volume_file_status(volume_server_pb::ReadVolumeFileStatusRequest {
@@ -1900,19 +1887,6 @@ impl VolumeServer for VolumeGrpcService {
             .await
             .map_err(|e| Status::internal(format!("read volume file status failed, {}", e)))?
             .into_inner();
-
-        // Source is reachable and holds the volume: only now is it safe to drop
-        // an existing local replica before overwriting its files.
-        if had_existing_volume {
-            let mut store = self.state.store.write().unwrap();
-            // keep remote data: the inbound copy carries a .vif that may point
-            // at the same cloud-tier object the existing volume references.
-            store.delete_volume(vid, false, false, true).map_err(|e| {
-                Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
-            })?;
-            drop(store);
-            self.state.volume_state_notify.notify_one();
-        }
 
         let requested_disk_type = if !req.disk_type.is_empty() {
             DiskType::from_string(&req.disk_type)
@@ -1933,24 +1907,44 @@ impl VolumeServer for VolumeGrpcService {
         };
 
         // Find a free disk location using Go's Store.FindFreeLocation semantics.
+        // The slot of the replica being replaced counts as free.
         let (data_base, idx_base, selected_disk_type) = {
-            let store = self.state.store.read().unwrap();
-            let Some(loc_idx) = store.find_free_location_predicate(|loc| {
-                loc.disk_type == requested_disk_type
-                    && loc.available_space.load(Ordering::Relaxed) > needed_space
-            }) else {
+            let mut store = self.state.store.write().unwrap();
+            let Some(loc_idx) = store.find_free_location_predicate(
+                |loc| {
+                    loc.disk_type == requested_disk_type
+                        && loc.available_space.load(Ordering::Relaxed) > needed_space
+                },
+                Some(vid),
+            ) else {
                 return Err(Status::internal(format!(
                     "no space left {}",
                     requested_disk_type.readable_string()
                 )));
             };
             let loc = &store.locations[loc_idx];
-            (
+            let selected = (
                 loc.directory.clone(),
                 loc.idx_directory.clone(),
                 loc.disk_type.clone(),
-            )
+            );
+
+            // Source is reachable and a destination is reserved: only now is
+            // it safe to drop an existing local replica before overwriting its
+            // files.
+            if had_existing_volume {
+                // keep remote data: the inbound copy carries a .vif that may
+                // point at the same cloud-tier object the existing volume
+                // references.
+                store.delete_volume(vid, false, false, true).map_err(|e| {
+                    Status::internal(format!("failed to delete existing volume {}: {}", vid, e))
+                })?;
+            }
+            selected
         };
+        if had_existing_volume {
+            self.state.volume_state_notify.notify_one();
+        }
 
         let data_base_name =
             crate::storage::volume::volume_file_name(&data_base, &vol_info.collection, vid);
@@ -2127,6 +2121,28 @@ impl VolumeServer for VolumeGrpcService {
                     )));
                 }
 
+                // Go passes stream.Context() here, so a departing caller
+                // cancels the call. Race it against the response channel the
+                // same way: a stalled source would otherwise hold the copied,
+                // unmounted files past the caller.
+                let source_status_after = tokio::select! {
+                    res = client.volume_status(volume_server_pb::VolumeStatusRequest {
+                        volume_id: req.volume_id,
+                    }) => res.map_err(|e| {
+                        Status::internal(format!(
+                            "read source volume {} status after copy failed: {}",
+                            vid, e
+                        ))
+                    })?
+                    .into_inner(),
+                    _ = tx.closed() => {
+                        return Err(Status::cancelled(format!(
+                            "volume {} copy cancelled by caller",
+                            vid
+                        )));
+                    }
+                };
+
                 // Verify file sizes
                 if !has_remote_dat {
                     let dat_path = format!("{}.dat", data_base_name);
@@ -2160,14 +2176,42 @@ impl VolumeServer for VolumeGrpcService {
                     )));
                 }
 
-                // Mount the volume
+                let validate_counts =
+                    copy_counts_stable(source_status_before.as_ref(), &source_status_after);
+                if !validate_counts {
+                    tracing::debug!(
+                        "source volume {} changed during copy; skip record count validation",
+                        vid
+                    );
+                }
+
+                // Mount and validate the volume under one store lock, so a
+                // replica that fails validation is unloaded before the next
+                // heartbeat can announce it.
                 {
                     let mut store = state.store.write().unwrap();
                     store
                         .mount_volume(vid, &vol_info.collection, selected_disk_type)
                         .map_err(|e| {
-                            Status::internal(format!("failed to mount volume {}: {}", vid, e))
+                            Status::internal(format!(
+                                "failed to mount or validate volume {}: {}",
+                                vid, e
+                            ))
                         })?;
+                    if validate_counts
+                        && let Some((_, v)) = store.find_volume(vid)
+                        && let Err(e) = check_copy_counts(
+                            &source_status_after,
+                            v.file_count() as u64,
+                            v.deleted_count() as u64,
+                        )
+                    {
+                        store.unmount_volume(vid);
+                        return Err(Status::internal(format!(
+                            "failed to mount or validate volume {}: {}",
+                            vid, e
+                        )));
+                    }
                     mounted = true;
                 }
                 state.volume_state_notify.notify_one();
@@ -2570,7 +2614,7 @@ impl VolumeServer for VolumeGrpcService {
                                                 .map(|m| m.len() > 0)
                                                 .unwrap_or(false)
                                         })
-                                }) {
+                                }, None) {
                                     Some(i) => {
                                         let dir = store.locations[i].directory.clone();
                                         drop(store);
@@ -2802,48 +2846,15 @@ impl VolumeServer for VolumeGrpcService {
 
         let (tx, rx) = tokio::sync::mpsc::channel(32);
 
-        // Stream needles lazily via a blocking task (matches Go's scanner pattern)
         tokio::task::spawn_blocking(move || {
-            let store = state.store.read().unwrap();
             for &raw_vid in &req.volume_ids {
-                let vid = VolumeId(raw_vid);
-                let v = match store.find_volume(vid) {
-                    Some((_, v)) => v,
-                    None => {
-                        let _ = tx.blocking_send(Err(Status::not_found(format!(
-                            "not found volume id {}",
-                            vid
-                        ))));
+                match read_all_needles_of_volume(&state, VolumeId(raw_vid), &tx) {
+                    Ok(()) => {}
+                    Err(Some(status)) => {
+                        let _ = tx.blocking_send(Err(status));
                         return;
                     }
-                };
-
-                let needles = match v.read_all_needles() {
-                    Ok(n) => n,
-                    Err(e) => {
-                        let _ = tx.blocking_send(Err(Status::internal(e.to_string())));
-                        return;
-                    }
-                };
-
-                for n in needles {
-                    let compressed = n.is_compressed();
-                    if tx
-                        .blocking_send(Ok(volume_server_pb::ReadAllNeedlesResponse {
-                            volume_id: raw_vid,
-                            needle_id: n.id.into(),
-                            cookie: n.cookie.0,
-                            needle_blob: n.data,
-                            needle_blob_compressed: compressed,
-                            last_modified: n.last_modified,
-                            crc: n.checksum.0,
-                            name: n.name,
-                            mime: n.mime,
-                        }))
-                        .is_err()
-                    {
-                        return; // receiver dropped
-                    }
+                    Err(None) => return, // receiver dropped
                 }
             }
         });
@@ -4508,10 +4519,10 @@ impl VolumeServer for VolumeGrpcService {
                     })
                     .await
                     .map_err(|e| {
-                        Status::internal(format!(
-                            "backend {} copy file {}: {}",
-                            dest_backend_name, dat_path, e
-                        ))
+                        crate::server::status_with_context(
+                            &format!("backend {} copy file {}", dest_backend_name, dat_path),
+                            e.into(),
+                        )
                     })?;
 
                 // Deliberately no cancellation check here. Once the object is
@@ -4730,10 +4741,10 @@ impl VolumeServer for VolumeGrpcService {
                                 rm
                             );
                         }
-                        Status::internal(format!(
-                            "backend {} copy file {}: {}",
-                            storage_name_clone, dat_path, e
-                        ))
+                        crate::server::status_with_context(
+                            &format!("backend {} copy file {}", storage_name_clone, dat_path),
+                            e.into(),
+                        )
                     })?;
 
                 // Restore the .dat mtime so a reload computes TTL from real data age,
@@ -4862,10 +4873,13 @@ impl VolumeServer for VolumeGrpcService {
 
                 // Only the last replica to download deletes the shared remote object.
                 backend.delete_file(&storage_key).await.map_err(|e| {
-                    Status::internal(format!(
-                        "volume {} failed to delete remote file {}: {}",
-                        vid, storage_key, e
-                    ))
+                    crate::server::status_with_context(
+                        &format!(
+                            "volume {} failed to delete remote file {}",
+                            vid, storage_key
+                        ),
+                        e.into(),
+                    )
                 })?;
 
                 // Go does NOT send a final 100% progress message after download completion
@@ -5841,6 +5855,40 @@ where
     Ok(modified_ts_ns)
 }
 
+/// Compare a copied replica's record counts with the source's.
+fn check_copy_counts(
+    origin: &volume_server_pb::VolumeStatusResponse,
+    target_file_count: u64,
+    target_deleted_count: u64,
+) -> Result<(), String> {
+    if origin.file_count != target_file_count {
+        return Err(format!(
+            "target file count [{}] is not same as origin file count [{}]",
+            target_file_count, origin.file_count
+        ));
+    }
+    if origin.file_deleted_count != target_deleted_count {
+        return Err(format!(
+            "target deleted count [{}] is not same as origin deleted count [{}]",
+            target_deleted_count, origin.file_deleted_count
+        ));
+    }
+    Ok(())
+}
+
+/// A writable source may take writes or deletes while its files are copied;
+/// then the before/after counts do not describe one snapshot and a strict
+/// count check would report a false mismatch.
+fn copy_counts_stable(
+    before: Option<&volume_server_pb::VolumeStatusResponse>,
+    after: &volume_server_pb::VolumeStatusResponse,
+) -> bool {
+    before.is_some_and(|before| {
+        before.file_count == after.file_count
+            && before.file_deleted_count == after.file_deleted_count
+    })
+}
+
 /// Verify that a copied file has the expected size.
 fn check_copy_file_size(path: &str, expected: u64) -> Result<(), Status> {
     match std::fs::metadata(path) {
@@ -6082,6 +6130,97 @@ fn tail_pass(
     }
 }
 
+/// Stream the live needles of one volume in .dat order, one at a time and
+/// without holding the store lock while reading or waiting for channel space.
+/// Liveness is checked against the needle map per record, and the scan follows
+/// appends made while it ran. `Err(None)` means the receiver hung up.
+fn read_all_needles_of_volume(
+    state: &VolumeServerState,
+    vid: VolumeId,
+    tx: &tokio::sync::mpsc::Sender<Result<volume_server_pb::ReadAllNeedlesResponse, Status>>,
+) -> Result<(), Option<Status>> {
+    let not_found = || Some(Status::not_found(format!("not found volume id {}", vid)));
+    let internal = |e: crate::storage::volume::VolumeError| Some(Status::internal(e.to_string()));
+    let mut plan = {
+        let store = state.store.read().unwrap();
+        let (_, v) = store.find_volume(vid).ok_or_else(not_found)?;
+        v.dat_scan_plan(v.super_block.block_size() as u64)
+            .map_err(internal)?
+    };
+    loop {
+        let mut next = None;
+        let mut failed = None;
+        let mut client_gone = false;
+        let scanned = plan.scan_records(|record| {
+            if tx.is_closed() {
+                client_gone = true;
+                return Ok(ControlFlow::Break(()));
+            }
+            next = Some(record.offset + record.bytes.len() as u64);
+            if record.size.0 <= 0 {
+                return Ok(ControlFlow::Continue(()));
+            }
+            // A stale copy's parse error must not fail the stream.
+            let parsed = record.parse();
+            // Wait for channel space before the liveness check, then enqueue
+            // under the guard, so no overwrite can land between the two.
+            let Ok(permit) = futures::executor::block_on(tx.reserve()) else {
+                client_gone = true;
+                return Ok(ControlFlow::Break(()));
+            };
+            let store = state.store.read().unwrap();
+            let live = match store.find_volume(vid) {
+                Some((_, v)) => v
+                    .is_live_in_plan(&plan, record.id, record.offset)
+                    .map_err(internal),
+                None => Err(not_found()),
+            };
+            match live {
+                Ok(true) => {}
+                Ok(false) => return Ok(ControlFlow::Continue(())),
+                Err(status) => {
+                    failed = status;
+                    return Ok(ControlFlow::Break(()));
+                }
+            }
+            let n = parsed?;
+            let compressed = n.is_compressed();
+            let msg = volume_server_pb::ReadAllNeedlesResponse {
+                volume_id: vid.0,
+                needle_id: n.id.into(),
+                cookie: n.cookie.0,
+                needle_blob: n.data,
+                needle_blob_compressed: compressed,
+                last_modified: n.last_modified,
+                crc: n.checksum.0,
+                name: n.name,
+                mime: n.mime,
+            };
+            permit.send(Ok(msg));
+            Ok(ControlFlow::Continue(()))
+        });
+        if client_gone {
+            return Err(None);
+        }
+        if failed.is_some() {
+            return Err(failed);
+        }
+        scanned.map_err(internal)?;
+
+        // Records appended while the pass ran lie past its end bound; an
+        // overwrite's new copy is among them, so continue until none are left.
+        let after = {
+            let store = state.store.read().unwrap();
+            let (_, v) = store.find_volume(vid).ok_or_else(not_found)?;
+            v.dat_scan_plan_after(&plan, next).map_err(internal)?
+        };
+        match after {
+            Some(p) => plan = p,
+            None => return Ok(()),
+        }
+    }
+}
+
 /// Get disk usage (total, free) in bytes for the given path.
 fn get_disk_usage(path: &str) -> (u64, u64) {
     use sysinfo::Disks;
@@ -6103,11 +6242,77 @@ fn get_disk_usage(path: &str) -> (u64, u64) {
     }
 }
 
+/// Bytes compacted between two `VacuumVolumeCompact` progress reports.
+const COMPACT_REPORT_INTERVAL: i64 = 128 * 1024 * 1024;
+
+/// The blocking body of `vacuum_volume_compact`. The store lock is held only
+/// to start the job; the copy and its progress sends run without it.
+fn run_vacuum_compact(
+    state: &VolumeServerState,
+    vid: VolumeId,
+    preallocate: u64,
+    report_interval: i64,
+    tx: &tokio::sync::mpsc::Sender<Result<volume_server_pb::VacuumVolumeCompactResponse, Status>>,
+) {
+    let compact_start = std::time::Instant::now();
+    let next_report = std::sync::atomic::AtomicI64::new(report_interval);
+    let progress = |processed: i64| {
+        // A copy nobody waits for would keep refusing unmount/delete/cleanup.
+        if tx.is_closed() {
+            return false;
+        }
+        let target = next_report.load(std::sync::atomic::Ordering::Relaxed);
+        if processed > target {
+            let resp = volume_server_pb::VacuumVolumeCompactResponse {
+                processed_bytes: processed,
+                load_avg_1m: 0.0,
+            };
+            // If send fails (client disconnected), stop compaction
+            if tx.blocking_send(Ok(resp)).is_err() {
+                return false;
+            }
+            next_report.store(
+                processed + report_interval,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        true
+    };
+
+    let job = state
+        .store
+        .write()
+        .unwrap()
+        .begin_compact_volume(vid, preallocate);
+    let result = match job {
+        Ok(Some(job)) => job.run(progress),
+        Ok(None) => Ok(()), // already compacting
+        Err(e) => Err(e),
+    };
+
+    let success = result.is_ok();
+    crate::metrics::VACUUMING_HISTOGRAM
+        .with_label_values(&["compact"])
+        .observe(compact_start.elapsed().as_secs_f64());
+    crate::metrics::VACUUMING_COMPACT_COUNTER
+        .with_label_values(&[if success { "true" } else { "false" }])
+        .inc();
+
+    if let Err(e) = result {
+        let _ = tx.blocking_send(Err(crate::server::status_with_context(
+            &format!("compact volume {vid}"),
+            e,
+        )));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::MinFreeSpace;
-    use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig, global_s3_tier_registry};
+    use crate::remote_storage::s3_tier::{
+        S3TierBackend, S3TierConfig, TierError, global_s3_tier_registry,
+    };
     use crate::security::{Guard, SigningKey};
     use crate::server::grpc_client::GRPC_MAX_MESSAGE_SIZE;
     use crate::storage::needle_map::NeedleMapKind;
@@ -6781,6 +6986,88 @@ mod tests {
             .remove("s3.tier_down_delete");
     }
 
+    /// An S3 endpoint that answers every request 404 with no body.
+    fn spawn_s3_not_found_server() -> (String, tokio::sync::oneshot::Sender<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let app = axum::Router::new().fallback(axum::routing::any(|| async {
+                    axum::http::StatusCode::NOT_FOUND
+                }));
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let _ = ready_tx.send(());
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+                    .unwrap();
+            });
+        });
+        ready_rx.recv().unwrap();
+        (format!("http://{}", addr), shutdown_tx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_tier_move_from_remote_missing_object_is_not_found() {
+        let (service, tmp, shutdown_tx, _dat_bytes, _super_block_size, _delete_count) =
+            make_remote_only_service("tier_down_missing");
+        let (endpoint, missing_shutdown_tx) = spawn_s3_not_found_server();
+        global_s3_tier_registry().write().unwrap().register(
+            "s3.tier_down_missing".to_string(),
+            S3TierBackend::new(&S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint,
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            }),
+        );
+        let dat_path = format!("{}/1.dat", tmp.path().to_str().unwrap());
+
+        let mut stream = service
+            .volume_tier_move_dat_from_remote(Request::new(
+                volume_server_pb::VolumeTierMoveDatFromRemoteRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                    keep_remote_dat_file: false,
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        let err = stream
+            .next()
+            .await
+            .expect("the stream must carry the failure")
+            .expect_err("a missing remote object must fail the tier-down");
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err:?}");
+        assert!(
+            err.message().starts_with(&format!(
+                "backend s3.tier_down_missing copy file {dat_path}: "
+            )),
+            "the message must keep its context: {err:?}"
+        );
+        assert!(!std::path::Path::new(&dat_path).exists());
+
+        let _ = shutdown_tx.send(());
+        let _ = missing_shutdown_tx.send(());
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_down_missing");
+    }
+
     // The progress callback is the only thing a tier transfer polls, so it is
     // the only place a departing caller can be noticed. Go gives it an error
     // return for exactly this (s3_upload.go:99, s3_download.go:84); this checks
@@ -6800,7 +7087,10 @@ mod tests {
             .download_file(&dest, "remote-key", |_, _| Err("caller gone".to_string()))
             .await
             .expect_err("a failing progress callback must abort the download");
-        assert!(err.contains("caller gone"), "unexpected error: {}", err);
+        assert!(
+            matches!(&err, TierError::Aborted(m) if m == "caller gone"),
+            "unexpected error: {err:?}"
+        );
 
         drop(service);
         let _ = shutdown_tx.send(());
@@ -7119,7 +7409,9 @@ mod tests {
         let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
         {
             let mut store = dest_service.state.store.write().unwrap();
-            store.delete_volume(VolumeId(1), false, false, false).unwrap();
+            store
+                .delete_volume(VolumeId(1), false, false, false)
+                .unwrap();
             // available_space is filled in by the periodic disk check, which
             // does not run in a unit test; without it VolumeCopy finds no
             // location with room and never gets as far as copying.
@@ -7266,7 +7558,9 @@ mod tests {
         let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
         {
             let mut store = dest_service.state.store.write().unwrap();
-            store.delete_volume(VolumeId(1), false, false, false).unwrap();
+            store
+                .delete_volume(VolumeId(1), false, false, false)
+                .unwrap();
             for loc in &store.locations {
                 loc.check_disk_space();
             }
@@ -7320,6 +7614,283 @@ mod tests {
                 dest_file(ext)
             );
         }
+    }
+
+    /// Run a VolumeCopy of volume 1 from `port` to completion and return its
+    /// terminal result: the final response, or the error that ended the copy.
+    async fn run_volume_copy(
+        dest: &VolumeGrpcService,
+        port: u16,
+    ) -> Result<volume_server_pb::VolumeCopyResponse, Status> {
+        let mut stream = dest
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await?
+            .into_inner();
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let mut last = None;
+            while let Some(msg) = stream.next().await {
+                last = Some(msg?);
+            }
+            last.ok_or_else(|| Status::internal("copy stream ended without a response"))
+        })
+        .await
+        .expect("volume copy must finish")
+    }
+
+    // A replica that is about to be replaced must survive a copy that has
+    // nowhere to land: deleting it before a destination disk is reserved
+    // loses the only local copy when no disk qualifies.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_without_free_disk_keeps_existing_replica() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        // available_space stays 0 without check_disk_space, so no disk has room.
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        let dest_dat = format!("{}/1.dat", dest_tmp.path().to_str().unwrap());
+
+        let err = run_volume_copy(&dest_service, port)
+            .await
+            .expect_err("a copy with no free disk must fail");
+        assert!(err.message().contains("no space left"), "{err:?}");
+
+        let store = dest_service.state.store.read().unwrap();
+        let (_, vol) = store
+            .find_volume(VolumeId(1))
+            .expect("the existing replica must still be mounted");
+        assert_eq!(vol.file_count(), 1, "the existing replica must be intact");
+        assert!(std::path::Path::new(&dest_dat).exists());
+    }
+
+    // Replacing a replica on a disk whose only slot it occupies must succeed:
+    // the slot the replica frees counts as free when choosing a destination.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_replaces_existing_replica_in_its_own_slot() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, _dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let store = dest_service.state.store.read().unwrap();
+            for loc in &store.locations {
+                loc.max_volume_count.store(1, Ordering::Relaxed);
+                loc.check_disk_space();
+            }
+        }
+
+        let resp = run_volume_copy(&dest_service, port)
+            .await
+            .expect("replacing a replica in its own slot must succeed");
+        assert!(resp.last_append_at_ns > 0);
+
+        let store = dest_service.state.store.read().unwrap();
+        let (_, vol) = store
+            .find_volume(VolumeId(1))
+            .expect("the copied replica must be mounted");
+        assert_eq!(
+            vol.file_count(),
+            2,
+            "the replica must hold the source's needles"
+        );
+    }
+
+    // A copy whose record counts disagree with a stable source must be
+    // rejected, left unmounted, and cleaned off disk, even though the .dat and
+    // .idx sizes match.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_rejects_record_count_mismatch() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        {
+            let store = source_service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            vol.add_file_count_for_test(1);
+        }
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store
+                .delete_volume(VolumeId(1), false, false, false)
+                .unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_dir = dest_tmp.path().to_str().unwrap().to_string();
+
+        let err = run_volume_copy(&dest_service, port)
+            .await
+            .expect_err("a copy with mismatched record counts must fail");
+        assert!(err.message().contains("file count"), "{err:?}");
+
+        assert!(
+            dest_service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_none(),
+            "a replica that failed count validation must not stay mounted"
+        );
+        for ext in [".dat", ".idx", ".vif", ".note"] {
+            let path = format!("{}/1{}", dest_dir, ext);
+            assert!(
+                !std::path::Path::new(&path).exists(),
+                "rejected copy left {} behind",
+                path
+            );
+        }
+    }
+
+    /// Lets the first VolumeStatus call through and never answers the ones
+    /// after it, so the source stalls exactly at VolumeCopy's post-copy status
+    /// read.
+    #[derive(Clone)]
+    struct StallLaterVolumeStatus<S> {
+        inner: S,
+        status_calls: Arc<std::sync::atomic::AtomicUsize>,
+        stalled: Arc<tokio::sync::Notify>,
+    }
+
+    impl<S, B> tower::Service<tonic::codegen::http::Request<B>> for StallLaterVolumeStatus<S>
+    where
+        S: tower::Service<tonic::codegen::http::Request<B>>,
+        S::Future: Send + 'static,
+        S::Response: 'static,
+        S::Error: 'static,
+    {
+        type Response = S::Response;
+        type Error = S::Error;
+        type Future = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<S::Response, S::Error>> + Send>,
+        >;
+
+        fn poll_ready(
+            &mut self,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: tonic::codegen::http::Request<B>) -> Self::Future {
+            if req.uri().path() == "/volume_server_pb.VolumeServer/VolumeStatus"
+                && self.status_calls.fetch_add(1, Ordering::SeqCst) >= 1
+            {
+                self.stalled.notify_one();
+                return Box::pin(std::future::pending());
+            }
+            Box::pin(self.inner.call(req))
+        }
+    }
+
+    // A source that stalls on the post-copy status read must not hold the
+    // copied files once the caller is gone: the old replica is already
+    // deleted and the new one is unmounted, so the task has to notice the
+    // departed caller and clean up like any other failed copy.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_copy_stalled_final_status_cleans_up_when_caller_leaves() {
+        let (source_service, _source_tmp, _dat_bytes) = make_local_service_with_large_volume();
+        let stalled = Arc::new(tokio::sync::Notify::new());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let stalled = stalled.clone();
+            let status_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            tokio::spawn(async move {
+                let _ = tonic::transport::Server::builder()
+                    .layer(tower::layer::layer_fn(move |inner| {
+                        StallLaterVolumeStatus {
+                            inner,
+                            status_calls: status_calls.clone(),
+                            stalled: stalled.clone(),
+                        }
+                    }))
+                    .add_service(
+                        crate::pb::volume_server_pb::volume_server_server::VolumeServerServer::new(
+                            source_service,
+                        ),
+                    )
+                    .serve_with_incoming_shutdown(
+                        tokio_stream::wrappers::TcpListenerStream::new(listener),
+                        async {
+                            let _ = shutdown_rx.await;
+                        },
+                    )
+                    .await;
+            });
+        }
+
+        let (dest_service, dest_tmp) = make_local_service_with_volume("", None);
+        {
+            let mut store = dest_service.state.store.write().unwrap();
+            store
+                .delete_volume(VolumeId(1), false, false, false)
+                .unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        let dest_file = |ext: &str| format!("{}/1{}", dest_tmp.path().to_str().unwrap(), ext);
+
+        let response = dest_service
+            .volume_copy(Request::new(volume_server_pb::VolumeCopyRequest {
+                volume_id: 1,
+                collection: String::new(),
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_type: String::new(),
+                io_byte_per_second: 0,
+                replication: String::new(),
+                ttl: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(30), stalled.notified())
+            .await
+            .expect("the copy must reach the post-copy status read");
+        assert!(
+            std::path::Path::new(&dest_file(".dat")).exists(),
+            "the files must be copied before the post-copy status read"
+        );
+
+        drop(response);
+
+        let mut cleaned = false;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if [".dat", ".idx", ".vif", ".note"]
+                .iter()
+                .all(|ext| !std::path::Path::new(&dest_file(ext)).exists())
+            {
+                cleaned = true;
+                break;
+            }
+        }
+        assert!(
+            cleaned,
+            "a copy stalled on the source's final status left its files behind"
+        );
+        assert!(
+            dest_service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .is_none(),
+            "an abandoned copy must not be mounted"
+        );
     }
 
     // copy_file must stream the whole .dat in 2MB chunks (not buffer it) and
@@ -7435,6 +8006,275 @@ mod tests {
             shipped == dat_bytes[sb_size..],
             "the stream must reproduce the .dat after the superblock"
         );
+    }
+
+    fn write_volume_needle(service: &VolumeGrpcService, id: u64, data: &[u8]) {
+        let mut store = service.state.store.write().unwrap();
+        let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
+        let mut n = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(0x1234),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+    }
+
+    async fn read_all_needles_stream(
+        service: &VolumeGrpcService,
+        volume_ids: Vec<u32>,
+    ) -> BoxStream<volume_server_pb::ReadAllNeedlesResponse> {
+        service
+            .read_all_needles(Request::new(volume_server_pb::ReadAllNeedlesRequest {
+                volume_ids,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+    }
+
+    async fn collect_read_all(
+        mut stream: BoxStream<volume_server_pb::ReadAllNeedlesResponse>,
+    ) -> Vec<Result<volume_server_pb::ReadAllNeedlesResponse, Status>> {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let mut items = Vec::new();
+            while let Some(item) = stream.next().await {
+                items.push(item);
+            }
+            items
+        })
+        .await
+        .expect("the stream must end")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_all_needles_uses_dat_order_for_live_offsets() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        write_volume_needle(&service, 10, b"first");
+        write_volume_needle(&service, 20, b"second");
+        write_volume_needle(&service, 10, b"first-overwrite");
+
+        let items = collect_read_all(read_all_needles_stream(&service, vec![1]).await).await;
+        let needles: Vec<_> = items.into_iter().map(|r| r.unwrap()).collect();
+        let ids: Vec<u64> = needles.iter().map(|n| n.needle_id).collect();
+        let bodies: Vec<&[u8]> = needles.iter().map(|n| n.needle_blob.as_slice()).collect();
+        assert_eq!(ids, vec![11, 20, 10]);
+        assert_eq!(
+            bodies,
+            vec![
+                b"ec-generate".as_slice(),
+                b"second".as_slice(),
+                b"first-overwrite".as_slice()
+            ]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_all_needles_fails_at_a_header_it_cannot_advance_past() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let dat_path = {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            v.file_name(".dat")
+        };
+        let mut corrupt = [0u8; NEEDLE_HEADER_SIZE];
+        NeedleId(99).to_bytes(&mut corrupt[4..12]);
+        Size(-100).to_bytes(&mut corrupt[12..16]);
+        let mut dat = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dat_path)
+            .unwrap();
+        std::io::Write::write_all(&mut dat, &corrupt).unwrap();
+
+        let items = collect_read_all(read_all_needles_stream(&service, vec![1]).await).await;
+        assert_eq!(
+            items.len(),
+            2,
+            "the needle before the corrupt header, then the error"
+        );
+        assert_eq!(items[0].as_ref().unwrap().needle_id, 11);
+        let err = items[1].as_ref().unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(err.message().contains("corrupt needle header"), "{err:?}");
+    }
+
+    // A damaged body in a copy that was since overwritten must not fail the
+    // stream: only the live copy is parsed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_all_needles_skips_a_corrupt_stale_copy() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let (stale_offset, dat_path) = {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            (v.dat_file_size().unwrap(), v.file_name(".dat"))
+        };
+        write_volume_needle(&service, 50, b"old-data");
+        write_volume_needle(&service, 50, b"new-data");
+        // The first body field is DataSize; u32::MAX cannot fit the record.
+        let mut dat = std::fs::OpenOptions::new()
+            .write(true)
+            .open(dat_path)
+            .unwrap();
+        std::io::Seek::seek(
+            &mut dat,
+            std::io::SeekFrom::Start(stale_offset + NEEDLE_HEADER_SIZE as u64),
+        )
+        .unwrap();
+        std::io::Write::write_all(&mut dat, &u32::MAX.to_be_bytes()).unwrap();
+        drop(dat);
+
+        let items = collect_read_all(read_all_needles_stream(&service, vec![1]).await).await;
+        let needles: Vec<_> = items.into_iter().map(|r| r.unwrap()).collect();
+        let got: Vec<(u64, &[u8])> = needles
+            .iter()
+            .map(|n| (n.needle_id, n.needle_blob.as_slice()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (11, b"ec-generate".as_slice()),
+                (50, b"new-data".as_slice())
+            ]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_all_needles_reports_a_missing_volume_after_the_found_ones() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let items = collect_read_all(read_all_needles_stream(&service, vec![1, 77]).await).await;
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].as_ref().unwrap().needle_id, 11);
+        assert_eq!(items[1].as_ref().unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    // Open a ReadAllNeedles stream over more needles than its channel holds,
+    // read one message so the scan is known to be running (it then fills the
+    // channel and parks in a send), and apply `f` under store.write(). Returns
+    // the first message and the rest of the stream.
+    async fn park_read_all_then_write(
+        service: &VolumeGrpcService,
+        ids: &[u64],
+        f: impl FnOnce(&mut crate::storage::volume::Volume),
+    ) -> (
+        volume_server_pb::ReadAllNeedlesResponse,
+        BoxStream<volume_server_pb::ReadAllNeedlesResponse>,
+    ) {
+        for &id in ids {
+            write_volume_needle(service, id, format!("body-{id}").as_bytes());
+        }
+        let mut stream = read_all_needles_stream(service, vec![1]).await;
+        let first = stream.next().await.unwrap().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            // The scan takes a read guard briefly per record, so retry.
+            if let Ok(mut store) = service.state.store.try_write() {
+                let (_, v) = store.find_volume_mut(VolumeId(1)).unwrap();
+                f(v);
+                return (first, stream);
+            }
+            if std::time::Instant::now() > deadline {
+                drop(stream);
+                panic!("store.write() stayed blocked while the scan was parked in a send");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    // A client that stops reading parks the scan waiting for channel space. The
+    // store lock must not be held there, or needle writes and the heartbeat,
+    // which take store.write(), stall behind it. A needle overwritten before the
+    // scan reaches it is streamed once, as its new copy, the way Go's scan reads
+    // on to EOF.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_all_needles_releases_the_store_lock_while_parked() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let ids: Vec<u64> = (100..140).collect();
+        let (first, stream) = park_read_all_then_write(&service, &ids, |v| {
+            let mut n = Needle {
+                id: NeedleId(138),
+                cookie: Cookie(0x1234),
+                data: b"overwritten".to_vec(),
+                data_size: b"overwritten".len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        })
+        .await;
+
+        let items = collect_read_all(stream).await;
+        let needles: Vec<_> = std::iter::once(first)
+            .chain(items.into_iter().map(|r| r.unwrap()))
+            .collect();
+        let got: Vec<u64> = needles.iter().map(|n| n.needle_id).collect();
+        let mut want = vec![11];
+        want.extend(ids.iter().copied().filter(|&id| id != 138));
+        want.push(138);
+        assert_eq!(got, want);
+        assert_eq!(needles.last().unwrap().needle_blob, b"overwritten");
+    }
+
+    // The record the scan is parked on is checked for liveness only once it has
+    // channel space, so overwriting it meanwhile streams it once, as its new
+    // copy, not the old copy followed by the new one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_all_needles_skips_a_record_overwritten_while_parked() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        for id in 100..104 {
+            write_volume_needle(&service, id, b"old");
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let state = service.state.clone();
+        let producer = tokio::task::spawn_blocking(move || {
+            read_all_needles_of_volume(&state, VolumeId(1), &tx).map_err(|e| e.map(|s| s.code()))
+        });
+        // Needle 11 fills the channel and the scan parks on needle 100.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while rx.len() < rx.max_capacity() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the scan never filled the channel"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        // Lets a scan that checks before waiting reach its wait; the fixed
+        // order is correct under any timing.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        write_volume_needle(&service, 100, b"new");
+
+        let mut got = Vec::new();
+        while let Some(item) = rx.recv().await {
+            let n = item.unwrap();
+            got.push((n.needle_id, n.needle_blob));
+        }
+        assert_eq!(producer.await.unwrap(), Ok(()));
+        let want: Vec<(u64, Vec<u8>)> = vec![
+            (11, b"ec-generate".to_vec()),
+            (101, b"old".to_vec()),
+            (102, b"old".to_vec()),
+            (103, b"old".to_vec()),
+            (100, b"new".to_vec()),
+        ];
+        assert_eq!(got, want);
+    }
+
+    // After a vacuum commit the needle map describes the new .dat, not the
+    // one the scan pinned, so the stream fails instead of guessing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_all_needles_fails_when_the_volume_is_compacted_mid_scan() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let ids: Vec<u64> = (100..140).collect();
+        let (_first, stream) = park_read_all_then_write(&service, &ids, |v| {
+            v.compact_by_index(0, 0, |_| true).unwrap();
+            v.commit_compact().unwrap();
+        })
+        .await;
+
+        let items = collect_read_all(stream).await;
+        let err = items.last().unwrap().as_ref().unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(err.message().contains("compacted or replaced"), "{err:?}");
+        assert!(items[..items.len() - 1].iter().all(|r| r.is_ok()));
     }
 
     // copy_file must stop exactly at stop_offset, never streaming past it.
@@ -7748,6 +8588,157 @@ mod tests {
             Ok(_) => {}
             Err(e) => assert_ne!(e.code(), tonic::Code::InvalidArgument, "got {e:?}"),
         }
+    }
+
+    // The compaction copy must not hold the store lock: a progress send parked
+    // on a client that stops reading would otherwise stall every read, write
+    // and heartbeat on the node for the rest of the copy.
+    #[test]
+    fn test_vacuum_compact_releases_store_lock_while_progress_send_parks() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let vid = VolumeId(1);
+        let write = |store: &mut crate::storage::store::Store, id: u64, data: &[u8]| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(id as u32),
+                data_size: data.len() as u32,
+                data: data.to_vec(),
+                ..Needle::default()
+            };
+            store.write_volume_needle(vid, &mut n, true).unwrap();
+        };
+        {
+            let mut store = service.state.store.write().unwrap();
+            for i in 100..140u64 {
+                write(&mut store, i, format!("data-{i}").as_bytes());
+            }
+        }
+
+        // Report every needle into a one-slot channel nobody reads, so the
+        // copy parks in `blocking_send` after the first report.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let state = service.state.clone();
+        let copy = std::thread::spawn(move || run_vacuum_compact(&state, vid, 0, 0, &tx));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Ok(store) = service.state.store.try_read()
+                && store.find_volume(vid).unwrap().1.is_compacting()
+            {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                drop(rx);
+                panic!("the store lock stayed held while the compaction copy was parked");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        {
+            let mut store = service
+                .state
+                .store
+                .try_write()
+                .expect("the store write lock must be free while the copy is parked");
+            assert!(store.find_volume(vid).unwrap().1.is_compacting());
+            write(&mut store, 999, b"late-write");
+        }
+
+        let mut reports = 0;
+        while let Some(msg) = rx.blocking_recv() {
+            msg.expect("the compaction must succeed");
+            reports += 1;
+        }
+        copy.join().unwrap();
+        assert!(reports > 1, "every needle should have been reported");
+
+        let mut store = service.state.store.write().unwrap();
+        store.commit_compact_volume(vid).unwrap();
+        let mut n = Needle {
+            id: NeedleId(999),
+            cookie: Cookie(999),
+            ..Needle::default()
+        };
+        store.read_volume_needle(vid, &mut n).unwrap();
+        assert_eq!(n.data, b"late-write");
+    }
+
+    #[test]
+    fn test_vacuum_compact_stops_when_the_client_is_gone_before_a_report() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let vid = VolumeId(1);
+        let cpd = {
+            let mut store = service.state.store.write().unwrap();
+            for i in 100..110u64 {
+                let data = format!("data-{i}");
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data_size: data.len() as u32,
+                    data: data.into_bytes(),
+                    ..Needle::default()
+                };
+                store.write_volume_needle(vid, &mut n, true).unwrap();
+            }
+            store.find_volume(vid).unwrap().1.file_name(".cpd")
+        };
+
+        // The client is gone and no report is due for 128 MiB.
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        drop(rx);
+        run_vacuum_compact(&service.state, vid, 0, COMPACT_REPORT_INTERVAL, &tx);
+
+        assert!(
+            !std::path::Path::new(&cpd).exists(),
+            "the copy ran to the end after its client disconnected"
+        );
+        let store = service.state.store.read().unwrap();
+        assert!(!store.find_volume(vid).unwrap().1.is_compacting());
+    }
+
+    // VolumeConfigure unmounts, rewrites the super block and remounts. While
+    // a copy is in flight the unmount is refused, and configure must stop
+    // there rather than rewrite the .dat the copy is reading.
+    #[tokio::test]
+    async fn test_volume_configure_refused_while_compacting() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let vid = VolumeId(1);
+        let job = service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .begin_compact_volume(vid, 0)
+            .unwrap()
+            .unwrap();
+
+        let resp = service
+            .volume_configure(Request::new(volume_server_pb::VolumeConfigureRequest {
+                volume_id: vid.0,
+                replication: "001".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.error.contains("is compacting"), "{}", resp.error);
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(vid).expect("still mounted");
+            assert_eq!(v.super_block.replica_placement.to_string(), "000");
+        }
+
+        job.run(|_| true).unwrap();
+        let resp = service
+            .volume_configure(Request::new(volume_server_pb::VolumeConfigureRequest {
+                volume_id: vid.0,
+                replication: "001".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.error, "");
+        let store = service.state.store.read().unwrap();
+        let (_, v) = store.find_volume(vid).unwrap();
+        assert_eq!(v.super_block.replica_placement.to_string(), "001");
     }
 
     // Regression test for comparing the wrong compaction-revision field.
@@ -8234,7 +9225,8 @@ mod tests {
                         .store
                         .write()
                         .unwrap()
-                        .unmount_volume(VolumeId(1)),
+                        .unmount_volume(VolumeId(1))
+                        .unwrap(),
                     "the volume must still be mounted when the lookup ran"
                 );
                 drop(park);

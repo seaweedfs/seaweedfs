@@ -123,9 +123,10 @@ func genericCopyRoleDefinition(role *RoleDefinition) *RoleDefinition {
 	}
 
 	result := &RoleDefinition{
-		RoleName:    role.RoleName,
-		RoleArn:     role.RoleArn,
-		Description: role.Description,
+		RoleName:           role.RoleName,
+		RoleArn:            role.RoleArn,
+		Description:        role.Description,
+		MaxSessionDuration: role.MaxSessionDuration,
 	}
 
 	// Deep copy trust policy if it exists

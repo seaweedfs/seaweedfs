@@ -8,14 +8,64 @@ use std::future::Future;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use aws_sdk_s3::Client;
+use aws_sdk_s3::config::http::HttpResponse;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
-use aws_sdk_s3::error::DisplayErrorContext;
+use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
+use aws_sdk_s3::operation::get_object::GetObjectError;
+use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
 /// Concurrency limit for multipart upload/download (matches Go's s3manager).
 const CONCURRENCY: usize = 5;
+
+/// A tier transfer failure. The variant is what callers match on; the
+/// message is the operator-facing text.
+#[derive(Debug, thiserror::Error)]
+pub enum TierError {
+    /// The remote object does not exist.
+    #[error("{0}")]
+    NotFound(String),
+    /// An S3 request or a local file operation failed.
+    #[error("{0}")]
+    Io(String),
+    /// The tier I/O runtime could not be built or dropped the task.
+    #[error("{0}")]
+    RuntimeUnavailable(String),
+    /// The progress callback asked to stop.
+    #[error("{0}")]
+    Aborted(String),
+}
+
+// Not-found rules as in remote_storage/s3.rs: HEAD by the raw 404 status,
+// GET by the NoSuchKey code only.
+fn head_object_error(key: &str, e: SdkError<HeadObjectError, HttpResponse>) -> TierError {
+    let message = format!("failed to head object {}: {}", key, DisplayErrorContext(&e));
+    match e {
+        SdkError::ServiceError(ref se) if se.raw().status().as_u16() == 404 => {
+            TierError::NotFound(message)
+        }
+        _ => TierError::Io(message),
+    }
+}
+
+fn get_object_error(
+    key: &str,
+    range: &str,
+    e: SdkError<GetObjectError, HttpResponse>,
+) -> TierError {
+    let message = format!(
+        "failed to get object {} range {}: {}",
+        key,
+        range,
+        DisplayErrorContext(&e)
+    );
+    match e {
+        SdkError::ServiceError(ref se) if se.err().is_no_such_key() => TierError::NotFound(message),
+        _ => TierError::Io(message),
+    }
+}
 
 /// Configuration for an S3 tier backend.
 #[derive(Debug, Clone)]
@@ -90,7 +140,7 @@ impl S3TierBackend {
         &self,
         file_path: &str,
         progress_fn: F,
-    ) -> Result<(String, u64), String>
+    ) -> Result<(String, u64), TierError>
     where
         F: FnMut(i64, f32) -> Result<(), String> + Send + Sync + 'static,
     {
@@ -98,7 +148,7 @@ impl S3TierBackend {
 
         let metadata = tokio::fs::metadata(file_path)
             .await
-            .map_err(|e| format!("failed to stat file {}: {}", file_path, e))?;
+            .map_err(|e| TierError::Io(format!("failed to stat file {}: {}", file_path, e)))?;
         let file_size = metadata.len();
 
         // Calculate part size: start at 64MB, scale up for very large files (matches Go)
@@ -121,15 +171,15 @@ impl S3TierBackend {
             .send()
             .await
             .map_err(|e| {
-                format!(
+                TierError::Io(format!(
                     "failed to create multipart upload: {}",
                     DisplayErrorContext(&e)
-                )
+                ))
             })?;
 
         let upload_id = create_resp
             .upload_id()
-            .ok_or_else(|| "no upload_id in multipart upload response".to_string())?
+            .ok_or_else(|| TierError::Io("no upload_id in multipart upload response".to_string()))?
             .to_string();
 
         // Build list of (part_number, offset, size) for all parts
@@ -165,19 +215,21 @@ impl S3TierBackend {
                 let _permit = sem
                     .acquire()
                     .await
-                    .map_err(|e| format!("semaphore error: {}", e))?;
+                    .map_err(|e| TierError::Io(format!("semaphore error: {}", e)))?;
 
                 // Read this part's data from the file at the correct offset
                 let mut file = tokio::fs::File::open(&fp)
                     .await
-                    .map_err(|e| format!("failed to open file {}: {}", fp, e))?;
+                    .map_err(|e| TierError::Io(format!("failed to open file {}: {}", fp, e)))?;
                 file.seek(std::io::SeekFrom::Start(off))
                     .await
-                    .map_err(|e| format!("failed to seek to offset {}: {}", off, e))?;
+                    .map_err(|e| {
+                        TierError::Io(format!("failed to seek to offset {}: {}", off, e))
+                    })?;
                 let mut buf = vec![0u8; size];
-                file.read_exact(&mut buf)
-                    .await
-                    .map_err(|e| format!("failed to read file at offset {}: {}", off, e))?;
+                file.read_exact(&mut buf).await.map_err(|e| {
+                    TierError::Io(format!("failed to read file at offset {}: {}", off, e))
+                })?;
 
                 let upload_part_resp = client
                     .upload_part()
@@ -189,12 +241,12 @@ impl S3TierBackend {
                     .send()
                     .await
                     .map_err(|e| {
-                        format!(
+                        TierError::Io(format!(
                             "failed to upload part {} at offset {}: {}",
                             pn,
                             off,
                             DisplayErrorContext(&e)
-                        )
+                        ))
                     })?;
 
                 let e_tag = upload_part_resp.e_tag().unwrap_or_default().to_string();
@@ -213,9 +265,9 @@ impl S3TierBackend {
                     };
                     (guard.1)(uploaded as i64, pct)
                 };
-                progress_result?;
+                progress_result.map_err(TierError::Aborted)?;
 
-                Ok::<_, String>(
+                Ok::<_, TierError>(
                     CompletedPart::builder()
                         .e_tag(e_tag)
                         .part_number(pn)
@@ -230,7 +282,7 @@ impl S3TierBackend {
             for handle in handles {
                 let part = handle
                     .await
-                    .map_err(|e| format!("upload task panicked: {}", e))??;
+                    .map_err(|e| TierError::Io(format!("upload task panicked: {}", e)))??;
                 completed_parts.push(part);
             }
 
@@ -248,13 +300,13 @@ impl S3TierBackend {
                 .send()
                 .await
                 .map_err(|e| {
-                    format!(
+                    TierError::Io(format!(
                         "failed to complete multipart upload: {}",
                         DisplayErrorContext(&e)
-                    )
+                    ))
                 })?;
 
-            Ok::<(), String>(())
+            Ok::<(), TierError>(())
         }
         .await;
 
@@ -297,7 +349,7 @@ impl S3TierBackend {
         dest_path: &str,
         key: &str,
         progress_fn: F,
-    ) -> Result<u64, String>
+    ) -> Result<u64, TierError>
     where
         F: FnMut(i64, f32) -> Result<(), String> + Send + Sync + 'static,
     {
@@ -309,7 +361,7 @@ impl S3TierBackend {
             .key(key)
             .send()
             .await
-            .map_err(|e| format!("failed to head object {}: {}", key, DisplayErrorContext(&e)))?;
+            .map_err(|e| head_object_error(key, e))?;
 
         let file_size = head_resp.content_length().unwrap_or(0) as u64;
 
@@ -321,10 +373,12 @@ impl S3TierBackend {
                 .truncate(true)
                 .open(dest_path)
                 .await
-                .map_err(|e| format!("failed to open dest file {}: {}", dest_path, e))?;
+                .map_err(|e| {
+                    TierError::Io(format!("failed to open dest file {}: {}", dest_path, e))
+                })?;
             file.set_len(file_size)
                 .await
-                .map_err(|e| format!("failed to set file length: {}", e))?;
+                .map_err(|e| TierError::Io(format!("failed to set file length: {}", e)))?;
         }
 
         let part_size: u64 = 64 * 1024 * 1024;
@@ -360,7 +414,7 @@ impl S3TierBackend {
                 let _permit = sem
                     .acquire()
                     .await
-                    .map_err(|e| format!("semaphore error: {}", e))?;
+                    .map_err(|e| TierError::Io(format!("semaphore error: {}", e)))?;
 
                 let end = off + size - 1;
                 let range = format!("bytes={}-{}", off, end);
@@ -372,20 +426,13 @@ impl S3TierBackend {
                     .range(&range)
                     .send()
                     .await
-                    .map_err(|e| {
-                        format!(
-                            "failed to get object {} range {}: {}",
-                            key,
-                            range,
-                            DisplayErrorContext(&e)
-                        )
-                    })?;
+                    .map_err(|e| get_object_error(&key, &range, e))?;
 
                 let body = get_resp
                     .body
                     .collect()
                     .await
-                    .map_err(|e| format!("failed to read body: {}", e))?;
+                    .map_err(|e| TierError::Io(format!("failed to read body: {}", e)))?;
                 let bytes = body.into_bytes();
 
                 // Write at the correct offset (like Go's WriteAt)
@@ -393,13 +440,17 @@ impl S3TierBackend {
                     .write(true)
                     .open(&dp)
                     .await
-                    .map_err(|e| format!("failed to open dest file {}: {}", dp, e))?;
+                    .map_err(|e| {
+                        TierError::Io(format!("failed to open dest file {}: {}", dp, e))
+                    })?;
                 file.seek(std::io::SeekFrom::Start(off))
                     .await
-                    .map_err(|e| format!("failed to seek to offset {}: {}", off, e))?;
+                    .map_err(|e| {
+                        TierError::Io(format!("failed to seek to offset {}: {}", off, e))
+                    })?;
                 file.write_all(&bytes)
                     .await
-                    .map_err(|e| format!("failed to write to {}: {}", dp, e))?;
+                    .map_err(|e| TierError::Io(format!("failed to write to {}: {}", dp, e)))?;
 
                 // Report progress. The lock is released before the result is
                 // propagated so an aborting callback cannot poison the mutex
@@ -415,9 +466,9 @@ impl S3TierBackend {
                     };
                     (guard.1)(downloaded as i64, pct)
                 };
-                progress_result?;
+                progress_result.map_err(TierError::Aborted)?;
 
-                Ok::<_, String>(())
+                Ok::<_, TierError>(())
             }));
         }
 
@@ -425,7 +476,7 @@ impl S3TierBackend {
         for handle in handles {
             handle
                 .await
-                .map_err(|e| format!("download task panicked: {}", e))??;
+                .map_err(|e| TierError::Io(format!("download task panicked: {}", e)))??;
         }
 
         // fsync the file so its content is durable before the caller trims the .vif
@@ -434,16 +485,21 @@ impl S3TierBackend {
             .write(true)
             .open(dest_path)
             .await
-            .map_err(|e| format!("failed to open {} for fsync: {}", dest_path, e))?;
+            .map_err(|e| TierError::Io(format!("failed to open {} for fsync: {}", dest_path, e)))?;
         synced
             .sync_all()
             .await
-            .map_err(|e| format!("failed to fsync {}: {}", dest_path, e))?;
+            .map_err(|e| TierError::Io(format!("failed to fsync {}: {}", dest_path, e)))?;
 
         Ok(file_size)
     }
 
-    pub async fn read_range(&self, key: &str, offset: u64, size: usize) -> Result<Vec<u8>, String> {
+    pub async fn read_range(
+        &self,
+        key: &str,
+        offset: u64,
+        size: usize,
+    ) -> Result<Vec<u8>, TierError> {
         let end = offset + (size as u64).saturating_sub(1);
         let range = format!("bytes={}-{}", offset, end);
         let resp = self
@@ -454,25 +510,18 @@ impl S3TierBackend {
             .range(&range)
             .send()
             .await
-            .map_err(|e| {
-                format!(
-                    "failed to get object {} range {}: {}",
-                    key,
-                    range,
-                    DisplayErrorContext(&e)
-                )
-            })?;
+            .map_err(|e| get_object_error(key, &range, e))?;
 
         let body = resp
             .body
             .collect()
             .await
-            .map_err(|e| format!("failed to read object {} body: {}", key, e))?;
+            .map_err(|e| TierError::Io(format!("failed to read object {} body: {}", key, e)))?;
         Ok(body.into_bytes().to_vec())
     }
 
     /// Delete a file from S3.
-    pub async fn delete_file(&self, key: &str) -> Result<(), String> {
+    pub async fn delete_file(&self, key: &str) -> Result<(), TierError> {
         self.client
             .delete_object()
             .bucket(&self.bucket)
@@ -480,16 +529,16 @@ impl S3TierBackend {
             .send()
             .await
             .map_err(|e| {
-                format!(
+                TierError::Io(format!(
                     "failed to delete object {}: {}",
                     key,
                     DisplayErrorContext(&e)
-                )
+                ))
             })?;
         Ok(())
     }
 
-    pub fn delete_file_blocking(&self, key: &str) -> Result<(), String> {
+    pub fn delete_file_blocking(&self, key: &str) -> Result<(), TierError> {
         let client = self.client.clone();
         let bucket = self.bucket.clone();
         let key = key.to_string();
@@ -501,11 +550,11 @@ impl S3TierBackend {
                 .send()
                 .await
                 .map_err(|e| {
-                    format!(
+                    TierError::Io(format!(
                         "failed to delete object {}: {}",
                         key,
                         DisplayErrorContext(&e)
-                    )
+                    ))
                 })?;
             Ok(())
         })
@@ -516,7 +565,7 @@ impl S3TierBackend {
         key: &str,
         offset: u64,
         size: usize,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, TierError> {
         let client = self.client.clone();
         let bucket = self.bucket.clone();
         let key = key.to_string();
@@ -530,20 +579,12 @@ impl S3TierBackend {
                 .range(&range)
                 .send()
                 .await
-                .map_err(|e| {
-                    format!(
-                        "failed to get object {} range {}: {}",
-                        key,
-                        range,
-                        DisplayErrorContext(&e)
-                    )
-                })?;
+                .map_err(|e| get_object_error(&key, &range, e))?;
 
-            let body = resp
-                .body
-                .collect()
-                .await
-                .map_err(|e| format!("failed to read object {} body: {}", key, e))?;
+            let body =
+                resp.body.collect().await.map_err(|e| {
+                    TierError::Io(format!("failed to read object {} body: {}", key, e))
+                })?;
             Ok(body.into_bytes().to_vec())
         })
     }
@@ -615,7 +656,7 @@ pub fn global_s3_tier_registry() -> &'static RwLock<S3TierRegistry> {
 static TIER_RUNTIME: std::sync::Mutex<Option<tokio::runtime::Runtime>> =
     std::sync::Mutex::new(None);
 
-fn tier_handle() -> Result<tokio::runtime::Handle, String> {
+fn tier_handle() -> Result<tokio::runtime::Handle, TierError> {
     let mut slot = TIER_RUNTIME
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -625,7 +666,12 @@ fn tier_handle() -> Result<tokio::runtime::Handle, String> {
             .thread_name("tier-io")
             .enable_all()
             .build()
-            .map_err(|e| format!("failed to build the tier I/O tokio runtime: {}", e))?;
+            .map_err(|e| {
+                TierError::RuntimeUnavailable(format!(
+                    "failed to build the tier I/O tokio runtime: {}",
+                    e
+                ))
+            })?;
         *slot = Some(runtime);
     }
     Ok(slot.as_ref().expect("just initialised").handle().clone())
@@ -635,9 +681,9 @@ fn tier_handle() -> Result<tokio::runtime::Handle, String> {
 /// finishes. The caller may be a worker of *another* tokio runtime, so this
 /// waits on a channel rather than `Handle::block_on`, which panics when
 /// called from inside any runtime context.
-fn block_on_tier_future<F, T>(future: F) -> Result<T, String>
+fn block_on_tier_future<F, T>(future: F) -> Result<T, TierError>
 where
-    F: Future<Output = Result<T, String>> + Send + 'static,
+    F: Future<Output = Result<T, TierError>> + Send + 'static,
     T: Send + 'static,
 {
     let handle = tier_handle()?;
@@ -651,13 +697,15 @@ where
     match rx.recv() {
         Ok(Ok(result)) => result,
         Ok(Err(join_error)) => Err(describe_join_error(join_error)),
-        Err(_) => Err("tier I/O runtime dropped the task before it finished".to_string()),
+        Err(_) => Err(TierError::RuntimeUnavailable(
+            "tier I/O runtime dropped the task before it finished".to_string(),
+        )),
     }
 }
 
 /// Turn a `JoinError` into a message that keeps the panic payload, so an
 /// SDK panic surfaces as "boom" rather than a fixed "thread panicked".
-fn describe_join_error(join_error: tokio::task::JoinError) -> String {
+fn describe_join_error(join_error: tokio::task::JoinError) -> TierError {
     if join_error.is_panic() {
         let payload = join_error.into_panic();
         let message = if let Some(s) = payload.downcast_ref::<&str>() {
@@ -667,19 +715,20 @@ fn describe_join_error(join_error: tokio::task::JoinError) -> String {
         } else {
             "non-string panic payload".to_string()
         };
-        format!("tier I/O task panicked: {}", message)
+        TierError::Io(format!("tier I/O task panicked: {}", message))
     } else {
-        format!("tier I/O task failed: {}", join_error)
+        TierError::RuntimeUnavailable(format!("tier I/O task failed: {}", join_error))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote_storage::s3::tests::{CannedResponse, NO_SUCH_KEY};
     use std::collections::HashSet;
     use tokio::runtime::Handle;
 
-    fn probe() -> Result<(tokio::runtime::Id, Option<String>), String> {
+    fn probe() -> Result<(tokio::runtime::Id, Option<String>), TierError> {
         block_on_tier_future(async {
             Ok((
                 Handle::current().id(),
@@ -709,10 +758,12 @@ mod tests {
 
     #[test]
     fn block_on_tier_future_returns_the_value_and_the_error() {
-        assert_eq!(block_on_tier_future(async { Ok(7u32) }), Ok(7));
-        assert_eq!(
-            block_on_tier_future::<_, u32>(async { Err("nope".to_string()) }),
-            Err("nope".to_string())
+        assert_eq!(block_on_tier_future(async { Ok(7u32) }).unwrap(), 7);
+        let err = block_on_tier_future::<_, u32>(async { Err(TierError::NotFound("nope".into())) })
+            .unwrap_err();
+        assert!(
+            matches!(&err, TierError::NotFound(m) if m == "nope"),
+            "{err:?}"
         );
     }
 
@@ -761,8 +812,9 @@ mod tests {
             Ok(())
         })
         .expect_err("a panicking future must be an error");
-        assert!(err.contains("boom 42"), "got: {err}");
-        assert!(err.contains("panicked"), "got: {err}");
+        assert!(matches!(err, TierError::Io(_)), "got: {err:?}");
+        assert!(err.to_string().contains("boom 42"), "got: {err}");
+        assert!(err.to_string().contains("panicked"), "got: {err}");
     }
 
     #[test]
@@ -774,7 +826,83 @@ mod tests {
             Ok(())
         })
         .expect_err("a panicking future must be an error");
-        assert!(err.contains("static boom"), "got: {err}");
+        assert!(err.to_string().contains("static boom"), "got: {err}");
+    }
+
+    fn backend_answering(status: u16, body: &'static str) -> S3TierBackend {
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::new("AKIATEST", "secret", None, None, "test"))
+            .endpoint_url("http://127.0.0.1:1")
+            .force_path_style(true)
+            .http_client(CannedResponse { status, body })
+            .retry_config(aws_sdk_s3::config::retry::RetryConfig::disabled())
+            .build();
+        S3TierBackend {
+            client: Client::from_conf(config),
+            bucket: "bucket".to_string(),
+            storage_class: "STANDARD".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_head_404_is_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("1.dat");
+        let err = backend_answering(404, "")
+            .download_file(dest.to_str().unwrap(), "missing", |_, _| Ok(()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TierError::NotFound(_)), "{err:?}");
+        assert!(
+            err.to_string()
+                .starts_with("failed to head object missing: "),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_head_403_is_io() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("1.dat");
+        let err = backend_answering(403, "")
+            .download_file(dest.to_str().unwrap(), "denied", |_, _| Ok(()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TierError::Io(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn read_range_no_such_key_is_not_found() {
+        let err = backend_answering(404, NO_SUCH_KEY)
+            .read_range("missing", 0, 8)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TierError::NotFound(_)), "{err:?}");
+        assert!(
+            err.to_string()
+                .starts_with("failed to get object missing range bytes=0-7: "),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_range_bare_404_is_io() {
+        // As in Go, GET is not-found by the NoSuchKey code, not the status.
+        let err = backend_answering(404, "")
+            .read_range("missing", 0, 8)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TierError::Io(_)), "{err:?}");
+    }
+
+    #[test]
+    fn read_range_blocking_no_such_key_is_not_found() {
+        let err = backend_answering(404, NO_SUCH_KEY)
+            .read_range_blocking("missing", 0, 8)
+            .unwrap_err();
+        assert!(matches!(err, TierError::NotFound(_)), "{err:?}");
     }
 
     #[test]
