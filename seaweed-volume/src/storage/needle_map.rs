@@ -247,6 +247,8 @@ impl CompactNeedleMap {
     pub fn load_from_idx<R: Read + Seek>(reader: &mut R, version: Version) -> io::Result<Self> {
         let mut nm = CompactNeedleMap::new();
         idx::walk_index_file(reader, 0, |key, offset, size| {
+            // A read-only load attaches no writer, so this is its only size.
+            nm.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
             nm.metric.maybe_set_max_needle_end(offset, size, version);
             if offset.is_zero() || size.is_deleted() {
                 nm.delete_from_map(key);
