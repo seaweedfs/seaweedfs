@@ -247,6 +247,8 @@ impl CompactNeedleMap {
     pub fn load_from_idx<R: Read + Seek>(reader: &mut R, version: Version) -> io::Result<Self> {
         let mut nm = CompactNeedleMap::new();
         idx::walk_index_file(reader, 0, |key, offset, size| {
+            // A read-only load attaches no writer, so this is its only size.
+            nm.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
             nm.metric.maybe_set_max_needle_end(offset, size, version);
             if offset.is_zero() || size.is_deleted() {
                 nm.delete_from_map(key);
@@ -1384,6 +1386,18 @@ impl NeedleMap {
             NeedleMap::Redb(nm) => nm.max_file_key(),
             NeedleMap::SortedFile(nm) => nm.max_file_key(),
         }
+    }
+
+    /// Skew the live file count away from what the `.idx` holds, so tests
+    /// can build a volume whose reported count disagrees with a reload.
+    #[cfg(test)]
+    pub(crate) fn add_file_count_for_test(&self, delta: i64) {
+        let metric = match self {
+            NeedleMap::InMemory(nm) => &nm.metric,
+            NeedleMap::Redb(nm) => &nm.metric,
+            NeedleMap::SortedFile(_) => panic!("sorted-file needle maps are read-only"),
+        };
+        metric.file_count.fetch_add(delta, Ordering::Relaxed);
     }
 
     /// Largest (offset + actual size) seen during the load walk; 0 if the
