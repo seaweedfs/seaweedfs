@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
@@ -554,6 +555,72 @@ func TestRealSDKSignerWithForwardedHeaders(t *testing.T) {
 				"Signature from real AWS SDK signer must verify successfully")
 			require.NotNil(t, identity)
 			assert.Equal(t, "test_user", identity.Name)
+		})
+	}
+}
+
+// GHSA-8rrx-349w-6396: ?prefix= was promoted into the object for every action,
+// so PUT /cache?versioning&prefix=x authorized as Write:cache/x. An identity
+// holding only Write:cache/* could then change bucket versioning, lifecycle,
+// cors, and object-lock configuration.
+func TestPrefixParameterDoesNotEscalateBucketActions(t *testing.T) {
+	resetMemoryStore()
+	defer resetMemoryStore()
+
+	configContent := `{
+  "identities": [
+    {"name":"admin","credentials":[{"accessKey":"ADMINKEY","secretKey":"adminsecret0000000000000000000001"}],"actions":["Admin"]},
+    {"name":"writer","credentials":[{"accessKey":"WRITERKEY","secretKey":"writersecret000000000000000000001"}],"actions":["Read:cache","Write:cache/*","List:cache"]},
+    {"name":"policywriter","credentials":[{"accessKey":"POLICYKEY","secretKey":"policysecret00000000000000000001"}],"policyNames":["WriterPolicy"]}
+  ],
+  "policies":[
+    {"name":"WriterPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"}
+  ]
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.Write([]byte(configContent))
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{Config: tmpFile.Name()}, nil, "memory")
+	require.True(t, iam.isEnabled(), "Auth should be enabled")
+
+	for _, tc := range []struct {
+		name   string
+		access string
+		secret string
+		object string
+		query  string
+		action Action
+		want   s3err.ErrorCode
+	}{
+		{"writer put object", "WRITERKEY", "writersecret000000000000000000001", "key", "", s3_constants.ACTION_WRITE, s3err.ErrNone},
+		{"writer put versioning", "WRITERKEY", "writersecret000000000000000000001", "", "versioning", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer put versioning with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "versioning&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer put lifecycle with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "lifecycle&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"writer list with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "list-type=2&prefix=x", s3_constants.ACTION_LIST, s3err.ErrNone},
+		{"policywriter put object", "POLICYKEY", "policysecret00000000000000000001", "key", "", s3_constants.ACTION_WRITE, s3err.ErrNone},
+		{"policywriter put versioning with prefix", "POLICYKEY", "policysecret00000000000000000001", "", "versioning&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			url := "http://localhost:8333/cache"
+			if tc.object != "" {
+				url += "/" + tc.object
+			}
+			if tc.query != "" {
+				url += "?" + tc.query
+			}
+			r := httptest.NewRequest(http.MethodPut, url, nil)
+			if tc.action == s3_constants.ACTION_LIST {
+				r.Method = http.MethodGet
+			}
+			r = mux.SetURLVars(r, map[string]string{"bucket": "cache", "object": tc.object})
+			require.NoError(t, signRawHTTPRequest(context.Background(), r, tc.access, tc.secret, "us-east-1"))
+
+			_, errCode := iam.authRequest(r, tc.action)
+			assert.Equal(t, tc.want, errCode)
 		})
 	}
 }
