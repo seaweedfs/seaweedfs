@@ -112,6 +112,50 @@ func TestEvaluateIAMPolicies_ListBucketVersionsWithPrefix(t *testing.T) {
 		"s3:ListBucketVersions must still resolve when listing with a prefix")
 }
 
+// GET ?uploads routes under ACTION_READ, not ACTION_LIST, but it is a bucket
+// listing: a promoted prefix must not resolve it to s3:GetObject, and only
+// s3:ListBucketMultipartUploads on the bucket ARN may allow it.
+func TestEvaluateIAMPolicies_ListMultipartUploadsWithPrefix(t *testing.T) {
+	const bucket = "test-bucket"
+
+	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.PutPolicy("list-uploads", mustPolicy(t, map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{{
+			"Effect":   "Allow",
+			"Action":   "s3:ListBucketMultipartUploads",
+			"Resource": "arn:aws:s3:::" + bucket,
+		}},
+	})))
+	require.NoError(t, iam.PutPolicy("get-object", mustPolicy(t, map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{{
+			"Effect":   "Allow",
+			"Action":   "s3:GetObject",
+			"Resource": "arn:aws:s3:::" + bucket + "/*",
+		}},
+	})))
+
+	uploadsReader := &Identity{
+		Name:        "dave",
+		Account:     &AccountAdmin,
+		PolicyNames: []string{"list-uploads"},
+		Credentials: []*Credential{{AccessKey: "AKIAEXAMPLE", SecretKey: "secret"}},
+	}
+	getReader := &Identity{
+		Name:        "erin",
+		Account:     &AccountAdmin,
+		PolicyNames: []string{"get-object"},
+		Credentials: []*Credential{{AccessKey: "AKIAEXAMPLE", SecretKey: "secret"}},
+	}
+
+	r := httptest.NewRequest("GET", "/"+bucket+"?uploads&prefix=uploads/", nil)
+	require.True(t, iam.evaluateIAMPolicies(r, uploadsReader, s3_constants.ACTION_READ, bucket, "uploads/"),
+		"s3:ListBucketMultipartUploads on the bucket must allow the uploads listing")
+	require.False(t, iam.evaluateIAMPolicies(r, getReader, s3_constants.ACTION_READ, bucket, "uploads/"),
+		"s3:GetObject must not satisfy the uploads listing")
+}
+
 // The IAM-integration authorizer must resolve the listing variant the same way
 // evaluateIAMPolicies does: a prefix promoted into the object argument is not
 // part of the request URL, so ?versions&prefix=... still resolves to
@@ -149,6 +193,22 @@ func TestAuthorizeAction_ListVersionsWithPromotedPrefix(t *testing.T) {
 			Resource: []string{"arn:aws:s3:::" + bucket},
 		}},
 	}))
+	require.NoError(t, iamManager.CreatePolicy(ctx, "", "ListUploadsOnly", &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect:   "Allow",
+			Action:   []string{"s3:ListBucketMultipartUploads"},
+			Resource: []string{"arn:aws:s3:::" + bucket},
+		}},
+	}))
+	require.NoError(t, iamManager.CreatePolicy(ctx, "", "GetObjectOnly", &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect:   "Allow",
+			Action:   []string{"s3:GetObject"},
+			Resource: []string{"arn:aws:s3:::" + bucket + "/*"},
+		}},
+	}))
 
 	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
 	reader := &IAMIdentity{
@@ -176,6 +236,26 @@ func TestAuthorizeAction_ListVersionsWithPromotedPrefix(t *testing.T) {
 	require.Equal(t, s3err.ErrNone,
 		s3iam.AuthorizeAction(ctx, versionsReader, s3_constants.ACTION_LIST, bucket, "b/", versionsReq),
 		"s3:ListBucketVersions allows the versions listing")
+
+	// GET ?uploads routes under ACTION_READ; a promoted prefix must still
+	// resolve it to s3:ListBucketMultipartUploads, not s3:GetObject.
+	uploadsReq := httptest.NewRequest("GET", "/"+bucket+"?uploads&prefix=b/", nil)
+	uploadsReader := &IAMIdentity{
+		Name:        "uploads-reader",
+		Principal:   "arn:aws:iam::000000000000:user/uploads-reader",
+		PolicyNames: []string{"ListUploadsOnly"},
+	}
+	require.Equal(t, s3err.ErrNone,
+		s3iam.AuthorizeAction(ctx, uploadsReader, s3_constants.ACTION_READ, bucket, "b/", uploadsReq),
+		"s3:ListBucketMultipartUploads allows the uploads listing")
+	getReader := &IAMIdentity{
+		Name:        "get-reader",
+		Principal:   "arn:aws:iam::000000000000:user/get-reader",
+		PolicyNames: []string{"GetObjectOnly"},
+	}
+	require.Equal(t, s3err.ErrAccessDenied,
+		s3iam.AuthorizeAction(ctx, getReader, s3_constants.ACTION_READ, bucket, "b/", uploadsReq),
+		"s3:GetObject must not satisfy the uploads listing")
 }
 
 func mustPolicy(t *testing.T, doc map[string]any) string {
