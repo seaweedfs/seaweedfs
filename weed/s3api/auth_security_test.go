@@ -633,3 +633,36 @@ func TestPrefixParameterDoesNotEscalateBucketActions(t *testing.T) {
 		})
 	}
 }
+
+// The admin explicit-deny path resolves the same action and resource the
+// policy engine sees, so a promoted prefix must not hide a listing variant:
+// ?uploads resolves s3:ListBucketMultipartUploads on the bucket ARN, and
+// ?versions resolves s3:ListBucketVersions, both at bucket level.
+func TestResolveS3AuthTarget_BucketListings(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		url          string
+		action       Action
+		object       string
+		routeObject  string
+		wantAction   string
+		wantResource string
+	}{
+		{"uploads listing keeps its action", "/cache?uploads&prefix=uploads/", s3_constants.ACTION_READ, "uploads/", "",
+			s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS, "arn:aws:s3:::cache"},
+		{"versions listing keeps its action", "/cache?versions&prefix=a/", s3_constants.ACTION_LIST, "a/", "",
+			s3_constants.S3_ACTION_LIST_BUCKET_VERSIONS, "arn:aws:s3:::cache"},
+		{"plain list keeps its action", "/cache?list-type=2&prefix=a/", s3_constants.ACTION_LIST, "a/", "",
+			s3_constants.S3_ACTION_LIST_BUCKET, "arn:aws:s3:::cache"},
+		{"uploads on an object stays object-level", "/cache/key?uploads", s3_constants.ACTION_READ, "key", "key",
+			s3_constants.S3_ACTION_GET_OBJECT, "arn:aws:s3:::cache/key"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			r = mux.SetURLVars(r, map[string]string{"bucket": "cache", "object": tt.routeObject})
+			action, resource := resolveS3AuthTarget(tt.action, "cache", tt.object, r)
+			assert.Equal(t, tt.wantAction, action)
+			assert.Equal(t, tt.wantResource, resource)
+		})
+	}
+}
