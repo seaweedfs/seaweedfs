@@ -813,6 +813,19 @@ func markerSortsBeforePrefix(prefix, marker string) bool {
 	return !strings.HasPrefix(marker, prefix) && marker < prefix
 }
 
+// markerSortsPastPrefix reports whether marker lies beyond the last key the
+// prefix can match. A marker that diverges from the prefix at a larger byte
+// is after every key under it, so the listing is empty no matter where the
+// walk would resume.
+func markerSortsPastPrefix(prefix, marker string) bool {
+	prefix = strings.TrimLeft(prefix, "/")
+	marker = strings.TrimLeft(marker, "/")
+	if marker == "" || prefix == "" {
+		return false
+	}
+	return !strings.HasPrefix(marker, prefix) && marker > prefix
+}
+
 // the prefix and marker may be in different directories
 // normalizePrefixMarker ensures the prefix and marker both starts from the same directory.
 // prefixEndsOnDelimiter tells the walk that the prefix names one directory, whose own key
@@ -910,6 +923,13 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	// Returning early here would incorrectly hide all top-level entries (folders like "Veeam/").
 	if cursor.maxKeys <= 0 {
 		return // Don't set isTruncated here - let caller decide based on whether more entries exist
+	}
+
+	// A marker past the prefix's range leaves nothing under the prefix to
+	// resume at, and descending into the marker's own directory below would
+	// drop the prefix filter entirely.
+	if markerSortsPastPrefix(prefix, marker) {
+		return
 	}
 
 	if strings.Contains(marker, "/") {
