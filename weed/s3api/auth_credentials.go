@@ -1780,13 +1780,13 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
-	// For List operations, use prefix for permission checking if available:
+	// For bucket listings, use prefix for permission checking if available:
 	// the aws cli, s3api, and boto3 carry the key scope in ?prefix= rather
 	// than the URL path. Other actions must not promote it — a bucket-level
 	// request has no object, and a promoted prefix would let an object-scoped
 	// grant (e.g. Write:bucket/*) authorize bucket-subresource operations
 	// like ?versioning or ?lifecycle as if they were object writes.
-	if action == s3_constants.ACTION_LIST && (object == "" || object == "/") && prefix != "" {
+	if isBucketListingRequest(r, action) && (object == "" || object == "/") && prefix != "" {
 		object = prefix
 	}
 

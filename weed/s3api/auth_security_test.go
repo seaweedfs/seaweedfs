@@ -571,10 +571,15 @@ func TestPrefixParameterDoesNotEscalateBucketActions(t *testing.T) {
   "identities": [
     {"name":"admin","credentials":[{"accessKey":"ADMINKEY","secretKey":"adminsecret0000000000000000000001"}],"actions":["Admin"]},
     {"name":"writer","credentials":[{"accessKey":"WRITERKEY","secretKey":"writersecret000000000000000000001"}],"actions":["Read:cache","Write:cache/*","List:cache"]},
-    {"name":"policywriter","credentials":[{"accessKey":"POLICYKEY","secretKey":"policysecret00000000000000000001"}],"policyNames":["WriterPolicy"]}
+    {"name":"uploadreader","credentials":[{"accessKey":"UPREADERKEY","secretKey":"upreadersecret00000000000000001"}],"actions":["Read:cache/uploads/*"]},
+    {"name":"policywriter","credentials":[{"accessKey":"POLICYKEY","secretKey":"policysecret00000000000000000001"}],"policyNames":["WriterPolicy"]},
+    {"name":"uploadlister","credentials":[{"accessKey":"UPLISTERKEY","secretKey":"uplistersecret00000000000000001"}],"policyNames":["UploadsPolicy"]},
+    {"name":"getonly","credentials":[{"accessKey":"GETONLYKEY","secretKey":"getonlysecret0000000000000000001"}],"policyNames":["GetOnlyPolicy"]}
   ],
   "policies":[
-    {"name":"WriterPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"}
+    {"name":"WriterPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"},
+    {"name":"UploadsPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucketMultipartUploads\"],\"Resource\":[\"arn:aws:s3:::cache\"]}]}"},
+    {"name":"GetOnlyPolicy","content":"{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::cache/*\"]}]}"}
   ]
 }`
 	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
@@ -603,6 +608,10 @@ func TestPrefixParameterDoesNotEscalateBucketActions(t *testing.T) {
 		{"writer list with prefix", "WRITERKEY", "writersecret000000000000000000001", "", "list-type=2&prefix=x", s3_constants.ACTION_LIST, s3err.ErrNone},
 		{"policywriter put object", "POLICYKEY", "policysecret00000000000000000001", "key", "", s3_constants.ACTION_WRITE, s3err.ErrNone},
 		{"policywriter put versioning with prefix", "POLICYKEY", "policysecret00000000000000000001", "", "versioning&prefix=x", s3_constants.ACTION_WRITE, s3err.ErrAccessDenied},
+		{"uploadreader lists uploads under prefix", "UPREADERKEY", "upreadersecret00000000000000001", "", "uploads&prefix=uploads/foo", s3_constants.ACTION_READ, s3err.ErrNone},
+		{"uploadreader cannot list outside prefix", "UPREADERKEY", "upreadersecret00000000000000001", "", "uploads&prefix=other/", s3_constants.ACTION_READ, s3err.ErrAccessDenied},
+		{"uploadlister lists uploads", "UPLISTERKEY", "uplistersecret00000000000000001", "", "uploads&prefix=x", s3_constants.ACTION_READ, s3err.ErrNone},
+		{"getonly cannot list uploads", "GETONLYKEY", "getonlysecret0000000000000000001", "", "uploads&prefix=x", s3_constants.ACTION_READ, s3err.ErrAccessDenied},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			url := "http://localhost:8333/cache"
@@ -613,7 +622,7 @@ func TestPrefixParameterDoesNotEscalateBucketActions(t *testing.T) {
 				url += "?" + tc.query
 			}
 			r := httptest.NewRequest(http.MethodPut, url, nil)
-			if tc.action == s3_constants.ACTION_LIST {
+			if tc.action == s3_constants.ACTION_LIST || tc.action == s3_constants.ACTION_READ {
 				r.Method = http.MethodGet
 			}
 			r = mux.SetURLVars(r, map[string]string{"bucket": "cache", "object": tc.object})
