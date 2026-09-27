@@ -507,58 +507,48 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 // Empty directories left behind by deleted objects and internal folders
 // (.uploads, *.versions) do not count as user objects.
 func (s3a *S3ApiServer) bucketHasUserObjects(bucket string) (bool, error) {
-	bucketPath := s3a.option.BucketsPath + "/" + bucket
-	return s3a.dirHasUserObjects(bucketPath, 0)
+	return s3a.dirHasUserObjects(s3a.option.BucketsPath + "/" + bucket)
 }
 
-const maxDirScanDepth = 256
-
-func (s3a *S3ApiServer) dirHasUserObjects(dir string, depth int) (bool, error) {
-	if depth > maxDirScanDepth {
-		// Defensive guard against excessively deep directory structures; treat as non-empty.
-		return true, nil
-	}
-	startFrom := ""
-	// Start with a small batch — most non-empty buckets have a real object early.
-	// If we only find special or empty entries, switch to larger batches to page through quickly.
-	limit := uint32(10)
-	for {
-		entries, isLast, err := s3a.list(dir, "", startFrom, false, limit)
-		if err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				return false, nil
-			}
-			return false, err
-		}
-		for _, entry := range entries {
-			if entry.Name == "" || entry.Name == "." || entry.Name == ".." || strings.ContainsAny(entry.Name, "/\\") {
-				continue
-			}
-			if isReservedDirectoryName(entry.Name) {
-				startFrom = entry.Name
-				continue
-			}
-			if !entry.IsDirectory {
-				return true, nil
-			}
-			if entry.IsDirectoryKeyObject() {
-				return true, nil
-			}
-			// It is an intermediate directory. Recursively check if it holds any user objects.
-			hasUserObjects, err := s3a.dirHasUserObjects(dir+"/"+entry.Name, depth+1)
+func (s3a *S3ApiServer) dirHasUserObjects(root string) (bool, error) {
+	dirs := []string{root}
+	for len(dirs) > 0 {
+		dir := dirs[len(dirs)-1]
+		dirs = dirs[:len(dirs)-1]
+		startFrom := ""
+		// Start with a small batch — most non-empty buckets have a real object
+		// early; switch to larger batches to page through quickly.
+		limit := uint32(10)
+		for {
+			entries, isLast, err := s3a.list(dir, "", startFrom, false, limit)
 			if err != nil {
+				if isFilerNotFound(err) {
+					break // the directory was deleted between listing and walking it
+				}
 				return false, err
 			}
-			if hasUserObjects {
-				return true, nil
+			for _, entry := range entries {
+				startFrom = entry.Name
+				if entry.Name == "" || entry.Name == "." || entry.Name == ".." || strings.Contains(entry.Name, "/") {
+					continue
+				}
+				// Reserved folders are internal only at the bucket root; a
+				// deeper .uploads or *.versions name is a user key prefix.
+				if dir == root && isReservedDirectoryName(entry.Name) {
+					continue
+				}
+				if !entry.IsDirectory || entry.IsDirectoryKeyObject() {
+					return true, nil
+				}
+				dirs = append(dirs, dir+"/"+entry.Name)
 			}
-			startFrom = entry.Name
+			if isLast || len(entries) == 0 {
+				break
+			}
+			limit = 1000
 		}
-		if isLast || len(entries) == 0 {
-			return false, nil
-		}
-		limit = 1000
 	}
+	return false, nil
 }
 
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold

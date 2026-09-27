@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -160,6 +161,45 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 			},
 			wantHasUser: false,
 		},
+		{
+			name: "nested versions-named directory holding a file",
+			entriesByDir: map[string][]*filer_pb.Entry{
+				"/buckets/b": {
+					{Name: "logs", IsDirectory: true},
+				},
+				"/buckets/b/logs": {
+					{Name: "foo" + s3_constants.VersionsFolder, IsDirectory: true},
+				},
+				"/buckets/b/logs/foo" + s3_constants.VersionsFolder: {
+					{Name: "v1", IsDirectory: false},
+				},
+			},
+			wantHasUser: true,
+		},
+		{
+			name: "nested uploads-named directory holding a file",
+			entriesByDir: map[string][]*filer_pb.Entry{
+				"/buckets/b": {
+					{Name: "data", IsDirectory: true},
+				},
+				"/buckets/b/data": {
+					{Name: s3_constants.MultipartUploadsFolder, IsDirectory: true},
+				},
+				"/buckets/b/data/" + s3_constants.MultipartUploadsFolder: {
+					{Name: "part-1", IsDirectory: false},
+				},
+			},
+			wantHasUser: true,
+		},
+		{
+			name: "file with backslash in name",
+			entriesByDir: map[string][]*filer_pb.Entry{
+				"/buckets/b": {
+					{Name: `a\b`, IsDirectory: false},
+				},
+			},
+			wantHasUser: true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -172,6 +212,26 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 			assert.Equal(t, tc.wantHasUser, got)
 		})
 	}
+}
+
+func TestBucketHasUserObjects_DeepEmptyChain(t *testing.T) {
+	entriesByDir := map[string][]*filer_pb.Entry{
+		"/buckets/b": {{Name: "d0", IsDirectory: true}},
+	}
+	dir := "/buckets/b/d0"
+	for i := 1; i < 500; i++ {
+		child := fmt.Sprintf("d%d", i)
+		entriesByDir[dir] = []*filer_pb.Entry{{Name: child, IsDirectory: true}}
+		dir = dir + "/" + child
+	}
+	entriesByDir[dir] = []*filer_pb.Entry{}
+
+	f := &fakeBucketDeleteFiler{entriesByDir: entriesByDir}
+	s3a := newBucketDeleteTestServer(t, f, false)
+
+	got, err := s3a.bucketHasUserObjects("b")
+	require.NoError(t, err)
+	assert.False(t, got)
 }
 
 func TestDeleteBucketHandler_EmptyDirectoriesAllowedWhenNotEmptyFalse(t *testing.T) {
