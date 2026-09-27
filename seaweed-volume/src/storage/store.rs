@@ -1206,43 +1206,28 @@ impl Store {
         Vec<master_pb::VolumeEcShardInformationMessage>,
         Vec<master_pb::VolumeEcShardInformationMessage>,
     ) {
-        let mut ec_shards = Vec::new();
-        let mut deleted = Vec::new();
+        let (mut ec_shards, expired) = self.find_expired_ec_volumes();
+        let (deleted, still_held) = self.remove_expired_ec_volumes(expired);
+        ec_shards.extend(still_held);
+        (ec_shards, deleted)
+    }
 
-        for (disk_id, loc) in self.locations.iter_mut().enumerate() {
-            let mut expired_vids = Vec::new();
-            let mut io_quarantined_vids = Vec::new();
+    /// The read half of `delete_expired_ec_volumes`: the shards to report, and
+    /// the expired EC volumes, by disk index, for `remove_expired_ec_volumes`.
+    pub fn find_expired_ec_volumes(
+        &self,
+    ) -> (
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+        Vec<(usize, VolumeId)>,
+    ) {
+        let mut ec_shards = Vec::new();
+        let mut expired = Vec::new();
+
+        for (disk_id, loc) in self.locations.iter().enumerate() {
             for (vid, ec_vol) in loc.ec_volumes() {
                 if ec_vol.is_time_to_destroy() {
-                    expired_vids.push(*vid);
+                    expired.push((disk_id, *vid));
                 } else if ec_vol.should_quarantine() {
-                    io_quarantined_vids.push(*vid);
-                } else {
-                    ec_shards
-                        .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
-                }
-            }
-
-            for vid in expired_vids {
-                let messages = loc
-                    .find_ec_volume(vid)
-                    .map(|ec_vol| ec_vol.to_volume_ec_shard_information_messages(disk_id as u32))
-                    .unwrap_or_default();
-                if let Some(mut ec_vol) = loc.remove_ec_volume(vid) {
-                    for _ in 0..ec_vol.shard_count() {
-                        crate::metrics::VOLUME_GAUGE
-                            .with_label_values(&[&ec_vol.collection, "ec_shards"])
-                            .dec();
-                    }
-                    ec_vol.destroy();
-                    deleted.extend(messages);
-                } else {
-                    ec_shards.extend(messages);
-                }
-            }
-
-            for vid in io_quarantined_vids {
-                if let Some(ec_vol) = loc.find_ec_volume(vid) {
                     let (_, io_count, quarantined) = ec_vol.get_io_error_state();
                     if !quarantined {
                         ec_vol.mark_io_quarantined();
@@ -1252,11 +1237,51 @@ impl Store {
                             "ec volume quarantined after consecutive IO errors"
                         );
                     }
+                } else {
+                    ec_shards
+                        .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
                 }
             }
         }
 
-        (ec_shards, deleted)
+        (ec_shards, expired)
+    }
+
+    /// The write half of `delete_expired_ec_volumes`: destroys each volume that
+    /// is still there and still expired, returning the shards deleted and the
+    /// shards of any that no longer qualify.
+    pub fn remove_expired_ec_volumes(
+        &mut self,
+        expired: Vec<(usize, VolumeId)>,
+    ) -> (
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+    ) {
+        let mut deleted = Vec::new();
+        let mut still_held = Vec::new();
+        for (disk_id, vid) in expired {
+            let Some(loc) = self.locations.get_mut(disk_id) else {
+                continue;
+            };
+            let Some(ec_vol) = loc.find_ec_volume(vid) else {
+                continue;
+            };
+            let messages = ec_vol.to_volume_ec_shard_information_messages(disk_id as u32);
+            if !ec_vol.is_time_to_destroy() {
+                still_held.extend(messages);
+                continue;
+            }
+            if let Some(mut ec_vol) = loc.remove_ec_volume(vid) {
+                for _ in 0..ec_vol.shard_count() {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&ec_vol.collection, "ec_shards"])
+                        .dec();
+                }
+                ec_vol.destroy();
+                deleted.extend(messages);
+            }
+        }
+        (deleted, still_held)
     }
 
     /// Remove an EC volume from whichever location has it.
