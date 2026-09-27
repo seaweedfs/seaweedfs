@@ -503,27 +503,58 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
-// bucketHasUserObjects checks whether a bucket contains any non-special entries.
-// Special entries (.uploads, *.versions) are internal to S3 and don't count as user objects.
+// bucketHasUserObjects checks whether a bucket contains any user objects.
+// Empty directories left behind by deleted objects and internal folders
+// (.uploads, *.versions) do not count as user objects.
 func (s3a *S3ApiServer) bucketHasUserObjects(bucket string) (bool, error) {
 	bucketPath := s3a.option.BucketsPath + "/" + bucket
+	return s3a.dirHasUserObjects(bucketPath, 0)
+}
+
+const maxDirScanDepth = 256
+
+func (s3a *S3ApiServer) dirHasUserObjects(dir string, depth int) (bool, error) {
+	if depth > maxDirScanDepth {
+		// Defensive guard against excessively deep directory structures; treat as non-empty.
+		return true, nil
+	}
 	startFrom := ""
 	// Start with a small batch — most non-empty buckets have a real object early.
-	// If we only find special entries, switch to larger batches to page through quickly.
+	// If we only find special or empty entries, switch to larger batches to page through quickly.
 	limit := uint32(10)
 	for {
-		entries, isLast, err := s3a.list(bucketPath, "", startFrom, false, limit)
+		entries, isLast, err := s3a.list(dir, "", startFrom, false, limit)
 		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return false, nil
+			}
 			return false, err
 		}
 		for _, entry := range entries {
-			if entry.Name != s3_constants.MultipartUploadsFolder &&
-				!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+			if entry.Name == "" || entry.Name == "." || entry.Name == ".." || strings.ContainsAny(entry.Name, "/\\") {
+				continue
+			}
+			if isReservedDirectoryName(entry.Name) {
+				startFrom = entry.Name
+				continue
+			}
+			if !entry.IsDirectory {
+				return true, nil
+			}
+			if entry.IsDirectoryKeyObject() {
+				return true, nil
+			}
+			// It is an intermediate directory. Recursively check if it holds any user objects.
+			hasUserObjects, err := s3a.dirHasUserObjects(dir+"/"+entry.Name, depth+1)
+			if err != nil {
+				return false, err
+			}
+			if hasUserObjects {
 				return true, nil
 			}
 			startFrom = entry.Name
 		}
-		if isLast {
+		if isLast || len(entries) == 0 {
 			return false, nil
 		}
 		limit = 1000
