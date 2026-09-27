@@ -124,3 +124,54 @@ func TestAttachedPolicyExplicitDenyOverridesNativeAdmin(t *testing.T) {
 	assert.Equal(t, s3err.ErrAccessDenied, errCode,
 		"explicit Deny in an attached policy must override native Admin")
 }
+
+// GET ?uploads lists multipart uploads at bucket level but routes under Read,
+// so the prefix promoted into object must not change the evaluated action or
+// resource: an explicit Deny on s3:ListBucketMultipartUploads must still
+// constrain a native admin, and an Allow on the bucket ARN must satisfy a
+// plain attached-policy identity.
+func TestMultipartListingResolvesBucketAction(t *testing.T) {
+	mgr := newTestIAMManager(t)
+	iam := &IdentityAccessManagement{}
+	iam.SetIAMIntegration(NewS3IAMIntegration(mgr, ""))
+
+	denyDoc, _ := json.Marshal(map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{"Effect": "Deny", "Action": "s3:ListBucketMultipartUploads", "Resource": "arn:aws:s3:::mybucket"},
+		},
+	})
+	require.NoError(t, iam.PutPolicy("DenyUploadsListing", string(denyDoc)))
+	allowDoc, _ := json.Marshal(map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{"Effect": "Allow", "Action": "s3:ListBucketMultipartUploads", "Resource": "arn:aws:s3:::mybucket"},
+		},
+	})
+	require.NoError(t, iam.PutPolicy("AllowUploadsListing", string(allowDoc)))
+
+	uploadsReq := func() *http.Request {
+		return httptest.NewRequest(http.MethodGet, "/mybucket?uploads&prefix=x/", nil)
+	}
+	admin := &Identity{
+		Name:         "admin",
+		Account:      &Account{DisplayName: "admin", Id: "admin"},
+		Actions:      []Action{s3_constants.ACTION_ADMIN},
+		PolicyNames:  []string{"DenyUploadsListing"},
+		PrincipalArn: "arn:aws:iam::111122223333:user/admin",
+	}
+	reader := &Identity{
+		Name:         "reader",
+		Account:      &Account{DisplayName: "reader", Id: "reader"},
+		PolicyNames:  []string{"AllowUploadsListing"},
+		PrincipalArn: "arn:aws:iam::111122223333:user/reader",
+	}
+
+	// object carries the promoted prefix, matching authRequestWithAuthType
+	assert.Equal(t, s3err.ErrAccessDenied,
+		iam.VerifyActionPermission(uploadsReq(), admin, s3_constants.ACTION_READ, "mybucket", "x/"),
+		"explicit Deny on the uploads listing must override native Admin")
+	assert.Equal(t, s3err.ErrNone,
+		iam.VerifyActionPermission(uploadsReq(), reader, s3_constants.ACTION_READ, "mybucket", "x/"),
+		"s3:ListBucketMultipartUploads on the bucket must allow the uploads listing")
+}

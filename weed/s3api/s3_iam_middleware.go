@@ -260,7 +260,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 
 	// Determine the specific S3 action based on the HTTP request details. The
 	// prefix promoted into objectKey is not part of the URL; resolve against
-	// the bucket-level object so ?versions keeps its own action.
+	// the bucket-level object so ?versions and ?uploads keep their own action.
 	specificAction := ResolveS3Action(r, string(action), bucket, resourceObjectKey)
 
 	// Create action request
