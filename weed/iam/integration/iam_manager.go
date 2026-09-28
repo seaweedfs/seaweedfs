@@ -559,6 +559,8 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 	}
 	m.oidcProviderStore = store
 
+	mirrored := map[string]bool{}
+	defer m.pruneAndHydrateOIDCProviders(context.Background(), mirrored)
 	if config.STS == nil {
 		return nil
 	}
@@ -598,14 +600,78 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 			Thumbprints:             extractStringList(pc.Config, "thumbprints"),
 			AllowedPrincipalTagKeys: extractStringList(pc.Config, "allowedPrincipalTagKeys"),
 			PolicyClaim:             extractString(pc.Config, "policyClaim"),
+			Source:                  OIDCProviderSourceStaticConfig,
 			CreatedAt:               createdAt,
 			UpdatedAt:               now,
 		}
 		if err := store.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
 			glog.Warningf("mirror static OIDC provider %s into store: %v", pc.Name, err)
 		}
+		mirrored[arn] = true
 	}
 	return nil
+}
+
+// pruneAndHydrateOIDCProviders runs after the static mirror when the store
+// outlives the process. A record the static config seeded on an earlier boot
+// and no longer lists is deleted, so removing a provider from the config file
+// still revokes it. The runtime STS view is then loaded from the store, since
+// providers created through the IAM API on an earlier boot, or on a peer, are
+// otherwise unknown until the next mutation. An in-memory store holds nothing
+// from before this boot, so it needs neither.
+func (m *IAMManager) pruneAndHydrateOIDCProviders(ctx context.Context, mirrored map[string]bool) {
+	if _, inMemory := m.oidcProviderStore.(*MemoryOIDCProviderStore); inMemory {
+		return
+	}
+	if err := m.pruneAndHydrateOnce(ctx, mirrored); err != nil {
+		// The metadata subscription only reports changes made from now on, so
+		// providers already in the store would stay unknown until one changes.
+		glog.Warningf("load OIDC providers from the store at startup: %v; retrying in the background", err)
+		keep := make(map[string]bool, len(mirrored))
+		for arn := range mirrored {
+			keep[arn] = true
+		}
+		go m.retryPruneAndHydrate(keep)
+	}
+}
+
+// oidcHydrateRetry bounds the backoff between startup load attempts.
+var oidcHydrateRetry = struct{ initial, max time.Duration }{initial: time.Second, max: 30 * time.Second}
+
+func (m *IAMManager) retryPruneAndHydrate(mirrored map[string]bool) {
+	delay := oidcHydrateRetry.initial
+	for {
+		time.Sleep(delay)
+		err := m.pruneAndHydrateOnce(context.Background(), mirrored)
+		if err == nil {
+			glog.V(0).Infof("loaded OIDC providers from the store after retrying")
+			return
+		}
+		glog.V(1).Infof("load OIDC providers from the store: %v; retrying in %v", err, delay)
+		if delay *= 2; delay > oidcHydrateRetry.max {
+			delay = oidcHydrateRetry.max
+		}
+	}
+}
+
+// pruneAndHydrateOnce deletes static-config records the config no longer
+// lists, then loads the store into STS. It fails when the store cannot be read.
+func (m *IAMManager) pruneAndHydrateOnce(ctx context.Context, mirrored map[string]bool) error {
+	records, err := m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	if err != nil {
+		return fmt.Errorf("list OIDC providers: %w", err)
+	}
+	for _, rec := range records {
+		if rec == nil || rec.Source != OIDCProviderSourceStaticConfig || mirrored[rec.ARN] {
+			continue
+		}
+		if err := m.oidcProviderStore.DeleteProvider(ctx, m.getFilerAddress(), rec.ARN); err != nil {
+			glog.Warningf("prune OIDC provider %s removed from static config: %v", rec.ARN, err)
+			continue
+		}
+		glog.V(1).Infof("pruned OIDC provider %s: no longer in static config", rec.ARN)
+	}
+	return m.RefreshOIDCProvidersFromStore(ctx)
 }
 
 // refreshOIDCProvidersBestEffort calls RefreshOIDCProvidersFromStore and

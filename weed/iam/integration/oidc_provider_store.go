@@ -71,9 +71,19 @@ type OIDCProviderRecord struct {
 	// (audit/inventory metadata, not propagated into sessions).
 	Tags map[string]string `json:"tags,omitempty"`
 
+	// Source records where the entry came from. OIDCProviderSourceStaticConfig
+	// marks a record mirrored from STS.Providers at boot; empty means it was
+	// created through the IAM API. Only static-config records are pruned when
+	// their provider leaves the configuration.
+	Source string `json:"source,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// OIDCProviderSourceStaticConfig is the Source of a record mirrored from the
+// static STS provider configuration.
+const OIDCProviderSourceStaticConfig = "static-config"
 
 // OIDCProviderStore stores OIDCProviderRecord entries. Implementations are
 // expected to be safe for concurrent use.
@@ -267,15 +277,20 @@ func (f *FilerOIDCProviderStore) GetProviderByARN(ctx context.Context, filerAddr
 
 	var data []byte
 	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: f.basePath,
 			Name:      f.fileName(arn),
 		})
+		// Only a confirmed absence is ErrOIDCProviderNotFound: callers create
+		// on it, so an unreachable filer must not read as "no such provider".
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrOIDCProviderNotFound, arn)
+		}
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrOIDCProviderNotFound, err)
+			return fmt.Errorf("lookup OIDC provider %s: %w", arn, err)
 		}
 		if resp.Entry == nil {
-			return fmt.Errorf("OIDC provider not found: %s", arn)
+			return fmt.Errorf("%w: %s", ErrOIDCProviderNotFound, arn)
 		}
 		data = resp.Entry.Content
 		return nil
