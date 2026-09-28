@@ -3461,7 +3461,14 @@ impl VolumeServer for VolumeGrpcService {
         for &sid in &req.shard_ids {
             shard_ids.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
         }
-        store.delete_ec_shards(vid, &req.collection, &shard_ids);
+        store
+            .delete_ec_shards(vid, &req.collection, &shard_ids)
+            .map_err(|e| {
+                Status::internal(format!(
+                    "delete ec shards of volume {} in {}: {}",
+                    req.volume_id, req.collection, e
+                ))
+            })?;
         drop(store);
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(
