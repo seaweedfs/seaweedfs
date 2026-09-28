@@ -227,7 +227,16 @@ pub fn remove_ec_generation_files(base: &str, generations_older_than: u32) -> io
     };
     match fs::read_dir(parent) {
         Ok(entries) => {
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        // A skipped entry means an incomplete sweep; report it
+                        // instead of pretending the cleanup finished.
+                        record(Err(e));
+                        continue;
+                    }
+                };
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let Some((artifact, _)) = name.rsplit_once(".v") else {
                     continue;
@@ -267,7 +276,8 @@ pub fn remove_ec_shard_generations(shard_file: &str) -> io::Result<bool> {
     let mut removed = false;
     match fs::read_dir(parent) {
         Ok(entries) => {
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = entry?;
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if ec_file_generation(&name, &fname).is_some() {
                     match fs::remove_file(entry.path()) {

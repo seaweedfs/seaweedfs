@@ -1346,12 +1346,16 @@ impl Store {
                 }
                 // The shard and every 2PC generation of it (<name>.v<N>) are
                 // removed: the shard must not live on this disk at all.
-                if crate::storage::erasure_coding::ec_shard::remove_ec_shard_generations(
+                match crate::storage::erasure_coding::ec_shard::remove_ec_shard_generations(
                     &shard.file_name(),
-                )
-                .unwrap_or(false)
-                {
-                    deleted_at[i] = true;
+                ) {
+                    Ok(true) => deleted_at[i] = true,
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!(
+                        "failed to remove staged generations of {}: {}",
+                        shard.file_name(),
+                        e
+                    ),
                 }
             }
         }

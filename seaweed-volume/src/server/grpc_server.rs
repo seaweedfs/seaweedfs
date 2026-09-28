@@ -3416,42 +3416,38 @@ impl VolumeServer for VolumeGrpcService {
             // staged <base>.*.v<N> files strictly older than the threshold are
             // superseded and safe to remove. Versioned files are never mounted,
             // so nothing needs to be unloaded first.
-            let store = self.state.store.read().unwrap();
-            for loc in &store.locations {
-                let data_base = crate::storage::volume::volume_file_name(
-                    &loc.directory,
-                    &req.collection,
-                    vid,
-                );
+            // Snapshot the base names under the lock; the filesystem sweep runs
+            // after it is dropped so a slow disk cannot stall the store.
+            let mut bases = Vec::new();
+            {
+                let store = self.state.store.read().unwrap();
+                for loc in &store.locations {
+                    bases.push(crate::storage::volume::volume_file_name(
+                        &loc.directory,
+                        &req.collection,
+                        vid,
+                    ));
+                    if loc.idx_directory != loc.directory {
+                        bases.push(crate::storage::volume::volume_file_name(
+                            &loc.idx_directory,
+                            &req.collection,
+                            vid,
+                        ));
+                    }
+                }
+            }
+            for base in &bases {
                 crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(
-                    &data_base,
+                    base,
                     req.delete_generations_older_than,
                 )
                 .map_err(|e| {
                     Status::internal(format!(
                         "ec generation cleanup of volume {} on {}: {}",
-                        req.volume_id, loc.directory, e
+                        req.volume_id, base, e
                     ))
                 })?;
-                if loc.idx_directory != loc.directory {
-                    let idx_base = crate::storage::volume::volume_file_name(
-                        &loc.idx_directory,
-                        &req.collection,
-                        vid,
-                    );
-                    crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(
-                        &idx_base,
-                        req.delete_generations_older_than,
-                    )
-                    .map_err(|e| {
-                        Status::internal(format!(
-                            "ec generation cleanup of volume {} on {}: {}",
-                            req.volume_id, loc.idx_directory, e
-                        ))
-                    })?;
-                }
             }
-            drop(store);
             self.state.volume_state_notify.notify_one();
             return Ok(Response::new(
                 volume_server_pb::VolumeEcShardsDeleteResponse {
