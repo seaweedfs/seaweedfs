@@ -27,6 +27,9 @@ import (
 var (
 	ErrOIDCProviderNotFound      = errors.New("OIDC provider not found")
 	ErrOIDCProviderAlreadyExists = errors.New("OIDC provider already exists")
+	// ErrOIDCProviderStatic refuses a change to a provider defined in the
+	// server's IAM config file: change it there instead.
+	ErrOIDCProviderStatic = errors.New("OIDC provider is defined in the IAM config file")
 )
 
 // OIDCProviderRecord is the persisted, IAM-managed view of an OIDC identity
@@ -71,19 +74,9 @@ type OIDCProviderRecord struct {
 	// (audit/inventory metadata, not propagated into sessions).
 	Tags map[string]string `json:"tags,omitempty"`
 
-	// Source records where the entry came from. OIDCProviderSourceStaticConfig
-	// marks a record mirrored from STS.Providers at boot; empty means it was
-	// created through the IAM API. Only static-config records are pruned when
-	// their provider leaves the configuration.
-	Source string `json:"source,omitempty"`
-
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
-
-// OIDCProviderSourceStaticConfig is the Source of a record mirrored from the
-// static STS provider configuration.
-const OIDCProviderSourceStaticConfig = "static-config"
 
 // OIDCProviderStore stores OIDCProviderRecord entries. Implementations are
 // expected to be safe for concurrent use.
