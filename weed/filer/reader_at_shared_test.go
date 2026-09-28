@@ -247,3 +247,37 @@ func TestChunkReadAtPinnedChunkSurvivesEviction(t *testing.T) {
 		t.Errorf("chunk0 fetched %d times, want 1", got)
 	}
 }
+
+// When every downloader is pinned the limit still applies: the oldest pinned
+// buffer is evicted so abandoned streams cannot grow memory past the limit.
+func TestChunkReadAtPinnedEvictionFallsBackWhenAllPinned(t *testing.T) {
+	const chunkSize = 64 << 10
+	rc := NewReaderCache(2, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
+		return len(buffer), nil
+	}
+
+	buf := make([]byte, 16<<10)
+	streamA := &chunkStream{}
+	streamB := &chunkStream{}
+	if _, err := rc.readChunkAt(context.Background(), streamA, buf, "chunk0", nil, false, 0, chunkSize, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rc.readChunkAt(context.Background(), streamB, buf, "chunk1", nil, false, 0, chunkSize, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Every downloader is now pinned; the next chunk must still get in.
+	if _, err := rc.readChunkAt(context.Background(), &chunkStream{}, buf, "chunk2", nil, false, 0, chunkSize, false); err != nil {
+		t.Fatal(err)
+	}
+	if isRetained(rc, "chunk0") {
+		t.Fatal("oldest pinned downloader was not evicted past the limit")
+	}
+	if !isRetained(rc, "chunk2") {
+		t.Fatal("new downloader missing after pinned fallback eviction")
+	}
+}

@@ -56,20 +56,31 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 		// to the oldest pinned one so abandoned pins cannot block the budget.
 		var victim *SingleChunkCacher
 		var entry *list.Element
+		pinnedVictim := false
 		for e := b.idle.Front(); e != nil; e = e.Next() {
 			c := e.Value.(*SingleChunkCacher)
-			if victim == nil || atomic.LoadInt32(&c.pins) == 0 {
+			if atomic.LoadInt32(&c.pins) == 0 {
 				victim, entry = c, e
-				if atomic.LoadInt32(&c.pins) == 0 {
-					break
-				}
+				pinnedVictim = false
+				break
+			}
+			if victim == nil {
+				victim, entry = c, e
+				pinnedVictim = true
 			}
 		}
 		if entry != nil {
 			b.idle.Remove(entry)
 			delete(b.idleEntries, victim)
 			b.Unlock()
-			victim.parent.remove(victim)
+			if pinnedVictim {
+				victim.parent.remove(victim)
+			} else {
+				// Recheck the pin at removal: a stream that positioned itself
+				// in the victim since selection keeps it mapped, and the loop
+				// retries the selection.
+				victim.parent.removeUnpinned(victim)
+			}
 			continue
 		}
 		changed := b.changed
