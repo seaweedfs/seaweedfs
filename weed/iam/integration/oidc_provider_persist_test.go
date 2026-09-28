@@ -294,12 +294,81 @@ func TestInstallingAnotherStoreStopsThePreviousRetry(t *testing.T) {
 
 	first := &countingUnreadableStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore()}
 	mgr := startServer(t, first)
-	time.Sleep(20 * time.Millisecond)
-	require.Greater(t, first.readCount(), 1, "precondition: the first store is being retried")
+	deadline := time.Now().Add(2 * time.Second)
+	for first.readCount() <= 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("precondition: the first store is never retried")
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	mgr.installOIDCProviderStore(&persistentTestStore{NewMemoryOIDCProviderStore()}, persistTestConfig().STS)
 	time.Sleep(10 * time.Millisecond) // let an in-flight attempt finish
 	settled := first.readCount()
 	time.Sleep(30 * time.Millisecond)
 	assert.Equal(t, settled, first.readCount(), "the superseded store is still being retried")
+}
+
+// blockingListStore blocks the first ListProviders call after arm, having
+// already read its snapshot, until release is closed.
+type blockingListStore struct {
+	*MemoryOIDCProviderStore
+	mu      sync.Mutex
+	armed   bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingListStore) arm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armed, s.entered, s.release = true, make(chan struct{}), make(chan struct{})
+}
+
+func (s *blockingListStore) ListProviders(ctx context.Context, addr string) ([]*OIDCProviderRecord, error) {
+	records, err := s.MemoryOIDCProviderStore.ListProviders(ctx, addr)
+	s.mu.Lock()
+	block := s.armed
+	s.armed = false
+	s.mu.Unlock()
+	if block {
+		close(s.entered)
+		<-s.release
+	}
+	return records, err
+}
+
+// A refresh that read the store before a provider was deleted cannot leave the
+// deleted provider trusted by finishing after the deletion's own refresh.
+func TestAnOlderRefreshCannotRestoreADeletedProvider(t *testing.T) {
+	store := &blockingListStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store)
+	createAPIProvider(t, mgr, persistTestAPIIssuer)
+	require.True(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer), "precondition: the provider is trusted")
+
+	store.arm()
+	stale := make(chan struct{})
+	go func() {
+		defer close(stale)
+		_ = mgr.RefreshOIDCProvidersFromStore(context.Background())
+	}()
+	<-store.entered // the stale refresh holds a snapshot with the provider
+
+	deleted := make(chan error, 1)
+	go func() { deleted <- mgr.DeleteOIDCProvider(context.Background(), arnOf(t, persistTestAPIIssuer)) }()
+	// Serialized, the deletion's refresh waits for the stale one; otherwise
+	// let it finish first, which is the ordering that went wrong.
+	var deleteErr error
+	select {
+	case deleteErr = <-deleted:
+		deleted = nil
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(store.release)
+	<-stale
+	if deleted != nil {
+		deleteErr = <-deleted
+	}
+	require.NoError(t, deleteErr)
+	assert.False(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer), "a refresh older than the deletion left the deleted provider trusted")
 }

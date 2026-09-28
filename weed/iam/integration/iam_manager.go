@@ -37,7 +37,10 @@ type IAMManager struct {
 	// store; a persistent store never holds them (see installOIDCProviderStore).
 	staticOIDCProviders map[string]*OIDCProviderRecord
 	// cancelOIDCLoad stops a startup load still retrying against the store.
-	cancelOIDCLoad       context.CancelFunc
+	cancelOIDCLoad context.CancelFunc
+	// oidcRefreshMu serializes refreshes from reading the store to handing
+	// STS the result, so an older snapshot cannot replace a newer one.
+	oidcRefreshMu        sync.Mutex
 	oidcAuditSink        OIDCProviderAuditSink
 	revocationStore      SessionRevocationStore
 	filerAddressProvider func() string // Function to get current filer address
@@ -740,9 +743,20 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 	if store == nil || m.stsService == nil {
 		return nil
 	}
+	// Refreshes run concurrently: after an IAM API change, on a peer's change
+	// and in the startup retry. Unserialized, a refresh that read the store
+	// before a DeleteOIDCProvider could finish after that call's own refresh
+	// and keep the deleted provider trusted.
+	m.oidcRefreshMu.Lock()
+	defer m.oidcRefreshMu.Unlock()
 	records, err := store.ListProviders(ctx, m.getFilerAddress())
 	if err != nil {
 		return fmt.Errorf("list OIDC providers: %w", err)
+	}
+	// A startup retry is cancelled when another store is installed; its
+	// snapshot is of the old store and must not replace the new one's.
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	byIssuer := make(map[string][]sts.ScopedOIDCProvider, len(records))
 	for _, rec := range records {
