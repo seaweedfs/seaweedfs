@@ -3461,16 +3461,17 @@ impl VolumeServer for VolumeGrpcService {
         for &sid in &req.shard_ids {
             shard_ids.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
         }
-        store
-            .delete_ec_shards(vid, &req.collection, &shard_ids)
-            .map_err(|e| {
-                Status::internal(format!(
-                    "delete ec shards of volume {} in {}: {}",
-                    req.volume_id, req.collection, e
-                ))
-            })?;
+        let delete_result = store.delete_ec_shards(vid, &req.collection, &shard_ids);
+        // The shards are already deleted and unmounted even when a staged-
+        // generation sweep failed, so the state notification must still go out.
         drop(store);
         self.state.volume_state_notify.notify_one();
+        delete_result.map_err(|e| {
+            Status::internal(format!(
+                "delete ec shards of volume {} in {}: {}",
+                req.volume_id, req.collection, e
+            ))
+        })?;
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsDeleteResponse {
                 full_teardown_done: false,
