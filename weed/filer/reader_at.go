@@ -32,7 +32,9 @@ type ChunkReadAt struct {
 	fileSize      int64
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
+	lastChunkMu   sync.Mutex // guards lastChunkFid; mount issues concurrent ReadAt calls
 	lastChunkFid  string
+	stream        chunkStream     // chunk this reader is positioned in, pinned in the shared readerCache
 	prefetchCount int             // Number of chunks to prefetch ahead during sequential reads
 	ctx           context.Context // Context used for cancellation during chunk read operations
 }
@@ -341,6 +343,7 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunkView *ChunkView, nextChunkViews *Interval[*ChunkView], offset uint64) (n int, err error) {
 
 	if c.readerPattern.IsRandomMode() {
+		c.readerCache.releaseStream(&c.stream)
 		n, err := c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)
 		if n > 0 {
 			return n, err
@@ -350,20 +353,20 @@ func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunk
 	}
 
 	shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= c.readerCache.chunkCache.GetMaxFilePartSizeInCache()
-	n, err = c.readerCache.ReadChunkAt(ctx, buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), shouldCache)
-	if c.lastChunkFid != chunkView.FileId {
-		if chunkView.OffsetInChunk == 0 { // start of a new chunk
-			if c.lastChunkFid != "" {
-				c.readerCache.UnCache(c.lastChunkFid)
-			}
-			if nextChunkViews != nil && c.prefetchCount > 0 {
-				// Prefetch multiple chunks ahead for better sequential read throughput
-				// This keeps the network pipeline full with parallel chunk fetches
-				c.readerCache.MaybeCache(nextChunkViews, c.prefetchCount)
-			}
+	// The previous chunk is released through the stream pin rather than
+	// UnCache: the buffer is shared, and other streams may still be reading it.
+	n, err = c.readerCache.readChunkAt(ctx, &c.stream, buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), shouldCache)
+	c.lastChunkMu.Lock()
+	enteredChunk := c.lastChunkFid != chunkView.FileId
+	c.lastChunkFid = chunkView.FileId
+	c.lastChunkMu.Unlock()
+	if enteredChunk && chunkView.OffsetInChunk == 0 { // start of a new chunk
+		if nextChunkViews != nil && c.prefetchCount > 0 {
+			// Prefetch multiple chunks ahead for better sequential read throughput
+			// This keeps the network pipeline full with parallel chunk fetches
+			c.readerCache.MaybeCache(nextChunkViews, c.prefetchCount)
 		}
 	}
-	c.lastChunkFid = chunkView.FileId
 	return
 }
 
