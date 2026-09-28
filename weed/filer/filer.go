@@ -606,7 +606,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) (bool, error) {
 		select {
 		case <-ctx.Done():
-			glog.V(1).InfofCtx(ctx, "listing %s canceled: %v", p, ctx.Err())
+			glog.V(1).InfofCtx(ctx, "listing %q canceled: %v", p, ctx.Err())
 			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 			if entry.TtlSec > 0 && !entry.IsDirectory() {
