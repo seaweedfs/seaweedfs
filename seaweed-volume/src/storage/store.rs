@@ -1334,15 +1334,41 @@ impl Store {
         None
     }
 
-    /// Delete EC shard files from disk.
-    pub fn delete_ec_shards(&mut self, vid: VolumeId, collection: &str, shard_ids: &[ShardId]) {
+    /// Delete EC shard files from disk. Staged-generation removal failures are
+    /// retained and returned after every location has been processed, so a
+    /// failed sweep never masquerades as a successful delete.
+    pub fn delete_ec_shards(
+        &mut self,
+        vid: VolumeId,
+        collection: &str,
+        shard_ids: &[ShardId],
+    ) -> std::io::Result<()> {
         // Delete shard files from disk, tracking which locations actually held one.
         let mut deleted_at = vec![false; self.locations.len()];
+        let mut first_err: Option<std::io::Error> = None;
         for (i, loc) in self.locations.iter().enumerate() {
             for &shard_id in shard_ids {
                 let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
                 if std::fs::remove_file(shard.file_name()).is_ok() {
                     deleted_at[i] = true;
+                }
+                // The shard and every 2PC generation of it (<name>.v<N>) are
+                // removed: the shard must not live on this disk at all.
+                match crate::storage::erasure_coding::ec_shard::remove_ec_shard_generations(
+                    &shard.file_name(),
+                ) {
+                    Ok(true) => deleted_at[i] = true,
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to remove staged generations of {}: {}",
+                            shard.file_name(),
+                            e
+                        );
+                        if first_err.is_none() {
+                            first_err = Some(e);
+                        }
+                    }
                 }
             }
         }
@@ -1414,6 +1440,11 @@ impl Store {
                     let _ = std::fs::remove_file(format!("{}.vif", data_base));
                 }
             }
+        }
+
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
     }
 
@@ -2763,13 +2794,13 @@ mod tests {
         std::fs::write(format!("{}.ecsum", base1), b"x").unwrap();
 
         // Disk 1 still has .ec01 afterwards: both sidecars survive.
-        store.delete_ec_shards(vid, collection, &[0]);
+        store.delete_ec_shards(vid, collection, &[0]).unwrap();
         assert!(std::path::Path::new(&format!("{}.ecsum", base0)).exists());
         assert!(std::path::Path::new(&format!("{}.ecsum", base1)).exists());
 
         // Disk 1's last shard goes: its sidecar is orphaned and removed, but
         // disk 0 was never touched by either delete and keeps its sidecar.
-        store.delete_ec_shards(vid, collection, &[1]);
+        store.delete_ec_shards(vid, collection, &[1]).unwrap();
         assert!(!std::path::Path::new(&format!("{}.ec01", base1)).exists());
         assert!(
             !std::path::Path::new(&format!("{}.ecsum", base1)).exists(),
@@ -2814,13 +2845,13 @@ mod tests {
         std::fs::write(format!("{}.ec01", base1), b"x").unwrap();
         std::fs::write(format!("{}.ecsum", idx_base), b"x").unwrap();
 
-        store.delete_ec_shards(vid, collection, &[0]);
+        store.delete_ec_shards(vid, collection, &[0]).unwrap();
         assert!(
             std::path::Path::new(&format!("{}.ecsum", idx_base)).exists(),
             "shared idx sidecar must survive while a sibling disk still has shards"
         );
 
-        store.delete_ec_shards(vid, collection, &[1]);
+        store.delete_ec_shards(vid, collection, &[1]).unwrap();
         assert!(
             !std::path::Path::new(&format!("{}.ecsum", idx_base)).exists(),
             "shared idx sidecar should go with the last location's last shard"
@@ -2843,7 +2874,7 @@ mod tests {
         std::fs::write(format!("{}.vif", base1), b"x").unwrap();
         std::fs::write(format!("{}.idx", base1), b"x").unwrap();
 
-        store.delete_ec_shards(vid, collection, &[0, 1]);
+        store.delete_ec_shards(vid, collection, &[0, 1]).unwrap();
 
         assert!(
             !std::path::Path::new(&format!("{}.vif", base0)).exists(),
@@ -2852,6 +2883,34 @@ mod tests {
         assert!(
             std::path::Path::new(&format!("{}.vif", base1)).exists(),
             "a disk with a live .idx keeps its .vif"
+        );
+    }
+
+    /// Deleting a shard removes its staged 2PC generations (<name>.v<N>) too:
+    /// a shard evicted off a disk leaves nothing (Go
+    /// deleteEcShardIdsForEachLocation).
+    #[test]
+    fn test_delete_ec_shards_removes_staged_generations() {
+        let (mut store, _tmp) = make_ec_target_test_store(1);
+        let collection = "c";
+        let vid = VolumeId(7);
+        let base = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base), b"x").unwrap();
+        std::fs::write(format!("{}.ec05", base), b"x").unwrap();
+        std::fs::write(format!("{}.ec05.v2", base), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base), b"x").unwrap();
+
+        store.delete_ec_shards(vid, collection, &[5]).unwrap();
+
+        assert!(!std::path::Path::new(&format!("{}.ec05", base)).exists());
+        assert!(
+            !std::path::Path::new(&format!("{}.ec05.v2", base)).exists(),
+            "staged generations of a deleted shard must go with it"
+        );
+        assert!(std::path::Path::new(&format!("{}.ec00", base)).exists());
+        assert!(
+            std::path::Path::new(&format!("{}.ecx", base)).exists(),
+            "index must survive while shards remain"
         );
     }
 
