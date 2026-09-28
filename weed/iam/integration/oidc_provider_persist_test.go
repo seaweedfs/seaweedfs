@@ -233,3 +233,73 @@ func TestStartupLoadRetriesUntilTheStoreIsReadable(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// A provider stored under a config-file provider's ARN takes precedence, as it
+// does in STS; the API then changes the stored one, and deleting it brings the
+// config-file provider back.
+func TestStoredProviderTakesPrecedenceOverTheConfigFileOne(t *testing.T) {
+	ctx := context.Background()
+	store := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	configured := startServer(t, store, persistTestStaticIssuer)
+	peer := startServer(t, store)
+	arn := arnOf(t, persistTestStaticIssuer)
+	require.NoError(t, peer.CreateOIDCProvider(ctx, &OIDCProviderRecord{ARN: arn, URL: persistTestStaticIssuer, ClientIDs: []string{"stored"}}))
+
+	rec, err := configured.GetOIDCProvider(ctx, arn)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"stored"}, rec.ClientIDs, "the config-file provider hides the stored one")
+	assert.NoError(t, configured.AddClientIDToOIDCProvider(ctx, arn, "more"), "the stored provider cannot be changed")
+
+	require.NoError(t, configured.DeleteOIDCProvider(ctx, arn))
+	rec, err = configured.GetOIDCProvider(ctx, arn)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"aud"}, rec.ClientIDs, "deleting the stored provider did not bring the config-file one back")
+}
+
+// A config-file provider reports no creation time: a time taken at startup
+// would change with every restart.
+func TestConfigFileProvidersReportNoCreationTime(t *testing.T) {
+	store := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store, persistTestStaticIssuer)
+	rec, err := mgr.GetOIDCProvider(context.Background(), arnOf(t, persistTestStaticIssuer))
+	require.NoError(t, err)
+	assert.True(t, rec.CreatedAt.IsZero())
+}
+
+// countingUnreadableStore never becomes readable and counts the attempts.
+type countingUnreadableStore struct {
+	*MemoryOIDCProviderStore
+	mu    sync.Mutex
+	reads int
+}
+
+func (s *countingUnreadableStore) ListProviders(context.Context, string) ([]*OIDCProviderRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	return nil, errors.New("filer unavailable")
+}
+
+func (s *countingUnreadableStore) readCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
+}
+
+// Installing another store stops the previous one's startup retry.
+func TestInstallingAnotherStoreStopsThePreviousRetry(t *testing.T) {
+	saved := oidcHydrateRetry
+	oidcHydrateRetry.initial, oidcHydrateRetry.max = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { oidcHydrateRetry = saved })
+
+	first := &countingUnreadableStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, first)
+	time.Sleep(20 * time.Millisecond)
+	require.Greater(t, first.readCount(), 1, "precondition: the first store is being retried")
+
+	mgr.installOIDCProviderStore(&persistentTestStore{NewMemoryOIDCProviderStore()}, persistTestConfig().STS)
+	time.Sleep(10 * time.Millisecond) // let an in-flight attempt finish
+	settled := first.readCount()
+	time.Sleep(30 * time.Millisecond)
+	assert.Equal(t, settled, first.readCount(), "the superseded store is still being retried")
+}

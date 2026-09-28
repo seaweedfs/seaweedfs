@@ -35,7 +35,9 @@ type IAMManager struct {
 	// staticOIDCProviders are the OIDC providers of this server's IAM config
 	// file, by ARN. With an in-memory store they are also written to the
 	// store; a persistent store never holds them (see installOIDCProviderStore).
-	staticOIDCProviders  map[string]*OIDCProviderRecord
+	staticOIDCProviders map[string]*OIDCProviderRecord
+	// cancelOIDCLoad stops a startup load still retrying against the store.
+	cancelOIDCLoad       context.CancelFunc
 	oidcAuditSink        OIDCProviderAuditSink
 	revocationStore      SessionRevocationStore
 	filerAddressProvider func() string // Function to get current filer address
@@ -613,13 +615,25 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 // Those providers stay in memory (staticOIDCProviders) and STS keeps serving
 // them from its static configuration; the store holds only providers created
 // through the IAM API, and those are loaded into STS here.
+//
+// A provider stored under the same ARN as a config-file provider takes
+// precedence, in the IAM API as in STS, which already prefers IAM-managed
+// providers so that an API call can shadow a bootstrap entry. Deleting the
+// stored provider brings the config-file one back.
 func (m *IAMManager) installOIDCProviderStore(store OIDCProviderStore, stsConfig *sts.STSConfig) {
+	if m.cancelOIDCLoad != nil {
+		m.cancelOIDCLoad()
+		m.cancelOIDCLoad = nil
+	}
 	m.oidcProviderStore = store
 	m.staticOIDCProviders = staticOIDCProviderRecords(stsConfig)
 	if _, inMemory := store.(*MemoryOIDCProviderStore); inMemory {
 		ctx := context.Background()
+		now := time.Now().UTC()
 		for _, rec := range m.staticOIDCProviders {
-			if err := store.StoreProvider(ctx, m.getFilerAddress(), copyOIDCProviderRecord(rec)); err != nil {
+			mirrored := copyOIDCProviderRecord(rec)
+			mirrored.CreatedAt, mirrored.UpdatedAt = now, now
+			if err := store.StoreProvider(ctx, m.getFilerAddress(), mirrored); err != nil {
 				glog.Warningf("mirror static OIDC provider %s into store: %v", rec.ARN, err)
 			}
 		}
@@ -632,7 +646,9 @@ func (m *IAMManager) installOIDCProviderStore(store OIDCProviderStore, stsConfig
 		// The metadata subscription only reports changes made from now on, so
 		// providers already in the store would stay unknown until one changes.
 		glog.Warningf("load OIDC providers from the store at startup: %v; retrying in the background", err)
-		go m.retryOIDCProviderLoad()
+		ctx, cancel := context.WithCancel(context.Background())
+		m.cancelOIDCLoad = cancel
+		go m.retryOIDCProviderLoad(ctx, store, oidcHydrateRetry)
 	}
 }
 
@@ -643,7 +659,6 @@ func staticOIDCProviderRecords(stsConfig *sts.STSConfig) map[string]*OIDCProvide
 	if stsConfig == nil {
 		return out
 	}
-	now := time.Now().UTC()
 	for _, pc := range stsConfig.Providers {
 		if pc == nil || !pc.Enabled || pc.Type != sts.ProviderTypeOIDC {
 			continue
@@ -666,8 +681,8 @@ func staticOIDCProviderRecords(stsConfig *sts.STSConfig) map[string]*OIDCProvide
 			Thumbprints:             extractStringList(pc.Config, "thumbprints"),
 			AllowedPrincipalTagKeys: extractStringList(pc.Config, "allowedPrincipalTagKeys"),
 			PolicyClaim:             extractString(pc.Config, "policyClaim"),
-			CreatedAt:               now,
-			UpdatedAt:               now,
+			// No CreatedAt: a config-file provider has no creation time the
+			// server could report consistently across restarts.
 		}
 	}
 	return out
@@ -676,18 +691,24 @@ func staticOIDCProviderRecords(stsConfig *sts.STSConfig) map[string]*OIDCProvide
 // oidcHydrateRetry bounds the backoff between startup load attempts.
 var oidcHydrateRetry = struct{ initial, max time.Duration }{initial: time.Second, max: 30 * time.Second}
 
-func (m *IAMManager) retryOIDCProviderLoad() {
-	delay := oidcHydrateRetry.initial
+// retryOIDCProviderLoad retries loading store, the store it was started for,
+// until it succeeds or ctx is cancelled because another store was installed.
+func (m *IAMManager) retryOIDCProviderLoad(ctx context.Context, store OIDCProviderStore, bounds struct{ initial, max time.Duration }) {
+	delay := bounds.initial
 	for {
-		time.Sleep(delay)
-		err := m.RefreshOIDCProvidersFromStore(context.Background())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		err := m.refreshOIDCProvidersFrom(ctx, store)
 		if err == nil {
 			glog.V(0).Infof("loaded OIDC providers from the store after retrying")
 			return
 		}
 		glog.V(1).Infof("load OIDC providers from the store: %v; retrying in %v", err, delay)
-		if delay *= 2; delay > oidcHydrateRetry.max {
-			delay = oidcHydrateRetry.max
+		if delay *= 2; delay > bounds.max {
+			delay = bounds.max
 		}
 	}
 }
@@ -711,10 +732,15 @@ func (m *IAMManager) refreshOIDCProvidersBestEffort(ctx context.Context, op, arn
 // or invalid configuration are logged and skipped so a single bad entry
 // does not stop the rest from refreshing.
 func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
-	if m.oidcProviderStore == nil || m.stsService == nil {
+	return m.refreshOIDCProvidersFrom(ctx, m.oidcProviderStore)
+}
+
+// refreshOIDCProvidersFrom is RefreshOIDCProvidersFromStore for a given store.
+func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCProviderStore) error {
+	if store == nil || m.stsService == nil {
 		return nil
 	}
-	records, err := m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	records, err := store.ListProviders(ctx, m.getFilerAddress())
 	if err != nil {
 		return fmt.Errorf("list OIDC providers: %w", err)
 	}
