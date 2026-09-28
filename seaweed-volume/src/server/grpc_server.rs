@@ -3410,6 +3410,56 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
+        if req.delete_generations_older_than > 0 {
+            // Post-commit cleanup of a 2PC generation switch: the committed
+            // generation has been promoted to the canonical names, so only the
+            // staged <base>.*.v<N> files strictly older than the threshold are
+            // superseded and safe to remove. Versioned files are never mounted,
+            // so nothing needs to be unloaded first.
+            let store = self.state.store.read().unwrap();
+            for loc in &store.locations {
+                let data_base = crate::storage::volume::volume_file_name(
+                    &loc.directory,
+                    &req.collection,
+                    vid,
+                );
+                crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(
+                    &data_base,
+                    req.delete_generations_older_than,
+                )
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "ec generation cleanup of volume {} on {}: {}",
+                        req.volume_id, loc.directory, e
+                    ))
+                })?;
+                if loc.idx_directory != loc.directory {
+                    let idx_base = crate::storage::volume::volume_file_name(
+                        &loc.idx_directory,
+                        &req.collection,
+                        vid,
+                    );
+                    crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(
+                        &idx_base,
+                        req.delete_generations_older_than,
+                    )
+                    .map_err(|e| {
+                        Status::internal(format!(
+                            "ec generation cleanup of volume {} on {}: {}",
+                            req.volume_id, loc.idx_directory, e
+                        ))
+                    })?;
+                }
+            }
+            drop(store);
+            self.state.volume_state_notify.notify_one();
+            return Ok(Response::new(
+                volume_server_pb::VolumeEcShardsDeleteResponse {
+                    full_teardown_done: false,
+                },
+            ));
+        }
+
         let mut store = self.state.store.write().unwrap();
         let mut shard_ids: Vec<ShardId> = Vec::with_capacity(req.shard_ids.len());
         for &sid in &req.shard_ids {
@@ -9202,6 +9252,7 @@ mod tests {
                     shard_ids: Vec::new(),
                     full_teardown: true,
                     encode_ts_ns: 0,
+                    delete_generations_older_than: 0,
                 },
             ))
             .await
@@ -9279,6 +9330,7 @@ mod tests {
                     shard_ids: Vec::new(),
                     full_teardown: true,
                     encode_ts_ns: 150,
+                    delete_generations_older_than: 0,
                 },
             ))
             .await
@@ -9320,6 +9372,123 @@ mod tests {
             newer_shard.exists(),
             "{} must survive",
             newer_shard.display()
+        );
+    }
+
+    /// A full teardown wipes the 2PC-staged <base>.*.v<N> files together with
+    /// the canonical ones: they are invisible to EC bookkeeping, so anything
+    /// left behind leaks forever (Go removeStaleEcArtifacts).
+    #[tokio::test]
+    async fn test_volume_ec_shards_delete_teardown_removes_staged_generations() {
+        let collection = "ecdel-gens";
+        let vid = VolumeId(7062);
+        let (service, tmp) = SplitDiskEcFixture {
+            collection,
+            ..SplitDiskEcFixture::new(vid.0)
+        }
+        .build();
+
+        for ext in [".ec00.v3", ".ecx.v3", ".vif.v3", ".ecsum.v3"] {
+            std::fs::write(
+                tmp.path()
+                    .join("data0")
+                    .join(format!("{}_{}{}", collection, vid.0, ext)),
+                b"staged",
+            )
+            .unwrap();
+        }
+
+        service
+            .volume_ec_shards_delete(Request::new(
+                volume_server_pb::VolumeEcShardsDeleteRequest {
+                    volume_id: vid.0,
+                    collection: collection.to_string(),
+                    shard_ids: Vec::new(),
+                    full_teardown: true,
+                    encode_ts_ns: 0,
+                    delete_generations_older_than: 0,
+                },
+            ))
+            .await
+            .unwrap();
+
+        for dir in ["data0", "data1"] {
+            let leftover = std::fs::read_dir(tmp.path().join(dir))
+                .unwrap()
+                .flatten()
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with(&format!("{}_{}.", collection, vid.0))
+                })
+                .count();
+            assert_eq!(leftover, 0, "teardown must leave no EC files in {dir}");
+        }
+    }
+
+    /// Post-commit cleanup removes only staged generations strictly below the
+    /// threshold; the committed generation and live canonical files stay
+    /// (Go VolumeEcShardsDelete delete_generations_older_than).
+    #[tokio::test]
+    async fn test_volume_ec_shards_delete_generations_older_than() {
+        let collection = "ecdel-gc";
+        let vid = VolumeId(7063);
+        let (service, tmp) = SplitDiskEcFixture {
+            collection,
+            ..SplitDiskEcFixture::new(vid.0)
+        }
+        .build();
+
+        let staged = |ext: &str| {
+            tmp.path()
+                .join("data0")
+                .join(format!("{}_{}{}", collection, vid.0, ext))
+        };
+        for ext in [".ec00.v3", ".ecx.v3", ".vif.v3", ".ec00.v7"] {
+            std::fs::write(staged(ext), b"staged").unwrap();
+        }
+
+        service
+            .volume_ec_shards_delete(Request::new(
+                volume_server_pb::VolumeEcShardsDeleteRequest {
+                    volume_id: vid.0,
+                    collection: collection.to_string(),
+                    shard_ids: Vec::new(),
+                    full_teardown: false,
+                    encode_ts_ns: 0,
+                    delete_generations_older_than: 5,
+                },
+            ))
+            .await
+            .unwrap();
+
+        for ext in [".ec00.v3", ".ecx.v3", ".vif.v3"] {
+            assert!(
+                !staged(ext).exists(),
+                "{} must be removed",
+                staged(ext).display()
+            );
+        }
+        assert!(
+            staged(".ec00.v7").exists(),
+            "the committed generation must be preserved"
+        );
+        assert!(
+            tmp.path()
+                .join("data0")
+                .join(format!("{}_{}.ec00", collection, vid.0))
+                .exists(),
+            "canonical shards must be preserved"
+        );
+        assert!(
+            service
+                .state
+                .store
+                .read()
+                .unwrap()
+                .locations[0]
+                .has_ec_volume(vid),
+            "mounted shards must stay mounted"
         );
     }
 

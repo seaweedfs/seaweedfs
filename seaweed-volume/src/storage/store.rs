@@ -1344,6 +1344,15 @@ impl Store {
                 if std::fs::remove_file(shard.file_name()).is_ok() {
                     deleted_at[i] = true;
                 }
+                // The shard and every 2PC generation of it (<name>.v<N>) are
+                // removed: the shard must not live on this disk at all.
+                if crate::storage::erasure_coding::ec_shard::remove_ec_shard_generations(
+                    &shard.file_name(),
+                )
+                .unwrap_or(false)
+                {
+                    deleted_at[i] = true;
+                }
             }
         }
 
@@ -2852,6 +2861,34 @@ mod tests {
         assert!(
             std::path::Path::new(&format!("{}.vif", base1)).exists(),
             "a disk with a live .idx keeps its .vif"
+        );
+    }
+
+    /// Deleting a shard removes its staged 2PC generations (<name>.v<N>) too:
+    /// a shard evicted off a disk leaves nothing (Go
+    /// deleteEcShardIdsForEachLocation).
+    #[test]
+    fn test_delete_ec_shards_removes_staged_generations() {
+        let (mut store, _tmp) = make_ec_target_test_store(1);
+        let collection = "c";
+        let vid = VolumeId(7);
+        let base = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base), b"x").unwrap();
+        std::fs::write(format!("{}.ec05", base), b"x").unwrap();
+        std::fs::write(format!("{}.ec05.v2", base), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base), b"x").unwrap();
+
+        store.delete_ec_shards(vid, collection, &[5]);
+
+        assert!(!std::path::Path::new(&format!("{}.ec05", base)).exists());
+        assert!(
+            !std::path::Path::new(&format!("{}.ec05.v2", base)).exists(),
+            "staged generations of a deleted shard must go with it"
+        );
+        assert!(std::path::Path::new(&format!("{}.ec00", base)).exists());
+        assert!(
+            std::path::Path::new(&format!("{}.ecx", base)).exists(),
+            "index must survive while shards remain"
         );
     }
 
