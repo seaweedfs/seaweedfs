@@ -104,3 +104,23 @@ func TestExpiredFileIsDeletedOnRead(t *testing.T) {
 	require.ErrorIs(t, err, filer_pb.ErrNotFound,
 		"native TTL lookup should remove the expired metadata row")
 }
+
+func TestListDirectoryEntriesContextCanceled(t *testing.T) {
+	f, store := newTestFilerWithStubStore()
+	ctx := context.Background()
+
+	require.NoError(t, store.InsertEntry(ctx, &Entry{
+		FullPath: util.FullPath("/dir/file1.txt"),
+		Attr:     Attr{Mode: 0o644},
+	}))
+
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	_, _, err := f.doListDirectoryEntries(canceledCtx, util.FullPath("/dir"), "", false, 10, "", func(entry *Entry) (bool, error) {
+		return true, nil
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "context canceled")
+}
+
