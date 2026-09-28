@@ -169,10 +169,13 @@ retry:
 		}
 	}
 
-	// clean up old downloaders
+	// clean up old downloaders; a pinned chunk may still be serving a stream
 	if len(rc.downloaders) >= rc.limit {
 		oldestFid, oldestTime := "", time.Now().UnixNano()
 		for fid, downloader := range rc.downloaders {
+			if atomic.LoadInt32(&downloader.pins) != 0 {
+				continue
+			}
 			completedTime := atomic.LoadInt64(&downloader.completedTimeNew)
 			if completedTime > 0 && completedTime < oldestTime {
 				oldestFid, oldestTime = fid, completedTime

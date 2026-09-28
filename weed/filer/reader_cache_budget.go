@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 )
@@ -51,8 +52,20 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 			b.Unlock()
 			return nil
 		}
-		if entry := b.idle.Front(); entry != nil {
-			victim := entry.Value.(*SingleChunkCacher)
+		// Prefer evicting an idle chunk no stream is positioned in; fall back
+		// to the oldest pinned one so abandoned pins cannot block the budget.
+		var victim *SingleChunkCacher
+		var entry *list.Element
+		for e := b.idle.Front(); e != nil; e = e.Next() {
+			c := e.Value.(*SingleChunkCacher)
+			if victim == nil || atomic.LoadInt32(&c.pins) == 0 {
+				victim, entry = c, e
+				if atomic.LoadInt32(&c.pins) == 0 {
+					break
+				}
+			}
+		}
+		if entry != nil {
 			b.idle.Remove(entry)
 			delete(b.idleEntries, victim)
 			b.Unlock()

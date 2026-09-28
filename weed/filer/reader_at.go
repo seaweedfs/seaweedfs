@@ -169,8 +169,15 @@ func (c *ChunkReadAt) Size() int64 {
 }
 
 func (c *ChunkReadAt) Close() error {
+	c.ReleaseStream()
 	c.readerCache.destroy()
 	return nil
+}
+
+// ReleaseStream drops this reader's hold on the chunk it is positioned in.
+// Unlike Close it leaves the (possibly shared) ReaderCache intact.
+func (c *ChunkReadAt) ReleaseStream() {
+	c.readerCache.releaseStream(&c.stream)
 }
 
 func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {

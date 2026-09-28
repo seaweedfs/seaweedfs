@@ -130,7 +130,7 @@ type WebDavFile struct {
 	off              int64
 	entry            *filer_pb.Entry
 	visibleIntervals *filer.IntervalList[*filer.VisibleInterval]
-	reader           io.ReaderAt
+	reader           *filer.ChunkReadAt
 	bufWriter        *buffered_writer.BufferedWriteCloser
 	ctx              context.Context
 }
@@ -537,6 +537,9 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 func (f *WebDavFile) Close() error {
 
 	glog.V(2).Infof("WebDavFileSystem.Close %v", f.name)
+	if f.reader != nil {
+		f.reader.ReleaseStream()
+	}
 	if f.bufWriter == nil {
 		return nil
 	}
