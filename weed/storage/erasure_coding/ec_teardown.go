@@ -105,18 +105,29 @@ func RemoveEcGenerationFiles(baseFileName string, generationsOlderThan uint32) e
 			firstErr = err
 		}
 	}
-	for _, pattern := range []string{baseFileName + ".ec*.v*", baseFileName + ".vif.v*"} {
-		matches, globErr := filepath.Glob(pattern)
-		record(globErr)
-		for _, name := range matches {
-			base := name[:len(name)-len(filepath.Ext(name))]
-			generation := EcFileGeneration(name, base)
-			if generation < 0 || (generationsOlderThan > 0 && generation >= int64(generationsOlderThan)) {
-				continue
-			}
-			if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
-				record(err)
-			}
+	dir, fileName := filepath.Dir(baseFileName), filepath.Base(baseFileName)
+	ecPrefix, vifName := fileName+".ec", fileName+".vif"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		// A generation file is <artifact>.v<N>; the last dot separates the
+		// staged-generation suffix from the artifact name.
+		artifact := name[:max(strings.LastIndexByte(name, '.'), 0)]
+		if artifact != vifName && !strings.HasPrefix(artifact, ecPrefix) {
+			continue
+		}
+		generation := EcFileGeneration(name, artifact)
+		if generation < 0 || (generationsOlderThan > 0 && generation >= int64(generationsOlderThan)) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			record(err)
 		}
 	}
 	return firstErr

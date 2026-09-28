@@ -590,19 +590,36 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	// Delete the requested shard files unconditionally. Gating on a local .ecx
 	// (still used for index-file routing below) would leak an orphan shard left
 	// by a failed copy that reconciliation later mounts under a foreign index.
+	shardFileNames := make([]string, 0, len(shardIds))
 	for _, shardId := range shardIds {
-		shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
-		// The shard and every 2PC generation of it (<name>.v<N>) are removed:
-		// the shard must not live on this disk at all.
-		matches, _ := filepath.Glob(shardFileName + ".v*")
-		for _, shardFile := range append([]string{shardFileName}, matches...) {
-			if shardFile != shardFileName && erasure_coding.EcFileGeneration(shardFile, shardFileName) < 0 {
-				continue
+		shardFileNames = append(shardFileNames, dataBaseFilename+erasure_coding.ToExt(int(shardId)))
+	}
+	// The shard and every 2PC generation of it (<name>.v<N>) are removed:
+	// the shard must not live on this disk at all. Names match literally —
+	// a glob would let glob metacharacters in the collection part of bName
+	// leak into another volume's files.
+	if entries, readErr := os.ReadDir(location.Directory); readErr == nil {
+		for _, entry := range entries {
+			for _, shardFileName := range shardFileNames {
+				name := filepath.Join(location.Directory, entry.Name())
+				if name != shardFileName && erasure_coding.EcFileGeneration(entry.Name(), filepath.Base(shardFileName)) < 0 {
+					continue
+				}
+				if util.FileExists(name) {
+					found = true
+					if err := removeFileIfExists(name); err != nil {
+						return fmt.Errorf("remove ec shard %s: %w", name, err)
+					}
+				}
 			}
-			if util.FileExists(shardFile) {
+		}
+	} else {
+		// Without a directory listing fall back to the canonical names only.
+		for _, shardFileName := range shardFileNames {
+			if util.FileExists(shardFileName) {
 				found = true
-				if err := removeFileIfExists(shardFile); err != nil {
-					return fmt.Errorf("remove ec shard %s: %w", shardFile, err)
+				if err := removeFileIfExists(shardFileName); err != nil {
+					return fmt.Errorf("remove ec shard %s: %w", shardFileName, err)
 				}
 			}
 		}
