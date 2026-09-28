@@ -75,11 +75,15 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 			b.Unlock()
 			if pinnedVictim {
 				victim.parent.remove(victim)
-			} else {
-				// Recheck the pin at removal: a stream that positioned itself
-				// in the victim since selection keeps it mapped, and the loop
-				// retries the selection.
-				victim.parent.removeUnpinned(victim)
+			} else if !victim.parent.removeUnpinned(victim) {
+				// The victim was pinned between selection and removal: keep it
+				// evictable so a pin abandoned in that gap cannot wedge the
+				// budget, then retry the selection.
+				b.Lock()
+				if _, ok := b.reservations[victim]; ok && b.idleEntries[victim] == nil {
+					b.idleEntries[victim] = b.idle.PushBack(victim)
+				}
+				b.Unlock()
 			}
 			continue
 		}
