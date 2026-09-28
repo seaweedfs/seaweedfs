@@ -383,20 +383,21 @@ func TestVolumeGrowth_ConfigurableReservationTimeout(t *testing.T) {
 		t.Errorf("Expected negative timeout to fall back to 5m, got %v", VolumeGrowStrategy.GetReservationTimeout())
 	}
 
-	// 4. Verify TryReserveCapacityWithTimeout directly
-	resId5, ok := dn.TryReserveCapacityWithTimeout(diskType, 2, 30*time.Second)
+	// 4. Expired reservations must not strand capacity: the selection filter
+	// reads AvailableSpaceForReservation without calling TryReserveCapacity.
+	VolumeGrowStrategy.ReservationTimeout = 1 * time.Minute
+	resId5, ok := dn.TryReserveCapacity(diskType, 5)
 	if !ok {
 		t.Fatal("Expected reservation 5 to succeed")
 	}
 	dn.capacityReservations.Lock()
 	if r, exists := dn.capacityReservations.reservations[resId5]; exists {
-		r.createdAt = time.Now().Add(-40 * time.Second)
+		r.createdAt = time.Now().Add(-2 * time.Minute)
 	}
 	dn.capacityReservations.Unlock()
 
-	// With 30s timeout, 40s old reservation should be expired
-	_, ok = dn.TryReserveCapacityWithTimeout(diskType, 5, 30*time.Second)
-	if !ok {
-		t.Error("Expected reservation of 5 to succeed when 40s old reservation expired under 30s timeout")
+	option := &VolumeGrowOption{DiskType: diskType}
+	if available := dn.AvailableSpaceForReservation(option); available != 5 {
+		t.Errorf("Expected expired reservation to free capacity in AvailableSpaceForReservation, got %d", available)
 	}
 }

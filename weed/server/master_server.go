@@ -667,20 +667,14 @@ func (ms *MasterServer) Reload() {
 }
 
 func parseReservationTimeout(v *util.ViperProxy) time.Duration {
-	if !v.IsSet("master.volume_growth.reservation_timeout") {
-		return 5 * time.Minute
-	}
-	str := strings.TrimSpace(v.GetString("master.volume_growth.reservation_timeout"))
-	if str != "" {
+	if str := strings.TrimSpace(v.GetString("master.volume_growth.reservation_timeout")); str != "" {
 		if d, err := time.ParseDuration(str); err == nil && d > 0 {
 			return d
 		}
 	}
-	if d := v.GetDuration("master.volume_growth.reservation_timeout"); d >= time.Second {
-		return d
-	}
+	// A bare number in the config means seconds; GetDuration would read it as nanoseconds.
 	if sec := v.GetInt("master.volume_growth.reservation_timeout"); sec > 0 {
 		return time.Duration(sec) * time.Second
 	}
-	return 5 * time.Minute
+	return topology.DefaultReservationTimeout
 }

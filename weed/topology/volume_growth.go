@@ -39,6 +39,8 @@ func (vg *VolumeGrowRequest) Equals(req *VolumeGrowRequest) bool {
 	return reflect.DeepEqual(vg.Option, req.Option) && vg.Count == req.Count && vg.Force == req.Force
 }
 
+const DefaultReservationTimeout = 5 * time.Minute
+
 type volumeGrowthStrategy struct {
 	Copy1Count         uint32
 	Copy2Count         uint32
@@ -52,7 +54,7 @@ func (s *volumeGrowthStrategy) GetReservationTimeout() time.Duration {
 	if s != nil && s.ReservationTimeout > 0 {
 		return s.ReservationTimeout
 	}
-	return 5 * time.Minute
+	return DefaultReservationTimeout
 }
 
 var (
@@ -62,7 +64,7 @@ var (
 		Copy3Count:         3,
 		CopyOtherCount:     1,
 		Threshold:          0.9,
-		ReservationTimeout: 5 * time.Minute,
+		ReservationTimeout: DefaultReservationTimeout,
 	}
 )
 

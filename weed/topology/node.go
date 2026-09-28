@@ -125,7 +125,6 @@ type Node interface {
 
 	// Capacity reservation methods for avoiding race conditions
 	TryReserveCapacity(diskType types.DiskType, count int64) (reservationId string, success bool)
-	TryReserveCapacityWithTimeout(diskType types.DiskType, count int64, timeout time.Duration) (reservationId string, success bool)
 	ReleaseReservedCapacity(reservationId string)
 	AvailableSpaceForReservation(option *VolumeGrowOption) int64
 
@@ -350,24 +349,18 @@ func (n *NodeImpl) CapacityForAnyDisk() (total int64) {
 
 // AvailableSpaceForReservation returns available space considering existing reservations
 func (n *NodeImpl) AvailableSpaceForReservation(option *VolumeGrowOption) int64 {
+	// Expire here as well: a node whose reservations fill it is filtered out
+	// before TryReserveCapacity could clean them, stranding the capacity.
+	n.capacityReservations.cleanExpiredReservations(VolumeGrowStrategy.GetReservationTimeout())
 	baseAvailable := n.AvailableSpaceFor(option)
 	reservedCount := n.capacityReservations.getReservedCount(option.DiskType)
 	return baseAvailable - reservedCount
 }
 
-// TryReserveCapacity attempts to atomically reserve capacity for volume creation using configured timeout
+// TryReserveCapacity attempts to atomically reserve capacity for volume creation using the configured timeout
 func (n *NodeImpl) TryReserveCapacity(diskType types.DiskType, count int64) (reservationId string, success bool) {
-	return n.TryReserveCapacityWithTimeout(diskType, count, VolumeGrowStrategy.GetReservationTimeout())
-}
-
-// TryReserveCapacityWithTimeout attempts to atomically reserve capacity for volume creation with a specific timeout
-func (n *NodeImpl) TryReserveCapacityWithTimeout(diskType types.DiskType, count int64, timeout time.Duration) (reservationId string, success bool) {
-	if timeout <= 0 {
-		timeout = 5 * time.Minute
-	}
-
 	// Clean up any expired reservations first
-	n.capacityReservations.cleanExpiredReservations(timeout)
+	n.capacityReservations.cleanExpiredReservations(VolumeGrowStrategy.GetReservationTimeout())
 
 	// Atomically check and reserve space
 	option := &VolumeGrowOption{DiskType: diskType}
