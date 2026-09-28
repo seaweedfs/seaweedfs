@@ -571,10 +571,18 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	// by a failed copy that reconciliation later mounts under a foreign index.
 	for _, shardId := range shardIds {
 		shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
-		if util.FileExists(shardFileName) {
-			found = true
-			if err := removeFileIfExists(shardFileName); err != nil {
-				return fmt.Errorf("remove ec shard %s: %w", shardFileName, err)
+		// The shard and every 2PC generation of it (<name>.v<N>) are removed:
+		// the shard must not live on this disk at all.
+		matches, _ := filepath.Glob(shardFileName + ".v*")
+		for _, shardFile := range append([]string{shardFileName}, matches...) {
+			if shardFile != shardFileName && erasure_coding.EcFileGeneration(shardFile, shardFileName) < 0 {
+				continue
+			}
+			if util.FileExists(shardFile) {
+				found = true
+				if err := removeFileIfExists(shardFile); err != nil {
+					return fmt.Errorf("remove ec shard %s: %w", shardFile, err)
+				}
 			}
 		}
 	}
@@ -709,6 +717,13 @@ func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total in
 		record(removeFileIfExists(dataBaseFileName + ".ecx"))
 		record(removeFileIfExists(dataBaseFileName + ".ecj"))
 		record(removeBitrotSidecars(dataBaseFileName))
+	}
+
+	// Generations staged by the 2PC switch are <base>.ecNN.v<N> plus the
+	// versioned .ecx/.ecj/.vif/.ecsum: a teardown of this disk leaves none.
+	record(erasure_coding.RemoveEcGenerationFiles(dataBaseFileName, 0))
+	if dataBaseFileName != indexBaseFileName {
+		record(erasure_coding.RemoveEcGenerationFiles(indexBaseFileName, 0))
 	}
 
 	// Canonical <base>.vif. A shard copy installs shards + .ecx before .vif, so an
