@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -598,7 +599,9 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	// the shard must not live on this disk at all. Names match literally —
 	// a glob would let glob metacharacters in the collection part of bName
 	// leak into another volume's files.
-	if entries, readErr := os.ReadDir(location.Directory); readErr == nil {
+	entries, readErr := os.ReadDir(location.Directory)
+	switch {
+	case readErr == nil:
 		for _, entry := range entries {
 			for _, shardFileName := range shardFileNames {
 				name := filepath.Join(location.Directory, entry.Name())
@@ -613,16 +616,12 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 				}
 			}
 		}
-	} else {
-		// Without a directory listing fall back to the canonical names only.
-		for _, shardFileName := range shardFileNames {
-			if util.FileExists(shardFileName) {
-				found = true
-				if err := removeFileIfExists(shardFileName); err != nil {
-					return fmt.Errorf("remove ec shard %s: %w", shardFileName, err)
-				}
-			}
-		}
+	case errors.Is(readErr, fs.ErrNotExist):
+		// No such directory means no shard files on this disk.
+	default:
+		// A listing failure must not fall back to canonical names only:
+		// staged .v<N> files would survive while the RPC reports success.
+		return fmt.Errorf("list %s for ec shards of %s: %w", location.Directory, bName, readErr)
 	}
 
 	if !found {
