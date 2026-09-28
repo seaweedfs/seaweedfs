@@ -39,6 +39,14 @@ const (
 	SeaweedIdentityAccessManagement_GetServiceAccount_FullMethodName            = "/iam_pb.SeaweedIdentityAccessManagement/GetServiceAccount"
 	SeaweedIdentityAccessManagement_ListServiceAccounts_FullMethodName          = "/iam_pb.SeaweedIdentityAccessManagement/ListServiceAccounts"
 	SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_FullMethodName = "/iam_pb.SeaweedIdentityAccessManagement/GetServiceAccountByAccessKey"
+	SeaweedIdentityAccessManagement_PutOIDCProvider_FullMethodName              = "/iam_pb.SeaweedIdentityAccessManagement/PutOIDCProvider"
+	SeaweedIdentityAccessManagement_GetOIDCProvider_FullMethodName              = "/iam_pb.SeaweedIdentityAccessManagement/GetOIDCProvider"
+	SeaweedIdentityAccessManagement_DeleteOIDCProvider_FullMethodName           = "/iam_pb.SeaweedIdentityAccessManagement/DeleteOIDCProvider"
+	SeaweedIdentityAccessManagement_ListOIDCProviders_FullMethodName            = "/iam_pb.SeaweedIdentityAccessManagement/ListOIDCProviders"
+	SeaweedIdentityAccessManagement_PutRole_FullMethodName                      = "/iam_pb.SeaweedIdentityAccessManagement/PutRole"
+	SeaweedIdentityAccessManagement_GetRole_FullMethodName                      = "/iam_pb.SeaweedIdentityAccessManagement/GetRole"
+	SeaweedIdentityAccessManagement_DeleteRole_FullMethodName                   = "/iam_pb.SeaweedIdentityAccessManagement/DeleteRole"
+	SeaweedIdentityAccessManagement_ListRoles_FullMethodName                    = "/iam_pb.SeaweedIdentityAccessManagement/ListRoles"
 )
 
 // SeaweedIdentityAccessManagementClient is the client API for SeaweedIdentityAccessManagement service.
@@ -70,6 +78,18 @@ type SeaweedIdentityAccessManagementClient interface {
 	GetServiceAccount(ctx context.Context, in *GetServiceAccountRequest, opts ...grpc.CallOption) (*GetServiceAccountResponse, error)
 	ListServiceAccounts(ctx context.Context, in *ListServiceAccountsRequest, opts ...grpc.CallOption) (*ListServiceAccountsResponse, error)
 	GetServiceAccountByAccessKey(ctx context.Context, in *GetServiceAccountByAccessKeyRequest, opts ...grpc.CallOption) (*GetServiceAccountByAccessKeyResponse, error)
+	// OIDC Provider Management. Writes the records the S3 servers' STS trusts
+	// when they run with "oidcProviderStore": {"storeType": "filer"}.
+	PutOIDCProvider(ctx context.Context, in *PutOIDCProviderRequest, opts ...grpc.CallOption) (*PutOIDCProviderResponse, error)
+	GetOIDCProvider(ctx context.Context, in *GetOIDCProviderRequest, opts ...grpc.CallOption) (*GetOIDCProviderResponse, error)
+	DeleteOIDCProvider(ctx context.Context, in *DeleteOIDCProviderRequest, opts ...grpc.CallOption) (*DeleteOIDCProviderResponse, error)
+	ListOIDCProviders(ctx context.Context, in *ListOIDCProvidersRequest, opts ...grpc.CallOption) (*ListOIDCProvidersResponse, error)
+	// Role Management. Writes the roles the S3 servers' STS assumes when they
+	// run with "roleStore": {"storeType": "filer"}.
+	PutRole(ctx context.Context, in *PutRoleRequest, opts ...grpc.CallOption) (*PutRoleResponse, error)
+	GetRole(ctx context.Context, in *GetRoleRequest, opts ...grpc.CallOption) (*GetRoleResponse, error)
+	DeleteRole(ctx context.Context, in *DeleteRoleRequest, opts ...grpc.CallOption) (*DeleteRoleResponse, error)
+	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
 }
 
 type seaweedIdentityAccessManagementClient struct {
@@ -280,6 +300,86 @@ func (c *seaweedIdentityAccessManagementClient) GetServiceAccountByAccessKey(ctx
 	return out, nil
 }
 
+func (c *seaweedIdentityAccessManagementClient) PutOIDCProvider(ctx context.Context, in *PutOIDCProviderRequest, opts ...grpc.CallOption) (*PutOIDCProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutOIDCProviderResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_PutOIDCProvider_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) GetOIDCProvider(ctx context.Context, in *GetOIDCProviderRequest, opts ...grpc.CallOption) (*GetOIDCProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetOIDCProviderResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_GetOIDCProvider_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) DeleteOIDCProvider(ctx context.Context, in *DeleteOIDCProviderRequest, opts ...grpc.CallOption) (*DeleteOIDCProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteOIDCProviderResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_DeleteOIDCProvider_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) ListOIDCProviders(ctx context.Context, in *ListOIDCProvidersRequest, opts ...grpc.CallOption) (*ListOIDCProvidersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListOIDCProvidersResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_ListOIDCProviders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) PutRole(ctx context.Context, in *PutRoleRequest, opts ...grpc.CallOption) (*PutRoleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutRoleResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_PutRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) GetRole(ctx context.Context, in *GetRoleRequest, opts ...grpc.CallOption) (*GetRoleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRoleResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_GetRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) DeleteRole(ctx context.Context, in *DeleteRoleRequest, opts ...grpc.CallOption) (*DeleteRoleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteRoleResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_DeleteRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRolesResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_ListRoles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedIdentityAccessManagementServer is the server API for SeaweedIdentityAccessManagement service.
 // All implementations must embed UnimplementedSeaweedIdentityAccessManagementServer
 // for forward compatibility.
@@ -309,6 +409,18 @@ type SeaweedIdentityAccessManagementServer interface {
 	GetServiceAccount(context.Context, *GetServiceAccountRequest) (*GetServiceAccountResponse, error)
 	ListServiceAccounts(context.Context, *ListServiceAccountsRequest) (*ListServiceAccountsResponse, error)
 	GetServiceAccountByAccessKey(context.Context, *GetServiceAccountByAccessKeyRequest) (*GetServiceAccountByAccessKeyResponse, error)
+	// OIDC Provider Management. Writes the records the S3 servers' STS trusts
+	// when they run with "oidcProviderStore": {"storeType": "filer"}.
+	PutOIDCProvider(context.Context, *PutOIDCProviderRequest) (*PutOIDCProviderResponse, error)
+	GetOIDCProvider(context.Context, *GetOIDCProviderRequest) (*GetOIDCProviderResponse, error)
+	DeleteOIDCProvider(context.Context, *DeleteOIDCProviderRequest) (*DeleteOIDCProviderResponse, error)
+	ListOIDCProviders(context.Context, *ListOIDCProvidersRequest) (*ListOIDCProvidersResponse, error)
+	// Role Management. Writes the roles the S3 servers' STS assumes when they
+	// run with "roleStore": {"storeType": "filer"}.
+	PutRole(context.Context, *PutRoleRequest) (*PutRoleResponse, error)
+	GetRole(context.Context, *GetRoleRequest) (*GetRoleResponse, error)
+	DeleteRole(context.Context, *DeleteRoleRequest) (*DeleteRoleResponse, error)
+	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
 	mustEmbedUnimplementedSeaweedIdentityAccessManagementServer()
 }
 
@@ -378,6 +490,30 @@ func (UnimplementedSeaweedIdentityAccessManagementServer) ListServiceAccounts(co
 }
 func (UnimplementedSeaweedIdentityAccessManagementServer) GetServiceAccountByAccessKey(context.Context, *GetServiceAccountByAccessKeyRequest) (*GetServiceAccountByAccessKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetServiceAccountByAccessKey not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) PutOIDCProvider(context.Context, *PutOIDCProviderRequest) (*PutOIDCProviderResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutOIDCProvider not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) GetOIDCProvider(context.Context, *GetOIDCProviderRequest) (*GetOIDCProviderResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetOIDCProvider not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) DeleteOIDCProvider(context.Context, *DeleteOIDCProviderRequest) (*DeleteOIDCProviderResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteOIDCProvider not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) ListOIDCProviders(context.Context, *ListOIDCProvidersRequest) (*ListOIDCProvidersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListOIDCProviders not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) PutRole(context.Context, *PutRoleRequest) (*PutRoleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutRole not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) GetRole(context.Context, *GetRoleRequest) (*GetRoleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRole not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) DeleteRole(context.Context, *DeleteRoleRequest) (*DeleteRoleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteRole not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListRoles not implemented")
 }
 func (UnimplementedSeaweedIdentityAccessManagementServer) mustEmbedUnimplementedSeaweedIdentityAccessManagementServer() {
 }
@@ -761,6 +897,150 @@ func _SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_Handler(srv i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedIdentityAccessManagement_PutOIDCProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutOIDCProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).PutOIDCProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_PutOIDCProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).PutOIDCProvider(ctx, req.(*PutOIDCProviderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_GetOIDCProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOIDCProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).GetOIDCProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_GetOIDCProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).GetOIDCProvider(ctx, req.(*GetOIDCProviderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_DeleteOIDCProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteOIDCProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).DeleteOIDCProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_DeleteOIDCProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).DeleteOIDCProvider(ctx, req.(*DeleteOIDCProviderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_ListOIDCProviders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListOIDCProvidersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).ListOIDCProviders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_ListOIDCProviders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).ListOIDCProviders(ctx, req.(*ListOIDCProvidersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_PutRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).PutRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_PutRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).PutRole(ctx, req.(*PutRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_GetRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).GetRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_GetRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).GetRole(ctx, req.(*GetRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_DeleteRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).DeleteRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_DeleteRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).DeleteRole(ctx, req.(*DeleteRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_ListRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRolesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).ListRoles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_ListRoles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).ListRoles(ctx, req.(*ListRolesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedIdentityAccessManagement_ServiceDesc is the grpc.ServiceDesc for SeaweedIdentityAccessManagement service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -847,6 +1127,38 @@ var SeaweedIdentityAccessManagement_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetServiceAccountByAccessKey",
 			Handler:    _SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_Handler,
+		},
+		{
+			MethodName: "PutOIDCProvider",
+			Handler:    _SeaweedIdentityAccessManagement_PutOIDCProvider_Handler,
+		},
+		{
+			MethodName: "GetOIDCProvider",
+			Handler:    _SeaweedIdentityAccessManagement_GetOIDCProvider_Handler,
+		},
+		{
+			MethodName: "DeleteOIDCProvider",
+			Handler:    _SeaweedIdentityAccessManagement_DeleteOIDCProvider_Handler,
+		},
+		{
+			MethodName: "ListOIDCProviders",
+			Handler:    _SeaweedIdentityAccessManagement_ListOIDCProviders_Handler,
+		},
+		{
+			MethodName: "PutRole",
+			Handler:    _SeaweedIdentityAccessManagement_PutRole_Handler,
+		},
+		{
+			MethodName: "GetRole",
+			Handler:    _SeaweedIdentityAccessManagement_GetRole_Handler,
+		},
+		{
+			MethodName: "DeleteRole",
+			Handler:    _SeaweedIdentityAccessManagement_DeleteRole_Handler,
+		},
+		{
+			MethodName: "ListRoles",
+			Handler:    _SeaweedIdentityAccessManagement_ListRoles_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -23,6 +23,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -472,9 +473,18 @@ func (fo *FilerOptions) startFiler() {
 	if credentialManager != nil {
 		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
 		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
+		// The OIDC provider and role RPCs write where S3 servers configured with
+		// filer-typed "oidcProviderStore" and "roleStore" read: this filer, at
+		// the stores' default base paths.
+		selfAddress := func() string { return string(filerAddress) }
+		if roleStore, err := integration.NewFilerRoleStore(nil, selfAddress); err != nil {
+			glog.Warningf("IAM gRPC: role RPCs disabled: %v", err)
+		} else {
+			iamGrpcServer.SetSTSStores(integration.NewFilerOIDCProviderStore(nil, selfAddress), roleStore)
+		}
 		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
 		if len(adminSigningKey) == 0 {
-			glog.V(0).Info("Registered IAM gRPC service on filer (unauthenticated; set jwt.filer_signing.key in security.toml to require admin Bearer token)")
+			glog.Warning("IAM gRPC service on filer is UNAUTHENTICATED: anyone who can reach this port can create users and policies, and its OIDC provider and role RPCs are refused; set jwt.filer_signing.key in security.toml to require an admin Bearer token")
 		} else {
 			glog.V(0).Info("Registered IAM gRPC service on filer (admin Bearer token required)")
 		}
