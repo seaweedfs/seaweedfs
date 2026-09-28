@@ -13,7 +13,9 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -214,7 +216,7 @@ func (t *Topology) batchVacuumVolumeCleanup(grpcDialOption grpc.DialOption, vl *
 	}
 }
 
-func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, maxParallelVacuumPerServer int, volumeId uint32, collection string, preallocate int64, automatic bool) {
+func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float64, maxParallelVacuumPerServer int, volumeId uint32, collection string, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
 
 	// if there is vacuum going on, return immediately
 	swapped := atomic.CompareAndSwapInt64(&t.vacuumLockCounter, 0, 1)
@@ -248,7 +250,7 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 						t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate, false)
 					}
 				} else {
-					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, maxParallelVacuumPerServer, preallocate, automatic)
+					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, maxParallelVacuumPerServer, preallocate, automatic, deleteEmptyAfter)
 				}
 			}
 			if automatic && t.IsVacuumDisabled() {
@@ -262,7 +264,7 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 	}
 }
 
-func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, maxParallelVacuumPerServer int, preallocate int64, automatic bool) {
+func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, maxParallelVacuumPerServer int, preallocate int64, automatic bool, deleteEmptyAfter time.Duration) {
 
 	volumeLayout.accessLock.RLock()
 	todoVolumeMap := make(map[needle.VolumeId]*VolumeLocationList)
@@ -270,6 +272,12 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 		todoVolumeMap[vid] = locationList.Copy()
 	}
 	volumeLayout.accessLock.RUnlock()
+
+	// Empty volumes hold their slots forever: deleting them here also spares
+	// compacting bytes that are all deleted already.
+	if deleteEmptyAfter > 0 {
+		t.deleteEmptyVolumes(grpcDialOption, volumeLayout, todoVolumeMap, deleteEmptyAfter)
+	}
 
 	// limiter for each volume server
 	limiter := make(map[NodeId]int)
@@ -376,4 +384,75 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 			t.batchVacuumVolumeCleanup(grpcDialOption, volumeLayout, vid, vacuumLocationList)
 		}
 	}
+}
+
+// deleteEmptyVolumes removes a volume whose every replica copy has stayed
+// empty and quiet for quietPeriod, the same rule volume.deleteEmpty applies
+// on demand. A copy that still holds data or was written recently keeps the
+// whole volume: deleting only the empty copies would silently cut the
+// surviving copy's replica count. Fully deleted vids leave the sweep's work
+// map; anything else falls through to the normal compaction path.
+func (t *Topology) deleteEmptyVolumes(grpcDialOption grpc.DialOption, vl *VolumeLayout, todoVolumeMap map[needle.VolumeId]*VolumeLocationList, quietPeriod time.Duration) {
+	quietSeconds := int64(quietPeriod / time.Second)
+	nowUnixSeconds := time.Now().Unix()
+	for vid, locationList := range todoVolumeMap {
+		eligible := true
+		for _, dn := range locationList.list {
+			v, err := dn.GetVolumesById(vid)
+			if err != nil || !isEmptyVolumeDeleteCandidate(v, quietSeconds, nowUnixSeconds) {
+				eligible = false
+				break
+			}
+		}
+		if !eligible {
+			continue
+		}
+		// keep the volume out of assignments for the whole delete: a heartbeat
+		// landing mid-delete must not re-add it while replicas are dropping
+		vl.MarkDeleting(vid)
+		remaining := 0
+		kept := locationList.list[:0]
+		for _, dn := range locationList.list {
+			v, err := dn.GetVolumesById(vid)
+			if err == nil {
+				onlyGarbage := v.FileCount > 0 && v.FileCount <= v.DeleteCount
+				glog.V(0).Infof("deleting empty volume %d on %s", vid, dn.ServerAddress())
+				if err = t.deleteEmptyVolume(grpcDialOption, dn, vid, onlyGarbage); err == nil {
+					t.UnRegisterVolumeLayout(v, dn)
+					continue
+				}
+			}
+			glog.Warningf("delete empty volume %d on %s: %v", vid, dn.ServerAddress(), err)
+			kept = append(kept, dn)
+			remaining++
+		}
+		vl.UnmarkDeleting(vid)
+		locationList.list = kept
+		if remaining == 0 {
+			delete(todoVolumeMap, vid)
+		}
+	}
+}
+
+func (t *Topology) deleteEmptyVolume(grpcDialOption grpc.DialOption, dn *DataNode, vid needle.VolumeId, onlyGarbage bool) error {
+	return operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		// onlyEmpty stays set so a pre-upgrade server checks emptiness and
+		// refuses instead of deleting a volume that changed since the report.
+		ctx, cancel := context.WithTimeout(context.Background(), allocateVolumeTimeout)
+		defer cancel()
+		_, err := client.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{
+			VolumeId:    uint32(vid),
+			OnlyEmpty:   true,
+			OnlyGarbage: onlyGarbage,
+		})
+		return err
+	})
+}
+
+func isEmptyVolumeDeleteCandidate(v storage.VolumeInfo, quietSeconds, nowUnixSeconds int64) bool {
+	return v.RemoteStorageName == "" &&
+		(!v.ReadOnly || v.ReadOnlyCanDelete) &&
+		(v.Size <= super_block.SuperBlockSize || v.FileCount > 0 && v.FileCount <= v.DeleteCount) &&
+		v.ModifiedAtSecond > 0 &&
+		v.ModifiedAtSecond+quietSeconds < nowUnixSeconds
 }

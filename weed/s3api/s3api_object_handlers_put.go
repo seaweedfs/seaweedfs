@@ -45,6 +45,7 @@ var (
 	ErrObjectLockModeRequiresDate            = errors.New("object lock mode requires retention until date")
 	ErrRetentionDateRequiresMode             = errors.New("retention until date requires object lock mode")
 	ErrGovernanceBypassVersioningRequired    = errors.New("governance bypass header can only be used on buckets with Object Lock enabled")
+	ErrObjectLockNotAuthorized               = errors.New("object lock headers require the corresponding object lock permission")
 	ErrInvalidObjectLockDuration             = errors.New("object lock duration must be greater than 0 days")
 	ErrObjectLockDurationExceeded            = errors.New("object lock duration exceeds maximum allowed days")
 	ErrObjectLockConfigurationMissingEnabled = errors.New("object lock configuration must specify ObjectLockEnabled")
@@ -152,7 +153,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
-		if validationErr := s3a.validateObjectLockHeaders(r, objectLockEnabled); validationErr != nil {
+		if validationErr := s3a.validateObjectLockHeaders(r, bucket, object, objectLockEnabled); validationErr != nil {
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed for %s/%s: %v", bucket, object, validationErr)
 			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(validationErr))
 			return
@@ -281,7 +282,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Validate object lock headers before processing
-		if err := s3a.validateObjectLockHeaders(r, objectLockEnabled); err != nil {
+		if err := s3a.validateObjectLockHeaders(r, bucket, object, objectLockEnabled); err != nil {
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
 			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 			return
@@ -2129,9 +2130,29 @@ func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_
 	return nil
 }
 
+// checkObjectLockHeaderPermission reports whether the caller may set object
+// lock through PutObject-style request headers. On AWS these headers require
+// the dedicated s3:PutObjectRetention / s3:PutObjectLegalHold permissions;
+// s3:PutObject alone must not be enough, or any writer can pin data with
+// COMPLIANCE retention. Without auth there is nothing to check against.
+func (s3a *S3ApiServer) checkObjectLockHeaderPermission(r *http.Request, bucket, object string, action Action) bool {
+	if s3a.iam == nil || !s3a.iam.isEnabled() {
+		return true
+	}
+	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
+	if identity == nil {
+		var errCode s3err.ErrorCode
+		identity, errCode, _ = s3a.iam.authenticateRequestInternal(r)
+		if errCode != s3err.ErrNone {
+			return false
+		}
+	}
+	return s3a.iam.authorizeObjectKeyAction(r, identity, r.Method, action, bucket, s3_constants.NormalizeObjectKey(object), "") == s3err.ErrNone
+}
+
 // validateObjectLockHeaders validates object lock headers in PUT requests
 // objectLockEnabled should be true only if the bucket has Object Lock configured
-func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, objectLockEnabled bool) error {
+func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, bucket, object string, objectLockEnabled bool) error {
 	// Extract object lock headers from request
 	mode := r.Header.Get(s3_constants.AmzObjectLockMode)
 	retainUntilDateStr := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate)
@@ -2193,6 +2214,17 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, objectLockEna
 		return ErrGovernanceBypassVersioningRequired
 	}
 
+	if mode != "" || retainUntilDateStr != "" {
+		if !s3a.checkObjectLockHeaderPermission(r, bucket, object, s3_constants.ACTION_PUT_OBJECT_RETENTION) {
+			return ErrObjectLockNotAuthorized
+		}
+	}
+	if legalHold != "" {
+		if !s3a.checkObjectLockHeaderPermission(r, bucket, object, s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD) {
+			return ErrObjectLockNotAuthorized
+		}
+	}
+
 	return nil
 }
 
@@ -2232,6 +2264,8 @@ func mapValidationErrorToS3Error(err error) s3err.ErrorCode {
 		// For governance bypass on non-versioned bucket, return InvalidRequest
 		// This matches the test expectations
 		return s3err.ErrInvalidRequest
+	case errors.Is(err, ErrObjectLockNotAuthorized):
+		return s3err.ErrAccessDenied
 	case errors.Is(err, ErrMalformedXML):
 		// For malformed XML in request body, return MalformedXML
 		// This matches the test expectations for invalid retention mode and legal hold status
