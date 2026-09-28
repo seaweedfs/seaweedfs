@@ -349,17 +349,18 @@ func (n *NodeImpl) CapacityForAnyDisk() (total int64) {
 
 // AvailableSpaceForReservation returns available space considering existing reservations
 func (n *NodeImpl) AvailableSpaceForReservation(option *VolumeGrowOption) int64 {
+	// Expire here as well: a node whose reservations fill it is filtered out
+	// before TryReserveCapacity could clean them, stranding the capacity.
+	n.capacityReservations.cleanExpiredReservations(VolumeGrowStrategy.GetReservationTimeout())
 	baseAvailable := n.AvailableSpaceFor(option)
 	reservedCount := n.capacityReservations.getReservedCount(option.DiskType)
 	return baseAvailable - reservedCount
 }
 
-// TryReserveCapacity attempts to atomically reserve capacity for volume creation
+// TryReserveCapacity attempts to atomically reserve capacity for volume creation using the configured timeout
 func (n *NodeImpl) TryReserveCapacity(diskType types.DiskType, count int64) (reservationId string, success bool) {
-	const reservationTimeout = 5 * time.Minute // TODO: make this configurable
-
 	// Clean up any expired reservations first
-	n.capacityReservations.cleanExpiredReservations(reservationTimeout)
+	n.capacityReservations.cleanExpiredReservations(VolumeGrowStrategy.GetReservationTimeout())
 
 	// Atomically check and reserve space
 	option := &VolumeGrowOption{DiskType: diskType}

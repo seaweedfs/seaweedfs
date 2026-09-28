@@ -293,3 +293,111 @@ func TestVolumeGrowth_ReservationTimeout(t *testing.T) {
 		t.Errorf("Expected 2 available slots after cleanup and new reservation, got %d", available)
 	}
 }
+
+func TestVolumeGrowth_ConfigurableReservationTimeout(t *testing.T) {
+	origTimeout := VolumeGrowStrategy.ReservationTimeout
+	defer func() {
+		VolumeGrowStrategy.ReservationTimeout = origTimeout
+	}()
+
+	dn := NewDataNode("server1")
+	diskType := types.HardDriveType
+
+	// Set up capacity of 5
+	diskUsage := dn.diskUsages.getOrCreateDisk(diskType)
+	diskUsage.maxVolumeCount = 5
+
+	// 1. Verify default timeout (5 minutes)
+	VolumeGrowStrategy.ReservationTimeout = 5 * time.Minute
+	resId1, ok := dn.TryReserveCapacity(diskType, 2)
+	if !ok {
+		t.Fatal("Expected reservation 1 to succeed")
+	}
+
+	// Set reservation createdAt to 4 minutes ago (not expired under 5m timeout)
+	dn.capacityReservations.Lock()
+	if r, exists := dn.capacityReservations.reservations[resId1]; exists {
+		r.createdAt = time.Now().Add(-4 * time.Minute)
+	}
+	dn.capacityReservations.Unlock()
+
+	// Available space should be 5 - 2 = 3. Trying to reserve 4 must fail.
+	_, ok = dn.TryReserveCapacity(diskType, 4)
+	if ok {
+		t.Error("Expected reservation of 4 to fail when 2 slots are still reserved")
+	}
+
+	// Set reservation createdAt to 6 minutes ago (expired under 5m timeout)
+	dn.capacityReservations.Lock()
+	if r, exists := dn.capacityReservations.reservations[resId1]; exists {
+		r.createdAt = time.Now().Add(-6 * time.Minute)
+	}
+	dn.capacityReservations.Unlock()
+
+	// Now reserving 4 should clean up the expired reservation and succeed
+	resId2, ok := dn.TryReserveCapacity(diskType, 4)
+	if !ok {
+		t.Fatal("Expected reservation of 4 to succeed after 6m expired reservation was cleaned up")
+	}
+	dn.ReleaseReservedCapacity(resId2)
+
+	// 2. Verify custom timeout (1 minute)
+	VolumeGrowStrategy.ReservationTimeout = 1 * time.Minute
+	resId3, ok := dn.TryReserveCapacity(diskType, 2)
+	if !ok {
+		t.Fatal("Expected reservation 3 to succeed")
+	}
+
+	// Set createdAt to 45 seconds ago (not expired under 1m timeout)
+	dn.capacityReservations.Lock()
+	if r, exists := dn.capacityReservations.reservations[resId3]; exists {
+		r.createdAt = time.Now().Add(-45 * time.Second)
+	}
+	dn.capacityReservations.Unlock()
+
+	_, ok = dn.TryReserveCapacity(diskType, 4)
+	if ok {
+		t.Error("Expected reservation of 4 to fail when 2 slots are reserved 45s ago with 1m timeout")
+	}
+
+	// Set createdAt to 75 seconds ago (expired under 1m timeout)
+	dn.capacityReservations.Lock()
+	if r, exists := dn.capacityReservations.reservations[resId3]; exists {
+		r.createdAt = time.Now().Add(-75 * time.Second)
+	}
+	dn.capacityReservations.Unlock()
+
+	resId4, ok := dn.TryReserveCapacity(diskType, 4)
+	if !ok {
+		t.Fatal("Expected reservation of 4 to succeed after 75s reservation expired under 1m timeout")
+	}
+	dn.ReleaseReservedCapacity(resId4)
+
+	// 3. Verify non-positive timeout fallback to 5 minutes
+	VolumeGrowStrategy.ReservationTimeout = 0
+	if VolumeGrowStrategy.GetReservationTimeout() != 5*time.Minute {
+		t.Errorf("Expected 0 timeout to fall back to 5m, got %v", VolumeGrowStrategy.GetReservationTimeout())
+	}
+	VolumeGrowStrategy.ReservationTimeout = -10 * time.Second
+	if VolumeGrowStrategy.GetReservationTimeout() != 5*time.Minute {
+		t.Errorf("Expected negative timeout to fall back to 5m, got %v", VolumeGrowStrategy.GetReservationTimeout())
+	}
+
+	// 4. Expired reservations must not strand capacity: the selection filter
+	// reads AvailableSpaceForReservation without calling TryReserveCapacity.
+	VolumeGrowStrategy.ReservationTimeout = 1 * time.Minute
+	resId5, ok := dn.TryReserveCapacity(diskType, 5)
+	if !ok {
+		t.Fatal("Expected reservation 5 to succeed")
+	}
+	dn.capacityReservations.Lock()
+	if r, exists := dn.capacityReservations.reservations[resId5]; exists {
+		r.createdAt = time.Now().Add(-2 * time.Minute)
+	}
+	dn.capacityReservations.Unlock()
+
+	option := &VolumeGrowOption{DiskType: diskType}
+	if available := dn.AvailableSpaceForReservation(option); available != 5 {
+		t.Errorf("Expected expired reservation to free capacity in AvailableSpaceForReservation, got %d", available)
+	}
+}
