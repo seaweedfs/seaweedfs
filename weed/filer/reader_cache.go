@@ -169,14 +169,26 @@ retry:
 		}
 	}
 
-	// clean up old downloaders
+	// clean up old downloaders; prefer one no stream is positioned in, but
+	// fall back to a pinned one so abandoned pins cannot bypass the limit
 	if len(rc.downloaders) >= rc.limit {
 		oldestFid, oldestTime := "", time.Now().UnixNano()
+		pinnedFid, pinnedTime := "", int64(0)
 		for fid, downloader := range rc.downloaders {
 			completedTime := atomic.LoadInt64(&downloader.completedTimeNew)
-			if completedTime > 0 && completedTime < oldestTime {
-				oldestFid, oldestTime = fid, completedTime
+			if completedTime <= 0 {
+				continue
 			}
+			if atomic.LoadInt32(&downloader.pins) == 0 {
+				if completedTime < oldestTime {
+					oldestFid, oldestTime = fid, completedTime
+				}
+			} else if pinnedFid == "" || completedTime < pinnedTime {
+				pinnedFid, pinnedTime = fid, completedTime
+			}
+		}
+		if oldestFid == "" {
+			oldestFid = pinnedFid
 		}
 		if oldestFid != "" {
 			oldDownloader := rc.downloaders[oldestFid]
@@ -288,6 +300,23 @@ func (rc *ReaderCache) remove(downloader *SingleChunkCacher) {
 	if removed {
 		downloader.destroy()
 	}
+}
+
+// removeUnpinned drops a cacher only while no stream is positioned in it.
+// Budget eviction picks its victim under the budget lock, so the pin check
+// and the map removal must happen together under the ReaderCache lock.
+func (rc *ReaderCache) removeUnpinned(downloader *SingleChunkCacher) (removed bool) {
+	rc.Lock()
+	removed = rc.downloaders[downloader.chunkFileId] == downloader &&
+		atomic.LoadInt32(&downloader.pins) == 0
+	if removed {
+		delete(rc.downloaders, downloader.chunkFileId)
+	}
+	rc.Unlock()
+	if removed {
+		downloader.destroy()
+	}
+	return
 }
 
 // removeConsumed drops a cacher once its buffer was fully read, or the
