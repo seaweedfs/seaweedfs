@@ -177,6 +177,40 @@ func TestTeardownRemovesStagedGenerations(t *testing.T) {
 	require.Empty(t, left, "teardown must leave no EC files, staged generations included: %v", left)
 }
 
+// TestDeleteGenerationsOlderThan covers the post-commit cleanup: staged
+// generations below the threshold are removed while the committed generation
+// and the live canonical files stay untouched.
+func TestDeleteGenerationsOlderThan(t *testing.T) {
+	const collection = "ec-gen-gc"
+	vid := needle.VolumeId(58)
+	dir := t.TempDir()
+	vs := &VolumeServer{store: buildEcStoreWithGeneration(t, dir, collection, vid, 100, []erasure_coding.ShardId{0, 1})}
+
+	base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+	stale := []string{base + ".ec00.v3", base + ".ecx.v3", base + ".vif.v3"}
+	fresh := []string{base + ".ec00.v7", base + ".vif.v7"}
+	for _, name := range append(stale, fresh...) {
+		require.NoError(t, os.WriteFile(name, []byte("staged"), 0o644))
+	}
+
+	_, err := vs.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+		VolumeId:                   uint32(vid),
+		Collection:                 collection,
+		DeleteGenerationsOlderThan: 5,
+	})
+	require.NoError(t, err)
+	for _, name := range stale {
+		require.False(t, util.FileExists(name), "%s must be removed", name)
+	}
+	for _, name := range fresh {
+		require.True(t, util.FileExists(name), "%s must be preserved", name)
+	}
+	require.True(t, util.FileExists(base+".ec00"), "canonical shards must be preserved")
+	require.True(t, util.FileExists(base+".ecx"))
+	require.True(t, util.FileExists(base+".vif"))
+	require.True(t, mountedEcShardIds(t, vs, vid)[0], "mounted shards must stay mounted")
+}
+
 // TestShardDeleteRemovesStagedGenerations pins that deleting a shard removes
 // its staged generations too: a shard evicted off a disk leaves nothing.
 func TestShardDeleteRemovesStagedGenerations(t *testing.T) {

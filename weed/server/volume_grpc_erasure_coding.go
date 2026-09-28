@@ -517,6 +517,27 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 		return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
 	}
 
+	if req.DeleteGenerationsOlderThan > 0 {
+		// Post-commit cleanup of a 2PC generation switch: the committed
+		// generation has been promoted to the canonical names, so only the
+		// staged <base>.*.v<N> files strictly older than the threshold are
+		// superseded and safe to remove. Versioned files are never mounted,
+		// so nothing needs to be unloaded first.
+		for _, location := range vs.store.Locations {
+			dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+			idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+			if err := erasure_coding.RemoveEcGenerationFiles(dataBase, req.DeleteGenerationsOlderThan); err != nil {
+				return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.Directory, err)
+			}
+			if dataBase != idxBase {
+				if err := erasure_coding.RemoveEcGenerationFiles(idxBase, req.DeleteGenerationsOlderThan); err != nil {
+					return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.IdxDirectory, err)
+				}
+			}
+		}
+		return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+	}
+
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
 
 	// Pass 1: delete the requested shard files (and any now-orphaned per-disk bitrot
