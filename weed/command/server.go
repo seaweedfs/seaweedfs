@@ -99,6 +99,7 @@ func init() {
 	masterOptions.volumePreallocate = cmdServer.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	masterOptions.maxParallelVacuumPerServer = cmdServer.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
 	masterOptions.vacuumIntervalSeconds = cmdServer.Flag.Int("master.vacuumIntervalSeconds", 840, "seconds between automatic vacuum sweeps")
+	masterOptions.vacuumDeleteEmptyAfterSeconds = cmdServer.Flag.Int("master.vacuumDeleteEmptyAfterSeconds", 0, "automatic sweep deletes volume copies that stay empty this many seconds; 0 disables")
 	masterOptions.defaultReplication = cmdServer.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
 	masterOptions.garbageThreshold = cmdServer.Flag.Float64("master.garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	masterOptions.metricsAddress = cmdServer.Flag.String("master.metrics.address", "", "Prometheus gateway address")

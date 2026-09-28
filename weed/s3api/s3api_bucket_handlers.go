@@ -503,31 +503,56 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
-// bucketHasUserObjects checks whether a bucket contains any non-special entries.
-// Special entries (.uploads, *.versions) are internal to S3 and don't count as user objects.
+// bucketHasUserObjects checks whether a bucket contains any user objects.
+// Empty directories left behind by deleted objects and internal folders
+// (.uploads, *.versions) do not count as user objects.
 func (s3a *S3ApiServer) bucketHasUserObjects(bucket string) (bool, error) {
-	bucketPath := s3a.option.BucketsPath + "/" + bucket
-	startFrom := ""
-	// Start with a small batch — most non-empty buckets have a real object early.
-	// If we only find special entries, switch to larger batches to page through quickly.
-	limit := uint32(10)
-	for {
-		entries, isLast, err := s3a.list(bucketPath, "", startFrom, false, limit)
-		if err != nil {
-			return false, err
-		}
-		for _, entry := range entries {
-			if entry.Name != s3_constants.MultipartUploadsFolder &&
-				!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-				return true, nil
+	return s3a.dirHasUserObjects(s3a.option.BucketsPath + "/" + bucket)
+}
+
+func (s3a *S3ApiServer) dirHasUserObjects(root string) (bool, error) {
+	dirs := []string{root}
+	for len(dirs) > 0 {
+		dir := dirs[len(dirs)-1]
+		dirs = dirs[:len(dirs)-1]
+		startFrom := ""
+		// Start with a small batch — most non-empty buckets have a real object
+		// early; switch to larger batches to page through quickly.
+		limit := uint32(10)
+		for {
+			entries, isLast, err := s3a.list(dir, "", startFrom, false, limit)
+			if err != nil {
+				if isFilerNotFound(err) {
+					break // the directory was deleted between listing and walking it
+				}
+				return false, err
 			}
-			startFrom = entry.Name
+			for _, entry := range entries {
+				startFrom = entry.Name
+				if entry.Name == "" || entry.Name == "." || entry.Name == ".." || strings.Contains(entry.Name, "/") {
+					continue
+				}
+				if !entry.IsDirectory {
+					return true, nil
+				}
+				// An explicit directory object counts even under a reserved name.
+				if entry.IsDirectoryKeyObject() {
+					return true, nil
+				}
+				// Internal folders are skipped by object listing at every level,
+				// so a directory with a reserved name never counts.
+				if isReservedDirectoryName(entry.Name) {
+					continue
+				}
+				dirs = append(dirs, dir+"/"+entry.Name)
+			}
+			if isLast || len(entries) == 0 {
+				break
+			}
+			limit = 1000
 		}
-		if isLast {
-			return false, nil
-		}
-		limit = 1000
 	}
+	return false, nil
 }
 
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold

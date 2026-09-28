@@ -86,7 +86,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	if identity != nil {
-		r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identity.Name))
+		r = r.WithContext(recordIdentityInContext(r, identity))
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
@@ -160,7 +160,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	if err := s3a.validateObjectLockHeaders(r, objectLockEnabled); err != nil {
+	if err := s3a.validateObjectLockHeaders(r, bucket, object, objectLockEnabled); err != nil {
 		glog.V(2).Infof("PostPolicyBucketHandler: object lock header validation failed for %s/%s: %v", bucket, object, err)
 		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return

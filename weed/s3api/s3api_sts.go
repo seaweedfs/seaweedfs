@@ -834,10 +834,28 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSessionName string,
 	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
-	// Calculate duration
-	duration := time.Hour // Default 1 hour
-	if durationSeconds != nil {
+	duration := time.Hour
+	if h.stsService != nil && h.stsService.Config != nil {
+		duration = h.stsService.CalculateSessionDuration(durationSeconds)
+	} else if durationSeconds != nil {
 		duration = time.Duration(*durationSeconds) * time.Second
+	}
+
+	// A named role's MaxSessionDuration bounds the resolved duration the same
+	// way capDurationByRole does on the SDK paths; self-assumption has no role
+	// definition to consult.
+	if h.iam != nil && h.iam.iamIntegration != nil {
+		if roleName := utils.ExtractRoleNameFromArn(roleArn); roleName != "" {
+			if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
+				if mgr := provider.GetIAMManager(); mgr != nil {
+					if roleDef, roleErr := mgr.GetRole(ctx, roleName); roleErr == nil && roleDef.MaxSessionDuration > 0 {
+						if roleMax := time.Duration(roleDef.MaxSessionDuration) * time.Second; duration > roleMax {
+							duration = roleMax
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// Generate session ID
