@@ -14,6 +14,9 @@ import (
 
 const oidcProvidersDir = filer.IamConfigDirectory + "/oidc-providers"
 
+// rolesDir is the filer role store's default base path (sts.DefaultRoleBasePath).
+const rolesDir = filer.IamConfigDirectory + "/roles"
+
 func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, prefix string, directoriesToWatch []string) {
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -33,6 +36,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onOIDCProviderChange(dir, message.OldEntry, message.NewEntry)
+		s3a.onRoleChange(dir)
 		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
 
 		// For moves across directories, replay a delete event for the source directory
@@ -40,6 +44,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 			_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onOIDCProviderChange(resp.Directory, message.OldEntry, nil)
+			s3a.onRoleChange(resp.Directory)
 			_ = s3a.onCircuitBreakerConfigChange(resp.Directory, message.OldEntry, nil)
 		}
 
@@ -135,6 +140,24 @@ func (s3a *S3ApiServer) onOIDCProviderChange(dir string, oldEntry *filer_pb.Entr
 	}
 	glog.V(2).Infof("Refreshed IAM-managed OIDC providers after %s change", dir)
 	return nil
+}
+
+// onRoleChange drops the cached role definitions when the persisted role store
+// under /etc/iam/roles changes, so a role created, changed or deleted on a peer
+// takes effect here on the next lookup instead of after the cache TTL.
+func (s3a *S3ApiServer) onRoleChange(dir string) {
+	if dir != rolesDir && !strings.HasPrefix(dir, rolesDir+"/") {
+		return
+	}
+	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+		return
+	}
+	s3iam, ok := s3a.iam.iamIntegration.(*S3IAMIntegration)
+	if !ok || s3iam.iamManager == nil {
+		return
+	}
+	s3iam.iamManager.InvalidateRoleCache()
+	glog.V(2).Infof("Invalidated cached roles after %s change", dir)
 }
 
 // onCircuitBreakerConfigChange handles circuit breaker config file changes (create, update, delete)

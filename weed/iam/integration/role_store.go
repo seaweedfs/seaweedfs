@@ -3,7 +3,9 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
 )
+
+// ErrRoleNotFound is wrapped by every RoleStore's GetRole when the role does
+// not exist, so callers can tell a missing role from a store that could not
+// be read.
+var ErrRoleNotFound = errors.New("role not found")
+
+// ErrRoleStatic refuses a change to a role defined in the server's IAM config
+// file: change it there instead.
+var ErrRoleStatic = errors.New("role is defined in the IAM config file")
 
 // RoleStore defines the interface for storing IAM role definitions
 type RoleStore interface {
@@ -72,7 +83,7 @@ func (m *MemoryRoleStore) GetRole(ctx context.Context, filerAddress string, role
 
 	role, exists := m.roles[roleName]
 	if !exists {
-		return nil, fmt.Errorf("role not found: %s", roleName)
+		return nil, fmt.Errorf("%w: %s", ErrRoleNotFound, roleName)
 	}
 
 	// Return a copy to prevent external modifications
@@ -116,6 +127,9 @@ func copyRoleDefinition(original *RoleDefinition) *RoleDefinition {
 		RoleArn:            original.RoleArn,
 		Description:        original.Description,
 		MaxSessionDuration: original.MaxSessionDuration,
+		Source:             original.Source,
+		CreatedAt:          original.CreatedAt,
+		RoleId:             original.RoleId,
 	}
 
 	// Deep copy trust policy if it exists
@@ -235,13 +249,16 @@ func (f *FilerRoleStore) GetRole(ctx context.Context, filerAddress string, roleN
 		}
 
 		glog.V(3).Infof("Looking up role %s", roleName)
-		response, err := client.LookupDirectoryEntry(ctx, request)
+		response, err := filer_pb.LookupEntry(ctx, client, request)
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrRoleNotFound, roleName)
+		}
 		if err != nil {
-			return fmt.Errorf("role not found: %v", err)
+			return fmt.Errorf("lookup role %s: %w", roleName, err)
 		}
 
 		if response.Entry == nil {
-			return fmt.Errorf("role not found")
+			return fmt.Errorf("%w: %s", ErrRoleNotFound, roleName)
 		}
 
 		roleData = response.Entry.Content
@@ -388,4 +405,127 @@ type CachedFilerRoleStoreConfig struct {
 	TTL          string `json:"ttl,omitempty"`          // e.g., "5m", "1h"
 	ListTTL      string `json:"listTtl,omitempty"`      // e.g., "1m", "30s"
 	MaxCacheSize int    `json:"maxCacheSize,omitempty"` // Maximum number of cached roles
+}
+
+// RolesAttachingPolicy returns the names of the roles that attach the policy.
+// A policy is attached to a role by name, so deleting it while attached would
+// let a policy created later under the same name take effect on the role;
+// callers refuse the delete instead, as AWS does (DeleteConflict).
+func RolesAttachingPolicy(ctx context.Context, store RoleStore, policyName string) ([]string, error) {
+	names, err := store.ListRoles(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("list roles: %w", err)
+	}
+	var attaching []string
+	for _, name := range names {
+		role, err := store.GetRole(ctx, "", name)
+		if errors.Is(err, ErrRoleNotFound) {
+			continue // deleted between list and read
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get role %s: %w", name, err)
+		}
+		for _, attached := range role.AttachedPolicies {
+			if attached == policyName {
+				attaching = append(attaching, name)
+				break
+			}
+		}
+	}
+	return attaching, nil
+}
+
+// MaxManagedPoliciesPerRole caps the managed policies attached to one role,
+// as AWS's default quota does (and as MaxManagedPoliciesPerUser does for users).
+const MaxManagedPoliciesPerRole = 10
+
+var roleNamePattern = regexp.MustCompile(`^[\w+=,.@-]{1,64}$`)
+
+// ValidateRoleName checks a role name against AWS's rules. A role is stored as
+// <name>.json in the filer, so the rules also keep a name from leaving the
+// role store's directory.
+func ValidateRoleName(name string) error {
+	if !roleNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid role name %q: must be 1-64 characters of letters, digits and +=,.@_-", name)
+	}
+	return nil
+}
+
+// staticRoleOverlay serves the IAM config file's roles from memory beside a
+// persistent store, which never holds them (see IAMManager.LoadStaticRoles).
+// A role stored under the same name takes precedence, as a stored OIDC
+// provider does over a config-file one; deleting it brings the config-file
+// role back. A config-file role itself cannot be stored over or deleted.
+type staticRoleOverlay struct {
+	static map[string]*RoleDefinition
+	inner  RoleStore
+}
+
+// storedRoleExists reports whether the store itself holds the role.
+func (o *staticRoleOverlay) storedRoleExists(ctx context.Context, filerAddress, roleName string) (bool, error) {
+	_, err := o.inner.GetRole(ctx, filerAddress, roleName)
+	if errors.Is(err, ErrRoleNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (o *staticRoleOverlay) StoreRole(ctx context.Context, filerAddress string, roleName string, role *RoleDefinition) error {
+	if _, ok := o.static[roleName]; ok {
+		stored, err := o.storedRoleExists(ctx, filerAddress, roleName)
+		if err != nil {
+			return err
+		}
+		if !stored {
+			return fmt.Errorf("%w: %s", ErrRoleStatic, roleName)
+		}
+	}
+	return o.inner.StoreRole(ctx, filerAddress, roleName, role)
+}
+
+func (o *staticRoleOverlay) GetRole(ctx context.Context, filerAddress string, roleName string) (*RoleDefinition, error) {
+	role, err := o.inner.GetRole(ctx, filerAddress, roleName)
+	if errors.Is(err, ErrRoleNotFound) {
+		if static, ok := o.static[roleName]; ok {
+			return copyRoleDefinition(static), nil
+		}
+	}
+	return role, err
+}
+
+func (o *staticRoleOverlay) ListRoles(ctx context.Context, filerAddress string) ([]string, error) {
+	names, err := o.inner.ListRoles(ctx, filerAddress)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		seen[name] = true
+	}
+	for name := range o.static {
+		if !seen[name] {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+func (o *staticRoleOverlay) DeleteRole(ctx context.Context, filerAddress string, roleName string) error {
+	if _, ok := o.static[roleName]; ok {
+		stored, err := o.storedRoleExists(ctx, filerAddress, roleName)
+		if err != nil {
+			return err
+		}
+		if !stored {
+			return fmt.Errorf("%w: %s", ErrRoleStatic, roleName)
+		}
+	}
+	return o.inner.DeleteRole(ctx, filerAddress, roleName)
+}
+
+// ClearCache forwards cache invalidation to the store underneath.
+func (o *staticRoleOverlay) ClearCache() {
+	if cached, ok := o.inner.(interface{ ClearCache() }); ok {
+		cached.ClearCache()
+	}
 }

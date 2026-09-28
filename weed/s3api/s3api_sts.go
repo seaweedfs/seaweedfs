@@ -843,14 +843,18 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 
 	// A named role's MaxSessionDuration bounds the resolved duration the same
 	// way capDurationByRole does on the SDK paths; self-assumption has no role
-	// definition to consult.
+	// definition to consult. The role's ID binds the session to this role.
+	var roleID string
 	if h.iam != nil && h.iam.iamIntegration != nil {
 		if roleName := utils.ExtractRoleNameFromArn(roleArn); roleName != "" {
 			if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
 				if mgr := provider.GetIAMManager(); mgr != nil {
-					if roleDef, roleErr := mgr.GetRole(ctx, roleName); roleErr == nil && roleDef.MaxSessionDuration > 0 {
-						if roleMax := time.Duration(roleDef.MaxSessionDuration) * time.Second; duration > roleMax {
-							duration = roleMax
+					if roleDef, roleErr := mgr.GetRole(ctx, roleName); roleErr == nil && roleDef != nil {
+						roleID = roleDef.RoleId
+						if roleDef.MaxSessionDuration > 0 {
+							if roleMax := time.Duration(roleDef.MaxSessionDuration) * time.Second; duration > roleMax {
+								duration = roleMax
+							}
 						}
 					}
 				}
@@ -894,7 +898,8 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 	// This ensures that subsequent requests using this token are correctly identified as the assumed role.
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
-		WithRoleInfo(effectiveRoleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
+		WithRoleInfo(effectiveRoleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn).
+		WithRoleId(roleID)
 
 	// If IAM integration is available, embed the role's attached policies into the session token.
 	// This makes the token self-sufficient for authorization even when role lookup is unavailable.
