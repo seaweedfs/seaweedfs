@@ -2,9 +2,11 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
@@ -85,6 +87,53 @@ func TestGovernanceBypassDoesNotInheritDeleteObjectVersion(t *testing.T) {
 	}))
 	if !s3a.checkGovernanceBypassPermission(req, "worm", "/doc.txt") {
 		t.Fatal("s3:BypassGovernanceRetention did not satisfy the governance bypass check")
+	}
+}
+
+// The object-lock request headers on PutObject/CreateMultipartUpload must be
+// authorized as s3:PutObjectRetention / s3:PutObjectLegalHold; s3:PutObject
+// alone used to set retention and legal hold on new versions.
+func TestObjectLockHeadersRequireDedicatedActions(t *testing.T) {
+	iam := &IdentityAccessManagement{isAuthEnabled: true}
+	require.NoError(t, iam.PutPolicy("Writer",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject"],"Resource":"arn:aws:s3:::worm/*"}]}`))
+	require.NoError(t, iam.PutPolicy("Locked",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:PutObjectRetention","s3:PutObjectLegalHold"],"Resource":"arn:aws:s3:::worm/*"}]}`))
+	s3a := &S3ApiServer{iam: iam}
+
+	retainUntil := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+	for _, tc := range []struct {
+		name    string
+		policy  string
+		headers map[string]string
+		wantErr error
+	}{
+		{"writer sets retention", "Writer",
+			map[string]string{s3_constants.AmzObjectLockMode: "COMPLIANCE", s3_constants.AmzObjectLockRetainUntilDate: retainUntil},
+			ErrObjectLockNotAuthorized},
+		{"writer sets legal hold", "Writer",
+			map[string]string{s3_constants.AmzObjectLockLegalHold: s3_constants.LegalHoldOn},
+			ErrObjectLockNotAuthorized},
+		{"writer plain put", "Writer", nil, nil},
+		{"locked principal sets both", "Locked",
+			map[string]string{s3_constants.AmzObjectLockMode: "GOVERNANCE", s3_constants.AmzObjectLockRetainUntilDate: retainUntil, s3_constants.AmzObjectLockLegalHold: s3_constants.LegalHoldOn},
+			nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "http://localhost:8333/worm/doc.txt", nil)
+			req = mux.SetURLVars(req, map[string]string{"bucket": "worm", "object": "doc.txt"})
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), &Identity{
+				Name:        "caller",
+				PolicyNames: []string{tc.policy},
+				Account:     &Account{Id: "test-account"},
+			}))
+			if err := s3a.validateObjectLockHeaders(req, "worm", "doc.txt", true); !errors.Is(err, tc.wantErr) {
+				t.Errorf("validateObjectLockHeaders() = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 

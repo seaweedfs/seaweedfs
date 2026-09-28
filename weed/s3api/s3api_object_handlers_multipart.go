@@ -69,7 +69,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	}
 
 	// Validate object lock headers before processing
-	if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
+	if err := s3a.validateObjectLockHeaders(r, bucket, object, versioningEnabled); err != nil {
 		glog.V(2).Infof("NewMultipartUploadHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
 		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return

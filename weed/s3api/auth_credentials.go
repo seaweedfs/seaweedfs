@@ -1565,7 +1565,10 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 			return
 		}
 
-		identity, errCode := iam.authRequest(r, action)
+		// authRequestWithAuthType keeps the resolved identity when authN
+		// succeeds but authZ denies, so the denied request still audits its
+		// requester; a failed authN resolves no identity at all.
+		identity, errCode, _ := iam.authRequestWithAuthType(r, action)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
@@ -1631,11 +1634,12 @@ func recordIdentityInContext(r *http.Request, identity *Identity) context.Contex
 }
 
 func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *http.Request, identity *Identity, errCode s3err.ErrorCode, f http.HandlerFunc) {
+	// Store the authenticated identity in request context (secure, cannot be spoofed)
+	// even on the deny path so audit records for rejected requests keep requester attribution
+	if identity != nil && identity.Name != "" {
+		r = r.WithContext(recordIdentityInContext(r, identity))
+	}
 	if errCode == s3err.ErrNone {
-		// Store the authenticated identity in request context (secure, cannot be spoofed)
-		if identity != nil && identity.Name != "" {
-			r = r.WithContext(recordIdentityInContext(r, identity))
-		}
 		f(w, r)
 		return
 	}
@@ -1749,6 +1753,23 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 	return identity, s3Err, reqAuthType
 }
 
+// isBucketListingRequest reports whether the request lists bucket contents:
+// the ACTION_LIST routes, and ListMultipartUploads (GET ?uploads), which the
+// router registers under ACTION_READ without an object-path constraint.
+// GET /bucket/key?uploads therefore also reaches the listing handler. Route
+// vars are used so a prefix promoted into the authorization object does not
+// hide the bucket-level shape.
+func isBucketListingRequest(r *http.Request, action Action) bool {
+	if action == s3_constants.ACTION_LIST {
+		return true
+	}
+	if r.Method != http.MethodGet || r.URL == nil || !r.URL.Query().Has("uploads") {
+		return false
+	}
+	_, object := s3_constants.GetBucketAndObject(r)
+	return object == "" || object == "/"
+}
+
 // authRequestWithAuthType authenticates and then authorizes a request for a given action.
 func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
 	identity, s3Err, reqAuthType := iam.authenticateRequestInternal(r)
@@ -1759,13 +1780,13 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
-	// For List operations, use prefix for permission checking if available
-	if action == s3_constants.ACTION_LIST && object == "" && prefix != "" {
-		// List operation with prefix - check permission for the prefix path
-		object = prefix
-	} else if (object == "/" || object == "") && prefix != "" {
-		// Using the aws cli with s3, and s3api, and with boto3, the object is often set to "/" or empty
-		// but the prefix is set to the actual object key for permission checking
+	// For bucket listings, use prefix for permission checking if available:
+	// the aws cli, s3api, and boto3 carry the key scope in ?prefix= rather
+	// than the URL path. Other actions must not promote it — a bucket-level
+	// request has no object, and a promoted prefix would let an object-scoped
+	// grant (e.g. Write:bucket/*) authorize bucket-subresource operations
+	// like ?versioning or ?lifecycle as if they were object writes.
+	if isBucketListingRequest(r, action) && (object == "" || object == "/") && prefix != "" {
 		object = prefix
 	}
 
@@ -1806,11 +1827,11 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			if identity != nil {
 				claims = identity.Claims
 			}
-			// List is bucket-level; the prefix promoted into object (for the
-			// legacy CanDo path) must not scope the resource ARN. Prefix is
-			// matched via the s3:prefix Condition.
+			// Bucket listings are bucket-level; the prefix promoted into
+			// object (for the legacy CanDo path) must not scope the resource
+			// ARN. Prefix is matched via the s3:prefix Condition.
 			policyObject := object
-			if action == s3_constants.ACTION_LIST {
+			if isBucketListingRequest(r, action) {
 				policyObject = ""
 			}
 			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, policyObject, string(action), principal, r, claims, nil)
@@ -2513,11 +2534,12 @@ func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request
 		return attachedIAMPolicyNoMatch
 	}
 
-	// List is bucket-level; the prefix promoted into object (for the legacy
-	// CanDo path) must not scope the resource ARN or the resolved action
-	// (e.g. ListBucketVersions on ?versions). Prefix is matched via s3:prefix.
+	// Bucket listings are bucket-level; the prefix promoted into object (for
+	// the legacy CanDo path) must not scope the resource ARN or the resolved
+	// action (e.g. ListBucketVersions on ?versions). Prefix is matched via
+	// s3:prefix.
 	resourceObject := object
-	if action == s3_constants.ACTION_LIST {
+	if isBucketListingRequest(r, action) {
 		resourceObject = ""
 	}
 	resource := buildResourceARN(bucket, resourceObject)
@@ -3017,11 +3039,11 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 // check evaluates the same action and resource ARN as the policy engine.
 func resolveS3AuthTarget(action Action, bucket, object string, r *http.Request) (s3Action, resourceArn string) {
 	resourceObjectKey := object
-	if action == s3_constants.ACTION_LIST {
+	if isBucketListingRequest(r, action) {
 		resourceObjectKey = ""
 	}
 	resourceArn = buildS3ResourceArn(bucket, resourceObjectKey)
-	s3Action = ResolveS3Action(r, string(action), bucket, object)
+	s3Action = ResolveS3Action(r, string(action), bucket, resourceObjectKey)
 	return
 }
 
