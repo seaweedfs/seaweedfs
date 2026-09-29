@@ -126,8 +126,10 @@ type FilerServer struct {
 
 	// serializes remote-cache eviction passes; lastVacuum rate-limits the
 	// compaction trigger that reclaims evicted chunks.
-	remoteCacheEvictMu    sync.Mutex
-	remoteCacheLastVacuum atomic.Pointer[time.Time]
+	remoteCacheEvictMu     sync.Mutex
+	remoteCacheLastVacuum  atomic.Pointer[time.Time]
+	remoteCacheEvictCtx    context.Context
+	remoteCacheEvictCancel context.CancelFunc
 
 	recentCopyRequestsMu sync.Mutex
 	recentCopyRequests   map[string]recentCopyRequest
@@ -217,6 +219,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.startPosixLockSweeper()
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
+	fs.remoteCacheEvictCtx, fs.remoteCacheEvictCancel = context.WithCancel(context.Background())
 	go fs.runRemoteCacheEviction()
 
 	option.Masters.RefreshBySrvIfAvailable()
@@ -371,6 +374,9 @@ func (fs *FilerServer) Shutdown() {
 	glog.V(0).Infof("Shutting down filer")
 	if fs.posixLockSweeperStop != nil {
 		close(fs.posixLockSweeperStop)
+	}
+	if fs.remoteCacheEvictCancel != nil {
+		fs.remoteCacheEvictCancel()
 	}
 	fs.filer.Shutdown()
 }

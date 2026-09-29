@@ -163,14 +163,26 @@ func isRemoteCacheCapacityError(err error) bool {
 // runRemoteCacheEviction periodically evicts remote-cached entries once any
 // disk crosses the configured usage threshold, with a vacuum pass to reclaim
 // the deleted chunks.
+func (fs *FilerServer) evictCtx() context.Context {
+	if fs.remoteCacheEvictCtx == nil {
+		return context.Background()
+	}
+	return fs.remoteCacheEvictCtx
+}
+
 func (fs *FilerServer) runRemoteCacheEviction() {
-	if fs.option.RemoteCacheEvictThreshold <= 0 {
+	if fs.option.RemoteCacheEvictThreshold <= 0 || fs.remoteCacheEvictCtx == nil {
 		return
 	}
+	ctx := fs.remoteCacheEvictCtx
 	ticker := time.NewTicker(remoteCacheEvictInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		ctx := context.Background()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		if fs.filer.RemoteStorage == nil || len(fs.filer.RemoteStorage.MountedDirectories()) == 0 {
 			continue
 		}
