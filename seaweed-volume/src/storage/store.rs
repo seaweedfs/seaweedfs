@@ -16,7 +16,7 @@ use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, S
 use crate::storage::erasure_coding::ec_volume::{EcVolume, is_usable_ecx_file};
 use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
-use crate::storage::super_block::ReplicaPlacement;
+use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 use crate::storage::volume::{CompactionJob, VifVolumeInfo, VolumeError, VolumeSpec};
 
@@ -1539,13 +1539,20 @@ impl Store {
         preallocate: u64,
     ) -> Result<Option<CompactionJob>, VolumeError> {
         // Required space matches Go's CompactVolume check: the larger of the
-        // requested preallocation and the estimated volume size.
+        // requested preallocation and the estimated compacted size — the live
+        // needles, not the .dat the garbage already occupies, so a full disk
+        // can still be reclaimed.
         let (loc_idx, space_needed) = {
             let (loc_idx, v) = self
                 .find_volume(vid)
                 .ok_or(VolumeError::VolumeNotFound(vid))?;
-            let estimated = v.dat_file_size().unwrap_or(0) + v.idx_file_size();
-            (loc_idx, std::cmp::max(preallocate, estimated))
+            let live_count = (v.file_count() - v.deleted_count()).max(0) as u64;
+            let live_bytes = v.content_size().saturating_sub(v.deleted_size());
+            let estimated = SUPER_BLOCK_SIZE as u64
+                + live_count * NEEDLE_MAP_ENTRY_SIZE as u64
+                + live_bytes;
+            let space_needed = std::cmp::max(preallocate, estimated);
+            (loc_idx, space_needed + space_needed / 10)
         };
 
         let dir = self.locations[loc_idx].directory.clone();
