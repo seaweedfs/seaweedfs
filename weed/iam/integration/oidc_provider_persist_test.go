@@ -391,3 +391,76 @@ func TestAnOlderRefreshCannotRestoreADeletedProvider(t *testing.T) {
 	require.NoError(t, deleteErr)
 	assert.False(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer), "a refresh older than the deletion left the deleted provider trusted")
 }
+
+// A refresh that fails is retried until the store answers. A change event reports each mutation once, so
+// a subscription refresh that found the filer unreachable — mid-restart, say — left the provider set stale
+// until some unrelated later change; a peer's new provider stayed untrusted and a deleted one trusted.
+func TestAFailedRefreshIsRetriedUntilTheStoreAnswers(t *testing.T) {
+	saved := oidcHydrateRetry
+	oidcHydrateRetry.initial, oidcHydrateRetry.max = time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { oidcHydrateRetry = saved })
+
+	store := &unreachableThenReadyStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store)
+	require.NoError(t, store.StoreProvider(context.Background(), "", &OIDCProviderRecord{
+		ARN: arnOf(t, persistTestAPIIssuer), URL: persistTestAPIIssuer, ClientIDs: []string{"aud"},
+	}))
+	store.mu.Lock()
+	store.failsLeft = 3
+	store.mu.Unlock()
+	require.Error(t, mgr.RefreshOIDCProvidersFromStore(context.Background()), "precondition: the refresh fails")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !stsKnowsIssuer(t, mgr, persistTestAPIIssuer) {
+		if time.Now().After(deadline) {
+			t.Fatal("a failed refresh was never retried: the stored provider stays untrusted until an unrelated change")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Failures during an outage start ONE retry, not one per event: a filer that is down for a while produces a
+// change event per mutation, and each would otherwise add a goroutine polling the same store. Once the store
+// answers and the retry ends, a later failure starts a new one.
+func TestFailedRefreshesShareOneRetry(t *testing.T) {
+	saved := oidcHydrateRetry
+	oidcHydrateRetry.initial, oidcHydrateRetry.max = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { oidcHydrateRetry = saved })
+
+	store := &unreachableThenReadyStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store)
+	store.mu.Lock()
+	store.failsLeft = 1 << 30
+	store.mu.Unlock()
+	for range 20 {
+		require.Error(t, mgr.RefreshOIDCProvidersFromStore(context.Background()))
+	}
+	mgr.oidcRetryMu.Lock()
+	started := mgr.oidcRetrySeq
+	mgr.oidcRetryMu.Unlock()
+	assert.Equal(t, uint64(1), started, "twenty failed refreshes started more than one retry")
+
+	store.mu.Lock()
+	store.failsLeft = 0
+	store.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mgr.oidcRetryMu.Lock()
+		running := mgr.oidcRetryGen != 0
+		mgr.oidcRetryMu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the retry never ended after the store answered")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	store.mu.Lock()
+	store.failsLeft = 1
+	store.mu.Unlock()
+	require.Error(t, mgr.RefreshOIDCProvidersFromStore(context.Background()))
+	mgr.oidcRetryMu.Lock()
+	assert.Equal(t, uint64(2), mgr.oidcRetrySeq, "a failure after the retry ended starts a new one")
+	mgr.oidcRetryMu.Unlock()
+}
