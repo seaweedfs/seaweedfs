@@ -36,12 +36,15 @@ type IAMManager struct {
 	// file, by ARN. With an in-memory store they are also written to the
 	// store; a persistent store never holds them (see installOIDCProviderStore).
 	staticOIDCProviders map[string]*OIDCProviderRecord
-	// oidcRetryMu guards the background refresh retry: cancelOIDCLoad stops it,
-	// and oidcRetryGen names the one running (0 when none), so at most one runs.
+	// oidcRetryMu guards the background refresh retry and which store is
+	// current: cancelOIDCLoad stops the retry, oidcRetryGen names the one
+	// running (0 when none) so at most one runs, and oidcRetryAgain records a
+	// refresh that failed while it ran, so the retry runs once more.
 	oidcRetryMu    sync.Mutex
 	cancelOIDCLoad context.CancelFunc
 	oidcRetryGen   uint64
 	oidcRetrySeq   uint64
+	oidcRetryAgain bool
 	// oidcRefreshMu serializes refreshes from reading the store to handing
 	// STS the result, so an older snapshot cannot replace a newer one.
 	oidcRefreshMu        sync.Mutex
@@ -629,8 +632,12 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 // providers so that an API call can shadow a bootstrap entry. Deleting the
 // stored provider brings the config-file one back.
 func (m *IAMManager) installOIDCProviderStore(store OIDCProviderStore, stsConfig *sts.STSConfig) {
-	m.stopOIDCRetry()
+	// Cancel the old store's retry and switch stores in one step, so a failed
+	// refresh of the old store cannot start a retry after the cancel.
+	m.oidcRetryMu.Lock()
+	m.stopOIDCRetryLocked()
 	m.oidcProviderStore = store
+	m.oidcRetryMu.Unlock()
 	m.staticOIDCProviders = staticOIDCProviderRecords(stsConfig)
 	if _, inMemory := store.(*MemoryOIDCProviderStore); inMemory {
 		ctx := context.Background()
@@ -655,12 +662,19 @@ func (m *IAMManager) installOIDCProviderStore(store OIDCProviderStore, stsConfig
 	}
 }
 
-// startOIDCRetry retries loading store in the background until it succeeds,
-// unless a retry is already running.
+// startOIDCRetry retries loading store in the background until it succeeds.
+// A store that is no longer current gets no retry: nothing would cancel it,
+// and its eventual success would replace the current store's providers. When
+// a retry is already running, it is asked to run once more instead, because
+// it may already have listed a snapshot older than this failure.
 func (m *IAMManager) startOIDCRetry(store OIDCProviderStore) {
 	m.oidcRetryMu.Lock()
 	defer m.oidcRetryMu.Unlock()
+	if store != m.oidcProviderStore {
+		return
+	}
 	if m.oidcRetryGen != 0 {
+		m.oidcRetryAgain = true
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -669,24 +683,40 @@ func (m *IAMManager) startOIDCRetry(store OIDCProviderStore) {
 	m.cancelOIDCLoad, m.oidcRetryGen = cancel, gen
 	bounds := oidcHydrateRetry // read here, not in the goroutine: it outlives its caller
 	go func() {
-		m.retryOIDCProviderLoad(ctx, store, bounds)
-		m.oidcRetryMu.Lock()
-		defer m.oidcRetryMu.Unlock()
-		if m.oidcRetryGen == gen {
-			m.cancelOIDCLoad, m.oidcRetryGen = nil, 0
+		defer cancel()
+		for {
+			m.retryOIDCProviderLoad(ctx, store, bounds)
+			m.oidcRetryMu.Lock()
+			if m.oidcRetryGen != gen {
+				m.oidcRetryMu.Unlock()
+				return // cancelled: another store was installed
+			}
+			if m.oidcRetryAgain && ctx.Err() == nil {
+				m.oidcRetryAgain = false
+				m.oidcRetryMu.Unlock()
+				continue
+			}
+			m.cancelOIDCLoad, m.oidcRetryGen, m.oidcRetryAgain = nil, 0, false
+			m.oidcRetryMu.Unlock()
+			return
 		}
-		cancel()
 	}()
 }
 
-// stopOIDCRetry cancels a running retry, as installing another store must.
-func (m *IAMManager) stopOIDCRetry() {
-	m.oidcRetryMu.Lock()
-	defer m.oidcRetryMu.Unlock()
+// stopOIDCRetryLocked cancels a running retry, as installing another store
+// must. The caller holds oidcRetryMu.
+func (m *IAMManager) stopOIDCRetryLocked() {
 	if m.cancelOIDCLoad != nil {
 		m.cancelOIDCLoad()
 	}
-	m.cancelOIDCLoad, m.oidcRetryGen = nil, 0
+	m.cancelOIDCLoad, m.oidcRetryGen, m.oidcRetryAgain = nil, 0, false
+}
+
+// currentOIDCProviderStore is the installed store, read under oidcRetryMu.
+func (m *IAMManager) currentOIDCProviderStore() OIDCProviderStore {
+	m.oidcRetryMu.Lock()
+	defer m.oidcRetryMu.Unlock()
+	return m.oidcProviderStore
 }
 
 // staticOIDCProviderRecords describes the enabled OIDC providers of the IAM
@@ -778,7 +808,7 @@ func (m *IAMManager) refreshOIDCProvidersBestEffort(ctx context.Context, op, arn
 // later change; the refresh after a local IAM API mutation and the startup load
 // have the same shape. At most one retry runs.
 func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
-	store := m.oidcProviderStore
+	store := m.currentOIDCProviderStore()
 	err := m.refreshOIDCProvidersFrom(ctx, store)
 	if err != nil && store != nil {
 		m.startOIDCRetry(store)
@@ -801,10 +831,14 @@ func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCPro
 	if err != nil {
 		return fmt.Errorf("list OIDC providers: %w", err)
 	}
-	// A startup retry is cancelled when another store is installed; its
-	// snapshot is of the old store and must not replace the new one's.
+	// A snapshot of a store that has since been replaced must not replace the
+	// current store's providers: a retry is cancelled when another store is
+	// installed, and a refresh may have listed the old store just before.
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if store != m.currentOIDCProviderStore() {
+		return fmt.Errorf("list OIDC providers: the store was replaced during the refresh")
 	}
 	byIssuer := make(map[string][]sts.ScopedOIDCProvider, len(records))
 	for _, rec := range records {
