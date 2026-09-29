@@ -283,12 +283,12 @@ func (fs *FilerServer) runRemoteCacheEviction() {
 			return
 		case <-ticker.C:
 		}
-		if fs.filer.RemoteStorage == nil || len(fs.filer.RemoteStorage.MountedDirectories()) == 0 {
-			continue
-		}
 		if fs.remoteCacheEvictMu.TryLock() {
 			fs.vacuumPendingRemoteCacheVids(ctx)
 			fs.remoteCacheEvictMu.Unlock()
+		}
+		if fs.filer.RemoteStorage == nil || len(fs.filer.RemoteStorage.MountedDirectories()) == 0 {
+			continue
 		}
 		bytesToFree, pressuredVids, over := fs.remoteCacheDiskPressure(ctx)
 		if !over {
