@@ -112,3 +112,53 @@ func TestListEvictableRemoteEntries(t *testing.T) {
 		"/buckets/mybucket/old.bin",
 	}, paths, "minCacheAge excludes freshly cached entries")
 }
+
+func TestUpdateEntryInvalidatesStaleSyncStamp(t *testing.T) {
+	now := time.Now()
+	synced := now.Add(-time.Hour).UnixNano()
+	mtime := now.Add(-time.Hour)
+	path := "/buckets/mybucket/a.bin"
+
+	newFiler := func() *Filer {
+		f := newTestFiler(t, newStubFilerStore(), NewFilerRemoteStorage())
+		require.NoError(t, f.CreateEntry(context.Background(), remoteCachedEntry(path, synced, mtime, 1), nil, false, false, nil, false, 255))
+		return f
+	}
+	syncStamp := func(f *Filer) int64 {
+		entry, err := f.FindEntry(context.Background(), util.FullPath(path))
+		require.NoError(t, err)
+		return entry.Remote.LastLocalSyncTsNs
+	}
+
+	t.Run("local chunk change clears stamp", func(t *testing.T) {
+		f := newFiler()
+		update := remoteCachedEntry(path, synced, mtime, 1)
+		update.Chunks[0].FileId = "2,01637037d6"
+		require.NoError(t, f.CreateEntry(context.Background(), update, nil, false, false, nil, false, 255))
+		assert.Zero(t, syncStamp(f))
+	})
+
+	t.Run("metadata-only update keeps stamp", func(t *testing.T) {
+		f := newFiler()
+		update := remoteCachedEntry(path, synced, mtime, 1)
+		update.Attr.Mime = "text/plain"
+		require.NoError(t, f.CreateEntry(context.Background(), update, nil, false, false, nil, false, 255))
+		assert.Equal(t, synced, syncStamp(f))
+	})
+
+	t.Run("fresh sync stamp survives chunk change", func(t *testing.T) {
+		f := newFiler()
+		update := remoteCachedEntry(path, now.UnixNano(), mtime, 1)
+		update.Chunks[0].FileId = "2,01637037d6"
+		require.NoError(t, f.CreateEntry(context.Background(), update, nil, false, false, nil, false, 255))
+		assert.Equal(t, now.UnixNano(), syncStamp(f))
+	})
+
+	t.Run("replicated update keeps authoritative stamp", func(t *testing.T) {
+		f := newFiler()
+		update := remoteCachedEntry(path, synced, mtime, 1)
+		update.Chunks[0].FileId = "2,01637037d6"
+		require.NoError(t, f.CreateEntry(context.Background(), update, nil, false, true, nil, false, 255))
+		assert.Equal(t, synced, syncStamp(f))
+	})
+}

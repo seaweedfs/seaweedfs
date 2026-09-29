@@ -173,7 +173,7 @@ func TestUpdateEntryPreservesExistingInode(t *testing.T) {
 		},
 	}
 
-	err := f.UpdateEntry(context.Background(), original, updated)
+	err := f.UpdateEntry(context.Background(), original, updated, false)
 	require.Error(t, err)
 
 	updated = &Entry{
@@ -182,7 +182,7 @@ func TestUpdateEntryPreservesExistingInode(t *testing.T) {
 			Mode: 0o600,
 		},
 	}
-	err = f.UpdateEntry(context.Background(), original, updated)
+	err = f.UpdateEntry(context.Background(), original, updated, false)
 	require.NoError(t, err)
 
 	stored, findErr := store.FindEntry(context.Background(), original.FullPath)
@@ -208,7 +208,7 @@ func TestUpdateEntryBackfillsMissingLegacyInode(t *testing.T) {
 			Mode: 0o640,
 		},
 	}
-	err := f.UpdateEntry(context.Background(), original, updated)
+	err := f.UpdateEntry(context.Background(), original, updated, false)
 	require.NoError(t, err)
 
 	stored, findErr := store.FindEntry(context.Background(), original.FullPath)

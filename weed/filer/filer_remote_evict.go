@@ -6,8 +6,23 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+func chunksEqual(a, b []*filer_pb.FileChunk) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].GetFileIdString() != b[i].GetFileIdString() ||
+			a[i].Size != b[i].Size ||
+			a[i].Offset != b[i].Offset {
+			return false
+		}
+	}
+	return true
+}
 
 // IsEvictableRemoteEntry reports whether an entry's local chunks are backed by
 // a synchronized remote copy, mirroring the checks remote.uncache applies:
