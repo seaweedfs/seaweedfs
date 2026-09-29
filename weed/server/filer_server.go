@@ -92,6 +92,9 @@ type FilerOption struct {
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
+	// RemoteCacheEvictThreshold is the disk usage fraction at which the filer
+	// evicts remote-mounted cached chunks; 0 disables eviction.
+	RemoteCacheEvictThreshold float64
 }
 
 type FilerServer struct {
@@ -120,6 +123,11 @@ type FilerServer struct {
 
 	// deduplicates concurrent remote object caching operations
 	remoteCacheGroup singleflight.Group
+
+	// serializes remote-cache eviction passes; lastVacuum rate-limits the
+	// compaction trigger that reclaims evicted chunks.
+	remoteCacheEvictMu    sync.Mutex
+	remoteCacheLastVacuum atomic.Pointer[time.Time]
 
 	recentCopyRequestsMu sync.Mutex
 	recentCopyRequests   map[string]recentCopyRequest
@@ -209,6 +217,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.startPosixLockSweeper()
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
+	go fs.runRemoteCacheEviction()
 
 	option.Masters.RefreshBySrvIfAvailable()
 	if len(option.Masters.GetInstances()) == 0 {
