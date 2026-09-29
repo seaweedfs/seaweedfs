@@ -161,7 +161,7 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 // flushAndVacuumRemoteCacheVolumes forces the deletion queue down to the volume
 // servers so fresh tombstones land, then compacts the volumes carrying them.
 func (fs *FilerServer) flushAndVacuumRemoteCacheVolumes(ctx context.Context) {
-	fs.notePendingRemoteCacheVids(fs.filer.FlushFileIdDeletionQueue(filer.LookupByMasterClientFn(fs.filer.MasterClient)))
+	fs.notePendingRemoteCacheVids(fs.filer.FlushFileIdDeletionQueue(ctx, filer.LookupByMasterClientFn(fs.filer.MasterClient)))
 	fs.vacuumPendingRemoteCacheVids(ctx)
 }
 

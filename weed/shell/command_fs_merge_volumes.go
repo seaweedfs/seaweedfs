@@ -339,7 +339,7 @@ func deleteOrphanedNeedles(commandEnv *CommandEnv, entryPath util.FullPath, need
 			continue
 		}
 		for _, loc := range locations {
-			results := operation.DeleteFileIdsAtOneVolumeServer(loc.ServerAddress(), commandEnv.option.GrpcDialOption, fids, includeCookie)
+			results := operation.DeleteFileIdsAtOneVolumeServer(context.Background(), loc.ServerAddress(), commandEnv.option.GrpcDialOption, fids, includeCookie)
 			// Summarize per server: an unreachable volume server returns one
 			// error per needle, which for manifest-heavy files can mean
 			// hundreds of near-identical lines. Keep the first error as the

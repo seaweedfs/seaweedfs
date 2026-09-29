@@ -306,12 +306,12 @@ func (f *Filer) loopProcessingDeletion() {
 			glog.V(0).Infof("deletion processor shutting down")
 			return
 		case <-ticker.C:
-			f.FlushFileIdDeletionQueue(lookupFunc)
+			f.FlushFileIdDeletionQueue(context.Background(), lookupFunc)
 		}
 	}
 }
 
-func (f *Filer) FlushFileIdDeletionQueue(lookupFunc func([]string) (map[string]*operation.LookupResult, error)) (consumed []string) {
+func (f *Filer) FlushFileIdDeletionQueue(ctx context.Context, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) (consumed []string) {
 	f.FileIdDeletionQueue.Consume(func(fileIds []string) {
 		consumed = fileIds
 		for i := 0; i < len(fileIds); i += DeletionBatchSize {
@@ -319,7 +319,7 @@ func (f *Filer) FlushFileIdDeletionQueue(lookupFunc func([]string) (map[string]*
 			if end > len(fileIds) {
 				end = len(fileIds)
 			}
-			f.processDeletionBatch(fileIds[i:end], lookupFunc)
+			f.processDeletionBatch(ctx, fileIds[i:end], lookupFunc)
 		}
 	})
 	return consumed
@@ -328,7 +328,7 @@ func (f *Filer) FlushFileIdDeletionQueue(lookupFunc func([]string) (map[string]*
 // processDeletionBatch handles deletion of a batch of file IDs and processes results.
 // It classifies errors into retryable and permanent categories, adds retryable failures
 // to the retry queue, and logs appropriate messages.
-func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
+func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
 	// Deduplicate file IDs to prevent incorrect retry count increments for the same file ID within a single batch.
 	uniqueFileIdsSlice := make([]string, 0, len(toDeleteFileIds))
 	processed := make(map[string]struct{}, len(toDeleteFileIds))
@@ -344,7 +344,7 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
+	outcomes := deleteFilesAndClassify(ctx, f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
 
 	// Process outcomes
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
@@ -410,9 +410,9 @@ type deletionOutcome struct {
 }
 
 // deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs
-func deleteFilesAndClassify(grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
+func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
 	// Perform deletion
-	results := operation.DeleteFileIdsWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
+	results := operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, fileIds, lookupFunc)
 
 	// Group results by file ID to handle multiple results for replicated volumes
 	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
@@ -550,7 +550,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(f.GrpcDialOption, fileIds, lookupFunc)
+	outcomes := deleteFilesAndClassify(context.Background(), f.GrpcDialOption, fileIds, lookupFunc)
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int
