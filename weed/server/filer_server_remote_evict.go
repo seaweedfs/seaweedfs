@@ -24,7 +24,9 @@ const (
 // uncacheRemoteEntry drops the local chunks of one remote-mounted entry, the
 // same state transition remote.uncache applies through UpdateEntry. Cleared
 // chunks go to the deletion queue and are reclaimed by the next compaction.
-func (fs *FilerServer) uncacheRemoteEntry(ctx context.Context, fullPath util.FullPath, minCacheAge time.Duration) (freedBytes int64, err error) {
+// When vids is set, only entries holding chunks on those volumes count toward
+// the freed bytes, and entries contributing nothing are left untouched.
+func (fs *FilerServer) uncacheRemoteEntry(ctx context.Context, fullPath util.FullPath, minCacheAge time.Duration, vids map[uint32]struct{}) (freedBytes int64, err error) {
 	pathLock := fs.entryLockTable.AcquireLock("uncacheRemoteEntry", fullPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
 
@@ -39,12 +41,16 @@ func (fs *FilerServer) uncacheRemoteEntry(ctx context.Context, fullPath util.Ful
 		return 0, nil
 	}
 
+	freedBytes = remoteEntryBytesOnVids(current, vids)
+	if freedBytes == 0 {
+		return 0, nil
+	}
+
 	newEntry := current.ShallowClone()
 	newEntry.Chunks = nil
 	newEntry.Remote = proto.Clone(current.Remote).(*filer_pb.RemoteEntry)
 	newEntry.Remote.LastLocalSyncTsNs = 0
 
-	freedBytes = int64(current.Size())
 	if err := fs.filer.CreateEntry(ctx, newEntry, current, false, false, nil, true, fs.filer.MaxFilenameLength); err != nil {
 		return 0, err
 	}
@@ -53,12 +59,32 @@ func (fs *FilerServer) uncacheRemoteEntry(ctx context.Context, fullPath util.Ful
 	return freedBytes, nil
 }
 
+// remoteEntryBytesOnVids sums the entry's chunk bytes on the given volumes; a
+// nil set counts the whole object.
+func remoteEntryBytesOnVids(entry *filer.Entry, vids map[uint32]struct{}) int64 {
+	if vids == nil {
+		return int64(entry.Size())
+	}
+	var bytes int64
+	for _, chunk := range entry.Chunks {
+		fid, err := needle.ParseFileIdFromString(chunk.GetFileIdString())
+		if err != nil {
+			continue
+		}
+		if _, ok := vids[uint32(fid.VolumeId)]; ok {
+			bytes += int64(chunk.Size)
+		}
+	}
+	return bytes
+}
+
 // evictRemoteCachedEntries drops local chunks of remote-mounted entries
 // oldest-cached first until bytesNeeded is met or candidates run out. The
 // first pass honors a minimum cache age so a just-fetched hot object is not
 // dropped under a reader; when aged candidates cannot cover the request a
-// second pass accepts any synchronized cached entry.
-func (fs *FilerServer) evictRemoteCachedEntries(ctx context.Context, bytesNeeded int64) (freed int64) {
+// second pass accepts any synchronized cached entry. When pressuredVids is
+// set, only bytes on those volumes count and entries elsewhere are skipped.
+func (fs *FilerServer) evictRemoteCachedEntries(ctx context.Context, bytesNeeded int64, pressuredVids map[uint32]struct{}) (freed int64) {
 	if fs.filer.RemoteStorage == nil {
 		return 0
 	}
@@ -68,7 +94,7 @@ func (fs *FilerServer) evictRemoteCachedEntries(ctx context.Context, bytesNeeded
 			if bytesNeeded > 0 && freed >= bytesNeeded {
 				return freed
 			}
-			n, err := fs.uncacheRemoteEntry(ctx, entry.FullPath, minCacheAge)
+			n, err := fs.uncacheRemoteEntry(ctx, entry.FullPath, minCacheAge, pressuredVids)
 			if err != nil {
 				glog.WarningfCtx(ctx, "evict remote cache %s: %v", entry.FullPath, err)
 				continue
@@ -79,13 +105,14 @@ func (fs *FilerServer) evictRemoteCachedEntries(ctx context.Context, bytesNeeded
 	return freed
 }
 
-// remoteCacheDiskPressure reports the worst per-disk usage ratio across the
-// cluster and how many bytes it sits above the eviction threshold.
-func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree int64, over bool) {
+// remoteCacheDiskPressure reports per-disk usage across the cluster: the total
+// bytes to reclaim and the volumes hosted on disks over the eviction threshold.
+func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree int64, pressuredVids map[uint32]struct{}, over bool) {
 	threshold := fs.option.RemoteCacheEvictThreshold
 	if threshold <= 0 {
-		return 0, false
+		return 0, nil, false
 	}
+	pressuredVids = make(map[uint32]struct{})
 	err := fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if err != nil {
@@ -95,14 +122,18 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 			for _, rack := range dc.RackInfos {
 				for _, dn := range rack.DataNodeInfos {
 					for _, disk := range dn.DiskInfos {
-						if disk.DiskTotalBytes == 0 {
-							continue
-						}
-						used := disk.DiskTotalBytes - disk.DiskFreeBytes
-						if float64(used) >= float64(disk.DiskTotalBytes)*threshold {
+						for _, pd := range disk.SplitByPhysicalDisk() {
+							if pd.DiskTotalBytes == 0 {
+								continue
+							}
+							used := pd.DiskTotalBytes - pd.DiskFreeBytes
+							if float64(used) < float64(pd.DiskTotalBytes)*threshold {
+								continue
+							}
 							over = true
-							if need := int64(used - uint64(float64(disk.DiskTotalBytes)*threshold*0.95)); need > bytesToFree {
-								bytesToFree = need
+							bytesToFree += int64(used) - int64(float64(pd.DiskTotalBytes)*threshold*0.95)
+							for _, vi := range pd.VolumeInfos {
+								pressuredVids[vi.Id] = struct{}{}
 							}
 						}
 					}
@@ -113,9 +144,9 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 	})
 	if err != nil {
 		glog.WarningfCtx(ctx, "remote cache disk pressure check: %v", err)
-		return 0, false
+		return 0, nil, false
 	}
-	return bytesToFree, over
+	return bytesToFree, pressuredVids, over
 }
 
 // maybeVacuumRemoteCacheVolumes flushes the deletion queue so fresh tombstones
@@ -174,12 +205,12 @@ func (fs *FilerServer) clearPendingRemoteCacheVid(vid uint32) {
 // reclaimRemoteCacheSpace evicts remote-cached content and compacts volumes to
 // release disk space under capacity pressure. A pass already in flight is
 // enough; callers that would queue behind it just fall back to remote reads.
-func (fs *FilerServer) reclaimRemoteCacheSpace(ctx context.Context, bytesNeeded int64) {
+func (fs *FilerServer) reclaimRemoteCacheSpace(ctx context.Context, bytesNeeded int64, pressuredVids map[uint32]struct{}) {
 	if !fs.remoteCacheEvictMu.TryLock() {
 		return
 	}
 	defer fs.remoteCacheEvictMu.Unlock()
-	freed := fs.evictRemoteCachedEntries(ctx, bytesNeeded)
+	freed := fs.evictRemoteCachedEntries(ctx, bytesNeeded, pressuredVids)
 	if freed > 0 {
 		glog.V(0).InfofCtx(ctx, "remote cache eviction freed %d bytes", freed)
 	}
@@ -221,11 +252,11 @@ func (fs *FilerServer) runRemoteCacheEviction() {
 		if fs.filer.RemoteStorage == nil || len(fs.filer.RemoteStorage.MountedDirectories()) == 0 {
 			continue
 		}
-		bytesToFree, over := fs.remoteCacheDiskPressure(ctx)
+		bytesToFree, pressuredVids, over := fs.remoteCacheDiskPressure(ctx)
 		if !over {
 			continue
 		}
 		glog.V(0).Infof("remote cache: disk usage over %.0f%%, evicting %d bytes", fs.option.RemoteCacheEvictThreshold*100, bytesToFree)
-		fs.reclaimRemoteCacheSpace(ctx, bytesToFree)
+		fs.reclaimRemoteCacheSpace(ctx, bytesToFree, pressuredVids)
 	}
 }
