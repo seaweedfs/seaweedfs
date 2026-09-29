@@ -53,6 +53,12 @@ func TestIsEvictableRemoteEntry(t *testing.T) {
 		{"remote only, never cached", remoteCachedEntry("/f", 0, mtime, 0), false},
 		{"remote, chunks cleared", remoteCachedEntry("/f", synced, mtime, 0), false},
 		{"dirty, newer than remote", remoteCachedEntry("/f", synced, now, 1), false},
+		{"same-second write after sync", remoteCachedEntry("/f",
+			now.Truncate(time.Second).Add(100*time.Millisecond).UnixNano(),
+			now.Truncate(time.Second).Add(900*time.Millisecond), 1), false},
+		{"same-second sync after write", remoteCachedEntry("/f",
+			now.Truncate(time.Second).Add(900*time.Millisecond).UnixNano(),
+			now.Truncate(time.Second).Add(100*time.Millisecond), 1), true},
 		{"synced and cached", remoteCachedEntry("/f", synced, mtime, 1), true},
 	}
 	for _, tt := range tests {

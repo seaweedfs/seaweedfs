@@ -19,7 +19,7 @@ func IsEvictableRemoteEntry(entry *Entry) bool {
 	if entry.Remote.LastLocalSyncTsNs <= 0 || len(entry.GetChunks()) == 0 {
 		return false
 	}
-	if entry.Remote.LastLocalSyncTsNs/1e9 < entry.Mtime.Unix() {
+	if entry.Remote.LastLocalSyncTsNs < entry.Mtime.UnixNano() {
 		return false
 	}
 	return true
