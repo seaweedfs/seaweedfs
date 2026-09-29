@@ -45,11 +45,11 @@ func DeleteFileIds(masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.
 		return
 	}
 
-	return DeleteFileIdsWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
+	return DeleteFileIdsWithLookupVolumeId(context.Background(), grpcDialOption, fileIds, lookupFunc)
 
 }
 
-func DeleteFileIdsWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func(vid []string) (map[string]*LookupResult, error)) []*volume_server_pb.DeleteResult {
+func DeleteFileIdsWithLookupVolumeId(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func(vid []string) (map[string]*LookupResult, error)) []*volume_server_pb.DeleteResult {
 
 	var ret []*volume_server_pb.DeleteResult
 
@@ -117,7 +117,7 @@ func DeleteFileIdsWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []s
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			resultChan <- DeleteFileIdsAtOneVolumeServer(server, grpcDialOption, fidList, false)
+			resultChan <- DeleteFileIdsAtOneVolumeServer(ctx, server, grpcDialOption, fidList, false)
 
 		}(server, fidList)
 	}
@@ -133,7 +133,7 @@ func DeleteFileIdsWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []s
 
 // DeleteFileIdsAtOneVolumeServer deletes a list of files that is on one volume server via gRpc
 // Returns individual results for each file ID. Check result.Error for per-file failures.
-func DeleteFileIdsAtOneVolumeServer(volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, fileIds []string, includeCookie bool) []*volume_server_pb.DeleteResult {
+func DeleteFileIdsAtOneVolumeServer(ctx context.Context, volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, fileIds []string, includeCookie bool) []*volume_server_pb.DeleteResult {
 
 	var ret []*volume_server_pb.DeleteResult
 
@@ -144,7 +144,7 @@ func DeleteFileIdsAtOneVolumeServer(volumeServer pb.ServerAddress, grpcDialOptio
 			SkipCookieCheck: !includeCookie,
 		}
 
-		resp, err := volumeServerClient.BatchDelete(context.Background(), req)
+		resp, err := volumeServerClient.BatchDelete(ctx, req)
 
 		// fmt.Printf("deleted %v %v: %v\n", fileIds, err, resp)
 
