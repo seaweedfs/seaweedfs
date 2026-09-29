@@ -211,7 +211,7 @@ func TestRemoteCacheEvictUnderPressure(t *testing.T) {
 	// tombstoned bytes, leaving only live data within the two volumes.
 	require.True(t, waitForCondition(t, func() bool {
 		size, garbage := volumeStats(t, evictPrimaryVolume)
-		return garbage == 0 && size <= 96*1024*1024
+		return garbage == 0 && size <= 72*1024*1024
 	}, 2*time.Minute, "volumes to be reclaimed by eviction+vacuum"),
 		"evicted chunks were not reclaimed")
 
