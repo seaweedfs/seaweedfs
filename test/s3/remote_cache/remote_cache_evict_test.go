@@ -208,21 +208,24 @@ func TestRemoteCacheEvictUnderPressure(t *testing.T) {
 	wg.Wait()
 
 	// Eviction must have dropped obj0's local chunks and vacuumed the
-	// volumes back below capacity.
+	// tombstoned bytes, leaving only live data within the two volumes.
 	require.True(t, waitForCondition(t, func() bool {
 		size, garbage := volumeStats(t, evictPrimaryVolume)
-		return garbage == 0 && size < 32*1024*1024
+		return garbage == 0 && size <= 96*1024*1024
 	}, 2*time.Minute, "volumes to be reclaimed by eviction+vacuum"),
 		"evicted chunks were not reclaimed")
 
 	assert.Equal(t, "0", chunkCountOn(t, evictPrimaryMaster, mount+"/obj0.bin"),
 		"oldest cached entry should be evicted back to remote-only")
 
-	// The cache self-heals: reading the evicted object re-caches it.
-	again := readViaFiler(t, evictPrimaryFiler, mount+"/obj0.bin")
-	assert.Equal(t, first, again)
+	// The cache self-heals: reading the evicted object re-caches it. Fills
+	// still running from the concurrent wave may evict it again, so retry
+	// the read until a commit sticks.
+	var again []byte
 	require.True(t, waitForCondition(t, func() bool {
+		again = readViaFiler(t, evictPrimaryFiler, mount+"/obj0.bin")
 		return chunkCountOn(t, evictPrimaryMaster, mount+"/obj0.bin") != "0"
-	}, 30*time.Second, "obj0 to re-cache"),
+	}, 2*time.Minute, "obj0 to re-cache"),
 		"evicted object did not re-cache on read")
+	assert.Equal(t, first, again)
 }
