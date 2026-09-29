@@ -27,6 +27,9 @@ import (
 var (
 	ErrOIDCProviderNotFound      = errors.New("OIDC provider not found")
 	ErrOIDCProviderAlreadyExists = errors.New("OIDC provider already exists")
+	// ErrOIDCProviderStatic refuses a change to a provider defined in the
+	// server's IAM config file: change it there instead.
+	ErrOIDCProviderStatic = errors.New("OIDC provider is defined in the IAM config file")
 )
 
 // OIDCProviderRecord is the persisted, IAM-managed view of an OIDC identity
@@ -267,15 +270,20 @@ func (f *FilerOIDCProviderStore) GetProviderByARN(ctx context.Context, filerAddr
 
 	var data []byte
 	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: f.basePath,
 			Name:      f.fileName(arn),
 		})
+		// Only a confirmed absence is ErrOIDCProviderNotFound: callers create
+		// on it, so an unreachable filer must not read as "no such provider".
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrOIDCProviderNotFound, arn)
+		}
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrOIDCProviderNotFound, err)
+			return fmt.Errorf("lookup OIDC provider %s: %w", arn, err)
 		}
 		if resp.Entry == nil {
-			return fmt.Errorf("OIDC provider not found: %s", arn)
+			return fmt.Errorf("%w: %s", ErrOIDCProviderNotFound, arn)
 		}
 		data = resp.Entry.Content
 		return nil
