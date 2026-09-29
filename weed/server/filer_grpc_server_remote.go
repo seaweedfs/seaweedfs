@@ -270,6 +270,11 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			fs.filer.DeleteUncommittedChunks(ctx, chunks)
 		}
 		if fs.option.RemoteCacheEvictThreshold > 0 && isRemoteCacheCapacityError(err) {
+			fileIds := make([]string, 0, len(chunks))
+			for _, chunk := range chunks {
+				fileIds = append(fileIds, chunk.GetFileIdString())
+			}
+			fs.notePendingRemoteCacheVids(fileIds)
 			go fs.reclaimRemoteCacheSpace(fs.evictCtx(), entry.Remote.RemoteSize, nil)
 		}
 		return nil, err
