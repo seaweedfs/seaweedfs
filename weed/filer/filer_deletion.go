@@ -356,16 +356,20 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 		switch outcome.status {
 		case deletionOutcomeSuccess:
 			successCount++
+			f.forgetDeletion(fileId) // confirmed gone: drop from durable ledger
 		case deletionOutcomeNotFound:
 			notFoundCount++
+			f.forgetDeletion(fileId) // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryableErrorCount++
+			// Keep in the durable ledger: not confirmed, must survive restarts.
 			f.DeletionRetryQueue.AddOrUpdate(fileId, outcome.errorMsg)
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (will retry)")
 			}
 		case deletionOutcomePermanent:
 			permanentErrorCount++
+			f.forgetDeletion(fileId) // gave up: stop carrying it in the ledger
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (permanent)")
 			}
@@ -561,19 +565,23 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 		case deletionOutcomeSuccess:
 			successCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (success)
+			f.forgetDeletion(item.FileId)     // confirmed gone: drop from durable ledger
 			glog.V(2).Infof("retry successful for %s after %d attempts", item.FileId, item.RetryCount)
 		case deletionOutcomeNotFound:
 			notFoundCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (already deleted)
+			f.forgetDeletion(item.FileId)     // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryCount++
 			if outcome.status == deletionOutcomeNoResult {
 				glog.Warningf("no deletion result for retried file %s, re-queuing to avoid loss", item.FileId)
 			}
+			// Keep in the durable ledger: still not confirmed.
 			f.DeletionRetryQueue.RequeueForRetry(item, outcome.errorMsg)
 		case deletionOutcomePermanent:
 			permanentErrorCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (permanent failure)
+			f.forgetDeletion(item.FileId)     // gave up: stop carrying it in the ledger
 			glog.Warningf("permanent error on retry for %s after %d attempts: %s", item.FileId, item.RetryCount, outcome.errorMsg)
 		}
 	}
@@ -604,7 +612,7 @@ func (f *Filer) DeleteChunks(ctx context.Context, fullpath util.FullPath, chunks
 func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
-			f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+			f.queueDeletions(chunk.GetFileIdString())
 			continue
 		}
 		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk, f.MasterClient)
@@ -612,15 +620,15 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
-			f.FileIdDeletionQueue.EnQueue(dChunk.GetFileIdString())
+			f.queueDeletions(dChunk.GetFileIdString())
 		}
-		f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+		f.queueDeletions(chunk.GetFileIdString())
 	}
 }
 
 func (f *Filer) DeleteChunksNotRecursive(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.FileIdDeletionQueue.EnQueue(chunk.GetFileIdString())
+		f.queueDeletions(chunk.GetFileIdString())
 	}
 }
 
