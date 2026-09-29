@@ -58,8 +58,6 @@ func (fs *FilerServer) uncacheRemoteEntry(ctx context.Context, fullPath util.Ful
 // dropped under a reader; when aged candidates cannot cover the request a
 // second pass accepts any synchronized cached entry.
 func (fs *FilerServer) evictRemoteCachedEntries(ctx context.Context, bytesNeeded int64) (freed int64) {
-	fs.remoteCacheEvictMu.Lock()
-	defer fs.remoteCacheEvictMu.Unlock()
 	if fs.filer.RemoteStorage == nil {
 		return 0
 	}
@@ -140,8 +138,13 @@ func (fs *FilerServer) maybeVacuumRemoteCacheVolumes(ctx context.Context) {
 }
 
 // reclaimRemoteCacheSpace evicts remote-cached content and compacts volumes to
-// release disk space under capacity pressure.
+// release disk space under capacity pressure. A pass already in flight is
+// enough; callers that would queue behind it just fall back to remote reads.
 func (fs *FilerServer) reclaimRemoteCacheSpace(ctx context.Context, bytesNeeded int64) {
+	if !fs.remoteCacheEvictMu.TryLock() {
+		return
+	}
+	defer fs.remoteCacheEvictMu.Unlock()
 	freed := fs.evictRemoteCachedEntries(ctx, bytesNeeded)
 	if freed > 0 {
 		glog.V(0).InfofCtx(ctx, "remote cache eviction freed %d bytes", freed)
