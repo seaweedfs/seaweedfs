@@ -17,7 +17,8 @@ func chunksEqual(a, b []*filer_pb.FileChunk) bool {
 	for i := range a {
 		if a[i].GetFileIdString() != b[i].GetFileIdString() ||
 			a[i].Size != b[i].Size ||
-			a[i].Offset != b[i].Offset {
+			a[i].Offset != b[i].Offset ||
+			a[i].ModifiedTsNs != b[i].ModifiedTsNs {
 			return false
 		}
 	}
