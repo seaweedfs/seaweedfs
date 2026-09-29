@@ -160,8 +160,16 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 
 // flushAndVacuumRemoteCacheVolumes forces the deletion queue down to the volume
 // servers so fresh tombstones land, then compacts the volumes carrying them.
+// The flush survives shutdown cancellation: an interrupted delete would be
+// requeued into the in-memory retry queue that exits with the process,
+// stranding bytes whose metadata the eviction already dropped.
 func (fs *FilerServer) flushAndVacuumRemoteCacheVolumes(ctx context.Context) {
-	fs.notePendingRemoteCacheVids(fs.filer.FlushFileIdDeletionQueue(ctx, filer.LookupByMasterClientFn(fs.filer.MasterClient)))
+	if len(fs.pendingRemoteCacheVids()) == 0 {
+		return
+	}
+	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteCacheMasterRpcTime)
+	fs.filer.FlushFileIdDeletionQueue(flushCtx, filer.LookupByMasterClientFn(fs.filer.MasterClient))
+	cancel()
 	fs.vacuumPendingRemoteCacheVids(ctx)
 }
 
