@@ -168,6 +168,7 @@ message VacuumVolumeCheckRequest {
 }
 message VacuumVolumeCheckResponse {
     double garbage_ratio = 1;
+    bool disk_space_low = 4; // the volume's disk is low on space — a read-only cause that compaction itself reclaims
 }
 
 message VacuumVolumeCompactRequest {

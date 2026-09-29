@@ -1127,14 +1127,18 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::VacuumVolumeCheckResponse>, Status> {
         let vid = VolumeId(request.into_inner().volume_id);
         let store = self.state.store.read().unwrap();
-        let garbage_ratio = match store.find_volume(vid) {
-            Some((_, vol)) => vol.garbage_level(),
+        let (garbage_ratio, disk_space_low) = match store.find_volume(vid) {
+            Some((_, vol)) => (
+                vol.garbage_level(),
+                vol.location_disk_space_low.load(Ordering::Relaxed),
+            ),
             None => {
                 return Err(crate::storage::volume::VolumeError::VolumeNotFound(vid).into());
             }
         };
         Ok(Response::new(volume_server_pb::VacuumVolumeCheckResponse {
             garbage_ratio,
+            disk_space_low,
         }))
     }
 

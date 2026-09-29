@@ -22,9 +22,10 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 
 	resp := &volume_server_pb.VacuumVolumeCheckResponse{}
 
-	garbageRatio, err := vs.store.CheckCompactVolume(needle.VolumeId(req.VolumeId))
+	garbageRatio, diskSpaceLow, err := vs.store.CheckCompactVolume(needle.VolumeId(req.VolumeId))
 
 	resp.GarbageRatio = garbageRatio
+	resp.DiskSpaceLow = diskSpaceLow
 
 	if err != nil {
 		glog.V(3).Infof("check volume %d: %v", req.VolumeId, err)

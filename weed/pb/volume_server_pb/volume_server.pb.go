@@ -436,6 +436,7 @@ func (x *VacuumVolumeCheckRequest) GetVolumeId() uint32 {
 type VacuumVolumeCheckResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	GarbageRatio  float64                `protobuf:"fixed64,1,opt,name=garbage_ratio,json=garbageRatio,proto3" json:"garbage_ratio,omitempty"`
+	DiskSpaceLow  bool                   `protobuf:"varint,4,opt,name=disk_space_low,json=diskSpaceLow,proto3" json:"disk_space_low,omitempty"` // the volume's disk is low on space — a read-only cause that compaction itself reclaims
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -475,6 +476,13 @@ func (x *VacuumVolumeCheckResponse) GetGarbageRatio() float64 {
 		return x.GarbageRatio
 	}
 	return 0
+}
+
+func (x *VacuumVolumeCheckResponse) GetDiskSpaceLow() bool {
+	if x != nil {
+		return x.DiskSpaceLow
+	}
+	return false
 }
 
 type VacuumVolumeCompactRequest struct {
@@ -7276,9 +7284,10 @@ const file_volume_server_proto_rawDesc = "" +
 	"\aversion\x18\x05 \x01(\rR\aversion\"\a\n" +
 	"\x05Empty\"7\n" +
 	"\x18VacuumVolumeCheckRequest\x12\x1b\n" +
-	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"@\n" +
+	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"f\n" +
 	"\x19VacuumVolumeCheckResponse\x12#\n" +
-	"\rgarbage_ratio\x18\x01 \x01(\x01R\fgarbageRatio\"[\n" +
+	"\rgarbage_ratio\x18\x01 \x01(\x01R\fgarbageRatio\x12$\n" +
+	"\x0edisk_space_low\x18\x04 \x01(\bR\fdiskSpaceLow\"[\n" +
 	"\x1aVacuumVolumeCompactRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12 \n" +
 	"\vpreallocate\x18\x02 \x01(\x03R\vpreallocate\"f\n" +

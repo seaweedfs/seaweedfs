@@ -23,11 +23,11 @@ import (
 )
 
 func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid needle.VolumeId,
-	locationlist *VolumeLocationList, garbageThreshold float64) (*VolumeLocationList, bool) {
+	locationlist *VolumeLocationList, garbageThreshold float64, skipReadOnly bool) (*VolumeLocationList, bool) {
 	ch := make(chan int, locationlist.Length())
 	errCount := int32(0)
 	for index, dn := range locationlist.list {
-		go func(index int, url pb.ServerAddress, vid needle.VolumeId) {
+		go func(index int, dn *DataNode, url pb.ServerAddress, vid needle.VolumeId) {
 			err := operation.WithVolumeServerClient(false, url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				resp, err := volumeServerClient.VacuumVolumeCheck(context.Background(), &volume_server_pb.VacuumVolumeCheckRequest{
 					VolumeId: uint32(vid),
@@ -36,6 +36,15 @@ func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid ne
 					atomic.AddInt32(&errCount, 1)
 					ch <- -1
 					return err
+				}
+				// A sweep skips a read-only copy unless the read-only is the
+				// disk filling up — that is the copy compaction exists for.
+				if skipReadOnly {
+					if v, lookErr := dn.GetVolumesById(vid); lookErr == nil && v.ReadOnly && !resp.DiskSpaceLow {
+						glog.V(0).Infof("skip vacuuming read-only volume %d on %s", vid, url)
+						ch <- -1
+						return nil
+					}
 				}
 				if resp.GarbageRatio >= garbageThreshold {
 					ch <- index
@@ -47,7 +56,7 @@ func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid ne
 			if err != nil {
 				glog.V(0).Infof("Checking vacuuming %d on %s: %v", vid, url, err)
 			}
-		}(index, dn.ServerAddress(), vid)
+		}(index, dn, dn.ServerAddress(), vid)
 	}
 	vacuumLocationList := NewVolumeLocationList()
 
@@ -356,18 +365,16 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 }
 
 // skipReadOnly is set by the background scan and all-volumes sweep, where a
-// read-only flag usually means an unhealthy disk. An explicit volumeId clears
-// it so a benignly read-only (full/oversized) volume can be reclaimed.
+// read-only flag usually means an unhealthy disk. Even then a copy that is
+// read-only because its disk is low on space stays eligible — compaction is
+// how the space comes back. An explicit volumeId clears the rule entirely.
 func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64, skipReadOnly bool) {
 	volumeLayout.accessLock.RLock()
 	isReadOnly := volumeLayout.vid2location[vid].AnyReadOnly()
 	isEnoughCopies := volumeLayout.enoughCopies(vid)
 	volumeLayout.accessLock.RUnlock()
 
-	if isReadOnly {
-		if skipReadOnly {
-			return
-		}
+	if isReadOnly && !skipReadOnly {
 		glog.V(0).Infof("vacuuming read-only volume %d on explicit request", vid)
 	}
 	if !isEnoughCopies {
@@ -377,7 +384,7 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 
 	glog.V(1).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
 	if vacuumLocationList, needVacuum := t.batchVacuumVolumeCheck(
-		grpcDialOption, vid, locationList, garbageThreshold); needVacuum {
+		grpcDialOption, vid, locationList, garbageThreshold, skipReadOnly); needVacuum {
 		if t.batchVacuumVolumeCompact(grpcDialOption, volumeLayout, vid, vacuumLocationList, preallocate) {
 			t.batchVacuumVolumeCommit(grpcDialOption, volumeLayout, vid, vacuumLocationList, locationList)
 		} else {

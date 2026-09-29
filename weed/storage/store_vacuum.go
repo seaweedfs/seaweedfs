@@ -11,12 +11,13 @@ import (
 
 var ErrInsufficientSpace = fmt.Errorf("insufficient free space")
 
-func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {
+func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (garbageRatio float64, diskSpaceLow bool, err error) {
 	if v := s.findVolume(volumeId); v != nil {
 		glog.V(3).Infof("volume %d garbage level: %f", volumeId, v.garbageLevel())
-		return v.garbageLevel(), nil
+		_, _, _, diskSpaceLow = v.ReadOnlyReasons()
+		return v.garbageLevel(), diskSpaceLow, nil
 	}
-	return 0, fmt.Errorf("volume id %d is not found during check compact: %w", volumeId, ErrVolumeNotFound)
+	return 0, false, fmt.Errorf("volume id %d is not found during check compact: %w", volumeId, ErrVolumeNotFound)
 }
 
 func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compactionBytePerSecond int64, progressFn ProgressFunc) error {
