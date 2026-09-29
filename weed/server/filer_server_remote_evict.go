@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	remoteCacheEvictInterval = 30 * time.Second
-	remoteCacheEvictMinAge   = time.Minute
-	remoteCacheVacuumWait    = 5 * time.Minute
+	remoteCacheEvictInterval  = 30 * time.Second
+	remoteCacheEvictMinAge    = time.Minute
+	remoteCacheVacuumCooldown = time.Minute
 )
 
 // uncacheRemoteEntry drops the local chunks of one remote-mounted entry, the
@@ -121,13 +121,16 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 
 // maybeVacuumRemoteCacheVolumes compacts volumes holding freshly-deleted
 // remote cache chunks (or orphaned partial fills) so evicted space actually
-// returns to the filesystem. Cooldown keeps it from running back-to-back.
+// returns to the filesystem. The deletion queue is flushed first so the tombstones
+// are on the volume servers before the compaction check; the cooldown keeps the
+// sweep from running back-to-back.
 func (fs *FilerServer) maybeVacuumRemoteCacheVolumes(ctx context.Context) {
-	if last := fs.remoteCacheLastVacuum.Load(); last != nil && time.Since(*last) < remoteCacheVacuumWait {
+	if last := fs.remoteCacheLastVacuum.Load(); last != nil && time.Since(*last) < remoteCacheVacuumCooldown {
 		return
 	}
 	now := time.Now()
 	fs.remoteCacheLastVacuum.Store(&now)
+	fs.filer.FlushFileIdDeletionQueue(filer.LookupByMasterClientFn(fs.filer.MasterClient))
 	if err := fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		_, err := client.VacuumVolume(ctx, &master_pb.VacuumVolumeRequest{GarbageThreshold: 0.1})
 		return err

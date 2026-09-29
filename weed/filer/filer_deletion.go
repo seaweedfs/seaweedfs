@@ -306,18 +306,21 @@ func (f *Filer) loopProcessingDeletion() {
 			glog.V(0).Infof("deletion processor shutting down")
 			return
 		case <-ticker.C:
-			f.FileIdDeletionQueue.Consume(func(fileIds []string) {
-				for i := 0; i < len(fileIds); i += DeletionBatchSize {
-					end := i + DeletionBatchSize
-					if end > len(fileIds) {
-						end = len(fileIds)
-					}
-					toDeleteFileIds := fileIds[i:end]
-					f.processDeletionBatch(toDeleteFileIds, lookupFunc)
-				}
-			})
+			f.FlushFileIdDeletionQueue(lookupFunc)
 		}
 	}
+}
+
+func (f *Filer) FlushFileIdDeletionQueue(lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
+	f.FileIdDeletionQueue.Consume(func(fileIds []string) {
+		for i := 0; i < len(fileIds); i += DeletionBatchSize {
+			end := i + DeletionBatchSize
+			if end > len(fileIds) {
+				end = len(fileIds)
+			}
+			f.processDeletionBatch(fileIds[i:end], lookupFunc)
+		}
+	})
 }
 
 // processDeletionBatch handles deletion of a batch of file IDs and processes results.
