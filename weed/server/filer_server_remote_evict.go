@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 )
@@ -117,24 +118,57 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 	return bytesToFree, over
 }
 
-// maybeVacuumRemoteCacheVolumes compacts volumes holding freshly-deleted
-// remote cache chunks (or orphaned partial fills) so evicted space actually
-// returns to the filesystem. The deletion queue is flushed first so the tombstones
-// are on the volume servers before the compaction check; the cooldown keeps the
-// sweep from running back-to-back.
+// maybeVacuumRemoteCacheVolumes flushes the deletion queue so fresh tombstones
+// land on the volume servers, then compacts only the volumes that received them
+// (evicted chunks or orphaned partial fills). Vids that miss the cooldown window
+// stay pending until the janitor retries them.
 func (fs *FilerServer) maybeVacuumRemoteCacheVolumes(ctx context.Context) {
+	fileIds := fs.filer.FlushFileIdDeletionQueue(filer.LookupByMasterClientFn(fs.filer.MasterClient))
+	pending := fs.notePendingRemoteCacheVids(fileIds)
+	if len(pending) == 0 {
+		return
+	}
 	if last := fs.remoteCacheLastVacuum.Load(); last != nil && time.Since(*last) < remoteCacheVacuumCooldown {
 		return
 	}
 	now := time.Now()
 	fs.remoteCacheLastVacuum.Store(&now)
-	fs.filer.FlushFileIdDeletionQueue(filer.LookupByMasterClientFn(fs.filer.MasterClient))
 	if err := fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
-		_, err := client.VacuumVolume(ctx, &master_pb.VacuumVolumeRequest{GarbageThreshold: 0.1})
-		return err
+		for vid := range pending {
+			if _, err := client.VacuumVolume(ctx, &master_pb.VacuumVolumeRequest{VolumeId: vid, GarbageThreshold: 0.1}); err != nil {
+				glog.WarningfCtx(ctx, "remote cache vacuum volume %d: %v", vid, err)
+				continue
+			}
+			fs.clearPendingRemoteCacheVid(vid)
+		}
+		return nil
 	}); err != nil {
 		glog.WarningfCtx(ctx, "remote cache vacuum: %v", err)
 	}
+}
+
+func (fs *FilerServer) notePendingRemoteCacheVids(fileIds []string) map[uint32]struct{} {
+	fs.remoteCachePendingVidsMu.Lock()
+	defer fs.remoteCachePendingVidsMu.Unlock()
+	if fs.remoteCachePendingVids == nil {
+		fs.remoteCachePendingVids = make(map[uint32]struct{})
+	}
+	for _, fid := range fileIds {
+		if parsed, err := needle.ParseFileIdFromString(fid); err == nil {
+			fs.remoteCachePendingVids[uint32(parsed.VolumeId)] = struct{}{}
+		}
+	}
+	out := make(map[uint32]struct{}, len(fs.remoteCachePendingVids))
+	for vid := range fs.remoteCachePendingVids {
+		out[vid] = struct{}{}
+	}
+	return out
+}
+
+func (fs *FilerServer) clearPendingRemoteCacheVid(vid uint32) {
+	fs.remoteCachePendingVidsMu.Lock()
+	defer fs.remoteCachePendingVidsMu.Unlock()
+	delete(fs.remoteCachePendingVids, vid)
 }
 
 // reclaimRemoteCacheSpace evicts remote-cached content and compacts volumes to
@@ -183,6 +217,7 @@ func (fs *FilerServer) runRemoteCacheEviction() {
 			return
 		case <-ticker.C:
 		}
+		fs.maybeVacuumRemoteCacheVolumes(ctx)
 		if fs.filer.RemoteStorage == nil || len(fs.filer.RemoteStorage.MountedDirectories()) == 0 {
 			continue
 		}

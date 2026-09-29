@@ -311,8 +311,9 @@ func (f *Filer) loopProcessingDeletion() {
 	}
 }
 
-func (f *Filer) FlushFileIdDeletionQueue(lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
+func (f *Filer) FlushFileIdDeletionQueue(lookupFunc func([]string) (map[string]*operation.LookupResult, error)) (consumed []string) {
 	f.FileIdDeletionQueue.Consume(func(fileIds []string) {
+		consumed = fileIds
 		for i := 0; i < len(fileIds); i += DeletionBatchSize {
 			end := i + DeletionBatchSize
 			if end > len(fileIds) {
@@ -321,6 +322,7 @@ func (f *Filer) FlushFileIdDeletionQueue(lookupFunc func([]string) (map[string]*
 			f.processDeletionBatch(fileIds[i:end], lookupFunc)
 		}
 	})
+	return consumed
 }
 
 // processDeletionBatch handles deletion of a batch of file IDs and processes results.

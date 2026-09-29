@@ -126,10 +126,12 @@ type FilerServer struct {
 
 	// serializes remote-cache eviction passes; lastVacuum rate-limits the
 	// compaction trigger that reclaims evicted chunks.
-	remoteCacheEvictMu     sync.Mutex
-	remoteCacheLastVacuum  atomic.Pointer[time.Time]
-	remoteCacheEvictCtx    context.Context
-	remoteCacheEvictCancel context.CancelFunc
+	remoteCacheEvictMu       sync.Mutex
+	remoteCacheLastVacuum    atomic.Pointer[time.Time]
+	remoteCacheEvictCtx      context.Context
+	remoteCacheEvictCancel   context.CancelFunc
+	remoteCachePendingVidsMu sync.Mutex
+	remoteCachePendingVids   map[uint32]struct{}
 
 	recentCopyRequestsMu sync.Mutex
 	recentCopyRequests   map[string]recentCopyRequest
