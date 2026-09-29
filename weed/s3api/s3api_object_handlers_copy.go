@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -790,6 +791,19 @@ type CopyPartResult struct {
 	LastModified time.Time `xml:"LastModified"`
 	ETag         string    `xml:"ETag"`
 	ChecksumResult
+}
+
+// MarshalXML writes LastModified in the S3 timestamp format (see xsdDateTime)
+// instead of encoding/xml's RFC 3339 with trimmed fractional seconds.
+func (r CopyPartResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	type T CopyPartResult
+	var layout struct {
+		*T
+		LastModified xsdDateTime `xml:"LastModified"`
+	}
+	layout.T = (*T)(&r)
+	layout.LastModified = xsdDateTime(r.LastModified)
+	return e.EncodeElement(layout, start)
 }
 
 func buildCopyPartResult(etag string, lastModified time.Time, metadata SSEResponseMetadata) CopyPartResult {
