@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	remoteCacheEvictInterval  = 30 * time.Second
-	remoteCacheEvictMinAge    = time.Minute
-	remoteCacheVacuumCooldown = time.Minute
-	remoteCacheMasterRpcTime  = 30 * time.Second
+	remoteCacheEvictInterval      = 30 * time.Second
+	remoteCacheEvictMinAge        = time.Minute
+	remoteCacheVacuumCooldown     = time.Minute
+	remoteCacheMasterRpcTime      = 30 * time.Second
+	remoteCachePendingVidAttempts = 3
 )
 
 // uncacheRemoteEntry drops the local chunks of one remote-mounted entry, the
@@ -55,6 +56,11 @@ func (fs *FilerServer) uncacheRemoteEntry(ctx context.Context, fullPath util.Ful
 	if err := fs.filer.CreateEntry(ctx, newEntry, current, false, false, nil, true, fs.filer.MaxFilenameLength); err != nil {
 		return 0, err
 	}
+	fileIds := make([]string, 0, len(current.Chunks))
+	for _, chunk := range current.Chunks {
+		fileIds = append(fileIds, chunk.GetFileIdString())
+	}
+	fs.notePendingRemoteCacheVids(fileIds)
 	stats.RemoteCacheEvictedCounter.Inc()
 	glog.V(1).InfofCtx(ctx, "uncacheRemoteEntry %s freed %d bytes", fullPath, freedBytes)
 	return freedBytes, nil
@@ -152,13 +158,18 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 	return bytesToFree, pressuredVids, over
 }
 
-// maybeVacuumRemoteCacheVolumes flushes the deletion queue so fresh tombstones
-// land on the volume servers, then compacts only the volumes that received them
-// (evicted chunks or orphaned partial fills). Vids that miss the cooldown window
-// stay pending until the janitor retries them.
-func (fs *FilerServer) maybeVacuumRemoteCacheVolumes(ctx context.Context) {
-	fileIds := fs.filer.FlushFileIdDeletionQueue(filer.LookupByMasterClientFn(fs.filer.MasterClient))
-	pending := fs.notePendingRemoteCacheVids(fileIds)
+// flushAndVacuumRemoteCacheVolumes forces the deletion queue down to the volume
+// servers so fresh tombstones land, then compacts the volumes carrying them.
+func (fs *FilerServer) flushAndVacuumRemoteCacheVolumes(ctx context.Context) {
+	fs.notePendingRemoteCacheVids(fs.filer.FlushFileIdDeletionQueue(filer.LookupByMasterClientFn(fs.filer.MasterClient)))
+	fs.vacuumPendingRemoteCacheVids(ctx)
+}
+
+// vacuumPendingRemoteCacheVids compacts every volume still owed a vacuum. A
+// vid keeps a few attempts so tombstones that land after a compaction are
+// retried by a later pass instead of stranded.
+func (fs *FilerServer) vacuumPendingRemoteCacheVids(ctx context.Context) {
+	pending := fs.pendingRemoteCacheVids()
 	if len(pending) == 0 {
 		return
 	}
@@ -175,7 +186,7 @@ func (fs *FilerServer) maybeVacuumRemoteCacheVolumes(ctx context.Context) {
 				glog.WarningfCtx(ctx, "remote cache vacuum volume %d: %v", vid, err)
 				continue
 			}
-			fs.clearPendingRemoteCacheVid(vid)
+			fs.completePendingRemoteCacheVid(vid)
 		}
 		return nil
 	}); err != nil {
@@ -183,17 +194,22 @@ func (fs *FilerServer) maybeVacuumRemoteCacheVolumes(ctx context.Context) {
 	}
 }
 
-func (fs *FilerServer) notePendingRemoteCacheVids(fileIds []string) map[uint32]struct{} {
+func (fs *FilerServer) notePendingRemoteCacheVids(fileIds []string) {
 	fs.remoteCachePendingVidsMu.Lock()
 	defer fs.remoteCachePendingVidsMu.Unlock()
 	if fs.remoteCachePendingVids == nil {
-		fs.remoteCachePendingVids = make(map[uint32]struct{})
+		fs.remoteCachePendingVids = make(map[uint32]int)
 	}
 	for _, fid := range fileIds {
 		if parsed, err := needle.ParseFileIdFromString(fid); err == nil {
-			fs.remoteCachePendingVids[uint32(parsed.VolumeId)] = struct{}{}
+			fs.remoteCachePendingVids[uint32(parsed.VolumeId)] = remoteCachePendingVidAttempts
 		}
 	}
+}
+
+func (fs *FilerServer) pendingRemoteCacheVids() map[uint32]struct{} {
+	fs.remoteCachePendingVidsMu.Lock()
+	defer fs.remoteCachePendingVidsMu.Unlock()
 	out := make(map[uint32]struct{}, len(fs.remoteCachePendingVids))
 	for vid := range fs.remoteCachePendingVids {
 		out[vid] = struct{}{}
@@ -201,10 +217,14 @@ func (fs *FilerServer) notePendingRemoteCacheVids(fileIds []string) map[uint32]s
 	return out
 }
 
-func (fs *FilerServer) clearPendingRemoteCacheVid(vid uint32) {
+func (fs *FilerServer) completePendingRemoteCacheVid(vid uint32) {
 	fs.remoteCachePendingVidsMu.Lock()
 	defer fs.remoteCachePendingVidsMu.Unlock()
-	delete(fs.remoteCachePendingVids, vid)
+	if fs.remoteCachePendingVids[vid] <= 1 {
+		delete(fs.remoteCachePendingVids, vid)
+	} else {
+		fs.remoteCachePendingVids[vid]--
+	}
 }
 
 // reclaimRemoteCacheSpace evicts remote-cached content and compacts volumes to
@@ -219,7 +239,7 @@ func (fs *FilerServer) reclaimRemoteCacheSpace(ctx context.Context, bytesNeeded 
 	if freed > 0 {
 		glog.V(0).InfofCtx(ctx, "remote cache eviction freed %d bytes", freed)
 	}
-	fs.maybeVacuumRemoteCacheVolumes(ctx)
+	fs.flushAndVacuumRemoteCacheVolumes(ctx)
 }
 
 func isRemoteCacheCapacityError(err error) bool {
@@ -253,9 +273,12 @@ func (fs *FilerServer) runRemoteCacheEviction() {
 			return
 		case <-ticker.C:
 		}
-		fs.maybeVacuumRemoteCacheVolumes(ctx)
 		if fs.filer.RemoteStorage == nil || len(fs.filer.RemoteStorage.MountedDirectories()) == 0 {
 			continue
+		}
+		if fs.remoteCacheEvictMu.TryLock() {
+			fs.vacuumPendingRemoteCacheVids(ctx)
+			fs.remoteCacheEvictMu.Unlock()
 		}
 		bytesToFree, pressuredVids, over := fs.remoteCacheDiskPressure(ctx)
 		if !over {

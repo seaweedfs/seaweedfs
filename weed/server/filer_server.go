@@ -131,7 +131,7 @@ type FilerServer struct {
 	remoteCacheEvictCtx      context.Context
 	remoteCacheEvictCancel   context.CancelFunc
 	remoteCachePendingVidsMu sync.Mutex
-	remoteCachePendingVids   map[uint32]struct{}
+	remoteCachePendingVids   map[uint32]int
 
 	recentCopyRequestsMu sync.Mutex
 	recentCopyRequests   map[string]recentCopyRequest
