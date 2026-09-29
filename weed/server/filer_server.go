@@ -222,7 +222,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
 	fs.remoteCacheEvictCtx, fs.remoteCacheEvictCancel = context.WithCancel(context.Background())
-	go fs.runRemoteCacheEviction()
 
 	option.Masters.RefreshBySrvIfAvailable()
 	if len(option.Masters.GetInstances()) == 0 {
@@ -253,6 +252,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer.RemoteStorage.SetConfValidator(func(ctx context.Context, conf *remote_pb.RemoteConf) error {
 		return ValidateRemoteConfForLoad(ctx, conf, option.AllowUntrustedRemoteEndpoints)
 	})
+	go fs.runRemoteCacheEviction()
 	// we do not support IP whitelist right now https://github.com/seaweedfs/seaweedfs/issues/7094
 	if v.GetString("guard.white_list") != "" {
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
