@@ -256,6 +256,25 @@ func TestStoredProviderTakesPrecedenceOverTheConfigFileOne(t *testing.T) {
 	assert.Equal(t, []string{"aud"}, rec.ClientIDs, "deleting the stored provider did not bring the config-file one back")
 }
 
+// A store installed through SetOIDCProviderStore behaves like one installed
+// at startup: stored providers load into STS and config-file providers stay
+// visible to the IAM API.
+func TestSetOIDCProviderStoreInstallsLikeStartup(t *testing.T) {
+	store := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	require.NoError(t, store.StoreProvider(context.Background(), "", &OIDCProviderRecord{
+		ARN: arnOf(t, persistTestAPIIssuer), URL: persistTestAPIIssuer, ClientIDs: []string{"aud"},
+	}))
+
+	cfg := persistTestConfig(persistTestStaticIssuer)
+	mgr := NewIAMManager()
+	require.NoError(t, mgr.Initialize(cfg, func() string { return "localhost:8888" }))
+	mgr.SetOIDCProviderStore(store)
+
+	assert.True(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer), "a stored provider was not trusted after install")
+	assert.True(t, listedARNs(t, mgr)[arnOf(t, persistTestStaticIssuer)], "the IAM API no longer lists the config-file provider")
+	assert.ErrorIs(t, mgr.DeleteOIDCProvider(context.Background(), arnOf(t, persistTestStaticIssuer)), ErrOIDCProviderStatic)
+}
+
 // A config-file provider reports no creation time: a time taken at startup
 // would change with every restart.
 func TestConfigFileProvidersReportNoCreationTime(t *testing.T) {

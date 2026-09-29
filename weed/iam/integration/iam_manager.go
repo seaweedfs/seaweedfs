@@ -117,12 +117,13 @@ func (m *IAMManager) PurgeRevokedSessions(ctx context.Context) (int, error) {
 }
 
 // SetOIDCProviderStore configures the IAM-managed OIDC provider store. When
-// nil, OIDC provider IAM actions return ServiceNotReady. The store is the
-// source of truth for AssumeRoleWithWebIdentity provider resolution once
-// Phase 2b lands; in Phase 2a it is read-only and populated from static
-// configuration at boot.
+// nil, OIDC provider IAM actions return ServiceNotReady.
 func (m *IAMManager) SetOIDCProviderStore(store OIDCProviderStore) {
-	m.oidcProviderStore = store
+	var stsConfig *sts.STSConfig
+	if m.stsService != nil {
+		stsConfig = m.stsService.Config
+	}
+	m.installOIDCProviderStore(store, stsConfig)
 }
 
 // GetOIDCProviderStore returns the configured store (may be nil).
