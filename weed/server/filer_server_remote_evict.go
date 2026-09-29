@@ -19,6 +19,7 @@ const (
 	remoteCacheEvictInterval  = 30 * time.Second
 	remoteCacheEvictMinAge    = time.Minute
 	remoteCacheVacuumCooldown = time.Minute
+	remoteCacheMasterRpcTime  = 30 * time.Second
 )
 
 // uncacheRemoteEntry drops the local chunks of one remote-mounted entry, the
@@ -113,8 +114,10 @@ func (fs *FilerServer) remoteCacheDiskPressure(ctx context.Context) (bytesToFree
 		return 0, nil, false
 	}
 	pressuredVids = make(map[uint32]struct{})
-	err := fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+	rpcCtx, cancel := context.WithTimeout(ctx, remoteCacheMasterRpcTime)
+	defer cancel()
+	err := fs.filer.MasterClient.WithClient(rpcCtx, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(rpcCtx, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return err
 		}
@@ -164,9 +167,11 @@ func (fs *FilerServer) maybeVacuumRemoteCacheVolumes(ctx context.Context) {
 	}
 	now := time.Now()
 	fs.remoteCacheLastVacuum.Store(&now)
-	if err := fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
+	rpcCtx, cancel := context.WithTimeout(ctx, remoteCacheMasterRpcTime)
+	defer cancel()
+	if err := fs.filer.MasterClient.WithClient(rpcCtx, false, func(client master_pb.SeaweedClient) error {
 		for vid := range pending {
-			if _, err := client.VacuumVolume(ctx, &master_pb.VacuumVolumeRequest{VolumeId: vid, GarbageThreshold: 0.1}); err != nil {
+			if _, err := client.VacuumVolume(rpcCtx, &master_pb.VacuumVolumeRequest{VolumeId: vid}); err != nil {
 				glog.WarningfCtx(ctx, "remote cache vacuum volume %d: %v", vid, err)
 				continue
 			}
