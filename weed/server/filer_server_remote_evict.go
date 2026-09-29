@@ -20,7 +20,7 @@ const (
 	remoteCacheEvictMinAge        = time.Minute
 	remoteCacheVacuumCooldown     = time.Minute
 	remoteCacheMasterRpcTime      = 30 * time.Second
-	remoteCachePendingVidAttempts = 3
+	remoteCachePendingVidAttempts = 10
 )
 
 // uncacheRemoteEntry drops the local chunks of one remote-mounted entry, the
@@ -165,9 +165,10 @@ func (fs *FilerServer) flushAndVacuumRemoteCacheVolumes(ctx context.Context) {
 	fs.vacuumPendingRemoteCacheVids(ctx)
 }
 
-// vacuumPendingRemoteCacheVids compacts every volume still owed a vacuum. A
-// vid keeps a few attempts so tombstones that land after a compaction are
-// retried by a later pass instead of stranded.
+// vacuumPendingRemoteCacheVids compacts every volume still owed a vacuum. The
+// master does not report whether a request actually compacted, so a vid keeps
+// roughly ten minutes of attempts: tombstones that land late or compaction
+// losses to another vacuum are retried by later passes instead of stranded.
 func (fs *FilerServer) vacuumPendingRemoteCacheVids(ctx context.Context) {
 	pending := fs.pendingRemoteCacheVids()
 	if len(pending) == 0 {
@@ -178,11 +179,12 @@ func (fs *FilerServer) vacuumPendingRemoteCacheVids(ctx context.Context) {
 	}
 	now := time.Now()
 	fs.remoteCacheLastVacuum.Store(&now)
-	rpcCtx, cancel := context.WithTimeout(ctx, remoteCacheMasterRpcTime)
-	defer cancel()
-	if err := fs.filer.MasterClient.WithClient(rpcCtx, false, func(client master_pb.SeaweedClient) error {
+	if err := fs.filer.MasterClient.WithClient(ctx, false, func(client master_pb.SeaweedClient) error {
 		for vid := range pending {
-			if _, err := client.VacuumVolume(rpcCtx, &master_pb.VacuumVolumeRequest{VolumeId: vid}); err != nil {
+			vCtx, cancel := context.WithTimeout(ctx, remoteCacheMasterRpcTime)
+			_, err := client.VacuumVolume(vCtx, &master_pb.VacuumVolumeRequest{VolumeId: vid})
+			cancel()
+			if err != nil {
 				glog.WarningfCtx(ctx, "remote cache vacuum volume %d: %v", vid, err)
 				continue
 			}
