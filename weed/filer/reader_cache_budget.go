@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 )
@@ -51,12 +52,39 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 			b.Unlock()
 			return nil
 		}
-		if entry := b.idle.Front(); entry != nil {
-			victim := entry.Value.(*SingleChunkCacher)
+		// Prefer evicting an idle chunk no stream is positioned in; fall back
+		// to the oldest pinned one so abandoned pins cannot block the budget.
+		var victim *SingleChunkCacher
+		var entry *list.Element
+		pinnedVictim := false
+		for e := b.idle.Front(); e != nil; e = e.Next() {
+			c := e.Value.(*SingleChunkCacher)
+			if atomic.LoadInt32(&c.pins) == 0 {
+				victim, entry = c, e
+				pinnedVictim = false
+				break
+			}
+			if victim == nil {
+				victim, entry = c, e
+				pinnedVictim = true
+			}
+		}
+		if entry != nil {
 			b.idle.Remove(entry)
 			delete(b.idleEntries, victim)
 			b.Unlock()
-			victim.parent.remove(victim)
+			if pinnedVictim {
+				victim.parent.remove(victim)
+			} else if !victim.parent.removeUnpinned(victim) {
+				// The victim was pinned between selection and removal: keep it
+				// evictable so a pin abandoned in that gap cannot wedge the
+				// budget, then retry the selection.
+				b.Lock()
+				if _, ok := b.reservations[victim]; ok && b.idleEntries[victim] == nil {
+					b.idleEntries[victim] = b.idle.PushBack(victim)
+				}
+				b.Unlock()
+			}
 			continue
 		}
 		changed := b.changed

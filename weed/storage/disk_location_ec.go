@@ -650,4 +650,12 @@ func (l *DiskLocation) removeEcVolumeFiles(collection string, vid needle.VolumeI
 	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		removeFile(baseFileName+erasure_coding.ToExt(i), "EC shard file")
 	}
+
+	// Staged 2PC generations (<base>.ecNN.v<N>, versioned .ecx/.ecj/.vif)
+	// belong to this volume's EC state too; leaving them orphans the files.
+	for _, dir := range []string{indexBaseFileName, baseFileName} {
+		if err := erasure_coding.RemoveEcGenerationFiles(dir, 0); err != nil {
+			glog.Warningf("Failed to remove EC generation files for %s: %v", dir, err)
+		}
+	}
 }

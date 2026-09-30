@@ -149,6 +149,92 @@ func TestUnmountEcShardsFencedByGeneration(t *testing.T) {
 	require.False(t, mountedEcShardIds(t, vs, vid)[1], "a strictly-older generation shard must be unmounted")
 }
 
+// TestTeardownRemovesStagedGenerations pins that a full teardown wipes the
+// 2PC-staged <base>.*.v<N> files together with the canonical ones: they are
+// invisible to EC bookkeeping, so anything left behind leaks forever.
+func TestTeardownRemovesStagedGenerations(t *testing.T) {
+	const collection = "ec-gen-leak"
+	vid := needle.VolumeId(57)
+	dir := t.TempDir()
+	vs := &VolumeServer{store: buildEcStoreWithGeneration(t, dir, collection, vid, 100, []erasure_coding.ShardId{0, 1})}
+
+	base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+	for _, name := range []string{
+		base + ".ec00.v3", base + ".ec01.v3", base + ".ecx.v3", base + ".vif.v3", base + ".ecsum.v3",
+	} {
+		require.NoError(t, os.WriteFile(name, []byte("staged"), 0o644))
+	}
+
+	_, err := vs.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+		VolumeId:     uint32(vid),
+		Collection:   collection,
+		FullTeardown: true,
+		EncodeTsNs:   200,
+	})
+	require.NoError(t, err)
+	left, err := filepath.Glob(base + "*")
+	require.NoError(t, err)
+	require.Empty(t, left, "teardown must leave no EC files, staged generations included: %v", left)
+}
+
+// TestDeleteGenerationsOlderThan covers the post-commit cleanup: staged
+// generations below the threshold are removed while the committed generation
+// and the live canonical files stay untouched.
+func TestDeleteGenerationsOlderThan(t *testing.T) {
+	const collection = "ec-gen-gc"
+	vid := needle.VolumeId(58)
+	dir := t.TempDir()
+	vs := &VolumeServer{store: buildEcStoreWithGeneration(t, dir, collection, vid, 100, []erasure_coding.ShardId{0, 1})}
+
+	base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+	stale := []string{base + ".ec00.v3", base + ".ecx.v3", base + ".vif.v3"}
+	fresh := []string{base + ".ec00.v7", base + ".vif.v7"}
+	for _, name := range append(stale, fresh...) {
+		require.NoError(t, os.WriteFile(name, []byte("staged"), 0o644))
+	}
+
+	_, err := vs.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+		VolumeId:                   uint32(vid),
+		Collection:                 collection,
+		DeleteGenerationsOlderThan: 5,
+	})
+	require.NoError(t, err)
+	for _, name := range stale {
+		require.False(t, util.FileExists(name), "%s must be removed", name)
+	}
+	for _, name := range fresh {
+		require.True(t, util.FileExists(name), "%s must be preserved", name)
+	}
+	require.True(t, util.FileExists(base+".ec00"), "canonical shards must be preserved")
+	require.True(t, util.FileExists(base+".ecx"))
+	require.True(t, util.FileExists(base+".vif"))
+	require.True(t, mountedEcShardIds(t, vs, vid)[0], "mounted shards must stay mounted")
+}
+
+// TestShardDeleteRemovesStagedGenerations pins that deleting a shard removes
+// its staged generations too: a shard evicted off a disk leaves nothing.
+func TestShardDeleteRemovesStagedGenerations(t *testing.T) {
+	const collection = "ec-shard-gen"
+	vid := needle.VolumeId(59)
+	dir := t.TempDir()
+	vs := &VolumeServer{store: buildEcStoreWithGeneration(t, dir, collection, vid, 100, []erasure_coding.ShardId{0, 5})}
+
+	base := erasure_coding.EcShardFileName(collection, dir, int(vid))
+	require.NoError(t, os.WriteFile(base+".ec05.v2", []byte("staged"), 0o644))
+	require.NoError(t, vs.store.UnmountEcShards(vid, 5, 0))
+
+	_, err := vs.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+		VolumeId:   uint32(vid),
+		Collection: collection,
+		ShardIds:   []uint32{5},
+	})
+	require.NoError(t, err)
+	require.False(t, util.FileExists(base+".ec05"))
+	require.False(t, util.FileExists(base+".ec05.v2"))
+	require.True(t, util.FileExists(base+".ec00"), "sibling shards must be preserved")
+	require.True(t, util.FileExists(base+".ecx"), "index must survive while shards remain")
+}
+
 // TestReadEcGenerationTsNs covers the per-disk .vif generation read used by the
 // fenced teardown: a present .vif yields its generation (or 0 when it has no EC
 // config), and a missing .vif is reported unreadable (preserved, fail-safe).

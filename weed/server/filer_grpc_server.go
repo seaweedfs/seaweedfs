@@ -518,7 +518,7 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 		if m.TouchMtime {
 			newEntry.Attr.Mtime = time.Now()
 		}
-		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry); err != nil {
+		if err := fs.filer.UpdateEntry(ctx, oldEntry, newEntry, fromOtherCluster); err != nil {
 			return err
 		}
 		// Emit the metadata event so the update replicates and subscribers see it,
@@ -623,7 +623,7 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 		}
 	}
 
-	if err := fs.filer.UpdateEntry(ctx, oldPointer, pointer); err != nil {
+	if err := fs.filer.UpdateEntry(ctx, oldPointer, pointer, fromOtherCluster); err != nil {
 		return err
 	}
 	// Replicate the recomputed pointer to peer filers and subscribers. Without
@@ -653,7 +653,7 @@ func (fs *FilerServer) applyRecomputeLatest(ctx context.Context, m *filer_pb.Obj
 			priorEntry.Extended = make(map[string][]byte)
 		}
 		priorEntry.Extended[rc.DemoteKey] = rc.DemoteValue
-		if err := fs.filer.UpdateEntry(ctx, oldPrior, priorEntry); err != nil {
+		if err := fs.filer.UpdateEntry(ctx, oldPrior, priorEntry, fromOtherCluster); err != nil {
 			return err
 		}
 		fs.filer.NotifyUpdateEvent(ctx, oldPrior, priorEntry, false, fromOtherCluster, signatures)
@@ -746,7 +746,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
-	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
+	if err = fs.filer.UpdateEntry(ctx, entry, newEntry, req.IsFromOtherCluster); err == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
 
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)

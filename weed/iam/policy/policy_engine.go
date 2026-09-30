@@ -473,8 +473,11 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 		return nil, fmt.Errorf("trust policy cannot be nil")
 	}
 
+	// A trust policy is deny-by-default, whatever the engine's DefaultEffect:
+	// a role may be assumed only by a principal a trust statement explicitly
+	// allows.
 	result := &EvaluationResult{
-		Effect: Effect(e.config.DefaultEffect),
+		Effect: EffectDeny,
 		EvaluationDetails: &EvaluationDetails{
 			Principal:         evalCtx.Principal,
 			Action:            evalCtx.Action,
@@ -511,7 +514,7 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 	// AWS IAM evaluation logic:
 	// 1. If there's an explicit Deny, the result is Deny
 	// 2. If there's an Allow and no Deny, the result is Allow
-	// 3. Otherwise, use the default effect
+	// 3. Otherwise, the implicit deny stands
 	if explicitDeny {
 		result.Effect = EffectDeny
 	} else if hasAllow {

@@ -1168,7 +1168,10 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		Policy    *policy.PolicyEngineConfig    `json:"policy"`
 		Providers []map[string]interface{}      `json:"providers"`
 		Roles     []*integration.RoleDefinition `json:"roles"`
-		Policies  []struct {
+		// OIDCProviderStore selects where IAM-managed OIDC providers persist.
+		// Absent, they live in memory and are lost on restart.
+		OIDCProviderStore *integration.OIDCProviderStoreConfig `json:"oidcProviderStore"`
+		Policies          []struct {
 			Name     string                 `json:"name"`
 			Document *policy.PolicyDocument `json:"document"`
 		} `json:"policies"`
@@ -1213,6 +1216,15 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		glog.V(1).Infof("Using policy defaults: DefaultEffect=%s, StoreType=%s", configRoot.Policy.DefaultEffect, configRoot.Policy.StoreType)
 	}
 
+	// With no IAM config file there is nothing static for a persisted
+	// provider to shadow or outlive, so providers created at runtime default
+	// to the filer, where restarts and peer S3 servers see them. A config
+	// file keeps the in-memory default unless it sets oidcProviderStore.
+	oidcProviderStore := configRoot.OIDCProviderStore
+	if oidcProviderStore == nil && configPath == "" && filerAddressProvider != nil {
+		oidcProviderStore = &integration.OIDCProviderStoreConfig{StoreType: "filer"}
+	}
+
 	// Create IAM configuration
 	iamConfig := &integration.IAMConfig{
 		STS:    configRoot.STS,
@@ -1220,6 +1232,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		Roles: &integration.RoleStoreConfig{
 			StoreType: sts.StoreTypeMemory, // Use memory store for JSON config-based setup
 		},
+		OIDCProviders: oidcProviderStore,
 	}
 
 	// Apply default signing key if not present in config

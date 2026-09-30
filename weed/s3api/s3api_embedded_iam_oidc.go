@@ -161,7 +161,7 @@ func (e *EmbeddedIamApi) deleteOpenIDConnectProvider(ctx context.Context, mgr *i
 		return nil, iamErr
 	}
 	if err := mgr.DeleteOIDCProvider(ctx, arn); err != nil {
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		return nil, oidcMutationError(err)
 	}
 	return &iamlib.DeleteOpenIDConnectProviderResponse{}, nil
 }
@@ -176,10 +176,7 @@ func (e *EmbeddedIamApi) addClientIDToOpenIDConnectProvider(ctx context.Context,
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientID is required")}
 	}
 	if err := mgr.AddClientIDToOIDCProvider(ctx, arn, clientID); err != nil {
-		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
-			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
-		}
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		return nil, oidcMutationError(err)
 	}
 	return &iamlib.AddClientIDToOpenIDConnectProviderResponse{}, nil
 }
@@ -194,10 +191,7 @@ func (e *EmbeddedIamApi) removeClientIDFromOpenIDConnectProvider(ctx context.Con
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ClientID is required")}
 	}
 	if err := mgr.RemoveClientIDFromOIDCProvider(ctx, arn, clientID); err != nil {
-		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
-			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
-		}
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		return nil, oidcMutationError(err)
 	}
 	return &iamlib.RemoveClientIDFromOpenIDConnectProviderResponse{}, nil
 }
@@ -212,6 +206,9 @@ func (e *EmbeddedIamApi) updateOpenIDConnectProviderThumbprint(ctx context.Conte
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("ThumbprintList must contain at least one entry")}
 	}
 	if err := mgr.UpdateOIDCProviderThumbprints(ctx, arn, thumbprints); err != nil {
+		if errors.Is(err, integration.ErrOIDCProviderStatic) {
+			return nil, oidcMutationError(err)
+		}
 		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
 			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
 		}
@@ -230,10 +227,7 @@ func (e *EmbeddedIamApi) tagOpenIDConnectProvider(ctx context.Context, mgr *inte
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("Tags must contain at least one Key/Value pair")}
 	}
 	if err := mgr.TagOIDCProvider(ctx, arn, tags); err != nil {
-		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
-			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
-		}
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		return nil, oidcMutationError(err)
 	}
 	return &iamlib.TagOpenIDConnectProviderResponse{}, nil
 }
@@ -248,10 +242,7 @@ func (e *EmbeddedIamApi) untagOpenIDConnectProvider(ctx context.Context, mgr *in
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("TagKeys must contain at least one entry")}
 	}
 	if err := mgr.UntagOIDCProvider(ctx, arn, keys); err != nil {
-		if errors.Is(err, integration.ErrOIDCProviderNotFound) {
-			return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
-		}
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		return nil, oidcMutationError(err)
 	}
 	return &iamlib.UntagOpenIDConnectProviderResponse{}, nil
 }
@@ -338,4 +329,18 @@ func (e *EmbeddedIamApi) getOpenIDConnectProvider(ctx context.Context, mgr *inte
 		resp.GetOpenIDConnectProviderResult.Tags = tags
 	}
 	return resp, nil
+}
+
+// oidcMutationError maps an IAMManager error from a provider change to its
+// IAM error code. A provider defined in the IAM config file is changed there,
+// not through the API.
+func oidcMutationError(err error) *iamError {
+	switch {
+	case errors.Is(err, integration.ErrOIDCProviderStatic):
+		return &iamError{Code: iam.ErrCodeUnmodifiableEntityException, Error: err}
+	case errors.Is(err, integration.ErrOIDCProviderNotFound):
+		return &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: err}
+	default:
+		return &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
 }

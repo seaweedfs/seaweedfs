@@ -225,6 +225,8 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 		s3err.WriteXMLResponse(w, r, http.StatusNotImplemented, errorResp)
 	case iam.ErrCodeDeleteConflictException:
 		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
+	case iam.ErrCodeUnmodifiableEntityException:
+		s3err.WriteXMLResponse(w, r, http.StatusBadRequest, errorResp)
 	default:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	}

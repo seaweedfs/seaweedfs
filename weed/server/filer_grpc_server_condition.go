@@ -87,10 +87,14 @@ func clauseSatisfied(c *filer_pb.WriteCondition_Clause, current *filer.Entry) bo
 		if !exists || c.ExpectedEntry == nil {
 			return !exists && c.ExpectedEntry == nil
 		}
-		// Normalize the expected entry the way FindEntry normalizes the stored
-		// one (e.g. FileSize grows to the chunk extent), or an unchanged entry
-		// can compare unequal.
-		return proto.Equal(current.ToProtoEntry(), filer.FromPbEntry("", c.ExpectedEntry).ToProtoEntry())
+		// Compare both sides in serialized form on clones: chunks are matched
+		// by their fid only — the stored entry may carry the restored file_id
+		// while an expected one built from a metadata event does not.
+		expected := proto.Clone(c.ExpectedEntry).(*filer_pb.Entry)
+		filer_pb.BeforeEntrySerialization(expected.Chunks)
+		actual := proto.Clone(current.ToProtoEntry()).(*filer_pb.Entry)
+		filer_pb.BeforeEntrySerialization(actual.Chunks)
+		return proto.Equal(actual, filer.FromPbEntry("", expected).ToProtoEntry())
 	default:
 		// An unrecognized clause kind (e.g. from a newer client) must not be
 		// treated as satisfied, which would silently bypass the guard. Fail
