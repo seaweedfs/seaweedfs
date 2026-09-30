@@ -748,6 +748,26 @@ impl Store {
         self.writable_volume_mut(vid)?.write_needle(n, true, fsync)
     }
 
+    /// Write a batch of needles to one volume, sharing the syncs of its
+    /// durable writes. See `Volume::write_needles_grouped`.
+    pub fn write_volume_needles(
+        &mut self,
+        vid: VolumeId,
+        writes: &mut [(Needle, bool)],
+    ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
+        match self.writable_volume_mut(vid) {
+            Ok(vol) => vol.write_needles_grouped(writes),
+            // The lookup fails only with NotFound or the disk-space ReadOnly.
+            Err(e) => writes
+                .iter()
+                .map(|_| match e {
+                    VolumeError::ReadOnly => Err(VolumeError::ReadOnly),
+                    _ => Err(VolumeError::NotFound),
+                })
+                .collect(),
+        }
+    }
+
     fn writable_volume_mut(&mut self, vid: VolumeId) -> Result<&mut Volume, VolumeError> {
         // Check disk space on the location containing this volume.
         // We do this before the mutable borrow to avoid borrow conflicts.

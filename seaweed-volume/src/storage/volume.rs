@@ -9,6 +9,7 @@
 //! Matches Go's storage/volume.go, volume_loading.go, volume_read.go,
 //! volume_write.go, volume_super_block.go.
 
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::ControlFlow;
@@ -1146,6 +1147,10 @@ pub struct Volume {
     fail_idx_sync_for_test: bool,
     #[cfg(test)]
     fail_truncate_for_test: bool,
+    #[cfg(test)]
+    dat_syncs_for_test: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    idx_syncs_for_test: std::sync::atomic::AtomicUsize,
     needle_map_kind: NeedleMapKind,
     data_file_access_control: Arc<DataFileAccessControl>,
 
@@ -1244,6 +1249,10 @@ impl Volume {
             fail_idx_sync_for_test: false,
             #[cfg(test)]
             fail_truncate_for_test: false,
+            #[cfg(test)]
+            dat_syncs_for_test: Default::default(),
+            #[cfg(test)]
+            idx_syncs_for_test: Default::default(),
             nm: None,
             needle_map_kind,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
@@ -1288,6 +1297,10 @@ impl Volume {
             fail_idx_sync_for_test: false,
             #[cfg(test)]
             fail_truncate_for_test: false,
+            #[cfg(test)]
+            dat_syncs_for_test: Default::default(),
+            #[cfg(test)]
+            idx_syncs_for_test: Default::default(),
             nm: None,
             needle_map_kind: NeedleMapKind::InMemory,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
@@ -2261,6 +2274,124 @@ impl Volume {
         self.do_write_request(n, check_cookie, fsync)
     }
 
+    /// Write a batch of needles the way Go's processBatch does: one .dat
+    /// sync and one .idx sync per run of distinct needle ids that holds a
+    /// durable write, instead of two per durable needle. Nothing in such a
+    /// run is published before its sync, so a failed sync takes the whole
+    /// run back off the .dat and fails every entry. A repeated id starts a
+    /// new run, so its dedup and cookie checks see the earlier write.
+    pub fn write_needles_grouped(
+        &mut self,
+        writes: &mut [(Needle, bool)],
+    ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
+        let _guard = self.data_file_access_control.write_lock();
+        let mut results = Vec::with_capacity(writes.len());
+        let mut rest = writes;
+        while !rest.is_empty() {
+            let mut ids = HashSet::new();
+            let len = rest.iter().take_while(|(n, _)| ids.insert(n.id)).count();
+            let (run, tail) = std::mem::take(&mut rest).split_at_mut(len);
+            if run.iter().any(|(_, fsync)| *fsync) {
+                results.extend(self.write_synced_run(run));
+            } else {
+                for (n, _) in run.iter_mut() {
+                    results.push(
+                        self.check_writable()
+                            .and_then(|()| self.do_write_request(n, true, false)),
+                    );
+                }
+            }
+            rest = tail;
+        }
+        results
+    }
+
+    fn write_synced_run(
+        &mut self,
+        run: &mut [(Needle, bool)],
+    ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
+        // Per entry: Some(offset) once appended, None when it dedups.
+        let mut staged = Vec::with_capacity(run.len());
+        let mut last_append_at_ns = self.last_append_at_ns;
+        let mut run_start = None;
+        let mut sync = false;
+        for (n, fsync) in run.iter_mut() {
+            let r = self.append_unpublished(n, &mut last_append_at_ns);
+            if let Ok(Some(offset)) = r {
+                run_start.get_or_insert(offset);
+            }
+            // Only a durable entry that got this far needs the sync.
+            sync |= *fsync && r.is_ok();
+            staged.push(r);
+        }
+
+        if sync && let Err(e) = self.flush_dat() {
+            self.check_read_write_error(Some(&e));
+            if let Some(start) = run_start {
+                self.undo_unsynced_append(start);
+            }
+            let e = VolumeError::Io(e);
+            return staged
+                .into_iter()
+                .map(|r| r.and_then(|_| Err(run_error(&e))))
+                .collect();
+        }
+        self.last_append_at_ns = last_append_at_ns;
+
+        for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
+            if let Ok(Some(offset)) = *r
+                && let Err(e) = self.publish_write(n, offset, *fsync)
+            {
+                *r = Err(e);
+            }
+        }
+
+        if sync && let Err(e) = self.flush_idx() {
+            return staged
+                .into_iter()
+                .map(|r| r.and_then(|_| Err(run_error(&e))))
+                .collect();
+        }
+
+        let written = run
+            .iter()
+            .zip(&staged)
+            .filter(|(_, r)| matches!(r, Ok(Some(_))))
+            .map(|((n, _), _)| n.last_modified)
+            .max();
+        if let Some(last_modified) = written {
+            self.finish_write(last_modified, sync);
+        }
+
+        run.iter()
+            .zip(staged)
+            .map(|((n, _), r)| {
+                let size = Size(n.data_size as i32);
+                r.map(|staged| match staged {
+                    Some(offset) => (offset, size, false),
+                    None => (0, size, true),
+                })
+            })
+            .collect()
+    }
+
+    /// The checks and the append for one entry of a synced run, leaving the
+    /// publish to the caller. Returns the offset, or None when it dedups.
+    fn append_unpublished(
+        &mut self,
+        n: &mut Needle,
+        last_append_at_ns: &mut u64,
+    ) -> Result<Option<u64>, VolumeError> {
+        self.check_writable()?;
+        if self.prepare_write(n, true)? {
+            return Ok(None);
+        }
+        n.append_at_ns = get_append_at_ns(*last_append_at_ns);
+        let (offset, _, _) = self.append_needle(n)?;
+        *last_append_at_ns = n.append_at_ns;
+        Ok(Some(offset))
+    }
+
     fn check_writable(&self) -> Result<(), VolumeError> {
         if let Some(e) = self.unavailable_error() {
             return Err(e);
@@ -2275,6 +2406,8 @@ impl Volume {
     /// separately by flush_idx once the row is published; the two are split so
     /// nothing is indexed before the bytes it points at are down.
     fn flush_dat(&self) -> io::Result<()> {
+        #[cfg(test)]
+        self.dat_syncs_for_test.fetch_add(1, Ordering::Relaxed);
         #[cfg(test)]
         if self.fail_fsync_for_test {
             return Err(io::Error::other("injected fsync failure"));
@@ -2297,6 +2430,8 @@ impl Volume {
     /// record whose index may not survive, and the master routes writes
     /// elsewhere once the volume heartbeats read only.
     fn flush_idx(&mut self) -> Result<(), VolumeError> {
+        #[cfg(test)]
+        self.idx_syncs_for_test.fetch_add(1, Ordering::Relaxed);
         #[cfg(test)]
         if self.fail_idx_sync_for_test {
             let e = io::Error::other("injected idx sync failure");
@@ -4841,6 +4976,15 @@ impl Volume {
         self.fail_truncate_for_test = fail;
     }
 
+    /// (.dat syncs, .idx syncs) attempted since the volume was opened.
+    #[cfg(test)]
+    pub(crate) fn sync_counts_for_test(&self) -> (usize, usize) {
+        (
+            self.dat_syncs_for_test.load(Ordering::Relaxed),
+            self.idx_syncs_for_test.load(Ordering::Relaxed),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn set_last_modified_ts_for_test(&mut self, ts_seconds: u64) {
         self.last_modified_ts_seconds = ts_seconds;
@@ -4857,6 +5001,14 @@ impl Volume {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// A copy of a run-wide failure for each entry it fails.
+fn run_error(e: &VolumeError) -> VolumeError {
+    match e {
+        VolumeError::Io(e) => VolumeError::Io(io::Error::new(e.kind(), e.to_string())),
+        e => VolumeError::Io(io::Error::other(e.to_string())),
+    }
+}
 
 /// Generate volume file base name: dir/collection_id or dir/id
 /// Byte offset just past the needle's on-disk record. Mirrors Go's
@@ -6083,6 +6235,210 @@ mod tests {
             ..Needle::default()
         };
         assert!(v.read_needle(&mut read_n).is_err());
+    }
+
+    fn batch_needle(id: u64, cookie: u32, data: &[u8]) -> Needle {
+        Needle {
+            id: NeedleId(id),
+            cookie: Cookie(cookie),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        }
+    }
+
+    fn dat_len(v: &Volume) -> u64 {
+        std::fs::metadata(v.file_name(".dat")).unwrap().len()
+    }
+
+    /// A batch of durable writes shares one .dat sync and one .idx sync,
+    /// where writing them one at a time syncs both files per needle.
+    #[test]
+    fn test_grouped_fsync_writes_share_one_sync() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut writes: Vec<_> = (1..=10u64)
+            .map(|id| {
+                (
+                    batch_needle(id, 0xaa, format!("body-{id}").as_bytes()),
+                    true,
+                )
+            })
+            .collect();
+        let results = v.write_needles_grouped(&mut writes);
+        assert!(results.iter().all(|r| matches!(r, Ok((_, _, false)))));
+        assert_eq!(v.sync_counts_for_test(), (1, 1));
+        for id in 1..=10u64 {
+            let mut n = Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            };
+            v.read_needle(&mut n).unwrap();
+            assert_eq!(n.data, format!("body-{id}").as_bytes());
+        }
+
+        // A batch with no durable write syncs nothing, as before.
+        let mut writes: Vec<_> = (11..=20u64)
+            .map(|id| (batch_needle(id, 0xaa, b"lazy"), false))
+            .collect();
+        let results = v.write_needles_grouped(&mut writes);
+        assert!(results.iter().all(|r| r.is_ok()));
+        assert_eq!(v.sync_counts_for_test(), (1, 1));
+
+        // The per-needle path pays both syncs for every durable write.
+        let tmp2 = TempDir::new().unwrap();
+        let mut one_by_one = make_test_volume(tmp2.path().to_str().unwrap());
+        for id in 1..=10u64 {
+            let mut n = batch_needle(id, 0xaa, format!("body-{id}").as_bytes());
+            one_by_one.write_needle(&mut n, true, true).unwrap();
+        }
+        assert_eq!(one_by_one.sync_counts_for_test(), (10, 10));
+    }
+
+    /// A failed shared sync fails every entry of the run, durable or not,
+    /// and leaves the volume as it was before the run: the .dat back at the
+    /// run start, the clocks where they were, nothing published.
+    #[test]
+    fn test_grouped_failed_sync_rolls_back_the_run() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut kept = batch_needle(1, 0xaa, b"first-copy");
+        v.write_needle(&mut kept, true, true).unwrap();
+        let prior = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
+        let dat_len_before = dat_len(&v);
+        let last_append_before = v.last_append_at_ns;
+        let last_modified_before = v.last_modified_ts_seconds;
+        let file_count_before = v.file_count();
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"second-copy"), false),
+            (batch_needle(2, 0xbb, b"durable"), true),
+            (batch_needle(3, 0xcc, b"lazy"), false),
+        ];
+        for (n, _) in writes.iter_mut() {
+            n.last_modified = last_modified_before + 1000;
+        }
+        v.fail_next_fsync_for_test(true);
+        let results = v.write_needles_grouped(&mut writes);
+        v.fail_next_fsync_for_test(false);
+
+        assert!(
+            results.iter().all(|r| matches!(r, Err(VolumeError::Io(_)))),
+            "every entry of the run shares its failed sync: {results:?}"
+        );
+        assert_eq!(dat_len(&v), dat_len_before, "the run is off the .dat");
+        assert_eq!(v.last_append_at_ns, last_append_before);
+        assert_eq!(v.last_modified_ts_seconds, last_modified_before);
+        let now = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
+        assert_eq!((now.offset, now.size), (prior.offset, prior.size));
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(2)).unwrap().is_none());
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(3)).unwrap().is_none());
+        assert_eq!(v.file_count(), file_count_before);
+        assert!(
+            !v.is_read_only(),
+            "a rolled-back run keeps the volume writable"
+        );
+
+        let mut read_n = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut read_n).unwrap();
+        assert_eq!(read_n.data, b"first-copy");
+
+        // The same run goes through once the disk recovers.
+        let results = v.write_needles_grouped(&mut writes);
+        assert!(results.iter().all(|r| r.is_ok()));
+        assert!(v.last_append_at_ns > last_append_before);
+    }
+
+    /// A repeated id starts a new run, so the second write sees the first
+    /// one published: a different cookie is refused and the same content
+    /// dedups, exactly as two sequential writes would.
+    #[test]
+    fn test_grouped_repeated_id_behaves_as_sequential_writes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"one"), true),
+            (batch_needle(1, 0xbb, b"imposter"), true),
+            (batch_needle(2, 0xcc, b"two"), true),
+            (batch_needle(2, 0xcc, b"two"), true),
+        ];
+        let results = v.write_needles_grouped(&mut writes);
+
+        assert!(matches!(results[0], Ok((_, _, false))));
+        assert!(matches!(results[1], Err(VolumeError::CookieMismatch(0xbb))));
+        assert!(matches!(results[2], Ok((_, _, false))));
+        assert!(
+            matches!(results[3], Ok((0, _, true))),
+            "the same content dedups against the write just before it"
+        );
+        // Runs [1], [1, 2], [2]: one pair of syncs each.
+        assert_eq!(v.sync_counts_for_test(), (3, 3));
+
+        let mut read_n = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut read_n).unwrap();
+        assert_eq!(read_n.data, b"one");
+    }
+
+    /// A failed shared .idx sync fails every published entry and stops the
+    /// volume taking writes, as it does for a single durable write.
+    #[test]
+    fn test_grouped_failed_idx_sync_quarantines_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"durable"), true),
+            (batch_needle(2, 0xbb, b"lazy"), false),
+        ];
+        v.fail_next_idx_sync_for_test(true);
+        let results = v.write_needles_grouped(&mut writes);
+        v.fail_next_idx_sync_for_test(false);
+
+        assert!(results.iter().all(|r| matches!(r, Err(VolumeError::Io(_)))));
+        assert_eq!(v.sync_counts_for_test(), (1, 1));
+        assert!(v.is_read_only());
+    }
+
+    /// A failed shared sync whose truncate also fails leaves an unverified
+    /// tail, so the volume fails closed exactly as a single write does.
+    #[test]
+    fn test_grouped_failed_rollback_marks_volume_unavailable() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"never"), true),
+            (batch_needle(2, 0xbb, b"landed"), false),
+        ];
+        v.fail_next_fsync_for_test(true);
+        v.fail_next_truncate_for_test(true);
+        let results = v.write_needles_grouped(&mut writes);
+        v.fail_next_fsync_for_test(false);
+        v.fail_next_truncate_for_test(false);
+
+        assert!(results.iter().all(|r| r.is_err()));
+        assert!(v.unavailable_error().is_some());
+        assert!(v.is_read_only());
+        assert!(v.should_quarantine());
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().is_none());
+
+        let mut later = vec![(batch_needle(3, 0xcc, b"refused"), true)];
+        let results = v.write_needles_grouped(&mut later);
+        assert!(matches!(results[0], Err(VolumeError::Unavailable(_))));
     }
 
     #[test]
