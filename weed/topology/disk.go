@@ -235,22 +235,27 @@ func (d *Disk) SetVolumeReadOnly(vid needle.VolumeId, readOnly bool) (found bool
 	if !found {
 		return false
 	}
-	if readOnly {
-		// A mark is a reason of its own, whatever the disk reported last;
-		// the sweep must not treat this volume as merely low on space.
-		v.ReadOnlyLowDisk = false
-	}
-	if v.ReadOnly == readOnly {
+	// A mark is a reason of its own, whatever the disk reported last; the
+	// sweep must not treat this volume as merely low on space.
+	clearLowDisk := readOnly && v.ReadOnlyLowDisk
+	if v.ReadOnly == readOnly && !clearLowDisk {
 		return true
 	}
+	// Every field the digest covers changes between these two lines, or the
+	// master's digest drifts from its own records for good.
 	d.volumeDigest ^= v.ReportHash()
-	v.ReadOnly = readOnly
-	d.volumeDigest ^= v.ReportHash()
-	delta := &DiskUsageCounts{activeVolumeCount: 1}
-	if readOnly {
-		delta.activeVolumeCount = -1
+	if clearLowDisk {
+		v.ReadOnlyLowDisk = false
 	}
-	d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), delta)
+	if v.ReadOnly != readOnly {
+		v.ReadOnly = readOnly
+		delta := &DiskUsageCounts{activeVolumeCount: 1}
+		if readOnly {
+			delta.activeVolumeCount = -1
+		}
+		d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), delta)
+	}
+	d.volumeDigest ^= v.ReportHash()
 	return true
 }
 

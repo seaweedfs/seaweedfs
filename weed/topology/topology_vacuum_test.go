@@ -333,6 +333,16 @@ func TestMarkReadOnlyClearsLowDiskReason(t *testing.T) {
 	}
 	dn.UpdateVolumes([]storage.VolumeInfo{v})
 
+	// a node that was told the final state outright is what the digest must match
+	marked := v
+	marked.ReadOnlyLowDisk = false
+	other := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.2", 8080, 0, "127.0.0.2", "", map[string]uint32{"": 10})
+	other.UpdateVolumes([]storage.VolumeInfo{marked})
+	if dn.VolumeDigest() == other.VolumeDigest() {
+		t.Fatal("test setup: the low-disk bit does not show in the digest")
+	}
+
 	dn.SetVolumeReadOnly(v.Id, true)
 
 	stored, err := dn.GetVolumesById(v.Id)
@@ -341,5 +351,8 @@ func TestMarkReadOnlyClearsLowDiskReason(t *testing.T) {
 	}
 	if !stored.ReadOnly || stored.ReadOnlyLowDisk {
 		t.Fatalf("after an explicit mark: ReadOnly=%t ReadOnlyLowDisk=%t, want true false", stored.ReadOnly, stored.ReadOnlyLowDisk)
+	}
+	if dn.VolumeDigest() != other.VolumeDigest() {
+		t.Fatal("the mark cleared the low-disk bit without moving the digest, so the master would keep asking for the full list")
 	}
 }
