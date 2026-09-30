@@ -104,3 +104,28 @@ func TestEstimatedCompactedSizeCountsLiveNeedles(t *testing.T) {
 		t.Fatalf("all-deleted estimate = %d, want superblock only (%d)", estimate, super_block.SuperBlockSize)
 	}
 }
+
+// The estimate must cover what compaction writes on disk: each live needle's
+// content plus its header, checksum, timestamp and padding. An all-live
+// volume's compacted .dat is byte-for-byte its current one, so the estimate
+// may not fall below the current file.
+func TestEstimatedCompactedSizeCoversNeedleFraming(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 100; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	datSize, _, _ := v.FileStat()
+
+	if estimate := estimatedCompactedSize(v); estimate < int64(datSize) {
+		t.Fatalf("estimate %d below .dat size %d for an all-live volume: missing per-needle framing", estimate, datSize)
+	}
+}

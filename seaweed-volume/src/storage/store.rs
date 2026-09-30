@@ -14,7 +14,7 @@ use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
 use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, ShardId};
 use crate::storage::erasure_coding::ec_volume::{EcVolume, is_usable_ecx_file};
-use crate::storage::needle::needle::Needle;
+use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
@@ -1548,9 +1548,10 @@ impl Store {
                 .ok_or(VolumeError::VolumeNotFound(vid))?;
             let live_count = (v.file_count() - v.deleted_count()).max(0) as u64;
             let live_bytes = v.content_size().saturating_sub(v.deleted_size());
-            let estimated = SUPER_BLOCK_SIZE as u64
-                + live_count * NEEDLE_MAP_ENTRY_SIZE as u64
-                + live_bytes;
+            let per_needle = (get_actual_size(Size(0), v.version())
+                + NEEDLE_PADDING_SIZE as i64
+                + NEEDLE_MAP_ENTRY_SIZE as i64) as u64;
+            let estimated = SUPER_BLOCK_SIZE as u64 + live_count * per_needle + live_bytes;
             let space_needed = std::cmp::max(preallocate, estimated);
             (loc_idx, space_needed + space_needed / 10)
         };

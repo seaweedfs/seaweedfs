@@ -60,8 +60,9 @@ func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 }
 
 // estimatedCompactedSize is what compaction writes: a superblock, the live
-// needles, and an index with live entries only. Deleted bytes do not carry
-// over, so a mostly-garbage volume needs far less space than it occupies.
+// needles with their on-disk framing, and an index with live entries only.
+// Deleted bytes do not carry over, so a mostly-garbage volume needs far less
+// space than it occupies.
 func estimatedCompactedSize(v *Volume) int64 {
 	liveCount := v.FileCount()
 	if deleted := v.DeletedCount(); deleted < liveCount {
@@ -75,7 +76,8 @@ func estimatedCompactedSize(v *Volume) int64 {
 	} else {
 		liveBytes = 0
 	}
-	return super_block.SuperBlockSize + int64(liveCount)*types.NeedleMapEntrySize + int64(liveBytes)
+	perNeedle := needle.GetActualSize(0, v.Version()) + types.NeedlePaddingSize + types.NeedleMapEntrySize
+	return super_block.SuperBlockSize + int64(liveCount)*perNeedle + int64(liveBytes)
 }
 
 func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
