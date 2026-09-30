@@ -1,12 +1,14 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
@@ -121,12 +123,19 @@ func requireSecureIssuer(issuerURL string) error {
 	if err != nil {
 		return fmt.Errorf("invalid issuer URL: %w", err)
 	}
+	// STS matches a token's iss claim against the stored URL exactly, and the
+	// provider's ARN is derived from host and path alone: an issuer with
+	// userinfo, a query or a fragment would share its ARN with the bare
+	// issuer and match no token.
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("issuer URL must not contain userinfo, a query or a fragment: %s", issuerURL)
+	}
 	switch u.Scheme {
 	case "https":
 		return nil
 	case "http":
 		host := u.Hostname()
-		if host == "localhost" {
+		if strings.EqualFold(host, "localhost") {
 			return nil
 		}
 		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
@@ -342,6 +351,10 @@ func (s *IamGrpcServer) GetRole(ctx context.Context, req *iam_pb.GetRoleRequest)
 // DeleteOIDCProvider. Unlike the IAM API's DeleteRole it does not require the
 // policies to be detached first: this API is declarative, and the role and its
 // attachments are one object here.
+// errRoleReplacedDuringDelete aborts a DeleteRole whose role was replaced
+// between the request's read and its delete.
+var errRoleReplacedDuringDelete = errors.New("role replaced during delete")
+
 func (s *IamGrpcServer) DeleteRole(ctx context.Context, req *iam_pb.DeleteRoleRequest) (*iam_pb.DeleteRoleResponse, error) {
 	if err := s.checkAdminAuth(ctx); err != nil {
 		return nil, err
@@ -353,15 +366,34 @@ func (s *IamGrpcServer) DeleteRole(ctx context.Context, req *iam_pb.DeleteRoleRe
 	if req.RoleName == "" {
 		return nil, status.Error(codes.InvalidArgument, "role_name is required")
 	}
-	existing, err := lookupRole(ctx, store, req.RoleName)
-	if err != nil {
-		return nil, err
-	}
-	if existing == nil {
+	// Delete the role as this request first saw it. The store's delete is
+	// conditional (RoleStore.UpdateRole), and a retry that finds the role
+	// replaced by a PutRole in between refuses rather than delete the newer
+	// definition: the caller decides again against it.
+	var seen []byte
+	err = store.UpdateRole(ctx, "", req.RoleName, func(existing *integration.RoleDefinition) (*integration.RoleDefinition, error) {
+		if existing == nil {
+			return nil, integration.ErrRoleNotFound
+		}
+		current, err := json.Marshal(existing)
+		if err != nil {
+			return nil, err
+		}
+		if seen == nil {
+			seen = current
+		} else if !bytes.Equal(seen, current) {
+			return nil, errRoleReplacedDuringDelete
+		}
+		return nil, nil
+	})
+	if errors.Is(err, integration.ErrRoleNotFound) {
 		return nil, status.Errorf(codes.NotFound, "role %s not found", req.RoleName)
 	}
-	if err := store.DeleteRole(ctx, "", req.RoleName); err != nil {
-		return nil, status.Errorf(codes.Internal, "delete role: %v", err)
+	if errors.Is(err, errRoleReplacedDuringDelete) {
+		return nil, status.Errorf(codes.Aborted, "role %s was replaced while it was being deleted; retry", req.RoleName)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "delete role: %v", err)
 	}
 	return &iam_pb.DeleteRoleResponse{}, nil
 }

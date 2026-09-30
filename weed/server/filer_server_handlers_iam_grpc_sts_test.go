@@ -290,6 +290,11 @@ func TestIamGrpc_PutOIDCProviderRequiresHTTPSExceptOnLoopback(t *testing.T) {
 		"http://10.0.0.5":                   false,
 		"ftp://oidc.example":                false,
 		"http://localhost.attacker.example": false,
+		"http://LOCALHOST:8080":             true,
+		"https://oidc.example?x=1":          false,
+		"https://oidc.example?":             false,
+		"https://oidc.example#frag":         false,
+		"https://user@oidc.example":         false,
 	} {
 		_, err := s.PutOIDCProvider(ctx, &iam_pb.PutOIDCProviderRequest{IssuerUrl: issuer, ClientIds: []string{"aud"}})
 		if ok {
@@ -377,4 +382,34 @@ func TestIamGrpc_PutRoleRacingADeleteDoesNotReviveTheOldRoleID(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, "AROA-DELETED", role.RoleId, "the deleted role's ID was written back")
 	assert.NotEmpty(t, role.RoleId)
+}
+
+// replacedDuringDeleteRoles has UpdateRole behave as the filer store's does
+// when a PutRole replaces the role between the delete's read and its write:
+// the conditional delete fails and the update runs again on the replacement.
+type replacedDuringDeleteRoles struct {
+	*integration.MemoryRoleStore
+	earlier *integration.RoleDefinition
+}
+
+func (s replacedDuringDeleteRoles) UpdateRole(ctx context.Context, addr, name string, update integration.RoleUpdate) error {
+	if _, err := update(s.earlier); err != nil { // the delete that loses to the PutRole
+		return err
+	}
+	return s.MemoryRoleStore.UpdateRole(ctx, addr, name, update)
+}
+
+// A DeleteRole racing a PutRole does not delete the definition the PutRole
+// wrote: it is refused as Aborted, and the caller decides again.
+func TestIamGrpc_DeleteRoleDoesNotDeleteARoleReplacedMeanwhile(t *testing.T) {
+	s, ctx, providers, _ := newSTSTestServer(t)
+	store := replacedDuringDeleteRoles{MemoryRoleStore: integration.NewMemoryRoleStore(), earlier: &integration.RoleDefinition{RoleName: "app", RoleId: "AROA-OLD"}}
+	require.NoError(t, store.StoreRole(context.Background(), "", "app", &integration.RoleDefinition{RoleName: "app", RoleId: "AROA-NEW"}))
+	s.SetSTSStores(providers, store)
+
+	_, err := s.DeleteRole(ctx, &iam_pb.DeleteRoleRequest{RoleName: "app"})
+	requireCode(t, err, codes.Aborted)
+	role, err := store.GetRole(context.Background(), "", "app")
+	require.NoError(t, err, "the replacement role was deleted")
+	assert.Equal(t, "AROA-NEW", role.RoleId)
 }
