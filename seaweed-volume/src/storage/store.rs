@@ -2457,8 +2457,8 @@ mod tests {
         assert_eq!(selected, Some(0));
     }
 
-    // VolumeCopy plans before it deletes the replica it replaces, so on a full
-    // disk only the location actually holding that replica may count it as free.
+    // VolumeCopy picks a disk before deleting the replica it replaces, so only
+    // the location actually holding that replica may count its slot as free.
     #[test]
     fn test_find_free_location_predicate_credits_only_the_holding_location() {
         let tmp1 = TempDir::new().unwrap();
