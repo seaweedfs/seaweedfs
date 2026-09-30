@@ -60,8 +60,8 @@ pub enum VolumeError {
     #[error("volume already exists")]
     AlreadyExists,
 
-    #[error("volume is read-only")]
-    ReadOnly,
+    #[error("volume {0} is read only")]
+    ReadOnly(VolumeId),
 
     #[error("volume is unavailable: {0}")]
     Unavailable(String),
@@ -2261,7 +2261,7 @@ impl Volume {
             return Err(e);
         }
         if self.is_read_only() {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(self.id));
         }
 
         self.do_write_request(n, check_cookie, fsync)
@@ -2605,7 +2605,7 @@ impl Volume {
             return Err(e);
         }
         if self.no_write_or_delete {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(self.id));
         }
         self.do_delete_request(n)
     }
@@ -3957,7 +3957,7 @@ impl Volume {
         needle_blob: &[u8],
     ) -> Result<(), VolumeError> {
         if self.is_read_only() {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(self.id));
         }
         let dat_file = self
             .dat_file
@@ -3978,7 +3978,7 @@ impl Volume {
     ) -> Result<(), VolumeError> {
         // nm.put on a read-only volume fails only after the blob is appended to .dat.
         if self.is_read_only() {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(self.id));
         }
         // Storage guard: negativity-only (Go parity). See parse_needle_at.
         if size.0 < 0 {
@@ -5939,7 +5939,7 @@ mod tests {
         assert!(
             matches!(
                 v.write_needle(&mut later, true, false),
-                Err(VolumeError::ReadOnly)
+                Err(VolumeError::ReadOnly(_))
             ),
             "later writes must not append past the record whose index is in doubt"
         );
@@ -7843,7 +7843,7 @@ mod tests {
                 false,
             )
             .unwrap_err();
-        assert!(matches!(err, VolumeError::ReadOnly));
+        assert!(matches!(err, VolumeError::ReadOnly(_)));
 
         let deleted_size = v
             .delete_needle(&mut Needle {
@@ -8767,7 +8767,7 @@ mod tests {
                     false,
                 )
                 .unwrap_err();
-            assert!(matches!(err, VolumeError::ReadOnly));
+            assert!(matches!(err, VolumeError::ReadOnly(_)));
 
             let deleted = v
                 .delete_needle(&mut Needle {
@@ -8808,7 +8808,7 @@ mod tests {
                 false,
             )
             .unwrap_err();
-        assert!(matches!(err, VolumeError::ReadOnly));
+        assert!(matches!(err, VolumeError::ReadOnly(_)));
 
         let deleted = v
             .delete_needle(&mut Needle {
@@ -8875,7 +8875,7 @@ mod tests {
             })
             .unwrap_err();
         assert!(
-            matches!(err, VolumeError::ReadOnly),
+            matches!(err, VolumeError::ReadOnly(_)),
             "plain readonly must reject deletes"
         );
 
