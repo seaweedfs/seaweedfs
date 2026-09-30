@@ -41,11 +41,14 @@ func TestReadOnlyReport(t *testing.T) {
 	check("no-write only", true, false, false)
 }
 
-func TestReportHashCoversReadOnlyLowDisk(t *testing.T) {
+func TestReportHashIgnoresReadOnlyLowDisk(t *testing.T) {
+	// Deliberate: a master without the field must keep agreeing with an
+	// upgraded volume server, or every heartbeat during a rolling upgrade
+	// would fetch the full volume list while a disk is low.
 	base := VolumeInfo{Id: 1, Size: 100, ReadOnly: true, ReplicaPlacement: &super_block.ReplicaPlacement{}, Ttl: needle.EMPTY_TTL}
 	lowDisk := base
 	lowDisk.ReadOnlyLowDisk = true
-	if base.ReportHash() == lowDisk.ReportHash() {
-		t.Fatal("ReportHash does not change with ReadOnlyLowDisk, so the master would never learn about it")
+	if base.ReportHash() != lowDisk.ReportHash() {
+		t.Fatal("ReportHash changes with ReadOnlyLowDisk; an older master would never match it")
 	}
 }

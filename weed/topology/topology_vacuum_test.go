@@ -320,3 +320,26 @@ func TestSweepChecksVolumesReadOnlyOnlyForLowDisk(t *testing.T) {
 		t.Fatalf("sweep checked volumes %v, want only the low-disk volume [%d]", fake.checked, lowDisk.Id)
 	}
 }
+
+// volume.mark -readonly on a volume that was read-only for low disk space
+// must not leave it looking merely low on space until the next heartbeat.
+func TestMarkReadOnlyClearsLowDiskReason(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 0, "127.0.0.1", "", map[string]uint32{"": 10})
+	v := storage.VolumeInfo{
+		Id: 1, Collection: "c", Size: 1 << 20, ReadOnly: true, ReadOnlyLowDisk: true,
+		Version: needle.GetCurrentVersion(), ReplicaPlacement: &super_block.ReplicaPlacement{}, Ttl: needle.EMPTY_TTL,
+	}
+	dn.UpdateVolumes([]storage.VolumeInfo{v})
+
+	dn.SetVolumeReadOnly(v.Id, true)
+
+	stored, err := dn.GetVolumesById(v.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.ReadOnly || stored.ReadOnlyLowDisk {
+		t.Fatalf("after an explicit mark: ReadOnly=%t ReadOnlyLowDisk=%t, want true false", stored.ReadOnly, stored.ReadOnlyLowDisk)
+	}
+}

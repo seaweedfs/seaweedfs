@@ -232,8 +232,16 @@ func (d *Disk) SetVolumeReadOnly(vid needle.VolumeId, readOnly bool) (found bool
 	d.Lock()
 	defer d.Unlock()
 	v, found := d.volumes[vid]
-	if !found || v.ReadOnly == readOnly {
-		return found
+	if !found {
+		return false
+	}
+	if readOnly {
+		// A mark is a reason of its own, whatever the disk reported last;
+		// the sweep must not treat this volume as merely low on space.
+		v.ReadOnlyLowDisk = false
+	}
+	if v.ReadOnly == readOnly {
+		return true
 	}
 	d.volumeDigest ^= v.ReportHash()
 	v.ReadOnly = readOnly

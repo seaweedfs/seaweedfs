@@ -32,9 +32,12 @@ func (vi VolumeInfo) ReportHash() uint64 {
 	if vi.ReadOnlyCanDelete {
 		buf[56] |= 2
 	}
-	if vi.ReadOnlyLowDisk {
-		buf[56] |= 4
-	}
+	// ReadOnlyLowDisk stays out on purpose. It only ever flips together with
+	// ReadOnly, except when another read-only reason arrives on an already
+	// read-only volume, and that costs at most one compaction attempt that
+	// fails and rolls back. Folding it in would make a master from before the
+	// field disagree with an upgraded volume server on every heartbeat while
+	// a disk is low, and ask for the full volume list each time.
 	h := xxhash.Sum64(buf[:])
 
 	var modified [8]byte
