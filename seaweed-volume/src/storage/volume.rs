@@ -2752,8 +2752,7 @@ impl Volume {
         }
 
         if let Err(e) = dat_file.write_all(&bytes) {
-            // Truncate back to pre-write position on error (matching Go)
-            let _ = dat_file.set_len(offset);
+            self.undo_unsynced_append(offset);
             self.check_read_write_error(Some(&e));
             return Err(VolumeError::Io(e));
         }
@@ -6439,6 +6438,35 @@ mod tests {
         let mut later = vec![(batch_needle(3, 0xcc, b"refused"), true)];
         let results = v.write_needles_grouped(&mut later);
         assert!(matches!(results[0], Err(VolumeError::Unavailable(_))));
+    }
+
+    /// An append whose partial bytes cannot be truncated back leaves the .dat
+    /// tail unverified, so the volume fails closed rather than let a later
+    /// append bury them mid-file.
+    #[test]
+    fn test_failed_append_rollback_marks_volume_unavailable() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut first = batch_needle(1, 0xaa, b"landed");
+        v.write_needle(&mut first, true, true).unwrap();
+
+        // A read-only .dat handle fails the append and the truncate-back alike.
+        v.dat_file = Some(File::open(v.file_name(".dat")).unwrap());
+        let mut n = batch_needle(2, 0xbb, b"never-lands");
+        v.write_needle(&mut n, true, false).unwrap_err();
+
+        assert!(v.unavailable_error().is_some());
+        assert!(v.is_read_only());
+        assert!(v.should_quarantine());
+        assert!(v.nm.as_ref().unwrap().get(NeedleId(2)).unwrap().is_none());
+
+        let mut later = batch_needle(3, 0xcc, b"refused");
+        assert!(matches!(
+            v.write_needle(&mut later, true, true),
+            Err(VolumeError::Unavailable(_))
+        ));
     }
 
     #[test]
