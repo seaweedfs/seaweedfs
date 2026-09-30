@@ -6445,7 +6445,7 @@ struct EcDecodeJob {
 
 impl EcDecodeJob {
     fn run(self) -> Result<(), Status> {
-        use crate::storage::erasure_coding::ec_decoder;
+        use crate::storage::erasure_coding::{ec_bitrot, ec_decoder};
         let EcDecodeJob {
             vid,
             dat_dir,
@@ -6514,6 +6514,19 @@ impl EcDecodeJob {
             dat_file_size,
         )
         .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
+
+        // The EC generation is gone; a stale .ecsum must not pass for the
+        // protection of a later re-encode.
+        let mut sidecar_dirs = vec![&dat_dir];
+        if ecx_dir != dat_dir {
+            sidecar_dirs.push(&ecx_dir);
+        }
+        for dir in sidecar_dirs {
+            let base = crate::storage::volume::volume_file_name(dir, &collection, vid);
+            if let Err(e) = ec_bitrot::remove_bitrot_sidecars(&base) {
+                tracing::warn!(volume_id = vid.0, error = %e, "remove bitrot sidecars of {base}");
+            }
+        }
         Ok(())
     }
 }
@@ -11164,6 +11177,51 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
         assert!(err.message().contains("has no live entries"), "{err:?}");
         assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
+        assert!(
+            std::path::Path::new(&format!("{data}/1.ecsum")).exists(),
+            "a failed decode keeps the shards' bitrot sidecar"
+        );
+    }
+
+    /// A decode drops the bitrot sidecars beside the .dat and the .ecx, as Go
+    /// does, so a stale .ecsum cannot vouch for a later re-encode.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_removes_bitrot_sidecars() {
+        let (service, _tmp, data, idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        assert!(
+            std::path::Path::new(&format!("{data}/1.ecsum")).exists(),
+            "precondition: the encode wrote a generation-0 sidecar"
+        );
+        let idx_sidecar = format!("{idx}/1.ecsum.v3");
+        let other_volume = format!("{data}/2.ecsum");
+        std::fs::write(&idx_sidecar, b"x").unwrap();
+        std::fs::write(&other_volume, b"x").unwrap();
+
+        service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap();
+
+        assert!(!std::path::Path::new(&format!("{data}/1.ecsum")).exists());
+        assert!(!std::path::Path::new(&idx_sidecar).exists());
+        assert!(std::path::Path::new(&other_volume).exists());
+    }
+
+    /// Only the .dat and .ecx dirs are swept: with the .ecx beside the shards,
+    /// the idx dir is not one of them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_sweeps_sidecars_beside_dat_and_ecx_only() {
+        let (service, _tmp, data, idx, _) = make_split_idx_ec_decode_service(&[], true).await;
+        let idx_sidecar = format!("{idx}/1.ecsum");
+        std::fs::write(&idx_sidecar, b"x").unwrap();
+
+        service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap();
+
+        assert!(!std::path::Path::new(&format!("{data}/1.ecsum")).exists());
+        assert!(std::path::Path::new(&idx_sidecar).exists());
     }
 
     /// Replaces the idx-dir .ecj with a FIFO: the decode's open of it blocks
