@@ -64,7 +64,7 @@ func (f *fakeVolumeDeleteServer) VolumeDelete(ctx context.Context, req *volume_s
 	return &volume_server_pb.VolumeDeleteResponse{}, nil
 }
 
-func startFakeVolumeServer(t *testing.T, vs *fakeVolumeDeleteServer) (grpcPort int, dialOption grpc.DialOption) {
+func startFakeVolumeServer(t *testing.T, vs volume_server_pb.VolumeServerServer) (grpcPort int, dialOption grpc.DialOption) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -251,5 +251,112 @@ func TestDeleteEmptyVolumesKeepsVidWhenCopyDeleteFails(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.deletes) != 1 {
 		t.Fatalf("VolumeDelete calls = %d, want 1 (only the reachable copy)", len(fake.deletes))
+	}
+}
+
+type fakeVacuumServer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+	mu        sync.Mutex
+	checks    map[uint32]*volume_server_pb.VacuumVolumeCheckResponse
+	committed []uint32
+}
+
+func (f *fakeVacuumServer) VacuumVolumeCheck(_ context.Context, req *volume_server_pb.VacuumVolumeCheckRequest) (*volume_server_pb.VacuumVolumeCheckResponse, error) {
+	resp, ok := f.checks[req.VolumeId]
+	if !ok {
+		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
+	}
+	return resp, nil
+}
+
+func (f *fakeVacuumServer) VacuumVolumeCompact(_ *volume_server_pb.VacuumVolumeCompactRequest, _ volume_server_pb.VolumeServer_VacuumVolumeCompactServer) error {
+	return nil
+}
+
+func (f *fakeVacuumServer) VacuumVolumeCommit(_ context.Context, req *volume_server_pb.VacuumVolumeCommitRequest) (*volume_server_pb.VacuumVolumeCommitResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.committed = append(f.committed, req.VolumeId)
+	return &volume_server_pb.VacuumVolumeCommitResponse{IsReadOnly: true}, nil
+}
+
+func (f *fakeVacuumServer) VacuumVolumeCleanup(_ context.Context, _ *volume_server_pb.VacuumVolumeCleanupRequest) (*volume_server_pb.VacuumVolumeCleanupResponse, error) {
+	return &volume_server_pb.VacuumVolumeCleanupResponse{}, nil
+}
+
+// A sweep keeps a read-only replica eligible only when the volume server
+// reports disk_space_low; other read-only causes stay skipped unless the
+// request names the volume explicitly.
+func TestVacuumReadOnlyDiskLowVolume(t *testing.T) {
+	fake := &fakeVacuumServer{
+		checks: map[uint32]*volume_server_pb.VacuumVolumeCheckResponse{
+			1: {GarbageRatio: 0.9, DiskSpaceLow: true},
+			2: {GarbageRatio: 0.9},
+			3: {GarbageRatio: 0.9},
+			4: {GarbageRatio: 0.1, DiskSpaceLow: true},
+			5: {GarbageRatio: 0.9},
+		},
+	}
+	grpcPort, dialOption := startFakeVolumeServer(t, fake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, grpcPort, "127.0.0.1", "dn", map[string]uint32{"": 10})
+
+	newVolumeInfo := func(vid needle.VolumeId, readOnly bool) storage.VolumeInfo {
+		return storage.VolumeInfo{
+			Id:               vid,
+			Size:             1 << 20,
+			Collection:       "c",
+			ReadOnly:         readOnly,
+			ModifiedAtSecond: time.Now().Unix(),
+			Version:          needle.GetCurrentVersion(),
+			ReplicaPlacement: &super_block.ReplicaPlacement{},
+			Ttl:              needle.EMPTY_TTL,
+		}
+	}
+	vl := topo.GetVolumeLayout("c", &super_block.ReplicaPlacement{}, needle.EMPTY_TTL, types.ToDiskType(""))
+	volumes := []storage.VolumeInfo{
+		newVolumeInfo(1, true),
+		newVolumeInfo(2, true),
+		newVolumeInfo(3, false),
+		newVolumeInfo(4, true),
+		newVolumeInfo(5, true),
+	}
+	dn.UpdateVolumes(volumes)
+	for _, v := range volumes {
+		topo.RegisterVolumeLayout(v, dn)
+	}
+	c := NewCollection("c", topo.volumeSizeLimit, false)
+
+	vacuum := func(vid needle.VolumeId, skipReadOnly bool) {
+		vl.accessLock.RLock()
+		ll := vl.vid2location[vid].Copy()
+		vl.accessLock.RUnlock()
+		topo.vacuumOneVolumeId(dialOption, vl, c, 0.3, ll, vid, 0, skipReadOnly)
+	}
+
+	vacuum(1, true) // read-only but disk_low: compacted
+	vacuum(2, true) // read-only otherwise: skipped by sweep
+	vacuum(3, true) // writable: compacted
+	vacuum(4, true) // disk_low but below threshold: skipped
+	vacuum(5, false) // read-only, explicit request: compacted
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	want := map[uint32]bool{1: true, 3: true, 5: true}
+	got := map[uint32]bool{}
+	for _, vid := range fake.committed {
+		got[vid] = true
+	}
+	for vid := range want {
+		if !got[vid] {
+			t.Errorf("volume %d was not vacuum-committed", vid)
+		}
+	}
+	for _, vid := range fake.committed {
+		if !want[vid] {
+			t.Errorf("volume %d vacuum-committed unexpectedly", vid)
+		}
 	}
 }

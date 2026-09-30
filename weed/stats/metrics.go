@@ -789,6 +789,14 @@ var (
 			Help:      "Remote-mount object read attempts by source, bucket and cache result. A cold object retried before caching completes records a miss per attempt; paths outside the buckets folder use bucket \"_other\".",
 		}, []string{"source", "bucket", "result"})
 
+	RemoteCacheEvictedCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemRemote,
+			Name:      "cache_evicted_total",
+			Help:      "Remote-mounted objects whose local chunks were evicted under disk pressure.",
+		})
+
 	UploadErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -1072,6 +1080,7 @@ func init() {
 	Gather.MustRegister(S3BucketReadOnlyGauge)
 
 	Gather.MustRegister(RemoteCacheReadCounter)
+	Gather.MustRegister(RemoteCacheEvictedCounter)
 
 	Gather.MustRegister(S3LifecycleDispatchCounter)
 	Gather.MustRegister(S3LifecycleScheduleDepthGauge)

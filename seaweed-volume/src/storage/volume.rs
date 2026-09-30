@@ -2637,6 +2637,19 @@ impl Volume {
             || self.location_disk_space_low.load(Ordering::Relaxed)
     }
 
+    /// Mirrors Go's ReadOnlyReasons: `no_write_or_delete` already covers the
+    /// io_unavailable quarantine.
+    pub fn read_only_reasons(&self) -> (bool, bool, bool, bool) {
+        let no_write_or_delete = self.no_write_or_delete || self.io_unavailable.is_some();
+        let disk_space_low = self.location_disk_space_low.load(Ordering::Relaxed);
+        (
+            no_write_or_delete || self.no_write_can_delete || disk_space_low,
+            no_write_or_delete,
+            self.no_write_can_delete,
+            disk_space_low,
+        )
+    }
+
     /// The reason the volume refuses all I/O, when a failed recovery left the
     /// .dat/index pair unverified. Mirrors Go's unavailableError.
     pub fn unavailable_error(&self) -> Option<VolumeError> {

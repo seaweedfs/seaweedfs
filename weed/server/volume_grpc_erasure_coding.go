@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -517,6 +518,27 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 		return &volume_server_pb.VolumeEcShardsDeleteResponse{FullTeardownDone: true}, nil
 	}
 
+	if req.DeleteGenerationsOlderThan > 0 {
+		// Post-commit cleanup of a 2PC generation switch: the committed
+		// generation has been promoted to the canonical names, so only the
+		// staged <base>.*.v<N> files strictly older than the threshold are
+		// superseded and safe to remove. Versioned files are never mounted,
+		// so nothing needs to be unloaded first.
+		for _, location := range vs.store.Locations {
+			dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+			idxBase := storage.VolumeFileName(location.IdxDirectory, req.Collection, int(req.VolumeId))
+			if err := erasure_coding.RemoveEcGenerationFiles(dataBase, req.DeleteGenerationsOlderThan); err != nil {
+				return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.Directory, err)
+			}
+			if dataBase != idxBase {
+				if err := erasure_coding.RemoveEcGenerationFiles(idxBase, req.DeleteGenerationsOlderThan); err != nil {
+					return nil, fmt.Errorf("ec generation cleanup of volume %d on %s: %w", req.VolumeId, location.IdxDirectory, err)
+				}
+			}
+		}
+		return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+	}
+
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
 
 	// Pass 1: delete the requested shard files (and any now-orphaned per-disk bitrot
@@ -569,14 +591,37 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	// Delete the requested shard files unconditionally. Gating on a local .ecx
 	// (still used for index-file routing below) would leak an orphan shard left
 	// by a failed copy that reconciliation later mounts under a foreign index.
+	shardFileNames := make([]string, 0, len(shardIds))
 	for _, shardId := range shardIds {
-		shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
-		if util.FileExists(shardFileName) {
-			found = true
-			if err := removeFileIfExists(shardFileName); err != nil {
-				return fmt.Errorf("remove ec shard %s: %w", shardFileName, err)
+		shardFileNames = append(shardFileNames, dataBaseFilename+erasure_coding.ToExt(int(shardId)))
+	}
+	// The shard and every 2PC generation of it (<name>.v<N>) are removed:
+	// the shard must not live on this disk at all. Names match literally —
+	// a glob would let glob metacharacters in the collection part of bName
+	// leak into another volume's files.
+	entries, readErr := os.ReadDir(location.Directory)
+	switch {
+	case readErr == nil:
+		for _, entry := range entries {
+			for _, shardFileName := range shardFileNames {
+				name := filepath.Join(location.Directory, entry.Name())
+				if name != shardFileName && erasure_coding.EcFileGeneration(entry.Name(), filepath.Base(shardFileName)) < 0 {
+					continue
+				}
+				if util.FileExists(name) {
+					found = true
+					if err := removeFileIfExists(name); err != nil {
+						return fmt.Errorf("remove ec shard %s: %w", name, err)
+					}
+				}
 			}
 		}
+	case errors.Is(readErr, fs.ErrNotExist):
+		// No such directory means no shard files on this disk.
+	default:
+		// A listing failure must not fall back to canonical names only:
+		// staged .v<N> files would survive while the RPC reports success.
+		return fmt.Errorf("list %s for ec shards of %s: %w", location.Directory, bName, readErr)
 	}
 
 	if !found {
@@ -709,6 +754,13 @@ func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total in
 		record(removeFileIfExists(dataBaseFileName + ".ecx"))
 		record(removeFileIfExists(dataBaseFileName + ".ecj"))
 		record(removeBitrotSidecars(dataBaseFileName))
+	}
+
+	// Generations staged by the 2PC switch are <base>.ecNN.v<N> plus the
+	// versioned .ecx/.ecj/.vif/.ecsum: a teardown of this disk leaves none.
+	record(erasure_coding.RemoveEcGenerationFiles(dataBaseFileName, 0))
+	if dataBaseFileName != indexBaseFileName {
+		record(erasure_coding.RemoveEcGenerationFiles(indexBaseFileName, 0))
 	}
 
 	// Canonical <base>.vif. A shard copy installs shards + .ecx before .vif, so an

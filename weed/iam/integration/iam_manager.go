@@ -27,11 +27,27 @@ const maxPoliciesForEvaluation = 1024
 
 // IAMManager orchestrates all IAM components
 type IAMManager struct {
-	stsService           *sts.STSService
-	policyEngine         *policy.PolicyEngine
-	roleStore            RoleStore
-	userStore            UserStore
-	oidcProviderStore    OIDCProviderStore
+	stsService        *sts.STSService
+	policyEngine      *policy.PolicyEngine
+	roleStore         RoleStore
+	userStore         UserStore
+	oidcProviderStore OIDCProviderStore
+	// staticOIDCProviders are the OIDC providers of this server's IAM config
+	// file, by ARN. With an in-memory store they are also written to the
+	// store; a persistent store never holds them (see installOIDCProviderStore).
+	staticOIDCProviders map[string]*OIDCProviderRecord
+	// oidcRetryMu guards the background refresh retry and which store is
+	// current: cancelOIDCLoad stops the retry, oidcRetryGen names the one
+	// running (0 when none) so at most one runs, and oidcRetryAgain records a
+	// refresh that failed while it ran, so the retry runs once more.
+	oidcRetryMu    sync.Mutex
+	cancelOIDCLoad context.CancelFunc
+	oidcRetryGen   uint64
+	oidcRetrySeq   uint64
+	oidcRetryAgain bool
+	// oidcRefreshMu serializes refreshes from reading the store to handing
+	// STS the result, so an older snapshot cannot replace a newer one.
+	oidcRefreshMu        sync.Mutex
 	oidcAuditSink        OIDCProviderAuditSink
 	revocationStore      SessionRevocationStore
 	filerAddressProvider func() string // Function to get current filer address
@@ -108,12 +124,13 @@ func (m *IAMManager) PurgeRevokedSessions(ctx context.Context) (int, error) {
 }
 
 // SetOIDCProviderStore configures the IAM-managed OIDC provider store. When
-// nil, OIDC provider IAM actions return ServiceNotReady. The store is the
-// source of truth for AssumeRoleWithWebIdentity provider resolution once
-// Phase 2b lands; in Phase 2a it is read-only and populated from static
-// configuration at boot.
+// nil, OIDC provider IAM actions return ServiceNotReady.
 func (m *IAMManager) SetOIDCProviderStore(store OIDCProviderStore) {
-	m.oidcProviderStore = store
+	var stsConfig *sts.STSConfig
+	if m.stsService != nil {
+		stsConfig = m.stsService.Config
+	}
+	m.installOIDCProviderStore(store, stsConfig)
 }
 
 // GetOIDCProviderStore returns the configured store (may be nil).
@@ -127,7 +144,13 @@ func (m *IAMManager) GetOIDCProvider(ctx context.Context, arn string) (*OIDCProv
 	if m.oidcProviderStore == nil {
 		return nil, fmt.Errorf("OIDC provider store not configured")
 	}
-	return m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if errors.Is(err, ErrOIDCProviderNotFound) {
+		if static, ok := m.staticOIDCProviders[arn]; ok {
+			return copyOIDCProviderRecord(static), nil
+		}
+	}
+	return rec, err
 }
 
 // ListOIDCProviders enumerates all configured OIDC providers.
@@ -135,7 +158,33 @@ func (m *IAMManager) ListOIDCProviders(ctx context.Context) ([]*OIDCProviderReco
 	if m.oidcProviderStore == nil {
 		return nil, fmt.Errorf("OIDC provider store not configured")
 	}
-	return m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	records, err := m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	if err != nil {
+		return nil, err
+	}
+	// A persistent store does not hold the config file's providers.
+	seen := make(map[string]bool, len(records))
+	for _, rec := range records {
+		seen[rec.ARN] = true
+	}
+	for arn, static := range m.staticOIDCProviders {
+		if !seen[arn] {
+			records = append(records, copyOIDCProviderRecord(static))
+		}
+	}
+	return records, nil
+}
+
+// mutableOIDCProvider loads a stored provider for a change. A provider only
+// the IAM config file defines is refused with ErrOIDCProviderStatic.
+func (m *IAMManager) mutableOIDCProvider(ctx context.Context, arn string) (*OIDCProviderRecord, error) {
+	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	if errors.Is(err, ErrOIDCProviderNotFound) {
+		if _, ok := m.staticOIDCProviders[arn]; ok {
+			return nil, fmt.Errorf("%w: %s", ErrOIDCProviderStatic, arn)
+		}
+	}
+	return rec, err
 }
 
 // CreateOIDCProvider persists a new IAM-managed OIDC provider record. Refuses
@@ -149,6 +198,9 @@ func (m *IAMManager) CreateOIDCProvider(ctx context.Context, rec *OIDCProviderRe
 	}
 	if err := validateOIDCProviderRecord(rec); err != nil {
 		return err
+	}
+	if _, static := m.staticOIDCProviders[rec.ARN]; static {
+		return fmt.Errorf("%w: %s", ErrOIDCProviderAlreadyExists, rec.ARN)
 	}
 	existing, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), rec.ARN)
 	if err == nil && existing != nil {
@@ -173,6 +225,9 @@ func (m *IAMManager) DeleteOIDCProvider(ctx context.Context, arn string) error {
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
+	if _, err := m.mutableOIDCProvider(ctx, arn); errors.Is(err, ErrOIDCProviderStatic) {
+		return err
+	}
 	if err := m.oidcProviderStore.DeleteProvider(ctx, m.getFilerAddress(), arn); err != nil {
 		return err
 	}
@@ -190,7 +245,7 @@ func (m *IAMManager) AddClientIDToOIDCProvider(ctx context.Context, arn, clientI
 	if clientID == "" {
 		return fmt.Errorf("ClientID cannot be empty")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -218,7 +273,7 @@ func (m *IAMManager) RemoveClientIDFromOIDCProvider(ctx context.Context, arn, cl
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -255,7 +310,7 @@ func (m *IAMManager) UpdateOIDCProviderThumbprints(ctx context.Context, arn stri
 			return fmt.Errorf("invalid thumbprint %q: must be 40-character SHA-1 hex", tp)
 		}
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -274,7 +329,7 @@ func (m *IAMManager) TagOIDCProvider(ctx context.Context, arn string, tags map[s
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -297,7 +352,7 @@ func (m *IAMManager) UntagOIDCProvider(ctx context.Context, arn string, keys []s
 	if m.oidcProviderStore == nil {
 		return fmt.Errorf("OIDC provider store not configured")
 	}
-	rec, err := m.oidcProviderStore.GetProviderByARN(ctx, m.getFilerAddress(), arn)
+	rec, err := m.mutableOIDCProvider(ctx, arn)
 	if err != nil {
 		return err
 	}
@@ -557,55 +612,174 @@ func (m *IAMManager) initOIDCProviderStore(config *IAMConfig) error {
 	if err != nil {
 		return err
 	}
-	m.oidcProviderStore = store
+	m.installOIDCProviderStore(store, config.STS)
+	return nil
+}
 
-	if config.STS == nil {
-		return nil
+// installOIDCProviderStore makes store the manager's OIDC provider store.
+//
+// The IAM config file's providers are reported by the IAM API alongside the
+// stored ones. An in-memory store holds them as records, as it always has. A
+// persistent store never does: it outlives this process and may be shared by
+// S3 servers with different config files, so a record written from one file
+// would outlive its removal from that file and be trusted by every server.
+// Those providers stay in memory (staticOIDCProviders) and STS keeps serving
+// them from its static configuration; the store holds only providers created
+// through the IAM API, and those are loaded into STS here.
+//
+// A provider stored under the same ARN as a config-file provider takes
+// precedence, in the IAM API as in STS, which already prefers IAM-managed
+// providers so that an API call can shadow a bootstrap entry. Deleting the
+// stored provider brings the config-file one back.
+func (m *IAMManager) installOIDCProviderStore(store OIDCProviderStore, stsConfig *sts.STSConfig) {
+	// Cancel the old store's retry and switch stores in one step, so a failed
+	// refresh of the old store cannot start a retry after the cancel.
+	m.oidcRetryMu.Lock()
+	m.stopOIDCRetryLocked()
+	m.oidcProviderStore = store
+	m.oidcRetryMu.Unlock()
+	m.staticOIDCProviders = staticOIDCProviderRecords(stsConfig)
+	if _, inMemory := store.(*MemoryOIDCProviderStore); inMemory {
+		ctx := context.Background()
+		now := time.Now().UTC()
+		for _, rec := range m.staticOIDCProviders {
+			mirrored := copyOIDCProviderRecord(rec)
+			mirrored.CreatedAt, mirrored.UpdatedAt = now, now
+			if err := store.StoreProvider(ctx, m.getFilerAddress(), mirrored); err != nil {
+				glog.Warningf("mirror static OIDC provider %s into store: %v", rec.ARN, err)
+			}
+		}
+		// The store now holds them and the API may change them, as before;
+		// the overlay is only for stores that must not hold them.
+		m.staticOIDCProviders = nil
+		return
 	}
-	for _, pc := range config.STS.Providers {
+	// The metadata subscription only reports changes made from now on, so
+	// providers already in the store would stay unknown until one changes; a
+	// failed load is retried (RefreshOIDCProvidersFromStore).
+	if err := m.RefreshOIDCProvidersFromStore(context.Background()); err != nil {
+		glog.Warningf("load OIDC providers from the store at startup: %v; retrying in the background", err)
+	}
+}
+
+// startOIDCRetry retries loading store in the background until it succeeds.
+// A store that is no longer current gets no retry: nothing would cancel it,
+// and its eventual success would replace the current store's providers. When
+// a retry is already running, it is asked to run once more instead, because
+// it may already have listed a snapshot older than this failure.
+func (m *IAMManager) startOIDCRetry(store OIDCProviderStore) {
+	m.oidcRetryMu.Lock()
+	defer m.oidcRetryMu.Unlock()
+	if store != m.oidcProviderStore {
+		return
+	}
+	if m.oidcRetryGen != 0 {
+		m.oidcRetryAgain = true
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.oidcRetrySeq++
+	gen := m.oidcRetrySeq
+	m.cancelOIDCLoad, m.oidcRetryGen = cancel, gen
+	bounds := oidcHydrateRetry // read here, not in the goroutine: it outlives its caller
+	go func() {
+		defer cancel()
+		for {
+			m.retryOIDCProviderLoad(ctx, store, bounds)
+			m.oidcRetryMu.Lock()
+			if m.oidcRetryGen != gen {
+				m.oidcRetryMu.Unlock()
+				return // cancelled: another store was installed
+			}
+			if m.oidcRetryAgain && ctx.Err() == nil {
+				m.oidcRetryAgain = false
+				m.oidcRetryMu.Unlock()
+				continue
+			}
+			m.cancelOIDCLoad, m.oidcRetryGen, m.oidcRetryAgain = nil, 0, false
+			m.oidcRetryMu.Unlock()
+			return
+		}
+	}()
+}
+
+// stopOIDCRetryLocked cancels a running retry, as installing another store
+// must. The caller holds oidcRetryMu.
+func (m *IAMManager) stopOIDCRetryLocked() {
+	if m.cancelOIDCLoad != nil {
+		m.cancelOIDCLoad()
+	}
+	m.cancelOIDCLoad, m.oidcRetryGen, m.oidcRetryAgain = nil, 0, false
+}
+
+// currentOIDCProviderStore is the installed store, read under oidcRetryMu.
+func (m *IAMManager) currentOIDCProviderStore() OIDCProviderStore {
+	m.oidcRetryMu.Lock()
+	defer m.oidcRetryMu.Unlock()
+	return m.oidcProviderStore
+}
+
+// staticOIDCProviderRecords describes the enabled OIDC providers of the IAM
+// config file as provider records.
+func staticOIDCProviderRecords(stsConfig *sts.STSConfig) map[string]*OIDCProviderRecord {
+	out := map[string]*OIDCProviderRecord{}
+	if stsConfig == nil {
+		return out
+	}
+	for _, pc := range stsConfig.Providers {
 		if pc == nil || !pc.Enabled || pc.Type != sts.ProviderTypeOIDC {
 			continue
 		}
 		issuer, _ := pc.Config["issuer"].(string)
 		if issuer == "" {
-			glog.Warningf("OIDC provider %s in static config has empty issuer; skipping mirror to store", pc.Name)
+			glog.Warningf("OIDC provider %s in static config has empty issuer; skipping", pc.Name)
 			continue
 		}
-		accountID := ""
-		if config.STS != nil {
-			accountID = config.STS.AccountId
-		}
-		arn, err := DeriveOIDCProviderARN(accountID, issuer)
+		arn, err := DeriveOIDCProviderARN(stsConfig.AccountId, issuer)
 		if err != nil {
 			glog.Warningf("derive ARN for static OIDC provider %s: %v", pc.Name, err)
 			continue
 		}
-		clientIDs := extractClientIDs(pc.Config)
-		ctx := context.Background()
-		// Preserve CreatedAt across reboots when a persistent store already
-		// has this provider — IAM's GetOpenIDConnectProvider response
-		// shouldn't shift its CreateDate every time the server restarts.
-		now := time.Now().UTC()
-		createdAt := now
-		if existing, err := store.GetProviderByARN(ctx, m.getFilerAddress(), arn); err == nil && existing != nil && !existing.CreatedAt.IsZero() {
-			createdAt = existing.CreatedAt
-		}
-		rec := &OIDCProviderRecord{
-			AccountID:               accountID,
+		out[arn] = &OIDCProviderRecord{
+			AccountID:               stsConfig.AccountId,
 			ARN:                     arn,
 			URL:                     issuer,
-			ClientIDs:               clientIDs,
+			ClientIDs:               extractClientIDs(pc.Config),
 			Thumbprints:             extractStringList(pc.Config, "thumbprints"),
 			AllowedPrincipalTagKeys: extractStringList(pc.Config, "allowedPrincipalTagKeys"),
 			PolicyClaim:             extractString(pc.Config, "policyClaim"),
-			CreatedAt:               createdAt,
-			UpdatedAt:               now,
-		}
-		if err := store.StoreProvider(ctx, m.getFilerAddress(), rec); err != nil {
-			glog.Warningf("mirror static OIDC provider %s into store: %v", pc.Name, err)
+			// No CreatedAt: a config-file provider has no creation time the
+			// server could report consistently across restarts.
 		}
 	}
-	return nil
+	return out
+}
+
+// oidcHydrateRetry bounds the backoff between startup load attempts.
+var oidcHydrateRetry = struct{ initial, max time.Duration }{initial: time.Second, max: 30 * time.Second}
+
+// retryOIDCProviderLoad retries loading store, the store it was started for,
+// until it succeeds or ctx is cancelled because another store was installed.
+// It calls refreshOIDCProvidersFrom, not RefreshOIDCProvidersFromStore, so it
+// never schedules a retry of its own.
+func (m *IAMManager) retryOIDCProviderLoad(ctx context.Context, store OIDCProviderStore, bounds struct{ initial, max time.Duration }) {
+	delay := bounds.initial
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		err := m.refreshOIDCProvidersFrom(ctx, store)
+		if err == nil {
+			glog.V(0).Infof("loaded OIDC providers from the store after retrying")
+			return
+		}
+		glog.V(1).Infof("load OIDC providers from the store: %v; retrying in %v", err, delay)
+		if delay *= 2; delay > bounds.max {
+			delay = bounds.max
+		}
+	}
 }
 
 // refreshOIDCProvidersBestEffort calls RefreshOIDCProvidersFromStore and
@@ -626,13 +800,45 @@ func (m *IAMManager) refreshOIDCProvidersBestEffort(ctx context.Context, op, arn
 // the store is empty (clears the IAM-managed map). Records with empty URLs
 // or invalid configuration are logged and skipped so a single bad entry
 // does not stop the rest from refreshing.
+//
+// A refresh that fails keeps retrying in the background until the store
+// answers. Every caller needs that: a metadata-subscription event reports each
+// change ONCE, so a refresh that found the filer unreachable on it would leave
+// a peer's new provider untrusted, or a deleted one trusted, until an unrelated
+// later change; the refresh after a local IAM API mutation and the startup load
+// have the same shape. At most one retry runs.
 func (m *IAMManager) RefreshOIDCProvidersFromStore(ctx context.Context) error {
-	if m.oidcProviderStore == nil || m.stsService == nil {
+	store := m.currentOIDCProviderStore()
+	err := m.refreshOIDCProvidersFrom(ctx, store)
+	if err != nil && store != nil {
+		m.startOIDCRetry(store)
+	}
+	return err
+}
+
+// refreshOIDCProvidersFrom is RefreshOIDCProvidersFromStore for a given store.
+func (m *IAMManager) refreshOIDCProvidersFrom(ctx context.Context, store OIDCProviderStore) error {
+	if store == nil || m.stsService == nil {
 		return nil
 	}
-	records, err := m.oidcProviderStore.ListProviders(ctx, m.getFilerAddress())
+	// Refreshes run concurrently: after an IAM API change, on a peer's change
+	// and in the startup retry. Unserialized, a refresh that read the store
+	// before a DeleteOIDCProvider could finish after that call's own refresh
+	// and keep the deleted provider trusted.
+	m.oidcRefreshMu.Lock()
+	defer m.oidcRefreshMu.Unlock()
+	records, err := store.ListProviders(ctx, m.getFilerAddress())
 	if err != nil {
 		return fmt.Errorf("list OIDC providers: %w", err)
+	}
+	// A snapshot of a store that has since been replaced must not replace the
+	// current store's providers: a retry is cancelled when another store is
+	// installed, and a refresh may have listed the old store just before.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if store != m.currentOIDCProviderStore() {
+		return fmt.Errorf("list OIDC providers: the store was replaced during the refresh")
 	}
 	byIssuer := make(map[string][]sts.ScopedOIDCProvider, len(records))
 	for _, rec := range records {
@@ -664,9 +870,11 @@ func buildOIDCProviderFromRecord(rec *OIDCProviderRecord) (*oidc.OIDCProvider, e
 		return nil, fmt.Errorf("record cannot be nil")
 	}
 	cfg := &oidc.OIDCConfig{
-		Issuer:      rec.URL,
-		ClientIDs:   append([]string(nil), rec.ClientIDs...),
-		Thumbprints: append([]string(nil), rec.Thumbprints...),
+		Issuer:                  rec.URL,
+		ClientIDs:               append([]string(nil), rec.ClientIDs...),
+		Thumbprints:             append([]string(nil), rec.Thumbprints...),
+		AllowedPrincipalTagKeys: append([]string(nil), rec.AllowedPrincipalTagKeys...),
+		PolicyClaim:             rec.PolicyClaim,
 	}
 	provider := oidc.NewOIDCProvider(rec.ARN)
 	if err := provider.Initialize(cfg); err != nil {

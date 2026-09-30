@@ -89,6 +89,7 @@ type FilerOptions struct {
 	s3ConfigFile              *string // optional path to static S3 identity config
 
 	allowUntrustedRemoteEndpoints *bool
+	remoteCacheEvictThreshold     *float64
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
 	// and by weed mini; nil for standalone weed filer.
@@ -134,6 +135,7 @@ func init() {
 	f.tusMaxSizeMB = cmdFiler.Flag.Int("tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
 	f.tusSessionExpiry = cmdFiler.Flag.Duration("tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
 	f.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	f.remoteCacheEvictThreshold = cmdFiler.Flag.Float64("remoteCacheEvictThreshold", 0.9, "evict remote-cached objects (oldest first) when any volume disk exceeds this usage fraction; 0 disables")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -407,6 +409,7 @@ func (fo *FilerOptions) startFiler() {
 		CredentialManager:         credentialManager,
 
 		AllowUntrustedRemoteEndpoints: *fo.allowUntrustedRemoteEndpoints,
+		RemoteCacheEvictThreshold:     *fo.remoteCacheEvictThreshold,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

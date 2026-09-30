@@ -7,16 +7,21 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 var ErrInsufficientSpace = fmt.Errorf("insufficient free space")
 
-func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {
+func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (garbageRatio float64, diskSpaceLow bool, err error) {
 	if v := s.findVolume(volumeId); v != nil {
 		glog.V(3).Infof("volume %d garbage level: %f", volumeId, v.garbageLevel())
-		return v.garbageLevel(), nil
+		// diskSpaceLow only counts when it is the sole read-only cause — an
+		// operator mark or I/O quarantine still shields the volume.
+		_, noWriteOrDelete, noWriteCanDelete, isLow := v.ReadOnlyReasons()
+		return v.garbageLevel(), isLow && !noWriteOrDelete && !noWriteCanDelete, nil
 	}
-	return 0, fmt.Errorf("volume id %d is not found during check compact: %w", volumeId, ErrVolumeNotFound)
+	return 0, false, fmt.Errorf("volume id %d is not found during check compact: %w", volumeId, ErrVolumeNotFound)
 }
 
 func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compactionBytePerSecond int64, progressFn ProgressFunc) error {
@@ -56,18 +61,39 @@ func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 	return fmt.Errorf("volume id %d is not found during cleaning up: %w", vid, ErrVolumeNotFound)
 }
 
+// estimatedCompactedSize is what compaction writes: a superblock, the live
+// needles with their on-disk framing, and an index with live entries only.
+// Deleted bytes do not carry over, so a mostly-garbage volume needs far less
+// space than it occupies.
+func estimatedCompactedSize(v *Volume) int64 {
+	liveCount := v.FileCount()
+	if deleted := v.DeletedCount(); deleted < liveCount {
+		liveCount -= deleted
+	} else {
+		liveCount = 0
+	}
+	liveBytes := v.ContentSize()
+	if deleted := v.DeletedSize(); deleted < liveBytes {
+		liveBytes -= deleted
+	} else {
+		liveBytes = 0
+	}
+	perNeedle := needle.GetActualSize(0, v.Version()) + types.NeedlePaddingSize + types.NeedleMapEntrySize
+	return super_block.SuperBlockSize + int64(liveCount)*perNeedle + int64(liveBytes)
+}
+
 func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
-	// Get current volume size for space calculation
 	volumeSize, indexSize, _ := v.FileStat()
 
-	// Calculate space needed for compaction:
-	// 1. Space for the new compacted volume (approximately same as current volume size)
-	// 2. Use the larger of preallocate or estimated volume size
-	estimatedCompactSize := int64(volumeSize + indexSize)
+	// The compacted output holds live needles only, so measure against the
+	// estimated compacted size — otherwise a disk full of garbage can never
+	// reclaim itself.
+	estimatedCompactSize := estimatedCompactedSize(v)
 	spaceNeeded := preallocate
 	if estimatedCompactSize > preallocate {
 		spaceNeeded = estimatedCompactSize
 	}
+	spaceNeeded += spaceNeeded / 10
 
 	diskStatus := stats.NewDiskStatus(v.dir)
 	if int64(diskStatus.Free) < spaceNeeded {
