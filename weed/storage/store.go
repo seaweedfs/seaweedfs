@@ -341,7 +341,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			volume.diskId = diskId // Set the disk ID
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d on disk ID %d", vid, diskId)
-			readOnly, _, readOnlyCanDelete, _ := volume.ReadOnlyReasons()
+			readOnly, readOnlyCanDelete, readOnlyLowDisk := volume.readOnlyReport()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:                uint32(vid),
 				Collection:        collection,
@@ -352,6 +352,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 				DiskId:            diskId,
 				ReadOnly:          readOnly,
 				ReadOnlyCanDelete: readOnlyCanDelete,
+				ReadOnlyLowDisk:   readOnlyLowDisk,
 			}
 			return nil
 		} else {
@@ -1006,7 +1007,7 @@ func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ..
 					return err
 				}
 			}
-			readOnly, _, readOnlyCanDelete, _ := v.ReadOnlyReasons()
+			readOnly, readOnlyCanDelete, readOnlyLowDisk := v.readOnlyReport()
 			s.NewVolumesChan <- &master_pb.VolumeShortInformationMessage{
 				Id:                uint32(v.Id),
 				Collection:        v.Collection,
@@ -1017,6 +1018,7 @@ func (s *Store) mountVolume(i needle.VolumeId, collection *string, validators ..
 				DiskId:            uint32(diskId),
 				ReadOnly:          readOnly,
 				ReadOnlyCanDelete: readOnlyCanDelete,
+				ReadOnlyLowDisk:   readOnlyLowDisk,
 			}
 			return nil
 		}

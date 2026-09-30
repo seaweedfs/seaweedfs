@@ -357,7 +357,10 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 
 // skipReadOnly is set by the background scan and all-volumes sweep, where a
 // read-only flag usually means an unhealthy disk. An explicit volumeId clears
-// it so a benignly read-only (full/oversized) volume can be reclaimed.
+// it so a benignly read-only (full/oversized) volume can be reclaimed. A volume
+// that is read-only only because its disk ran out of space is the other benign
+// case, and the one the sweep must not skip: compacting it is what gives the
+// disk its space back (issue #11516).
 func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64, skipReadOnly bool) {
 	volumeLayout.accessLock.RLock()
 	isReadOnly := volumeLayout.vid2location[vid].AnyReadOnly()
@@ -366,9 +369,13 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 
 	if isReadOnly {
 		if skipReadOnly {
-			return
+			if !readOnlyForLowDiskOnly(locationList, vid) {
+				return
+			}
+			glog.V(1).Infof("vacuuming volume %d: read-only only because its disk is low on space", vid)
+		} else {
+			glog.V(0).Infof("vacuuming read-only volume %d on explicit request", vid)
 		}
-		glog.V(0).Infof("vacuuming read-only volume %d on explicit request", vid)
 	}
 	if !isEnoughCopies {
 		glog.Warningf("skip vacuuming: not enough copies for volume:%d", vid)
@@ -384,6 +391,18 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 			t.batchVacuumVolumeCleanup(grpcDialOption, volumeLayout, vid, vacuumLocationList)
 		}
 	}
+}
+
+// readOnlyForLowDiskOnly reports whether no replica of vid is read-only for any
+// reason other than low disk space, going by what each node last reported.
+func readOnlyForLowDiskOnly(locationList *VolumeLocationList, vid needle.VolumeId) bool {
+	for _, dn := range locationList.list {
+		v, err := dn.GetVolumesById(vid)
+		if err != nil || (v.ReadOnly && !v.ReadOnlyLowDisk) {
+			return false
+		}
+	}
+	return true
 }
 
 // deleteEmptyVolumes removes a volume whose every replica copy has stayed

@@ -64,7 +64,7 @@ func (f *fakeVolumeDeleteServer) VolumeDelete(ctx context.Context, req *volume_s
 	return &volume_server_pb.VolumeDeleteResponse{}, nil
 }
 
-func startFakeVolumeServer(t *testing.T, vs *fakeVolumeDeleteServer) (grpcPort int, dialOption grpc.DialOption) {
+func startFakeVolumeServer(t *testing.T, vs volume_server_pb.VolumeServerServer) (grpcPort int, dialOption grpc.DialOption) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -251,5 +251,72 @@ func TestDeleteEmptyVolumesKeepsVidWhenCopyDeleteFails(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.deletes) != 1 {
 		t.Fatalf("VolumeDelete calls = %d, want 1 (only the reachable copy)", len(fake.deletes))
+	}
+}
+
+type fakeVacuumCheckServer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+	mu      sync.Mutex
+	checked []uint32
+}
+
+func (f *fakeVacuumCheckServer) VacuumVolumeCheck(ctx context.Context, req *volume_server_pb.VacuumVolumeCheckRequest) (*volume_server_pb.VacuumVolumeCheckResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checked = append(f.checked, req.VolumeId)
+	// no garbage: the sweep stops after the check, which is all this test needs
+	return &volume_server_pb.VacuumVolumeCheckResponse{GarbageRatio: 0}, nil
+}
+
+// The sweep skips read-only volumes because the flag usually means a failing
+// disk. A volume that is read-only only because its disk is low on space is
+// healthy and must still be checked, or a full disk can never be reclaimed.
+func TestSweepChecksVolumesReadOnlyOnlyForLowDisk(t *testing.T) {
+	fake := &fakeVacuumCheckServer{}
+	grpcPort, dialOption := startFakeVolumeServer(t, fake)
+
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, grpcPort, "127.0.0.1", fmt.Sprintf("dn-%d", grpcPort), map[string]uint32{"": 10})
+
+	volume := func(id int, lowDisk bool) storage.VolumeInfo {
+		return storage.VolumeInfo{
+			Id:               needle.VolumeId(id),
+			Size:             1 << 20,
+			Collection:       "c",
+			FileCount:        100,
+			DeleteCount:      100,
+			ReadOnly:         true,
+			ReadOnlyLowDisk:  lowDisk,
+			Version:          needle.GetCurrentVersion(),
+			ReplicaPlacement: &super_block.ReplicaPlacement{},
+			Ttl:              needle.EMPTY_TTL,
+		}
+	}
+	lowDisk := volume(1, true)
+	otherReason := volume(2, false)
+	dn.UpdateVolumes([]storage.VolumeInfo{lowDisk, otherReason})
+	topo.RegisterVolumeLayout(lowDisk, dn)
+	topo.RegisterVolumeLayout(otherReason, dn)
+
+	vl := topo.GetVolumeLayout("c", &super_block.ReplicaPlacement{}, needle.EMPTY_TTL, types.ToDiskType(""))
+	c, ok := topo.FindCollection("c")
+	if !ok {
+		t.Fatal("collection c not found")
+	}
+	for _, v := range []storage.VolumeInfo{lowDisk, otherReason} {
+		vl.accessLock.RLock()
+		locations := vl.vid2location[v.Id].Copy()
+		vl.accessLock.RUnlock()
+		if !locations.AnyReadOnly() {
+			t.Fatalf("volume %d is not flagged read-only in the layout; the test would not exercise the skip", v.Id)
+		}
+		topo.vacuumOneVolumeId(dialOption, vl, c, 0.3, locations, v.Id, 0, true)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.checked) != 1 || fake.checked[0] != uint32(lowDisk.Id) {
+		t.Fatalf("sweep checked volumes %v, want only the low-disk volume [%d]", fake.checked, lowDisk.Id)
 	}
 }

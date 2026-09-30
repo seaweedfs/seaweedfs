@@ -482,7 +482,7 @@ func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMes
 	volumeInfo.FileCount = fileCount
 	volumeInfo.DeleteCount = deletedCount
 	volumeInfo.DeletedByteCount = deletedSize
-	volumeInfo.ReadOnly, _, volumeInfo.ReadOnlyCanDelete, _ = v.ReadOnlyReasons()
+	volumeInfo.ReadOnly, volumeInfo.ReadOnlyCanDelete, volumeInfo.ReadOnlyLowDisk = v.readOnlyReport()
 	volumeInfo.ReplicaPlacement = uint32(v.ReplicaPlacement.Byte())
 	volumeInfo.Version = uint32(v.Version())
 	volumeInfo.Ttl = v.Ttl.ToUint32()
@@ -523,6 +523,15 @@ func (v *Volume) ReadOnlyReasons() (readOnly, noWriteOrDelete, noWriteCanDelete,
 	// after NewVolume hands it back.
 	diskSpaceLow = v.location != nil && v.location.isDiskSpaceLow.Load()
 	return noWriteOrDelete || noWriteCanDelete || diskSpaceLow, noWriteOrDelete, noWriteCanDelete, diskSpaceLow
+}
+
+// readOnlyReport folds ReadOnlyReasons into the read-only bits a heartbeat
+// carries. readOnlyLowDisk is set only when low disk space is the sole reason:
+// the volume itself is healthy and deletes still land, which lets the master
+// tell it apart from a volume on a failing disk.
+func (v *Volume) readOnlyReport() (readOnly, readOnlyCanDelete, readOnlyLowDisk bool) {
+	readOnly, noWriteOrDelete, noWriteCanDelete, diskSpaceLow := v.ReadOnlyReasons()
+	return readOnly, noWriteCanDelete, diskSpaceLow && !noWriteOrDelete && !noWriteCanDelete
 }
 
 var errVolumeUnavailable = errors.New("volume unavailable")

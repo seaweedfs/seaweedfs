@@ -155,6 +155,9 @@ message VolumeInformationMessage {
   string remote_storage_key = 14;
   string disk_type = 15;
   uint32 disk_id = 16;
+  // read_only holds only because the disk is low on free space; the volume
+  // itself is healthy and deletes still land.
+  bool read_only_low_disk = 18;
 }
 
 message VolumeShortInformationMessage {
@@ -167,6 +170,7 @@ message VolumeShortInformationMessage {
   uint32 disk_id = 16;
   bool read_only = 17;
   bool read_only_can_delete = 18;
+  bool read_only_low_disk = 19;
 }
 
 message VolumeEcShardInformationMessage {

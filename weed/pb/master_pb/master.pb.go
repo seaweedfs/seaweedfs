@@ -470,8 +470,11 @@ type VolumeInformationMessage struct {
 	RemoteStorageKey  string                 `protobuf:"bytes,14,opt,name=remote_storage_key,json=remoteStorageKey,proto3" json:"remote_storage_key,omitempty"`
 	DiskType          string                 `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	DiskId            uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// read_only holds only because the disk is low on free space; the volume
+	// itself is healthy and deletes still land.
+	ReadOnlyLowDisk bool `protobuf:"varint,18,opt,name=read_only_low_disk,json=readOnlyLowDisk,proto3" json:"read_only_low_disk,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *VolumeInformationMessage) Reset() {
@@ -623,6 +626,13 @@ func (x *VolumeInformationMessage) GetDiskId() uint32 {
 	return 0
 }
 
+func (x *VolumeInformationMessage) GetReadOnlyLowDisk() bool {
+	if x != nil {
+		return x.ReadOnlyLowDisk
+	}
+	return false
+}
+
 type VolumeShortInformationMessage struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Id                uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -634,6 +644,7 @@ type VolumeShortInformationMessage struct {
 	DiskId            uint32                 `protobuf:"varint,16,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	ReadOnly          bool                   `protobuf:"varint,17,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
 	ReadOnlyCanDelete bool                   `protobuf:"varint,18,opt,name=read_only_can_delete,json=readOnlyCanDelete,proto3" json:"read_only_can_delete,omitempty"`
+	ReadOnlyLowDisk   bool                   `protobuf:"varint,19,opt,name=read_only_low_disk,json=readOnlyLowDisk,proto3" json:"read_only_low_disk,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -727,6 +738,13 @@ func (x *VolumeShortInformationMessage) GetReadOnly() bool {
 func (x *VolumeShortInformationMessage) GetReadOnlyCanDelete() bool {
 	if x != nil {
 		return x.ReadOnlyCanDelete
+	}
+	return false
+}
+
+func (x *VolumeShortInformationMessage) GetReadOnlyLowDisk() bool {
+	if x != nil {
+		return x.ReadOnlyLowDisk
 	}
 	return false
 }
@@ -5069,7 +5087,7 @@ const file_master_proto_rawDesc = "" +
 	"\x10duplicated_uuids\x18\x06 \x03(\tR\x0fduplicatedUuids\x12 \n" +
 	"\vpreallocate\x18\a \x01(\bR\vpreallocate\x125\n" +
 	"\x17resend_full_volume_list\x18\b \x01(\bR\x14resendFullVolumeList\x126\n" +
-	"\x17volume_digest_supported\x18\t \x01(\bR\x15volumeDigestSupported\"\xe2\x04\n" +
+	"\x17volume_digest_supported\x18\t \x01(\bR\x15volumeDigestSupported\"\x8f\x05\n" +
 	"\x18VolumeInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x1e\n" +
@@ -5091,7 +5109,8 @@ const file_master_proto_rawDesc = "" +
 	"\x13remote_storage_name\x18\r \x01(\tR\x11remoteStorageName\x12,\n" +
 	"\x12remote_storage_key\x18\x0e \x01(\tR\x10remoteStorageKey\x12\x1b\n" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
-	"\adisk_id\x18\x10 \x01(\rR\x06diskId\"\xac\x02\n" +
+	"\adisk_id\x18\x10 \x01(\rR\x06diskId\x12+\n" +
+	"\x12read_only_low_disk\x18\x12 \x01(\bR\x0freadOnlyLowDisk\"\xd9\x02\n" +
 	"\x1dVolumeShortInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +
@@ -5104,7 +5123,8 @@ const file_master_proto_rawDesc = "" +
 	"\tdisk_type\x18\x0f \x01(\tR\bdiskType\x12\x17\n" +
 	"\adisk_id\x18\x10 \x01(\rR\x06diskId\x12\x1b\n" +
 	"\tread_only\x18\x11 \x01(\bR\breadOnly\x12/\n" +
-	"\x14read_only_can_delete\x18\x12 \x01(\bR\x11readOnlyCanDelete\"\xd4\x02\n" +
+	"\x14read_only_can_delete\x18\x12 \x01(\bR\x11readOnlyCanDelete\x12+\n" +
+	"\x12read_only_low_disk\x18\x13 \x01(\bR\x0freadOnlyLowDisk\"\xd4\x02\n" +
 	"\x1fVolumeEcShardInformationMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1e\n" +
 	"\n" +

@@ -32,6 +32,9 @@ func (vi VolumeInfo) ReportHash() uint64 {
 	if vi.ReadOnlyCanDelete {
 		buf[56] |= 2
 	}
+	if vi.ReadOnlyLowDisk {
+		buf[56] |= 4
+	}
 	h := xxhash.Sum64(buf[:])
 
 	var modified [8]byte

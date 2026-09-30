@@ -39,6 +39,9 @@ type VolumeInfo struct {
 	Version           needle.Version
 	ReadOnly          bool
 	ReadOnlyCanDelete bool
+	// ReadOnlyLowDisk: ReadOnly holds only because the disk is low on free
+	// space, so the volume itself is healthy and deletes still land.
+	ReadOnlyLowDisk bool
 }
 
 // countAsUint32 narrows a reported count without letting it wrap. Nothing
@@ -61,6 +64,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		DeletedByteCount:  m.DeletedByteCount,
 		ReadOnly:          m.ReadOnly,
 		ReadOnlyCanDelete: m.ReadOnlyCanDelete,
+		ReadOnlyLowDisk:   m.ReadOnlyLowDisk,
 		Version:           needle.Version(m.Version),
 		CompactRevision:   m.CompactRevision,
 		ModifiedAtSecond:  m.ModifiedAtSecond,
@@ -82,6 +86,7 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 		Id:                needle.VolumeId(m.Id),
 		ReadOnly:          m.ReadOnly,
 		ReadOnlyCanDelete: m.ReadOnlyCanDelete,
+		ReadOnlyLowDisk:   m.ReadOnlyLowDisk,
 		Collection:        internVolumeString(m.Collection),
 		Version:           needle.Version(m.Version),
 		DiskId:            m.DiskId,
@@ -171,6 +176,7 @@ func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMe
 		DeletedByteCount:  vi.DeletedByteCount,
 		ReadOnly:          vi.ReadOnly,
 		ReadOnlyCanDelete: vi.ReadOnlyCanDelete,
+		ReadOnlyLowDisk:   vi.ReadOnlyLowDisk,
 		ReplicaPlacement:  uint32(vi.ReplicaPlacement.Byte()),
 		Version:           uint32(vi.Version),
 		Ttl:               vi.Ttl.ToUint32(),
