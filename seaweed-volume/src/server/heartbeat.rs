@@ -373,6 +373,22 @@ fn diff_ec_shard_delta_messages(
     (new_ec_shards, deleted_ec_shards)
 }
 
+/// A volume heartbeat carries no shard list, only the expired shards it
+/// deleted, so that is all it may take out of the delta baseline.
+fn forget_reported_ec_deletions(
+    last_ec_shards: &mut HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+    heartbeat: &master_pb::Heartbeat,
+) {
+    last_ec_shards.retain(|(id, collection, disk_id, shard_id), _| {
+        !heartbeat.deleted_ec_shards.iter().any(|deleted| {
+            deleted.id == *id
+                && deleted.collection == *collection
+                && deleted.disk_id == *disk_id
+                && deleted.ec_index_bits & (1u32 << shard_id) != 0
+        })
+    });
+}
+
 /// Perform one heartbeat session with a master server.
 async fn do_heartbeat(
     config: &HeartbeatConfig,
@@ -401,16 +417,12 @@ async fn do_heartbeat(
     let (initial_hb, initial_volumes) =
         off_runtime(config, state, collect_heartbeat_with_snapshot).await?;
     let mut last_volumes: HashMap<u32, VolumeIdentity> = volume_identities(&initial_volumes);
-    let mut last_ec_shards = {
-        let store = state.store.read().unwrap();
-        collect_ec_shard_delta_messages(&store)
-    };
 
     // Send initial heartbeats BEFORE calling send_heartbeat to avoid deadlock:
     // the server won't send response headers until it receives the first message,
     // but send_heartbeat().await waits for response headers.
     tx.send(initial_hb).await?;
-    let initial_ec_hb = off_runtime(config, state, collect_ec_heartbeat).await?;
+    let (initial_ec_hb, mut last_ec_shards) = ec_tick_pass(config, state).await?;
     tx.send(initial_ec_hb).await?;
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -469,10 +481,7 @@ async fn do_heartbeat(
                                 off_runtime(config, state, collect_heartbeat_with_snapshot)
                                     .await?;
                             last_volumes = volume_identities(&adjusted_volumes);
-                            last_ec_shards = {
-                                let store = state.store.read().unwrap();
-                                collect_ec_shard_delta_messages(&store)
-                            };
+                            forget_reported_ec_deletions(&mut last_ec_shards, &adjusted_hb);
                             if tx.send(adjusted_hb).await.is_err() {
                                 return Ok(None);
                             }
@@ -501,10 +510,7 @@ async fn do_heartbeat(
                 let (current_hb, current_volumes) =
                     off_runtime(config, state, collect_heartbeat_with_snapshot).await?;
                 last_volumes = volume_identities(&current_volumes);
-                last_ec_shards = {
-                    let store = state.store.read().unwrap();
-                    collect_ec_shard_delta_messages(&store)
-                };
+                forget_reported_ec_deletions(&mut last_ec_shards, &current_hb);
                 if tx.send(current_hb).await.is_err() {
                     return Ok(None);
                 }
@@ -803,7 +809,8 @@ async fn maybe_adjust_volume_max(
     .await
 }
 
-/// The EC heartbeat and the shard list later deltas are diffed against.
+/// The EC heartbeat and the shard list later deltas are diffed against,
+/// under one guard so no mount lands between them unreported.
 async fn ec_tick_pass(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
@@ -815,9 +822,11 @@ async fn ec_tick_pass(
     tokio::task::JoinError,
 > {
     off_runtime(config, state, |config, state| {
-        let heartbeat = collect_ec_heartbeat(config, state);
-        let shards = collect_ec_shard_delta_messages(&state.store.read().unwrap());
-        (heartbeat, shards)
+        let store = state.store.read().unwrap();
+        (
+            collect_ec_heartbeat(config, &store),
+            collect_ec_shard_delta_messages(&store),
+        )
     })
     .await
 }
@@ -1356,12 +1365,8 @@ fn collect_live_ec_shards(
 }
 
 /// Collect EC shard information into a Heartbeat message.
-fn collect_ec_heartbeat(
-    config: &HeartbeatConfig,
-    state: &Arc<VolumeServerState>,
-) -> master_pb::Heartbeat {
-    let store = state.store.read().unwrap();
-    let ec_shards = collect_live_ec_shards(&store, true);
+fn collect_ec_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartbeat {
+    let ec_shards = collect_live_ec_shards(store, true);
 
     let has_no = ec_shards.is_empty();
     master_pb::Heartbeat {
@@ -2010,7 +2015,7 @@ mod tests {
             .unwrap();
 
         let state = test_state_with_store(store);
-        let heartbeat = collect_ec_heartbeat(&test_config(), &state);
+        let heartbeat = collect_ec_heartbeat(&test_config(), &state.store.read().unwrap());
 
         assert_eq!(heartbeat.ec_shards.len(), 1);
         assert!(!heartbeat.has_no_ec_shards);
@@ -2444,6 +2449,96 @@ mod tests {
             !heartbeat.has_no_ec_shards,
             "a mounted EC shard was reported absent"
         );
+    }
+
+    fn mount_test_ec_shard(state: &VolumeServerState, dir: &str, collection: &str, id: u32) {
+        std::fs::write(format!("{}/{}_{}.ec00", dir, collection, id), b"shard").unwrap();
+        std::fs::write(format!("{}/{}_{}.ecx", dir, collection, id), [0u8; 16]).unwrap();
+        state.store.write().unwrap().locations[0]
+            .mount_ec_shards(VolumeId(id), collection, &[0], "")
+            .unwrap();
+    }
+
+    /// One pass of the loop's volume tick, then of its notify branch: the
+    /// EC delta the notify branch would send.
+    fn ec_delta_after_volume_tick(
+        state: &Arc<VolumeServerState>,
+        last_ec_shards: &mut HashMap<EcShardDeltaKey, master_pb::VolumeEcShardInformationMessage>,
+    ) -> (
+        master_pb::Heartbeat,
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+    ) {
+        let (heartbeat, _) = collect_heartbeat_with_snapshot(&test_config(), state);
+        forget_reported_ec_deletions(last_ec_shards, &heartbeat);
+        let current = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+        let (new_ec_shards, deleted_ec_shards) =
+            diff_ec_shard_delta_messages(last_ec_shards, &current);
+        (heartbeat, new_ec_shards, deleted_ec_shards)
+    }
+
+    // A volume heartbeat carries no shard list, so a mount or unmount it
+    // collects past must still go out as the notify branch's delta.
+    #[test]
+    fn test_ec_shard_change_before_a_volume_heartbeat_still_goes_out_as_a_delta() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let state = test_state_with_store(reporting_store(dir, 1));
+        mount_test_ec_shard(&state, dir, "ec_delta_kept", 91);
+        mount_test_ec_shard(&state, dir, "ec_delta_unmounted", 92);
+        let mut last_ec_shards = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+
+        mount_test_ec_shard(&state, dir, "ec_delta_mounted", 93);
+        state
+            .store
+            .write()
+            .unwrap()
+            .unmount_ec_shards(VolumeId(92), &[0]);
+        let (heartbeat, new_ec_shards, deleted_ec_shards) =
+            ec_delta_after_volume_tick(&state, &mut last_ec_shards);
+
+        assert!(heartbeat.ec_shards.is_empty() && !heartbeat.has_no_ec_shards);
+        assert_eq!(
+            new_ec_shards.iter().map(|s| s.id).collect::<Vec<_>>(),
+            vec![93],
+            "a mount collected past by the volume heartbeat was never sent"
+        );
+        assert_eq!(
+            deleted_ec_shards.iter().map(|s| s.id).collect::<Vec<_>>(),
+            vec![92],
+            "an unmount collected past by the volume heartbeat was never sent"
+        );
+    }
+
+    // The volume heartbeat already told the master about the expired EC
+    // volume it destroyed; the next delta must not repeat it.
+    #[test]
+    fn test_ec_volume_expired_by_a_volume_heartbeat_is_not_deleted_again() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let state = test_state_with_store(reporting_store(dir, 0));
+        mount_test_ec_shard(&state, dir, "ec_delta_kept", 94);
+        mount_test_ec_shard(&state, dir, "ec_delta_expired", 95);
+        let mut last_ec_shards = collect_ec_shard_delta_messages(&state.store.read().unwrap());
+        state
+            .store
+            .write()
+            .unwrap()
+            .find_ec_volume_mut(VolumeId(95))
+            .unwrap()
+            .expire_at_sec = 1;
+
+        let (heartbeat, new_ec_shards, deleted_ec_shards) =
+            ec_delta_after_volume_tick(&state, &mut last_ec_shards);
+
+        assert_eq!(heartbeat.deleted_ec_shards.len(), 1);
+        assert_eq!(heartbeat.deleted_ec_shards[0].id, 95);
+        assert!(new_ec_shards.is_empty());
+        assert!(
+            deleted_ec_shards.is_empty(),
+            "an expired EC volume was reported deleted twice"
+        );
+        assert_eq!(last_ec_shards.len(), 1);
     }
 
     #[test]
