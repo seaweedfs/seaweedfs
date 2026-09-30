@@ -3893,6 +3893,7 @@ impl VolumeServer for VolumeGrpcService {
                     .iter()
                     .map(|d| d.clone().unwrap())
                     .collect(),
+                needle_map_kind: store.needle_map_kind,
             }
         };
 
@@ -6441,6 +6442,7 @@ struct EcDecodeJob {
     small_block_size: usize,
     /// Directory of each data shard.
     shard_dirs: Vec<String>,
+    needle_map_kind: crate::storage::needle_map::NeedleMapKind,
 }
 
 impl EcDecodeJob {
@@ -6456,6 +6458,7 @@ impl EcDecodeJob {
             large_block_size,
             small_block_size,
             shard_dirs,
+            needle_map_kind,
         } = self;
 
         // Deletions journaled beside the .ecx, or collected by
@@ -6526,6 +6529,18 @@ impl EcDecodeJob {
             if let Err(e) = ec_bitrot::remove_bitrot_sidecars(&base) {
                 tracing::warn!(volume_id = vid.0, error = %e, "remove bitrot sidecars of {base}");
             }
+        }
+
+        // Drop the deleted needles. A failure is only logged, as in Go: the
+        // uncompacted .dat/.idx already make a complete volume.
+        if let Err(e) = crate::storage::store::Store::compact_volume_files(
+            &dat_dir,
+            &idx_dir,
+            &collection,
+            vid,
+            needle_map_kind,
+        ) {
+            tracing::error!(volume_id = vid.0, error = %e, "compact decoded volume");
         }
         Ok(())
     }
@@ -11074,9 +11089,22 @@ mod tests {
         assert_eq!(n.data, body);
     }
 
+    /// The decode's closing compaction fails when its .cpd cannot be created;
+    /// undo with [`unblock_decode_compaction`] before mounting.
+    fn block_decode_compaction(data: &str) {
+        std::fs::create_dir(format!("{data}/1.cpd")).unwrap();
+    }
+
+    fn unblock_decode_compaction(data: &str) {
+        std::fs::remove_dir(format!("{data}/1.cpd")).unwrap();
+        assert!(!std::path::Path::new(&format!("{data}/1.cpx")).exists());
+    }
+
     /// ec.decode used to read the .ecx/.ecj from the data dir when writing the
     /// .idx, failing with NotFound after the .dat was already published, and
     /// ignored .ecj deletions when sizing the .dat (Go folds them in first).
+    /// Compaction is made to fail: the decode still succeeds, as in Go, so the
+    /// uncompacted .idx must stand on its own.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_volume_ec_shards_to_volume_reads_ecx_from_split_idx_dir() {
         // The lowest key (the first .idx row) and the .dat tail, each journaled
@@ -11085,11 +11113,13 @@ mod tests {
         let (service, _tmp, data, idx, size_before_needle_3) =
             make_split_idx_ec_decode_service(&journal, false).await;
         let ecx = std::fs::read(format!("{idx}/1.ecx")).unwrap();
+        block_decode_compaction(&data);
 
         service
             .volume_ec_shards_to_volume(ec_shards_to_volume_request())
             .await
             .unwrap();
+        unblock_decode_compaction(&data);
 
         // The journaled tail needle is not decoded.
         assert_eq!(
@@ -11136,7 +11166,8 @@ mod tests {
     }
 
     /// A tail needle tombstoned in the .ecx itself (Go's RebuildEcxFile) is cut
-    /// from the .dat the same way, so its row must not survive either.
+    /// from the .dat the same way, so its row must not survive either, even
+    /// when compaction fails.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_volume_ec_shards_to_volume_drops_sealed_tail_tombstone() {
         let (service, _tmp, data, idx, size_before_needle_3) =
@@ -11146,11 +11177,13 @@ mod tests {
         let size_at = 2 * NEEDLE_MAP_ENTRY_SIZE + NEEDLE_ID_SIZE + OFFSET_SIZE;
         TOMBSTONE_FILE_SIZE.to_bytes(&mut ecx[size_at..size_at + SIZE_SIZE]);
         std::fs::write(&ecx_path, &ecx).unwrap();
+        block_decode_compaction(&data);
 
         service
             .volume_ec_shards_to_volume(ec_shards_to_volume_request())
             .await
             .unwrap();
+        unblock_decode_compaction(&data);
 
         assert_eq!(
             std::fs::metadata(format!("{data}/1.dat")).unwrap().len(),
@@ -11161,6 +11194,47 @@ mod tests {
             ecx[..2 * NEEDLE_MAP_ENTRY_SIZE]
         );
         assert_decoded_volume(&service, (2, 0), &[1, 2], &[3]);
+    }
+
+    /// Go compacts the decoded volume (CompactVolumeFiles), so needles deleted
+    /// through the .ecj leave the .dat and .idx instead of waiting for a vacuum.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_compacts_the_decoded_volume() {
+        let (service, _tmp, data, idx, _) = make_split_idx_ec_decode_service(&[1], false).await;
+        let vifs = || [&data, &idx].map(|dir| std::fs::read(format!("{dir}/1.vif")).ok());
+        let vifs_before = vifs();
+        assert!(vifs_before.iter().any(Option::is_some));
+
+        service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap();
+
+        let dat = std::fs::read(format!("{data}/1.dat")).unwrap();
+        let deleted_body = b"split idx decode needle 1";
+        assert!(
+            !dat.windows(deleted_body.len()).any(|w| w == deleted_body),
+            "the deleted needle must be compacted out of the .dat"
+        );
+        assert_eq!(dat[4..6], 1u16.to_be_bytes(), "compaction revision");
+        let idx = std::fs::read(format!("{data}/1.idx")).unwrap();
+        let idx_rows: Vec<(NeedleId, Size)> = idx
+            .as_chunks::<NEEDLE_MAP_ENTRY_SIZE>()
+            .0
+            .iter()
+            .map(|row| {
+                let (key, _, size) = idx_entry_from_bytes(row);
+                (key, size)
+            })
+            .collect();
+        assert_eq!(
+            idx_rows.iter().map(|(key, _)| key.0).collect::<Vec<_>>(),
+            [2, 3]
+        );
+        assert!(idx_rows.iter().all(|(_, size)| !size.is_deleted()));
+        assert_eq!(vifs(), vifs_before, "the EC .vif is left alone");
+
+        assert_decoded_volume(&service, (2, 0), &[2, 3], &[1]);
     }
 
     /// Deletions only in the .ecj count toward "no live entries", as after Go's

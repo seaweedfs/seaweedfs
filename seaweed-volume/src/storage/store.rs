@@ -18,7 +18,32 @@ use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
-use crate::storage::volume::{CompactionJob, VifVolumeInfo, VolumeError, VolumeSpec};
+use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
+
+/// Fails unless `dir` has room to compact `v`, as Go's CompactVolume checks:
+/// the larger of `preallocate` and the estimated compacted size (the live
+/// needles, not the .dat the garbage already occupies, so a full disk can
+/// still be reclaimed), plus a tenth.
+fn check_compact_space(dir: &str, v: &Volume, preallocate: u64) -> Result<(), VolumeError> {
+    let live_count = (v.file_count() - v.deleted_count()).max(0) as u64;
+    let live_bytes = v.content_size().saturating_sub(v.deleted_size());
+    let per_needle = (get_actual_size(Size(0), v.version())
+        + NEEDLE_PADDING_SIZE as i64
+        + NEEDLE_MAP_ENTRY_SIZE as i64) as u64;
+    let estimated = SUPER_BLOCK_SIZE as u64 + live_count * per_needle + live_bytes;
+    let space_needed = std::cmp::max(preallocate, estimated);
+    let space_needed = space_needed + space_needed / 10;
+
+    let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+    if free < space_needed {
+        return Err(VolumeError::InsufficientSpace {
+            vid: v.id,
+            required: space_needed,
+            free,
+        });
+    }
+    Ok(())
+}
 
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
@@ -1538,38 +1563,42 @@ impl Store {
         vid: VolumeId,
         preallocate: u64,
     ) -> Result<Option<CompactionJob>, VolumeError> {
-        // Required space matches Go's CompactVolume check: the larger of the
-        // requested preallocation and the estimated compacted size — the live
-        // needles, not the .dat the garbage already occupies, so a full disk
-        // can still be reclaimed.
-        let (loc_idx, space_needed) = {
-            let (loc_idx, v) = self
-                .find_volume(vid)
-                .ok_or(VolumeError::VolumeNotFound(vid))?;
-            let live_count = (v.file_count() - v.deleted_count()).max(0) as u64;
-            let live_bytes = v.content_size().saturating_sub(v.deleted_size());
-            let per_needle = (get_actual_size(Size(0), v.version())
-                + NEEDLE_PADDING_SIZE as i64
-                + NEEDLE_MAP_ENTRY_SIZE as i64) as u64;
-            let estimated = SUPER_BLOCK_SIZE as u64 + live_count * per_needle + live_bytes;
-            let space_needed = std::cmp::max(preallocate, estimated);
-            (loc_idx, space_needed + space_needed / 10)
-        };
-
-        let dir = self.locations[loc_idx].directory.clone();
-        let (_, free) = crate::storage::disk_location::get_disk_stats(&dir);
-        if free < space_needed {
-            return Err(VolumeError::InsufficientSpace {
-                vid,
-                required: space_needed,
-                free,
-            });
-        }
+        let (loc_idx, v) = self
+            .find_volume(vid)
+            .ok_or(VolumeError::VolumeNotFound(vid))?;
+        check_compact_space(&self.locations[loc_idx].directory, v, preallocate)?;
 
         let (_, v) = self
             .find_volume_mut(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
         v.begin_compact_by_index()
+    }
+
+    /// Rewrite the volume in `dir`/`dir_idx`, which is not mounted, with its
+    /// live needles only. Go's `Store.CompactVolumeFiles`.
+    pub fn compact_volume_files(
+        dir: &str,
+        dir_idx: &str,
+        collection: &str,
+        vid: VolumeId,
+        needle_map_kind: NeedleMapKind,
+    ) -> Result<(), VolumeError> {
+        let spec = VolumeSpec {
+            collection,
+            ..VolumeSpec::default()
+        };
+        let mut v = Volume::new(dir, dir_idx, vid, needle_map_kind, &spec)?;
+        let mut compact = || -> Result<(), VolumeError> {
+            check_compact_space(dir, &v, 0)?;
+            v.compact_by_index(0, 0, |_| true)?;
+            v.commit_compact()
+        };
+        let result = compact();
+        if result.is_err() {
+            let _ = v.cleanup_compact();
+        }
+        v.close();
+        result
     }
 
     /// Commit a completed compaction: swap files and reload.
