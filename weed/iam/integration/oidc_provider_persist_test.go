@@ -391,3 +391,171 @@ func TestAnOlderRefreshCannotRestoreADeletedProvider(t *testing.T) {
 	require.NoError(t, deleteErr)
 	assert.False(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer), "a refresh older than the deletion left the deleted provider trusted")
 }
+
+// A refresh that fails is retried until the store answers. A change event reports each mutation once, so
+// a subscription refresh that found the filer unreachable — mid-restart, say — left the provider set stale
+// until some unrelated later change; a peer's new provider stayed untrusted and a deleted one trusted.
+func TestAFailedRefreshIsRetriedUntilTheStoreAnswers(t *testing.T) {
+	saved := oidcHydrateRetry
+	oidcHydrateRetry.initial, oidcHydrateRetry.max = time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { oidcHydrateRetry = saved })
+
+	store := &unreachableThenReadyStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store)
+	require.NoError(t, store.StoreProvider(context.Background(), "", &OIDCProviderRecord{
+		ARN: arnOf(t, persistTestAPIIssuer), URL: persistTestAPIIssuer, ClientIDs: []string{"aud"},
+	}))
+	store.mu.Lock()
+	store.failsLeft = 3
+	store.mu.Unlock()
+	require.Error(t, mgr.RefreshOIDCProvidersFromStore(context.Background()), "precondition: the refresh fails")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !stsKnowsIssuer(t, mgr, persistTestAPIIssuer) {
+		if time.Now().After(deadline) {
+			t.Fatal("a failed refresh was never retried: the stored provider stays untrusted until an unrelated change")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Failures during an outage start ONE retry, not one per event: a filer that is down for a while produces a
+// change event per mutation, and each would otherwise add a goroutine polling the same store. Once the store
+// answers and the retry ends, a later failure starts a new one.
+func TestFailedRefreshesShareOneRetry(t *testing.T) {
+	saved := oidcHydrateRetry
+	oidcHydrateRetry.initial, oidcHydrateRetry.max = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { oidcHydrateRetry = saved })
+
+	store := &unreachableThenReadyStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, store)
+	store.mu.Lock()
+	store.failsLeft = 1 << 30
+	store.mu.Unlock()
+	for range 20 {
+		require.Error(t, mgr.RefreshOIDCProvidersFromStore(context.Background()))
+	}
+	mgr.oidcRetryMu.Lock()
+	started := mgr.oidcRetrySeq
+	mgr.oidcRetryMu.Unlock()
+	assert.Equal(t, uint64(1), started, "twenty failed refreshes started more than one retry")
+
+	store.mu.Lock()
+	store.failsLeft = 0
+	store.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mgr.oidcRetryMu.Lock()
+		running := mgr.oidcRetryGen != 0
+		mgr.oidcRetryMu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the retry never ended after the store answered")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	store.mu.Lock()
+	store.failsLeft = 1
+	store.mu.Unlock()
+	require.Error(t, mgr.RefreshOIDCProvidersFromStore(context.Background()))
+	mgr.oidcRetryMu.Lock()
+	assert.Equal(t, uint64(2), mgr.oidcRetrySeq, "a failure after the retry ended starts a new one")
+	mgr.oidcRetryMu.Unlock()
+}
+
+// flakyCountingStore fails while fail is set and counts the lists that succeed.
+type flakyCountingStore struct {
+	*MemoryOIDCProviderStore
+	mu   sync.Mutex
+	fail bool
+	ok   int
+}
+
+func (s *flakyCountingStore) ListProviders(ctx context.Context, addr string) ([]*OIDCProviderRecord, error) {
+	s.mu.Lock()
+	if s.fail {
+		s.mu.Unlock()
+		return nil, errors.New("filer unavailable")
+	}
+	s.ok++
+	s.mu.Unlock()
+	return s.MemoryOIDCProviderStore.ListProviders(ctx, addr)
+}
+
+func (s *flakyCountingStore) set(fail bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fail = fail
+}
+
+func (s *flakyCountingStore) successes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ok
+}
+
+// A refresh of store A that fails as store B is installed must not start a retry for A: nothing would cancel
+// it, and when A answered it would replace B's providers (a removed one trusted again, B's own untrusted).
+func TestAFailedRefreshOfASupersededStoreStartsNoRetry(t *testing.T) {
+	a := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	mgr := startServer(t, a)
+	mgr.SetOIDCProviderStore(&persistentTestStore{NewMemoryOIDCProviderStore()})
+	mgr.oidcRetryMu.Lock()
+	before := mgr.oidcRetrySeq
+	mgr.oidcRetryMu.Unlock()
+
+	mgr.startOIDCRetry(a) // the late call of A's failed refresh, after B's install
+
+	mgr.oidcRetryMu.Lock()
+	defer mgr.oidcRetryMu.Unlock()
+	assert.Equal(t, before, mgr.oidcRetrySeq, "a retry was started for the store that was replaced")
+	assert.Zero(t, mgr.oidcRetryGen)
+}
+
+// A refresh that listed store A before B was installed must not hand STS A's providers afterwards.
+func TestASupersededSnapshotIsNotApplied(t *testing.T) {
+	a := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	require.NoError(t, a.StoreProvider(context.Background(), "", &OIDCProviderRecord{
+		ARN: arnOf(t, persistTestAPIIssuer), URL: persistTestAPIIssuer, ClientIDs: []string{"aud"},
+	}))
+	b := &persistentTestStore{NewMemoryOIDCProviderStore()}
+	require.NoError(t, b.StoreProvider(context.Background(), "", &OIDCProviderRecord{
+		ARN: arnOf(t, persistTestStaticIssuer), URL: persistTestStaticIssuer, ClientIDs: []string{"aud"},
+	}))
+	mgr := startServer(t, a)
+	mgr.SetOIDCProviderStore(b)
+
+	assert.Error(t, mgr.refreshOIDCProvidersFrom(context.Background(), a), "a snapshot of the replaced store was applied")
+	assert.False(t, stsKnowsIssuer(t, mgr, persistTestAPIIssuer), "the replaced store's provider is trusted")
+	assert.True(t, stsKnowsIssuer(t, mgr, persistTestStaticIssuer), "the current store's provider is not")
+}
+
+// A refresh that fails while a retry runs is not dropped: the retry may already have listed an older snapshot,
+// so after its success it runs once more and picks up whatever the failed refresh would have seen.
+func TestAFailureDuringARetryIsNotDropped(t *testing.T) {
+	saved := oidcHydrateRetry
+	oidcHydrateRetry.initial, oidcHydrateRetry.max = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() { oidcHydrateRetry = saved })
+
+	store := &flakyCountingStore{MemoryOIDCProviderStore: NewMemoryOIDCProviderStore(), fail: true}
+	mgr := startServer(t, store) // the startup load fails: a retry is running
+	require.Error(t, mgr.RefreshOIDCProvidersFromStore(context.Background()), "a later refresh fails while it runs")
+	store.set(false)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mgr.oidcRetryMu.Lock()
+		running := mgr.oidcRetryGen != 0
+		mgr.oidcRetryMu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the retry never ended")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	assert.GreaterOrEqual(t, store.successes(), 2, "the retry ended on its first success, dropping the refresh that failed while it ran")
+}
