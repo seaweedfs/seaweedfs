@@ -711,6 +711,29 @@ impl DatScanPlan {
     }
 }
 
+/// Why a volume refuses all I/O, shared with its in-flight needle streams so
+/// they see a mark made after they left the store lock. A leaf lock.
+#[derive(Debug, Default)]
+pub(crate) struct IoUnavailable(Mutex<Option<String>>);
+
+impl IoUnavailable {
+    fn set(&self, reason: String) {
+        *self.0.lock().unwrap() = Some(reason);
+    }
+
+    fn is_set(&self) -> bool {
+        self.0.lock().unwrap().is_some()
+    }
+
+    pub(crate) fn error(&self) -> Option<VolumeError> {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|reason| VolumeError::Unavailable(reason.clone()))
+    }
+}
+
 /// A needle read resolved under a store guard and run after it is released;
 /// the handle pins the inode, as for `DatScanPlan`. It takes no data-file
 /// lease: writers wait for one while holding the store write lock.
@@ -722,6 +745,7 @@ pub(crate) struct NeedleReadPlan {
     needle_id: NeedleId,
     data_file_access_control: Arc<DataFileAccessControl>,
     io_errors: Arc<IoErrorTracker>,
+    io_unavailable: Arc<IoUnavailable>,
 }
 
 impl NeedleReadPlan {
@@ -784,6 +808,7 @@ impl NeedleReadPlan {
             data_file_offset,
             data_size: n.data_size,
             data_file_access_control: self.data_file_access_control,
+            io_unavailable: self.io_unavailable,
             needle_id: self.needle_id,
             checksum: n.checksum.0,
         }
@@ -1058,6 +1083,8 @@ pub struct NeedleStreamInfo {
     pub data_size: u32,
     /// Per-volume file access lock used to match Go's slow-read behavior.
     pub data_file_access_control: Arc<DataFileAccessControl>,
+    /// Checked before each chunk: the volume can become unavailable mid-stream.
+    pub(crate) io_unavailable: Arc<IoUnavailable>,
     pub needle_id: NeedleId,
     /// Checksum stored in the needle tail, verified once the last chunk has
     /// been read — before that frame is emitted.
@@ -1139,7 +1166,7 @@ pub struct Volume {
     /// Set when a failed recovery leaves the .dat/index pair unverified: all
     /// I/O is refused and a `.unavailable` marker keeps the volume quarantined
     /// across restarts. Mirrors Go's ioUnavailable.
-    io_unavailable: Option<String>,
+    io_unavailable: Arc<IoUnavailable>,
 
     /// Shared flag from the parent DiskLocation indicating low disk space.
     /// Matches Go's `v.location.isDiskSpaceLow` checked in `IsReadOnly()`.
@@ -1236,7 +1263,7 @@ impl Volume {
             },
             no_write_or_delete: false,
             no_write_can_delete: false,
-            io_unavailable: None,
+            io_unavailable: Arc::default(),
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
@@ -1276,7 +1303,7 @@ impl Volume {
             super_block: SuperBlock::default(),
             no_write_or_delete: false,
             no_write_can_delete: false,
-            io_unavailable: None,
+            io_unavailable: Arc::default(),
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
@@ -2165,6 +2192,7 @@ impl Volume {
             needle_id: id,
             data_file_access_control: self.data_file_access_control.clone(),
             io_errors: self.io_errors.clone(),
+            io_unavailable: self.io_unavailable.clone(),
         })
     }
 
@@ -2633,14 +2661,14 @@ impl Volume {
     pub fn is_read_only(&self) -> bool {
         self.no_write_or_delete
             || self.no_write_can_delete
-            || self.io_unavailable.is_some()
+            || self.io_unavailable.is_set()
             || self.location_disk_space_low.load(Ordering::Relaxed)
     }
 
     /// Mirrors Go's ReadOnlyReasons: `no_write_or_delete` already covers the
     /// io_unavailable quarantine.
     pub fn read_only_reasons(&self) -> (bool, bool, bool, bool) {
-        let no_write_or_delete = self.no_write_or_delete || self.io_unavailable.is_some();
+        let no_write_or_delete = self.no_write_or_delete || self.io_unavailable.is_set();
         let disk_space_low = self.location_disk_space_low.load(Ordering::Relaxed);
         (
             no_write_or_delete || self.no_write_can_delete || disk_space_low,
@@ -2653,9 +2681,7 @@ impl Volume {
     /// The reason the volume refuses all I/O, when a failed recovery left the
     /// .dat/index pair unverified. Mirrors Go's unavailableError.
     pub fn unavailable_error(&self) -> Option<VolumeError> {
-        self.io_unavailable
-            .as_ref()
-            .map(|reason| VolumeError::Unavailable(reason.clone()))
+        self.io_unavailable.error()
     }
 
     /// Fail closed after a recovery could not return the volume to a verified
@@ -2663,7 +2689,7 @@ impl Volume {
     /// reload stays unavailable until an operator verifies the volume.
     fn mark_io_unavailable(&mut self, reason: String) {
         self.no_write_or_delete = true;
-        self.io_unavailable = Some(reason.clone());
+        self.io_unavailable.set(reason.clone());
         self.mark_io_quarantined();
         if let Err(e) = self.persist_unavailable(&reason) {
             warn!(
@@ -2705,7 +2731,7 @@ impl Volume {
             return;
         };
         self.no_write_or_delete = true;
-        self.io_unavailable = Some(reason.trim().to_string());
+        self.io_unavailable.set(reason.trim().to_string());
         self.mark_io_quarantined();
         warn!(
             volume_id = self.id.0,

@@ -229,6 +229,7 @@ struct StreamingBody {
     data_file_access_control: Arc<crate::storage::volume::DataFileAccessControl>,
     hold_read_lock_for_stream: bool,
     _held_read_lease: Option<crate::storage::volume::DataFileReadLease>,
+    io_unavailable: Arc<crate::storage::volume::IoUnavailable>,
     /// Pending chunk read; it hands `buf` back with the result.
     pending: Option<tokio::task::JoinHandle<(bytes::BytesMut, std::io::Result<bytes::Bytes>)>>,
     /// Chunk buffer, reclaimed once the previous frame has been written out.
@@ -314,6 +315,7 @@ impl http_body::Body for StreamingBody {
             let source = self.source.clone();
             let data_file_access_control = self.data_file_access_control.clone();
             let hold_read_lock_for_stream = self.hold_read_lock_for_stream;
+            let io_unavailable = self.io_unavailable.clone();
             let mut buf = std::mem::take(&mut self.buf);
 
             let handle = tokio::task::spawn_blocking(move || {
@@ -322,6 +324,10 @@ impl http_body::Body for StreamingBody {
                 } else {
                     Some(data_file_access_control.read_lock())
                 };
+                // Under the lease: a writer marks the volume holding the write lock.
+                if let Some(e) = io_unavailable.error() {
+                    return (buf, Err(std::io::Error::other(e)));
+                }
                 buf.resize(chunk_len, 0);
                 let read = source
                     .read_exact_at(&mut buf, file_offset)
@@ -1721,6 +1727,7 @@ fn stream_response(
         },
         data_file_access_control: info.data_file_access_control,
         hold_read_lock_for_stream: !state.has_slow_read,
+        io_unavailable: info.io_unavailable,
         pending: None,
         buf: bytes::BytesMut::new(),
         state: tracking_state,
@@ -4855,6 +4862,7 @@ mod tests {
             ),
             hold_read_lock_for_stream: true,
             _held_read_lease: None,
+            io_unavailable: Arc::default(),
             pending: None,
             buf: bytes::BytesMut::new(),
             state: None,
@@ -5361,6 +5369,59 @@ mod tests {
         .await
         .unwrap();
         assert!(wrote, "the writer must get the lease once the stream ends");
+    }
+
+    /// With -hasSlowRead a writer gets the data-file lease between chunks; if
+    /// its failed append leaves the volume unavailable, the stream must stop.
+    #[tokio::test]
+    async fn test_streaming_body_stops_once_the_volume_becomes_unavailable() {
+        use futures::StreamExt;
+
+        const ID: u64 = 0x6e7a_0701;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().has_slow_read = true;
+        let data = multi_chunk_data();
+        let path = put_test_needle(&state, ID, &data);
+
+        let mut stream = open_read(&state, &path).await.into_data_stream();
+        let first = stream.next().await.unwrap().unwrap();
+        assert!(
+            first.len() < data.len(),
+            "the needle must span several frames"
+        );
+
+        {
+            let mut store = state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.fail_next_fsync_for_test(true);
+            vol.fail_next_truncate_for_test(true);
+            let mut n = Needle {
+                id: NeedleId(ID + 1),
+                cookie: Cookie(TEST_COOKIE),
+                data: b"never-landed".to_vec(),
+                data_size: 12,
+                ..Needle::default()
+            };
+            store
+                .write_volume_needle(VolumeId(1), &mut n, true)
+                .unwrap_err();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.fail_next_fsync_for_test(false);
+            vol.fail_next_truncate_for_test(false);
+            assert!(vol.unavailable_error().is_some());
+        }
+
+        match stream.next().await {
+            Some(Err(err)) => assert!(
+                err.to_string().contains("volume is unavailable"),
+                "unexpected stream error: {err}"
+            ),
+            other => panic!(
+                "the stream kept reading an unavailable volume: {:?}",
+                other.map(|chunk| chunk.map(|c| c.len()))
+            ),
+        }
     }
 
     /// A vacuum committed mid-stream must not change the bytes served: the
