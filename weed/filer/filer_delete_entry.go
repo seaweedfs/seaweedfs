@@ -261,8 +261,15 @@ func (f *Filer) bucketCollection(ctx context.Context, bucket string) (collection
 	collection = resolve(bucketDir, bucket)
 
 	// Rule-less writes outside buckets fall back to the filer's default
-	// collection, so a bucket resolving there shares it with them.
+	// collection, so a bucket resolving there shares it with them. The
+	// system metadata-log collection (when explicitly redirected via
+	// filer.options.metaLog.collection) is in the same boat: it backs internal
+	// log volumes, so a bucket that resolves there must never drop it
+	// either.
 	if collection == f.metaLogCollection {
+		return ""
+	}
+	if f.metaLogTargetCollection != "" && collection == f.metaLogTargetCollection {
 		return ""
 	}
 

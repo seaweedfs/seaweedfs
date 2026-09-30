@@ -16,6 +16,11 @@ recursive_delete = false
 # for S3: how long to wait before deleting an empty folder.
 # increase this if using tools like Spark that create temporary directories.
 #s3.empty_folder_cleanup_delay = "2m"
+# where the filer's internal system metadata log chunks are stored.
+# By default the log follows the filer's -collection flag; set this to keep
+# the internal log in its own collection, out of the default one:
+#metaLog.collection = "filer-meta"
+#metaLog.replication = ""
 
 ####################################################
 # The following are filer store options
