@@ -18,7 +18,7 @@ use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
-use crate::storage::volume::{CompactionJob, VifVolumeInfo, VolumeError, VolumeSpec};
+use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
 
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
@@ -745,6 +745,10 @@ impl Store {
         n: &mut Needle,
         fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
+        self.writable_volume_mut(vid)?.write_needle(n, true, fsync)
+    }
+
+    fn writable_volume_mut(&mut self, vid: VolumeId) -> Result<&mut Volume, VolumeError> {
         // Check disk space on the location containing this volume.
         // We do this before the mutable borrow to avoid borrow conflicts.
         let loc_idx = self
@@ -759,7 +763,7 @@ impl Store {
         }
 
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
-        vol.write_needle(n, true, fsync)
+        Ok(vol)
     }
 
     /// Delete a needle from a volume.

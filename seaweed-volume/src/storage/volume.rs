@@ -2257,14 +2257,18 @@ impl Volume {
         fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
         let _guard = self.data_file_access_control.write_lock();
+        self.check_writable()?;
+        self.do_write_request(n, check_cookie, fsync)
+    }
+
+    fn check_writable(&self) -> Result<(), VolumeError> {
         if let Some(e) = self.unavailable_error() {
             return Err(e);
         }
         if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
         }
-
-        self.do_write_request(n, check_cookie, fsync)
+        Ok(())
     }
 
     /// Flush the .dat, the first half of a durable write. The .idx is flushed
@@ -2335,6 +2339,54 @@ impl Volume {
         check_cookie: bool,
         fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
+        if self.prepare_write(n, check_cookie)? {
+            // Nothing to append, but the write this matched may have been
+            // non-durable, and the caller is asking for the content to be on
+            // disk. Its .idx row can be sitting in the page cache too, so both
+            // files get flushed exactly as they would for a fresh append.
+            if fsync {
+                self.flush_dat().map_err(|e| {
+                    self.check_read_write_error(Some(&e));
+                    VolumeError::Io(e)
+                })?;
+                self.flush_idx()?;
+            }
+            return Ok((0, Size(n.data_size as i32), true));
+        }
+
+        // Update append timestamp
+        n.append_at_ns = get_append_at_ns(self.last_append_at_ns);
+
+        // Append to .dat file
+        let (offset, _body_size, _actual_size) = self.append_needle(n)?;
+
+        // Nothing is published until the bytes are down: an index entry for an
+        // unflushed append would resolve past the end of the file after a crash,
+        // and undoing it afterwards would double-count the volume's metrics.
+        if fsync && let Err(e) = self.flush_dat() {
+            self.check_read_write_error(Some(&e));
+            self.undo_unsynced_append(offset);
+            return Err(VolumeError::Io(e));
+        }
+
+        self.last_append_at_ns = n.append_at_ns;
+
+        self.publish_write(n, offset, fsync)?;
+
+        if fsync {
+            self.flush_idx()?;
+        }
+
+        self.finish_write(n.last_modified, fsync);
+
+        // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
+        Ok((offset, Size(n.data_size as i32), false))
+    }
+
+    /// The checks a write passes before anything is appended: TTL
+    /// inheritance, checksum, dedup and cookie. Returns true when the needle
+    /// matches the stored copy and there is nothing to append.
+    fn prepare_write(&self, n: &mut Needle, check_cookie: bool) -> Result<bool, VolumeError> {
         // TTL inheritance from volume (matching Go's writeNeedle2)
         {
             use crate::storage::needle::ttl::TTL;
@@ -2353,18 +2405,7 @@ impl Volume {
         // Dedup check (matches Go: n.DataSize = oldNeedle.DataSize on dedup)
         if let Some(old_data_size) = self.is_file_unchanged(n) {
             n.data_size = old_data_size;
-            // Nothing to append, but the write this matched may have been
-            // non-durable, and the caller is asking for the content to be on
-            // disk. Its .idx row can be sitting in the page cache too, so both
-            // files get flushed exactly as they would for a fresh append.
-            if fsync {
-                self.flush_dat().map_err(|e| {
-                    self.check_read_write_error(Some(&e));
-                    VolumeError::Io(e)
-                })?;
-                self.flush_idx()?;
-            }
-            return Ok((0, Size(n.data_size as i32), true));
+            return Ok(true);
         }
 
         // Cookie validation for existing needle (matches Go: check whenever nm.Get returns ok)
@@ -2382,32 +2423,24 @@ impl Volume {
                 return Err(VolumeError::CookieMismatch(n.cookie.0));
             }
         }
+        Ok(false)
+    }
 
-        // Update append timestamp
-        n.append_at_ns = get_append_at_ns(self.last_append_at_ns);
-
-        // Append to .dat file
-        let (offset, _body_size, _actual_size) = self.append_needle(n)?;
-
-        // Nothing is published until the bytes are down: an index entry for an
-        // unflushed append would resolve past the end of the file after a crash,
-        // and undoing it afterwards would double-count the volume's metrics.
-        if fsync && let Err(e) = self.flush_dat() {
-            self.check_read_write_error(Some(&e));
-            if let Err(te) = self.truncate_dat(offset) {
-                // The rejected record is still on the end. A later append
-                // would bury it mid-file, where the .dat tail check cannot
-                // see it, so the volume fails closed instead.
-                self.mark_io_unavailable(format!(
-                    "failed to truncate back to {} after a failed fsync: {}",
-                    offset, te
-                ));
-            }
-            return Err(VolumeError::Io(e));
+    /// Take an append whose sync failed back off the .dat.
+    fn undo_unsynced_append(&mut self, offset: u64) {
+        if let Err(te) = self.truncate_dat(offset) {
+            // The rejected record is still on the end. A later append
+            // would bury it mid-file, where the .dat tail check cannot
+            // see it, so the volume fails closed instead.
+            self.mark_io_unavailable(format!(
+                "failed to truncate back to {} after a failed fsync: {}",
+                offset, te
+            ));
         }
+    }
 
-        self.last_append_at_ns = n.append_at_ns;
-
+    /// Index an appended needle. `fsync` means its record is already down.
+    fn publish_write(&mut self, n: &Needle, offset: u64, fsync: bool) -> Result<(), VolumeError> {
         // Update needle map (uses n.size = full body size, matching Go's nm.Put)
         let prior = match self.nm.as_ref() {
             Some(nm) => nm.get(n.id),
@@ -2455,16 +2488,16 @@ impl Volume {
                 return Err(VolumeError::Io(e));
             }
         }
+        Ok(())
+    }
 
-        if fsync {
-            self.flush_idx()?;
+    /// The bookkeeping after a write is fully down.
+    fn finish_write(&mut self, last_modified: u64, idx_synced: bool) {
+        if self.last_modified_ts_seconds < last_modified {
+            self.last_modified_ts_seconds = last_modified;
         }
 
-        if self.last_modified_ts_seconds < n.last_modified {
-            self.last_modified_ts_seconds = n.last_modified;
-        }
-
-        let checkpoint_ok = self.maybe_checkpoint_index(fsync);
+        let checkpoint_ok = self.maybe_checkpoint_index(idx_synced);
 
         // Clear the EIO streak only after the full write (data + flush +
         // index + checkpoint) succeeds, so a failed fsync or checkpoint
@@ -2472,9 +2505,6 @@ impl Volume {
         if checkpoint_ok {
             self.check_read_write_error(None);
         }
-
-        // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
-        Ok((offset, Size(n.data_size as i32), false))
     }
 
     /// Take the index checkpoint the needle map asked for, data first: the
