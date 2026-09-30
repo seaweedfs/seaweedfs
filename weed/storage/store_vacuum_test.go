@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -179,4 +181,55 @@ func TestSameFilesystem(t *testing.T) {
 	if !sameFilesystem(dir, filepath.Join(dir, "missing")) {
 		t.Fatal("an unreadable path must be treated as shared, so the check asks for the sum")
 	}
+}
+
+// The estimate must cover what compaction writes on disk: each live needle's
+// content plus its header, checksum, timestamp and padding. An all-live
+// volume's compacted .dat is byte-for-byte its current one, so the estimate
+// may not fall below the current file.
+func TestCompactionSpaceNeededCoversNeedleFraming(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := 1; i <= 100; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	datSize, _, _ := v.FileStat()
+
+	dataBytes, _ := compactionSpaceNeeded(v, 0)
+	if dataBytes < int64(datSize) {
+		t.Fatalf("estimate %d below .dat size %d for an all-live volume: missing per-needle framing", dataBytes, datSize)
+	}
+}
+
+// disk_space_low is only reported when low space is the sole read-only cause,
+// so a volume also marked read-only by an operator or quarantined by failed
+// I/O stays out of the sweep.
+func TestCheckCompactVolumeDiskLowSoleCauseOnly(t *testing.T) {
+	dir := t.TempDir()
+	store := newSingleDirStore(t, dir)
+	defer store.Close()
+	const vid = needle.VolumeId(7)
+	require.NoError(t, store.AddVolume(vid, "", NeedleMapInMemory, "000", "", 0, needle.GetCurrentVersion(), 0, types.HardDriveType, 0))
+
+	_, low, err := store.CheckCompactVolume(vid)
+	require.NoError(t, err)
+	require.False(t, low)
+
+	store.Locations[0].isDiskSpaceLow.Store(true)
+	_, low, err = store.CheckCompactVolume(vid)
+	require.NoError(t, err)
+	require.True(t, low)
+
+	require.NoError(t, store.MarkVolumeReadonly(vid, false, false))
+	_, low, err = store.CheckCompactVolume(vid)
+	require.NoError(t, err)
+	require.False(t, low)
 }
