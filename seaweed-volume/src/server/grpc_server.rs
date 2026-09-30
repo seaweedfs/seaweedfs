@@ -5058,25 +5058,14 @@ impl VolumeServer for VolumeGrpcService {
                     Err(e) => return Err(Status::unknown(e.to_string())),
                 }
             }
-
-            let Some(ec_vol) = store.find_ec_volume(vid) else {
-                return Err(Status::not_found(format!("volume not found {}", vid)));
-            };
-            // locate_needle folds a tombstone into not-found; Go reports it deleted.
-            if let Ok(Some((_, size))) = ec_vol.find_needle_from_ecx(needle_id)
-                && size.is_deleted()
-            {
-                return Err(Status::unknown(
-                    crate::storage::volume::VolumeError::Deleted.to_string(),
-                ));
-            }
         }
 
         // Intervals on shards held by other nodes are fetched or reconstructed, as in Go.
-        match crate::server::store_ec::read_ec_shard_needle_distributed(&self.state, vid, needle_id)
+        use crate::server::store_ec::EcMiss;
+        match crate::server::store_ec::read_ec_shard_needle_or_miss(&self.state, vid, needle_id)
             .await
         {
-            Ok(Some(n)) => {
+            Ok(Ok(n)) => {
                 let ttl_str = match &n.ttl {
                     Some(t) if n.has_ttl() => t.to_string(),
                     _ => String::new(),
@@ -5092,7 +5081,14 @@ impl VolumeServer for VolumeGrpcService {
                     },
                 ))
             }
-            Ok(None) => Err(needle_not_found(needle_id)),
+            Ok(Err(EcMiss::NotFound)) => Err(needle_not_found(needle_id)),
+            // fs.verify skips "already deleted" by message, like Go's plain ErrorDeleted.
+            Ok(Err(EcMiss::Deleted)) => Err(Status::unknown(
+                crate::storage::volume::VolumeError::Deleted.to_string(),
+            )),
+            Ok(Err(EcMiss::VolumeNotFound)) => {
+                Err(Status::not_found(format!("volume not found {}", vid)))
+            }
             Err(e) => Err(Status::unknown(format!(
                 "read ec shard needle {} from volume {}: {}",
                 needle_id, vid, e
@@ -9805,14 +9801,16 @@ mod tests {
             .unwrap();
     }
 
-    /// fs.verify asks every EC shard holder, so a node that does not hold the
-    /// shard with the needle's bytes must fetch them from a peer, as Go does.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_volume_needle_status_reads_an_ec_needle_from_a_peer_shard() {
-        let (service, tmp) = make_local_service_with_volume("", None);
-        let want = needle_status(&service, 11).await.unwrap();
+    /// Leaves `service` holding only EC shard 1 of volume 1, with shard 0 (the
+    /// one with needle 11's bytes) served by a peer; `peer_deletes` journals
+    /// the needle's delete on the peer alone.
+    async fn put_ec_1_needle_shard_on_a_peer(
+        service: &VolumeGrpcService,
+        tmp: &TempDir,
+        peer_deletes: bool,
+    ) -> (TempDir, tokio::sync::oneshot::Sender<()>) {
         // One local shard, not the needle's: only a peer read can answer.
-        generate_and_mount_ec_1(&service, vec![1]).await;
+        generate_and_mount_ec_1(service, vec![1]).await;
 
         let (peer, peer_tmp) = make_local_service_with_volume("", None);
         peer.state
@@ -9828,7 +9826,17 @@ mod tests {
             }
         }
         mount_ec_1(&peer, vec![0]).await;
-        let (port, _shutdown) = serve_source(peer).await;
+        if peer_deletes {
+            peer.state
+                .store
+                .write()
+                .unwrap()
+                .find_ec_volume_mut(VolumeId(1))
+                .unwrap()
+                .journal_delete(NeedleId(11))
+                .unwrap();
+        }
+        let (port, shutdown) = serve_source(peer).await;
 
         {
             let mut store = service.state.store.write().unwrap();
@@ -9849,11 +9857,61 @@ mod tests {
                         .collect(),
                 );
         }
+        (peer_tmp, shutdown)
+    }
+
+    /// fs.verify asks every EC shard holder, so a node that does not hold the
+    /// shard with the needle's bytes must fetch them from a peer, as Go does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_needle_status_reads_an_ec_needle_from_a_peer_shard() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, false).await;
 
         let got = needle_status(&service, 11)
             .await
             .expect("the needle's shard is on a reachable peer");
         assert_eq!(got, want);
+    }
+
+    /// The local .ecx still shows the needle live; the peer's answer that it is
+    /// deleted must reach fs.verify as Go's ErrorDeleted, not as a missing needle.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_needle_status_reports_a_peer_reported_ec_deletion() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, true).await;
+
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unknown, "{err}");
+        assert_eq!(err.message(), "already deleted");
+    }
+
+    /// A volume unmounted before the EC read resolves it is "volume not found",
+    /// which fs.verify does not count as a lost needle.
+    #[tokio::test]
+    async fn test_volume_needle_status_reports_a_vanished_volume_as_not_found() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .unmount_volume(VolumeId(1))
+            .unwrap();
+
+        let miss = crate::server::store_ec::read_ec_shard_needle_or_miss(
+            &service.state,
+            VolumeId(1),
+            NeedleId(11),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(miss, crate::server::store_ec::EcMiss::VolumeNotFound);
+
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err}");
+        assert_eq!(err.message(), "volume not found 1");
     }
 
     /// Go returns ErrorDeleted as a plain error, which fs.verify skips by
