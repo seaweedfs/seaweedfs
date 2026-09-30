@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -264,6 +265,11 @@ func (s *IamGrpcServer) PutRole(ctx context.Context, req *iam_pb.PutRoleRequest)
 	if err := json.Unmarshal([]byte(in.TrustPolicy), &trust); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "parse trust policy: %v", err)
 	}
+	// STS finds a role by the name in the ARN a caller presents, so a stored
+	// ARN naming another role would be honoured for neither name correctly.
+	if in.RoleArn != "" && utils.ExtractRoleNameFromArn(in.RoleArn) != in.RoleName {
+		return nil, status.Errorf(codes.InvalidArgument, "role.role_arn %s does not name role %s", in.RoleArn, in.RoleName)
+	}
 	role := &integration.RoleDefinition{
 		RoleName:           in.RoleName,
 		RoleArn:            in.RoleArn,
@@ -284,23 +290,25 @@ func (s *IamGrpcServer) PutRole(ctx context.Context, req *iam_pb.PutRoleRequest)
 			return nil, status.Errorf(codes.NotFound, "attached policy %s not found", name)
 		}
 	}
-	existing, err := lookupRole(ctx, store, in.RoleName)
-	if err != nil {
-		return nil, err
-	}
 	// A replaced role keeps its ID, so its sessions stay valid; a role created
 	// anew — including after a delete — gets a new one, so sessions of an
-	// earlier role of the same name do not carry over.
-	role.CreatedAt = time.Now().UTC()
-	role.RoleId = integration.NewRoleID()
-	if existing != nil {
-		role.CreatedAt = existing.CreatedAt
-		if existing.RoleId != "" {
-			role.RoleId = existing.RoleId
+	// earlier role of the same name do not carry over. The store's atomic
+	// update decides which, against the role as it is when written: a Put
+	// racing a DeleteRole cannot write the deleted role back with its old ID.
+	err = store.UpdateRole(ctx, "", in.RoleName, func(existing *integration.RoleDefinition) (*integration.RoleDefinition, error) {
+		next := *role
+		next.CreatedAt = time.Now().UTC()
+		next.RoleId = integration.NewRoleID()
+		if existing != nil {
+			next.CreatedAt = existing.CreatedAt
+			if existing.RoleId != "" {
+				next.RoleId = existing.RoleId
+			}
 		}
-	}
-	if err := store.StoreRole(ctx, "", in.RoleName, role); err != nil {
-		return nil, status.Errorf(codes.Internal, "store role: %v", err)
+		return &next, nil
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "store role: %v", err)
 	}
 	return &iam_pb.PutRoleResponse{RoleArn: role.RoleArn}, nil
 }

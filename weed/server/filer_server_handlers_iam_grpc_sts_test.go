@@ -171,6 +171,14 @@ func TestIamGrpc_STSRefusals(t *testing.T) {
 			_, err := s.PutRole(ctx, &iam_pb.PutRoleRequest{Role: &iam_pb.Role{RoleName: "app", TrustPolicy: stsTestTrust, AttachedPolicies: policies}})
 			return err
 		}, codes.InvalidArgument},
+		{"role whose ARN names another role", func() error {
+			_, err := s.PutRole(ctx, &iam_pb.PutRoleRequest{Role: &iam_pb.Role{RoleName: "app", RoleArn: "arn:aws:iam::role/admin", TrustPolicy: stsTestTrust}})
+			return err
+		}, codes.InvalidArgument},
+		{"role whose ARN is not a role ARN", func() error {
+			_, err := s.PutRole(ctx, &iam_pb.PutRoleRequest{Role: &iam_pb.Role{RoleName: "app", RoleArn: "arn:aws:iam::user/app", TrustPolicy: stsTestTrust}})
+			return err
+		}, codes.InvalidArgument},
 		{"role attaching a missing policy", func() error {
 			_, err := s.PutRole(ctx, &iam_pb.PutRoleRequest{Role: &iam_pb.Role{RoleName: "app", TrustPolicy: stsTestTrust, AttachedPolicies: []string{"nope"}}})
 			return err
@@ -193,6 +201,11 @@ type unreadableRoles struct{ *integration.MemoryRoleStore }
 
 func (unreadableRoles) GetRole(context.Context, string, string) (*integration.RoleDefinition, error) {
 	return nil, errors.New("lookup role: filer unavailable")
+}
+
+// UpdateRole reads the role first, as the filer store's does.
+func (unreadableRoles) UpdateRole(context.Context, string, string, integration.RoleUpdate) error {
+	return errors.New("lookup role: filer unavailable")
 }
 
 // An unreadable store is not an absent entry: Put must not write over what it
@@ -325,4 +338,43 @@ func TestIamGrpc_STSRPCsRefuseAnUnauthenticatedService(t *testing.T) {
 	// Users keep the service's opt-in auth.
 	_, err = s.ListUsers(ctx, &iam_pb.ListUsersRequest{})
 	assert.NoError(t, err)
+}
+
+// deletedDuringPutRoles has UpdateRole behave as the filer store's does when
+// a DeleteRole lands between its read and its write: the conditional write
+// fails, and the update is applied again to the role as it now is — absent.
+type deletedDuringPutRoles struct {
+	*integration.MemoryRoleStore
+	earlier *integration.RoleDefinition
+}
+
+// GetRole is a read made before the delete landed.
+func (s deletedDuringPutRoles) GetRole(context.Context, string, string) (*integration.RoleDefinition, error) {
+	return s.earlier, nil
+}
+
+func (s deletedDuringPutRoles) UpdateRole(ctx context.Context, addr, name string, update integration.RoleUpdate) error {
+	if _, err := update(s.earlier); err != nil { // the write that loses to the delete
+		return err
+	}
+	next, err := update(nil)
+	if err != nil {
+		return err
+	}
+	return s.MemoryRoleStore.StoreRole(ctx, addr, name, next)
+}
+
+// A PutRole racing a DeleteRole must not write the deleted role back under
+// its old ID, which would revive the deleted role's sessions.
+func TestIamGrpc_PutRoleRacingADeleteDoesNotReviveTheOldRoleID(t *testing.T) {
+	s, ctx, providers, _ := newSTSTestServer(t)
+	store := deletedDuringPutRoles{MemoryRoleStore: integration.NewMemoryRoleStore(), earlier: &integration.RoleDefinition{RoleName: "app", RoleId: "AROA-DELETED"}}
+	s.SetSTSStores(providers, store)
+
+	_, err := s.PutRole(ctx, &iam_pb.PutRoleRequest{Role: &iam_pb.Role{RoleName: "app", TrustPolicy: stsTestTrust}})
+	require.NoError(t, err)
+	role, err := store.MemoryRoleStore.GetRole(context.Background(), "", "app")
+	require.NoError(t, err)
+	assert.NotEqual(t, "AROA-DELETED", role.RoleId, "the deleted role's ID was written back")
+	assert.NotEmpty(t, role.RoleId)
 }
