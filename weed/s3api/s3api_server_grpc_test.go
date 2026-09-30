@@ -29,6 +29,11 @@ func s3IamCacheBearerCtx(token string) context.Context {
 	return metadata.NewIncomingContext(context.Background(), md)
 }
 
+func s3LocalPeerCtx() context.Context {
+	return peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1}})
+}
+
 func TestS3IamCache_NoMetadata_Unauthenticated(t *testing.T) {
 	s := newTestS3IamCacheServer(t, testS3IamCacheSigningKey)
 	_, err := s.PutIdentity(context.Background(), &iam_pb.PutIdentityRequest{
@@ -155,6 +160,13 @@ func TestS3IamCache_NoSigningKey_RemotePeer_Unauthenticated(t *testing.T) {
 	if got, want := status.Code(err), codes.Unauthenticated; got != want {
 		t.Fatalf("PutIdentity from remote peer without key: got code %v, want %v (err=%v)", got, want, err)
 	}
+
+	unguarded := &S3ApiServer{}
+	if _, err := unguarded.PutIdentity(remoteCtx, &iam_pb.PutIdentityRequest{
+		Identity: &iam_pb.Identity{Name: "pwn", Actions: []string{"Admin"}},
+	}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("PutIdentity from remote peer with nil guard: got code %v, want Unauthenticated", status.Code(err))
+	}
 }
 
 func TestS3IamCache_NoSigningKey_LocalPeer_Allowed(t *testing.T) {
@@ -208,7 +220,8 @@ func firstLocalTCPAddr(t *testing.T) *net.TCPAddr {
 	t.Helper()
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		t.Skipf("interface addresses unavailable: %v", err)
+		t.Logf("interface addresses unavailable, skipping own-address case: %v", err)
+		return nil
 	}
 	for _, a := range addrs {
 		if ipNet, ok := a.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {

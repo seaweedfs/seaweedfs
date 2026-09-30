@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"strings"
-	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -26,13 +25,10 @@ import (
 // remote callers cannot be told apart, so only local clients (unix socket,
 // loopback, or the server's own addresses) are allowed.
 func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
-	if s3a.filerGuard == nil {
-		return nil
-	}
-	signingKey := s3a.filerGuard.SigningKey()
-	if len(signingKey) == 0 {
+	if s3a.filerGuard == nil || len(s3a.filerGuard.SigningKey()) == 0 {
 		return checkLocalPeer(ctx)
 	}
+	signingKey := s3a.filerGuard.SigningKey()
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "missing metadata")
@@ -56,19 +52,10 @@ func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
 	return nil
 }
 
-var localIPs = sync.OnceValue(func() map[string]bool {
-	ips := make(map[string]bool)
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		for _, a := range addrs {
-			if ipNet, ok := a.(*net.IPNet); ok {
-				ips[ipNet.IP.String()] = true
-			}
-		}
-	}
-	return ips
-})
-
 func checkLocalPeer(ctx context.Context) error {
+	if ctx == nil {
+		return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
+	}
 	pr, ok := peer.FromContext(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
@@ -84,11 +71,24 @@ func checkLocalPeer(ctx context.Context) error {
 	} else {
 		ip = net.ParseIP(pr.Addr.String())
 	}
-	if ip != nil && (ip.IsLoopback() || localIPs()[ip.String()]) {
+	if ip != nil && (ip.IsLoopback() || isLocalAddress(ip)) {
 		return nil
 	}
 	glog.V(1).Infof("rejected unauthenticated admin gRPC call from %s: no jwt.filer_signing.key configured", pr.Addr)
 	return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
+}
+
+func isLocalAddress(ip net.IP) bool {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if ipNet, ok := a.(*net.IPNet); ok && ipNet.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s3a *S3ApiServer) PutIdentity(ctx context.Context, req *iam_pb.PutIdentityRequest) (*iam_pb.PutIdentityResponse, error) {

@@ -117,7 +117,7 @@ func TestIdentityMatches_AllFieldsCompared(t *testing.T) {
 
 func TestLifecycleDelete_RejectsEmptyRequest(t *testing.T) {
 	s := &S3ApiServer{}
-	resp, err := s.LifecycleDelete(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{})
+	resp, err := s.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{})
 	if err != nil {
 		t.Fatalf("unexpected gRPC error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestLifecycleAbortMPU_RejectsTraversalUploadIDs(t *testing.T) {
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {
-			resp, err := s.LifecycleDelete(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+			resp, err := s.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
 				Bucket:     "bk",
 				ObjectPath: path,
 				ActionKind: s3_lifecycle_pb.ActionKind_ABORT_MPU,
