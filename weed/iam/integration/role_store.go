@@ -601,6 +601,14 @@ type CachedFilerRoleStoreConfig struct {
 // A policy is attached to a role by name, so deleting it while attached would
 // let a policy created later under the same name take effect on the role;
 // callers refuse the delete instead, as AWS does (DeleteConflict).
+//
+// It sees the stored roles, which every server sharing the store sees, and
+// this server's config-file roles. A role defined only in another server's
+// config file is invisible here: servers sharing a role store may have
+// different config files, but a config-file role that attaches a managed
+// (API-created) policy is protected only on the servers whose file defines it.
+// Keep such roles in every server's file, or attach only config-file policies
+// to config-file roles.
 func RolesAttachingPolicy(ctx context.Context, store RoleStore, policyName string) ([]string, error) {
 	names, err := store.ListRoles(ctx, "")
 	if err != nil {

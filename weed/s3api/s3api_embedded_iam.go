@@ -647,7 +647,8 @@ func (e *EmbeddedIamApi) DeletePolicy(ctx context.Context, values url.Values) (*
 			}
 		}
 	}
-	// Roles attach policies by name too; see integration.RolesAttachingPolicy.
+	// Roles attach policies by name too; see integration.RolesAttachingPolicy,
+	// including why a role only in a peer's IAM config file is not seen here.
 	if mgr := e.oidcIAMManager(); mgr != nil && mgr.GetRoleStore() != nil {
 		roles, err := integration.RolesAttachingPolicy(ctx, mgr.GetRoleStore(), policyName)
 		if err != nil {
