@@ -68,7 +68,11 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 	topo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
-		return fmt.Errorf("collect topology: %w", err)
+		if *volumeIds != "" {
+			return fmt.Errorf("collect topology: %w", err)
+		}
+		// The hint below is a courtesy; a sweep must not depend on it.
+		fmt.Fprintf(writer, "could not list volumes to check for read-only ones: %v\n", err)
 	}
 
 	// Reject unknown ids up front. The master's VacuumVolume RPC silently
@@ -100,11 +104,13 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 			sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
 			return fmt.Errorf("volume(s) not found on master: %v", missing)
 		}
-	} else if skipped := readOnlyVolumesAboveThreshold(topo, *collection, *garbageThreshold); len(skipped) > 0 {
+	} else if topo != nil {
 		// The sweep says nothing about the volumes it leaves alone, so an
 		// operator on a full disk sees the command return and nothing change.
-		fmt.Fprintf(writer, "%d read-only volume(s) hold garbage above %.2f and are skipped by the sweep: %v\n", len(skipped), *garbageThreshold, skipped)
-		fmt.Fprintf(writer, "vacuum them explicitly with -volumeId\n")
+		if skipped := readOnlyVolumesAboveThreshold(topo, *collection, *garbageThreshold); len(skipped) > 0 {
+			fmt.Fprintf(writer, "%d read-only volume(s) hold garbage above %g and are skipped by the sweep: %v\n", len(skipped), *garbageThreshold, skipped)
+			fmt.Fprintf(writer, "vacuum them explicitly with -volumeId\n")
+		}
 	}
 
 	for _, volumeId := range volumeIdInts {
@@ -124,27 +130,46 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	return nil
 }
 
-// readOnlyVolumesAboveThreshold lists the volumes a sweep leaves alone: read-only
-// on any replica, in the collection when one is given, with a garbage ratio at
-// or above the threshold. The ratio uses the sizes the master reports; the
-// volume server's own check is the authority, so this is a hint, not a verdict.
+// readOnlyVolumesAboveThreshold lists the volumes a sweep leaves alone: any
+// replica read-only (that is what the sweep checks), in the collection when one
+// is given, and some replica with a garbage ratio at or above the threshold.
+// The ratio uses the sizes the master reports, which is deleted bytes over the
+// .dat size rather than over the content size the volume server divides by, so
+// it can only understate. This is a hint; the volume server's own check decides.
 func readOnlyVolumesAboveThreshold(topo *master_pb.TopologyInfo, collection string, garbageThreshold float64) []uint32 {
-	seen := make(map[uint32]bool)
+	readOnly := make(map[uint32]bool)
+	garbage := make(map[uint32]float64) // the highest ratio any replica reports
 	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
 		for _, disk := range dn.DiskInfos {
 			for _, v := range disk.VolumeInfos {
-				if !v.ReadOnly || v.Size == 0 || (collection != "" && v.Collection != collection) {
+				if collection != "" && v.Collection != collection {
 					continue
 				}
-				if float64(v.DeletedByteCount)/float64(v.Size) >= garbageThreshold {
-					seen[v.Id] = true
+				if v.ReadOnly {
+					readOnly[v.Id] = true
+				}
+				var ratio float64
+				switch {
+				case v.Size == 0:
+				case v.DeleteCount > 0 && v.DeletedByteCount == 0:
+					// A .sdx converted back to .idx reports no deleted sizes.
+					// The volume server estimates them from the file and may
+					// well vacuum it, so list it rather than hide it.
+					ratio = 1
+				default:
+					ratio = float64(v.DeletedByteCount) / float64(v.Size)
+				}
+				if ratio > garbage[v.Id] {
+					garbage[v.Id] = ratio
 				}
 			}
 		}
 	})
-	vids := make([]uint32, 0, len(seen))
-	for vid := range seen {
-		vids = append(vids, vid)
+	vids := make([]uint32, 0, len(readOnly))
+	for vid := range readOnly {
+		if garbage[vid] >= garbageThreshold {
+			vids = append(vids, vid)
+		}
 	}
 	sort.Slice(vids, func(i, j int) bool { return vids[i] < vids[j] })
 	return vids

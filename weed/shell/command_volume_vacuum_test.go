@@ -28,24 +28,30 @@ func TestReadOnlyVolumesAboveThreshold(t *testing.T) {
 	readOnlyOtherCollection := &master_pb.VolumeInformationMessage{Id: 4, Collection: "b", Size: 100, DeletedByteCount: 100, ReadOnly: true}
 	readOnlyEmpty := &master_pb.VolumeInformationMessage{Id: 5, Collection: "a", Size: 0, DeletedByteCount: 0, ReadOnly: true}
 	readOnlyAtThreshold := &master_pb.VolumeInformationMessage{Id: 6, Collection: "a", Size: 100, DeletedByteCount: 30, ReadOnly: true}
+	// the sweep skips a volume when any replica is read-only, and the garbage
+	// may sit on the other replica
+	mixedReadOnlyReplica := &master_pb.VolumeInformationMessage{Id: 7, Collection: "a", Size: 100, DeletedByteCount: 5, ReadOnly: true}
+	mixedWritableReplica := &master_pb.VolumeInformationMessage{Id: 7, Collection: "a", Size: 100, DeletedByteCount: 60}
+	// a converted index reports deletes without their sizes
+	readOnlyConvertedIndex := &master_pb.VolumeInformationMessage{Id: 8, Collection: "a", Size: 100, DeleteCount: 2, DeletedByteCount: 0, ReadOnly: true}
 
 	topo := vacuumTestTopology(
-		vacuumTestNode(readOnlyHalfGarbage, writableMostlyGarbage, readOnlyLittleGarbage, readOnlyEmpty, readOnlyAtThreshold),
+		vacuumTestNode(readOnlyHalfGarbage, writableMostlyGarbage, readOnlyLittleGarbage, readOnlyEmpty, readOnlyAtThreshold, mixedReadOnlyReplica, readOnlyConvertedIndex),
 		// the second replica of volume 1 must not list it twice
-		vacuumTestNode(readOnlyHalfGarbage, readOnlyOtherCollection),
+		vacuumTestNode(readOnlyHalfGarbage, readOnlyOtherCollection, mixedWritableReplica),
 	)
 
 	got := readOnlyVolumesAboveThreshold(topo, "a", 0.3)
-	if want := []uint32{1, 6}; !reflect.DeepEqual(got, want) {
+	if want := []uint32{1, 6, 7, 8}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("collection a, threshold 0.3: got %v, want %v", got, want)
 	}
 
 	got = readOnlyVolumesAboveThreshold(topo, "", 0.3)
-	if want := []uint32{1, 4, 6}; !reflect.DeepEqual(got, want) {
+	if want := []uint32{1, 4, 6, 7, 8}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("all collections, threshold 0.3: got %v, want %v", got, want)
 	}
 
-	if got := readOnlyVolumesAboveThreshold(topo, "a", 0.95); len(got) != 0 {
-		t.Fatalf("threshold 0.95: got %v, want none", got)
+	if got := readOnlyVolumesAboveThreshold(topo, "a", 0.95); !reflect.DeepEqual(got, []uint32{8}) {
+		t.Fatalf("threshold 0.95: got %v, want only the converted index [8]", got)
 	}
 }
