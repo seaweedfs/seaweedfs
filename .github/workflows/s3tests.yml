@@ -312,6 +312,7 @@ jobs:
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good \
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed \
           s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed \
+          s3tests/functional/test_s3.py::test_get_checksum_object_attributes \
           s3tests/functional/test_s3.py::test_bucket_head \
           s3tests/functional/test_s3.py::test_bucket_head_notexist \
           s3tests/functional/test_s3.py::test_object_raw_authenticated \
@@ -1173,6 +1174,7 @@ jobs:
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_good \
           s3tests/functional/test_s3.py::test_get_object_ifmodifiedsince_failed \
           s3tests/functional/test_s3.py::test_get_object_ifunmodifiedsince_failed \
+          s3tests/functional/test_s3.py::test_get_checksum_object_attributes \
           s3tests/functional/test_s3.py::test_bucket_head \
           s3tests/functional/test_s3.py::test_bucket_head_notexist \
           s3tests/functional/test_s3.py::test_object_raw_authenticated \
