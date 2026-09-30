@@ -312,6 +312,30 @@ pub fn write_dat_file_from_shards(spec: &DatRebuild<'_>) -> io::Result<()> {
     write_result
 }
 
+/// Fails when the decoded `.dat` in `dat_dir` is shorter than the
+/// `dat_file_size` bytes its EC index references: the caller deletes the
+/// shards next, and they are the only other copy of the needles past the cut.
+/// A longer file passes.
+pub fn verify_decoded_dat_file(
+    dat_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    dat_file_size: i64,
+) -> io::Result<()> {
+    let dat_path = format!("{}.dat", volume_file_name(dat_dir, collection, volume_id));
+    let size = std::fs::metadata(&dat_path)?.len();
+    if (size as i64) < dat_file_size {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!(
+                "decoded {} is {} bytes, short of the {} its ec index references",
+                dat_path, size, dat_file_size
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Write .idx file from .ecx index + .ecj deletion journal.
 ///
 /// See [`write_idx_file_from_ec_index_with_dirs`]; everything lives in `dir`.
@@ -789,5 +813,24 @@ mod tests {
         let ids = read_ecj_deletions(&[data, idx, idx, missing], "", VolumeId(1)).unwrap();
         let expected: HashSet<NeedleId> = [1, 2, 3, 7, 9].into_iter().map(NeedleId).collect();
         assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn test_verify_decoded_dat_file_rejects_a_short_dat() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let dat_path = format!("{dir}/1.dat");
+
+        let err = verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+
+        std::fs::write(&dat_path, vec![0u8; 99]).unwrap();
+        let err = verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap_err();
+        assert!(err.to_string().contains("short of the 100"), "{err}");
+
+        std::fs::write(&dat_path, vec![0u8; 100]).unwrap();
+        verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
+        std::fs::write(&dat_path, vec![0u8; 101]).unwrap();
+        verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
     }
 }

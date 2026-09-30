@@ -6500,6 +6500,8 @@ impl EcDecodeJob {
             small_block_size,
         })
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
+        ec_decoder::verify_decoded_dat_file(&dat_dir, &collection, vid, dat_file_size)
+            .map_err(|e| Status::internal(format!("VerifyDecodedDatFile: {}", e)))?;
 
         // Write .idx from the .ecx wherever it lives, beside the .dat where
         // the mount looks first (Go moves it there after the rebuild).
