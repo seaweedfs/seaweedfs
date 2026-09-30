@@ -37,8 +37,8 @@ func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid ne
 					ch <- -1
 					return err
 				}
-				// A sweep skips a read-only copy unless the read-only is the
-				// disk filling up — that is the copy compaction exists for.
+				// A sweep skips a read-only copy unless low disk space is its
+				// only read-only cause — that is the copy compaction exists for.
 				if skipReadOnly {
 					if v, lookErr := dn.GetVolumesById(vid); lookErr == nil && v.ReadOnly && !resp.DiskSpaceLow {
 						glog.V(0).Infof("skip vacuuming read-only volume %d on %s", vid, url)

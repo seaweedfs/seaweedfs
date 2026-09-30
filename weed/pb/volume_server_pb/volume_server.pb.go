@@ -436,7 +436,7 @@ func (x *VacuumVolumeCheckRequest) GetVolumeId() uint32 {
 type VacuumVolumeCheckResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	GarbageRatio  float64                `protobuf:"fixed64,1,opt,name=garbage_ratio,json=garbageRatio,proto3" json:"garbage_ratio,omitempty"`
-	DiskSpaceLow  bool                   `protobuf:"varint,4,opt,name=disk_space_low,json=diskSpaceLow,proto3" json:"disk_space_low,omitempty"` // the volume's disk is low on space — a read-only cause that compaction itself reclaims
+	DiskSpaceLow  bool                   `protobuf:"varint,4,opt,name=disk_space_low,json=diskSpaceLow,proto3" json:"disk_space_low,omitempty"` // the volume is read-only solely because its disk is low on space — a cause compaction itself reclaims
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

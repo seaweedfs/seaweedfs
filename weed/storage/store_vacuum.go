@@ -16,8 +16,10 @@ var ErrInsufficientSpace = fmt.Errorf("insufficient free space")
 func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (garbageRatio float64, diskSpaceLow bool, err error) {
 	if v := s.findVolume(volumeId); v != nil {
 		glog.V(3).Infof("volume %d garbage level: %f", volumeId, v.garbageLevel())
-		_, _, _, diskSpaceLow = v.ReadOnlyReasons()
-		return v.garbageLevel(), diskSpaceLow, nil
+		// diskSpaceLow only counts when it is the sole read-only cause — an
+		// operator mark or I/O quarantine still shields the volume.
+		_, noWriteOrDelete, noWriteCanDelete, isLow := v.ReadOnlyReasons()
+		return v.garbageLevel(), isLow && !noWriteOrDelete && !noWriteCanDelete, nil
 	}
 	return 0, false, fmt.Errorf("volume id %d is not found during check compact: %w", volumeId, ErrVolumeNotFound)
 }

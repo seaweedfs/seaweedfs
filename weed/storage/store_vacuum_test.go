@@ -3,6 +3,8 @@ package storage
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -128,4 +130,29 @@ func TestEstimatedCompactedSizeCoversNeedleFraming(t *testing.T) {
 	if estimate := estimatedCompactedSize(v); estimate < int64(datSize) {
 		t.Fatalf("estimate %d below .dat size %d for an all-live volume: missing per-needle framing", estimate, datSize)
 	}
+}
+
+// disk_space_low is only reported when low space is the sole read-only cause,
+// so a volume also marked read-only by an operator or quarantined by failed
+// I/O stays out of the sweep.
+func TestCheckCompactVolumeDiskLowSoleCauseOnly(t *testing.T) {
+	dir := t.TempDir()
+	store := newSingleDirStore(t, dir)
+	defer store.Close()
+	const vid = needle.VolumeId(7)
+	require.NoError(t, store.AddVolume(vid, "", NeedleMapInMemory, "000", "", 0, needle.GetCurrentVersion(), 0, types.HardDriveType, 0))
+
+	_, low, err := store.CheckCompactVolume(vid)
+	require.NoError(t, err)
+	require.False(t, low)
+
+	store.Locations[0].isDiskSpaceLow.Store(true)
+	_, low, err = store.CheckCompactVolume(vid)
+	require.NoError(t, err)
+	require.True(t, low)
+
+	require.NoError(t, store.MarkVolumeReadonly(vid, false, false))
+	_, low, err = store.CheckCompactVolume(vid)
+	require.NoError(t, err)
+	require.False(t, low)
 }
