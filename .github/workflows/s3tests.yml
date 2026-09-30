@@ -289,6 +289,7 @@ jobs:
           s3tests/functional/test_s3.py::test_object_write_check_etag \
           s3tests/functional/test_s3.py::test_object_write_cache_control \
           s3tests/functional/test_s3.py::test_object_write_expires \
+          s3tests/functional/test_s3.py::test_object_content_encoding_aws_chunked \
           s3tests/functional/test_s3.py::test_object_write_read_update_read_delete \
           s3tests/functional/test_s3.py::test_object_metadata_replaced_on_put \
           s3tests/functional/test_s3.py::test_object_write_file \
@@ -1149,6 +1150,7 @@ jobs:
           s3tests/functional/test_s3.py::test_object_write_check_etag \
           s3tests/functional/test_s3.py::test_object_write_cache_control \
           s3tests/functional/test_s3.py::test_object_write_expires \
+          s3tests/functional/test_s3.py::test_object_content_encoding_aws_chunked \
           s3tests/functional/test_s3.py::test_object_write_read_update_read_delete \
           s3tests/functional/test_s3.py::test_object_metadata_replaced_on_put \
           s3tests/functional/test_s3.py::test_object_write_file \

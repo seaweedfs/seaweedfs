@@ -833,8 +833,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				entry.Extended[k] = []byte(v[0])
 			} else {
 				switch k {
-				case "Cache-Control", "Expires", "Content-Disposition", "Content-Encoding", "Content-Language":
+				case "Cache-Control", "Expires", "Content-Disposition", "Content-Language":
 					entry.Extended[k] = []byte(v[0])
+				case "Content-Encoding":
+					if ce := storedContentEncoding(v[0]); ce != "" {
+						entry.Extended[k] = []byte(ce)
+					}
 				}
 			}
 			if k == "Response-Content-Disposition" {

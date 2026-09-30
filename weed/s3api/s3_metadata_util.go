@@ -30,7 +30,7 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 	}
 
 	// Content-Encoding (standard HTTP header used by S3)
-	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+	if ce := storedContentEncoding(r.Header.Get("Content-Encoding")); ce != "" {
 		metadata["Content-Encoding"] = []byte(ce)
 	}
 
@@ -107,4 +107,26 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 	}
 
 	return metadata, s3err.ErrNone
+}
+
+// storedContentEncoding returns the Content-Encoding to keep with an object.
+// aws-chunked names the SigV4 streaming framing of the request body, which is
+// decoded on upload, so S3 does not store it: "gzip, aws-chunked" is kept as
+// "gzip", and "aws-chunked" alone as no Content-Encoding at all.
+func storedContentEncoding(value string) string {
+	var kept []string
+	chunked := false
+	for _, encoding := range strings.Split(value, ",") {
+		encoding = strings.TrimSpace(encoding)
+		switch {
+		case strings.EqualFold(encoding, "aws-chunked"):
+			chunked = true
+		case encoding != "":
+			kept = append(kept, encoding)
+		}
+	}
+	if !chunked {
+		return value
+	}
+	return strings.Join(kept, ", ")
 }

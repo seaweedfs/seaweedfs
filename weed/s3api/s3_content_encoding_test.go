@@ -202,3 +202,36 @@ func TestContentEncodingWithOtherHeaders(t *testing.T) {
 	assert.Equal(t, "max-age=3600", getResp.Header().Get("Cache-Control"))
 	assert.Equal(t, "attachment; filename=test.txt", getResp.Header().Get("Content-Disposition"))
 }
+
+// TestContentEncodingDropsAwsChunked verifies that aws-chunked, the SigV4
+// streaming framing of the request body, is not stored with the object
+func TestContentEncodingDropsAwsChunked(t *testing.T) {
+	testCases := []struct {
+		contentEncoding string
+		stored          string
+	}{
+		{"gzip, aws-chunked", "gzip"},
+		{"aws-chunked, gzip", "gzip"},
+		{"aws-chunked,gzip,br", "gzip, br"},
+		{"aws-chunked", ""},
+		{"AWS-Chunked", ""},
+		{"aws-chunked, aws-chunked", ""},
+		{"deflate, gzip", "deflate, gzip"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.contentEncoding, func(t *testing.T) {
+			putReq := httptest.NewRequest("PUT", "/test-bucket/test-object.txt", bytes.NewBufferString("body"))
+			putReq.Header.Set("Content-Encoding", tc.contentEncoding)
+
+			metadata, errCode := ParseS3Metadata(putReq, nil, false)
+			require.Equal(t, 0, int(errCode))
+			if tc.stored == "" {
+				assert.NotContains(t, metadata, "Content-Encoding")
+			} else {
+				assert.Equal(t, []byte(tc.stored), metadata["Content-Encoding"])
+			}
+			assert.Equal(t, tc.stored, storedContentEncoding(tc.contentEncoding))
+		})
+	}
+}
