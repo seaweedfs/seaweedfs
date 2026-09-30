@@ -3877,6 +3877,7 @@ impl VolumeServer for VolumeGrpcService {
         // reading each shard from its real on-disk location.
         let dat_dir = ec_vol.dir.clone();
         let ecx_dir = ec_vol.ecx_actual_dir().to_string();
+        let idx_dir = ec_vol.dir_idx.clone();
         let collection = ec_vol.collection.clone();
         let vif_dat_file_size = ec_vol.dat_file_size;
         let (large_block_size, small_block_size) =
@@ -3889,11 +3890,19 @@ impl VolumeServer for VolumeGrpcService {
             .collect();
         drop(store);
 
-        // .ecj deletions count as deleted here and in the .dat size below.
+        // Deletions journaled beside the .ecx, or collected by
+        // VolumeEcShardsCopy into the idx dir, count as deleted throughout.
+        let deleted = crate::storage::erasure_coding::ec_decoder::read_ecj_deletions(
+            &[&ecx_dir, &idx_dir],
+            &collection,
+            vid,
+        )
+        .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
         let has_live = crate::storage::erasure_coding::ec_decoder::has_live_needles(
             &ecx_dir,
             &collection,
             vid,
+            &deleted,
         )
         .map_err(|e| Status::internal(format!("HasLiveNeedles: {}", e)))?;
         if !has_live {
@@ -3911,6 +3920,7 @@ impl VolumeServer for VolumeGrpcService {
                 &ecx_dir,
                 &collection,
                 vid,
+                &deleted,
             )
             .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
 
@@ -3935,13 +3945,15 @@ impl VolumeServer for VolumeGrpcService {
         )
         .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 
-        // Write .idx from the .ecx/.ecj wherever they live, beside the .dat
-        // where the mount looks first (Go moves it there after the rebuild).
+        // Write .idx from the .ecx wherever it lives, beside the .dat where
+        // the mount looks first (Go moves it there after the rebuild).
         crate::storage::erasure_coding::ec_decoder::write_idx_file_from_ec_index_with_dirs(
             &ecx_dir,
             &dat_dir,
             &collection,
             vid,
+            &deleted,
+            dat_file_size,
         )
         .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
 
@@ -10857,11 +10869,13 @@ mod tests {
         );
     }
 
-    /// A split -dir/-dir.idx decode target: shards in the data dir, .ecx/.ecj
-    /// only in the idx dir, as VolumeEcShardsCopy leaves them. `journaled`
-    /// needles are deleted through the .ecj alone.
+    /// A split -dir/-dir.idx decode target with the shards in the data dir.
+    /// The .ecx is moved to the idx dir, as VolumeEcShardsCopy leaves it, unless
+    /// `ecx_in_data_dir` (where VolumeEcShardsGenerate writes it). `journal` goes
+    /// into the idx-dir .ecj, where VolumeEcShardsCopy appends collected ones.
     async fn make_split_idx_ec_decode_service(
-        journaled: &[u64],
+        journal: &[u64],
+        ecx_in_data_dir: bool,
     ) -> (VolumeGrpcService, TempDir, String, String, u64) {
         let tmp = TempDir::new().unwrap();
         let data = tmp.path().join("data").to_str().unwrap().to_string();
@@ -10917,10 +10931,14 @@ mod tests {
         store.unmount_volume(VolumeId(1)).unwrap();
         std::fs::remove_file(format!("{data}/1.dat")).unwrap();
         std::fs::remove_file(format!("{idx}/1.idx")).unwrap();
-        // Leave no .ecx beside the shards, as on a VolumeEcShardsCopy receiver.
-        std::fs::rename(format!("{data}/1.ecx"), format!("{idx}/1.ecx")).unwrap();
+        let ecx_dir = if ecx_in_data_dir {
+            data.clone()
+        } else {
+            std::fs::rename(format!("{data}/1.ecx"), format!("{idx}/1.ecx")).unwrap();
+            idx.clone()
+        };
         let mut ecj = Vec::new();
-        for id in journaled {
+        for id in journal {
             let mut buf = [0u8; NEEDLE_ID_SIZE];
             NeedleId(*id).to_bytes(&mut buf);
             ecj.extend_from_slice(&buf);
@@ -10931,8 +10949,8 @@ mod tests {
         }
         assert_eq!(
             store.find_ec_volume(VolumeId(1)).unwrap().ecx_actual_dir(),
-            idx,
-            "precondition: the mounted EC volume must read its .ecx from the idx dir"
+            ecx_dir,
+            "precondition: the mounted EC volume reads its .ecx from {ecx_dir}"
         );
         drop(store);
         (service, tmp, data, idx, size_before_needle_3)
@@ -10953,13 +10971,73 @@ mod tests {
         request
     }
 
+    /// Mounts the decoded volume and checks its (file, deleted) counts, that it
+    /// is writable, that `live` needles read back and `deleted` ones stay deleted.
+    fn assert_decoded_volume(
+        service: &VolumeGrpcService,
+        counts: (i64, i64),
+        live: &[u64],
+        deleted: &[u64],
+    ) {
+        let mut store = service.state.store.write().unwrap();
+        let all_shards: Vec<ShardId> = (0..14).collect();
+        store.unmount_ec_shards(VolumeId(1), &all_shards);
+        store
+            .mount_volume(VolumeId(1), "", DiskType::HardDrive)
+            .unwrap();
+        let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+        assert_eq!((v.file_count(), v.deleted_count()), counts);
+        assert!(
+            !v.is_no_write_or_delete(),
+            "no .idx row may point past the end of the decoded .dat"
+        );
+        for &id in live {
+            let mut n = Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            };
+            store.read_volume_needle(VolumeId(1), &mut n).unwrap();
+            assert_eq!(n.data, format!("split idx decode needle {id}").into_bytes());
+        }
+        for &id in deleted {
+            let mut n = Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            };
+            assert!(
+                store.read_volume_needle(VolumeId(1), &mut n).is_err(),
+                "needle {id} was deleted through the .ecj and must stay deleted"
+            );
+        }
+        let body = b"written after decode".to_vec();
+        let mut n = Needle {
+            id: NeedleId(4),
+            cookie: Cookie(4),
+            data_size: body.len() as u32,
+            data: body.clone(),
+            ..Needle::default()
+        };
+        store
+            .write_volume_needle(VolumeId(1), &mut n, true)
+            .unwrap();
+        let mut n = Needle {
+            id: NeedleId(4),
+            ..Needle::default()
+        };
+        store.read_volume_needle(VolumeId(1), &mut n).unwrap();
+        assert_eq!(n.data, body);
+    }
+
     /// ec.decode used to read the .ecx/.ecj from the data dir when writing the
     /// .idx, failing with NotFound after the .dat was already published, and
     /// ignored .ecj deletions when sizing the .dat (Go folds them in first).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_volume_ec_shards_to_volume_reads_ecx_from_split_idx_dir() {
+        // The lowest key (the first .idx row) and the .dat tail, each journaled
+        // many times over.
+        let journal: Vec<u64> = std::iter::repeat_n([1, 3], 500).flatten().collect();
         let (service, _tmp, data, idx, size_before_needle_3) =
-            make_split_idx_ec_decode_service(&[3]).await;
+            make_split_idx_ec_decode_service(&journal, false).await;
         let ecx = std::fs::read(format!("{idx}/1.ecx")).unwrap();
 
         service
@@ -10972,12 +11050,12 @@ mod tests {
             std::fs::metadata(format!("{data}/1.dat")).unwrap().len(),
             size_before_needle_3
         );
-        // The .idx sits beside the .dat, as Go leaves it: the .ecx rows, then a
-        // tombstone per journaled needle.
-        let mut expected_idx = ecx;
+        // The .idx sits beside the .dat. It keeps the .ecx rows the .dat holds
+        // and tombstones each journaled one once, however often it was journaled.
+        let mut expected_idx = ecx[..2 * NEEDLE_MAP_ENTRY_SIZE].to_vec();
         crate::storage::idx::write_index_entry(
             &mut expected_idx,
-            NeedleId(3),
+            NeedleId(1),
             Offset::default(),
             TOMBSTONE_FILE_SIZE,
         )
@@ -10988,37 +11066,35 @@ mod tests {
         );
         assert!(!std::path::Path::new(&format!("{idx}/1.idx")).exists());
 
-        let mut store = service.state.store.write().unwrap();
-        let all_shards: Vec<ShardId> = (0..14).collect();
-        store.unmount_ec_shards(VolumeId(1), &all_shards);
-        store
-            .mount_volume(VolumeId(1), "", DiskType::HardDrive)
+        // Needle 1 is still in the .dat, so it counts as garbage; needle 3 is not.
+        assert_decoded_volume(&service, (2, 1), &[2], &[1, 3]);
+    }
+
+    /// Collected journals land in the idx dir even when the .ecx is beside the
+    /// shards, so the decode reads deletions from both.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_reads_idx_dir_ecj_with_data_dir_ecx() {
+        let (service, _tmp, data, _idx, size_before_needle_3) =
+            make_split_idx_ec_decode_service(&[3], true).await;
+
+        service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
             .unwrap();
-        let (_, v) = store.find_volume(VolumeId(1)).unwrap();
-        assert_eq!((v.file_count(), v.deleted_count()), (3, 1));
-        for id in 1..=2u64 {
-            let mut n = Needle {
-                id: NeedleId(id),
-                ..Needle::default()
-            };
-            store.read_volume_needle(VolumeId(1), &mut n).unwrap();
-            assert_eq!(n.data, format!("split idx decode needle {id}").into_bytes());
-        }
-        let mut n = Needle {
-            id: NeedleId(3),
-            ..Needle::default()
-        };
-        assert!(
-            store.read_volume_needle(VolumeId(1), &mut n).is_err(),
-            "needle 3 was deleted through the .ecj and must stay deleted"
+
+        assert_eq!(
+            std::fs::metadata(format!("{data}/1.dat")).unwrap().len(),
+            size_before_needle_3
         );
+        assert_decoded_volume(&service, (2, 0), &[1, 2], &[3]);
     }
 
     /// Deletions only in the .ecj count toward "no live entries", as after Go's
     /// RebuildEcxFile, so the caller purges the shards instead of decoding.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_volume_ec_shards_to_volume_all_journaled_has_no_live_entries() {
-        let (service, _tmp, data, _idx, _) = make_split_idx_ec_decode_service(&[1, 2, 3]).await;
+        let (service, _tmp, data, _idx, _) =
+            make_split_idx_ec_decode_service(&[1, 2, 3], false).await;
 
         let err = service
             .volume_ec_shards_to_volume(ec_shards_to_volume_request())

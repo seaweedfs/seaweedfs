@@ -8,6 +8,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 
 use crate::storage::erasure_coding::ec_shard::*;
+use crate::storage::erasure_coding::ec_volume::read_ecj_ids;
 use crate::storage::idx;
 use crate::storage::needle::needle::get_actual_size;
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
@@ -21,18 +22,21 @@ use crate::storage::volume::{fsync_dir, volume_file_name};
 /// `dir` is used both for reading `.ec00` and `.ecx`. For split-disk
 /// reconciled volumes call [`find_dat_file_size_with_dirs`] instead.
 pub fn find_dat_file_size(dir: &str, collection: &str, volume_id: VolumeId) -> io::Result<i64> {
-    find_dat_file_size_with_dirs(dir, dir, collection, volume_id)
+    let deleted = read_ecj_deletions(&[dir], collection, volume_id)?;
+    find_dat_file_size_with_dirs(dir, dir, collection, volume_id, &deleted)
 }
 
 /// Like [`find_dat_file_size`] but lets the caller pass separate dirs
 /// for `.ec00` (the data shard) and `.ecx` (the sealed index). This
 /// is the form needed when shards are split across data dirs and the
-/// `.ecx` lives on a sibling disk's idx dir (#9252).
+/// `.ecx` lives on a sibling disk's idx dir (#9252). Needles in `deleted`
+/// count as deleted.
 pub fn find_dat_file_size_with_dirs(
     ec00_dir: &str,
     ecx_dir: &str,
     collection: &str,
     volume_id: VolumeId,
+    deleted: &HashSet<NeedleId>,
 ) -> io::Result<i64> {
     let ec00_base = volume_file_name(ec00_dir, collection, volume_id);
     let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
@@ -51,13 +55,12 @@ pub fn find_dat_file_size_with_dirs(
     let ecx_path = format!("{}.ecx", ecx_base);
     let ecx_data = std::fs::read(&ecx_path)?;
     let entry_count = ecx_data.len() / NEEDLE_MAP_ENTRY_SIZE;
-    let journaled = read_ecj_deletions(&ecx_base)?;
 
     for i in 0..entry_count {
         let start = i * NEEDLE_MAP_ENTRY_SIZE;
         let (key, offset, size) =
             idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
-        if size.is_deleted() || journaled.contains(&key) {
+        if size.is_deleted() || deleted.contains(&key) {
             continue;
         }
         let entry_stop = offset.to_actual_offset() + get_actual_size(size, version);
@@ -70,30 +73,45 @@ pub fn find_dat_file_size_with_dirs(
 }
 
 /// Whether the `.ecx` in `ecx_dir` indexes a needle deleted neither there nor
-/// in the `.ecj` beside it.
-pub fn has_live_needles(ecx_dir: &str, collection: &str, volume_id: VolumeId) -> io::Result<bool> {
+/// in `deleted`.
+pub fn has_live_needles(
+    ecx_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    deleted: &HashSet<NeedleId>,
+) -> io::Result<bool> {
     let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
     let ecx_data = std::fs::read(format!("{}.ecx", ecx_base))?;
-    let journaled = read_ecj_deletions(&ecx_base)?;
     let (entries, _) = ecx_data.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>();
     Ok(entries.iter().any(|entry| {
         let (key, _, size) = idx_entry_from_bytes(entry);
-        !size.is_deleted() && !journaled.contains(&key)
+        !size.is_deleted() && !deleted.contains(&key)
     }))
 }
 
-/// Needle ids in the `.ecj` beside `ecx_base`. Go folds them into the `.ecx`
-/// (RebuildEcxFile) before a decode sizes the `.dat`; reading them leaves the
-/// sealed index untouched. Only NotFound means "no journal".
-fn read_ecj_deletions(ecx_base: &str) -> io::Result<HashSet<NeedleId>> {
-    match std::fs::read(format!("{}.ecj", ecx_base)) {
-        Ok(data) => {
-            let (ids, _) = data.as_chunks::<NEEDLE_ID_SIZE>();
-            Ok(ids.iter().map(|id| NeedleId::from_bytes(id)).collect())
+/// Distinct needle ids journaled in the `.ecj` of any of `dirs`. Go folds the
+/// journal into the `.ecx` (RebuildEcxFile) before a decode; reading it leaves
+/// the sealed index untouched. Only NotFound means "no journal".
+pub fn read_ecj_deletions(
+    dirs: &[&str],
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<HashSet<NeedleId>> {
+    let mut ids = HashSet::new();
+    for (i, dir) in dirs.iter().enumerate() {
+        if dirs[..i].contains(dir) {
+            continue;
         }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(HashSet::new()),
-        Err(e) => Err(e),
+        let path = format!("{}.ecj", volume_file_name(dir, collection, volume_id));
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        let len = file.metadata()?.len();
+        read_ecj_ids(&file, len, &mut ids)?;
     }
+    Ok(ids)
 }
 
 /// What it takes to rebuild a volume's .dat from its EC data shards.
@@ -296,27 +314,33 @@ pub fn write_dat_file_from_shards(spec: &DatRebuild<'_>) -> io::Result<()> {
 
 /// Write .idx file from .ecx index + .ecj deletion journal.
 ///
-/// Copies sorted .ecx entries to .idx, then appends tombstones for
-/// deleted needles from .ecj.
+/// See [`write_idx_file_from_ec_index_with_dirs`]; everything lives in `dir`.
 pub fn write_idx_file_from_ec_index(
     dir: &str,
     collection: &str,
     volume_id: VolumeId,
 ) -> io::Result<()> {
-    write_idx_file_from_ec_index_with_dirs(dir, dir, collection, volume_id)
+    let deleted = read_ecj_deletions(&[dir], collection, volume_id)?;
+    let dat_file_size = find_dat_file_size_with_dirs(dir, dir, collection, volume_id, &deleted)?;
+    write_idx_file_from_ec_index_with_dirs(dir, dir, collection, volume_id, &deleted, dat_file_size)
 }
 
-/// Like [`write_idx_file_from_ec_index`] but reads `.ecx` / `.ecj` from
-/// `ecx_dir` and writes the `.idx` into `idx_dir`.
+/// Write the `.idx` for a `.dat` decoded to `dat_file_size` bytes, from the
+/// `.ecx` in `ecx_dir`, into `idx_dir`.
+///
+/// Copies the `.ecx` rows, then appends one tombstone per row whose needle is
+/// in `deleted`. A deleted needle at or past `dat_file_size` was cut from the
+/// `.dat`, so its row is dropped: a row pointing past the end of the `.dat`
+/// makes the volume load read-only.
 pub fn write_idx_file_from_ec_index_with_dirs(
     ecx_dir: &str,
     idx_dir: &str,
     collection: &str,
     volume_id: VolumeId,
+    deleted: &HashSet<NeedleId>,
+    dat_file_size: i64,
 ) -> io::Result<()> {
-    let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
-    let ecx_path = format!("{}.ecx", ecx_base);
-    let ecj_path = format!("{}.ecj", ecx_base);
+    let ecx_path = format!("{}.ecx", volume_file_name(ecx_dir, collection, volume_id));
     let idx_path = format!("{}.idx", volume_file_name(idx_dir, collection, volume_id));
     // Write to a temp file and atomically rename into place, so a crash
     // mid-write never leaves a partial .idx at the final name beside the
@@ -324,34 +348,27 @@ pub fn write_idx_file_from_ec_index_with_dirs(
     let tmp_path = format!("{}.tmp", idx_path);
 
     let write_result = (|| -> io::Result<()> {
-        // Copy .ecx to the temp .idx
-        std::fs::copy(&ecx_path, &tmp_path)?;
-
-        // Append deletions from .ecj as tombstones. Read the journal directly
-        // and treat only NotFound as "no journal": Path::exists would also
-        // swallow a permission/IO error and silently skip deletions, which
-        // would resurrect deleted needles as live.
-        let mut idx_file = std::fs::OpenOptions::new().append(true).open(&tmp_path)?;
-        match std::fs::read(&ecj_path) {
-            Ok(ecj_data) => {
-                let count = ecj_data.len() / NEEDLE_ID_SIZE;
-                for i in 0..count {
-                    let start = i * NEEDLE_ID_SIZE;
-                    let needle_id = NeedleId::from_bytes(&ecj_data[start..start + NEEDLE_ID_SIZE]);
-                    idx::write_index_entry(
-                        &mut idx_file,
-                        needle_id,
-                        Offset::default(),
-                        TOMBSTONE_FILE_SIZE,
-                    )?;
-                }
+        let mut ecx_file = File::open(&ecx_path)?;
+        let mut idx_file = io::BufWriter::new(File::create(&tmp_path)?);
+        let mut tombstoned = Vec::new();
+        idx::walk_index_file(&mut ecx_file, 0, |key, offset, size| {
+            let is_deleted = size.is_deleted() || deleted.contains(&key);
+            if is_deleted && offset.to_actual_offset() >= dat_file_size {
+                return Ok(());
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
+            idx::write_index_entry(&mut idx_file, key, offset, size)?;
+            if !size.is_deleted() && deleted.contains(&key) {
+                tombstoned.push(key);
+            }
+            Ok(())
+        })?;
+        for key in tombstoned {
+            idx::write_index_entry(&mut idx_file, key, Offset::default(), TOMBSTONE_FILE_SIZE)?;
         }
 
         // fsync, rename, then fsync the dir so the decoded .idx is durable and
         // atomically published before the caller deletes the source shards.
+        let idx_file = idx_file.into_inner().map_err(|e| e.into_error())?;
         idx_file.sync_all()?;
         drop(idx_file);
         // Windows rename does not replace an existing file on every version;
@@ -733,5 +750,44 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    /// A journal many chunks long that repeats a few ids reads back as those
+    /// ids, from each dir once, whatever its length.
+    #[test]
+    fn test_read_ecj_deletions_collects_distinct_ids_across_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let data = tmp.path().join("data");
+        let idx = tmp.path().join("idx");
+        let missing = tmp.path().join("missing");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&idx).unwrap();
+        let (data, idx, missing) = (
+            data.to_str().unwrap(),
+            idx.to_str().unwrap(),
+            missing.to_str().unwrap(),
+        );
+
+        let entry = |id: u64| {
+            let mut buf = [0u8; NEEDLE_ID_SIZE];
+            NeedleId(id).to_bytes(&mut buf);
+            buf
+        };
+        // Past two load chunks of three repeating ids, then an id only in the
+        // last chunk and a torn trailing record.
+        let mut ecj = Vec::new();
+        while ecj.len() <= 2 * (1 << 20) {
+            for id in [1, 2, 3] {
+                ecj.extend_from_slice(&entry(id));
+            }
+        }
+        ecj.extend_from_slice(&entry(7));
+        ecj.extend_from_slice(&entry(8)[..3]);
+        std::fs::write(format!("{idx}/1.ecj"), &ecj).unwrap();
+        std::fs::write(format!("{data}/1.ecj"), entry(9)).unwrap();
+
+        let ids = read_ecj_deletions(&[data, idx, idx, missing], "", VolumeId(1)).unwrap();
+        let expected: HashSet<NeedleId> = [1, 2, 3, 7, 9].into_iter().map(NeedleId).collect();
+        assert_eq!(ids, expected);
     }
 }
