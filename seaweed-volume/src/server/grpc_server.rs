@@ -47,6 +47,11 @@ fn scrub_mode_label(mode: i32) -> &'static str {
     }
 }
 
+/// Go formats the id in decimal; fs.verify matches the "needle not found " prefix.
+fn needle_not_found(needle_id: NeedleId) -> Status {
+    Status::not_found(format!("needle not found {}", needle_id.0))
+}
+
 fn unix_now_seconds() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -5023,64 +5028,76 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let needle_id = NeedleId(req.needle_id);
 
-        let store = self.state.store.read().unwrap();
+        {
+            let store = self.state.store.read().unwrap();
 
-        // Try normal volume first
-        if store.find_volume(vid).is_some() {
-            let mut n = Needle {
-                id: needle_id,
-                ..Needle::default()
+            // Try normal volume first
+            if store.find_volume(vid).is_some() {
+                let mut n = Needle {
+                    id: needle_id,
+                    ..Needle::default()
+                };
+                match store.read_volume_needle(vid, &mut n) {
+                    Ok(_) => {
+                        let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
+                        return Ok(Response::new(
+                            volume_server_pb::VolumeNeedleStatusResponse {
+                                needle_id: n.id.0,
+                                cookie: n.cookie.0,
+                                size: n.size.0 as u32,
+                                last_modified: n.last_modified,
+                                crc: n.checksum.0,
+                                ttl: ttl_str,
+                            },
+                        ));
+                    }
+                    Err(crate::storage::volume::VolumeError::NotFound) => {
+                        return Err(needle_not_found(needle_id));
+                    }
+                    // fs.verify skips "already deleted" by message, like Go's plain ErrorDeleted.
+                    Err(e) => return Err(Status::unknown(e.to_string())),
+                }
+            }
+
+            let Some(ec_vol) = store.find_ec_volume(vid) else {
+                return Err(Status::not_found(format!("volume not found {}", vid)));
             };
-            match store.read_volume_needle(vid, &mut n) {
-                Ok(_) => {
-                    let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
-                    return Ok(Response::new(
-                        volume_server_pb::VolumeNeedleStatusResponse {
-                            needle_id: n.id.0,
-                            cookie: n.cookie.0,
-                            size: n.size.0 as u32,
-                            last_modified: n.last_modified,
-                            crc: n.checksum.0,
-                            ttl: ttl_str,
-                        },
-                    ));
-                }
-                Err(_) => return Err(Status::not_found(format!("needle not found {}", needle_id))),
+            // locate_needle folds a tombstone into not-found; Go reports it deleted.
+            if let Ok(Some((_, size))) = ec_vol.find_needle_from_ecx(needle_id)
+                && size.is_deleted()
+            {
+                return Err(Status::unknown(
+                    crate::storage::volume::VolumeError::Deleted.to_string(),
+                ));
             }
         }
 
-        // Fall back to EC shards — read full needle from local shards
-        if let Some(ec_vol) = store.find_ec_volume(vid) {
-            match ec_vol.read_ec_shard_needle(needle_id) {
-                Ok(Some(n)) => {
-                    let ttl_str = match &n.ttl {
-                        Some(t) if n.has_ttl() => t.to_string(),
-                        _ => String::new(),
-                    };
-                    return Ok(Response::new(
-                        volume_server_pb::VolumeNeedleStatusResponse {
-                            needle_id: n.id.0,
-                            cookie: n.cookie.0,
-                            size: n.size.0 as u32,
-                            last_modified: n.last_modified,
-                            crc: n.checksum.0,
-                            ttl: ttl_str,
-                        },
-                    ));
-                }
-                Ok(None) => {
-                    return Err(Status::not_found(format!("needle not found {}", needle_id)));
-                }
-                Err(e) => {
-                    return Err(Status::internal(format!(
-                        "read ec shard needle {} from volume {}: {}",
-                        needle_id, vid, e
-                    )));
-                }
+        // Intervals on shards held by other nodes are fetched or reconstructed, as in Go.
+        match crate::server::store_ec::read_ec_shard_needle_distributed(&self.state, vid, needle_id)
+            .await
+        {
+            Ok(Some(n)) => {
+                let ttl_str = match &n.ttl {
+                    Some(t) if n.has_ttl() => t.to_string(),
+                    _ => String::new(),
+                };
+                Ok(Response::new(
+                    volume_server_pb::VolumeNeedleStatusResponse {
+                        needle_id: n.id.0,
+                        cookie: n.cookie.0,
+                        size: n.size.0 as u32,
+                        last_modified: n.last_modified,
+                        crc: n.checksum.0,
+                        ttl: ttl_str,
+                    },
+                ))
             }
+            Ok(None) => Err(needle_not_found(needle_id)),
+            Err(e) => Err(Status::unknown(format!(
+                "read ec shard needle {} from volume {}: {}",
+                needle_id, vid, e
+            ))),
         }
-
-        Err(Status::not_found(format!("volume not found {}", vid)))
     }
 
     async fn ping(
@@ -9747,6 +9764,148 @@ mod tests {
         assert!(resp.broken_shard_infos.iter().any(|s| s.shard_id == 0));
         assert!(resp.details.is_empty(), "{:?}", resp.details);
         assert_eq!(resp.total_files, 1);
+    }
+
+    async fn needle_status(
+        service: &VolumeGrpcService,
+        needle_id: u64,
+    ) -> Result<volume_server_pb::VolumeNeedleStatusResponse, Status> {
+        service
+            .volume_needle_status(Request::new(volume_server_pb::VolumeNeedleStatusRequest {
+                volume_id: 1,
+                needle_id,
+            }))
+            .await
+            .map(Response::into_inner)
+    }
+
+    async fn generate_and_mount_ec_1(service: &VolumeGrpcService, shard_ids: Vec<u32>) {
+        service
+            .volume_ec_shards_generate(Request::new(
+                volume_server_pb::VolumeEcShardsGenerateRequest {
+                    volume_id: 1,
+                    collection: String::new(),
+                },
+            ))
+            .await
+            .unwrap();
+        mount_ec_1(service, shard_ids).await;
+    }
+
+    async fn mount_ec_1(service: &VolumeGrpcService, shard_ids: Vec<u32>) {
+        service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 1,
+                collection: String::new(),
+                shard_ids,
+                source_disk_type: String::new(),
+                recover_missing_index: false,
+            }))
+            .await
+            .unwrap();
+    }
+
+    /// fs.verify asks every EC shard holder, so a node that does not hold the
+    /// shard with the needle's bytes must fetch them from a peer, as Go does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_volume_needle_status_reads_an_ec_needle_from_a_peer_shard() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        // One local shard, not the needle's: only a peer read can answer.
+        generate_and_mount_ec_1(&service, vec![1]).await;
+
+        let (peer, peer_tmp) = make_local_service_with_volume("", None);
+        peer.state
+            .store
+            .write()
+            .unwrap()
+            .unmount_volume(VolumeId(1))
+            .unwrap();
+        for entry in std::fs::read_dir(tmp.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            if name.starts_with("1.ec") || name == "1.vif" {
+                std::fs::copy(tmp.path().join(&name), peer_tmp.path().join(&name)).unwrap();
+            }
+        }
+        mount_ec_1(&peer, vec![0]).await;
+        let (port, _shutdown) = serve_source(peer).await;
+
+        {
+            let mut store = service.state.store.write().unwrap();
+            store.unmount_volume(VolumeId(1)).unwrap();
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .merge_shard_locations(
+                    (0u8..14)
+                        .map(|sid| {
+                            let addr = if sid == 0 {
+                                format!("127.0.0.1:{port}.{port}")
+                            } else {
+                                "127.0.0.1:255.1".to_string()
+                            };
+                            (sid, vec![addr])
+                        })
+                        .collect(),
+                );
+        }
+
+        let got = needle_status(&service, 11)
+            .await
+            .expect("the needle's shard is on a reachable peer");
+        assert_eq!(got, want);
+    }
+
+    /// Go returns ErrorDeleted as a plain error, which fs.verify skips by
+    /// message; a NotFound "needle not found" would class it as missing.
+    #[tokio::test]
+    async fn test_volume_needle_status_reports_deleted_needles_like_go() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+
+        let err = needle_status(&service, 12345).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err}");
+        assert_eq!(err.message(), "needle not found 12345");
+
+        generate_and_mount_ec_1(&service, (0..14).collect()).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            let mut n = Needle {
+                id: NeedleId(11),
+                cookie: Cookie(0x3344),
+                ..Needle::default()
+            };
+            store.delete_volume_needle(VolumeId(1), &mut n).unwrap();
+        }
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unknown, "{err}");
+        assert_eq!(err.message(), "already deleted");
+
+        // The EC copy still has the needle live until its own delete lands.
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .unmount_volume(VolumeId(1))
+            .unwrap();
+        assert_eq!(needle_status(&service, 11).await.unwrap().cookie, 0x3344);
+
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .find_ec_volume_mut(VolumeId(1))
+            .unwrap()
+            .journal_delete(NeedleId(11))
+            .unwrap();
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unknown, "{err}");
+        assert_eq!(err.message(), "already deleted");
+
+        let err = needle_status(&service, 12345).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err}");
+        assert_eq!(err.message(), "needle not found 12345");
     }
 
     /// Batch atomicity: mount pre-validates the ENTIRE shard_ids before
