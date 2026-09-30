@@ -540,26 +540,27 @@ const RoleSourceStaticConfig = "static-config"
 // must be the one the session carries. It runs for every session carrying a
 // role ID, whatever policies the session embeds — the policies a session
 // embeds are the ones its role had, and outlive the role otherwise. A session
-// issued before role IDs were recorded carries none and is not bound.
-func (m *IAMManager) checkSessionRoleBinding(ctx context.Context, sessionInfo *sts.SessionInfo) error {
+// issued before role IDs were recorded carries none and is not bound. It
+// returns the role it checked, nil for an unbound session.
+func (m *IAMManager) checkSessionRoleBinding(ctx context.Context, sessionInfo *sts.SessionInfo) (*RoleDefinition, error) {
 	if sessionInfo == nil || sessionInfo.RoleId == "" {
-		return nil
+		return nil, nil
 	}
 	roleName := utils.ExtractRoleNameFromArn(sessionInfo.RoleArn)
 	if roleName == "" {
-		return nil
+		return nil, nil
 	}
 	role, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if errors.Is(err, ErrRoleNotFound) {
-		return fmt.Errorf("session was issued for role %s, which no longer exists", roleName)
+		return nil, fmt.Errorf("session was issued for role %s, which no longer exists", roleName)
 	}
 	if err != nil {
-		return fmt.Errorf("resolve role %s for session: %w", roleName, err)
+		return nil, fmt.Errorf("resolve role %s for session: %w", roleName, err)
 	}
 	if role.RoleId != sessionInfo.RoleId {
-		return fmt.Errorf("session was issued for an earlier role named %s", roleName)
+		return nil, fmt.Errorf("session was issued for an earlier role named %s", roleName)
 	}
-	return nil
+	return role, nil
 }
 
 // ActionRequest represents a request to perform an action
@@ -1037,7 +1038,8 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 
 // UpdateRole changes a role atomically in the role store (see
 // RoleStore.UpdateRole). update receives the role's current definition, nil
-// when it does not exist, and its result is validated like CreateRole's.
+// when it does not exist, and its result is validated like CreateRole's; a
+// nil result deletes the role.
 // The IAM API's role actions use it, so a change made on one S3 server is
 // neither lost to a concurrent change on another nor written over a delete.
 func (m *IAMManager) UpdateRole(ctx context.Context, roleName string, update RoleUpdate) error {
@@ -1046,8 +1048,8 @@ func (m *IAMManager) UpdateRole(ctx context.Context, roleName string, update Rol
 	}
 	return m.roleStore.UpdateRole(ctx, "", roleName, func(current *RoleDefinition) (*RoleDefinition, error) {
 		next, err := update(current)
-		if err != nil {
-			return nil, err
+		if err != nil || next == nil {
+			return next, err
 		}
 		if err := PrepareRoleDefinition(roleName, next); err != nil {
 			return nil, err
@@ -1184,6 +1186,23 @@ func (m *IAMManager) InvalidateRoleCache() {
 	if cached, ok := m.roleStore.(interface{ ClearCache() }); ok {
 		cached.ClearCache()
 	}
+}
+
+// RoleStoreDirectory is the filer directory the role store keeps roles in,
+// its configured basePath; empty when the store is not filer-backed. S3
+// servers watch it to drop cached roles when a peer changes one.
+func (m *IAMManager) RoleStoreDirectory() string {
+	store := m.roleStore
+	if overlay, ok := store.(*staticRoleOverlay); ok {
+		store = overlay.inner
+	}
+	if cached, ok := store.(*GenericCachedRoleStore); ok {
+		store = cached.adapter.store
+	}
+	if filerStore, ok := store.(*FilerRoleStore); ok {
+		return filerStore.basePath
+	}
+	return ""
 }
 
 func (m *IAMManager) GetRole(ctx context.Context, roleName string) (*RoleDefinition, error) {
@@ -1447,6 +1466,10 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	// We always try to validate with the internal STS service first if it's a SeaweedFS token.
 	// This ensures that session policies embedded in the token are correctly extracted and enforced.
 	var sessionInfo *sts.SessionInfo
+	// boundRole is the role a session carrying a role ID was checked against;
+	// its policies are the ones evaluated, so the check and the evaluation
+	// see one definition even if the role is replaced in between.
+	var boundRole *RoleDefinition
 	if request.SessionToken != "" {
 		// Parse unverified to check issuer
 		parsed, _, err := new(jwt.Parser).ParseUnverified(request.SessionToken, jwt.MapClaims{})
@@ -1479,7 +1502,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 					return false, fmt.Errorf("session has been revoked")
 				}
 			}
-			if err := m.checkSessionRoleBinding(ctx, sessionInfo); err != nil {
+			if boundRole, err = m.checkSessionRoleBinding(ctx, sessionInfo); err != nil {
 				return false, err
 			}
 		}
@@ -1578,9 +1601,12 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				policies = user.GetPolicyNames()
 			} else {
 				// Get role definition
-				roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
-				if err != nil {
-					return false, fmt.Errorf("role not found: %s", roleName)
+				roleDef := boundRole
+				if roleDef == nil || roleDef.RoleName != roleName {
+					roleDef, err = m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+					if err != nil {
+						return false, fmt.Errorf("role not found: %s", roleName)
+					}
 				}
 
 				hasManagedSubject = true

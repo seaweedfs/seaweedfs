@@ -400,6 +400,9 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		identity.Name, roleArn, roleSessionName)
 
 	assumesSelf := roleArn == ""
+	// trustedPrincipal is the caller a named role's trust policy admitted;
+	// issuance evaluates that trust again on the definition it binds.
+	var trustedPrincipal string
 
 	// A named role is authorized by its trust policy, which declares which
 	// principals may assume it, so no separate identity-side sts:AssumeRole allow
@@ -415,6 +418,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		callerArn := h.callerPrincipalArn(identity)
+		trustedPrincipal = callerArn
 		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, callerArn); err != nil {
 			glog.V(2).Infof("AssumeRole: %s not authorized to assume %s: %v", identity.Name, roleArn, err)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
@@ -461,7 +465,13 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, trustedPrincipal, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	if errors.Is(err, integration.ErrTrustPolicyDenied) {
+		// The role was replaced after its trust check by one that does not
+		// trust the caller.
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
+		return
+	}
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -584,7 +594,8 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 
 	// Verify that the identity is allowed to assume the role by checking the Trust Policy
 	// The LDAP user doesn't have identity policies, so we strictly check if the Role trusts this principal.
-	if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, ldapUserIdentity.PrincipalArn); err != nil {
+	trustedPrincipal := ldapUserIdentity.PrincipalArn
+	if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, trustedPrincipal); err != nil {
 		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: trust policy validation failed for %s to assume %s: %v", ldapUsername, roleArn, err)
 		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
 		return
@@ -602,7 +613,13 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, trustedPrincipal, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	if errors.Is(err, integration.ErrTrustPolicyDenied) {
+		// The role was replaced after its trust check by one that does not
+		// trust the caller.
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
+		return
+	}
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -831,7 +848,14 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 }
 
 // prepareSTSCredentials extracts common shared logic for credential generation
-func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSessionName string,
+//
+// principalArn is the caller whose assumption of a named role was authorized
+// by its trust policy. The role is resolved once, with that trust evaluated
+// again on the definition resolved, and the session's role ID, duration cap
+// and embedded policies all come from that one definition: a role replaced
+// under the same name between the caller's trust check and here yields no
+// session rather than one for a role whose trust was never checked.
+func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, principalArn, roleSessionName string,
 	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
 	duration := time.Hour
@@ -847,17 +871,25 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 	// a named role that cannot be resolved here gets no session: one issued
 	// without the ID would be bound to no role at all.
 	var roleID string
+	var resolvedRole *integration.RoleDefinition
 	if h.iam != nil && h.iam.iamIntegration != nil {
 		if roleName := utils.ExtractRoleNameFromArn(roleArn); roleName != "" {
 			if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
 				if mgr := provider.GetIAMManager(); mgr != nil {
-					roleDef, roleErr := mgr.GetRole(ctx, roleName)
+					var roleDef *integration.RoleDefinition
+					var roleErr error
+					if principalArn != "" {
+						roleDef, roleErr = mgr.ResolveRoleForPrincipal(ctx, roleArn, principalArn)
+					} else {
+						roleDef, roleErr = mgr.GetRole(ctx, roleName)
+					}
 					if roleErr != nil {
 						return STSCredentials{}, nil, fmt.Errorf("resolve role %s: %w", roleName, roleErr)
 					}
 					if roleDef == nil {
 						return STSCredentials{}, nil, fmt.Errorf("role %s not found", roleName)
 					}
+					resolvedRole = roleDef
 					roleID = roleDef.RoleId
 					if roleDef.MaxSessionDuration > 0 {
 						if roleMax := time.Duration(roleDef.MaxSessionDuration) * time.Second; duration > roleMax {
@@ -924,7 +956,10 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 		}
 
 		if roleNameForPolicies != "" && len(claims.Policies) == 0 {
-			roleDef, err := policyManager.GetRole(ctx, roleNameForPolicies)
+			roleDef, err := resolvedRole, error(nil)
+			if roleDef == nil || roleDef.RoleName != roleNameForPolicies {
+				roleDef, err = policyManager.GetRole(ctx, roleNameForPolicies)
+			}
 			if err != nil {
 				glog.V(2).Infof("Failed to load role %q for policy embedding: %v", roleNameForPolicies, err)
 			} else if roleDef == nil {

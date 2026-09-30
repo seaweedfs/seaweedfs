@@ -501,7 +501,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	s3ApiServer.registerRouter(router)
 
-	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{
+	watched := []string{
 		option.BucketsPath,
 		filer.IamConfigDirectory,
 		filer.IamConfigDirectory + "/identities",
@@ -510,7 +510,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		filer.IamConfigDirectory + "/groups",
 		filer.IamConfigDirectory + "/oidc-providers",
 		filer.IamConfigDirectory + "/roles",
-	})
+	}
+	// A role store configured with its own basePath is watched there too.
+	if dir := s3ApiServer.roleStoreDir(); !slices.Contains(watched, dir) {
+		watched = append(watched, dir)
+	}
+	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, watched)
 
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())

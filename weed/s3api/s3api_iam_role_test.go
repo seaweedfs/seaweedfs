@@ -326,3 +326,15 @@ func TestListRolesSkipsARoleDeletedWhileListing(t *testing.T) {
 	require.Len(t, roles, 1)
 	assert.Equal(t, "app", roles[0].RoleName)
 }
+
+// Peer role changes are watched in the role store's own directory.
+func TestRoleChangesAreWatchedInTheRoleStoresDirectory(t *testing.T) {
+	api, mgr := newRoleTestAPI(t)
+	s3a := &S3ApiServer{iam: api.iam}
+	assert.Equal(t, rolesDir, s3a.roleStoreDir(), "a memory store falls back to the default directory")
+
+	store, err := integration.NewGenericCachedRoleStore(map[string]interface{}{"basePath": "/custom/roles"}, func() string { return "localhost:8888" })
+	require.NoError(t, err)
+	mgr.SetRoleStore(store)
+	assert.Equal(t, "/custom/roles", s3a.roleStoreDir())
+}

@@ -71,6 +71,27 @@ func (s *roleStoreTestFiler) CreateEntry(_ context.Context, req *filer_pb.Create
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
+// ObjectTransaction applies the conditional delete FilerRoleStore sends.
+func (s *roleStoreTestFiler) ObjectTransaction(_ context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(req.Mutations) != 1 || req.Mutations[0].Type != filer_pb.ObjectMutation_DELETE {
+		return nil, fmt.Errorf("unexpected mutations %v", req.Mutations)
+	}
+	name := req.Mutations[0].Name
+	current, exists := s.entries[name]
+	for _, c := range req.GetCondition().GetClauses() {
+		if c.Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+			return nil, fmt.Errorf("unexpected condition %v", c.Kind)
+		}
+		if !exists || !proto.Equal(current, c.ExpectedEntry) {
+			return &filer_pb.ObjectTransactionResponse{Error: "precondition failed", ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
+		}
+	}
+	delete(s.entries, name)
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
 func (s *roleStoreTestFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
 	s.mu.Lock()
 	var names []string
@@ -189,6 +210,46 @@ func TestFilerRoleCreateRefusesARoleCreatedConcurrently(t *testing.T) {
 	role, err := store.GetRole(ctx, "", "app")
 	require.NoError(t, err)
 	assert.Equal(t, "AROA-FIRST", role.RoleId, "the second create replaced the first role")
+}
+
+var errRoleHasPolicies = errors.New("role has attached policies")
+
+// deleteUnattached deletes the role only if it attaches no policy, as
+// DeleteRole requires.
+func deleteUnattached(current *RoleDefinition) (*RoleDefinition, error) {
+	if current == nil {
+		return nil, ErrRoleNotFound
+	}
+	if len(current.AttachedPolicies) > 0 {
+		return nil, errRoleHasPolicies
+	}
+	return nil, nil
+}
+
+func TestFilerRoleUpdateCanDeleteTheRole(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestFilerRoleStore(t)
+	require.NoError(t, store.UpdateRole(ctx, "", "app", createRole("AROA1")))
+
+	require.NoError(t, store.UpdateRole(ctx, "", "app", deleteUnattached))
+	_, err := store.GetRole(ctx, "", "app")
+	assert.ErrorIs(t, err, ErrRoleNotFound)
+}
+
+// A delete is decided against the role it removes: a policy attached between
+// the check and the delete makes it refuse, not delete the role anyway.
+func TestFilerRoleDeleteIsDecidedAgainstTheRoleItRemoves(t *testing.T) {
+	ctx := context.Background()
+	store, filer := newTestFilerRoleStore(t)
+	require.NoError(t, store.UpdateRole(ctx, "", "app", createRole("AROA1")))
+
+	filer.afterLookup = func() { assert.NoError(t, store.UpdateRole(ctx, "", "app", attachPolicy("peer"))) }
+	err := store.UpdateRole(ctx, "", "app", deleteUnattached)
+	assert.ErrorIs(t, err, errRoleHasPolicies)
+
+	role, err := store.GetRole(ctx, "", "app")
+	require.NoError(t, err, "the role was deleted although a policy was attached to it")
+	assert.Equal(t, []string{"peer"}, role.AttachedPolicies)
 }
 
 func TestFilerRoleListingPagesPastTheFirstThousand(t *testing.T) {

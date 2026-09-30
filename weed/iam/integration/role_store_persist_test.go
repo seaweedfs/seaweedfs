@@ -175,3 +175,22 @@ func TestSetRoleStoreInstallsLikeStartup(t *testing.T) {
 	assert.ErrorIs(t, mgr.GetRoleStore().DeleteRole(context.Background(), "", "from-file"), ErrRoleStatic)
 	assert.False(t, roleNames(t, store)["from-file"], "the config-file role was written into the new store")
 }
+
+// S3 servers watch the directory a filer-backed role store keeps roles in, so
+// a store configured with its own basePath must report it, through the
+// cache and the config-file overlay alike.
+func TestRoleStoreDirectoryIsTheConfiguredBasePath(t *testing.T) {
+	provider := func() string { return "localhost:8888" }
+	cached, err := NewGenericCachedRoleStore(map[string]interface{}{"basePath": "/custom/roles"}, provider)
+	require.NoError(t, err)
+	mgr := startRoleServer(t, cached, "from-file")
+	assert.Equal(t, "/custom/roles", mgr.RoleStoreDirectory())
+
+	uncached, err := NewFilerRoleStore(nil, provider)
+	require.NoError(t, err)
+	mgr.SetRoleStore(uncached)
+	assert.Equal(t, "/etc/iam/roles", mgr.RoleStoreDirectory())
+
+	mgr.SetRoleStore(NewMemoryRoleStore())
+	assert.Empty(t, mgr.RoleStoreDirectory(), "a memory store has no directory")
+}

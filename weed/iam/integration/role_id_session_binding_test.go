@@ -110,3 +110,56 @@ func TestStaticRoleIDIsStableAndRuntimeIDsAreUnique(t *testing.T) {
 	assert.NotEqual(t, NewRoleID(), NewRoleID())
 	assert.Regexp(t, `^AROA[A-Z2-7]{17}$`, NewRoleID())
 }
+
+// replacedAfterFirstReadStore serves the stored role on its first read and a
+// replacement of the same name afterwards: a role replaced while a request
+// is being authorized.
+type replacedAfterFirstReadStore struct {
+	RoleStore
+	reads       int
+	replacement *RoleDefinition
+}
+
+func (s *replacedAfterFirstReadStore) GetRole(ctx context.Context, addr, name string) (*RoleDefinition, error) {
+	s.reads++
+	if s.reads > 1 && name == s.replacement.RoleName {
+		return copyRoleDefinition(s.replacement), nil
+	}
+	return s.RoleStore.GetRole(ctx, addr, name)
+}
+
+// The session's binding is checked against one definition of its role, and
+// that definition's policies are the ones evaluated: a replacement read in
+// between must not lend the session its permissions.
+func TestAuthorizationEvaluatesTheRoleTheBindingCheckSaw(t *testing.T) {
+	ctx := context.Background()
+	m := setupIntegratedIAMSystem(t)
+	require.NoError(t, m.CreatePolicy(ctx, "", "S3WritePolicy", &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect: "Allow", Action: []string{"s3:PutObject"},
+			Resource: []string{"arn:aws:s3:::test-bucket/*"},
+		}},
+	}))
+	resp, err := m.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
+		WebIdentityToken: createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key"),
+		RoleSessionName:  "snapshot-test",
+	})
+	require.NoError(t, err)
+
+	original, err := m.GetRole(ctx, "S3ReadOnlyRole")
+	require.NoError(t, err)
+	replacement := *original
+	replacement.RoleId = NewRoleID()
+	replacement.AttachedPolicies = []string{"S3WritePolicy"}
+	m.roleStore = &replacedAfterFirstReadStore{RoleStore: m.roleStore, replacement: &replacement}
+
+	allowed, _ := m.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    resp.AssumedRoleUser.Arn,
+		Action:       "s3:PutObject",
+		Resource:     "arn:aws:s3:::test-bucket/file.txt",
+		SessionToken: resp.Credentials.SessionToken,
+	})
+	assert.False(t, allowed, "the session was authorized by the replacement role's policies")
+}
