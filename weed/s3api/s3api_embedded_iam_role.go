@@ -129,13 +129,55 @@ func requireMutableRole(ctx context.Context, mgr *integration.IAMManager, values
 	return role, nil
 }
 
+// errRoleUpdateRefused aborts a RoleStore update whose refusal the handler
+// has already recorded as an iamError.
+var errRoleUpdateRefused = errors.New("role update refused")
+
+// updateRole applies change to the named role through the role store's atomic
+// update, so a concurrent change on another server is neither lost nor
+// written over a delete. change sees the current role and returns an iamError
+// to refuse; a missing role is NoSuchEntity and a config-file role is
+// UnmodifiableEntity, as requireMutableRole reports them.
+func updateRole(ctx context.Context, mgr *integration.IAMManager, name string, change func(role *integration.RoleDefinition) *iamError) *iamError {
+	var refused *iamError
+	err := mgr.UpdateRole(ctx, name, func(current *integration.RoleDefinition) (*integration.RoleDefinition, error) {
+		if current == nil {
+			refused = &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("role %s not found", name)}
+			return nil, errRoleUpdateRefused
+		}
+		if refused = change(current); refused != nil {
+			return nil, errRoleUpdateRefused
+		}
+		return current, nil
+	})
+	return roleWriteError(err, refused)
+}
+
+// roleWriteError maps a role store write's outcome to the IAM error to
+// report: the handler's own refusal, else the store's error by kind. A write
+// that failed for another reason is a service failure, which clients retry.
+func roleWriteError(err error, refused *iamError) *iamError {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errRoleUpdateRefused) && refused != nil:
+		return refused
+	case errors.Is(err, integration.ErrRoleStatic):
+		return &iamError{Code: iam.ErrCodeUnmodifiableEntityException, Error: fmt.Errorf("%w; change it there", err)}
+	case errors.Is(err, integration.ErrRoleExists):
+		return &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: err}
+	default:
+		return &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+}
+
 // roleID is the role's stored ID. A role stored before IDs were recorded has
-// none; it is reported with the ID a config-file role of that name would get.
+// none; it is reported with the ID StaticRoleID derives for it.
 func roleID(role *integration.RoleDefinition) string {
 	if role.RoleId != "" {
 		return role.RoleId
 	}
-	return integration.StaticRoleID(role.RoleName)
+	return integration.StaticRoleID(role)
 }
 
 func toIAMRole(role *integration.RoleDefinition) iamlib.IAMRole {
@@ -170,11 +212,13 @@ func (e *EmbeddedIamApi) createRole(ctx context.Context, mgr *integration.IAMMan
 	if path := values.Get("Path"); path != "" && path != "/" {
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("role paths are not supported: %s", path)}
 	}
-	if values.Get("Tags.member.1.Key") != "" {
-		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("role tags are not supported")}
+	for key := range values {
+		if strings.HasPrefix(key, "Tags.") {
+			return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: errors.New("role tags are not supported")}
+		}
 	}
-	// Only a confirmed absence may proceed: an unreadable store must not let
-	// CreateRole overwrite a role that exists, config-file roles included.
+	// A config-file role is served beside the store, not from it, so the
+	// store's create-if-absent cannot see it.
 	existing, err := mgr.GetRole(ctx, name)
 	if err == nil && existing != nil {
 		return nil, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("role %s already exists", name)}
@@ -201,9 +245,22 @@ func (e *EmbeddedIamApi) createRole(ctx context.Context, mgr *integration.IAMMan
 		Description:        values.Get("Description"),
 		MaxSessionDuration: maxSession,
 		CreatedAt:          time.Now().UTC(),
+		RoleId:             integration.NewRoleID(),
 	}
-	if err := mgr.CreateRole(ctx, "", name, role); err != nil {
+	// Validation first: only a bad request is InvalidInput. The write below
+	// is created only if no role of this name exists by then, so of two
+	// concurrent creates, one fails with EntityAlreadyExists.
+	if err := integration.PrepareRoleDefinition(name, role); err != nil {
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	err = mgr.UpdateRole(ctx, name, func(current *integration.RoleDefinition) (*integration.RoleDefinition, error) {
+		if current != nil {
+			return nil, fmt.Errorf("%w: %s", integration.ErrRoleExists, name)
+		}
+		return role, nil
+	})
+	if iamErr := roleWriteError(err, nil); iamErr != nil {
+		return nil, iamErr
 	}
 	resp := &iamlib.CreateRoleResponse{}
 	resp.CreateRoleResult.Role = toIAMRole(role)
@@ -258,9 +315,11 @@ func (e *EmbeddedIamApi) updateAssumeRolePolicy(ctx context.Context, mgr *integr
 	if iamErr != nil {
 		return nil, iamErr
 	}
-	role.TrustPolicy = trust
-	if err := mgr.CreateRole(ctx, "", role.RoleName, role); err != nil {
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	if iamErr := updateRole(ctx, mgr, role.RoleName, func(current *integration.RoleDefinition) *iamError {
+		current.TrustPolicy = trust
+		return nil
+	}); iamErr != nil {
+		return nil, iamErr
 	}
 	return &iamlib.UpdateAssumeRolePolicyResponse{}, nil
 }
@@ -293,15 +352,21 @@ func (e *EmbeddedIamApi) attachRolePolicy(ctx context.Context, mgr *integration.
 	if iamErr != nil {
 		return nil, iamErr
 	}
-	if !slices.Contains(role.AttachedPolicies, name) {
-		if len(role.AttachedPolicies) >= integration.MaxManagedPoliciesPerRole {
-			return nil, &iamError{Code: iam.ErrCodeLimitExceededException,
-				Error: fmt.Errorf("cannot attach more than %d managed policies to role %s", integration.MaxManagedPoliciesPerRole, role.RoleName)}
+	if slices.Contains(role.AttachedPolicies, name) {
+		return &iamlib.AttachRolePolicyResponse{}, nil
+	}
+	if iamErr := updateRole(ctx, mgr, role.RoleName, func(current *integration.RoleDefinition) *iamError {
+		if slices.Contains(current.AttachedPolicies, name) {
+			return nil
 		}
-		role.AttachedPolicies = append(role.AttachedPolicies, name)
-		if err := mgr.CreateRole(ctx, "", role.RoleName, role); err != nil {
-			return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		if len(current.AttachedPolicies) >= integration.MaxManagedPoliciesPerRole {
+			return &iamError{Code: iam.ErrCodeLimitExceededException,
+				Error: fmt.Errorf("cannot attach more than %d managed policies to role %s", integration.MaxManagedPoliciesPerRole, current.RoleName)}
 		}
+		current.AttachedPolicies = append(current.AttachedPolicies, name)
+		return nil
+	}); iamErr != nil {
+		return nil, iamErr
 	}
 	return &iamlib.AttachRolePolicyResponse{}, nil
 }
@@ -315,13 +380,15 @@ func (e *EmbeddedIamApi) detachRolePolicy(ctx context.Context, mgr *integration.
 	if err != nil {
 		return nil, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 	}
-	idx := slices.Index(role.AttachedPolicies, name)
-	if idx < 0 {
-		return nil, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s is not attached to role %s", name, role.RoleName)}
-	}
-	role.AttachedPolicies = slices.Delete(role.AttachedPolicies, idx, idx+1)
-	if err := mgr.CreateRole(ctx, "", role.RoleName, role); err != nil {
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	if iamErr := updateRole(ctx, mgr, role.RoleName, func(current *integration.RoleDefinition) *iamError {
+		idx := slices.Index(current.AttachedPolicies, name)
+		if idx < 0 {
+			return &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s is not attached to role %s", name, current.RoleName)}
+		}
+		current.AttachedPolicies = slices.Delete(current.AttachedPolicies, idx, idx+1)
+		return nil
+	}); iamErr != nil {
+		return nil, iamErr
 	}
 	return &iamlib.DetachRolePolicyResponse{}, nil
 }

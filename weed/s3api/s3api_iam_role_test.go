@@ -249,3 +249,80 @@ func TestRoleWithoutACreationTimeOmitsCreateDate(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(out), "CreateDate")
 }
+
+// Roles take no tags, so any tag parameter is refused rather than dropped.
+func TestCreateRoleRefusesEveryTagParameter(t *testing.T) {
+	api, _ := newRoleTestAPI(t)
+	for _, key := range []string{"Tags.member.1.Key", "Tags.member.2.Key", "Tags.member.1.Value"} {
+		_, iamErr := roleAction(t, api, map[string]string{
+			"Action": actionCreateRole, "RoleName": "app", "AssumeRolePolicyDocument": spiffeTrustPolicy, key: "x",
+		})
+		requireIamCode(t, iamErr, iam.ErrCodeInvalidInputException)
+	}
+}
+
+// unwritableRoleStore fails every write the way an unreachable filer does.
+type unwritableRoleStore struct{ *integration.MemoryRoleStore }
+
+func (unwritableRoleStore) UpdateRole(context.Context, string, string, integration.RoleUpdate) error {
+	return errors.New("store role: filer unavailable")
+}
+
+// A store that cannot be written is a service failure, which clients retry;
+// only a bad request is InvalidInput.
+func TestCreateRoleReportsAFailedWriteAsAServiceFailure(t *testing.T) {
+	api, mgr := newRoleTestAPI(t)
+	mgr.SetRoleStore(unwritableRoleStore{integration.NewMemoryRoleStore()})
+
+	_, iamErr := roleAction(t, api, map[string]string{"Action": actionCreateRole, "RoleName": "app", "AssumeRolePolicyDocument": spiffeTrustPolicy})
+	requireIamCode(t, iamErr, iam.ErrCodeServiceFailureException)
+
+	_, iamErr = roleAction(t, api, map[string]string{
+		"Action": actionCreateRole, "RoleName": "app", "AssumeRolePolicyDocument": spiffeTrustPolicy, "MaxSessionDuration": "60",
+	})
+	requireIamCode(t, iamErr, iam.ErrCodeInvalidInputException)
+}
+
+// racingRoleStore reports every role absent to plain reads while the store
+// holds them: the view of a server whose create raced another server's.
+type racingRoleStore struct{ *integration.MemoryRoleStore }
+
+func (racingRoleStore) GetRole(_ context.Context, _ string, name string) (*integration.RoleDefinition, error) {
+	return nil, fmt.Errorf("%w: %s", integration.ErrRoleNotFound, name)
+}
+
+// Of two creates of one name, the second is told the role exists; it does
+// not replace the first role.
+func TestCreateRoleRacingAnotherCreateIsEntityAlreadyExists(t *testing.T) {
+	api, mgr := newRoleTestAPI(t)
+	store := racingRoleStore{integration.NewMemoryRoleStore()}
+	require.NoError(t, store.StoreRole(context.Background(), "", "app", &integration.RoleDefinition{RoleName: "app", RoleId: "AROA-FIRST"}))
+	mgr.SetRoleStore(store)
+
+	_, iamErr := roleAction(t, api, map[string]string{"Action": actionCreateRole, "RoleName": "app", "AssumeRolePolicyDocument": spiffeTrustPolicy})
+	requireIamCode(t, iamErr, iam.ErrCodeEntityAlreadyExistsException)
+	role, err := store.MemoryRoleStore.GetRole(context.Background(), "", "app")
+	require.NoError(t, err)
+	assert.Equal(t, "AROA-FIRST", role.RoleId, "the second create replaced the first role")
+}
+
+// vanishingRoleStore lists a role that is gone by the time it is read.
+type vanishingRoleStore struct{ *integration.MemoryRoleStore }
+
+func (s vanishingRoleStore) ListRoles(ctx context.Context, filerAddress string) ([]string, error) {
+	names, err := s.MemoryRoleStore.ListRoles(ctx, filerAddress)
+	return append(names, "deleted-meanwhile"), err
+}
+
+func TestListRolesSkipsARoleDeletedWhileListing(t *testing.T) {
+	api, mgr := newRoleTestAPI(t)
+	mgr.SetRoleStore(vanishingRoleStore{integration.NewMemoryRoleStore()})
+	_, iamErr := roleAction(t, api, map[string]string{"Action": actionCreateRole, "RoleName": "app", "AssumeRolePolicyDocument": spiffeTrustPolicy})
+	require.Nil(t, iamErr)
+
+	resp, iamErr := roleAction(t, api, map[string]string{"Action": actionListRoles})
+	require.Nil(t, iamErr)
+	roles := resp.(*iamlib.ListRolesResponse).ListRolesResult.Roles
+	require.Len(t, roles, 1)
+	assert.Equal(t, "app", roles[0].RoleName)
+}

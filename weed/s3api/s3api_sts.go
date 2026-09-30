@@ -843,18 +843,25 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 
 	// A named role's MaxSessionDuration bounds the resolved duration the same
 	// way capDurationByRole does on the SDK paths; self-assumption has no role
-	// definition to consult. The role's ID binds the session to this role.
+	// definition to consult. The role's ID binds the session to this role, so
+	// a named role that cannot be resolved here gets no session: one issued
+	// without the ID would be bound to no role at all.
 	var roleID string
 	if h.iam != nil && h.iam.iamIntegration != nil {
 		if roleName := utils.ExtractRoleNameFromArn(roleArn); roleName != "" {
 			if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
 				if mgr := provider.GetIAMManager(); mgr != nil {
-					if roleDef, roleErr := mgr.GetRole(ctx, roleName); roleErr == nil && roleDef != nil {
-						roleID = roleDef.RoleId
-						if roleDef.MaxSessionDuration > 0 {
-							if roleMax := time.Duration(roleDef.MaxSessionDuration) * time.Second; duration > roleMax {
-								duration = roleMax
-							}
+					roleDef, roleErr := mgr.GetRole(ctx, roleName)
+					if roleErr != nil {
+						return STSCredentials{}, nil, fmt.Errorf("resolve role %s: %w", roleName, roleErr)
+					}
+					if roleDef == nil {
+						return STSCredentials{}, nil, fmt.Errorf("role %s not found", roleName)
+					}
+					roleID = roleDef.RoleId
+					if roleDef.MaxSessionDuration > 0 {
+						if roleMax := time.Duration(roleDef.MaxSessionDuration) * time.Second; duration > roleMax {
+							duration = roleMax
 						}
 					}
 				}

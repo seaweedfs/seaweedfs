@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"sync"
@@ -16,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ErrRoleNotFound is wrapped by every RoleStore's GetRole when the role does
@@ -26,6 +29,23 @@ var ErrRoleNotFound = errors.New("role not found")
 // ErrRoleStatic refuses a change to a role defined in the server's IAM config
 // file: change it there instead.
 var ErrRoleStatic = errors.New("role is defined in the IAM config file")
+
+// ErrRoleExists is returned by an UpdateRole whose update refuses a role that
+// already exists (CreateRole).
+var ErrRoleExists = errors.New("role already exists")
+
+// RoleUpdate computes a role's new definition from its current one, nil when
+// the role does not exist. It returns an error to leave the role unchanged. It
+// may run more than once: it is called again with the fresh definition when
+// another writer changed the role in between.
+type RoleUpdate func(current *RoleDefinition) (*RoleDefinition, error)
+
+// maxRoleUpdateAttempts bounds UpdateRole's retries under contention.
+const maxRoleUpdateAttempts = 10
+
+// errRoleUpdateContended is returned when the role kept changing under
+// UpdateRole for maxRoleUpdateAttempts reads.
+var errRoleUpdateContended = errors.New("role changed concurrently; retry")
 
 // RoleStore defines the interface for storing IAM role definitions
 type RoleStore interface {
@@ -40,6 +60,14 @@ type RoleStore interface {
 
 	// DeleteRole deletes a role definition (filerAddress ignored for memory stores)
 	DeleteRole(ctx context.Context, filerAddress string, roleName string) error
+
+	// UpdateRole replaces a role with update's result, atomically: the write
+	// lands only if the role is still as update saw it, absent included, and
+	// update is retried against the current role otherwise. Every change the
+	// IAM API and the filer IAM service make to a role goes through it, so
+	// writers on different servers neither lose each other's changes nor bring
+	// back a role deleted in between.
+	UpdateRole(ctx context.Context, filerAddress string, roleName string, update RoleUpdate) error
 }
 
 // MemoryRoleStore implements RoleStore using in-memory storage
@@ -116,6 +144,25 @@ func (m *MemoryRoleStore) DeleteRole(ctx context.Context, filerAddress string, r
 	return nil
 }
 
+// UpdateRole applies update under the store's lock (filerAddress ignored for
+// memory store).
+func (m *MemoryRoleStore) UpdateRole(ctx context.Context, filerAddress string, roleName string, update RoleUpdate) error {
+	if roleName == "" {
+		return fmt.Errorf("role name cannot be empty")
+	}
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	next, err := update(copyRoleDefinition(m.roles[roleName]))
+	if err != nil {
+		return err
+	}
+	if next == nil {
+		return fmt.Errorf("role cannot be nil")
+	}
+	m.roles[roleName] = copyRoleDefinition(next)
+	return nil
+}
+
 // copyRoleDefinition creates a deep copy of a role definition
 func copyRoleDefinition(original *RoleDefinition) *RoleDefinition {
 	if original == nil {
@@ -149,6 +196,10 @@ func copyRoleDefinition(original *RoleDefinition) *RoleDefinition {
 
 	return copied
 }
+
+// roleListPageSize is the number of entries FilerRoleStore.ListRoles asks the
+// filer for per page.
+const roleListPageSize = 1000
 
 // FilerRoleStore implements RoleStore using SeaweedFS filer
 type FilerRoleStore struct {
@@ -228,6 +279,96 @@ func (f *FilerRoleStore) StoreRole(ctx context.Context, filerAddress string, rol
 	})
 }
 
+// UpdateRole reads the role's entry, applies update, and writes the result on
+// the condition that the entry is unchanged since the read — absent, when the
+// role did not exist — so the filer refuses a write racing another writer's
+// change or delete, and update is applied again to what that writer left.
+func (f *FilerRoleStore) UpdateRole(ctx context.Context, filerAddress string, roleName string, update RoleUpdate) error {
+	if filerAddress == "" && f.filerAddressProvider != nil {
+		filerAddress = f.filerAddressProvider()
+	}
+	if filerAddress == "" {
+		return fmt.Errorf("filer address is required for FilerRoleStore")
+	}
+	if roleName == "" {
+		return fmt.Errorf("role name cannot be empty")
+	}
+	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+		for attempt := 0; attempt < maxRoleUpdateAttempts; attempt++ {
+			var entry *filer_pb.Entry
+			var current *RoleDefinition
+			resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: f.basePath,
+				Name:      f.getRoleFileName(roleName),
+			})
+			switch {
+			case errors.Is(err, filer_pb.ErrNotFound):
+			case err != nil:
+				return fmt.Errorf("lookup role %s: %w", roleName, err)
+			case resp.Entry != nil:
+				entry = resp.Entry
+				current = &RoleDefinition{}
+				if err := json.Unmarshal(entry.Content, current); err != nil {
+					return fmt.Errorf("failed to deserialize role %s: %v", roleName, err)
+				}
+			}
+
+			next, err := update(current)
+			if err != nil {
+				return err
+			}
+			if next == nil {
+				return fmt.Errorf("role cannot be nil")
+			}
+			roleData, err := json.MarshalIndent(next, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to serialize role: %v", err)
+			}
+
+			clause := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
+			if entry != nil {
+				clause = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: entry}
+			}
+			now := time.Now().Unix()
+			created, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+				Directory: f.basePath,
+				Entry: &filer_pb.Entry{
+					Name: f.getRoleFileName(roleName),
+					Attributes: &filer_pb.FuseAttributes{
+						Mtime:    now,
+						Crtime:   now,
+						FileMode: uint32(0600),
+					},
+					Content: roleData,
+				},
+				Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{clause}},
+			})
+			if isRoleWriteConflict(created, err) {
+				glog.V(3).Infof("Role %s changed during update; retrying", roleName)
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("failed to store role %s: %v", roleName, err)
+			}
+			if created.Error != "" {
+				return fmt.Errorf("failed to store role %s: %s", roleName, created.Error)
+			}
+			return nil
+		}
+		return fmt.Errorf("update role %s: %w", roleName, errRoleUpdateContended)
+	})
+}
+
+// isRoleWriteConflict reports a write the filer refused because its condition
+// no longer held: in the response, or as FailedPrecondition when the write
+// was forwarded to the entry's owner filer.
+func isRoleWriteConflict(resp *filer_pb.CreateEntryResponse, err error) bool {
+	if err != nil {
+		return status.Code(err) == codes.FailedPrecondition
+	}
+	return resp != nil && resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED
+}
+
 // GetRole retrieves a role definition from filer
 func (f *FilerRoleStore) GetRole(ctx context.Context, filerAddress string, roleName string) (*RoleDefinition, error) {
 	// Use provider function if filerAddress is not provided
@@ -288,46 +429,50 @@ func (f *FilerRoleStore) ListRoles(ctx context.Context, filerAddress string) ([]
 		return nil, fmt.Errorf("filer address is required for FilerRoleStore")
 	}
 
+	// Page through the directory, and fail on a broken stream rather than
+	// return what arrived: a truncated list would let DeletePolicy miss a role
+	// that still attaches the policy (RolesAttachingPolicy).
 	var roleNames []string
-
 	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.ListEntriesRequest{
-			Directory:          f.basePath,
-			Prefix:             "",
-			StartFromFileName:  "",
-			InclusiveStartFrom: false,
-			Limit:              1000, // Process in batches of 1000
-		}
-
 		glog.V(3).Infof("Listing roles in %s", f.basePath)
-		stream, err := client.ListEntries(ctx, request)
-		if err != nil {
-			return fmt.Errorf("failed to list roles: %v", err)
-		}
-
+		startFrom := ""
 		for {
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+				Directory:         f.basePath,
+				StartFromFileName: startFrom,
+				Limit:             roleListPageSize,
+			})
 			if err != nil {
-				break // End of stream or error
+				return err
 			}
-
-			if resp.Entry == nil || resp.Entry.IsDirectory {
-				continue
+			received := 0
+			for {
+				resp, err := stream.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					return err
+				}
+				if resp.Entry == nil {
+					continue
+				}
+				received++
+				startFrom = resp.Entry.Name
+				if resp.Entry.IsDirectory {
+					continue
+				}
+				if name, ok := strings.CutSuffix(resp.Entry.Name, ".json"); ok {
+					roleNames = append(roleNames, name)
+				}
 			}
-
-			// Extract role name from filename
-			filename := resp.Entry.Name
-			if strings.HasSuffix(filename, ".json") {
-				roleName := strings.TrimSuffix(filename, ".json")
-				roleNames = append(roleNames, roleName)
+			if received < roleListPageSize {
+				return nil
 			}
 		}
-
-		return nil
 	})
-
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list roles: %w", err)
 	}
 
 	return roleNames, nil
@@ -481,6 +626,18 @@ func (o *staticRoleOverlay) StoreRole(ctx context.Context, filerAddress string, 
 		}
 	}
 	return o.inner.StoreRole(ctx, filerAddress, roleName, role)
+}
+
+// UpdateRole refuses to create a stored role over a config-file role, as
+// StoreRole does; a stored role of that name may be changed.
+func (o *staticRoleOverlay) UpdateRole(ctx context.Context, filerAddress string, roleName string, update RoleUpdate) error {
+	_, static := o.static[roleName]
+	return o.inner.UpdateRole(ctx, filerAddress, roleName, func(current *RoleDefinition) (*RoleDefinition, error) {
+		if current == nil && static {
+			return nil, fmt.Errorf("%w: %s", ErrRoleStatic, roleName)
+		}
+		return update(current)
+	})
 }
 
 func (o *staticRoleOverlay) GetRole(ctx context.Context, filerAddress string, roleName string) (*RoleDefinition, error) {

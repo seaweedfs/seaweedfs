@@ -55,7 +55,7 @@ func TestPersistentRoleStoreNeverHoldsConfigFileRoles(t *testing.T) {
 	role, err := mgr.GetRole(context.Background(), "from-file")
 	require.NoError(t, err)
 	assert.Equal(t, RoleSourceStaticConfig, role.Source)
-	assert.Equal(t, StaticRoleID("from-file"), role.RoleId)
+	assert.Equal(t, StaticRoleID(&RoleDefinition{RoleName: "from-file"}), role.RoleId)
 }
 
 // Servers sharing a store, with different config files, must not remove or
