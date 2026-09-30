@@ -1308,6 +1308,16 @@ impl Volume {
         }
     }
 
+    /// Identifies this volume instance: a re-created or remounted volume gets
+    /// a new one, even at the same compaction revision.
+    pub(crate) fn instance(&self) -> Arc<DataFileAccessControl> {
+        self.data_file_access_control.clone()
+    }
+
+    pub(crate) fn is_instance(&self, instance: &Arc<DataFileAccessControl>) -> bool {
+        Arc::ptr_eq(instance, &self.data_file_access_control)
+    }
+
     /// Returns true if the volume is currently being compacted.
     pub fn is_compacting(&self) -> bool {
         self.is_compacting.load(Ordering::Acquire)

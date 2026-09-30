@@ -4036,7 +4036,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         // Validate volume exists and collection matches
-        let (dat_path, compaction_revision) = {
+        let (dat_path, instance, compaction_revision) = {
             let store = self.state.store.read().unwrap();
             let (_, vol) = store
                 .find_volume(vid)
@@ -4082,7 +4082,11 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
 
-            (dat_path, vol.super_block.compaction_revision)
+            (
+                dat_path,
+                vol.instance(),
+                vol.super_block.compaction_revision,
+            )
         };
 
         // Store the source .dat mtime, not the upload time, so a reload computes
@@ -4180,15 +4184,27 @@ impl VolumeServer for VolumeGrpcService {
                 // state consistent; stopping now would leave the object paid
                 // for and referenced by nothing. Go does not gate here either:
                 // its progress callback only runs during the transfer.
-                // Update volume info with remote file reference, unless a
-                // compaction committed mid-upload: the object may mix both
-                // generations and would not match the compacted .idx.
-                let compacted = {
+                // Update volume info with remote file reference, unless the
+                // volume was compacted, replaced or removed mid-upload: the
+                // object would not match what now holds this id.
+                let abort = {
                     let mut store = state.store.write().unwrap();
-                    let compacted = store.find_volume(vid).is_some_and(|(_, v)| {
-                        v.super_block.compaction_revision != compaction_revision
-                    });
-                    if !compacted && let Some((_, vol)) = store.find_volume_mut(vid) {
+                    let abort = match store.find_volume(vid) {
+                        None => Some(Status::not_found(format!("volume {} not found", vid))),
+                        Some((_, v))
+                            if !v.is_instance(&instance)
+                                || v.super_block.compaction_revision != compaction_revision =>
+                        {
+                            Some(Status::failed_precondition(format!(
+                                "volume {} was compacted or replaced during tier move to remote",
+                                vid
+                            )))
+                        }
+                        Some(_) => None,
+                    };
+                    if abort.is_none()
+                        && let Some((_, vol)) = store.find_volume_mut(vid)
+                    {
                         vol.update_remote_files(|files| {
                             files.push(volume_server_pb::RemoteFile {
                                 backend_type: backend_type.clone(),
@@ -4230,9 +4246,9 @@ impl VolumeServer for VolumeGrpcService {
                             let _ = std::fs::remove_file(&dat);
                         }
                     }
-                    compacted
+                    abort
                 };
-                if compacted {
+                if let Some(status) = abort {
                     if let Err(e) = backend.delete_file(&key).await {
                         tracing::warn!(
                             "volume {} could not delete stale tier object {}: {}",
@@ -4241,10 +4257,7 @@ impl VolumeServer for VolumeGrpcService {
                             e
                         );
                     }
-                    return Err(Status::failed_precondition(format!(
-                        "volume {} was compacted during tier move to remote",
-                        vid
-                    )));
+                    return Err(status);
                 }
 
                 // Go does NOT send a final 100% progress message after upload completion
@@ -7541,13 +7554,44 @@ mod tests {
 
     fn tier_up_request(
         backend: &str,
+        keep_local_dat_file: bool,
     ) -> Request<volume_server_pb::VolumeTierMoveDatToRemoteRequest> {
         Request::new(volume_server_pb::VolumeTierMoveDatToRemoteRequest {
             volume_id: 1,
             collection: String::new(),
             destination_backend_name: backend.to_string(),
-            keep_local_dat_file: true,
+            keep_local_dat_file,
         })
+    }
+
+    /// Starts a tier move of volume 1 and waits until `s3` holds its part.
+    async fn start_parked_tier_move(
+        service: &VolumeGrpcService,
+        s3: &mut FakeMultipartS3,
+        backend: &str,
+        keep_local_dat_file: bool,
+    ) -> BoxStream<volume_server_pb::VolumeTierMoveDatToRemoteResponse> {
+        let stream = service
+            .volume_tier_move_dat_to_remote(tier_up_request(backend, keep_local_dat_file))
+            .await
+            .unwrap()
+            .into_inner();
+        s3.parked
+            .recv()
+            .await
+            .expect("the upload must reach its part");
+        stream
+    }
+
+    async fn tier_move_error(
+        mut stream: BoxStream<volume_server_pb::VolumeTierMoveDatToRemoteResponse>,
+    ) -> Option<Status> {
+        while let Some(message) = stream.next().await {
+            if let Err(e) = message {
+                return Some(e);
+            }
+        }
+        None
     }
 
     /// Writes needles 1 and 2 and deletes 1, so a compaction moves needle 2.
@@ -7710,7 +7754,7 @@ mod tests {
             .unwrap();
 
         let result = service
-            .volume_tier_move_dat_to_remote(tier_up_request("s3.tier_up_compacting"))
+            .volume_tier_move_dat_to_remote(tier_up_request("s3.tier_up_compacting", true))
             .await;
         global_s3_tier_registry()
             .write()
@@ -7733,15 +7777,7 @@ mod tests {
         let mut s3 = spawn_multipart_s3_server();
         register_tier_backend("s3.tier_up_mid_commit", s3.endpoint.clone());
 
-        let mut stream = service
-            .volume_tier_move_dat_to_remote(tier_up_request("s3.tier_up_mid_commit"))
-            .await
-            .unwrap()
-            .into_inner();
-        s3.parked
-            .recv()
-            .await
-            .expect("the upload must reach its part");
+        let stream = start_parked_tier_move(&service, &mut s3, "s3.tier_up_mid_commit", true).await;
 
         compact_volume(&service);
         service
@@ -7753,13 +7789,7 @@ mod tests {
             .unwrap();
         s3.release.add_permits(1);
 
-        let mut terminal = None;
-        while let Some(message) = stream.next().await {
-            if let Err(e) = message {
-                terminal = Some(e);
-                break;
-            }
-        }
+        let terminal = tier_move_error(stream).await;
         global_s3_tier_registry()
             .write()
             .unwrap()
@@ -7779,6 +7809,91 @@ mod tests {
         }
         assert!(tmp.path().join("1.dat").exists());
         assert_eq!(read_surviving_needle(&service).unwrap(), b"needle-2");
+        let _ = s3.shutdown.send(());
+    }
+
+    // A volume deleted and re-created under the same id mid-upload is back at
+    // the same compaction revision; the object holds the old volume's bytes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_tier_move_to_remote_aborts_when_volume_is_recreated_mid_upload() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let mut s3 = spawn_multipart_s3_server();
+        register_tier_backend("s3.tier_up_recreated", s3.endpoint.clone());
+
+        let stream = start_parked_tier_move(&service, &mut s3, "s3.tier_up_recreated", false).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            store
+                .delete_volume(VolumeId(1), false, false, false)
+                .unwrap();
+            store
+                .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
+                .unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert_eq!(vol.super_block.compaction_revision, 0);
+        }
+        s3.release.add_permits(1);
+
+        let terminal = tier_move_error(stream).await;
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_up_recreated");
+        {
+            let store = service.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+            assert!(!vol.has_remote_file(), "the new volume must not be tiered");
+            assert!(vol.volume_info().files.is_empty());
+        }
+        assert!(tmp.path().join("1.dat").exists());
+        if let Ok(vif) = std::fs::read_to_string(tmp.path().join("1.vif")) {
+            assert!(!vif.contains("tier_up_recreated"), "{vif}");
+        }
+        let err = terminal.expect("the tier move must fail once the volume was replaced");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
+        assert_eq!(
+            s3.delete_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the stale object must be deleted"
+        );
+        let _ = s3.shutdown.send(());
+    }
+
+    // Go fails here too: unmounting closes the descriptor its copy reads.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_tier_move_to_remote_fails_when_volume_is_unmounted_mid_upload() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let mut s3 = spawn_multipart_s3_server();
+        register_tier_backend("s3.tier_up_unmounted", s3.endpoint.clone());
+
+        let stream = start_parked_tier_move(&service, &mut s3, "s3.tier_up_unmounted", false).await;
+        assert!(
+            service
+                .state
+                .store
+                .write()
+                .unwrap()
+                .unmount_volume(VolumeId(1))
+                .unwrap()
+        );
+        s3.release.add_permits(1);
+
+        let terminal = tier_move_error(stream).await;
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tier_up_unmounted");
+        let err = terminal.expect("the tier move must fail once the volume was unmounted");
+        assert_eq!(err.code(), tonic::Code::NotFound, "{err:?}");
+        assert_eq!(
+            s3.delete_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the unreferenced object must be deleted"
+        );
+        assert!(tmp.path().join("1.dat").exists());
+        if let Ok(vif) = std::fs::read_to_string(tmp.path().join("1.vif")) {
+            assert!(!vif.contains("tier_up_unmounted"), "{vif}");
+        }
         let _ = s3.shutdown.send(());
     }
 
