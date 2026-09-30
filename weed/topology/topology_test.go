@@ -864,3 +864,48 @@ func TestSetVolumeAvailableRepairsMissingVolume(t *testing.T) {
 		t.Fatalf("after SetVolumeAvailable: size tracking for %d not seeded", vid)
 	}
 }
+
+// A read-only change that arrives in the regular heartbeat must reach the
+// layout's per-replica flag, which the vacuum sweep consults. Registration
+// and volume.mark already set it; the heartbeat path did not.
+func TestFullHeartbeatUpdatesLayoutReadOnlyFlag(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", map[string]uint32{"": 25})
+	report := func(readOnly bool) []*master_pb.VolumeInformationMessage {
+		return []*master_pb.VolumeInformationMessage{{
+			Id: 1, Collection: "c", Size: 1 << 20, Version: uint32(needle.GetCurrentVersion()), ReadOnly: readOnly,
+		}}
+	}
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	flag := func() bool {
+		vl := topo.GetVolumeLayout("c", rp, needle.EMPTY_TTL, types.HardDriveType)
+		vl.accessLock.RLock()
+		defer vl.accessLock.RUnlock()
+		return vl.vid2location[needle.VolumeId(1)].AnyReadOnly()
+	}
+
+	// the full list, which a server sends first and whenever the digests disagree
+	topo.SyncDataNodeRegistration(report(false), dn)
+	if flag() {
+		t.Fatal("volume registered writable is flagged read-only")
+	}
+	topo.SyncDataNodeRegistration(report(true), dn)
+	if !flag() {
+		t.Fatal("full heartbeat turned the volume read-only but the layout flag did not follow")
+	}
+	topo.SyncDataNodeRegistration(report(false), dn)
+	if flag() {
+		t.Fatal("full heartbeat turned the volume writable again but the layout flag stayed read-only")
+	}
+
+	// the changed-volumes delta, which is what a running server normally sends
+	topo.ApplyVolumeChanges(report(true), dn)
+	if !flag() {
+		t.Fatal("delta heartbeat turned the volume read-only but the layout flag did not follow")
+	}
+	topo.ApplyVolumeChanges(report(false), dn)
+	if flag() {
+		t.Fatal("delta heartbeat turned the volume writable again but the layout flag stayed read-only")
+	}
+}
