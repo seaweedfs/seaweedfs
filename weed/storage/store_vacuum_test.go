@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -134,9 +135,10 @@ func TestEnsureCompactVolumeSpace_SeparateIndexDisk(t *testing.T) {
 	dataBytes, indexBytes := compactionSpaceNeeded(v, 0)
 
 	free := map[string]uint64{dataDir: uint64(dataBytes), idxDir: uint64(indexBytes)}
-	prev := compactionDiskFree
+	prevFree, prevSame := compactionDiskFree, compactionSameFilesystem
 	compactionDiskFree = func(dir string) uint64 { return free[dir] }
-	t.Cleanup(func() { compactionDiskFree = prev })
+	compactionSameFilesystem = func(string, string) bool { return false }
+	t.Cleanup(func() { compactionDiskFree, compactionSameFilesystem = prevFree, prevSame })
 
 	if err := ensureCompactVolumeSpace(v, 0); err != nil {
 		t.Fatalf("each disk covers its own share: unexpected %v", err)
@@ -146,5 +148,27 @@ func TestEnsureCompactVolumeSpace_SeparateIndexDisk(t *testing.T) {
 	free[idxDir] = uint64(indexBytes) - 1
 	if err := ensureCompactVolumeSpace(v, 0); !errors.Is(err, ErrInsufficientSpace) {
 		t.Fatalf("full index disk: got %v, want ErrInsufficientSpace", err)
+	}
+
+	// Two directories on one filesystem draw on the same free space, so the
+	// data and the index estimates must be covered together.
+	compactionSameFilesystem = func(string, string) bool { return true }
+	free[dataDir] = uint64(dataBytes+indexBytes) - 1
+	if err := ensureCompactVolumeSpace(v, 0); !errors.Is(err, ErrInsufficientSpace) {
+		t.Fatalf("shared filesystem short of the sum: got %v, want ErrInsufficientSpace", err)
+	}
+	free[dataDir] = uint64(dataBytes + indexBytes)
+	if err := ensureCompactVolumeSpace(v, 0); err != nil {
+		t.Fatalf("shared filesystem covering the sum: unexpected %v", err)
+	}
+}
+
+func TestSameFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	if !sameFilesystem(dir, dir) {
+		t.Fatal("a directory is on its own filesystem")
+	}
+	if !sameFilesystem(dir, filepath.Join(dir, "missing")) {
+		t.Fatal("an unreadable path must be treated as shared, so the check asks for the sum")
 	}
 }

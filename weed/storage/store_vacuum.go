@@ -61,11 +61,15 @@ func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 	return fmt.Errorf("volume id %d is not found during cleaning up: %w", vid, ErrVolumeNotFound)
 }
 
-// compactionDiskFree reports the free bytes on the disk holding dir. It is a
-// variable so a test can stand in for a full disk without filling one.
-var compactionDiskFree = func(dir string) uint64 {
-	return stats.NewDiskStatus(dir).Free
-}
+// compactionDiskFree reports the free bytes on the disk holding dir, and
+// compactionSameFilesystem whether two directories draw on the same pool.
+// Both are variables so a test can stand in for a full or a split disk.
+var (
+	compactionDiskFree = func(dir string) uint64 {
+		return stats.NewDiskStatus(dir).Free
+	}
+	compactionSameFilesystem = sameFilesystem
+)
 
 // compactionSpaceNeeded estimates what CompactByIndex will write for v: a new
 // .dat holding the live needles with their on-disk framing behind a superblock
@@ -124,8 +128,10 @@ func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
 		return nil
 	}
 	// The new .dat lands next to the old one and the new .idx next to the old
-	// index, so with separate index directories each disk answers for its own.
-	if v.dirIdx != "" && v.dirIdx != v.dir {
+	// index. When the index directory is on another filesystem each disk
+	// answers for its own share; two directories on one filesystem draw on
+	// the same free space and must cover the sum.
+	if v.dirIdx != "" && !compactionSameFilesystem(v.dir, v.dirIdx) {
 		if err := check(v.dir, dataBytes); err != nil {
 			return err
 		}
