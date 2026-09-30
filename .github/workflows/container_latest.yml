@@ -156,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        platform: [amd64, arm64, arm, 386]
+        platform: [amd64, arm64, arm, 386, ppc64le, s390x]
         variant: ${{ fromJSON(needs.setup.outputs.variants) }}
 
     steps:
@@ -405,7 +405,7 @@ jobs:
           output: trivy-results.sarif
           exit-code: '0'
       - name: Upload Trivy scan results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4.38.1
+        uses: github/codeql-action/upload-sarif@v4.38.2
         if: always()
         with:
           sarif_file: trivy-results.sarif
@@ -505,7 +505,9 @@ jobs:
             ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-amd64 \
             ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm64 \
             ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm \
-            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386
+            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386 \
+            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-ppc64le \
+            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-s390x
           # The copy and the signature below use the digest this run pushed, not whatever the tag points at by then.
           DIGEST=$(jq -er '."containerimage.descriptor".digest' /tmp/manifest.json)
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
@@ -549,13 +551,15 @@ jobs:
             echo "Using skopeo to copy..."
             retry_with_backoff skopeo copy --all docker://ghcr.io/chrislusf/seaweedfs@${DIGEST} docker://chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}
           else
-            echo "Using docker buildx imagetools (pulling 4 images from Docker Hub)..."
+            echo "Using docker buildx imagetools (pulling 6 images from Docker Hub)..."
             # Fallback: create manifest directly on Docker Hub (pulls from Docker Hub - rate limited)
             retry_with_backoff docker buildx imagetools create -t chrislusf/seaweedfs:${BASE_TAG}${SUFFIX} \
               ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-amd64 \
               ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm64 \
               ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm \
-              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386
+              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386 \
+              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-ppc64le \
+              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-s390x
           fi
 
       - name: Sign

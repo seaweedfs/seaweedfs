@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func entryWithETag(etag string, mtime time.Time) *filer.Entry {
@@ -218,6 +219,30 @@ func TestIfEntryEqualNormalizesExpected(t *testing.T) {
 	raw.Attributes.Mtime = 43
 	if writeConditionSatisfied(cond, stored) {
 		t.Error("changed expected entry must not equal the stored entry")
+	}
+}
+
+// A stamp built from the metadata-log event carries chunks in serialized
+// form (file_id moved into fid), while the stored entry came through
+// FindEntry which restores file_id. The comparison must still match.
+func TestIfEntryEqualSerializedExpected(t *testing.T) {
+	serialized := &filer_pb.Entry{
+		Name:       "f",
+		Attributes: &filer_pb.FuseAttributes{Mtime: 42},
+		Chunks: []*filer_pb.FileChunk{
+			{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 2}, Size: 100},
+		},
+	}
+	storedProto := proto.Clone(serialized).(*filer_pb.Entry)
+	filer_pb.AfterEntryDeserialization(storedProto.Chunks)
+	stored := filer.FromPbEntry("/d", storedProto)
+
+	cond := one(&filer_pb.WriteCondition_Clause{
+		Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+		ExpectedEntry: serialized,
+	})
+	if !writeConditionSatisfied(cond, stored) {
+		t.Error("serialized expected entry must equal the deserialized stored entry")
 	}
 }
 

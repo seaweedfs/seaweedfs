@@ -1103,6 +1103,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	tStreamPrep := time.Now()
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, offset, size)
 	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
+	defer reader.ReleaseStream()
 	streamPrepTime = time.Since(tStreamPrep)
 
 	// A cached chunk whose volume server is down, or whose needle was evicted and

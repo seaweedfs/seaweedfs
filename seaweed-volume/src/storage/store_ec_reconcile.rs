@@ -1476,7 +1476,7 @@ mod tests {
         let vid = VolumeId(7004);
         let collection = "grafana-loki";
 
-        store.delete_ec_shards(vid, collection, &[1]);
+        store.delete_ec_shards(vid, collection, &[1]).unwrap();
 
         // Shard 1 file is gone on disk 1.
         let p1 = format!(

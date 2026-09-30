@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -327,7 +328,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 			return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrEntryAlreadyExists)
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
-		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
+		if err := f.UpdateEntry(ctx, oldEntry, entry, isFromOtherCluster); err != nil {
 			if errors.Is(err, filer_pb.ErrExistingIsDirectory) || errors.Is(err, filer_pb.ErrExistingIsFile) {
 				glog.V(2).InfofCtx(ctx, "update entry %s: %v", entry.FullPath, err)
 			} else {
@@ -482,7 +483,7 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 		narrowed := existing.ShallowClone()
 		narrowed.Mode = existing.Mode&^restorableModeBits | kept
 		glog.V(1).InfofCtx(ctx, "restore directory %s: narrowing %v to %v", dirPath, existing.Mode, narrowed.Mode)
-		if err := f.UpdateEntry(ctx, existing, narrowed); err != nil {
+		if err := f.UpdateEntry(ctx, existing, narrowed, false); err != nil {
 			return err
 		}
 		f.NotifyUpdateEvent(ctx, existing, narrowed, false, false, nil)
@@ -515,7 +516,7 @@ func (f *Filer) EnsureDirectoryEntry(ctx context.Context, dirPath util.FullPath,
 	return nil
 }
 
-func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
+func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry, isFromOtherCluster bool) (err error) {
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.Attr.Inode != 0 {
@@ -534,6 +535,17 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
 			glog.V(2).InfofCtx(ctx, "existing %s is a file", oldEntry.FullPath)
 			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsFile)
+		}
+		// A local write to a remote-backed entry leaves the copy on remote
+		// stale until a sync re-uploads it. Content changes that arrive
+		// without a fresh sync stamp are unsynced; clear the stamp so nothing
+		// mistakes the still-local chunks for a re-fetchable cache copy.
+		// Replicated updates carry the writer's authoritative stamp.
+		if !isFromOtherCluster && oldEntry.Remote != nil && entry.Remote != nil &&
+			oldEntry.Remote.LastLocalSyncTsNs == entry.Remote.LastLocalSyncTsNs &&
+			!chunksEqual(oldEntry.Chunks, entry.Chunks) {
+			entry.Remote = proto.Clone(entry.Remote).(*filer_pb.RemoteEntry)
+			entry.Remote.LastLocalSyncTsNs = 0
 		}
 	}
 	if entry.Attr.Atime.IsZero() {
@@ -606,7 +618,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) (bool, error) {
 		select {
 		case <-ctx.Done():
-			glog.Errorf("Context is done.")
+			glog.V(1).InfofCtx(ctx, "listing %q canceled: %v", p, ctx.Err())
 			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 			if entry.TtlSec > 0 && !entry.IsDirectory() {

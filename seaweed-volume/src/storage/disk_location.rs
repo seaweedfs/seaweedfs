@@ -479,6 +479,13 @@ impl DiskLocation {
         if self.idx_directory != self.directory {
             remove_bitrot_sidecars(&idx_base)?;
         }
+
+        // Staged 2PC generations (<base>.ecNN.v<N>, versioned .ecx/.ecj/.vif)
+        // belong to this volume's EC state too; leaving them orphans the files.
+        crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(&base, 0)?;
+        if self.idx_directory != self.directory {
+            crate::storage::erasure_coding::ec_shard::remove_ec_generation_files(&idx_base, 0)?;
+        }
         Ok(())
     }
 
