@@ -3610,7 +3610,7 @@ struct ChunkInfo {
 }
 
 /// Try to expand a chunk manifest needle into its assembled body and reply
-/// headers. A GET's Range (`get_range`) is answered here from only the
+/// headers. The Range of a GET (`get_range`) is answered here from only the
 /// chunks it overlaps. Returns None if manifest can't be parsed.
 async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
