@@ -48,16 +48,18 @@ pub(crate) struct ShardLocationCache {
 /// A multiple of `NEEDLE_ID_SIZE`; 1 MiB is 131072 entries per syscall.
 const ECJ_LOAD_CHUNK_BYTES: usize = 1 << 20;
 
-/// Adds every whole needle id in the first `len` bytes of `ecj_file` to `ids`,
+/// Adds every whole needle id in bytes `from..len` of `ecj_file` to `ids`,
 /// reading `ECJ_LOAD_CHUNK_BYTES` at a time; a trailing partial record is
-/// ignored.
+/// ignored. `from` is a record boundary.
 pub(crate) fn read_ecj_ids(
     ecj_file: &File,
+    from: u64,
     len: u64,
     ids: &mut HashSet<NeedleId>,
 ) -> io::Result<()> {
-    let mut buf = vec![0u8; std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len) as usize];
-    let mut off: u64 = 0;
+    let mut buf =
+        vec![0u8; std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len.saturating_sub(from)) as usize];
+    let mut off: u64 = from;
     while off + NEEDLE_ID_SIZE as u64 <= len {
         let mut want = std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len - off) as usize;
         want -= want % NEEDLE_ID_SIZE;
@@ -833,7 +835,7 @@ impl EcVolume {
         // held the `deleted_needles` write lock for the whole scan, which on a
         // bloated journal is the entire (unbounded) startup.
         let mut loaded: HashSet<NeedleId> = HashSet::new();
-        read_ecj_ids(ecj_file, self.ecj_file_size as u64, &mut loaded)?;
+        read_ecj_ids(ecj_file, 0, self.ecj_file_size as u64, &mut loaded)?;
 
         let mut set = self
             .deleted_needles

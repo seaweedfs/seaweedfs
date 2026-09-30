@@ -97,21 +97,52 @@ pub fn read_ecj_deletions(
     collection: &str,
     volume_id: VolumeId,
 ) -> io::Result<HashSet<NeedleId>> {
-    let mut ids = HashSet::new();
-    for (i, dir) in dirs.iter().enumerate() {
-        if dirs[..i].contains(dir) {
-            continue;
+    Ok(EcjDeletions::read(dirs, collection, volume_id)?.ids)
+}
+
+/// The ids [`read_ecj_deletions`] returns, plus how far each journal was read
+/// so that ids journaled later can be added.
+pub struct EcjDeletions {
+    pub ids: HashSet<NeedleId>,
+    /// Each distinct journal path and the whole-record length read so far.
+    journals: Vec<(String, u64)>,
+}
+
+impl EcjDeletions {
+    pub fn read(dirs: &[&str], collection: &str, volume_id: VolumeId) -> io::Result<Self> {
+        let mut journals: Vec<(String, u64)> = Vec::new();
+        for dir in dirs {
+            let path = format!("{}.ecj", volume_file_name(dir, collection, volume_id));
+            if !journals.iter().any(|(p, _)| *p == path) {
+                journals.push((path, 0));
+            }
         }
-        let path = format!("{}.ecj", volume_file_name(dir, collection, volume_id));
-        let file = match File::open(&path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
+        let mut deletions = EcjDeletions {
+            ids: HashSet::new(),
+            journals,
         };
-        let len = file.metadata()?.len();
-        read_ecj_ids(&file, len, &mut ids)?;
+        deletions.catch_up()?;
+        Ok(deletions)
     }
-    Ok(ids)
+
+    /// Adds the ids appended to each journal since the last read. A journal
+    /// that shrank is read again from the start.
+    pub fn catch_up(&mut self) -> io::Result<()> {
+        for (path, read_to) in &mut self.journals {
+            let file = match File::open(&*path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            let len = file.metadata()?.len();
+            if len < *read_to {
+                *read_to = 0;
+            }
+            read_ecj_ids(&file, *read_to, len, &mut self.ids)?;
+            *read_to = len - len % NEEDLE_ID_SIZE as u64;
+        }
+        Ok(())
+    }
 }
 
 /// What it takes to rebuild a volume's .dat from its EC data shards.
@@ -832,5 +863,50 @@ mod tests {
         verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
         std::fs::write(&dat_path, vec![0u8; 101]).unwrap();
         verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
+    }
+
+    /// Ids appended after the first read, including the rest of a record torn
+    /// at that point, are picked up; a journal that shrank is read again.
+    #[test]
+    fn test_ecj_deletions_catch_up_reads_appended_ids() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ecj_path = format!("{dir}/1.ecj");
+        let entry = |id: u64| {
+            let mut buf = [0u8; NEEDLE_ID_SIZE];
+            NeedleId(id).to_bytes(&mut buf);
+            buf
+        };
+        let append = |bytes: &[u8]| {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&ecj_path)
+                .unwrap();
+            f.write_all(bytes).unwrap();
+        };
+        let ids = |d: &EcjDeletions| {
+            let mut ids: Vec<u64> = d.ids.iter().map(|id| id.0).collect();
+            ids.sort();
+            ids
+        };
+
+        // No journal yet.
+        let mut deletions = EcjDeletions::read(&[dir, dir], "", VolumeId(1)).unwrap();
+        assert!(deletions.ids.is_empty());
+
+        append(&entry(1));
+        append(&entry(2)[..3]);
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [1]);
+
+        append(&entry(2)[3..]);
+        append(&entry(3));
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [1, 2, 3]);
+
+        std::fs::write(&ecj_path, entry(9)).unwrap();
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [1, 2, 3, 9]);
     }
 }

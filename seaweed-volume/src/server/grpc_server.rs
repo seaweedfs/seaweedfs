@@ -3897,7 +3897,8 @@ impl VolumeServer for VolumeGrpcService {
             }
         };
 
-        tokio::task::spawn_blocking(move || job.run())
+        let state = self.state.clone();
+        tokio::task::spawn_blocking(move || job.run(&state))
             .await
             .map_err(|e| Status::internal(format!("decode ec volume {}: {}", vid, e)))??;
 
@@ -6446,7 +6447,7 @@ struct EcDecodeJob {
 }
 
 impl EcDecodeJob {
-    fn run(self) -> Result<(), Status> {
+    fn run(self, state: &VolumeServerState) -> Result<(), Status> {
         use crate::storage::erasure_coding::{ec_bitrot, ec_decoder};
         let EcDecodeJob {
             vid,
@@ -6463,9 +6464,9 @@ impl EcDecodeJob {
 
         // Deletions journaled beside the .ecx, or collected by
         // VolumeEcShardsCopy into the idx dir, count as deleted throughout.
-        let deleted = ec_decoder::read_ecj_deletions(&[&ecx_dir, &idx_dir], &collection, vid)
+        let mut deleted = ec_decoder::EcjDeletions::read(&[&ecx_dir, &idx_dir], &collection, vid)
             .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
-        let has_live = ec_decoder::has_live_needles(&ecx_dir, &collection, vid, &deleted)
+        let has_live = ec_decoder::has_live_needles(&ecx_dir, &collection, vid, &deleted.ids)
             .map_err(|e| Status::internal(format!("HasLiveNeedles: {}", e)))?;
         if !has_live {
             return Err(Status::failed_precondition(format!(
@@ -6481,7 +6482,7 @@ impl EcDecodeJob {
             &ecx_dir,
             &collection,
             vid,
-            &deleted,
+            &deleted.ids,
         )
         .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
 
@@ -6506,6 +6507,14 @@ impl EcDecodeJob {
         ec_decoder::verify_decoded_dat_file(&dat_dir, &collection, vid, dat_file_size)
             .map_err(|e| Status::internal(format!("VerifyDecodedDatFile: {}", e)))?;
 
+        // Deletes journaled while the .dat was written. Appends hold the store
+        // write lock: waiting it out once means every delete acknowledged by
+        // now is on disk to be read.
+        drop(state.store.read().unwrap());
+        deleted
+            .catch_up()
+            .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+
         // Write .idx from the .ecx wherever it lives, beside the .dat where
         // the mount looks first (Go moves it there after the rebuild).
         ec_decoder::write_idx_file_from_ec_index_with_dirs(
@@ -6513,7 +6522,7 @@ impl EcDecodeJob {
             &dat_dir,
             &collection,
             vid,
-            &deleted,
+            &deleted.ids,
             dat_file_size,
         )
         .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
@@ -11372,5 +11381,46 @@ mod tests {
             "another task on the runtime must run while the decode is parked"
         );
         assert!(std::path::Path::new(&format!("{data}/1.dat")).exists());
+    }
+
+    /// A delete journaled while the .dat is written still reaches the .idx:
+    /// the journals are read again just before it.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_volume_ec_shards_to_volume_keeps_a_delete_journaled_mid_decode() {
+        let (service, _tmp, _data, idx, _) = make_split_idx_ec_decode_service(&[], true).await;
+        let fifo = make_ecj_fifo(&idx);
+
+        let probed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let deleter = {
+            let probed = probed.clone();
+            let state = service.state.clone();
+            std::thread::spawn(move || {
+                // The handler has taken its snapshot and handed off the decode.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while !probed.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                // Held until the delete is journaled, so the decode cannot
+                // catch up before it; the release proves the decode is parked
+                // on the idx-dir .ecj, past its first read of the data-dir one.
+                let mut store = state.store.write().unwrap();
+                let writer = release_ecj_fifo(&fifo);
+                store
+                    .find_ec_volume_mut(VolumeId(1))
+                    .unwrap()
+                    .journal_delete(NeedleId(2))
+                    .unwrap();
+                writer
+            })
+        };
+
+        let (result, ()) = tokio::join!(
+            service.volume_ec_shards_to_volume(ec_shards_to_volume_request()),
+            async { probed.store(true, Ordering::SeqCst) }
+        );
+        let _writer = deleter.join().unwrap();
+        result.unwrap();
+        assert_decoded_volume(&service, (2, 0), &[1, 3], &[2]);
     }
 }
