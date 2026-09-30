@@ -149,7 +149,11 @@ func (m *IAMManager) GetRoleStore() RoleStore {
 	return m.roleStore
 }
 
-// SetRoleStore replaces the role store.
+// SetRoleStore replaces the role store. An S3 server builds the list of
+// directories it watches for peers' changes once, at startup, from the store
+// installed then (RoleStoreDirectory): a filer-backed store installed later
+// with a different basePath is not watched, so peers' changes to it reach this
+// server's cached roles only when the cache expires.
 func (m *IAMManager) SetRoleStore(store RoleStore) {
 	m.installRoleStore(context.Background(), store)
 }
