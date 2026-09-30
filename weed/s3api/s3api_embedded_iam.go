@@ -2598,7 +2598,10 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 }
 
 // ExecuteAction executes an IAM action with the given values.
-// If skipPersist is true, the changed configuration is not saved to the persistent store.
+// If skipPersist is true, the changed S3ApiConfiguration is not saved to the
+// persistent store. OIDC provider and role actions do not change that
+// configuration: they write to the IAM manager's own stores, whichever the
+// server was configured with, and skipPersist does not apply to them.
 // reqID is set on the response; if empty, a new request ID is generated.
 func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, skipPersist bool, reqID string) (iamlib.RequestIDSetter, *iamError) {
 	if reqID == "" {

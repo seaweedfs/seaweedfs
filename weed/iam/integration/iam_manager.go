@@ -511,16 +511,56 @@ func NewRoleID() string {
 }
 
 // StaticRoleID is the ID of a role defined in the IAM config file. Such a
-// role is created again at every start, so its ID is derived from its name
-// to keep sessions valid across restarts; its lifecycle is the file's.
-func StaticRoleID(roleName string) string {
-	sum := sha256.Sum256([]byte("static-role:" + roleName))
-	return "AROA" + strings.ToUpper(hex.EncodeToString(sum[:]))[:17]
+// role is created again at every start, so its ID is derived rather than
+// random, to keep sessions valid across restarts. It is derived from the name
+// and the trust policy together: a role removed from the file and replaced by
+// a different one under the same name trusts different principals, and must
+// not inherit the old role's sessions. Restoring the same role restores its ID.
+func StaticRoleID(role *RoleDefinition) string {
+	h := sha256.New()
+	h.Write([]byte("static-role:" + role.RoleName + "\x00"))
+	if role.TrustPolicy != nil {
+		trust, err := json.Marshal(role.TrustPolicy)
+		if err != nil {
+			// A trust policy that cannot be encoded cannot be matched on
+			// either; give the role an ID no session can carry.
+			return NewRoleID()
+		}
+		h.Write(trust)
+	}
+	return "AROA" + strings.ToUpper(hex.EncodeToString(h.Sum(nil)))[:17]
 }
 
 // RoleSourceStaticConfig is the Source of a role loaded from the IAM config
 // file.
 const RoleSourceStaticConfig = "static-config"
+
+// checkSessionRoleBinding refuses a session issued for a role that has since
+// been deleted, or replaced by a role reusing its name: the role's current ID
+// must be the one the session carries. It runs for every session carrying a
+// role ID, whatever policies the session embeds — the policies a session
+// embeds are the ones its role had, and outlive the role otherwise. A session
+// issued before role IDs were recorded carries none and is not bound.
+func (m *IAMManager) checkSessionRoleBinding(ctx context.Context, sessionInfo *sts.SessionInfo) error {
+	if sessionInfo == nil || sessionInfo.RoleId == "" {
+		return nil
+	}
+	roleName := utils.ExtractRoleNameFromArn(sessionInfo.RoleArn)
+	if roleName == "" {
+		return nil
+	}
+	role, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+	if errors.Is(err, ErrRoleNotFound) {
+		return fmt.Errorf("session was issued for role %s, which no longer exists", roleName)
+	}
+	if err != nil {
+		return fmt.Errorf("resolve role %s for session: %w", roleName, err)
+	}
+	if role.RoleId != sessionInfo.RoleId {
+		return fmt.Errorf("session was issued for an earlier role named %s", roleName)
+	}
+	return nil
+}
 
 // ActionRequest represents a request to perform an action
 type ActionRequest struct {
@@ -995,6 +1035,27 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
 }
 
+// UpdateRole changes a role atomically in the role store (see
+// RoleStore.UpdateRole). update receives the role's current definition, nil
+// when it does not exist, and its result is validated like CreateRole's.
+// The IAM API's role actions use it, so a change made on one S3 server is
+// neither lost to a concurrent change on another nor written over a delete.
+func (m *IAMManager) UpdateRole(ctx context.Context, roleName string, update RoleUpdate) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+	return m.roleStore.UpdateRole(ctx, "", roleName, func(current *RoleDefinition) (*RoleDefinition, error) {
+		next, err := update(current)
+		if err != nil {
+			return nil, err
+		}
+		if err := PrepareRoleDefinition(roleName, next); err != nil {
+			return nil, err
+		}
+		return next, nil
+	})
+}
+
 // PrepareRoleDefinition applies CreateRole's defaults and validation to a role
 // about to be stored or loaded.
 func PrepareRoleDefinition(roleName string, roleDef *RoleDefinition) error {
@@ -1046,7 +1107,7 @@ func (m *IAMManager) LoadStaticRoles(ctx context.Context, roles []*RoleDefinitio
 		}
 		role.Source = RoleSourceStaticConfig
 		if role.RoleId == "" {
-			role.RoleId = StaticRoleID(role.RoleName)
+			role.RoleId = StaticRoleID(role)
 		}
 		if err := PrepareRoleDefinition(role.RoleName, role); err != nil {
 			glog.Warningf("Failed to load role %s: %v", role.RoleName, err)
@@ -1094,6 +1155,9 @@ func (m *IAMManager) ListRoles(ctx context.Context) ([]*RoleDefinition, error) {
 	roles := make([]*RoleDefinition, 0, len(names))
 	for _, name := range names {
 		role, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), name)
+		if errors.Is(err, ErrRoleNotFound) {
+			continue // deleted between list and read
+		}
 		if err != nil {
 			return nil, fmt.Errorf("get role %s: %w", name, err)
 		}
@@ -1415,6 +1479,9 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 					return false, fmt.Errorf("session has been revoked")
 				}
 			}
+			if err := m.checkSessionRoleBinding(ctx, sessionInfo); err != nil {
+				return false, err
+			}
 		}
 	}
 
@@ -1514,15 +1581,6 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 				if err != nil {
 					return false, fmt.Errorf("role not found: %s", roleName)
-				}
-
-				// A session carrying a role ID is bound to that role: once the
-				// role is deleted, a new role reusing its name must not inherit
-				// the old role's live sessions.
-				if sessionInfo != nil && sessionInfo.RoleId != "" &&
-					utils.ExtractRoleNameFromArn(sessionInfo.RoleArn) == roleName &&
-					sessionInfo.RoleId != roleDef.RoleId {
-					return false, fmt.Errorf("session was issued for an earlier role named %s", roleName)
 				}
 
 				hasManagedSubject = true
