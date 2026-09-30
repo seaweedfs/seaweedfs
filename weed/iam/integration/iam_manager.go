@@ -2,7 +2,10 @@ package integration
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +39,9 @@ type IAMManager struct {
 	// file, by ARN. With an in-memory store they are also written to the
 	// store; a persistent store never holds them (see installOIDCProviderStore).
 	staticOIDCProviders map[string]*OIDCProviderRecord
+	// staticRoles are the roles of this server's IAM config file, by name, once
+	// LoadStaticRoles has run (see installRoleStore).
+	staticRoles map[string]*RoleDefinition
 	// oidcRetryMu guards the background refresh retry and which store is
 	// current: cancelOIDCLoad stops the retry, oidcRetryGen names the one
 	// running (0 when none) so at most one runs, and oidcRetryAgain records a
@@ -136,6 +142,20 @@ func (m *IAMManager) SetOIDCProviderStore(store OIDCProviderStore) {
 // GetOIDCProviderStore returns the configured store (may be nil).
 func (m *IAMManager) GetOIDCProviderStore() OIDCProviderStore {
 	return m.oidcProviderStore
+}
+
+// GetRoleStore returns the configured role store.
+func (m *IAMManager) GetRoleStore() RoleStore {
+	return m.roleStore
+}
+
+// SetRoleStore replaces the role store. An S3 server builds the list of
+// directories it watches for peers' changes once, at startup, from the store
+// installed then (RoleStoreDirectory): a filer-backed store installed later
+// with a different basePath is not watched, so peers' changes to it reach this
+// server's cached roles only when the cache expires.
+func (m *IAMManager) SetRoleStore(store RoleStore) {
+	m.installRoleStore(context.Background(), store)
 }
 
 // GetOIDCProvider returns the record for the given ARN, or an error if the
@@ -470,6 +490,88 @@ type RoleDefinition struct {
 	// set it must satisfy AWS bounds: 3600 ≤ MaxSessionDuration ≤ 43200.
 	// Honoured by AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithCredentials.
 	MaxSessionDuration int64 `json:"maxSessionDuration,omitempty"`
+
+	// Source records where the role came from. RoleSourceStaticConfig marks a
+	// role loaded from the IAM config file; empty means it was created at
+	// runtime. Only static-config roles are pruned when they leave the file.
+	Source string `json:"source,omitempty"`
+
+	// CreatedAt is when the role was created through the IAM API. Zero for
+	// roles loaded from the config file.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+
+	// RoleId uniquely identifies this role, as AWS's RoleId does. A role
+	// deleted and created again under the same name gets a new ID, and a
+	// session is honoured only while the role it was issued for still has
+	// the ID the session carries — so a session outlives neither the role's
+	// deletion nor a later role that reuses its name.
+	RoleId string `json:"roleId,omitempty"`
+}
+
+// NewRoleID returns a fresh, random role ID in AWS's AROA form.
+func NewRoleID() string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+	b := make([]byte, 17)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("read random role id: %v", err))
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return "AROA" + string(b)
+}
+
+// StaticRoleID is the ID of a role defined in the IAM config file. Such a
+// role is created again at every start, so its ID is derived rather than
+// random, to keep sessions valid across restarts. It is derived from the name
+// and the trust policy together: a role removed from the file and replaced by
+// a different one under the same name trusts different principals, and must
+// not inherit the old role's sessions. Restoring the same role restores its ID.
+func StaticRoleID(role *RoleDefinition) string {
+	h := sha256.New()
+	h.Write([]byte("static-role:" + role.RoleName + "\x00"))
+	if role.TrustPolicy != nil {
+		trust, err := json.Marshal(role.TrustPolicy)
+		if err != nil {
+			// A trust policy that cannot be encoded cannot be matched on
+			// either; give the role an ID no session can carry.
+			return NewRoleID()
+		}
+		h.Write(trust)
+	}
+	return "AROA" + strings.ToUpper(hex.EncodeToString(h.Sum(nil)))[:17]
+}
+
+// RoleSourceStaticConfig is the Source of a role loaded from the IAM config
+// file.
+const RoleSourceStaticConfig = "static-config"
+
+// checkSessionRoleBinding refuses a session issued for a role that has since
+// been deleted, or replaced by a role reusing its name: the role's current ID
+// must be the one the session carries. It runs for every session carrying a
+// role ID, whatever policies the session embeds — the policies a session
+// embeds are the ones its role had, and outlive the role otherwise. A session
+// issued before role IDs were recorded carries none and is not bound. It
+// returns the role it checked, nil for an unbound session.
+func (m *IAMManager) checkSessionRoleBinding(ctx context.Context, sessionInfo *sts.SessionInfo) (*RoleDefinition, error) {
+	if sessionInfo == nil || sessionInfo.RoleId == "" {
+		return nil, nil
+	}
+	roleName := utils.ExtractRoleNameFromArn(sessionInfo.RoleArn)
+	if roleName == "" {
+		return nil, nil
+	}
+	role, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+	if errors.Is(err, ErrRoleNotFound) {
+		return nil, fmt.Errorf("session was issued for role %s, which no longer exists", roleName)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve role %s for session: %w", roleName, err)
+	}
+	if role.RoleId != sessionInfo.RoleId {
+		return nil, fmt.Errorf("session was issued for an earlier role named %s", roleName)
+	}
+	return role, nil
 }
 
 // ActionRequest represents a request to perform an action
@@ -1008,13 +1110,50 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
+	if err := PrepareRoleDefinition(roleName, roleDef); err != nil {
+		return err
+	}
+	if roleDef.RoleId == "" {
+		roleDef.RoleId = NewRoleID()
+	}
 
+	// Store role definition
+	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
+}
+
+// UpdateRole changes a role atomically in the role store (see
+// RoleStore.UpdateRole). update receives the role's current definition, nil
+// when it does not exist, and its result is validated like CreateRole's; a
+// nil result deletes the role.
+// The IAM API's role actions use it, so a change made on one S3 server is
+// neither lost to a concurrent change on another nor written over a delete.
+func (m *IAMManager) UpdateRole(ctx context.Context, roleName string, update RoleUpdate) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+	return m.roleStore.UpdateRole(ctx, "", roleName, func(current *RoleDefinition) (*RoleDefinition, error) {
+		next, err := update(current)
+		if err != nil || next == nil {
+			return next, err
+		}
+		if err := PrepareRoleDefinition(roleName, next); err != nil {
+			return nil, err
+		}
+		return next, nil
+	})
+}
+
+// PrepareRoleDefinition applies CreateRole's defaults and validation to a role
+// about to be stored or loaded.
+func PrepareRoleDefinition(roleName string, roleDef *RoleDefinition) error {
 	if roleName == "" {
 		return fmt.Errorf("role name cannot be empty")
 	}
-
 	if roleDef == nil {
 		return fmt.Errorf("role definition cannot be nil")
+	}
+	if roleDef.RoleName == "" {
+		roleDef.RoleName = roleName
 	}
 
 	// Set role ARN if not provided
@@ -1035,12 +1174,122 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 			return fmt.Errorf("MaxSessionDuration must be between 3600 and 43200 seconds, got %d", roleDef.MaxSessionDuration)
 		}
 	}
+	return nil
+}
 
-	// Store role definition
-	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
+// LoadStaticRoles installs the roles of the IAM config file.
+//
+// An in-memory store holds them as records, as it always has. A persistent
+// store never does: it outlives this process and may be shared by S3 servers
+// with different config files, so a record written from one file would
+// outlive its removal from that file and be honoured by every server. Those
+// roles are served from memory instead, ahead of the store, and cannot be
+// changed or deleted through the store (ErrRoleStatic). A role stored under
+// the same name takes precedence. They report no creation time.
+func (m *IAMManager) LoadStaticRoles(ctx context.Context, roles []*RoleDefinition) {
+	defs := make(map[string]*RoleDefinition, len(roles))
+	for _, role := range roles {
+		if role == nil {
+			continue
+		}
+		role.Source = RoleSourceStaticConfig
+		if role.RoleId == "" {
+			role.RoleId = StaticRoleID(role)
+		}
+		if err := PrepareRoleDefinition(role.RoleName, role); err != nil {
+			glog.Warningf("Failed to load role %s: %v", role.RoleName, err)
+			continue
+		}
+		defs[role.RoleName] = role
+	}
+	m.staticRoles = defs
+	m.installRoleStore(ctx, m.roleStore)
+}
+
+// installRoleStore makes store the role store, with the config-file roles
+// installed in it as LoadStaticRoles describes, so a store set after startup
+// behaves like the one set at startup.
+func (m *IAMManager) installRoleStore(ctx context.Context, store RoleStore) {
+	if overlay, ok := store.(*staticRoleOverlay); ok {
+		store = overlay.inner
+	}
+	if store == nil || m.staticRoles == nil {
+		m.roleStore = store
+		return
+	}
+	if _, inMemory := store.(*MemoryRoleStore); inMemory {
+		for name, role := range m.staticRoles {
+			if err := store.StoreRole(ctx, "", name, role); err != nil {
+				glog.Warningf("Failed to create role %s: %v", name, err)
+			}
+		}
+		m.roleStore = store
+		return
+	}
+	m.roleStore = &staticRoleOverlay{static: m.staticRoles, inner: store}
 }
 
 // GetRole retrieves a role definition by name.
+// ListRoles returns every stored role definition.
+func (m *IAMManager) ListRoles(ctx context.Context) ([]*RoleDefinition, error) {
+	if !m.initialized {
+		return nil, fmt.Errorf("IAM manager not initialized")
+	}
+	names, err := m.roleStore.ListRoles(ctx, m.getFilerAddress())
+	if err != nil {
+		return nil, fmt.Errorf("list roles: %w", err)
+	}
+	roles := make([]*RoleDefinition, 0, len(names))
+	for _, name := range names {
+		role, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), name)
+		if errors.Is(err, ErrRoleNotFound) {
+			continue // deleted between list and read
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get role %s: %w", name, err)
+		}
+		roles = append(roles, role)
+	}
+	return roles, nil
+}
+
+// DeleteRole removes a role definition.
+func (m *IAMManager) DeleteRole(ctx context.Context, roleName string) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+	if roleName == "" {
+		return fmt.Errorf("role name cannot be empty")
+	}
+	return m.roleStore.DeleteRole(ctx, m.getFilerAddress(), roleName)
+}
+
+// InvalidateRoleCache drops any cached role definitions, so a change written
+// to the store by a peer is seen on the next lookup rather than after the
+// cache TTL.
+func (m *IAMManager) InvalidateRoleCache() {
+	if cached, ok := m.roleStore.(interface{ ClearCache() }); ok {
+		cached.ClearCache()
+	}
+}
+
+// RoleStoreDirectory is the filer directory the role store keeps roles in,
+// its configured basePath; empty when the store is not filer-backed. S3
+// servers watch it to drop cached roles when a peer changes one.
+func (m *IAMManager) RoleStoreDirectory() string {
+	store := m.roleStore
+	if overlay, ok := store.(*staticRoleOverlay); ok {
+		store = overlay.inner
+	}
+	if cached, ok := store.(*GenericCachedRoleStore); ok {
+		store = cached.adapter.store
+	}
+	if filerStore, ok := store.(*FilerRoleStore); ok {
+		return filerStore.basePath
+	}
+	return ""
+}
+
 func (m *IAMManager) GetRole(ctx context.Context, roleName string) (*RoleDefinition, error) {
 	if !m.initialized {
 		return nil, fmt.Errorf("IAM manager not initialized")
@@ -1151,6 +1400,7 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	// the global MaxSessionLength and the source-token-expiry cap on top of
 	// this; per-role takes precedence whenever it is the tightest bound.
 	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration, m.defaultTokenDurationSeconds(), m.maxSessionLengthSeconds())
+	request.RoleId = roleDef.RoleId
 
 	// Use STS service to assume the role
 	return m.stsService.AssumeRoleWithWebIdentity(ctx, request)
@@ -1287,6 +1537,7 @@ func (m *IAMManager) AssumeRoleWithCredentials(ctx context.Context, request *sts
 	request.DurationSeconds = capDurationByRole(request.DurationSeconds, roleDef.MaxSessionDuration, m.defaultTokenDurationSeconds(), m.maxSessionLengthSeconds())
 
 	// Use STS service to assume the role
+	request.RoleId = roleDef.RoleId
 	return m.stsService.AssumeRoleWithCredentials(ctx, request)
 }
 
@@ -1300,6 +1551,10 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	// We always try to validate with the internal STS service first if it's a SeaweedFS token.
 	// This ensures that session policies embedded in the token are correctly extracted and enforced.
 	var sessionInfo *sts.SessionInfo
+	// boundRole is the role a session carrying a role ID was checked against;
+	// its policies are the ones evaluated, so the check and the evaluation
+	// see one definition even if the role is replaced in between.
+	var boundRole *RoleDefinition
 	if request.SessionToken != "" {
 		// Parse unverified to check issuer
 		parsed, _, err := new(jwt.Parser).ParseUnverified(request.SessionToken, jwt.MapClaims{})
@@ -1331,6 +1586,9 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				if revoked {
 					return false, fmt.Errorf("session has been revoked")
 				}
+			}
+			if boundRole, err = m.checkSessionRoleBinding(ctx, sessionInfo); err != nil {
+				return false, err
 			}
 		}
 	}
@@ -1428,9 +1686,12 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				policies = user.GetPolicyNames()
 			} else {
 				// Get role definition
-				roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
-				if err != nil {
-					return false, fmt.Errorf("role not found: %s", roleName)
+				roleDef := boundRole
+				if roleDef == nil || roleDef.RoleName != roleName {
+					roleDef, err = m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+					if err != nil {
+						return false, fmt.Errorf("role not found: %s", roleName)
+					}
 				}
 
 				hasManagedSubject = true
