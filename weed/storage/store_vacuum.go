@@ -61,48 +61,62 @@ func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 	return fmt.Errorf("volume id %d is not found during cleaning up: %w", vid, ErrVolumeNotFound)
 }
 
-// estimatedCompactedSize is what compaction writes: a superblock, the live
-// needles with their on-disk framing, and an index with live entries only.
-// Deleted bytes do not carry over, so a mostly-garbage volume needs far less
-// space than it occupies.
-func estimatedCompactedSize(v *Volume) int64 {
-	liveCount := v.FileCount()
-	if deleted := v.DeletedCount(); deleted < liveCount {
-		liveCount -= deleted
-	} else {
-		liveCount = 0
+// compactionDiskFree reports the free bytes on the disk holding dir. It is a
+// variable so a test can stand in for a full disk without filling one.
+var compactionDiskFree = func(dir string) uint64 {
+	return stats.NewDiskStatus(dir).Free
+}
+
+// compactionSpaceNeeded estimates what CompactByIndex will write for v: the
+// live needles with their on-disk framing behind a superblock, and a rebuilt
+// index with one entry per live needle. The volume's current size is the
+// wrong yardstick: the more garbage a volume holds, the less its compaction
+// writes, and a store that filled up until its volumes went read-only is
+// exactly where the all-garbage volumes must still compact to give the space
+// back (issue #11516). The estimate never exceeds the current volume, and
+// preallocate wins when it is larger, because the new .dat is preallocated
+// to that length.
+func compactionSpaceNeeded(v *Volume, preallocate int64) (spaceNeeded, liveBytes, indexBytes int64) {
+	datSize, idxSize, _ := v.FileStat()
+	liveBytes, indexBytes = int64(datSize), int64(idxSize)
+
+	liveCount := int64(v.FileCount()) - int64(v.DeletedCount())
+	liveContent := int64(v.ContentSize()) - int64(v.DeletedSize())
+	// A .sdx converted back to .idx carries no deleted sizes (see
+	// garbageLevel), and counters that disagree mean the metric is off;
+	// either way the whole volume stays the estimate.
+	deletedSizeKnown := v.DeletedCount() == 0 || v.DeletedSize() > 0
+	if deletedSizeKnown && liveCount >= 0 && liveContent >= 0 {
+		// GetActualSize(0) is the framing of an empty needle; another
+		// padding unit covers the worst case for any other size.
+		perNeedle := needle.GetActualSize(0, v.Version()) + types.NeedlePaddingSize
+		if estimate := super_block.SuperBlockSize + liveContent + liveCount*perNeedle; estimate < liveBytes {
+			liveBytes = estimate
+		}
+		if estimate := liveCount * types.NeedleMapEntrySize; estimate < indexBytes {
+			indexBytes = estimate
+		}
 	}
-	liveBytes := v.ContentSize()
-	if deleted := v.DeletedSize(); deleted < liveBytes {
-		liveBytes -= deleted
-	} else {
-		liveBytes = 0
+
+	spaceNeeded = liveBytes + indexBytes
+	if preallocate > spaceNeeded {
+		spaceNeeded = preallocate
 	}
-	perNeedle := needle.GetActualSize(0, v.Version()) + types.NeedlePaddingSize + types.NeedleMapEntrySize
-	return super_block.SuperBlockSize + int64(liveCount)*perNeedle + int64(liveBytes)
+	return spaceNeeded, liveBytes, indexBytes
 }
 
 func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
+	spaceNeeded, liveBytes, indexBytes := compactionSpaceNeeded(v, preallocate)
 	volumeSize, indexSize, _ := v.FileStat()
-
-	// The compacted output holds live needles only, so measure against the
-	// estimated compacted size — otherwise a disk full of garbage can never
-	// reclaim itself.
-	estimatedCompactSize := estimatedCompactedSize(v)
-	spaceNeeded := preallocate
-	if estimatedCompactSize > preallocate {
-		spaceNeeded = estimatedCompactSize
+	free := compactionDiskFree(v.dir)
+	if int64(free) < spaceNeeded {
+		return fmt.Errorf("insufficient free space for compaction: need %d bytes (live: %d, index: %d, current volume: %d, current index: %d), but only %d bytes available: %w",
+			spaceNeeded, liveBytes, indexBytes, volumeSize, indexSize, free, ErrInsufficientSpace)
 	}
 	spaceNeeded += spaceNeeded / 10
 
-	diskStatus := stats.NewDiskStatus(v.dir)
-	if int64(diskStatus.Free) < spaceNeeded {
-		return fmt.Errorf("insufficient free space for compaction: need %d bytes (volume: %d, index: %d), but only %d bytes available: %w",
-			spaceNeeded, volumeSize, indexSize, diskStatus.Free, ErrInsufficientSpace)
-	}
-
-	glog.V(1).Infof("volume %d compaction space check: volume=%d, index=%d, space_needed=%d, free_space=%d",
-		v.Id, volumeSize, indexSize, spaceNeeded, diskStatus.Free)
+	glog.V(1).Infof("volume %d compaction space check: live=%d, index=%d, current volume=%d, space_needed=%d, free_space=%d",
+		v.Id, liveBytes, indexBytes, volumeSize, spaceNeeded, free)
 
 	return nil
 }
