@@ -3833,129 +3833,72 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
-        let store = self.state.store.read().unwrap();
-        // Aggregate per-shard data dirs across all locations so the
-        // shard-presence check + decoder both see the union for
-        // cross-disk reconciled volumes (#9252). Mirrors Go's
-        // CollectEcShards.
-        let max_shard_count = crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
-        let (ec_vol, shard_dirs) = store
-            .collect_ec_shard_dirs(vid, max_shard_count)
-            .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
+        let job = {
+            let store = self.state.store.read().unwrap();
+            // Aggregate per-shard data dirs across all locations so the
+            // shard-presence check + decoder both see the union for
+            // cross-disk reconciled volumes (#9252). Mirrors Go's
+            // CollectEcShards.
+            let max_shard_count = crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
+            let (ec_vol, shard_dirs) = store
+                .collect_ec_shard_dirs(vid, max_shard_count)
+                .ok_or_else(|| {
+                    Status::not_found(format!("ec volume {} not found", req.volume_id))
+                })?;
 
-        if ec_vol.collection != req.collection {
-            return Err(Status::internal(format!(
-                "existing collection:{} unexpected input: {}",
-                ec_vol.collection, req.collection
-            )));
-        }
-
-        // Use EC context data shard count from the volume
-        let data_shards = ec_vol.data_shards as usize;
-
-        // Validate data shard count range (matches Go's VolumeEcShardsToVolume)
-        if data_shards == 0 || data_shards > max_shard_count {
-            return Err(Status::invalid_argument(format!(
-                "invalid data shard count {} for volume {} (must be 1..{})",
-                data_shards, req.volume_id, max_shard_count
-            )));
-        }
-
-        // Check that all data shards are present somewhere on this server.
-        for (shard_id, dir) in shard_dirs[..data_shards].iter().enumerate() {
-            if dir.is_none() {
+            if ec_vol.collection != req.collection {
                 return Err(Status::internal(format!(
-                    "ec volume {} missing shard {}",
-                    req.volume_id, shard_id
+                    "existing collection:{} unexpected input: {}",
+                    ec_vol.collection, req.collection
                 )));
             }
-        }
 
-        // Reconstruct the volume from EC shards. Use the EcVolume's
-        // own dir for the produced .dat (matches the volume's home
-        // disk) and its `ecx_actual_dir` for the .ecx lookup, while
-        // reading each shard from its real on-disk location.
-        let dat_dir = ec_vol.dir.clone();
-        let ecx_dir = ec_vol.ecx_actual_dir().to_string();
-        let idx_dir = ec_vol.dir_idx.clone();
-        let collection = ec_vol.collection.clone();
-        let vif_dat_file_size = ec_vol.dat_file_size;
-        let (large_block_size, small_block_size) =
-            (ec_vol.large_block_size(), ec_vol.small_block_size());
-        // shard_dirs[i] is guaranteed Some for i in 0..data_shards by
-        // the check above; collect concrete dirs for the decoder.
-        let per_shard_dirs: Vec<String> = shard_dirs[..data_shards]
-            .iter()
-            .map(|d| d.clone().unwrap())
-            .collect();
-        drop(store);
+            // Use EC context data shard count from the volume
+            let data_shards = ec_vol.data_shards as usize;
 
-        // Deletions journaled beside the .ecx, or collected by
-        // VolumeEcShardsCopy into the idx dir, count as deleted throughout.
-        let deleted = crate::storage::erasure_coding::ec_decoder::read_ecj_deletions(
-            &[&ecx_dir, &idx_dir],
-            &collection,
-            vid,
-        )
-        .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
-        let has_live = crate::storage::erasure_coding::ec_decoder::has_live_needles(
-            &ecx_dir,
-            &collection,
-            vid,
-            &deleted,
-        )
-        .map_err(|e| Status::internal(format!("HasLiveNeedles: {}", e)))?;
-        if !has_live {
-            return Err(Status::failed_precondition(format!(
-                "ec volume {} has no live entries",
-                req.volume_id
-            )));
-        }
+            // Validate data shard count range (matches Go's VolumeEcShardsToVolume)
+            if data_shards == 0 || data_shards > max_shard_count {
+                return Err(Status::invalid_argument(format!(
+                    "invalid data shard count {} for volume {} (must be 1..{})",
+                    data_shards, req.volume_id, max_shard_count
+                )));
+            }
 
-        // Calculate .dat file size from .ecx entries (.ec00 lives on
-        // its own disk, .ecx on the index disk).
-        let dat_file_size =
-            crate::storage::erasure_coding::ec_decoder::find_dat_file_size_with_dirs(
-                &per_shard_dirs[0],
-                &ecx_dir,
-                &collection,
+            // Check that all data shards are present somewhere on this server.
+            for (shard_id, dir) in shard_dirs[..data_shards].iter().enumerate() {
+                if dir.is_none() {
+                    return Err(Status::internal(format!(
+                        "ec volume {} missing shard {}",
+                        req.volume_id, shard_id
+                    )));
+                }
+            }
+
+            // Reconstruct the volume from EC shards. Use the EcVolume's
+            // own dir for the produced .dat (matches the volume's home
+            // disk) and its `ecx_actual_dir` for the .ecx lookup, while
+            // reading each shard from its real on-disk location.
+            // shard_dirs[i] is guaranteed Some for i in 0..data_shards by
+            // the check above; collect concrete dirs for the decoder.
+            EcDecodeJob {
                 vid,
-                &deleted,
-            )
-            .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
+                dat_dir: ec_vol.dir.clone(),
+                ecx_dir: ec_vol.ecx_actual_dir().to_string(),
+                idx_dir: ec_vol.dir_idx.clone(),
+                collection: ec_vol.collection.clone(),
+                vif_dat_file_size: ec_vol.dat_file_size,
+                large_block_size: ec_vol.large_block_size() as usize,
+                small_block_size: ec_vol.small_block_size() as usize,
+                shard_dirs: shard_dirs[..data_shards]
+                    .iter()
+                    .map(|d| d.clone().unwrap())
+                    .collect(),
+            }
+        };
 
-        // The shard block layout was fixed by the .dat size at encode time
-        // (recorded in .vif); deletions can shrink the live extent below a
-        // large-block row boundary, so the layout must not be derived from
-        // dat_file_size. The decoder infers the layout from the shard size
-        // when .vif does not record it.
-        // Write .dat file using block-interleaved reading from shards.
-        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards(
-            &crate::storage::erasure_coding::ec_decoder::DatRebuild {
-                dat_dir: &dat_dir,
-                collection: &collection,
-                volume_id: vid,
-                dat_file_size,
-                encoded_dat_file_size: vif_dat_file_size,
-                data_shards,
-                shard_dirs: Some(&per_shard_dirs),
-                large_block_size: large_block_size as usize,
-                small_block_size: small_block_size as usize,
-            },
-        )
-        .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
-
-        // Write .idx from the .ecx wherever it lives, beside the .dat where
-        // the mount looks first (Go moves it there after the rebuild).
-        crate::storage::erasure_coding::ec_decoder::write_idx_file_from_ec_index_with_dirs(
-            &ecx_dir,
-            &dat_dir,
-            &collection,
-            vid,
-            &deleted,
-            dat_file_size,
-        )
-        .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
+        tokio::task::spawn_blocking(move || job.run())
+            .await
+            .map_err(|e| Status::internal(format!("decode ec volume {}: {}", vid, e)))??;
 
         // Go does NOT unmount EC shards or mount the volume here.
         // The caller (ec.balance / ec.decode) handles mount/unmount separately.
@@ -6482,6 +6425,94 @@ fn get_disk_usage(path: &str) -> (u64, u64) {
     match best {
         Some(disk) => (disk.total_space(), disk.available_space()),
         None => (0, 0),
+    }
+}
+
+/// What `VolumeEcShardsToVolume` needs to decode an EC volume, snapshotted
+/// under the store lock so the decode itself runs without it.
+struct EcDecodeJob {
+    vid: VolumeId,
+    dat_dir: String,
+    ecx_dir: String,
+    idx_dir: String,
+    collection: String,
+    vif_dat_file_size: i64,
+    large_block_size: usize,
+    small_block_size: usize,
+    /// Directory of each data shard.
+    shard_dirs: Vec<String>,
+}
+
+impl EcDecodeJob {
+    fn run(self) -> Result<(), Status> {
+        use crate::storage::erasure_coding::ec_decoder;
+        let EcDecodeJob {
+            vid,
+            dat_dir,
+            ecx_dir,
+            idx_dir,
+            collection,
+            vif_dat_file_size,
+            large_block_size,
+            small_block_size,
+            shard_dirs,
+        } = self;
+
+        // Deletions journaled beside the .ecx, or collected by
+        // VolumeEcShardsCopy into the idx dir, count as deleted throughout.
+        let deleted = ec_decoder::read_ecj_deletions(&[&ecx_dir, &idx_dir], &collection, vid)
+            .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+        let has_live = ec_decoder::has_live_needles(&ecx_dir, &collection, vid, &deleted)
+            .map_err(|e| Status::internal(format!("HasLiveNeedles: {}", e)))?;
+        if !has_live {
+            return Err(Status::failed_precondition(format!(
+                "ec volume {} has no live entries",
+                vid
+            )));
+        }
+
+        // Calculate .dat file size from .ecx entries (.ec00 lives on
+        // its own disk, .ecx on the index disk).
+        let dat_file_size = ec_decoder::find_dat_file_size_with_dirs(
+            &shard_dirs[0],
+            &ecx_dir,
+            &collection,
+            vid,
+            &deleted,
+        )
+        .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
+
+        // The shard block layout was fixed by the .dat size at encode time
+        // (recorded in .vif); deletions can shrink the live extent below a
+        // large-block row boundary, so the layout must not be derived from
+        // dat_file_size. The decoder infers the layout from the shard size
+        // when .vif does not record it.
+        // Write .dat file using block-interleaved reading from shards.
+        ec_decoder::write_dat_file_from_shards(&ec_decoder::DatRebuild {
+            dat_dir: &dat_dir,
+            collection: &collection,
+            volume_id: vid,
+            dat_file_size,
+            encoded_dat_file_size: vif_dat_file_size,
+            data_shards: shard_dirs.len(),
+            shard_dirs: Some(&shard_dirs),
+            large_block_size,
+            small_block_size,
+        })
+        .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
+
+        // Write .idx from the .ecx wherever it lives, beside the .dat where
+        // the mount looks first (Go moves it there after the rebuild).
+        ec_decoder::write_idx_file_from_ec_index_with_dirs(
+            &ecx_dir,
+            &dat_dir,
+            &collection,
+            vid,
+            &deleted,
+            dat_file_size,
+        )
+        .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
+        Ok(())
     }
 }
 
@@ -11131,5 +11162,81 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{err:?}");
         assert!(err.message().contains("has no live entries"), "{err:?}");
         assert!(!std::path::Path::new(&format!("{data}/1.dat")).exists());
+    }
+
+    /// Replaces the idx-dir .ecj with a FIFO: the decode's open of it blocks
+    /// until [`release_ecj_fifo`] opens the write end.
+    #[cfg(unix)]
+    fn make_ecj_fifo(idx: &str) -> String {
+        let fifo = format!("{idx}/1.ecj");
+        std::fs::remove_file(&fifo).unwrap();
+        let path = std::ffi::CString::new(fifo.clone()).unwrap();
+        // SAFETY: `path` is a valid NUL-terminated string for the call.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o644) }, 0);
+        fifo
+    }
+
+    /// Opens the write end once the decode has the read end open, releasing
+    /// it. Keep the returned handle so a later open does not block again.
+    #[cfg(unix)]
+    fn release_ecj_fifo(fifo: &str) -> std::fs::File {
+        use std::os::unix::fs::OpenOptionsExt;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(fifo)
+            {
+                Ok(writer) => return writer,
+                // No reader yet.
+                Err(e)
+                    if e.raw_os_error() == Some(libc::ENXIO)
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => panic!("the decode never opened the .ecj: {e}"),
+            }
+        }
+    }
+
+    /// The decode's file I/O used to run on the async runtime: parked on a
+    /// slow disk, it stalled every other task on that worker.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_volume_ec_shards_to_volume_decodes_off_the_runtime() {
+        let (service, _tmp, data, idx, _) = make_split_idx_ec_decode_service(&[], true).await;
+        let fifo = make_ecj_fifo(&idx);
+
+        let probed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let releaser = {
+            let probed = probed.clone();
+            let state = service.state.clone();
+            std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while !probed.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                let probed_while_parked = probed.load(Ordering::SeqCst);
+                assert!(
+                    state.store.try_write().is_ok(),
+                    "the decode must not hold the store lock"
+                );
+                (probed_while_parked, release_ecj_fifo(&fifo))
+            })
+        };
+
+        let (result, ()) = tokio::join!(
+            service.volume_ec_shards_to_volume(ec_shards_to_volume_request()),
+            async { probed.store(true, Ordering::SeqCst) }
+        );
+        let (probed_while_parked, _writer) = releaser.join().unwrap();
+        result.unwrap();
+        assert!(
+            probed_while_parked,
+            "another task on the runtime must run while the decode is parked"
+        );
+        assert!(std::path::Path::new(&format!("{data}/1.dat")).exists());
     }
 }
