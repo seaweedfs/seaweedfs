@@ -149,12 +149,16 @@ jobs:
           - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/arm64,  arch: arm64, runner: ubuntu-24.04-arm, qemu: false }
           - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/arm/v7, arch: armv7, runner: ubuntu-latest,    qemu: true }
           - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/386,    arch: i386,  runner: ubuntu-latest,    qemu: false }
+          - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/ppc64le, arch: ppc64le, runner: ubuntu-latest,  qemu: true }
+          - { variant: normal, tag_suffix: "",             dockerfile: ./docker/Dockerfile.go_build, build_args: "",               rust_variant: normal,     platform: linux/s390x,   arch: s390x, runner: ubuntu-latest,    qemu: true }
 
           # Large disk - multi-arch
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/amd64,  arch: amd64, runner: ubuntu-latest,    qemu: false }
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/arm64,  arch: arm64, runner: ubuntu-24.04-arm, qemu: false }
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/arm/v7, arch: armv7, runner: ubuntu-latest,    qemu: true }
           - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/386,    arch: i386,  runner: ubuntu-latest,    qemu: false }
+          - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/ppc64le, arch: ppc64le, runner: ubuntu-latest,  qemu: true }
+          - { variant: large_disk, tag_suffix: _large_disk, dockerfile: ./docker/Dockerfile.go_build, build_args: TAGS=5BytesOffset, rust_variant: large-disk, platform: linux/s390x,   arch: s390x, runner: ubuntu-latest,    qemu: true }
 
           # Full tags - multi-arch
           - { variant: full, tag_suffix: _full, dockerfile: ./docker/Dockerfile.go_build, build_args: "TAGS=elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb", rust_variant: normal, platform: linux/amd64, arch: amd64, runner: ubuntu-latest,    qemu: false }
