@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -133,20 +135,87 @@ func TestS3IamCache_ValidToken_WritesIdentity(t *testing.T) {
 	}
 }
 
-func TestS3IamCache_NoSigningKey_Unauthenticated_Allowed(t *testing.T) {
+// Without a signing key remote callers cannot be authenticated, so admin
+// RPCs are restricted to local clients: unix socket, loopback, or the
+// server's own interface addresses. Remote peers and missing peer info are
+// denied.
+func TestS3IamCache_NoSigningKey_RemotePeer_Unauthenticated(t *testing.T) {
 	s := newTestS3IamCacheServer(t, "")
 	_, err := s.PutIdentity(context.Background(), &iam_pb.PutIdentityRequest{
-		Identity: &iam_pb.Identity{Name: "pushed", Actions: []string{"Read"}},
+		Identity: &iam_pb.Identity{Name: "pwn", Actions: []string{"Admin"}},
 	})
-	if err != nil {
-		t.Fatalf("PutIdentity without key: unexpected error %v", err)
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("PutIdentity with no peer info: got code %v, want %v (err=%v)", got, want, err)
+	}
+	remoteCtx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 11111}})
+	_, err = s.PutIdentity(remoteCtx, &iam_pb.PutIdentityRequest{
+		Identity: &iam_pb.Identity{Name: "pwn", Actions: []string{"Admin"}},
+	})
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("PutIdentity from remote peer without key: got code %v, want %v (err=%v)", got, want, err)
+	}
+}
+
+func TestS3IamCache_NoSigningKey_LocalPeer_Allowed(t *testing.T) {
+	s := newTestS3IamCacheServer(t, "")
+	for name, addr := range map[string]net.Addr{
+		"unix":       &net.UnixAddr{Name: "/tmp/x.sock", Net: "unix"},
+		"loopback":   &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 11111},
+		"loopbackV6": &net.TCPAddr{IP: net.ParseIP("::1"), Port: 11111},
+	} {
+		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
+		if _, err := s.PutIdentity(ctx, &iam_pb.PutIdentityRequest{
+			Identity: &iam_pb.Identity{Name: "pushed-" + name, Actions: []string{"Read"}},
+		}); err != nil {
+			t.Fatalf("PutIdentity from %s peer without key: unexpected error %v", name, err)
+		}
+	}
+	if own := firstLocalTCPAddr(t); own != nil {
+		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: own})
+		if _, err := s.PutIdentity(ctx, &iam_pb.PutIdentityRequest{
+			Identity: &iam_pb.Identity{Name: "pushed-own-ip", Actions: []string{"Read"}},
+		}); err != nil {
+			t.Fatalf("PutIdentity from own interface address: unexpected error %v", err)
+		}
 	}
 	good := security.GenJwtForFilerAdmin(security.SigningKey(testS3IamCacheSigningKey), 60)
-	if _, err := s.PutIdentity(s3IamCacheBearerCtx(string(good)), &iam_pb.PutIdentityRequest{
+	loopbackCtx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 11111}})
+	ctx := metadata.NewIncomingContext(loopbackCtx, metadata.New(map[string]string{"authorization": "Bearer " + string(good)}))
+	if _, err := s.PutIdentity(ctx, &iam_pb.PutIdentityRequest{
 		Identity: &iam_pb.Identity{Name: "pushed2", Actions: []string{"Read"}},
 	}); err != nil {
 		t.Fatalf("PutIdentity with stray token but no server key: unexpected error %v", err)
 	}
+}
+
+// With a signing key only a valid Bearer token is accepted; being local does
+// not bypass it.
+func TestS3IamCache_WithKey_LocalPeerStillNeedsToken(t *testing.T) {
+	s := newTestS3IamCacheServer(t, testS3IamCacheSigningKey)
+	ctx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 11111}})
+	_, err := s.PutIdentity(ctx, &iam_pb.PutIdentityRequest{
+		Identity: &iam_pb.Identity{Name: "pwn", Actions: []string{"Admin"}},
+	})
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("PutIdentity from loopback without token: got code %v, want %v (err=%v)", got, want, err)
+	}
+}
+
+func firstLocalTCPAddr(t *testing.T) *net.TCPAddr {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Skipf("interface addresses unavailable: %v", err)
+	}
+	for _, a := range addrs {
+		if ipNet, ok := a.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			return &net.TCPAddr{IP: ipNet.IP, Port: 11111}
+		}
+	}
+	return nil
 }
 
 func TestS3IamCache_RemoveIdentity_RequiresAuth(t *testing.T) {

@@ -2,13 +2,16 @@ package s3api
 
 import (
 	"context"
+	"net"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -19,15 +22,16 @@ import (
 // checkAdminAuth verifies the caller presented a Bearer token signed by the
 // filer write-signing key (jwt.filer_signing.key). It mirrors the filer's
 // IamGrpcServer.checkAdminAuth so the same operator knob that locks down the
-// filer IAM gRPC service also locks down this cache. With no key configured the
-// check is a no-op, matching the rest of SeaweedFS's gRPC surface.
+// filer IAM gRPC service also locks down this cache. With no key configured
+// remote callers cannot be told apart, so only local clients (unix socket,
+// loopback, or the server's own addresses) are allowed.
 func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
 	if s3a.filerGuard == nil {
 		return nil
 	}
 	signingKey := s3a.filerGuard.SigningKey()
 	if len(signingKey) == 0 {
-		return nil
+		return checkLocalPeer(ctx)
 	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -50,6 +54,41 @@ func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
 		return status.Error(codes.Unauthenticated, "invalid admin token")
 	}
 	return nil
+}
+
+var localIPs = sync.OnceValue(func() map[string]bool {
+	ips := make(map[string]bool)
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			if ipNet, ok := a.(*net.IPNet); ok {
+				ips[ipNet.IP.String()] = true
+			}
+		}
+	}
+	return ips
+})
+
+func checkLocalPeer(ctx context.Context) error {
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
+	}
+	if _, isUnix := pr.Addr.(*net.UnixAddr); isUnix {
+		return nil
+	}
+	var ip net.IP
+	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
+		ip = tcpAddr.IP
+	} else if h, _, err := net.SplitHostPort(pr.Addr.String()); err == nil {
+		ip = net.ParseIP(h)
+	} else {
+		ip = net.ParseIP(pr.Addr.String())
+	}
+	if ip != nil && (ip.IsLoopback() || localIPs()[ip.String()]) {
+		return nil
+	}
+	glog.V(1).Infof("rejected unauthenticated admin gRPC call from %s: no jwt.filer_signing.key configured", pr.Addr)
+	return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
 }
 
 func (s3a *S3ApiServer) PutIdentity(ctx context.Context, req *iam_pb.PutIdentityRequest) (*iam_pb.PutIdentityResponse, error) {
