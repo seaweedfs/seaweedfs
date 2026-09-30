@@ -154,12 +154,20 @@ func TestEnsureCompactVolumeSpace_SeparateIndexDisk(t *testing.T) {
 	// data and the index estimates must be covered together.
 	compactionSameFilesystem = func(string, string) bool { return true }
 	free[dataDir] = uint64(dataBytes+indexBytes) - 1
+	free[idxDir] = uint64(dataBytes+indexBytes) - 1
 	if err := ensureCompactVolumeSpace(v, 0); !errors.Is(err, ErrInsufficientSpace) {
 		t.Fatalf("shared filesystem short of the sum: got %v, want ErrInsufficientSpace", err)
 	}
 	free[dataDir] = uint64(dataBytes + indexBytes)
+	free[idxDir] = uint64(dataBytes + indexBytes)
 	if err := ensureCompactVolumeSpace(v, 0); err != nil {
 		t.Fatalf("shared filesystem covering the sum: unexpected %v", err)
+	}
+	// A mount point the identity check cannot see: the index directory
+	// reports its own, smaller pool and must still be checked.
+	free[idxDir] = uint64(indexBytes) - 1
+	if err := ensureCompactVolumeSpace(v, 0); !errors.Is(err, ErrInsufficientSpace) {
+		t.Fatalf("index mount point short of the index: got %v, want ErrInsufficientSpace", err)
 	}
 }
 

@@ -131,13 +131,23 @@ func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
 	// index. When the index directory is on another filesystem each disk
 	// answers for its own share; two directories on one filesystem draw on
 	// the same free space and must cover the sum.
-	if v.dirIdx != "" && !compactionSameFilesystem(v.dir, v.dirIdx) {
+	if v.dirIdx == "" || v.dirIdx == v.dir {
+		return check(v.dir, dataBytes+indexBytes)
+	}
+	if !compactionSameFilesystem(v.dir, v.dirIdx) {
 		if err := check(v.dir, dataBytes); err != nil {
 			return err
 		}
 		return check(v.dirIdx, indexBytes)
 	}
-	return check(v.dir, dataBytes+indexBytes)
+	// Same filesystem as far as the identity check can tell. The index
+	// directory is still asked for its own share, because a mount point the
+	// check cannot see (a volume mounted under one drive letter on Windows)
+	// would otherwise go unchecked.
+	if err := check(v.dir, dataBytes+indexBytes); err != nil {
+		return err
+	}
+	return check(v.dirIdx, indexBytes)
 }
 
 func (s *Store) CompactVolumeFiles(vid needle.VolumeId, collection string, location *DiskLocation, needleMapKind NeedleMapKind, ldbTimeout int64, preallocate int64, compactionBytePerSecond int64) (err error) {
