@@ -11089,6 +11089,34 @@ mod tests {
         assert_decoded_volume(&service, (2, 0), &[1, 2], &[3]);
     }
 
+    /// A tail needle tombstoned in the .ecx itself (Go's RebuildEcxFile) is cut
+    /// from the .dat the same way, so its row must not survive either.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_drops_sealed_tail_tombstone() {
+        let (service, _tmp, data, idx, size_before_needle_3) =
+            make_split_idx_ec_decode_service(&[], false).await;
+        let ecx_path = format!("{idx}/1.ecx");
+        let mut ecx = std::fs::read(&ecx_path).unwrap();
+        let size_at = 2 * NEEDLE_MAP_ENTRY_SIZE + NEEDLE_ID_SIZE + OFFSET_SIZE;
+        TOMBSTONE_FILE_SIZE.to_bytes(&mut ecx[size_at..size_at + SIZE_SIZE]);
+        std::fs::write(&ecx_path, &ecx).unwrap();
+
+        service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::metadata(format!("{data}/1.dat")).unwrap().len(),
+            size_before_needle_3
+        );
+        assert_eq!(
+            std::fs::read(format!("{data}/1.idx")).unwrap(),
+            ecx[..2 * NEEDLE_MAP_ENTRY_SIZE]
+        );
+        assert_decoded_volume(&service, (2, 0), &[1, 2], &[3]);
+    }
+
     /// Deletions only in the .ecj count toward "no live entries", as after Go's
     /// RebuildEcxFile, so the caller purges the shards instead of decoding.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
