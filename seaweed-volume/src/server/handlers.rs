@@ -900,11 +900,9 @@ async fn proxy_request(
     // Build the proxy request
     let mut req_builder = state.http_client.get(&target_url);
 
-    // Forward all original headers
+    // Forward all original headers as raw bytes, as Go does.
     for (name, value) in &info.original_headers {
-        if let Ok(v) = value.to_str() {
-            req_builder = req_builder.header(name.as_str(), v);
-        }
+        req_builder = req_builder.header(name.clone(), value.clone());
     }
 
     let resp = match req_builder.send().await {
@@ -1112,18 +1110,21 @@ async fn get_or_head_handler_inner(
     // response writer before tryHandleChunkedFile runs).
     if n.is_chunk_manifest()
         && !request_kind.bypass_cm
-        && let Some(resp) = try_expand_chunk_manifest(
-            &state,
-            &n,
-            &method,
-            &path,
-            &query,
-            &etag,
-            &last_modified_str,
-        )
-        .await
+        && let Some(expanded) =
+            try_expand_chunk_manifest(&state, &n, &path, &query, &etag, &last_modified_str).await
     {
-        return resp;
+        // HEAD and Range apply to the assembled object.
+        return match expanded {
+            ControlFlow::Continue((data, response_headers)) => buffered_response(
+                &state,
+                range.as_deref(),
+                &method,
+                data,
+                response_headers,
+                false,
+            ),
+            ControlFlow::Break(resp) => resp,
+        };
     }
     // If manifest expansion fails (invalid JSON etc.), fall through to raw data
 
@@ -3586,27 +3587,27 @@ struct ChunkInfo {
     size: i64,
 }
 
-/// Try to expand a chunk manifest needle. Returns None if manifest can't be parsed.
+/// Try to expand a chunk manifest needle into its assembled body and reply
+/// headers. Returns None if manifest can't be parsed.
 async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
-    method: &Method,
     path: &str,
     query: &ReadQueryParams,
     etag: &str,
     last_modified_str: &Option<String>,
-) -> Option<Response> {
+) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
     let data = if n.is_compressed() {
         match maybe_decompress_gzip(&n.data) {
             Ok(d) => d,
             Err(GunzipError::TooLarge) => {
-                return Some(
+                return Some(ControlFlow::Break(
                     (
                         StatusCode::PAYLOAD_TOO_LARGE,
                         "compressed manifest exceeds decompression limit",
                     )
                         .into_response(),
-                );
+                ));
             }
             Err(GunzipError::Decode) => return None,
         }
@@ -3636,24 +3637,24 @@ async fn try_expand_chunk_manifest(
         // negative value would wrap to a huge usize, and an out-of-range one has
         // nowhere to land.
         if chunk.offset < 0 || chunk.size < 0 {
-            return Some(
+            return Some(ControlFlow::Break(
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("invalid negative chunk offset/size in {}", chunk.fid),
                 )
                     .into_response(),
-            );
+            ));
         }
         let data = match read_chunk_needle(state, &chunk.fid).await {
             Ok(d) => d,
             Err(e) => {
-                return Some(
+                return Some(ControlFlow::Break(
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("read chunk {}: {}", chunk.fid, e),
                     )
                         .into_response(),
-                );
+                ));
             }
         };
         let offset = chunk.offset as usize;
@@ -3711,7 +3712,6 @@ async fn try_expand_chunk_manifest(
     }
     response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
     response_headers.insert("X-File-Store", "chunked".parse().unwrap());
-    response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
     // Last-Modified — Go sets this on the response writer before tryHandleChunkedFile
     if let Some(lm) = last_modified_str
@@ -3798,15 +3798,7 @@ async fn try_expand_chunk_manifest(
         result = maybe_resize_image(&result, &cm_ext, query);
     }
 
-    if *method == Method::HEAD {
-        response_headers.insert(
-            header::CONTENT_LENGTH,
-            result.len().to_string().parse().unwrap(),
-        );
-        return Some((StatusCode::OK, response_headers).into_response());
-    }
-
-    Some((StatusCode::OK, response_headers, result).into_response())
+    Some(ControlFlow::Continue((result, response_headers)))
 }
 
 /// Read one chunk-manifest chunk's final (decompressed) content bytes from
@@ -5288,6 +5280,107 @@ mod tests {
             assert_eq!(status, StatusCode::OK);
             assert_eq!(headers[header::CONTENT_LENGTH], data.len().to_string());
         }
+    }
+
+    /// A chunk manifest applies Range to the assembled object, as Go's
+    /// writeResponseContent does; its HEAD is still read from the meta.
+    #[tokio::test]
+    async fn test_chunk_manifest_range() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data = b"0123456789abcdef";
+        let a = put_test_needle(&state, 0x6e7a_0701, &data[..8]);
+        let b = put_test_needle(&state, 0x6e7a_0702, &data[8..]);
+        let manifest = format!(
+            r#"{{"name":"obj.txt","size":16,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let path = put_test_needle_with(&state, 0x6e7a_0703, manifest.as_bytes(), |n| {
+            n.set_is_chunk_manifest()
+        });
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, data);
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=5-12")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[5..13]);
+        assert_eq!(headers["Content-Range"], "bytes 5-12/16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert!(headers.contains_key(header::ETAG));
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-1,14-15")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert!(
+            headers[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("multipart/byteranges")
+        );
+        let body = String::from_utf8(body).unwrap();
+        assert!(body.contains("Content-Range: bytes 0-1/16\r\n\r\n01"));
+        assert!(body.contains("Content-Range: bytes 14-15/16\r\n\r\nef"));
+
+        let (status, headers, _) = send_read(&state, Method::GET, &path, Some(b"bytes=16-")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers["Content-Range"], "bytes */16");
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-1\xff")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(body, b"invalid range");
+
+        let (status, headers, _) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (range_status, range_headers, _) =
+            send_read(&state, Method::HEAD, &path, Some(b"bytes=0-9")).await;
+        assert_eq!(range_status, status);
+        assert_eq!(
+            range_headers[header::CONTENT_LENGTH],
+            headers[header::CONTENT_LENGTH]
+        );
+    }
+
+    /// A proxied read forwards request headers as raw bytes, as Go does: a
+    /// Range the target cannot parse must reach it and come back as its 416.
+    #[tokio::test]
+    async fn test_proxy_forwards_non_ascii_range() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let target_state = volume_test_state(&tmp);
+        let path = put_test_needle(&target_state, 0x6e7a_0801, b"proxied payload");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = super::super::volume_server::build_public_router(target_state);
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let proxy_state = test_state_with_store(crate::storage::store::Store::new(
+            crate::storage::needle_map::NeedleMapKind::InMemory,
+        ));
+        let target = VolumeLocation {
+            url: addr.to_string(),
+            public_url: addr.to_string(),
+            grpc_port: 0,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::RANGE,
+            header::HeaderValue::from_bytes(b"bytes=0-1\xff").unwrap(),
+        );
+        let info = build_proxy_request_info(&path, &headers, "").unwrap();
+
+        let resp = proxy_request(&proxy_state, &info, &target).await;
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"invalid range");
+
+        server.abort();
     }
 
     /// A large compressed needle cannot be streamed as stored: its meta is
