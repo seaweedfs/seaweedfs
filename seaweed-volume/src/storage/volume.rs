@@ -1821,7 +1821,7 @@ impl Volume {
         self.dat_file.is_some() || self.remote_dat_file.is_some()
     }
 
-    fn current_dat_file_size(&self) -> io::Result<u64> {
+    pub(crate) fn current_dat_file_size(&self) -> io::Result<u64> {
         if let Some(ref f) = self.dat_file {
             Ok(f.metadata()?.len())
         } else if let Some(ref remote_dat_file) = self.remote_dat_file {
@@ -3777,6 +3777,11 @@ impl Volume {
     /// Get the directory this volume is stored in.
     pub fn dir(&self) -> &str {
         &self.dir
+    }
+
+    /// Get the directory this volume's index is stored in.
+    pub fn dir_idx(&self) -> &str {
+        &self.dir_idx
     }
 
     /// Throttle IO during compaction to avoid saturating disk.
