@@ -296,12 +296,23 @@ func (e *EmbeddedIamApi) deleteRole(ctx context.Context, mgr *integration.IAMMan
 	if iamErr != nil {
 		return nil, iamErr
 	}
-	// AWS refuses to delete a role that still has managed policies attached.
-	if len(role.AttachedPolicies) > 0 {
-		return nil, &iamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("role %s has attached policies; detach them first", role.RoleName)}
-	}
-	if err := mgr.DeleteRole(ctx, role.RoleName); err != nil {
-		return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	// The delete is decided against the role as it is when deleted, in the
+	// store's atomic update: a policy attached meanwhile on another server is
+	// a DeleteConflict, as AWS reports a role with managed policies attached.
+	var refused *iamError
+	err := mgr.UpdateRole(ctx, role.RoleName, func(current *integration.RoleDefinition) (*integration.RoleDefinition, error) {
+		if current == nil {
+			refused = &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("role %s not found", role.RoleName)}
+			return nil, errRoleUpdateRefused
+		}
+		if len(current.AttachedPolicies) > 0 {
+			refused = &iamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("role %s has attached policies; detach them first", role.RoleName)}
+			return nil, errRoleUpdateRefused
+		}
+		return nil, nil
+	})
+	if iamErr := roleWriteError(err, refused); iamErr != nil {
+		return nil, iamErr
 	}
 	return &iamlib.DeleteRoleResponse{}, nil
 }

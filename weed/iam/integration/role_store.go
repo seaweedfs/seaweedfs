@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,9 +36,9 @@ var ErrRoleStatic = errors.New("role is defined in the IAM config file")
 var ErrRoleExists = errors.New("role already exists")
 
 // RoleUpdate computes a role's new definition from its current one, nil when
-// the role does not exist. It returns an error to leave the role unchanged. It
-// may run more than once: it is called again with the fresh definition when
-// another writer changed the role in between.
+// the role does not exist. It returns nil to delete the role, and an error to
+// leave it unchanged. It may run more than once: it is called again with the
+// fresh definition when another writer changed the role in between.
 type RoleUpdate func(current *RoleDefinition) (*RoleDefinition, error)
 
 // maxRoleUpdateAttempts bounds UpdateRole's retries under contention.
@@ -157,7 +158,8 @@ func (m *MemoryRoleStore) UpdateRole(ctx context.Context, filerAddress string, r
 		return err
 	}
 	if next == nil {
-		return fmt.Errorf("role cannot be nil")
+		delete(m.roles, roleName)
+		return nil
 	}
 	m.roles[roleName] = copyRoleDefinition(next)
 	return nil
@@ -282,7 +284,9 @@ func (f *FilerRoleStore) StoreRole(ctx context.Context, filerAddress string, rol
 // UpdateRole reads the role's entry, applies update, and writes the result on
 // the condition that the entry is unchanged since the read — absent, when the
 // role did not exist — so the filer refuses a write racing another writer's
-// change or delete, and update is applied again to what that writer left.
+// change or delete, and update is applied again to what that writer left. A
+// delete is made on the same condition, so it removes the role update saw and
+// not one written after it.
 func (f *FilerRoleStore) UpdateRole(ctx context.Context, filerAddress string, roleName string, update RoleUpdate) error {
 	if filerAddress == "" && f.filerAddressProvider != nil {
 		filerAddress = f.filerAddressProvider()
@@ -318,7 +322,18 @@ func (f *FilerRoleStore) UpdateRole(ctx context.Context, filerAddress string, ro
 				return err
 			}
 			if next == nil {
-				return fmt.Errorf("role cannot be nil")
+				if entry == nil {
+					return nil
+				}
+				deleted, err := f.deleteRoleEntryIfUnchanged(ctx, client, entry)
+				if err != nil {
+					return fmt.Errorf("failed to delete role %s: %w", roleName, err)
+				}
+				if !deleted {
+					glog.V(3).Infof("Role %s changed before its delete; retrying", roleName)
+					continue
+				}
+				return nil
 			}
 			roleData, err := json.MarshalIndent(next, "", "  ")
 			if err != nil {
@@ -357,6 +372,36 @@ func (f *FilerRoleStore) UpdateRole(ctx context.Context, filerAddress string, ro
 		}
 		return fmt.Errorf("update role %s: %w", roleName, errRoleUpdateContended)
 	})
+}
+
+// deleteRoleEntryIfUnchanged deletes the role's entry if it still equals
+// entry, reporting false when it changed. The delete is routed and locked as
+// the conditional CreateEntry of the same path is, so the two serialize.
+func (f *FilerRoleStore) deleteRoleEntryIfUnchanged(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry) (bool, error) {
+	fullPath := f.basePath + "/" + entry.Name
+	resp, err := client.ObjectTransaction(ctx, &filer_pb.ObjectTransactionRequest{
+		LockKey:  fullPath,
+		RouteKey: s3_constants.ObjectWriteRouteKeyPrefix + fullPath,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: entry,
+		}}},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type: filer_pb.ObjectMutation_DELETE, Directory: f.basePath, Name: entry.Name, IsDeleteData: true,
+		}},
+	})
+	if err != nil {
+		if status.Code(err) == codes.FailedPrecondition {
+			return false, nil
+		}
+		return false, err
+	}
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		return false, nil
+	}
+	if resp.Error != "" {
+		return false, errors.New(resp.Error)
+	}
+	return true, nil
 }
 
 // isRoleWriteConflict reports a write the filer refused because its condition

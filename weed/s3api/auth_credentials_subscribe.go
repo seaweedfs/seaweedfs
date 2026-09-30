@@ -142,11 +142,27 @@ func (s3a *S3ApiServer) onOIDCProviderChange(dir string, oldEntry *filer_pb.Entr
 	return nil
 }
 
-// onRoleChange drops the cached role definitions when the persisted role store
-// under /etc/iam/roles changes, so a role created, changed or deleted on a peer
+// roleStoreDir is the directory the persisted role store keeps roles in: its
+// configured basePath, else the default. The metadata subscription watches it.
+func (s3a *S3ApiServer) roleStoreDir() string {
+	if s3a.iam != nil {
+		if provider, ok := s3a.iam.iamIntegration.(IAMManagerProvider); ok {
+			if mgr := provider.GetIAMManager(); mgr != nil {
+				if dir := mgr.RoleStoreDirectory(); dir != "" {
+					return dir
+				}
+			}
+		}
+	}
+	return rolesDir
+}
+
+// onRoleChange drops the cached role definitions when the persisted role
+// store's directory changes, so a role created, changed or deleted on a peer
 // takes effect here on the next lookup instead of after the cache TTL.
 func (s3a *S3ApiServer) onRoleChange(dir string) {
-	if dir != rolesDir && !strings.HasPrefix(dir, rolesDir+"/") {
+	base := s3a.roleStoreDir()
+	if dir != base && !strings.HasPrefix(dir, base+"/") {
 		return
 	}
 	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
