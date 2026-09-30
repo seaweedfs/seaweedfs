@@ -4,6 +4,8 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -25,10 +27,13 @@ import (
 // remote callers cannot be told apart, so only local clients (unix socket,
 // loopback, or the server's own addresses) are allowed.
 func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
-	if s3a.filerGuard == nil || len(s3a.filerGuard.SigningKey()) == 0 {
+	var signingKey security.SigningKey
+	if s3a.filerGuard != nil {
+		signingKey = s3a.filerGuard.SigningKey()
+	}
+	if len(signingKey) == 0 {
 		return checkLocalPeer(ctx)
 	}
-	signingKey := s3a.filerGuard.SigningKey()
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "missing metadata")
@@ -78,17 +83,34 @@ func checkLocalPeer(ctx context.Context) error {
 	return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
 }
 
+// localAddrs is refreshed on demand and only from the no-key path for
+// non-loopback TCP peers — once per localAddrTTL at most, so a co-located
+// worker does not pay an interface enumeration per call while new addresses
+// still become usable shortly after they appear.
+const localAddrTTL = 30 * time.Second
+
+var localAddrs struct {
+	mu  sync.Mutex
+	at  time.Time
+	set map[string]struct{}
+}
+
 func isLocalAddress(ip net.IP) bool {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return false
-	}
-	for _, a := range addrs {
-		if ipNet, ok := a.(*net.IPNet); ok && ipNet.IP.Equal(ip) {
-			return true
+	localAddrs.mu.Lock()
+	defer localAddrs.mu.Unlock()
+	if time.Since(localAddrs.at) > localAddrTTL {
+		localAddrs.set = make(map[string]struct{})
+		if addrs, err := net.InterfaceAddrs(); err == nil {
+			for _, a := range addrs {
+				if ipNet, ok := a.(*net.IPNet); ok {
+					localAddrs.set[ipNet.IP.String()] = struct{}{}
+				}
+			}
 		}
+		localAddrs.at = time.Now()
 	}
-	return false
+	_, ok := localAddrs.set[ip.String()]
+	return ok
 }
 
 func (s3a *S3ApiServer) PutIdentity(ctx context.Context, req *iam_pb.PutIdentityRequest) (*iam_pb.PutIdentityResponse, error) {
