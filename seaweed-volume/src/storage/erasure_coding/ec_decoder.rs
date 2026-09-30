@@ -3,6 +3,7 @@
 //! Rebuilds the original .dat + .idx files from data shards (.ec00-.ec09)
 //! and the sorted index (.ecx) + deletion journal (.ecj).
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Write};
 
@@ -50,12 +51,13 @@ pub fn find_dat_file_size_with_dirs(
     let ecx_path = format!("{}.ecx", ecx_base);
     let ecx_data = std::fs::read(&ecx_path)?;
     let entry_count = ecx_data.len() / NEEDLE_MAP_ENTRY_SIZE;
+    let journaled = read_ecj_deletions(&ecx_base)?;
 
     for i in 0..entry_count {
         let start = i * NEEDLE_MAP_ENTRY_SIZE;
-        let (_, offset, size) =
+        let (key, offset, size) =
             idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
-        if size.is_deleted() {
+        if size.is_deleted() || journaled.contains(&key) {
             continue;
         }
         let entry_stop = offset.to_actual_offset() + get_actual_size(size, version);
@@ -65,6 +67,33 @@ pub fn find_dat_file_size_with_dirs(
     }
 
     Ok(dat_size)
+}
+
+/// Whether the `.ecx` in `ecx_dir` indexes a needle deleted neither there nor
+/// in the `.ecj` beside it.
+pub fn has_live_needles(ecx_dir: &str, collection: &str, volume_id: VolumeId) -> io::Result<bool> {
+    let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
+    let ecx_data = std::fs::read(format!("{}.ecx", ecx_base))?;
+    let journaled = read_ecj_deletions(&ecx_base)?;
+    let (entries, _) = ecx_data.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>();
+    Ok(entries.iter().any(|entry| {
+        let (key, _, size) = idx_entry_from_bytes(entry);
+        !size.is_deleted() && !journaled.contains(&key)
+    }))
+}
+
+/// Needle ids in the `.ecj` beside `ecx_base`. Go folds them into the `.ecx`
+/// (RebuildEcxFile) before a decode sizes the `.dat`; reading them leaves the
+/// sealed index untouched. Only NotFound means "no journal".
+fn read_ecj_deletions(ecx_base: &str) -> io::Result<HashSet<NeedleId>> {
+    match std::fs::read(format!("{}.ecj", ecx_base)) {
+        Ok(data) => {
+            let (ids, _) = data.as_chunks::<NEEDLE_ID_SIZE>();
+            Ok(ids.iter().map(|id| NeedleId::from_bytes(id)).collect())
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(HashSet::new()),
+        Err(e) => Err(e),
+    }
 }
 
 /// What it takes to rebuild a volume's .dat from its EC data shards.
@@ -274,10 +303,21 @@ pub fn write_idx_file_from_ec_index(
     collection: &str,
     volume_id: VolumeId,
 ) -> io::Result<()> {
-    let base = volume_file_name(dir, collection, volume_id);
-    let ecx_path = format!("{}.ecx", base);
-    let ecj_path = format!("{}.ecj", base);
-    let idx_path = format!("{}.idx", base);
+    write_idx_file_from_ec_index_with_dirs(dir, dir, collection, volume_id)
+}
+
+/// Like [`write_idx_file_from_ec_index`] but reads `.ecx` / `.ecj` from
+/// `ecx_dir` and writes the `.idx` into `idx_dir`.
+pub fn write_idx_file_from_ec_index_with_dirs(
+    ecx_dir: &str,
+    idx_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<()> {
+    let ecx_base = volume_file_name(ecx_dir, collection, volume_id);
+    let ecx_path = format!("{}.ecx", ecx_base);
+    let ecj_path = format!("{}.ecj", ecx_base);
+    let idx_path = format!("{}.idx", volume_file_name(idx_dir, collection, volume_id));
     // Write to a temp file and atomically rename into place, so a crash
     // mid-write never leaves a partial .idx at the final name beside the
     // source shards.
