@@ -135,7 +135,9 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 // is given, and some replica with a garbage ratio at or above the threshold.
 // The ratio uses the sizes the master reports, which is deleted bytes over the
 // .dat size rather than over the content size the volume server divides by, so
-// it can only understate. This is a hint; the volume server's own check decides.
+// it can only understate, and a converted index that reports deletes without
+// their sizes is left out because its ratio is not knowable here. This is a
+// hint; the volume server's own check decides.
 func readOnlyVolumesAboveThreshold(topo *master_pb.TopologyInfo, collection string, garbageThreshold float64) []uint32 {
 	readOnly := make(map[uint32]bool)
 	garbage := make(map[uint32]float64) // the highest ratio any replica reports
@@ -148,18 +150,10 @@ func readOnlyVolumesAboveThreshold(topo *master_pb.TopologyInfo, collection stri
 				if v.ReadOnly {
 					readOnly[v.Id] = true
 				}
-				var ratio float64
-				switch {
-				case v.Size == 0:
-				case v.DeleteCount > 0 && v.DeletedByteCount == 0:
-					// A .sdx converted back to .idx reports no deleted sizes.
-					// The volume server estimates them from the file and may
-					// well vacuum it, so list it rather than hide it.
-					ratio = 1
-				default:
-					ratio = float64(v.DeletedByteCount) / float64(v.Size)
+				if v.Size == 0 {
+					continue
 				}
-				if ratio > garbage[v.Id] {
+				if ratio := float64(v.DeletedByteCount) / float64(v.Size); ratio > garbage[v.Id] {
 					garbage[v.Id] = ratio
 				}
 			}

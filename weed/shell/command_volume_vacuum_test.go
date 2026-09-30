@@ -32,7 +32,8 @@ func TestReadOnlyVolumesAboveThreshold(t *testing.T) {
 	// may sit on the other replica
 	mixedReadOnlyReplica := &master_pb.VolumeInformationMessage{Id: 7, Collection: "a", Size: 100, DeletedByteCount: 5, ReadOnly: true}
 	mixedWritableReplica := &master_pb.VolumeInformationMessage{Id: 7, Collection: "a", Size: 100, DeletedByteCount: 60}
-	// a converted index reports deletes without their sizes
+	// a converted index reports deletes without their sizes; the ratio is not
+	// knowable from here, so it is not listed
 	readOnlyConvertedIndex := &master_pb.VolumeInformationMessage{Id: 8, Collection: "a", Size: 100, DeleteCount: 2, DeletedByteCount: 0, ReadOnly: true}
 
 	topo := vacuumTestTopology(
@@ -42,16 +43,16 @@ func TestReadOnlyVolumesAboveThreshold(t *testing.T) {
 	)
 
 	got := readOnlyVolumesAboveThreshold(topo, "a", 0.3)
-	if want := []uint32{1, 6, 7, 8}; !reflect.DeepEqual(got, want) {
+	if want := []uint32{1, 6, 7}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("collection a, threshold 0.3: got %v, want %v", got, want)
 	}
 
 	got = readOnlyVolumesAboveThreshold(topo, "", 0.3)
-	if want := []uint32{1, 4, 6, 7, 8}; !reflect.DeepEqual(got, want) {
+	if want := []uint32{1, 4, 6, 7}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("all collections, threshold 0.3: got %v, want %v", got, want)
 	}
 
-	if got := readOnlyVolumesAboveThreshold(topo, "a", 0.95); !reflect.DeepEqual(got, []uint32{8}) {
-		t.Fatalf("threshold 0.95: got %v, want only the converted index [8]", got)
+	if got := readOnlyVolumesAboveThreshold(topo, "a", 0.95); len(got) != 0 {
+		t.Fatalf("threshold 0.95: got %v, want none", got)
 	}
 }
