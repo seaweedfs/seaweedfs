@@ -1183,7 +1183,11 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 			}
 		}
 		for _, h := range copyReplaceSystemHeaders {
-			if v := reqHeader.Get(h); v != "" {
+			v := reqHeader.Get(h)
+			if h == "Content-Encoding" {
+				v = storedContentEncoding(reqHeader.Values(h))
+			}
+			if v != "" {
 				metadata[h] = []byte(v)
 			}
 		}
