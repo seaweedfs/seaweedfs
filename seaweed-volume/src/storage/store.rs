@@ -779,7 +779,7 @@ impl Store {
             .is_disk_space_low
             .load(Ordering::Relaxed)
         {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(vid));
         }
 
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
@@ -795,7 +795,7 @@ impl Store {
         // Match Go's DeleteVolumeNeedle: check noWriteOrDelete before proceeding.
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         if vol.is_no_write_or_delete() {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(vid));
         }
 
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
