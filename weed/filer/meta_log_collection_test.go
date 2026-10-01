@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -100,11 +101,12 @@ func TestViperReadsMetaLogOverrides(t *testing.T) {
 		v.Set("filer.options.metaLog.replication", "")
 	}()
 
-	if got := v.GetString("filer.options.metaLog.collection"); got != "filer-meta" {
-		t.Fatalf("viper key mismatch for collection: %q", got)
+	f := NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	if got := f.metaLogTargetCollection; got != "filer-meta" {
+		t.Fatalf("NewFiler did not read the collection override: %q", got)
 	}
-	if got := v.GetString("filer.options.metaLog.replication"); got != "100" {
-		t.Fatalf("viper key mismatch for replication: %q", got)
+	if got := f.metaLogTargetReplication; got != "100" {
+		t.Fatalf("NewFiler did not read the replication override: %q", got)
 	}
 }
 
