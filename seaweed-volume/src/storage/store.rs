@@ -1621,6 +1621,10 @@ impl Store {
         };
         let result = compact();
         if result.is_err() {
+            // A failed commit may have swapped only one of .dat/.idx;
+            // reconcile rolls a decided swap forward or removes orphan
+            // temp files before this volume can mount a mismatched pair.
+            let _ = v.reconcile_compact_state();
             let _ = v.cleanup_compact();
         }
         v.close();
