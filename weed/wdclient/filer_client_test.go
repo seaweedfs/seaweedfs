@@ -189,3 +189,44 @@ func TestDiscoverySnapshotWithoutInterveningPushIsApplied(t *testing.T) {
 		t.Fatalf("expected snapshot to replace list, got %v", got)
 	}
 }
+
+// A leave suppressed to keep the last filer is deferred, then honored as soon
+// as a replacement joins, so the departed address stops being a candidate.
+func TestOnPeerUpdateDeferredLeaveFlushesOnJoin(t *testing.T) {
+	old := pb.ServerAddress("10.0.0.1:8888")
+	joined := pb.ServerAddress("10.0.1.1:8888")
+	fc := newTestFilerClient(old)
+
+	fc.OnPeerUpdate(filerUpdate(old, false), time.Now())
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != old {
+		t.Fatalf("leave of the last filer must be deferred, got %v", got)
+	}
+	if len(fc.deferredLeaves) != 1 {
+		t.Fatalf("expected the leave to be deferred, got %v", fc.deferredLeaves)
+	}
+
+	fc.OnPeerUpdate(filerUpdate(joined, true), time.Now())
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != joined {
+		t.Fatalf("deferred leave should flush on join, got %v", got)
+	}
+	if len(fc.deferredLeaves) != 0 {
+		t.Fatalf("deferred leaves should be empty after flush, got %v", fc.deferredLeaves)
+	}
+}
+
+// A pushed add for an already-known filer changes nothing and must not bump
+// the generation that guards an in-flight discovery snapshot.
+func TestOnPeerUpdateNoopDoesNotDiscardSnapshot(t *testing.T) {
+	old := pb.ServerAddress("10.0.0.1:8888")
+	replacement := pb.ServerAddress("10.0.1.1:8888")
+	fc := newTestFilerClient(old)
+
+	generation := fc.peerUpdateGeneration()
+	fc.OnPeerUpdate(filerUpdate(old, true), time.Now())
+	fc.applyDiscoverySnapshot(map[pb.ServerAddress]struct{}{replacement: {}}, generation)
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != replacement {
+		t.Fatalf("no-op push should not discard the snapshot, got %v", got)
+	}
+}

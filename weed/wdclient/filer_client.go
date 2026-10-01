@@ -47,6 +47,7 @@ type FilerClient struct {
 	filerIndex         int32          // atomic: current filer index for round-robin
 	filerHealth        []*filerHealth // health status per filer (same order as filerAddresses)
 	peerUpdates        uint64         // pushed filer updates applied; protected by filerAddressesMu
+	deferredLeaves     map[pb.ServerAddress]struct{} // leaves suppressed while the filer was the last known; protected by filerAddressesMu
 	grpcDialOption     grpc.DialOption
 	urlPreference      UrlPreference
 	grpcTimeout        time.Duration
@@ -394,9 +395,10 @@ func (fc *FilerClient) applyDiscoveredFilers(discoveredFilers map[pb.ServerAddre
 }
 
 // OnPeerUpdate applies a filer join/leave pushed by the master, so the list
-// tracks a rolling restart instead of waiting for the next discovery poll. The
-// last known filer is never removed: an empty list fails every request, while a
-// stale one still recovers through the poll.
+// tracks a rolling restart instead of waiting for the next discovery poll. A
+// leave that would empty the list is deferred until another filer exists to
+// take over: an empty list fails every request, while a stale one still
+// recovers through the poll.
 func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.Time) {
 	if update.NodeType != cluster.FilerType || update.Address == "" {
 		return
@@ -405,20 +407,46 @@ func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.
 
 	fc.filerAddressesMu.Lock()
 	defer fc.filerAddressesMu.Unlock()
-	fc.peerUpdates++
 
 	filers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses)+1)
 	for _, f := range fc.filerAddresses {
 		filers[f] = struct{}{}
 	}
+
+	changed := false
 	if update.IsAdd {
-		filers[addr] = struct{}{}
+		if _, ok := filers[addr]; !ok {
+			filers[addr] = struct{}{}
+			changed = true
+		}
 	} else {
-		delete(filers, addr)
-		if len(filers) == 0 {
-			return
+		if _, ok := filers[addr]; ok {
+			delete(filers, addr)
+			changed = true
+			if len(filers) == 0 {
+				filers[addr] = struct{}{}
+				if fc.deferredLeaves == nil {
+					fc.deferredLeaves = make(map[pb.ServerAddress]struct{})
+				}
+				fc.deferredLeaves[addr] = struct{}{}
+			}
 		}
 	}
+
+	// A deferred leave can be honored once another filer exists to take over.
+	for gone := range fc.deferredLeaves {
+		if _, ok := filers[gone]; ok && len(filers) <= 1 {
+			continue
+		}
+		delete(filers, gone)
+		delete(fc.deferredLeaves, gone)
+		changed = true
+	}
+
+	if !changed {
+		return
+	}
+	fc.peerUpdates++
 	fc.applyDiscoveredFilersLocked(filers)
 }
 
