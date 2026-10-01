@@ -262,10 +262,7 @@ master:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
@@ -282,15 +279,7 @@ master:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   ingress:
     enabled: false
@@ -583,10 +572,7 @@ volume:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
@@ -603,15 +589,7 @@ volume:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   # used to configure livenessProbe on volume-server containers
   #
@@ -889,10 +867,7 @@ filer:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
@@ -909,15 +884,7 @@ filer:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   ingresses:
     http:
@@ -1192,10 +1159,7 @@ s3:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
@@ -1212,15 +1176,7 @@ s3:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   # You can also use emptyDir storage:
   #  logs:
@@ -1381,10 +1337,7 @@ sftp:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   # Example:
@@ -1400,15 +1353,7 @@ sftp:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   logs:
     type: "hostPath"
@@ -1564,10 +1509,7 @@ admin:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   # Example:
@@ -1583,15 +1525,7 @@ admin:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   extraEnvironmentVars: {}
 
@@ -1757,10 +1691,7 @@ worker:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   # Example:
@@ -1776,15 +1707,7 @@ worker:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   extraEnvironmentVars: {}
 
@@ -2045,10 +1968,7 @@ allInOne:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
@@ -2065,15 +1985,7 @@ allInOne:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   # Resource management
   resources:
@@ -2121,10 +2033,7 @@ cosi:
   #   fsGroup: 2000
   #   seccompProfile:
   #     type: RuntimeDefault
-  podSecurityContext:
-    enabled: true
-    seccompProfile:
-      type: RuntimeDefault
+  podSecurityContext: {}
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
   # Example:
@@ -2140,15 +2049,7 @@ cosi:
   #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
-  containerSecurityContext:
-    enabled: true
-    privileged: false
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    seccompProfile:
-      type: RuntimeDefault
+  containerSecurityContext: {}
 
   # used to assign a custom scheduler to cosi pods
   # ref: https://kubernetes.io/docs/tasks/extend-kubernetes/configure-multiple-schedulers/

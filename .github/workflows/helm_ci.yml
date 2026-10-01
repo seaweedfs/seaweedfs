@@ -720,8 +720,24 @@ jobs:
           echo "COSI driver renders correctly"
 
           echo ""
-          echo "=== Testing default pod and container security contexts ==="
+          echo "=== Testing configurable pod and container security contexts ==="
+          helm template test $CHART_DIR > /tmp/security-context-defaults.yaml
+
+          security_context_args=()
+          for component in master volume filer s3 sftp admin worker allInOne cosi; do
+            security_context_args+=(
+              --set "$component.podSecurityContext.enabled=true"
+              --set "$component.podSecurityContext.seccompProfile.type=RuntimeDefault"
+              --set "$component.containerSecurityContext.enabled=true"
+              --set "$component.containerSecurityContext.privileged=false"
+              --set "$component.containerSecurityContext.allowPrivilegeEscalation=false"
+              --set "$component.containerSecurityContext.capabilities.drop[0]=ALL"
+              --set "$component.containerSecurityContext.seccompProfile.type=RuntimeDefault"
+            )
+          done
+
           helm template test $CHART_DIR \
+            "${security_context_args[@]}" \
             --set s3.enabled=true \
             --set s3.createBuckets[0].name=test \
             --set sftp.enabled=true \
@@ -730,8 +746,9 @@ jobs:
             --set worker.enabled=true \
             --set cosi.enabled=true > /tmp/security-contexts.yaml
           helm template test $CHART_DIR \
+            "${security_context_args[@]}" \
             --set allInOne.enabled=true > /tmp/security-contexts-aio.yaml
-          python3 - /tmp/security-contexts.yaml /tmp/security-contexts-aio.yaml <<'PYEOF'
+          python3 - /tmp/security-context-defaults.yaml /tmp/security-contexts.yaml /tmp/security-contexts-aio.yaml <<'PYEOF'
           import sys
 
           import yaml
@@ -740,7 +757,24 @@ jobs:
           workloads = 0
           containers = 0
           components = set()
-          for path in sys.argv[1:]:
+
+          with open(sys.argv[1]) as stream:
+              default_documents = [document for document in yaml.safe_load_all(stream) if document]
+          for document in default_documents:
+              if document.get("kind") not in ("Deployment", "StatefulSet", "Job"):
+                  continue
+              name = document["metadata"]["name"]
+              pod = document["spec"]["template"]["spec"]
+              if "securityContext" in pod:
+                  errors.append(f"{name}: pod securityContext should be absent by default")
+              for container in pod.get("containers", []):
+                  if "securityContext" in container:
+                      errors.append(
+                          f"{name}/{container['name']}: container securityContext "
+                          f"should be absent by default"
+                      )
+
+          for path in sys.argv[2:]:
               with open(path) as stream:
                   documents = [document for document in yaml.safe_load_all(stream) if document]
               for document in documents:

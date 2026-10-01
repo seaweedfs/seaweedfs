@@ -572,7 +572,7 @@ The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings 
 
 ## Pod and container security contexts
 
-The chart enables a `RuntimeDefault` seccomp profile at both pod and container level for all built-in workloads. Built-in containers also run with privilege escalation disabled, `privileged: false`, and all Linux capabilities dropped.
+Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, and drop all Linux capabilities.
 
 The chart does not enable `runAsNonRoot` by default because its default `hostPath` storage may be owned by root. To enforce the Kubernetes `restricted` Pod Security Standard, use storage that is writable by a non-root user and configure `runAsNonRoot` or use the OpenShift overrides below.
 
