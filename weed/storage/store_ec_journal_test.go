@@ -233,60 +233,74 @@ func TestMergeEcJournal_UnmountedSyncHoldsNoDiskLock(t *testing.T) {
 	assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, journal))
 }
 
-// A failed fsync rolls the append back, also through a runtime that mounted
-// the journal after the write: its deleted set must not keep ids the journal
-// may never have persisted. Only a delete journaled by that runtime since
-// keeps the records, as truncating would lose it.
-func TestMergeEcJournal_FailedSyncRollsBack(t *testing.T) {
+// A failed fsync removes the append when its records are still the journal's
+// tail, also through every runtime that mounted the journal since the write:
+// their deleted sets must not keep ids the journal may never have persisted,
+// and a retried merge appends them again. Once any runtime has journaled
+// after them, removing them would lose that delete, even if the runtime doing
+// the rollback cached the older length; they stay and are rewritten and
+// synced instead.
+func TestMergeEcJournal_FailedSync(t *testing.T) {
 	for _, tt := range []struct {
-		name         string
-		mount        bool
-		journalAfter bool
-		wantJournal  []types.NeedleId
+		name        string
+		mounts      int // runtimes on disks 1.. mounting the journal mid-sync
+		journalVia  int // 1-based runtime that journals id 3 mid-sync, 0 for none
+		wantJournal []types.NeedleId
 	}{
 		{name: "unmounted", wantJournal: []types.NeedleId{1}},
-		{name: "mounted since the write", mount: true, wantJournal: []types.NeedleId{1}},
-		{name: "mounted and journaled since", mount: true, journalAfter: true, wantJournal: []types.NeedleId{1, 2, 3}},
+		{name: "mounted since the write", mounts: 1, wantJournal: []types.NeedleId{1}},
+		{name: "two mounted since the write", mounts: 2, wantJournal: []types.NeedleId{1}},
+		{name: "mounted and journaled since", mounts: 1, journalVia: 1, wantJournal: []types.NeedleId{1, 2, 3}},
+		{name: "another runtime journaled since", mounts: 2, journalVia: 2, wantJournal: []types.NeedleId{1, 2, 3}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tempDir := t.TempDir()
-			disk0 := filepath.Join(tempDir, "d0")
-			disk1 := filepath.Join(tempDir, "d1")
-			store := startEcJournalStoreDisks(t, "", disk0, disk1)
+			disks := []string{filepath.Join(tempDir, "d0"), filepath.Join(tempDir, "d1"), filepath.Join(tempDir, "d2")}
+			store := startEcJournalStoreDisks(t, "", disks...)
 
 			const collection = "c"
 			vid := needle.VolumeId(9)
-			journal := writeEcIndex(t, disk0, collection, vid, 1) + ".ecj"
-			writeEcShard0(t, disk1, collection, vid)
+			journal := writeEcIndex(t, disks[0], collection, vid, 1) + ".ecj"
+			for _, d := range disks[1:] {
+				writeEcShard0(t, d, collection, vid)
+			}
 
-			var sibling *erasure_coding.EcVolume
+			var holders []*erasure_coding.EcVolume
 			mio := defaultEcjMergeIO
 			mio.sync = func(*erasure_coding.EcjAppend) error {
-				if tt.mount {
-					var err error
-					sibling, err = store.Locations[1].loadEcShardWithIdxDir(collection, vid, 0, disk0)
+				for i := 1; i <= tt.mounts; i++ {
+					ev, err := store.Locations[i].loadEcShardWithIdxDir(collection, vid, 0, disks[0])
 					require.NoError(t, err)
-					require.True(t, sibling.IsNeedleDeleted(2), "the mount loads the unsynced record")
+					require.True(t, ev.IsNeedleDeleted(2), "the mount loads the unsynced record")
+					holders = append(holders, ev)
 				}
-				if tt.journalAfter {
-					_, err := sibling.MergeJournal(ecjIdSet(3))
+				if tt.journalVia > 0 {
+					_, err := holders[tt.journalVia-1].MergeJournal(ecjIdSet(3))
 					require.NoError(t, err)
 				}
 				return errors.New("injected fsync failure")
 			}
-			_, err := store.mergeEcJournal(vid, disk0, journal, ecjIdSet(1, 2), mio)
-			require.Error(t, err)
+			added, err := store.mergeEcJournal(vid, disks[0], journal, ecjIdSet(1, 2), mio)
 			assert.Equal(t, ecjRecords(tt.wantJournal...), mustReadFile(t, journal))
-			if !tt.mount {
+			if tt.journalVia > 0 {
+				require.NoError(t, err, "records followed by a delete are resynced")
+				assert.Equal(t, 1, added)
+				assert.True(t, holders[tt.journalVia-1].IsNeedleDeleted(3))
+				for _, ev := range holders {
+					assert.True(t, ev.IsNeedleDeleted(2))
+				}
 				return
 			}
-			assert.Equal(t, tt.journalAfter, sibling.IsNeedleDeleted(2), "the deleted set follows the journal")
+			require.Error(t, err)
+			for _, ev := range holders {
+				assert.False(t, ev.IsNeedleDeleted(2), "the deleted set follows the journal")
+			}
 
 			// A retried merge appends and syncs the id again.
-			added, err := store.MergeEcJournal(vid, disk0, journal, ecjIdSet(1, 2))
+			added, err = store.MergeEcJournal(vid, disks[0], journal, ecjIdSet(1, 2))
 			require.NoError(t, err)
-			assert.Equal(t, map[bool]int{false: 1, true: 0}[tt.journalAfter], added)
-			assert.True(t, sibling.IsNeedleDeleted(2))
+			assert.Equal(t, 1, added)
+			assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, journal))
 		})
 	}
 }

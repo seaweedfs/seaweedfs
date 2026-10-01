@@ -199,46 +199,77 @@ func (a *EcjAppend) Sync() error {
 	return nil
 }
 
-// Rollback truncates the journal back to its length before the append and
-// closes it. Only safe while no EcVolume has the journal open. If the journal
-// grew past this append's records, a runtime mounted and journaled after it
-// in the meantime; truncating would drop those deletes, so the records stay.
+// Rollback removes the append, for a journal no EcVolume has open, and closes
+// it. See RollbackUnsynced.
 func (a *EcjAppend) Rollback() {
-	defer a.Close()
-	fi, err := a.f.Stat()
-	if err != nil || fi.Size() != a.size+int64(a.Added*types.NeedleIdSize) {
-		return
-	}
-	_ = a.f.Truncate(a.size)
+	a.RollbackUnsynced(nil)
+	a.Close()
 }
 
-// UndoUnsyncedAppend rolls back an append whose fsync failed after this volume
-// mounted the journal and loaded the append's records. It recovers the way a
-// failed fsync in appendJournalLocked does: the journal is truncated back and
-// the ids leave the in-memory set, so disk and memory agree the merge did not
-// happen and a retried merge appends and syncs them again. Retrying the fsync
-// instead proves nothing: after a failed writeback the kernel may already have
-// dropped the pages and still report the next fsync as clean. It returns false
-// and changes nothing if this volume journaled anything after the append, as
-// truncating would drop those deletes.
-func (ev *EcVolume) UndoUnsyncedAppend(a *EcjAppend) bool {
-	ev.ecjFileAccessLock.Lock()
-	defer ev.ecjFileAccessLock.Unlock()
-	if ev.ecjFile == nil || ev.ecjFileSize != a.size+int64(len(a.delta)*types.NeedleIdSize) {
+// RollbackUnsynced removes an append whose fsync failed and reports whether it
+// did. holders are the mounted volumes that opened the journal since the write
+// (none can predate it: the write happens only while none is mounted); each
+// loaded the append's records, and they leave its in-memory set too, so disk
+// and memory agree the merge did not happen and a retried merge appends and
+// syncs them again. The caller must exclude new mounts and other unmounted
+// merges into the path.
+//
+// Invariant: only the journal's actual length decides, never a holder's cached
+// ecjFileSize, which another holder's appends leave stale. With every holder's
+// ecjFileAccessLock held nothing can append, so if the length is still this
+// append's end, its records are the tail and removing them loses nothing. If
+// anything follows them, it changes nothing and returns false; the caller then
+// keeps the records and makes them durable with Resync.
+func (a *EcjAppend) RollbackUnsynced(holders []*EcVolume) bool {
+	for _, ev := range holders {
+		ev.ecjFileAccessLock.Lock()
+		defer ev.ecjFileAccessLock.Unlock()
+	}
+	if fi, err := a.f.Stat(); err != nil || fi.Size() != a.end() {
 		return false
 	}
-	if err := ev.ecjFile.Truncate(a.size); err != nil {
+	if err := a.f.Truncate(a.size); err != nil {
 		return false
 	}
-	ev.ecjFileSize = a.size
-	// The journal held exactly the ids read before the append, which exclude
-	// the delta, so every delta id in the set came from the append.
-	ev.deletedNeedlesLock.Lock()
-	for _, id := range a.delta {
-		delete(ev.deletedNeedles, id)
+	for _, ev := range holders {
+		if ev.ecjFile == nil {
+			continue // closed: it serves nothing and journals nothing
+		}
+		ev.ecjFileSize = a.size
+		// Each holder loaded exactly the ids read before the append, which
+		// exclude the delta, plus the delta: every delta id came from it.
+		ev.deletedNeedlesLock.Lock()
+		for _, id := range a.delta {
+			delete(ev.deletedNeedles, id)
+		}
+		ev.deletedNeedlesLock.Unlock()
 	}
-	ev.deletedNeedlesLock.Unlock()
 	return true
+}
+
+// Resync rewrites the append's records in place and syncs them, for records
+// that later ones now follow and so cannot be removed. A bare second fsync
+// would prove nothing: after a failed writeback the kernel may have dropped
+// the pages or marked them clean and still report the next fsync as clean.
+// Rewriting the same bytes dirties them again, so a successful fsync means
+// they reached the disk. Writing outside the locks is safe: appends land past
+// these records, and every other truncate (a holder's failed append, a
+// mount's torn-tail repair) lands at or past their end, since each holder
+// loaded at least that much.
+func (a *EcjAppend) Resync() error {
+	if fi, err := a.f.Stat(); err != nil {
+		return fmt.Errorf("stat %s: %w", a.path, err)
+	} else if fi.Size() < a.end() {
+		return fmt.Errorf("%s shrank below the merged records", a.path)
+	}
+	if _, err := a.f.WriteAt(encodeEcjIds(a.delta), a.size); err != nil {
+		return fmt.Errorf("rewrite %s: %w", a.path, err)
+	}
+	return a.Sync()
+}
+
+func (a *EcjAppend) end() int64 {
+	return a.size + int64(len(a.delta)*types.NeedleIdSize)
 }
 
 // Close releases the journal, keeping whatever the append wrote.
