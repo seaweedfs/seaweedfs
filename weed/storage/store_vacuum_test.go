@@ -183,10 +183,8 @@ func TestSameFilesystem(t *testing.T) {
 	}
 }
 
-// The estimate must cover what compaction writes on disk: each live needle's
-// content plus its header, checksum, timestamp and padding. An all-live
-// volume's compacted .dat is byte-for-byte its current one, so the estimate
-// may not fall below the current file.
+// The estimate may not fall below the current .dat size: an all-live
+// volume's compacted copy is byte-for-byte its current one.
 func TestCompactionSpaceNeededCoversNeedleFraming(t *testing.T) {
 	dir := t.TempDir()
 
@@ -209,9 +207,7 @@ func TestCompactionSpaceNeededCoversNeedleFraming(t *testing.T) {
 	}
 }
 
-// disk_space_low is only reported when low space is the sole read-only cause,
-// so a volume also marked read-only by an operator or quarantined by failed
-// I/O stays out of the sweep.
+// disk_space_low is only reported when low space is the sole read-only cause.
 func TestCheckCompactVolumeDiskLowSoleCauseOnly(t *testing.T) {
 	dir := t.TempDir()
 	store := newSingleDirStore(t, dir)

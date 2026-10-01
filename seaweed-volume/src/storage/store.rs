@@ -1538,10 +1538,7 @@ impl Store {
         vid: VolumeId,
         preallocate: u64,
     ) -> Result<Option<CompactionJob>, VolumeError> {
-        // Mirrors Go's ensureCompactVolumeSpace: estimate what compaction
-        // writes from live bytes — a disk full of garbage must still be
-        // reclaimable — and check the index's own directory when it sits on
-        // another filesystem.
+        // Mirrors Go's ensureCompactVolumeSpace, per filesystem.
         let (dir, dir_idx, data_bytes, index_bytes) = {
             let (_, v) = self
                 .find_volume(vid)
@@ -1749,21 +1746,17 @@ fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[ShardId]
 
 /// Mirrors Go's compactionSpaceNeeded: what compaction will write, split into
 /// the new .dat and rebuilt .idx shares, each capped at its current file.
-/// The volume's current size is the wrong yardstick — the more garbage it
-/// holds, the less compaction writes.
 fn compaction_space_needed(v: &Volume, preallocate: u64) -> (u64, u64) {
     let mut data_bytes = v.current_dat_file_size().unwrap_or(0);
     let mut index_bytes = v.idx_file_size();
 
     let live_count = v.file_count() - v.deleted_count();
     let live_content = v.content_size() as i64 - v.deleted_size() as i64;
-    // An index converted back from .sdx carries no deleted sizes, and counters
-    // that disagree mean the metric is off; either way the whole volume stays
-    // the estimate.
+    // Unknown or inconsistent deleted sizes: the whole volume stays the
+    // estimate.
     let deleted_size_known = v.deleted_count() == 0 || v.deleted_size() > 0;
     if deleted_size_known && live_count >= 0 && live_content >= 0 {
-        // get_actual_size(Size(0)) is an empty needle's framing; another
-        // padding unit covers the worst case for any other size.
+        // Empty-needle framing plus a padding unit covers the worst case.
         let per_needle =
             (get_actual_size(Size(0), v.version()) + NEEDLE_PADDING_SIZE as i64) as u64;
         let estimate = with_headroom(
@@ -1783,15 +1776,12 @@ fn compaction_space_needed(v: &Volume, preallocate: u64) -> (u64, u64) {
     (data_bytes, index_bytes)
 }
 
-/// Counters rebuilt from an index go through a Bloom filter whose false
-/// positives can count a live needle as deleted; a few percent of headroom
-/// covers that many times over.
+/// Headroom for Bloom-filter false positives in the live/deleted counters.
 fn with_headroom(estimate: u64) -> u64 {
     estimate + estimate / 16
 }
 
-/// Whether two directories draw on the same free-space pool; when in doubt
-/// yes, so the space check asks for the sum.
+/// Whether two directories draw on the same free-space pool; in doubt, yes.
 fn same_filesystem(a: &str, b: &str) -> bool {
     if a == b {
         return true;
