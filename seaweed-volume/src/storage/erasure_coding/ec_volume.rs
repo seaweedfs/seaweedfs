@@ -48,6 +48,29 @@ pub(crate) struct ShardLocationCache {
 /// A multiple of `NEEDLE_ID_SIZE`; 1 MiB is 131072 entries per syscall.
 const ECJ_LOAD_CHUNK_BYTES: usize = 1 << 20;
 
+/// Adds every whole needle id in the first `len` bytes of `ecj_file` to `ids`,
+/// reading `ECJ_LOAD_CHUNK_BYTES` at a time; a trailing partial record is
+/// ignored.
+pub(crate) fn read_ecj_ids(
+    ecj_file: &File,
+    len: u64,
+    ids: &mut HashSet<NeedleId>,
+) -> io::Result<()> {
+    let mut buf = vec![0u8; std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len) as usize];
+    let mut off: u64 = 0;
+    while off + NEEDLE_ID_SIZE as u64 <= len {
+        let mut want = std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len - off) as usize;
+        want -= want % NEEDLE_ID_SIZE;
+        // Positional read: the loader's handle is shared with journal appends.
+        read_exact_at(ecj_file, &mut buf[..want], off)?;
+        for entry in buf[..want].as_chunks::<NEEDLE_ID_SIZE>().0 {
+            ids.insert(NeedleId::from_bytes(entry));
+        }
+        off += want as u64;
+    }
+    Ok(())
+}
+
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
     pub volume_id: VolumeId,
@@ -810,38 +833,7 @@ impl EcVolume {
         // held the `deleted_needles` write lock for the whole scan, which on a
         // bloated journal is the entire (unbounded) startup.
         let mut loaded: HashSet<NeedleId> = HashSet::new();
-        let mut buf = vec![0u8; ECJ_LOAD_CHUNK_BYTES];
-        let end = self.ecj_file_size as u64;
-        let mut off: u64 = 0;
-        while off + NEEDLE_ID_SIZE as u64 <= end {
-            // Whole entries only; a trailing partial record is ignored, as the
-            // per-entry loop did by construction.
-            let mut want = std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, end - off) as usize;
-            want -= want % NEEDLE_ID_SIZE;
-            if want == 0 {
-                break;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileExt;
-                ecj_file.read_exact_at(&mut buf[..want], off)?;
-            }
-            #[cfg(windows)]
-            {
-                // Positional read so concurrent readers of the shared .ecj
-                // handle can't interleave seek/read. Mirrors the
-                // read_exact_at helper at the bottom of this file.
-                read_exact_at(ecj_file, &mut buf[..want], off)?;
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                compile_error!("Platform not supported: only unix and windows are supported");
-            }
-            for entry in buf[..want].chunks_exact(NEEDLE_ID_SIZE) {
-                loaded.insert(NeedleId::from_bytes(entry));
-            }
-            off += want as u64;
-        }
+        read_ecj_ids(ecj_file, self.ecj_file_size as u64, &mut loaded)?;
 
         let mut set = self
             .deleted_needles
@@ -4668,7 +4660,7 @@ impl EcLocalShard {
             .file
             .as_ref()
             .map_err(|e| io::Error::new(e.kind(), e.to_string()))?;
-        crate::storage::io::read_at(file, buf, offset)
+        crate::storage::io::read_full_at(file, buf, offset)
     }
 }
 
