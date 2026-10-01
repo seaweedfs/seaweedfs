@@ -1147,6 +1147,9 @@ pub struct Volume {
     fail_idx_sync_for_test: bool,
     #[cfg(test)]
     fail_truncate_for_test: bool,
+    /// Needle ids whose .dat append fails with a media error.
+    #[cfg(test)]
+    fail_append_for_test: HashSet<NeedleId>,
     #[cfg(test)]
     dat_syncs_for_test: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -1250,6 +1253,8 @@ impl Volume {
             #[cfg(test)]
             fail_truncate_for_test: false,
             #[cfg(test)]
+            fail_append_for_test: HashSet::new(),
+            #[cfg(test)]
             dat_syncs_for_test: Default::default(),
             #[cfg(test)]
             idx_syncs_for_test: Default::default(),
@@ -1297,6 +1302,8 @@ impl Volume {
             fail_idx_sync_for_test: false,
             #[cfg(test)]
             fail_truncate_for_test: false,
+            #[cfg(test)]
+            fail_append_for_test: HashSet::new(),
             #[cfg(test)]
             dat_syncs_for_test: Default::default(),
             #[cfg(test)]
@@ -2312,11 +2319,15 @@ impl Volume {
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
         // Per entry: Some(offset) once appended, None when it dedups.
         let mut staged = Vec::with_capacity(run.len());
+        // Per entry: whether its append added to the I/O error streak.
+        let mut io_errors = Vec::with_capacity(run.len());
         let mut last_append_at_ns = self.last_append_at_ns;
         let mut run_start = None;
         let mut sync = false;
         for (n, fsync) in run.iter_mut() {
+            let streak = self.get_io_error_state().1;
             let r = self.append_unpublished(n, &mut last_append_at_ns);
+            io_errors.push(self.get_io_error_state().1 > streak);
             if let Ok(Some(offset)) = r {
                 run_start.get_or_insert(offset);
             }
@@ -2360,7 +2371,12 @@ impl Volume {
             .map(|((n, _), _)| n.last_modified)
             .max();
         if let Some(last_modified) = written {
-            self.finish_write(last_modified, sync);
+            // Sent one at a time, the last write to land would have cleared
+            // the streak before the appends queued after it failed, so their
+            // errors still count and must not be cleared here.
+            let last = staged.iter().rposition(|r| matches!(r, Ok(Some(_))));
+            let clear_io_errors = last.is_some_and(|i| !io_errors[i + 1..].contains(&true));
+            self.finish_write(last_modified, sync, clear_io_errors);
         }
 
         run.iter()
@@ -2512,7 +2528,7 @@ impl Volume {
             self.flush_idx()?;
         }
 
-        self.finish_write(n.last_modified, fsync);
+        self.finish_write(n.last_modified, fsync, true);
 
         // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
         Ok((offset, Size(n.data_size as i32), false))
@@ -2626,8 +2642,9 @@ impl Volume {
         Ok(())
     }
 
-    /// The bookkeeping after a write is fully down.
-    fn finish_write(&mut self, last_modified: u64, idx_synced: bool) {
+    /// The bookkeeping after a write is fully down. `clear_io_errors` false
+    /// keeps the I/O error streak a later failed append in the same run built.
+    fn finish_write(&mut self, last_modified: u64, idx_synced: bool, clear_io_errors: bool) {
         if self.last_modified_ts_seconds < last_modified {
             self.last_modified_ts_seconds = last_modified;
         }
@@ -2637,7 +2654,7 @@ impl Volume {
         // Clear the EIO streak only after the full write (data + flush +
         // index + checkpoint) succeeds, so a failed fsync or checkpoint
         // does not get its EIO erased by the success reset.
-        if checkpoint_ok {
+        if checkpoint_ok && clear_io_errors {
             self.check_read_write_error(None);
         }
     }
@@ -2751,7 +2768,14 @@ impl Volume {
             });
         }
 
-        if let Err(e) = dat_file.write_all(&bytes) {
+        let written = dat_file.write_all(&bytes);
+        #[cfg(test)]
+        let written = if self.fail_append_for_test.contains(&n.id) {
+            Err(media_error_for_test())
+        } else {
+            written
+        };
+        if let Err(e) = written {
             self.undo_unsynced_append(offset);
             self.check_read_write_error(Some(&e));
             return Err(VolumeError::Io(e));
@@ -4975,6 +4999,11 @@ impl Volume {
         self.fail_truncate_for_test = fail;
     }
 
+    #[cfg(test)]
+    pub(crate) fn fail_append_for_test(&mut self, ids: &[NeedleId]) {
+        self.fail_append_for_test = ids.iter().copied().collect();
+    }
+
     /// (.dat syncs, .idx syncs) attempted since the volume was opened.
     #[cfg(test)]
     pub(crate) fn sync_counts_for_test(&self) -> (usize, usize) {
@@ -5257,6 +5286,25 @@ fn preallocate_file(file: &File, size: u64) {
 // ============================================================================
 // Tests
 // ============================================================================
+
+/// An OS error the platform reports for failing storage media, which is
+/// what counts toward the I/O error streak.
+#[cfg(test)]
+fn media_error_for_test() -> io::Error {
+    #[cfg(unix)]
+    {
+        io::Error::from_raw_os_error(libc::EIO)
+    }
+    #[cfg(windows)]
+    {
+        const ERROR_IO_DEVICE: i32 = 1117;
+        io::Error::from_raw_os_error(ERROR_IO_DEVICE)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        io::Error::other("injected media error")
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -6438,6 +6486,49 @@ mod tests {
         let mut later = vec![(batch_needle(3, 0xcc, b"refused"), true)];
         let results = v.write_needles_grouped(&mut later);
         assert!(matches!(results[0], Err(VolumeError::Unavailable(_))));
+    }
+
+    /// A run counts I/O errors as the same writes sent one at a time would:
+    /// a success early in the run must not wipe out the streak that the
+    /// failed appends after it built up, or the volume escapes quarantine.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_grouped_run_keeps_the_io_error_streak_of_later_appends() {
+        use crate::storage::io_error::IO_ERROR_TOLERANCE;
+
+        let writes = || {
+            vec![
+                (batch_needle(1, 0xaa, b"landed"), true),
+                (batch_needle(2, 0xbb, b"eio"), true),
+                (batch_needle(3, 0xcc, b"eio"), true),
+                (batch_needle(4, 0xdd, b"eio"), true),
+            ]
+        };
+        let failing = [NeedleId(2), NeedleId(3), NeedleId(4)];
+
+        let tmp = TempDir::new().unwrap();
+        let mut one_by_one = make_test_volume(tmp.path().to_str().unwrap());
+        one_by_one.fail_append_for_test(&failing);
+        for (mut n, fsync) in writes() {
+            let _ = one_by_one.write_needle(&mut n, true, fsync);
+        }
+
+        let tmp2 = TempDir::new().unwrap();
+        let mut v = make_test_volume(tmp2.path().to_str().unwrap());
+        v.fail_append_for_test(&failing);
+        let mut grouped = writes();
+        let results = v.write_needles_grouped(&mut grouped);
+
+        assert!(matches!(results[0], Ok((_, _, false))));
+        assert!(
+            results[1..]
+                .iter()
+                .all(|r| matches!(r, Err(VolumeError::Io(_))))
+        );
+        assert_eq!(one_by_one.get_io_error_state().1, IO_ERROR_TOLERANCE);
+        assert_eq!(v.get_io_error_state().1, IO_ERROR_TOLERANCE);
+        assert!(v.should_quarantine());
+        assert!(!v.is_read_only(), "the failed appends were truncated back");
     }
 
     /// An append whose partial bytes cannot be truncated back leaves the .dat
