@@ -29,10 +29,8 @@ type GetObjectAttributesResponse struct {
 
 // ObjectAttributesChecksum holds checksum info for GetObjectAttributes.
 type ObjectAttributesChecksum struct {
-	ChecksumCRC32  string `xml:"ChecksumCRC32,omitempty"`
-	ChecksumCRC32C string `xml:"ChecksumCRC32C,omitempty"`
-	ChecksumSHA1   string `xml:"ChecksumSHA1,omitempty"`
-	ChecksumSHA256 string `xml:"ChecksumSHA256,omitempty"`
+	ChecksumResult
+	ChecksumType string `xml:"ChecksumType,omitempty"`
 }
 
 // ObjectAttributesParts holds parts info for GetObjectAttributes.
@@ -75,6 +73,24 @@ func validateObjectAttributes(attrs map[string]struct{}) bool {
 		}
 	}
 	return true
+}
+
+// objectAttributesChecksum returns the additional checksum that PutObject or
+// CompleteMultipartUpload stored with the object, or nil if it has none.
+func objectAttributesChecksum(entry *filer_pb.Entry) *ObjectAttributesChecksum {
+	if entry == nil || entry.Extended == nil {
+		return nil
+	}
+	value := string(entry.Extended[s3_constants.ExtChecksumValue])
+	if value == "" {
+		return nil
+	}
+	checksum := &ObjectAttributesChecksum{ChecksumType: string(entry.Extended[s3_constants.ExtChecksumType])}
+	checksum.SetChecksum(string(entry.Extended[s3_constants.ExtChecksumAlgorithm]), value)
+	if checksum.ChecksumResult == (ChecksumResult{}) {
+		return nil
+	}
+	return checksum
 }
 
 func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *http.Request) {
@@ -245,10 +261,9 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 		resp.StorageClass = storageClass
 	}
 
-	// Checksum: accepted in validation so clients don't get a 400, but SeaweedFS
-	// does not yet store S3 checksums (CRC32, CRC32C, SHA1, SHA256), so
-	// resp.Checksum is intentionally left nil. When checksum storage is added,
-	// populate resp.Checksum here.
+	if _, ok := requestedAttrs["Checksum"]; ok {
+		resp.Checksum = objectAttributesChecksum(entry)
+	}
 
 	if _, ok := requestedAttrs["ObjectSize"]; ok {
 		var size int64
