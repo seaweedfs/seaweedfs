@@ -179,12 +179,23 @@ func (s *Store) appendUnmountedEcJournal(owner *DiskLocation, vid needle.VolumeI
 	}
 	defer pending.Close()
 	if err := sync(pending); err != nil {
-		if s.rollbackUnmountedEcJournal(vid, ecjPath, pending) {
+		var rolledBack bool
+		s.withEcJournalHolders(vid, ecjPath, func(holders []*erasure_coding.EcVolume) {
+			rolledBack = pending.RollbackUnsynced(holders)
+		})
+		if rolledBack {
 			return 0, false, err
 		}
 		// Later records follow these, so they stay: make them durable,
 		// still outside the locks.
-		if resyncErr := pending.Resync(); resyncErr != nil {
+		resyncErr := pending.Rewrite()
+		if resyncErr == nil {
+			resyncErr = sync(pending)
+		}
+		if resyncErr != nil {
+			// Neither removable nor durable: no deleted set may claim them,
+			// so a retried merge writes and syncs them again.
+			s.withEcJournalHolders(vid, ecjPath, pending.Unpublish)
 			glog.Errorf("ec volume %d: merged records in %s may not be durable: %v; resync: %v", vid, ecjPath, err, resyncErr)
 			return 0, false, fmt.Errorf("%w; resync: %v", err, resyncErr)
 		}
@@ -202,12 +213,12 @@ func (s *Store) writeUnmountedEcJournal(owner *DiskLocation, vid needle.VolumeId
 	return pending, false, err
 }
 
-// rollbackUnmountedEcJournal removes an append whose fsync failed, through
-// every runtime that has mounted the journal since the write, and reports
-// whether it did (see EcjAppend.RollbackUnsynced). The disk locks stop new
-// mounts and the path lock stops other unmounted merges; no fsync runs here,
+// withEcJournalHolders runs fn with every runtime that has mounted the journal
+// at ecjPath, for undoing an append whose fsync failed (see
+// EcjAppend.RollbackUnsynced and Unpublish). The disk locks stop new mounts
+// and the caller's path lock stops other unmounted merges; fn runs no fsync,
 // so they are held only for in-memory work and a truncate.
-func (s *Store) rollbackUnmountedEcJournal(vid needle.VolumeId, ecjPath string, pending *erasure_coding.EcjAppend) bool {
+func (s *Store) withEcJournalHolders(vid needle.VolumeId, ecjPath string, fn func([]*erasure_coding.EcVolume)) {
 	unlock := s.rLockEcVolumes()
 	defer unlock()
 	var holders []*erasure_coding.EcVolume
@@ -216,5 +227,5 @@ func (s *Store) rollbackUnmountedEcJournal(vid needle.VolumeId, ecjPath string, 
 			holders = append(holders, ev)
 		}
 	}
-	return pending.RollbackUnsynced(holders)
+	fn(holders)
 }

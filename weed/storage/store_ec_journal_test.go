@@ -239,12 +239,15 @@ func TestMergeEcJournal_UnmountedSyncHoldsNoDiskLock(t *testing.T) {
 // and a retried merge appends them again. Once any runtime has journaled
 // after them, removing them would lose that delete, even if the runtime doing
 // the rollback cached the older length; they stay and are rewritten and
-// synced instead.
+// synced instead. If that sync fails too, the records stay but leave every
+// deleted set, so a retried merge appends and syncs them again rather than
+// trusting records never shown durable.
 func TestMergeEcJournal_FailedSync(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
-		mounts      int // runtimes on disks 1.. mounting the journal mid-sync
-		journalVia  int // 1-based runtime that journals id 3 mid-sync, 0 for none
+		mounts      int  // runtimes on disks 1.. mounting the journal mid-sync
+		journalVia  int  // 1-based runtime that journals id 3 mid-sync, 0 for none
+		resyncFails bool // the fsync after the rewrite fails too
 		wantJournal []types.NeedleId
 	}{
 		{name: "unmounted", wantJournal: []types.NeedleId{1}},
@@ -252,6 +255,7 @@ func TestMergeEcJournal_FailedSync(t *testing.T) {
 		{name: "two mounted since the write", mounts: 2, wantJournal: []types.NeedleId{1}},
 		{name: "mounted and journaled since", mounts: 1, journalVia: 1, wantJournal: []types.NeedleId{1, 2, 3}},
 		{name: "another runtime journaled since", mounts: 2, journalVia: 2, wantJournal: []types.NeedleId{1, 2, 3}},
+		{name: "resync fails", mounts: 2, journalVia: 2, resyncFails: true, wantJournal: []types.NeedleId{1, 2, 3}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tempDir := t.TempDir()
@@ -266,8 +270,15 @@ func TestMergeEcJournal_FailedSync(t *testing.T) {
 			}
 
 			var holders []*erasure_coding.EcVolume
+			syncs := 0
 			mio := defaultEcjMergeIO
-			mio.sync = func(*erasure_coding.EcjAppend) error {
+			mio.sync = func(a *erasure_coding.EcjAppend) error {
+				if syncs++; syncs > 1 {
+					if tt.resyncFails {
+						return errors.New("injected resync failure")
+					}
+					return a.Sync()
+				}
 				for i := 1; i <= tt.mounts; i++ {
 					ev, err := store.Locations[i].loadEcShardWithIdxDir(collection, vid, 0, disks[0])
 					require.NoError(t, err)
@@ -283,9 +294,11 @@ func TestMergeEcJournal_FailedSync(t *testing.T) {
 			added, err := store.mergeEcJournal(vid, disks[0], journal, ecjIdSet(1, 2), mio)
 			assert.Equal(t, ecjRecords(tt.wantJournal...), mustReadFile(t, journal))
 			if tt.journalVia > 0 {
+				assert.True(t, holders[tt.journalVia-1].IsNeedleDeleted(3), "a later delete is never lost")
+			}
+			if tt.journalVia > 0 && !tt.resyncFails {
 				require.NoError(t, err, "records followed by a delete are resynced")
 				assert.Equal(t, 1, added)
-				assert.True(t, holders[tt.journalVia-1].IsNeedleDeleted(3))
 				for _, ev := range holders {
 					assert.True(t, ev.IsNeedleDeleted(2))
 				}
@@ -293,14 +306,17 @@ func TestMergeEcJournal_FailedSync(t *testing.T) {
 			}
 			require.Error(t, err)
 			for _, ev := range holders {
-				assert.False(t, ev.IsNeedleDeleted(2), "the deleted set follows the journal")
+				assert.False(t, ev.IsNeedleDeleted(2), "no deleted set claims a record not shown durable")
 			}
 
 			// A retried merge appends and syncs the id again.
 			added, err = store.MergeEcJournal(vid, disks[0], journal, ecjIdSet(1, 2))
 			require.NoError(t, err)
 			assert.Equal(t, 1, added)
-			assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, journal))
+			assert.Equal(t, ecjRecords(append(tt.wantJournal, 2)...), mustReadFile(t, journal))
+			if len(holders) > 0 {
+				assert.True(t, holders[0].IsNeedleDeleted(2))
+			}
 		})
 	}
 }

@@ -219,7 +219,8 @@ func (a *EcjAppend) Rollback() {
 // ecjFileAccessLock held nothing can append, so if the length is still this
 // append's end, its records are the tail and removing them loses nothing. If
 // anything follows them, it changes nothing and returns false; the caller then
-// keeps the records and makes them durable with Resync.
+// keeps the records and rewrites and syncs them (Rewrite, Sync), or, if that
+// fails too, takes the ids back out of the holders' sets with Unpublish.
 func (a *EcjAppend) RollbackUnsynced(holders []*EcVolume) bool {
 	for _, ev := range holders {
 		ev.ecjFileAccessLock.Lock()
@@ -232,31 +233,51 @@ func (a *EcjAppend) RollbackUnsynced(holders []*EcVolume) bool {
 		return false
 	}
 	for _, ev := range holders {
-		if ev.ecjFile == nil {
-			continue // closed: it serves nothing and journals nothing
+		if ev.ecjFile != nil { // closed: it serves nothing and journals nothing
+			ev.ecjFileSize = a.size
 		}
-		ev.ecjFileSize = a.size
-		// Each holder loaded exactly the ids read before the append, which
-		// exclude the delta, plus the delta: every delta id came from it.
+	}
+	a.forget(holders)
+	return true
+}
+
+// Unpublish takes the append's ids back out of the holders' deleted sets, for
+// records that could neither be removed nor made durable. The records stay in
+// the file, where they are legitimate deletes, but as in DeleteNeedleFromEcx a
+// set only claims ids whose record is known durable: a retried merge then
+// sees them missing and appends and syncs them again.
+func (a *EcjAppend) Unpublish(holders []*EcVolume) {
+	for _, ev := range holders {
+		ev.ecjFileAccessLock.Lock()
+		defer ev.ecjFileAccessLock.Unlock()
+	}
+	a.forget(holders)
+}
+
+// forget removes the append's ids from the holders' deleted sets. Each holder
+// loaded exactly the ids read before the append, which exclude the delta, plus
+// the delta; it cannot have journaled a delta id itself, as it already held
+// them all. So every delta id in a holder's set came from this append. Callers
+// hold every holder's ecjFileAccessLock.
+func (a *EcjAppend) forget(holders []*EcVolume) {
+	for _, ev := range holders {
 		ev.deletedNeedlesLock.Lock()
 		for _, id := range a.delta {
 			delete(ev.deletedNeedles, id)
 		}
 		ev.deletedNeedlesLock.Unlock()
 	}
-	return true
 }
 
-// Resync rewrites the append's records in place and syncs them, for records
-// that later ones now follow and so cannot be removed. A bare second fsync
-// would prove nothing: after a failed writeback the kernel may have dropped
-// the pages or marked them clean and still report the next fsync as clean.
-// Rewriting the same bytes dirties them again, so a successful fsync means
-// they reached the disk. Writing outside the locks is safe: appends land past
-// these records, and every other truncate (a holder's failed append, a
-// mount's torn-tail repair) lands at or past their end, since each holder
-// loaded at least that much.
-func (a *EcjAppend) Resync() error {
+// Rewrite writes the append's records again in place, for records that later
+// ones now follow and so cannot be removed; a Sync after it makes them
+// durable. A bare second fsync would prove nothing: after a failed writeback
+// the kernel may have dropped the pages or marked them clean and still report
+// the next fsync as clean. Rewriting the same bytes dirties them again.
+// Writing outside the locks is safe: appends land past these records, and
+// every other truncate (a holder's failed append, a mount's torn-tail repair)
+// lands at or past their end, since each holder loaded at least that much.
+func (a *EcjAppend) Rewrite() error {
 	if fi, err := a.f.Stat(); err != nil {
 		return fmt.Errorf("stat %s: %w", a.path, err)
 	} else if fi.Size() < a.end() {
@@ -265,7 +286,7 @@ func (a *EcjAppend) Resync() error {
 	if _, err := a.f.WriteAt(encodeEcjIds(a.delta), a.size); err != nil {
 		return fmt.Errorf("rewrite %s: %w", a.path, err)
 	}
-	return a.Sync()
+	return nil
 }
 
 func (a *EcjAppend) end() int64 {
