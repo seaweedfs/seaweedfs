@@ -3,7 +3,7 @@
 
 use std::io;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Consecutive storage-media errors allowed before the volume is quarantined.
 pub(crate) const IO_ERROR_TOLERANCE: i32 = 3;
@@ -34,20 +34,29 @@ pub(crate) fn is_storage_io_error(e: &io::Error) -> bool {
 #[derive(Default)]
 pub(crate) struct IoErrorTracker {
     last: Mutex<Option<String>>,
-    count: AtomicI32,
+    /// The consecutive error count in the low 32 bits and, in the high 32,
+    /// how many times it has been cleared. They share one word so that
+    /// `record_success_at` updates both in one step: reads record their
+    /// outcomes here without the volume's write lock.
+    streak: AtomicU64,
     quarantined: AtomicBool,
-    /// Bumped whenever the count is cleared, so a `StreakMark` can tell
-    /// whether the streak it points into is still the current one.
-    clears: AtomicU64,
+}
+
+const STREAK_COUNT_BITS: u64 = 0xffff_ffff;
+
+fn streak_count(streak: u64) -> i32 {
+    (streak & STREAK_COUNT_BITS) as i32
+}
+
+/// `streak` with its count cleared and one more clear on record.
+fn streak_cleared(streak: u64) -> u64 {
+    (streak >> 32).wrapping_add(1) << 32
 }
 
 /// A point in the error streak, taken where a write landed whose success
 /// is only recorded later. See `IoErrorTracker::record_success_at`.
 #[derive(Clone, Copy)]
-pub(crate) struct StreakMark {
-    clears: u64,
-    count: i32,
-}
+pub(crate) struct StreakMark(u64);
 
 impl IoErrorTracker {
     /// `Some(e)` records a failure, `None` a success. Only storage-media
@@ -56,7 +65,7 @@ impl IoErrorTracker {
         if let Some(e) = err
             && is_storage_io_error(e)
         {
-            self.count.fetch_add(1, Ordering::Relaxed);
+            self.streak.fetch_add(1, Ordering::Relaxed);
             if let Ok(mut guard) = self.last.lock() {
                 *guard = Some(e.to_string());
             }
@@ -64,6 +73,14 @@ impl IoErrorTracker {
             return;
         }
         self.clear_count();
+        self.clear_last();
+    }
+
+    fn clear_count(&self) {
+        self.update_streak(|streak| Some(streak_cleared(streak)));
+    }
+
+    fn clear_last(&self) {
         if let Ok(mut guard) = self.last.lock()
             && guard.is_some()
         {
@@ -71,46 +88,58 @@ impl IoErrorTracker {
         }
     }
 
-    fn clear_count(&self) {
-        self.count.store(0, Ordering::Relaxed);
-        self.clears.fetch_add(1, Ordering::Relaxed);
+    /// Apply `f` to the streak atomically; `None` leaves it as it is.
+    /// Returns the streak `f` produced, if any.
+    fn update_streak(&self, mut f: impl FnMut(u64) -> Option<u64>) -> Option<u64> {
+        let mut updated = None;
+        let _ = self
+            .streak
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |streak| {
+                updated = f(streak);
+                updated
+            });
+        updated
     }
 
     pub(crate) fn mark(&self) -> StreakMark {
-        StreakMark {
-            clears: self.clears.load(Ordering::Relaxed),
-            count: self.count.load(Ordering::Relaxed),
-        }
+        StreakMark(self.streak.load(Ordering::Relaxed))
     }
 
     /// Record a success as if it had come at `mark`: the errors counted
     /// before the mark are cleared and the ones counted since still stand,
-    /// as they would had each outcome been recorded in order.
+    /// as they would had each outcome been recorded in order. A streak
+    /// cleared since the mark is left as it is.
     pub(crate) fn record_success_at(&self, mark: StreakMark) {
-        if self.clears.load(Ordering::Relaxed) != mark.clears {
-            // Something since the mark cleared the streak already.
-            return;
-        }
-        let since = self.count.load(Ordering::Relaxed) - mark.count;
-        if since <= 0 {
-            self.check_read_write_error(None);
-        } else {
-            // The last error stays: it is one of those counted since.
-            self.count.store(since, Ordering::Relaxed);
+        let before = streak_count(mark.0);
+        let updated = self.update_streak(|streak| {
+            if streak >> 32 != mark.0 >> 32 {
+                return None;
+            }
+            if streak_count(streak) <= before {
+                return Some(streak_cleared(streak));
+            }
+            Some(streak - before as u64)
+        });
+        // The last error stays when one counted since the mark is left.
+        if updated.is_some_and(|streak| streak_count(streak) == 0) {
+            self.clear_last();
         }
     }
 
     /// The last recorded error, the consecutive count, and the quarantine flag.
     pub(crate) fn get_io_error_state(&self) -> (Option<String>, i32, bool) {
         let err = self.last.lock().ok().and_then(|g| g.clone());
-        let count = self.count.load(Ordering::Relaxed);
+        let count = self.count();
         let quarantined = self.quarantined.load(Ordering::Relaxed);
         (err, count, quarantined)
     }
 
+    fn count(&self) -> i32 {
+        streak_count(self.streak.load(Ordering::Relaxed))
+    }
+
     pub(crate) fn should_quarantine(&self) -> bool {
-        self.quarantined.load(Ordering::Relaxed)
-            || self.count.load(Ordering::Relaxed) >= IO_ERROR_TOLERANCE
+        self.quarantined.load(Ordering::Relaxed) || self.count() >= IO_ERROR_TOLERANCE
     }
 
     pub(crate) fn mark_io_quarantined(&self) {
@@ -131,7 +160,9 @@ impl IoErrorTracker {
             *guard = err.map(|value| value.to_string());
         }
         if err.is_some() {
-            self.count.store(IO_ERROR_TOLERANCE, Ordering::Relaxed);
+            self.update_streak(|streak| {
+                Some((streak & !STREAK_COUNT_BITS) | IO_ERROR_TOLERANCE as u64)
+            });
         } else {
             self.clear_count();
         }
@@ -250,6 +281,46 @@ mod tests {
             tracker.get_io_error_state(),
             (Some(media_error().to_string()), 1, false)
         );
+    }
+
+    /// Reads update the tracker without the volume's write lock, so a
+    /// success replayed at a mark must not lose the errors they record
+    /// while it runs.
+    #[test]
+    fn success_at_a_mark_keeps_concurrent_errors() {
+        use std::sync::{Arc, Barrier};
+        const READERS: i32 = 4;
+        const ERRORS: i32 = 200;
+
+        for _ in 0..500 {
+            let tracker = Arc::new(IoErrorTracker::default());
+            tracker.check_read_write_error(Some(&media_error()));
+            tracker.check_read_write_error(Some(&media_error()));
+            let mark = tracker.mark();
+            let start = Arc::new(Barrier::new(READERS as usize + 1));
+            let readers: Vec<_> = (0..READERS)
+                .map(|_| {
+                    let (tracker, start) = (tracker.clone(), start.clone());
+                    std::thread::spawn(move || {
+                        start.wait();
+                        for _ in 0..ERRORS {
+                            tracker.check_read_write_error(Some(&media_error()));
+                        }
+                    })
+                })
+                .collect();
+            start.wait();
+            while tracker.get_io_error_state().1 < 2 + READERS * ERRORS / 2 {
+                std::hint::spin_loop();
+            }
+            tracker.record_success_at(mark);
+            for reader in readers {
+                reader.join().unwrap();
+            }
+            // The two errors before the mark are cleared; every error the
+            // readers recorded after it stands.
+            assert_eq!(tracker.get_io_error_state().1, READERS * ERRORS);
+        }
     }
 
     #[test]
