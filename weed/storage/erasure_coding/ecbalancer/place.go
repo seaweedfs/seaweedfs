@@ -81,15 +81,17 @@ type PlaceResult struct {
 type PlacementMode int
 
 const (
-	// PlaceStrict: caps and ReplicaPlacement are hard. Place fails rather than
-	// violate them, so the caller can defer (leave the volume as-is and retry).
+	// PlaceStrict: caps, the total-shards-per-rack cap and ReplicaPlacement are
+	// hard. Place fails rather than violate them, so the caller can defer (leave
+	// the volume as-is and retry).
 	PlaceStrict PlacementMode = iota
 	// PlaceDurabilityFirst (used by both encode and repair): relax per-type caps ->
-	// data/parity anti-affinity -> ReplicaPlacement, in that order, until each shard
-	// lands, reporting what was relaxed in PlaceResult.Relaxed. The per-disk
-	// durability cap (<= parityShards per disk) is never relaxed. Fails only if no
-	// disk has free capacity. Encode places best-effort this way and rebalancing
-	// tightens the spread afterward.
+	// data/parity anti-affinity -> ReplicaPlacement -> the total-shards-per-rack
+	// cap, in that order, until each shard lands, reporting what was relaxed in
+	// PlaceResult.Relaxed. The per-disk durability cap (<= parityShards per disk)
+	// is never relaxed. Fails only if no eligible disk has room for another shard
+	// of the volume. Encode places best-effort this way and rebalancing tightens
+	// the spread afterward.
 	PlaceDurabilityFirst
 )
 
@@ -101,6 +103,7 @@ type relaxation struct {
 	caps         bool
 	antiAffinity bool
 	rp           bool
+	rackTotal    bool
 }
 
 func (r relaxation) relaxedNames() []string {
@@ -114,16 +117,23 @@ func (r relaxation) relaxedNames() []string {
 	if !r.rp {
 		n = append(n, "replica-placement")
 	}
+	if !r.rackTotal {
+		n = append(n, "rack-total-cap")
+	}
 	return n
 }
 
-var strictAttempts = []relaxation{{caps: true, antiAffinity: true, rp: true}}
+var strictAttempts = []relaxation{{caps: true, antiAffinity: true, rp: true, rackTotal: true}}
 
+// The total-shards-per-rack cap is sized from real capacity (see rackTotalCap),
+// so it is relaxed last and only as a safety net; with it dropped, the per-disk
+// cap is the only constraint left.
 var durabilityAttempts = []relaxation{
-	{caps: true, antiAffinity: true, rp: true},
-	{caps: false, antiAffinity: true, rp: true},
-	{caps: false, antiAffinity: false, rp: true},
-	{caps: false, antiAffinity: false, rp: false},
+	{caps: true, antiAffinity: true, rp: true, rackTotal: true},
+	{caps: false, antiAffinity: true, rp: true, rackTotal: true},
+	{caps: false, antiAffinity: false, rp: true, rackTotal: true},
+	{caps: false, antiAffinity: false, rp: false, rackTotal: true},
+	{caps: false, antiAffinity: false, rp: false, rackTotal: false},
 }
 
 type placedEntry struct {
@@ -236,18 +246,30 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 		}
 	}
 
-	// Even per-rack caps divide by racks that actually have an eligible free disk,
-	// not all racks (the snapshot keeps every disk type/tag), so a valid tiered
-	// cluster — e.g. SSDs in only 2 of 4 racks — is not capped impossibly low.
+	// Even per-rack caps divide by racks that can actually take another shard of
+	// the volume, not all racks (the snapshot keeps every disk type/tag), so a
+	// valid tiered cluster — e.g. SSDs in only 2 of 4 racks — is not capped
+	// impossibly low.
+	rackRoom := make(map[string]int, len(rackKeys))
 	numEligibleRacks := 0
 	for _, rk := range rackKeys {
-		if rackHasFreeDisk(racks[rk], eligible) {
+		rackRoom[rk] = rackShardRoom(racks[rk], vk, eligible, parityShards)
+		if rackRoom[rk] > 0 {
 			numEligibleRacks++
 		}
 	}
 	if numEligibleRacks < 1 {
 		numEligibleRacks = 1
 	}
+
+	// The per-type caps spread data and parity independently, so together they
+	// can still stack e.g. 2 data + 1 parity on one rack. Cap the TOTAL per rack
+	// as well, at the lowest value the racks' free capacity allows.
+	totalShards := len(need)
+	for _, n := range rackShardCount {
+		totalShards += n
+	}
+	maxTotalPerRack := rackTotalCap(rackKeys, rackShardCount, rackRoom, totalShards)
 
 	attempts := strictAttempts
 	if mode == PlaceDurabilityFirst {
@@ -264,7 +286,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, parityShards, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
+			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, parityShards, maxTotalPerRack, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
 			if !ok {
 				continue
 			}
@@ -303,7 +325,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 				e.node.freeSlots++
 				racks[e.rackKey].freeSlots++
 			}
-			return nil, fmt.Errorf("cannot place EC shard %d of volume %d (collection %q)", sid, vk.vid, vk.collection)
+			return nil, fmt.Errorf("cannot place EC shard %d of volume %d (collection %q) (rack total cap %d, per-disk cap %d)", sid, vk.vid, vk.collection, maxTotalPerRack, parityShards)
 		}
 	}
 
@@ -316,11 +338,13 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 }
 
 // chooseShardDest selects a (node, disk) for one shard at the given relaxation
-// level: pick a rack (even per-type cap + ReplicaPlacement caps + two-pass
-// anti-affinity to the opposite type), then the least-loaded eligible node, then
-// the best eligible disk. The third return reports whether the disk spilled off
-// the soft-preferred type. ok=false when no rack/node/disk fits.
-func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks, maxPerDisk int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
+// level: pick a rack (total-shards-per-rack cap + even per-type cap +
+// ReplicaPlacement caps + two-pass anti-affinity to the opposite type), then the
+// least-loaded eligible node, then the best eligible disk. If no node in the
+// chosen rack fits (e.g. every node is at SameRackCount), the next-best rack is
+// tried. The third return reports whether the disk spilled off the
+// soft-preferred type. ok=false when no rack/node/disk fits.
+func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks, maxPerDisk, maxTotalPerRack int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
 	maxPerRack := numEligibleRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
 	if rl.caps {
 		if maxPerRack = ceilDivide(typeTotal, numEligibleRacks); maxPerRack < 1 {
@@ -336,74 +360,113 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 	if !rl.rp {
 		rp = nil
 	}
-	// A rack is eligible only if it is under the per-rack shard cap (DiffRackCount),
-	// enforced only when set (and relaxed with rp).
+	// A rack is eligible only if it is under the total-shards-per-rack cap and,
+	// when set, the per-rack shard cap (DiffRackCount). The total cap does not
+	// depend on ReplicaPlacement, so it also holds when rp is nil.
 	withinLimit := func(r string) bool {
-		if rp == nil {
-			return true
+		if rl.rackTotal && rackShardCount[r] >= maxTotalPerRack {
+			return false
 		}
-		if rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
+		if rp != nil && rp.DiffRackCount > 0 && rackShardCount[r] >= rp.DiffRackCount {
 			return false
 		}
 		return true
 	}
 
-	destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti,
-		func(r string) bool { return racks[r].freeSlots > 0 && rackHasFreeDisk(racks[r], eligible) },
-		withinLimit)
-	if !ok {
-		return nil, 0, false, false
+	tried := map[string]bool{}
+	hasRoom := func(r string) bool {
+		return !tried[r] && racks[r].freeSlots > 0 && rackShardRoom(racks[r], vk, eligible, maxPerDisk) > 0
 	}
-	node := pickNodeInRackEligible(racks[destRack], vk, rp, eligible)
-	if node == nil {
-		return nil, 0, false, false
+	for {
+		destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti, hasRoom, withinLimit)
+		if !ok {
+			return nil, 0, false, false
+		}
+		if node := pickNodeInRackEligible(racks[destRack], vk, rp, eligible, maxPerDisk); node != nil {
+			if diskID, ok, spilled := pickBestDiskEligible(node, vk, eligible, prefer, sid, dataShards, maxPerDisk); ok {
+				return node, diskID, spilled, true
+			}
+		}
+		tried[destRack] = true
 	}
-	diskID, ok, spilled := pickBestDiskEligible(node, vk, eligible, prefer, sid, dataShards, maxPerDisk)
-	if !ok {
-		return nil, 0, false, false
-	}
-	return node, diskID, spilled, true
 }
 
-// nodeHasFreeDisk reports whether the node has a free disk satisfying eligible.
-func nodeHasFreeDisk(n *Node, eligible func(*disk) bool) bool {
+// rackTotalCap returns the smallest per-rack total c such that the racks can
+// hold totalShards shards of the volume with none above c, given each rack's
+// shards already placed (held) and its room for more. On a uniform cluster this
+// is ceil(totalShards/racks); a nearly full rack raises it just enough for the
+// other racks to absorb its share, so the cap alone never makes a feasible
+// placement fail.
+//
+// It is the most even spread the free capacity allows, not a durability
+// guarantee: losing k racks loses up to k*c shards, which the volume survives
+// only while k*c <= parityShards. With few racks no placement can achieve that.
+func rackTotalCap(rackKeys []string, held, room map[string]int, totalShards int) int {
+	for c := 1; c < totalShards; c++ {
+		fits := 0
+		for _, rk := range rackKeys {
+			fits += max(held[rk], min(c, held[rk]+room[rk]))
+		}
+		if fits >= totalShards {
+			return c
+		}
+	}
+	return totalShards
+}
+
+// diskShardRoom returns how many more shards of the volume the disk can take:
+// its free slots, bounded by the per-disk durability cap (maxPerDisk shards of
+// one volume per disk; <= 0 disables it).
+func diskShardRoom(n *Node, d *disk, vk volKey, maxPerDisk int) int {
+	room := d.freeSlots
+	if maxPerDisk > 0 {
+		held := 0
+		if info := n.shards[vk]; info != nil {
+			held = info.diskShardBits[d.diskID].Count()
+		}
+		room = min(room, maxPerDisk-held)
+	}
+	return max(room, 0)
+}
+
+// nodeShardRoom returns how many more shards of the volume the node's eligible
+// disks can take, bounded by the node's free slots.
+func nodeShardRoom(n *Node, vk volKey, eligible func(*disk) bool, maxPerDisk int) int {
+	room := 0
 	for _, d := range n.disks {
-		if d.freeSlots > 0 && eligible(d) {
-			return true
+		if eligible(d) {
+			room += diskShardRoom(n, d, vk, maxPerDisk)
 		}
 	}
-	return false
+	return max(min(room, n.freeSlots), 0)
 }
 
-// rackHasFreeDisk reports whether any node in the rack has a free eligible disk.
-func rackHasFreeDisk(r *rack, eligible func(*disk) bool) bool {
+// rackShardRoom returns how many more shards of the volume the rack can take.
+func rackShardRoom(r *rack, vk volKey, eligible func(*disk) bool, maxPerDisk int) int {
+	room := 0
 	for _, n := range r.nodes {
-		if n.freeSlots > 0 && nodeHasFreeDisk(n, eligible) {
-			return true
-		}
+		room += nodeShardRoom(n, vk, eligible, maxPerDisk)
 	}
-	return false
+	return room
 }
 
-// pickNodeInRackEligible is pickNodeInRack restricted to nodes that have a free
-// eligible disk. FromActiveTopology keeps all disk types/tags in the snapshot, so
-// without this a node with free volume slots but no eligible disk could be chosen.
+// pickNodeInRackEligible is pickNodeInRack restricted to nodes with an eligible
+// disk that can take another shard of the volume (free slot, under maxPerDisk).
+// FromActiveTopology keeps all disk types/tags in the snapshot, so without this a
+// node with free volume slots but no eligible disk could be chosen.
 //
 // Among eligible nodes it ranks by fewest shards of the volume per machine, then per
 // node, with free capacity breaking ties. The free-capacity tie-break (not sorted id)
 // keeps the lowest-id machine from winning every volume's first shard against the
 // shared encode snapshot and piling up load.
-func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool) *Node {
+func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, maxPerDisk int) *Node {
 	machineShards := countShardsByHost(vk, r.nodes)
 	machineFree := freeSlotsByHost(r.nodes)
 	var best *Node
 	var bestMCount, bestMFree, bestNCount, bestNFree int
 	for _, id := range sortedNodeKeys(r.nodes) {
 		node := r.nodes[id]
-		if node.freeSlots <= 0 {
-			continue
-		}
-		if !nodeHasFreeDisk(node, eligible) {
+		if nodeShardRoom(node, vk, eligible, maxPerDisk) <= 0 {
 			continue
 		}
 		count := volumeShardCount(node, vk)
