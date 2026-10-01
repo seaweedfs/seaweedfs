@@ -176,7 +176,8 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 }
 
 // newEcVolumeWith is NewEcVolume with the journal-compaction filesystem steps
-// supplied, so tests can drive a failing publish through the real mount.
+// supplied, so tests can drive a failing load or publish through the real
+// mount.
 func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId, ecjOps ecjFsOps) (ev *EcVolume, err error) {
 	ev = &EcVolume{dir: dir, dirIdx: dirIdx, Collection: collection, VolumeId: vid, diskType: diskType}
 
@@ -264,7 +265,7 @@ func newEcVolumeWith(diskType types.DiskType, dir string, dirIdx string, collect
 		ev.ecjFileSize = whole
 	}
 	ev.deletedNeedles = make(map[types.NeedleId]struct{})
-	loadErr := ev.loadDeletedNeedlesFromEcj()
+	loadErr := ev.loadDeletedNeedlesFromEcj(ecjOps.readAt)
 	if loadErr != nil {
 		glog.Warningf("ec volume %d: load deleted needles from .ecj: %v", vid, loadErr)
 	}
@@ -702,7 +703,7 @@ func (ev *EcVolume) markNeedleDeletedInMemory(needleId types.NeedleId) {
 // loadDeletedNeedlesFromEcj walks the .ecj journal and populates the
 // in-memory deleted set. Called once from NewEcVolume under the exclusive
 // ownership of the just-constructed (and not yet shared) EcVolume.
-func (ev *EcVolume) loadDeletedNeedlesFromEcj() error {
+func (ev *EcVolume) loadDeletedNeedlesFromEcj(readAt func(f *os.File, b []byte, off int64) (int, error)) error {
 	if ev.ecjFile == nil || ev.ecjFileSize < int64(types.NeedleIdSize) {
 		return nil
 	}
@@ -713,7 +714,7 @@ func (ev *EcVolume) loadDeletedNeedlesFromEcj() error {
 		if want == 0 {
 			break
 		}
-		if _, err := ev.ecjFile.ReadAt(buf[:want], off); err != nil {
+		if _, err := readAt(ev.ecjFile, buf[:want], off); err != nil {
 			return fmt.Errorf("read ecj at %d: %w", off, err)
 		}
 		for i := int64(0); i+int64(types.NeedleIdSize) <= want; i += int64(types.NeedleIdSize) {
@@ -731,16 +732,19 @@ func openEcjFile(path string) (*os.File, error) {
 	return backend.OpenVolumeFile(path, os.O_RDWR|os.O_CREATE)
 }
 
-// ecjFsOps are the filesystem steps that publish a compacted journal.
-// Production uses realEcjFsOps; tests substitute failing steps to cover the
-// failure paths through the real mount.
+// ecjFsOps are the filesystem steps of a mount's journal compaction: the
+// reads that load the set it compacts from, and the steps that publish the
+// compacted file. Production uses realEcjFsOps; tests substitute failing steps
+// to cover the failure paths through the real mount.
 type ecjFsOps struct {
+	readAt   func(f *os.File, b []byte, off int64) (int, error)
 	rename   func(oldpath, newpath string) error
 	fsyncDir func(path string) error
 	reopen   func(path string) (*os.File, error)
 }
 
 var realEcjFsOps = ecjFsOps{
+	readAt:   (*os.File).ReadAt,
 	rename:   os.Rename,
 	fsyncDir: func(p string) error { return util.FsyncDir(filepath.Dir(p)) },
 	reopen:   openEcjFile,

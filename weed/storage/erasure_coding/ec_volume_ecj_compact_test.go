@@ -73,25 +73,37 @@ func mountCompactTest(dir string, vid needle.VolumeId, ops ecjFsOps) (*EcVolume,
 }
 
 // A load error leaves only part of the journal in the set. Compacting from it
-// would delete the unread records from disk for good.
+// would delete the unread records from disk for good. The read fails inside the
+// real mount, after the first chunk, so the mount goes on with a set missing
+// the id that only the rest of the journal holds.
 func TestEcjNotCompactedAfterLoadError(t *testing.T) {
 	dir := t.TempDir()
-	base := writeCompactTestVolume(t, dir, 60, compactEcjBytes(compactTestIds(), 4096))
-	bloated := fileSize(t, base+".ecj")
+	journal := append(compactEcjBytes(compactTestIds(), 4096), compactEcjBytes([]types.NeedleId{5000}, 1)...)
+	base := writeCompactTestVolume(t, dir, 60, journal)
 
-	// Mount while a copy holds the path, so the mount itself does not compact.
-	done := BeginEcjWrite(base + ".ecj")
-	ev, err := mountCompactTest(dir, 60, realEcjFsOps)
+	ops := withEcjOps(func(o *ecjFsOps) {
+		o.readAt = func(f *os.File, b []byte, off int64) (int, error) {
+			if off >= ecjLoadChunkBytes {
+				return 0, errors.New("injected read failure")
+			}
+			return f.ReadAt(b, off)
+		}
+	})
+	ev, err := mountCompactTest(dir, 60, ops)
+	require.NoError(t, err)
+	require.False(t, ev.IsNeedleDeleted(5000), "the failed read must have left the set partial")
+	ev.Close()
+
+	got, err := os.ReadFile(base + ".ecj")
+	require.NoError(t, err)
+	assert.Equal(t, journal, got, "a partial set must never be written over the journal")
+
+	// A full load compacts, and keeps the id only the tail held.
+	ev, err = mountCompactTest(dir, 60, realEcjFsOps)
 	require.NoError(t, err)
 	defer ev.Close()
-	done()
-	require.Equal(t, bloated, fileSize(t, base+".ecj"))
-
-	require.NoError(t, ev.compactEcjAfterLoad(errors.New("injected load failure"), realEcjFsOps))
-	assert.Equal(t, bloated, fileSize(t, base+".ecj"), "a partial set must never be written over the journal")
-
-	require.NoError(t, ev.compactEcjAfterLoad(nil, realEcjFsOps))
-	assert.Equal(t, int64(100*types.NeedleIdSize), fileSize(t, base+".ecj"))
+	assert.Equal(t, int64(101*types.NeedleIdSize), fileSize(t, base+".ecj"))
+	assert.True(t, ev.IsNeedleDeleted(5000))
 }
 
 // A shard mount can give disk B a volume whose .ecj is disk A's. When A's own
