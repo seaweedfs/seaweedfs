@@ -149,7 +149,7 @@ func (vs *VolumeServer) fetchEcIndexFromPeers(peers []pb.ServerAddress, m storag
 			// journal is a *set*: merge it as a union so a bounced volume
 			// cannot double it. The merge only appends whole records, and the
 			// .vif copy stages and renames, so a failure leaves nothing to clean.
-			if err := vs.copyEcjAndMerge(client, m.Collection, uint32(m.VolumeId), idxBaseFileName, util.NewWriteThrottler(vs.maintenanceBytePerSecond)); err != nil {
+			if err := vs.copyEcjAndMerge(client, m.Collection, uint32(m.VolumeId), m.DataDir, idxBaseFileName, util.NewWriteThrottler(vs.maintenanceBytePerSecond)); err != nil {
 				glog.Warningf("ec volume %d: copy .ecj from %s: %v", m.VolumeId, peer, err)
 			}
 			if _, err := vs.doCopyFile(client, true, m.Collection, uint32(m.VolumeId), math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil); err != nil {

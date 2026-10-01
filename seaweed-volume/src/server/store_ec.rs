@@ -1746,6 +1746,7 @@ async fn fetch_ec_index_from_one_peer(
                 Ok((ids, true)) => crate::server::grpc_server::merge_ecj_ids(
                     state,
                     m.vid,
+                    m.data_dir.clone(),
                     ecj_path.to_string(),
                     ids,
                 )

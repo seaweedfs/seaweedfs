@@ -51,64 +51,48 @@ func lockEcjPath(path string) (unlock func()) {
 }
 
 // MergeEcJournal folds a peer's deletion ids into the local journal of EC
-// volume vid, whose on-disk path on the receiving disk is ecjPath. It appends
+// volume vid on the receiving disk, the one whose data directory is dataDir;
+// ecjPath is that journal's path in the disk's index directory. It appends
 // only the ids the journal lacks and returns how many it added.
 //
 // A mounted volume owns its journal: the merge goes through its open handle
-// and in-memory set, wherever that journal lives (it may sit in the data dir
-// rather than ecjPath's index dir). Otherwise ecjPath is appended to while the
-// disk's EC lock is held, so no mount can open it mid-append.
-func (s *Store) MergeEcJournal(vid needle.VolumeId, ecjPath string, ids map[types.NeedleId]struct{}) (int, error) {
+// and in-memory set. That is the receiving disk's own runtime for vid,
+// wherever its journal lives (it may sit in the data dir rather than
+// ecjPath's index dir), else a sibling runtime journaling into ecjPath itself:
+// disks sharing one index directory, or reconciliation mounting vid on a disk
+// that journals into another's (#9212). Otherwise ecjPath is appended to while
+// every disk's EC lock is held, so no mount anywhere can open it mid-append.
+func (s *Store) MergeEcJournal(vid needle.VolumeId, dataDir, ecjPath string, ids map[types.NeedleId]struct{}) (int, error) {
+	return s.mergeEcJournal(vid, dataDir, ecjPath, ids, erasure_coding.ReadEcjIds)
+}
+
+// mergeEcJournal is MergeEcJournal with the unlocked journal read injected, so
+// a test can mount the volume between that read and the append.
+func (s *Store) mergeEcJournal(vid needle.VolumeId, dataDir, ecjPath string, ids map[types.NeedleId]struct{}, read func(string) (map[types.NeedleId]struct{}, int64, error)) (int, error) {
 	unlock := lockEcjPath(ecjPath)
 	defer unlock()
 
-	dir := filepath.Clean(filepath.Dir(ecjPath))
 	var owner *DiskLocation
 	for _, loc := range s.Locations {
-		if filepath.Clean(loc.IdxDirectory) == dir || filepath.Clean(loc.Directory) == dir {
+		if filepath.Clean(loc.Directory) == filepath.Clean(dataDir) {
 			owner = loc
-			continue
-		}
-		// Reconciliation can mount vid on a sibling disk whose runtime
-		// journals into this disk's index directory (#9212).
-		if added, merged, err := loc.mergeIntoMountedEcJournal(vid, ids, func(ev *erasure_coding.EcVolume) bool {
-			return ev.FileName(".ecj") == ecjPath
-		}); merged {
-			return added, err
+			break
 		}
 	}
 	if owner == nil {
-		return 0, fmt.Errorf("ec volume %d: no disk owns journal %s", vid, ecjPath)
+		return 0, fmt.Errorf("ec volume %d: no disk at %s owns journal %s", vid, dataDir, ecjPath)
 	}
-	return owner.mergeEcJournal(vid, ecjPath, ids)
-}
-
-// mergeIntoMountedEcJournal merges ids into vid's mounted volume on this disk
-// if owns accepts it. merged reports whether such a volume was found.
-func (l *DiskLocation) mergeIntoMountedEcJournal(vid needle.VolumeId, ids map[types.NeedleId]struct{}, owns func(*erasure_coding.EcVolume) bool) (added int, merged bool, err error) {
-	l.ecVolumesLock.RLock()
-	defer l.ecVolumesLock.RUnlock()
-	ev, found := l.ecVolumes[vid]
-	if !found || !owns(ev) {
-		return 0, false, nil
-	}
-	added, err = ev.MergeJournal(ids)
-	return added, true, err
-}
-
-func (l *DiskLocation) mergeEcJournal(vid needle.VolumeId, ecjPath string, ids map[types.NeedleId]struct{}) (int, error) {
-	anyMount := func(*erasure_coding.EcVolume) bool { return true }
 	for attempt := 0; attempt < ecjMergeAttempts; attempt++ {
-		if added, merged, err := l.mergeIntoMountedEcJournal(vid, ids, anyMount); merged {
+		if added, merged, err := s.mergeIntoMountedEcJournal(owner, vid, ecjPath, ids); merged {
 			return added, err
 		}
-		// Read outside the lock: a bloated journal can take a while, and a
-		// queued mount would otherwise stall every EC read on this disk.
-		local, size, err := erasure_coding.ReadEcjIds(ecjPath)
+		// Read outside the locks: a bloated journal can take a while, and a
+		// queued mount would otherwise stall every EC read on its disk.
+		local, size, err := read(ecjPath)
 		if err != nil {
 			return 0, fmt.Errorf("read %s: %w", ecjPath, err)
 		}
-		added, mounted, err := l.appendUnmountedEcJournal(vid, ecjPath, local, ids, size)
+		added, mounted, err := s.appendUnmountedEcJournal(owner, vid, ecjPath, local, ids, size)
 		if mounted || errors.Is(err, erasure_coding.ErrEcjChanged) {
 			continue
 		}
@@ -117,12 +101,56 @@ func (l *DiskLocation) mergeEcJournal(vid needle.VolumeId, ecjPath string, ids m
 	return 0, fmt.Errorf("ec volume %d: journal %s kept changing during merge", vid, ecjPath)
 }
 
-// appendUnmountedEcJournal appends under the EC lock, which mounts take, after
-// confirming vid is still unmounted here.
-func (l *DiskLocation) appendUnmountedEcJournal(vid needle.VolumeId, ecjPath string, local, ids map[types.NeedleId]struct{}, size int64) (added int, mounted bool, err error) {
-	l.ecVolumesLock.RLock()
-	defer l.ecVolumesLock.RUnlock()
-	if _, found := l.ecVolumes[vid]; found {
+// rLockEcVolumes read-locks every disk's EC volume map in location order. A
+// mount registers its EcVolume, and reads its journal, under its own disk's
+// write lock, so holding all of them excludes a mount on any disk. No path
+// holds two disks' EC locks at once, so the fixed order cannot deadlock.
+func (s *Store) rLockEcVolumes() (unlock func()) {
+	for _, loc := range s.Locations {
+		loc.ecVolumesLock.RLock()
+	}
+	return func() {
+		for _, loc := range s.Locations {
+			loc.ecVolumesLock.RUnlock()
+		}
+	}
+}
+
+// mountedEcJournal returns the runtime a merge into ecjPath on owner must go
+// through, or nil when there is none: owner's own runtime for vid, else the
+// first sibling's whose journal is ecjPath. Callers hold rLockEcVolumes.
+func (s *Store) mountedEcJournal(owner *DiskLocation, vid needle.VolumeId, ecjPath string) *erasure_coding.EcVolume {
+	if ev, found := owner.ecVolumes[vid]; found {
+		return ev
+	}
+	for _, loc := range s.Locations {
+		if ev, found := loc.ecVolumes[vid]; found && filepath.Clean(ev.FileName(".ecj")) == filepath.Clean(ecjPath) {
+			return ev
+		}
+	}
+	return nil
+}
+
+// mergeIntoMountedEcJournal merges ids through the runtime mountedEcJournal
+// picks. merged reports whether there was one.
+func (s *Store) mergeIntoMountedEcJournal(owner *DiskLocation, vid needle.VolumeId, ecjPath string, ids map[types.NeedleId]struct{}) (added int, merged bool, err error) {
+	unlock := s.rLockEcVolumes()
+	defer unlock()
+	ev := s.mountedEcJournal(owner, vid, ecjPath)
+	if ev == nil {
+		return 0, false, nil
+	}
+	added, err = ev.MergeJournal(ids)
+	return added, true, err
+}
+
+// appendUnmountedEcJournal appends under every disk's EC lock after
+// confirming no runtime has mounted the journal since it was read. mounted
+// reports that one has; the caller then merges through it.
+func (s *Store) appendUnmountedEcJournal(owner *DiskLocation, vid needle.VolumeId, ecjPath string, local, ids map[types.NeedleId]struct{}, size int64) (added int, mounted bool, err error) {
+	unlock := s.rLockEcVolumes()
+	defer unlock()
+	if s.mountedEcJournal(owner, vid, ecjPath) != nil {
 		return 0, true, nil
 	}
 	added, err = erasure_coding.AppendEcjIds(ecjPath, local, ids, size)

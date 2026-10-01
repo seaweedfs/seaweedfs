@@ -439,7 +439,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		if req.CopyEcjFile {
 			// The journal is a *set* of ids: merge the source's into the
 			// local one as a union, never append it whole.
-			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, indexBaseFileName, throttler); err != nil {
+			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
 				return err
 			}
 		}
@@ -474,8 +474,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 // as a set union: only ids the local journal lacks are appended, so a
 // shard bounced between servers cannot grow it. The source journal streams
 // straight into memory — no staging file — and a source without one is not an
-// error. destBase is the receiving disk's index base name.
-func (vs *VolumeServer) copyEcjAndMerge(client volume_server_pb.VolumeServerClient, collection string, vid uint32, destBase string, throttler *util.WriteThrottler) error {
+// error. destDir is the receiving disk's data directory and destBase its index
+// base name.
+func (vs *VolumeServer) copyEcjAndMerge(client volume_server_pb.VolumeServerClient, collection string, vid uint32, destDir, destBase string, throttler *util.WriteThrottler) error {
 	stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
 		VolumeId:                 vid,
 		Ext:                      ".ecj",
@@ -495,7 +496,7 @@ func (vs *VolumeServer) copyEcjAndMerge(client volume_server_pb.VolumeServerClie
 	if !found {
 		return nil
 	}
-	if _, err := vs.store.MergeEcJournal(needle.VolumeId(vid), destBase+".ecj", ids); err != nil {
+	if _, err := vs.store.MergeEcJournal(needle.VolumeId(vid), destDir, destBase+".ecj", ids); err != nil {
 		return fmt.Errorf("volume %d: merge .ecj: %w", vid, err)
 	}
 	return nil

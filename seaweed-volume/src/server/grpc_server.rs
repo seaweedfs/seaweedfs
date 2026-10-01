@@ -3264,7 +3264,7 @@ impl VolumeServer for VolumeGrpcService {
                     "{}.ecj",
                     crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid)
                 );
-                merge_ecj_ids(&self.state, vid, ecj_path, ids)
+                merge_ecj_ids(&self.state, vid, dest_dir.clone(), ecj_path, ids)
                     .await
                     .map_err(|e| {
                         Status::internal(format!(
@@ -5926,18 +5926,25 @@ pub(crate) async fn receive_ecj_ids(
     Ok((decoder.into_ids(), found))
 }
 
-/// Merge received `.ecj` ids into vid's local journal at `ecj_path` off the
-/// async runtime (the merge reads, appends and fsyncs). Shared by shard copy
-/// and index recovery.
+/// Merge received `.ecj` ids into vid's local journal at `ecj_path` on the
+/// disk whose data directory is `data_dir`, off the async runtime (the merge
+/// reads, appends and fsyncs). Shared by shard copy and index recovery.
 pub(crate) async fn merge_ecj_ids(
     state: &std::sync::Arc<super::volume_server::VolumeServerState>,
     vid: VolumeId,
+    data_dir: String,
     ecj_path: String,
     ids: std::collections::HashSet<NeedleId>,
 ) -> std::io::Result<usize> {
     let state = std::sync::Arc::clone(state);
     tokio::task::spawn_blocking(move || {
-        crate::storage::store_ec_journal::merge_ec_journal(&state.store, vid, &ecj_path, &ids)
+        crate::storage::store_ec_journal::merge_ec_journal(
+            &state.store,
+            vid,
+            &data_dir,
+            &ecj_path,
+            &ids,
+        )
     })
     .await
     .map_err(|e| std::io::Error::other(format!("join .ecj merge: {}", e)))?
