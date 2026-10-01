@@ -114,6 +114,11 @@ pub struct VolumeServerState {
     pub cli_white_list: Vec<String>,
     /// Path to state.pb file for persisting VolumeServerState across restarts.
     pub state_file_path: String,
+    /// Volumes with an EC decode in flight. A dropped request leaves the
+    /// blocking job running; this keeps a retry from racing it on the
+    /// same volume files.
+    pub ec_decodes_in_flight:
+        std::sync::Mutex<std::collections::HashSet<crate::storage::types::VolumeId>>,
 }
 
 impl VolumeServerState {

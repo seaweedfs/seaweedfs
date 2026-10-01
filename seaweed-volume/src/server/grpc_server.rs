@@ -3902,10 +3902,30 @@ impl VolumeServer for VolumeGrpcService {
             }
         };
 
+        // A dropped request leaves the blocking job running; keep the vid
+        // claimed until it finishes so a retry cannot race the in-flight
+        // decode on the same volume files.
+        if !self
+            .state
+            .ec_decodes_in_flight
+            .lock()
+            .unwrap()
+            .insert(vid)
+        {
+            return Err(Status::unavailable(format!(
+                "ec volume {} is already being decoded",
+                req.volume_id
+            )));
+        }
+
         let state = self.state.clone();
-        tokio::task::spawn_blocking(move || job.run(&state))
-            .await
-            .map_err(|e| Status::internal(format!("decode ec volume {}: {}", vid, e)))??;
+        tokio::task::spawn_blocking(move || {
+            let result = job.run(&state);
+            state.ec_decodes_in_flight.lock().unwrap().remove(&vid);
+            result
+        })
+        .await
+        .map_err(|e| Status::internal(format!("decode ec volume {}: {}", vid, e)))??;
 
         // Go does NOT unmount EC shards or mount the volume here.
         // The caller (ec.balance / ec.decode) handles mount/unmount separately.
@@ -6561,13 +6581,16 @@ impl EcDecodeJob {
         ec_decoder::verify_decoded_dat_file(&dat_dir, &collection, vid, dat_file_size)
             .map_err(|e| Status::internal(format!("VerifyDecodedDatFile: {}", e)))?;
 
-        // Deletes journaled while the .dat was written. Appends hold the store
-        // write lock: waiting it out once means every delete acknowledged by
-        // now is on disk to be read.
-        drop(state.store.read().unwrap());
-        deleted
-            .catch_up()
-            .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+        // Deletes journaled while the .dat was written. Journal appends hold
+        // the store write lock through their sync-or-truncate, so a read lock
+        // held across catch_up guarantees every record read is committed —
+        // a rolled-back delete cannot leave a tombstone in the index.
+        {
+            let _guard = state.store.read().unwrap();
+            deleted
+                .catch_up()
+                .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+        }
 
         // Write .idx from the .ecx wherever it lives, beside the .dat where
         // the mount looks first (Go moves it there after the rebuild).
@@ -7084,6 +7107,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
         });
 
         (
@@ -7195,6 +7219,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
         });
 
         (VolumeGrpcService { state }, tmp)
@@ -9202,6 +9227,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
         });
 
         (VolumeGrpcService { state }, tmp)
@@ -10849,6 +10875,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
         });
 
         VolumeGrpcService { state }
@@ -12098,6 +12125,25 @@ mod tests {
         let _writer = deleter.join().unwrap();
         result.unwrap();
         assert_decoded_volume(&service, (2, 0), &[1, 3], &[2]);
+    }
+
+    /// A second decode while one is in flight is refused: the blocking job
+    /// outlives a dropped request and would race a retry on the same files.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_shards_to_volume_rejects_overlapping_decode() {
+        let (service, _tmp, _data, _idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        service
+            .state
+            .ec_decodes_in_flight
+            .lock()
+            .unwrap()
+            .insert(VolumeId(1));
+
+        let err = service
+            .volume_ec_shards_to_volume(ec_shards_to_volume_request())
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unavailable);
     }
 
     // Among storage errors, the filer requeues a delete only on "is read only"

@@ -1080,6 +1080,11 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return vs.adoptStagedVolume(req)
 	}
 
+	if _, loaded := vs.ecDecodesInFlight.LoadOrStore(req.VolumeId, struct{}{}); loaded {
+		return nil, status.Errorf(codes.Unavailable, "ec volume %d is already being decoded", req.VolumeId)
+	}
+	defer vs.ecDecodesInFlight.Delete(req.VolumeId)
+
 	// Collect all EC shards (NewEcVolume will load EC config from .vif into v.ECContext)
 	// Use MaxShardCount (32) to support custom EC ratios up to 32 total shards
 	tempShards := make([]string, erasure_coding.MaxShardCount)
