@@ -187,6 +187,11 @@ type AssumeRoleWithWebIdentityRequest struct {
 
 	// Policy is an optional session policy (optional)
 	Policy *string `json:"Policy,omitempty"`
+
+	// RoleId is the assumed role's unique ID, set by the IAM manager after it
+	// resolves the role. It is embedded in the session so the session is bound
+	// to this role and not to whatever role later holds the same name.
+	RoleId string `json:"-"`
 }
 
 // AssumeRoleWithCredentialsRequest represents a request to assume role with username/password
@@ -211,6 +216,9 @@ type AssumeRoleWithCredentialsRequest struct {
 
 	// Policy is an optional session policy (optional)
 	Policy *string `json:"Policy,omitempty"`
+
+	// RoleId is set by the IAM manager; see AssumeRoleWithWebIdentityRequest.
+	RoleId string `json:"-"`
 }
 
 // AssumeRoleResponse represents the response from assume role operations
@@ -304,6 +312,10 @@ type SessionInfo struct {
 
 	// ParentUser is the stable hashed identity (sub+iss) derived at federation time.
 	ParentUser string `json:"parentUser,omitempty"`
+
+	// RoleId is the unique ID of the role the session was issued for; empty
+	// for sessions issued before role IDs were recorded.
+	RoleId string `json:"roleId,omitempty"`
 }
 
 // NewSTSService creates a new STS service
@@ -688,6 +700,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
 		WithRoleInfo(effectiveRoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithRoleId(request.RoleId).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, externalIdentity.Issuer).
 		WithMaxDuration(sessionDuration).
 		WithRequestContext(requestContext)
@@ -760,13 +773,13 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	}
 
 	// 4-7. Mint the session
-	return s.issueSession(request.RoleArn, request.RoleSessionName, sessionPolicy,
+	return s.issueSession(request.RoleArn, request.RoleId, request.RoleSessionName, sessionPolicy,
 		request.DurationSeconds, provider.Name(), externalIdentity.UserID)
 }
 
 // issueSession mints temporary credentials and the self-contained JWT that
 // carries the whole session, shared by every assume-role entry point.
-func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string,
+func (s *STSService) issueSession(roleArn, roleId, roleSessionName, sessionPolicy string,
 	durationSeconds *int64, providerName, subject string) (*AssumeRoleResponse, error) {
 
 	sessionDuration := s.CalculateSessionDuration(durationSeconds)
@@ -791,6 +804,7 @@ func (s *STSService) issueSession(roleArn, roleSessionName, sessionPolicy string
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(roleSessionName).
 		WithRoleInfo(roleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
+		WithRoleId(roleId).
 		WithIdentityProvider(providerName, subject, "").
 		WithMaxDuration(sessionDuration)
 	if sessionPolicy != "" {
@@ -891,7 +905,9 @@ func (s *STSService) AssumeRoleForPrincipal(ctx context.Context, request *Assume
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
-	return s.issueSession(request.RoleArn, request.RoleSessionName, sessionPolicy,
+	// Iceberg credential vending resolves no role definition, so its sessions
+	// carry no role ID and stay bound by name.
+	return s.issueSession(request.RoleArn, "", request.RoleSessionName, sessionPolicy,
 		request.DurationSeconds, request.ProviderName, request.Principal)
 }
 

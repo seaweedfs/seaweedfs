@@ -501,7 +501,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	s3ApiServer.registerRouter(router)
 
-	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{
+	watched := []string{
 		option.BucketsPath,
 		filer.IamConfigDirectory,
 		filer.IamConfigDirectory + "/identities",
@@ -509,7 +509,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		filer.IamConfigDirectory + "/service_accounts",
 		filer.IamConfigDirectory + "/groups",
 		filer.IamConfigDirectory + "/oidc-providers",
-	})
+		filer.IamConfigDirectory + "/roles",
+	}
+	// A role store configured with its own basePath is watched there too.
+	if dir := s3ApiServer.roleStoreDir(); !slices.Contains(watched, dir) {
+		watched = append(watched, dir)
+	}
+	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, watched)
 
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
@@ -1171,7 +1177,10 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		// OIDCProviderStore selects where IAM-managed OIDC providers persist.
 		// Absent, they live in memory and are lost on restart.
 		OIDCProviderStore *integration.OIDCProviderStoreConfig `json:"oidcProviderStore"`
-		Policies          []struct {
+		// RoleStore selects where roles persist. Absent, they live in memory and
+		// only the roles in this file exist.
+		RoleStore *integration.RoleStoreConfig `json:"roleStore"`
+		Policies  []struct {
 			Name     string                 `json:"name"`
 			Document *policy.PolicyDocument `json:"document"`
 		} `json:"policies"`
@@ -1217,21 +1226,28 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	}
 
 	// With no IAM config file there is nothing static for a persisted
-	// provider to shadow or outlive, so providers created at runtime default
-	// to the filer, where restarts and peer S3 servers see them. A config
-	// file keeps the in-memory default unless it sets oidcProviderStore.
+	// provider or role to shadow or outlive, so those created at runtime
+	// default to the filer, where restarts and peer S3 servers see them. A
+	// config file keeps the in-memory defaults unless it sets
+	// oidcProviderStore / roleStore.
+	persistByDefault := configPath == "" && filerAddressProvider != nil
 	oidcProviderStore := configRoot.OIDCProviderStore
-	if oidcProviderStore == nil && configPath == "" && filerAddressProvider != nil {
+	if oidcProviderStore == nil && persistByDefault {
 		oidcProviderStore = &integration.OIDCProviderStoreConfig{StoreType: "filer"}
+	}
+	roleStore := configRoot.RoleStore
+	if roleStore == nil {
+		roleStore = &integration.RoleStoreConfig{StoreType: sts.StoreTypeMemory}
+		if persistByDefault {
+			roleStore = &integration.RoleStoreConfig{StoreType: "filer"}
+		}
 	}
 
 	// Create IAM configuration
 	iamConfig := &integration.IAMConfig{
-		STS:    configRoot.STS,
-		Policy: configRoot.Policy,
-		Roles: &integration.RoleStoreConfig{
-			StoreType: sts.StoreTypeMemory, // Use memory store for JSON config-based setup
-		},
+		STS:           configRoot.STS,
+		Policy:        configRoot.Policy,
+		Roles:         roleStore,
 		OIDCProviders: oidcProviderStore,
 	}
 
@@ -1315,11 +1331,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	}
 
 	// Load roles
-	for _, roleDef := range configRoot.Roles {
-		if err := iamManager.CreateRole(context.Background(), "", roleDef.RoleName, roleDef); err != nil {
-			glog.Warningf("Failed to create role %s: %v", roleDef.RoleName, err)
-		}
-	}
+	iamManager.LoadStaticRoles(context.Background(), configRoot.Roles)
 
 	glog.V(1).Infof("Loaded %d providers, %d policies and %d roles from config", len(configRoot.Providers), len(configRoot.Policies), len(configRoot.Roles))
 

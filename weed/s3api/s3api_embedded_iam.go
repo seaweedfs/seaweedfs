@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -643,6 +644,20 @@ func (e *EmbeddedIamApi) DeletePolicy(ctx context.Context, values url.Values) (*
 					Code:  iam.ErrCodeDeleteConflictException,
 					Error: fmt.Errorf("policy %s is attached to group %s", policyName, gn),
 				}
+			}
+		}
+	}
+	// Roles attach policies by name too; see integration.RolesAttachingPolicy,
+	// including why a role only in a peer's IAM config file is not seen here.
+	if mgr := e.oidcIAMManager(); mgr != nil && mgr.GetRoleStore() != nil {
+		roles, err := integration.RolesAttachingPolicy(ctx, mgr.GetRoleStore(), policyName)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+		if len(roles) > 0 {
+			return resp, &iamError{
+				Code:  iam.ErrCodeDeleteConflictException,
+				Error: fmt.Errorf("policy %s is attached to role %s", policyName, roles[0]),
 			}
 		}
 	}
@@ -2584,7 +2599,10 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 }
 
 // ExecuteAction executes an IAM action with the given values.
-// If skipPersist is true, the changed configuration is not saved to the persistent store.
+// If skipPersist is true, the changed S3ApiConfiguration is not saved to the
+// persistent store. OIDC provider and role actions do not change that
+// configuration: they write to the IAM manager's own stores, whichever the
+// server was configured with, and skipPersist does not apply to them.
 // reqID is set on the response; if empty, a new request ID is generated.
 func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, skipPersist bool, reqID string) (iamlib.RequestIDSetter, *iamError) {
 	if reqID == "" {
@@ -2600,7 +2618,8 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListUserPolicies", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListPolicyVersions", "GetPolicyVersion", "ListServiceAccounts", "GetServiceAccount",
 			"GetGroup", "ListGroups", "ListAttachedGroupPolicies", "GetGroupPolicy", "ListGroupPolicies", "ListGroupsForUser",
 			"ListUserTags",
-			actionListOpenIDConnectProviders, actionGetOpenIDConnectProvider:
+			actionListOpenIDConnectProviders, actionGetOpenIDConnectProvider,
+			actionGetRole, actionListRoles, actionListAttachedRolePolicies:
 			// Allowed read-only actions
 		default:
 			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
@@ -2610,6 +2629,15 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	// OIDC provider actions don't operate on S3ApiConfiguration; dispatch
 	// before the unrelated config load + reload churn.
 	if response, iamErr, ok := e.dispatchOIDCProviderAction(ctx, values); ok {
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		response.SetRequestId(reqID)
+		return response, nil
+	}
+
+	// Role actions operate on the IAM manager's role store, likewise.
+	if response, iamErr, ok := e.dispatchRoleAction(ctx, values); ok {
 		if iamErr != nil {
 			return nil, iamErr
 		}
