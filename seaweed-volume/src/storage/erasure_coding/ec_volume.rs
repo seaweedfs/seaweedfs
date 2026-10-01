@@ -1856,6 +1856,14 @@ impl EcVolume {
         Ok(delta.len())
     }
 
+    /// Marks ids deleted in memory only, for runtimes sharing a journal
+    /// another runtime already appended them to.
+    pub fn publish_merged_ids(&self, ids: &HashSet<NeedleId>) {
+        if let Ok(mut set) = self.deleted_needles.write() {
+            set.extend(ids.iter().copied());
+        }
+    }
+
     // ---- Lifecycle ----
 
     pub fn close(&mut self) {

@@ -167,6 +167,33 @@ func TestMergeEcJournal_SharedIndexDirReachesSiblingMount(t *testing.T) {
 	assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, idxBase+".ecj"))
 }
 
+// Every runtime holding the journal open must see merged ids in memory.
+func TestMergeEcJournal_SharedJournalReachesEveryHolder(t *testing.T) {
+	tempDir := t.TempDir()
+	disk0 := filepath.Join(tempDir, "d0")
+	disk1 := filepath.Join(tempDir, "d1")
+	idxDir := filepath.Join(tempDir, "idx")
+	store := startEcJournalStoreDisks(t, idxDir, disk0, disk1)
+
+	const collection = "c"
+	vid := needle.VolumeId(9)
+	writeEcShard0(t, disk0, collection, vid)
+	writeEcShard0(t, disk1, collection, vid)
+	idxBase := writeEcIndex(t, idxDir, collection, vid, 1)
+	ev0, err := store.Locations[0].LoadEcShard(collection, vid, 0)
+	require.NoError(t, err)
+	ev1, err := store.Locations[1].LoadEcShard(collection, vid, 0)
+	require.NoError(t, err)
+	require.Equal(t, idxBase+".ecj", ev0.FileName(".ecj"))
+	require.Equal(t, idxBase+".ecj", ev1.FileName(".ecj"))
+
+	added, err := store.MergeEcJournal(vid, disk0, idxBase+".ecj", ecjIdSet(1, 2))
+	require.NoError(t, err)
+	assert.Equal(t, 1, added)
+	assert.True(t, ev0.IsNeedleDeleted(2))
+	assert.True(t, ev1.IsNeedleDeleted(2), "every journal holder must see the merged id")
+}
+
 // A sibling disk can mount vid from the receiving disk's index (#9212) while
 // the merge reads the journal unlocked. The append must notice that mount and
 // go through it instead of writing behind its open handle.

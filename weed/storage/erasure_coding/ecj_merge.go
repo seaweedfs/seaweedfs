@@ -323,3 +323,13 @@ func (ev *EcVolume) MergeJournal(ids map[types.NeedleId]struct{}) (added int, er
 	ev.deletedNeedlesLock.Unlock()
 	return len(delta), nil
 }
+
+// PublishMergedIds marks ids deleted in memory only, for runtimes sharing a
+// journal another runtime already appended them to.
+func (ev *EcVolume) PublishMergedIds(ids map[types.NeedleId]struct{}) {
+	ev.deletedNeedlesLock.Lock()
+	for id := range ids {
+		ev.deletedNeedles[id] = struct{}{}
+	}
+	ev.deletedNeedlesLock.Unlock()
+}

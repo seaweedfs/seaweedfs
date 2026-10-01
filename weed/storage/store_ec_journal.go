@@ -147,7 +147,8 @@ func (s *Store) mountedEcJournal(owner *DiskLocation, vid needle.VolumeId, ecjPa
 }
 
 // mergeIntoMountedEcJournal merges ids through the runtime mountedEcJournal
-// picks. merged reports whether there was one. Only that runtime's disk stays
+// picks and publishes them to the other runtimes sharing that journal.
+// merged reports whether there was one. Only the picked runtime's disk stays
 // locked across the merge's fsync, which keeps it mounted.
 func (s *Store) mergeIntoMountedEcJournal(owner *DiskLocation, vid needle.VolumeId, ecjPath string, ids map[types.NeedleId]struct{}) (added int, merged bool, err error) {
 	unlock := s.rLockEcVolumes()
@@ -161,9 +162,19 @@ func (s *Store) mergeIntoMountedEcJournal(owner *DiskLocation, vid needle.Volume
 			loc.ecVolumesLock.RUnlock()
 		}
 	}
-	defer mountedOn.ecVolumesLock.RUnlock()
 	added, err = ev.MergeJournal(ids)
-	return added, true, err
+	mountedOn.ecVolumesLock.RUnlock()
+	if err != nil {
+		return added, true, err
+	}
+	s.withEcJournalHolders(vid, ecjPath, func(holders []*erasure_coding.EcVolume) {
+		for _, h := range holders {
+			if h != ev {
+				h.PublishMergedIds(ids)
+			}
+		}
+	})
+	return added, true, nil
 }
 
 // appendUnmountedEcJournal writes the missing ids under every disk's EC lock,

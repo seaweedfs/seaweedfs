@@ -6,7 +6,6 @@ use std::io;
 use std::path::Path;
 use std::sync::RwLock;
 
-use crate::storage::erasure_coding::EcVolume;
 use crate::storage::erasure_coding::ecj_merge::{append_ecj_ids, read_ecj_ids};
 use crate::storage::store::Store;
 use crate::storage::types::{NeedleId, VolumeId};
@@ -57,17 +56,27 @@ fn merge_ec_journal_with(
             let mut store = store
                 .write()
                 .map_err(|_| io::Error::other("store lock poisoned"))?;
-            if let Some(ecv) = mounted_ec_journal(&mut store, vid, data_dir, ecj_path)? {
-                return ecv.merge_journal(ids);
+            if let Some(primary) = mounted_ec_journal(&store, vid, data_dir, ecj_path)? {
+                let added = store.locations[primary]
+                    .find_ec_volume_mut(vid)
+                    .expect("mounted journal runtime")
+                    .merge_journal(ids)?;
+                publish_to_journal_siblings(&store, primary, vid, ecj_path, ids);
+                return Ok(added);
             }
         }
         let (local, size) = read(ecj_path)?;
         let mut store = store
             .write()
             .map_err(|_| io::Error::other("store lock poisoned"))?;
-        if let Some(ecv) = mounted_ec_journal(&mut store, vid, data_dir, ecj_path)? {
+        if let Some(primary) = mounted_ec_journal(&store, vid, data_dir, ecj_path)? {
             // Mounted since the read: its handle owns the journal now.
-            return ecv.merge_journal(ids);
+            let added = store.locations[primary]
+                .find_ec_volume_mut(vid)
+                .expect("mounted journal runtime")
+                .merge_journal(ids)?;
+            publish_to_journal_siblings(&store, primary, vid, ecj_path, ids);
+            return Ok(added);
         }
         if let Some(added) = append_ecj_ids(ecj_path, &local, ids, size)? {
             return Ok(added);
@@ -79,16 +88,14 @@ fn merge_ec_journal_with(
     )))
 }
 
-/// The mounted runtime a merge into `ecj_path` on the disk at `data_dir` must
-/// go through, if any: that disk's own runtime for `vid`, else the first
-/// sibling's whose journal is `ecj_path`. Errors when no disk is at
-/// `data_dir`.
-fn mounted_ec_journal<'a>(
-    store: &'a mut Store,
+/// The disk index of the runtime holding `ecj_path` open, if any: the disk at
+/// `data_dir`'s own, else the first sibling journaling into it.
+fn mounted_ec_journal(
+    store: &Store,
     vid: VolumeId,
     data_dir: &str,
     ecj_path: &str,
-) -> io::Result<Option<&'a mut EcVolume>> {
+) -> io::Result<Option<usize>> {
     let owner = store
         .locations
         .iter()
@@ -107,7 +114,27 @@ fn mounted_ec_journal<'a>(
                 .is_some_and(|ecv| Path::new(&ecv.ecj_file_name()) == Path::new(ecj_path))
         })
     };
-    Ok(runtime.and_then(|i| store.locations[i].find_ec_volume_mut(vid)))
+    Ok(runtime)
+}
+
+/// Publishes merged ids into every other runtime journaling into `ecj_path`.
+fn publish_to_journal_siblings(
+    store: &Store,
+    primary: usize,
+    vid: VolumeId,
+    ecj_path: &str,
+    ids: &HashSet<NeedleId>,
+) {
+    for (i, loc) in store.locations.iter().enumerate() {
+        if i == primary {
+            continue;
+        }
+        if let Some(ecv) = loc.find_ec_volume(vid) {
+            if Path::new(&ecv.ecj_file_name()) == Path::new(ecj_path) {
+                ecv.publish_merged_ids(ids);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +250,30 @@ mod tests {
         assert!(
             deleted_on(&store, 0, 2),
             "the mounted sibling must see id 2"
+        );
+        assert_eq!(std::fs::read(&ecj).unwrap(), records(&[1, 2]));
+    }
+
+    /// Every runtime holding the journal open must see merged ids in memory.
+    #[test]
+    fn shared_journal_reaches_every_holder() {
+        let tmp = TempDir::new().unwrap();
+        let store = make_store(&tmp, &["d0", "d1"], Some("idx"));
+        write_shard0(&dir(&tmp, "d0"));
+        write_shard0(&dir(&tmp, "d1"));
+        let ecj = write_index(&dir(&tmp, "idx"), &[1]);
+        for i in 0..2 {
+            store.write().unwrap().locations[i]
+                .mount_ec_shards(VID, COLLECTION, &[0], "")
+                .unwrap();
+        }
+
+        let added =
+            merge_ec_journal(&store, VID, &dir(&tmp, "d1"), &ecj, &id_set(&[1, 2])).unwrap();
+        assert_eq!(added, 1);
+        assert!(
+            deleted_on(&store, 0, 2) && deleted_on(&store, 1, 2),
+            "every journal holder must see the merged id"
         );
         assert_eq!(std::fs::read(&ecj).unwrap(), records(&[1, 2]));
     }
