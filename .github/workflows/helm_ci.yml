@@ -718,6 +718,57 @@ jobs:
           helm template test $CHART_DIR --set cosi.enabled=true > /tmp/cosi.yaml
           grep -q "seaweedfs-cosi" /tmp/cosi.yaml
           echo "COSI driver renders correctly"
+
+          echo ""
+          echo "=== Testing default pod and container security contexts ==="
+          helm template test $CHART_DIR \
+            --set s3.enabled=true \
+            --set s3.createBuckets[0].name=test \
+            --set sftp.enabled=true \
+            --set admin.enabled=true \
+            --set admin.secret.adminPassword=ci-admin-password \
+            --set worker.enabled=true \
+            --set cosi.enabled=true > /tmp/security-contexts.yaml
+          helm template test $CHART_DIR \
+            --set allInOne.enabled=true > /tmp/security-contexts-aio.yaml
+          python3 - /tmp/security-contexts.yaml /tmp/security-contexts-aio.yaml <<'PYEOF'
+          import sys
+
+          import yaml
+
+          errors = []
+          workloads = 0
+          containers = 0
+          for path in sys.argv[1:]:
+              with open(path) as stream:
+                  documents = [document for document in yaml.safe_load_all(stream) if document]
+              for document in documents:
+                  if document.get("kind") not in ("Deployment", "StatefulSet", "Job"):
+                      continue
+                  workloads += 1
+                  name = document["metadata"]["name"]
+                  pod = document["spec"]["template"]["spec"]
+                  pod_context = pod.get("securityContext", {})
+                  if pod_context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
+                      errors.append(f"{name}: pod seccompProfile is not RuntimeDefault")
+                  for container in pod.get("containers", []):
+                      containers += 1
+                      context = container.get("securityContext", {})
+                      prefix = f"{name}/{container['name']}"
+                      if context.get("privileged") is not False:
+                          errors.append(f"{prefix}: privileged is not false")
+                      if context.get("allowPrivilegeEscalation") is not False:
+                          errors.append(f"{prefix}: allowPrivilegeEscalation is not false")
+                      if "ALL" not in context.get("capabilities", {}).get("drop", []):
+                          errors.append(f"{prefix}: capabilities.drop does not contain ALL")
+                      if context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
+                          errors.append(f"{prefix}: seccompProfile is not RuntimeDefault")
+
+          if errors:
+              print("\n".join(f"FAIL: {error}" for error in errors), file=sys.stderr)
+              sys.exit(1)
+          print(f"Validated security contexts on {workloads} workloads and {containers} containers")
+          PYEOF
           
           echo ""
           echo "=== Testing long release name: service names match DNS references ==="

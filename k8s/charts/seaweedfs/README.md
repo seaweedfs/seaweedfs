@@ -570,6 +570,14 @@ Two things worth knowing before you turn this on:
 
 The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings from AWS, Google and Azure install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
 
+## Pod and container security contexts
+
+The chart enables a `RuntimeDefault` seccomp profile at both pod and container level for all built-in workloads. Built-in containers also run with privilege escalation disabled, `privileged: false`, and all Linux capabilities dropped.
+
+The chart does not enable `runAsNonRoot` by default because its default `hostPath` storage may be owned by root. To enforce the Kubernetes `restricted` Pod Security Standard, use storage that is writable by a non-root user and configure `runAsNonRoot` or use the OpenShift overrides below.
+
+Security contexts configured for a component also apply to the chart-managed helper containers for that component. User-provided init containers and sidecars must define their own container security context.
+
 ## OpenShift Support
 
 SeaweedFS can be deployed on OpenShift or any cluster enforcing the Kubernetes "restricted" Pod Security Standard. By default, OpenShift blocks containers that run as root or use `hostPath` volumes.

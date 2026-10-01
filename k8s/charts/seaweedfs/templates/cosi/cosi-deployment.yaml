@@ -148,6 +148,9 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.cosi.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.cosi.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
         - name: seaweedfs-cosi-sidecar
           image: "{{ .Values.cosi.sidecar.image }}"
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
