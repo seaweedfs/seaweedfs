@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -45,6 +46,7 @@ type FilerClient struct {
 	filerAddressesMu   sync.RWMutex   // Protects filerAddresses and filerHealth
 	filerIndex         int32          // atomic: current filer index for round-robin
 	filerHealth        []*filerHealth // health status per filer (same order as filerAddresses)
+	peerUpdates        uint64         // pushed filer updates applied; protected by filerAddressesMu
 	grpcDialOption     grpc.DialOption
 	urlPreference      UrlPreference
 	grpcTimeout        time.Duration
@@ -335,6 +337,8 @@ func (fc *FilerClient) refreshFilerList() {
 		return
 	}
 
+	generation := fc.peerUpdateGeneration()
+
 	// Query master for filers in our group
 	updates := cluster.ListExistingPeerUpdates(currentMaster, fc.grpcDialOption, fc.filerGroup, cluster.FilerType)
 
@@ -358,7 +362,25 @@ func (fc *FilerClient) refreshFilerList() {
 		return
 	}
 
-	fc.applyDiscoveredFilers(discoveredFilers)
+	fc.applyDiscoverySnapshot(discoveredFilers, generation)
+}
+
+func (fc *FilerClient) peerUpdateGeneration() uint64 {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	return fc.peerUpdates
+}
+
+// applyDiscoverySnapshot drops a snapshot requested before a pushed update was
+// applied: the push is newer, and the next poll reconciles anything it missed.
+func (fc *FilerClient) applyDiscoverySnapshot(discoveredFilers map[pb.ServerAddress]struct{}, generation uint64) {
+	fc.filerAddressesMu.Lock()
+	defer fc.filerAddressesMu.Unlock()
+	if fc.peerUpdates != generation {
+		glog.V(1).Infof("FilerClient: discarding discovery snapshot for group '%s' superseded by pushed updates", fc.filerGroup)
+		return
+	}
+	fc.applyDiscoveredFilersLocked(discoveredFilers)
 }
 
 // applyDiscoveredFilers treats the master snapshot as authoritative: survivors
@@ -368,7 +390,39 @@ func (fc *FilerClient) refreshFilerList() {
 func (fc *FilerClient) applyDiscoveredFilers(discoveredFilers map[pb.ServerAddress]struct{}) {
 	fc.filerAddressesMu.Lock()
 	defer fc.filerAddressesMu.Unlock()
+	fc.applyDiscoveredFilersLocked(discoveredFilers)
+}
 
+// OnPeerUpdate applies a filer join/leave pushed by the master, so the list
+// tracks a rolling restart instead of waiting for the next discovery poll. The
+// last known filer is never removed: an empty list fails every request, while a
+// stale one still recovers through the poll.
+func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.Time) {
+	if update.NodeType != cluster.FilerType || update.Address == "" {
+		return
+	}
+	addr := pb.ServerAddress(update.Address)
+
+	fc.filerAddressesMu.Lock()
+	defer fc.filerAddressesMu.Unlock()
+	fc.peerUpdates++
+
+	filers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses)+1)
+	for _, f := range fc.filerAddresses {
+		filers[f] = struct{}{}
+	}
+	if update.IsAdd {
+		filers[addr] = struct{}{}
+	} else {
+		delete(filers, addr)
+		if len(filers) == 0 {
+			return
+		}
+	}
+	fc.applyDiscoveredFilersLocked(filers)
+}
+
+func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.ServerAddress]struct{}) {
 	existingFilers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses))
 	for _, f := range fc.filerAddresses {
 		existingFilers[f] = struct{}{}

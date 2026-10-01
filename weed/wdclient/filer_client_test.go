@@ -3,8 +3,11 @@ package wdclient
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func newTestFilerClient(addrs ...pb.ServerAddress) *FilerClient {
@@ -98,5 +101,91 @@ func TestApplyDiscoveredFilersNoChangeIsNoop(t *testing.T) {
 
 	if fc.filerHealth[0] != originalHealthA || fc.filerHealth[1] != originalHealthB {
 		t.Errorf("no-op refresh should not reallocate health entries")
+	}
+}
+
+func filerUpdate(addr pb.ServerAddress, isAdd bool) *master_pb.ClusterNodeUpdate {
+	return &master_pb.ClusterNodeUpdate{NodeType: cluster.FilerType, Address: string(addr), IsAdd: isAdd}
+}
+
+// A rolling restart replaces every filer within one discovery interval; the
+// pushed updates must keep the list live without waiting for the next poll.
+func TestOnPeerUpdateTracksRollingReplacement(t *testing.T) {
+	old1 := pb.ServerAddress("10.0.0.1:8888")
+	old2 := pb.ServerAddress("10.0.0.2:8888")
+	new1 := pb.ServerAddress("10.0.1.1:8888")
+	new2 := pb.ServerAddress("10.0.1.2:8888")
+
+	fc := newTestFilerClient(old1, old2)
+
+	fc.OnPeerUpdate(filerUpdate(old1, false), time.Now())
+	fc.OnPeerUpdate(filerUpdate(new1, true), time.Now())
+	fc.OnPeerUpdate(filerUpdate(old2, false), time.Now())
+	fc.OnPeerUpdate(filerUpdate(new2, true), time.Now())
+
+	got := filerAddressList(fc)
+	if len(got) != 2 || got[0] != new1 || got[1] != new2 {
+		t.Fatalf("expected [%s %s], got %v", new1, new2, got)
+	}
+}
+
+func TestOnPeerUpdateKeepsLastFiler(t *testing.T) {
+	only := pb.ServerAddress("10.0.0.1:8888")
+	fc := newTestFilerClient(only)
+
+	fc.OnPeerUpdate(filerUpdate(only, false), time.Now())
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != only {
+		t.Fatalf("removing the last filer must keep it, got %v", got)
+	}
+}
+
+func TestOnPeerUpdateIgnoresOtherNodeTypes(t *testing.T) {
+	a := pb.ServerAddress("10.0.0.1:8888")
+	fc := newTestFilerClient(a)
+
+	fc.OnPeerUpdate(&master_pb.ClusterNodeUpdate{NodeType: cluster.S3Type, Address: "10.0.0.9:18333", IsAdd: true}, time.Now())
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != a {
+		t.Fatalf("non-filer update changed the list: %v", got)
+	}
+}
+
+func TestOnPeerUpdateDuplicateAddKeepsHealth(t *testing.T) {
+	a := pb.ServerAddress("10.0.0.1:8888")
+	fc := newTestFilerClient(a)
+	atomic.StoreInt32(&fc.filerHealth[0].failureCount, 2)
+
+	fc.OnPeerUpdate(filerUpdate(a, true), time.Now())
+
+	if len(fc.filerHealth) != 1 || atomic.LoadInt32(&fc.filerHealth[0].failureCount) != 2 {
+		t.Fatalf("re-announced filer lost its health state")
+	}
+}
+
+func TestDiscoverySnapshotTakenBeforePushIsDiscarded(t *testing.T) {
+	old := pb.ServerAddress("10.0.0.1:8888")
+	joined := pb.ServerAddress("10.0.1.1:8888")
+	fc := newTestFilerClient(old)
+
+	generation := fc.peerUpdateGeneration()
+	fc.OnPeerUpdate(filerUpdate(joined, true), time.Now())
+	fc.OnPeerUpdate(filerUpdate(old, false), time.Now())
+	fc.applyDiscoverySnapshot(map[pb.ServerAddress]struct{}{old: {}}, generation)
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != joined {
+		t.Fatalf("stale snapshot overwrote pushed membership: %v", got)
+	}
+}
+
+func TestDiscoverySnapshotWithoutInterveningPushIsApplied(t *testing.T) {
+	old := pb.ServerAddress("10.0.0.1:8888")
+	replacement := pb.ServerAddress("10.0.1.1:8888")
+	fc := newTestFilerClient(old)
+
+	fc.applyDiscoverySnapshot(map[pb.ServerAddress]struct{}{replacement: {}}, fc.peerUpdateGeneration())
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != replacement {
+		t.Fatalf("expected snapshot to replace list, got %v", got)
 	}
 }
