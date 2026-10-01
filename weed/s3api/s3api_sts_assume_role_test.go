@@ -78,7 +78,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 			}
 		}
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), fallbackRoleArn, "test-session", nil, "", modifyClaims)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), fallbackRoleArn, "", "test-session", nil, "", modifyClaims)
 		require.NoError(t, err)
 
 		// Assertions
@@ -110,7 +110,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 
 		fallbackRoleArn := callerIdentity.PrincipalArn
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), fallbackRoleArn, "nested-session", nil, "", nil)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), fallbackRoleArn, "", "nested-session", nil, "", nil)
 		require.NoError(t, err)
 
 		// The role name should be extracted from the assumed role ARN ("admin")
@@ -127,7 +127,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 	t.Run("Explicit RoleArn Provided", func(t *testing.T) {
 		explicitRoleArn := "arn:aws:iam::111122223333:role/TargetRole"
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), explicitRoleArn, "explicit-session", nil, "", nil)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), explicitRoleArn, "", "explicit-session", nil, "", nil)
 		require.NoError(t, err)
 
 		// Role name should be "TargetRole"
@@ -143,7 +143,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 	t.Run("Malformed ARN", func(t *testing.T) {
 		malformedArn := "invalid-arn"
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), malformedArn, "bad-session", nil, "", nil)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), malformedArn, "", "bad-session", nil, "", nil)
 		require.NoError(t, err)
 
 		// Fallback behavior: use full string as role name if extraction fails
@@ -187,7 +187,7 @@ func TestAssumeRole_EmbedsRolePolicies(t *testing.T) {
 		stsHandlers := NewSTSHandlers(manager.GetSTSService(), iam)
 
 		roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", defaultAccountID, roleName)
-		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", nil, "", nil)
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "", "test-session", nil, "", nil)
 		require.NoError(t, err)
 
 		sessionInfo, err := manager.GetSTSService().ValidateSessionToken(ctx, stsCreds.SessionToken)
@@ -211,7 +211,7 @@ func TestAssumeRole_EmbedsRolePolicies(t *testing.T) {
 		stsHandlers := NewSTSHandlers(manager.GetSTSService(), iam)
 
 		roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", defaultAccountID, roleName)
-		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", nil, "", nil)
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "", "test-session", nil, "", nil)
 		require.NoError(t, err)
 
 		sessionInfo, err := manager.GetSTSService().ValidateSessionToken(ctx, stsCreds.SessionToken)
@@ -257,7 +257,7 @@ func TestPrepareSTSCredentialsHonorsConfiguredDurations(t *testing.T) {
 	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/test-role", defaultAccountID)
 
 	expiresIn := func(durationSeconds *int64) time.Duration {
-		stsCreds, _, err := stsHandlers.prepareSTSCredentials(context.Background(), roleArn, "test-session", durationSeconds, "", nil)
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(context.Background(), roleArn, "", "test-session", durationSeconds, "", nil)
 		require.NoError(t, err)
 		exp, err := time.Parse(time.RFC3339, stsCreds.Expiration)
 		require.NoError(t, err)
@@ -291,7 +291,7 @@ func TestPrepareSTSCredentialsCapsAtRoleMaxDuration(t *testing.T) {
 	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/ShortLivedRole", defaultAccountID)
 
 	expiresIn := func(durationSeconds *int64) time.Duration {
-		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", durationSeconds, "", nil)
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "", "test-session", durationSeconds, "", nil)
 		require.NoError(t, err)
 		exp, err := time.Parse(time.RFC3339, stsCreds.Expiration)
 		require.NoError(t, err)
@@ -301,4 +301,40 @@ func TestPrepareSTSCredentialsCapsAtRoleMaxDuration(t *testing.T) {
 	twoHours := int64(7200)
 	assert.InDelta(t, float64(3600), expiresIn(nil).Seconds(), 60, "omitted duration resolves to the 2h default but the role caps it at 1h")
 	assert.InDelta(t, float64(3600), expiresIn(&twoHours).Seconds(), 60, "explicit duration above the role max is capped")
+}
+
+// A session is issued from the role definition whose trust admits the
+// caller. A role replaced after the caller's trust check by one that does
+// not trust the caller yields no session, not one bound to the replacement.
+func TestPrepareSTSCredentialsChecksTrustOnTheRoleItBinds(t *testing.T) {
+	ctx := context.Background()
+	manager := newTestSTSIntegrationManager(t)
+	trusting := func(principal string) *policy.PolicyDocument {
+		return &policy.PolicyDocument{Version: "2012-10-17", Statement: []policy.Statement{{
+			Effect: "Allow", Action: []string{"sts:AssumeRole"},
+			Principal: map[string]interface{}{"AWS": principal},
+		}}}
+	}
+	caller := fmt.Sprintf("arn:aws:iam::%s:user/alice", defaultAccountID)
+	roleName := "ReplacedRole"
+	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", defaultAccountID, roleName)
+	stsHandlers := NewSTSHandlers(manager.GetSTSService(), &IdentityAccessManagement{iamIntegration: NewS3IAMIntegration(manager, "")})
+
+	// The caller's trust check passed against a role since replaced by one
+	// trusting someone else.
+	require.NoError(t, manager.CreateRole(ctx, "", roleName, &integration.RoleDefinition{
+		RoleName: roleName, TrustPolicy: trusting(fmt.Sprintf("arn:aws:iam::%s:user/bob", defaultAccountID)),
+	}))
+	_, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, caller, "s", nil, "", nil)
+	require.ErrorIs(t, err, integration.ErrTrustPolicyDenied, "a session was issued for a role that does not trust the caller")
+
+	// A replacement that does trust the caller binds its own ID.
+	require.NoError(t, manager.CreateRole(ctx, "", roleName, &integration.RoleDefinition{RoleName: roleName, TrustPolicy: trusting(caller)}))
+	role, err := manager.GetRole(ctx, roleName)
+	require.NoError(t, err)
+	creds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, caller, "s", nil, "", nil)
+	require.NoError(t, err)
+	session, err := manager.GetSTSService().ValidateSessionToken(ctx, creds.SessionToken)
+	require.NoError(t, err)
+	assert.Equal(t, role.RoleId, session.RoleId)
 }
