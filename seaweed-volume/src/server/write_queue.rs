@@ -3,8 +3,8 @@
 //! Instead of each upload handler directly calling `write_needle`, writes are
 //! submitted to a queue. A background worker drains the queue in batches (up to
 //! 128 entries), groups them by volume ID, and processes them together under a
-//! single store lock. Requests that asked for `fsync` are flushed by
-//! `write_needle` itself, one flush per durable write.
+//! single store lock. Durable writes to a volume share their .dat and .idx
+//! flushes (see `Volume::write_needles_grouped`).
 
 use std::sync::Arc;
 
@@ -159,8 +159,12 @@ fn process_batch(state: Arc<VolumeServerState>, batch: Vec<WriteRequest>) {
     let mut store = state.store.write().unwrap();
 
     for (vid, entries) in groups {
-        for (mut needle, fsync, response_tx) in entries {
-            let result = store.write_volume_needle(vid, &mut needle, fsync);
+        let (mut writes, senders): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .map(|(needle, fsync, response_tx)| ((needle, fsync), response_tx))
+            .unzip();
+        let results = store.write_volume_needles(vid, &mut writes);
+        for (response_tx, result) in senders.into_iter().zip(results) {
             // Send result back; ignore error if receiver dropped.
             let _ = response_tx.send(result);
         }
@@ -310,6 +314,63 @@ mod tests {
         for r in results {
             assert!(matches!(r, Err(VolumeError::NotFound)));
         }
+    }
+
+    /// The queue hands a volume's batch to the grouped path, so ten durable
+    /// writes cost one .dat sync and one .idx sync, not ten of each.
+    #[test]
+    fn test_process_batch_group_commits_fsync_writes() {
+        use crate::config::MinFreeSpace;
+        use crate::storage::types::{DiskType, NeedleId};
+        use crate::storage::volume::VolumeSpec;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let state = make_test_state();
+        {
+            let mut store = state.store.write().unwrap();
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    10,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(1.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            store
+                .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
+                .unwrap();
+        }
+
+        let mut receivers = Vec::new();
+        let batch = (1..=10u64)
+            .map(|id| {
+                let (response_tx, response_rx) = oneshot::channel();
+                receivers.push(response_rx);
+                WriteRequest {
+                    volume_id: VolumeId(1),
+                    needle: Needle {
+                        id: NeedleId(id),
+                        cookie: 0x1111.into(),
+                        data: vec![id as u8; 8],
+                        data_size: 8,
+                        ..Needle::default()
+                    },
+                    fsync: true,
+                    response_tx,
+                }
+            })
+            .collect();
+        process_batch(state.clone(), batch);
+
+        for mut rx in receivers {
+            assert!(matches!(rx.try_recv().unwrap(), Ok((_, _, false))));
+        }
+        let store = state.store.read().unwrap();
+        let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+        assert_eq!(vol.sync_counts_for_test(), (1, 1));
     }
 
     #[tokio::test]

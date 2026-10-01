@@ -18,7 +18,7 @@ use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
-use crate::storage::volume::{CompactionJob, VifVolumeInfo, VolumeError, VolumeSpec};
+use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
 
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
@@ -734,6 +734,30 @@ impl Store {
         n: &mut Needle,
         fsync: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
+        self.writable_volume_mut(vid)?.write_needle(n, true, fsync)
+    }
+
+    /// Write a batch of needles to one volume, sharing the syncs of its
+    /// durable writes. See `Volume::write_needles_grouped`.
+    pub fn write_volume_needles(
+        &mut self,
+        vid: VolumeId,
+        writes: &mut [(Needle, bool)],
+    ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
+        match self.writable_volume_mut(vid) {
+            Ok(vol) => vol.write_needles_grouped(writes),
+            // The lookup fails only with NotFound or the disk-space ReadOnly.
+            Err(e) => writes
+                .iter()
+                .map(|_| match e {
+                    VolumeError::ReadOnly => Err(VolumeError::ReadOnly),
+                    _ => Err(VolumeError::NotFound),
+                })
+                .collect(),
+        }
+    }
+
+    fn writable_volume_mut(&mut self, vid: VolumeId) -> Result<&mut Volume, VolumeError> {
         // Check disk space on the location containing this volume.
         // We do this before the mutable borrow to avoid borrow conflicts.
         let loc_idx = self
@@ -744,11 +768,11 @@ impl Store {
             .is_disk_space_low
             .load(Ordering::Relaxed)
         {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(vid));
         }
 
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
-        vol.write_needle(n, true, fsync)
+        Ok(vol)
     }
 
     /// Delete a needle from a volume.
@@ -760,7 +784,7 @@ impl Store {
         // Match Go's DeleteVolumeNeedle: check noWriteOrDelete before proceeding.
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         if vol.is_no_write_or_delete() {
-            return Err(VolumeError::ReadOnly);
+            return Err(VolumeError::ReadOnly(vid));
         }
 
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
@@ -1205,6 +1229,7 @@ impl Store {
         found_vol.map(|v| (v, dirs))
     }
 
+    #[cfg(test)]
     pub fn delete_expired_ec_volumes(
         &mut self,
     ) -> (
@@ -1290,6 +1315,7 @@ impl Store {
     }
 
     /// Remove an EC volume from whichever location has it.
+    #[cfg(test)]
     pub fn remove_ec_volume(&mut self, vid: VolumeId) -> Option<EcVolume> {
         for loc in &mut self.locations {
             if let Some(ecv) = loc.remove_ec_volume(vid) {

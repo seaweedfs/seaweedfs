@@ -27,7 +27,9 @@ impl From<VolumeError> for Status {
             VolumeError::NotFound
             | VolumeError::VolumeNotFound(_)
             | VolumeError::Tier(TierError::NotFound(_)) => Status::not_found(message),
-            VolumeError::ReadOnly | VolumeError::NotEmpty => Status::failed_precondition(message),
+            VolumeError::ReadOnly(_) | VolumeError::NotEmpty => {
+                Status::failed_precondition(message)
+            }
             VolumeError::InsufficientSpace { .. } => Status::resource_exhausted(message),
             VolumeError::AlreadyExists => Status::already_exists(message),
             _ => Status::internal(message),
@@ -69,7 +71,14 @@ mod tests {
             Code::NotFound
         );
         assert_eq!(code(VolumeError::NotFound), Code::NotFound);
-        assert_eq!(code(VolumeError::ReadOnly), Code::FailedPrecondition);
+        assert_eq!(
+            code(VolumeError::ReadOnly(VolumeId(7))),
+            Code::FailedPrecondition
+        );
+        assert_eq!(
+            VolumeError::ReadOnly(VolumeId(7)).to_string(),
+            "volume 7 is read only"
+        );
         assert_eq!(
             code(VolumeError::InsufficientSpace {
                 vid: VolumeId(7),

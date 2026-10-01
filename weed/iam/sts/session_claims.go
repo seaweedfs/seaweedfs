@@ -65,9 +65,10 @@ type STSSessionClaims struct {
 	TokenType   string `json:"typ"`  // token_type
 
 	// Role information
-	RoleArn     string `json:"role"`      // role_arn
-	AssumedRole string `json:"assumed"`   // assumed_role_user
-	Principal   string `json:"principal"` // principal_arn
+	RoleArn     string `json:"role"`          // role_arn
+	RoleId      string `json:"rid,omitempty"` // unique ID of the assumed role
+	AssumedRole string `json:"assumed"`       // assumed_role_user
+	Principal   string `json:"principal"`     // principal_arn
 
 	// Authorization data
 	Policies []string `json:"pol,omitempty"` // policies (abbreviated)
@@ -136,6 +137,7 @@ func (c *STSSessionClaims) ToSessionInfo(credGen *CredentialGenerator) *SessionI
 		SessionId:        c.SessionId,
 		SessionName:      c.SessionName,
 		RoleArn:          c.RoleArn,
+		RoleId:           c.RoleId,
 		AssumedRoleUser:  c.AssumedRole,
 		Principal:        c.Principal,
 		Policies:         c.Policies,
@@ -196,6 +198,13 @@ func (c *STSSessionClaims) WithRoleInfo(roleArn, assumedRole, principal string) 
 }
 
 // WithPolicies sets the policies associated with this session
+// WithRoleId binds the session to the assumed role's unique ID. An empty ID
+// leaves the session unbound (roles that predate role IDs).
+func (c *STSSessionClaims) WithRoleId(roleId string) *STSSessionClaims {
+	c.RoleId = roleId
+	return c
+}
+
 func (c *STSSessionClaims) WithPolicies(policies []string) *STSSessionClaims {
 	c.Policies = policies
 	return c
