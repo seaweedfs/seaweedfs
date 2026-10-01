@@ -90,9 +90,32 @@ struct EcjFsOps {
 impl EcjFsOps {
     const REAL: EcjFsOps = EcjFsOps {
         rename: |from, to| fs::rename(from, to),
-        fsync_dir: crate::storage::volume::fsync_dir,
+        fsync_dir: fsync_ecj_dir,
         reopen: open_ecj_append,
     };
+}
+
+/// Fsync the directory holding `path`, failing when it cannot be opened.
+/// The crate's `fsync_dir` treats an unopenable directory as success, which is
+/// best-effort syncing; here the mount carries on after the rename and takes
+/// deletes against the replacement, so an unsynced entry could lose them to a
+/// power loss. A rename needs only write and search permission on the
+/// directory, so it can succeed where opening the directory fails. Matches
+/// Go's `util.FsyncDir`, which also skips the sync on Windows.
+fn fsync_ecj_dir(path: &str) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let dir = match std::path::Path::new(path).parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => std::path::Path::new("."),
+        };
+        File::open(dir)?.sync_all()
+    }
 }
 
 /// Why publishing a compacted journal failed, split by whether the volume
@@ -3433,7 +3456,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let ops = EcjFsOps {
             rename: failing_rename,
-            fsync_dir: crate::storage::volume::fsync_dir,
+            fsync_dir: fsync_ecj_dir,
             reopen: failing_reopen,
         };
         let (vol, ecj_path, before) = mount_bloated_with(dir, VolumeId(53), ops);
@@ -3490,6 +3513,54 @@ mod tests {
         let msg = vol.err().expect("mount must fail").to_string();
         assert!(msg.contains("could not fsync its directory"), "{}", msg);
         assert!(msg.contains("injected fsync failure"), "{}", msg);
+    }
+
+    /// The directory sync after the rename must report a directory it cannot
+    /// open. The crate's best-effort `fsync_dir` returns Ok there, which would
+    /// let the mount take deletes against an entry that was never synced.
+    #[test]
+    fn test_fsync_ecj_dir_fails_when_directory_cannot_be_opened() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("gone").join("1.ecj");
+        let missing = missing.to_str().unwrap();
+        #[cfg(not(windows))]
+        assert!(fsync_ecj_dir(missing).is_err());
+        assert!(crate::storage::volume::fsync_dir(missing).is_ok());
+    }
+
+    /// The real mount over a directory it may write and search but not read:
+    /// the rename succeeds and the directory sync cannot open the directory,
+    /// so the mount fails rather than serving an unsynced replacement.
+    #[cfg(unix)]
+    #[test]
+    fn test_compaction_unreadable_directory_is_mount_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let set_mode =
+            |mode| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        write_ecx_file(
+            dir,
+            "",
+            VolumeId(55),
+            &[(NeedleId(7), Offset::from_actual_offset(8), Size(10))],
+        );
+        let ids: Vec<NeedleId> = (1000..1100).map(NeedleId).collect();
+        write_bloated_ecj(dir, "", VolumeId(55), &ids, 4096);
+
+        set_mode(0o300);
+        if File::open(dir).is_ok() {
+            // Root opens it regardless; nothing to test.
+            set_mode(0o755);
+            return;
+        }
+        let result = EcVolume::new(dir, dir, "", VolumeId(55));
+        set_mode(0o755);
+        let msg = result
+            .err()
+            .expect("an unsynced replacement must fail the mount")
+            .to_string();
+        assert!(msg.contains("could not fsync its directory"), "{}", msg);
     }
 
     #[test]
