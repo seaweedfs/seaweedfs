@@ -25,6 +25,9 @@ global:
     imagePullPolicy: IfNotPresent
     restartPolicy: Always
     loggingLevel: 1
+    # Writable temporary storage used when containers run with a read-only root filesystem.
+    tmpDir:
+      sizeLimit: ""
     enableSecurity: false
     masterServer: null
     # filerWrite: true mounts security.toml on filer + admin without needing
@@ -265,6 +268,7 @@ master:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -565,6 +569,7 @@ volume:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -850,6 +855,7 @@ filer:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -1132,6 +1138,7 @@ s3:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -1295,6 +1302,7 @@ sftp:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -1453,6 +1461,7 @@ admin:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -1621,6 +1630,7 @@ worker:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -1889,6 +1899,7 @@ allInOne:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL
@@ -1939,6 +1950,7 @@ cosi:
     enabled: true
     privileged: false
     allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
     capabilities:
       drop:
         - ALL

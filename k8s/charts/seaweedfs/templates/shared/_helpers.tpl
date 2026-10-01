@@ -76,6 +76,24 @@ Inject extra environment vars in the format key:value, if populated
 {{- end }}
 {{- end -}}
 
+{{/*
+Writable temporary directory for containers using a read-only root filesystem.
+*/}}
+{{- define "seaweedfs.tmpDirVolume" -}}
+- name: seaweedfs-tmp
+  {{- with .Values.global.seaweedfs.tmpDir.sizeLimit }}
+  emptyDir:
+    sizeLimit: {{ . | quote }}
+  {{- else }}
+  emptyDir: {}
+  {{- end }}
+{{- end -}}
+
+{{- define "seaweedfs.tmpDirVolumeMount" -}}
+- name: seaweedfs-tmp
+  mountPath: /tmp
+{{- end -}}
+
 {{/* Whether the mysql filer store is selected; a flag the chart cannot read counts as selected. */}}
 {{- define "seaweedfs.filer.mysqlEnabled" -}}
 {{- $merged := dict -}}

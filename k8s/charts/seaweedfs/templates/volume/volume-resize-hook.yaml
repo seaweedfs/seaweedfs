@@ -38,13 +38,20 @@ spec:
       containers:
         - name: resize
           image: {{ .Values.volume.resizeHook.image }}
+          env:
+            - name: HOME
+              value: /tmp
           command: ["sh", "-xec"]
           args:
             - |
 {{ $commands | indent 14 }}
+          volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
           {{- if .Values.volume.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
+      volumes:
+        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
 ---
 apiVersion: v1
 kind: ServiceAccount

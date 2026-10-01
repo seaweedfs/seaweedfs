@@ -144,6 +144,7 @@ spec:
               {{ $arg }}{{- if lt $index (sub (len $.Values.worker.extraArgs) 1) }} \{{ end }}
               {{- end }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
             {{- if or (eq .Values.worker.data.type "hostPath") (eq .Values.worker.data.type "emptyDir") (eq .Values.worker.data.type "existingClaim") }}
             - name: worker-data
               mountPath: {{ .Values.worker.workingDir }}
@@ -262,15 +263,16 @@ spec:
               --metrics-ip=0.0.0.0 \
               {{- end }}
               --max-concurrency={{ .Values.worker.maxExecute }}
-          {{- if .Values.global.seaweedfs.enableSecurity }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
             - name: worker-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/worker/
-          {{- end }}
+            {{- end }}
           {{- if .Values.worker.lanceMetricsPort }}
           ports:
             - containerPort: {{ .Values.worker.lanceMetricsPort }}
@@ -302,6 +304,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
         {{- if eq .Values.worker.data.type "hostPath" }}
         - name: worker-data
           hostPath:

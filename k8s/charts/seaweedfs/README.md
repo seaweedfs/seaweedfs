@@ -572,11 +572,20 @@ The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings 
 
 ## Pod and container security contexts
 
-The chart enables a `RuntimeDefault` seccomp profile at both pod and container level for all built-in workloads. Built-in containers also run with privilege escalation disabled, `privileged: false`, and all Linux capabilities dropped.
+The chart enables a `RuntimeDefault` seccomp profile at both pod and container level for all built-in workloads. Built-in containers also run with privilege escalation disabled, `privileged: false`, all Linux capabilities dropped, and a read-only root filesystem.
+
+SeaweedFS uses `/tmp` for Unix sockets, temporary uploads, worker task files, and other runtime data. The chart mounts a writable `emptyDir` at `/tmp` for every built-in container. Its optional size limit can be configured globally:
+
+```yaml
+global:
+  seaweedfs:
+    tmpDir:
+      sizeLimit: 1Gi
+```
 
 The chart does not enable `runAsNonRoot` by default because its default `hostPath` storage may be owned by root. To enforce the Kubernetes `restricted` Pod Security Standard, use storage that is writable by a non-root user and configure `runAsNonRoot` or use the OpenShift overrides below.
 
-Security contexts configured for a component also apply to the chart-managed helper containers for that component. User-provided init containers and sidecars must define their own container security context.
+Security contexts configured for a component also apply to the chart-managed helper containers for that component. User-provided init containers and sidecars must define their own container security context and writable mounts.
 
 ## OpenShift Support
 

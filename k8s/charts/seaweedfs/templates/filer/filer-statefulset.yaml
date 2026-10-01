@@ -229,6 +229,7 @@ spec:
               {{ . }} \
               {{- end }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
             {{- if (or (eq .Values.filer.logs.type "hostPath") (eq .Values.filer.logs.type "persistentVolumeClaim") (eq .Values.filer.logs.type "emptyDir")) }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
@@ -337,6 +338,7 @@ spec:
         {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
         {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
           hostPath:
