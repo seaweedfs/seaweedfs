@@ -4662,7 +4662,7 @@ impl EcLocalShard {
             .file
             .as_ref()
             .map_err(|e| io::Error::new(e.kind(), e.to_string()))?;
-        crate::storage::io::read_at(file, buf, offset)
+        crate::storage::io::read_full_at(file, buf, offset)
     }
 }
 
