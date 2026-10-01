@@ -23,7 +23,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::storage::idx;
 use crate::storage::io::read_exact_at;
-use crate::storage::io_error::IoErrorTracker;
+use crate::storage::io_error::{IoErrorTracker, StreakMark};
 use crate::storage::needle::needle::{self, Needle, NeedleError, get_actual_size};
 use crate::storage::needle_map::sorted_file::SortedFileNeedleMap;
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
@@ -2319,15 +2319,15 @@ impl Volume {
     ) -> Vec<Result<(u64, Size, bool), VolumeError>> {
         // Per entry: Some(offset) once appended, None when it dedups.
         let mut staged = Vec::with_capacity(run.len());
-        // Per entry: whether its append added to the I/O error streak.
-        let mut io_errors = Vec::with_capacity(run.len());
+        // Per entry: the I/O error streak once it is staged, where a write
+        // sent on its own would have recorded its success.
+        let mut marks = Vec::with_capacity(run.len());
         let mut last_append_at_ns = self.last_append_at_ns;
         let mut run_start = None;
         let mut sync = false;
         for (n, fsync) in run.iter_mut() {
-            let streak = self.get_io_error_state().1;
             let r = self.append_unpublished(n, &mut last_append_at_ns);
-            io_errors.push(self.get_io_error_state().1 > streak);
+            marks.push(self.io_errors.mark());
             if let Ok(Some(offset)) = r {
                 run_start.get_or_insert(offset);
             }
@@ -2370,13 +2370,12 @@ impl Volume {
             .filter(|(_, r)| matches!(r, Ok(Some(_))))
             .map(|((n, _), _)| n.last_modified)
             .max();
-        if let Some(last_modified) = written {
+        let last = staged.iter().rposition(|r| matches!(r, Ok(Some(_))));
+        if let (Some(last_modified), Some(last)) = (written, last) {
             // Sent one at a time, the last write to land would have cleared
-            // the streak before the appends queued after it failed, so their
-            // errors still count and must not be cleared here.
-            let last = staged.iter().rposition(|r| matches!(r, Ok(Some(_))));
-            let clear_io_errors = last.is_some_and(|i| !io_errors[i + 1..].contains(&true));
-            self.finish_write(last_modified, sync, clear_io_errors);
+            // the streak of the appends before it, and the ones after it
+            // would have failed on top of that.
+            self.finish_write(last_modified, sync, marks[last]);
         }
 
         run.iter()
@@ -2528,7 +2527,7 @@ impl Volume {
             self.flush_idx()?;
         }
 
-        self.finish_write(n.last_modified, fsync, true);
+        self.finish_write(n.last_modified, fsync, self.io_errors.mark());
 
         // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
         Ok((offset, Size(n.data_size as i32), false))
@@ -2642,9 +2641,10 @@ impl Volume {
         Ok(())
     }
 
-    /// The bookkeeping after a write is fully down. `clear_io_errors` false
-    /// keeps the I/O error streak a later failed append in the same run built.
-    fn finish_write(&mut self, last_modified: u64, idx_synced: bool, clear_io_errors: bool) {
+    /// The bookkeeping after a write is fully down. `landed_at` is the point
+    /// in the I/O error streak where the write landed; errors counted after
+    /// it, by later appends of the same run, are not cleared.
+    fn finish_write(&mut self, last_modified: u64, idx_synced: bool, landed_at: StreakMark) {
         if self.last_modified_ts_seconds < last_modified {
             self.last_modified_ts_seconds = last_modified;
         }
@@ -2654,8 +2654,8 @@ impl Volume {
         // Clear the EIO streak only after the full write (data + flush +
         // index + checkpoint) succeeds, so a failed fsync or checkpoint
         // does not get its EIO erased by the success reset.
-        if checkpoint_ok && clear_io_errors {
-            self.check_read_write_error(None);
+        if checkpoint_ok {
+            self.io_errors.record_success_at(landed_at);
         }
     }
 
@@ -6488,23 +6488,22 @@ mod tests {
         assert!(matches!(results[0], Err(VolumeError::Unavailable(_))));
     }
 
-    /// A run counts I/O errors as the same writes sent one at a time would:
-    /// a success early in the run must not wipe out the streak that the
-    /// failed appends after it built up, or the volume escapes quarantine.
+    /// The I/O error streak after writing four durable needles, the ones in
+    /// `failing` with a media error on their append, first one at a time and
+    /// then as one grouped run. Also returns which grouped writes landed.
     #[cfg(any(unix, windows))]
-    #[test]
-    fn test_grouped_run_keeps_the_io_error_streak_of_later_appends() {
-        use crate::storage::io_error::IO_ERROR_TOLERANCE;
-
-        let writes = || {
-            vec![
-                (batch_needle(1, 0xaa, b"landed"), true),
-                (batch_needle(2, 0xbb, b"eio"), true),
-                (batch_needle(3, 0xcc, b"eio"), true),
-                (batch_needle(4, 0xdd, b"eio"), true),
-            ]
+    fn io_error_streaks(failing: &[u64]) -> (i32, i32, Vec<bool>) {
+        let writes = || -> Vec<_> {
+            (1..=4u64)
+                .map(|id| {
+                    (
+                        batch_needle(id, 0xaa, format!("body-{id}").as_bytes()),
+                        true,
+                    )
+                })
+                .collect()
         };
-        let failing = [NeedleId(2), NeedleId(3), NeedleId(4)];
+        let failing: Vec<_> = failing.iter().map(|&id| NeedleId(id)).collect();
 
         let tmp = TempDir::new().unwrap();
         let mut one_by_one = make_test_volume(tmp.path().to_str().unwrap());
@@ -6518,17 +6517,45 @@ mod tests {
         v.fail_append_for_test(&failing);
         let mut grouped = writes();
         let results = v.write_needles_grouped(&mut grouped);
-
-        assert!(matches!(results[0], Ok((_, _, false))));
-        assert!(
-            results[1..]
-                .iter()
-                .all(|r| matches!(r, Err(VolumeError::Io(_))))
-        );
-        assert_eq!(one_by_one.get_io_error_state().1, IO_ERROR_TOLERANCE);
-        assert_eq!(v.get_io_error_state().1, IO_ERROR_TOLERANCE);
-        assert!(v.should_quarantine());
         assert!(!v.is_read_only(), "the failed appends were truncated back");
+
+        let landed = results
+            .iter()
+            .map(|r| matches!(r, Ok((_, _, false))))
+            .collect();
+        (
+            one_by_one.get_io_error_state().1,
+            v.get_io_error_state().1,
+            landed,
+        )
+    }
+
+    /// A run counts I/O errors as the same writes sent one at a time would:
+    /// a success early in the run must not wipe out the streak that the
+    /// failed appends after it built up, or the volume escapes quarantine.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_grouped_run_keeps_the_io_error_streak_of_later_appends() {
+        use crate::storage::io_error::IO_ERROR_TOLERANCE;
+
+        let (one_by_one, grouped, landed) = io_error_streaks(&[2, 3, 4]);
+
+        assert_eq!(landed, [true, false, false, false]);
+        assert_eq!(one_by_one, IO_ERROR_TOLERANCE);
+        assert_eq!(grouped, IO_ERROR_TOLERANCE);
+    }
+
+    /// The other half: a write that lands clears the errors of the appends
+    /// queued before it, even when another append after it fails, or the
+    /// run reaches a quarantine that the same writes one at a time do not.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_grouped_run_clears_the_io_error_streak_of_earlier_appends() {
+        let (one_by_one, grouped, landed) = io_error_streaks(&[1, 2, 4]);
+
+        assert_eq!(landed, [false, false, true, false]);
+        assert_eq!(one_by_one, 1);
+        assert_eq!(grouped, 1);
     }
 
     /// An append whose partial bytes cannot be truncated back leaves the .dat

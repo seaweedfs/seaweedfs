@@ -3,7 +3,7 @@
 
 use std::io;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
 /// Consecutive storage-media errors allowed before the volume is quarantined.
 pub(crate) const IO_ERROR_TOLERANCE: i32 = 3;
@@ -36,6 +36,17 @@ pub(crate) struct IoErrorTracker {
     last: Mutex<Option<String>>,
     count: AtomicI32,
     quarantined: AtomicBool,
+    /// Bumped whenever the count is cleared, so a `StreakMark` can tell
+    /// whether the streak it points into is still the current one.
+    clears: AtomicU64,
+}
+
+/// A point in the error streak, taken where a write landed whose success
+/// is only recorded later. See `IoErrorTracker::record_success_at`.
+#[derive(Clone, Copy)]
+pub(crate) struct StreakMark {
+    clears: u64,
+    count: i32,
 }
 
 impl IoErrorTracker {
@@ -52,11 +63,40 @@ impl IoErrorTracker {
             crate::metrics::STORAGE_IO_ERROR_COUNTER.inc();
             return;
         }
-        self.count.store(0, Ordering::Relaxed);
+        self.clear_count();
         if let Ok(mut guard) = self.last.lock()
             && guard.is_some()
         {
             *guard = None;
+        }
+    }
+
+    fn clear_count(&self) {
+        self.count.store(0, Ordering::Relaxed);
+        self.clears.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn mark(&self) -> StreakMark {
+        StreakMark {
+            clears: self.clears.load(Ordering::Relaxed),
+            count: self.count.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Record a success as if it had come at `mark`: the errors counted
+    /// before the mark are cleared and the ones counted since still stand,
+    /// as they would had each outcome been recorded in order.
+    pub(crate) fn record_success_at(&self, mark: StreakMark) {
+        if self.clears.load(Ordering::Relaxed) != mark.clears {
+            // Something since the mark cleared the streak already.
+            return;
+        }
+        let since = self.count.load(Ordering::Relaxed) - mark.count;
+        if since <= 0 {
+            self.check_read_write_error(None);
+        } else {
+            // The last error stays: it is one of those counted since.
+            self.count.store(since, Ordering::Relaxed);
         }
     }
 
@@ -78,7 +118,7 @@ impl IoErrorTracker {
     }
 
     pub(crate) fn reset_io_error_state(&self) {
-        self.count.store(0, Ordering::Relaxed);
+        self.clear_count();
         self.quarantined.store(false, Ordering::Relaxed);
         if let Ok(mut guard) = self.last.lock() {
             *guard = None;
@@ -93,7 +133,7 @@ impl IoErrorTracker {
         if err.is_some() {
             self.count.store(IO_ERROR_TOLERANCE, Ordering::Relaxed);
         } else {
-            self.count.store(0, Ordering::Relaxed);
+            self.clear_count();
         }
     }
 }
@@ -169,6 +209,47 @@ mod tests {
 
         assert_eq!(tracker.get_io_error_state(), (None, 0, true));
         assert!(tracker.should_quarantine());
+    }
+
+    #[test]
+    fn success_at_a_mark_keeps_only_the_errors_after_it() {
+        let tracker = IoErrorTracker::default();
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.check_read_write_error(Some(&media_error()));
+        let mark = tracker.mark();
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.record_success_at(mark);
+
+        assert_eq!(
+            tracker.get_io_error_state(),
+            (Some(media_error().to_string()), 1, false)
+        );
+    }
+
+    #[test]
+    fn success_at_a_mark_with_nothing_after_it_clears_the_streak() {
+        let tracker = IoErrorTracker::default();
+        tracker.check_read_write_error(Some(&media_error()));
+        let mark = tracker.mark();
+        tracker.record_success_at(mark);
+
+        assert_eq!(tracker.get_io_error_state(), (None, 0, false));
+    }
+
+    #[test]
+    fn success_at_a_mark_leaves_a_streak_cleared_since() {
+        let tracker = IoErrorTracker::default();
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.check_read_write_error(Some(&media_error()));
+        let mark = tracker.mark();
+        tracker.check_read_write_error(None);
+        tracker.check_read_write_error(Some(&media_error()));
+        tracker.record_success_at(mark);
+
+        assert_eq!(
+            tracker.get_io_error_state(),
+            (Some(media_error().to_string()), 1, false)
+        );
     }
 
     #[test]
