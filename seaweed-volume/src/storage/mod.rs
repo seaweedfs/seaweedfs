@@ -6,6 +6,7 @@ pub(crate) mod io_error;
 pub mod needle;
 pub mod needle_map;
 pub mod store;
+pub mod store_ec_journal;
 pub mod store_ec_mirror;
 pub mod store_ec_reconcile;
 pub mod super_block;

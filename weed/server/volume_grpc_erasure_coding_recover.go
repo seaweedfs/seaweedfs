@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // ecRecoveryLookupTimeout bounds the master LookupEcVolume call so a slow or
@@ -119,7 +120,6 @@ func (vs *VolumeServer) fetchEcIndexFromPeers(peers []pb.ServerAddress, m storag
 	idxBaseFileName := storage.VolumeFileName(m.IdxDir, m.Collection, int(m.VolumeId))
 	dataBaseFileName := storage.VolumeFileName(m.DataDir, m.Collection, int(m.VolumeId))
 	ecxPath := idxBaseFileName + ".ecx"
-	ecjPath := idxBaseFileName + ".ecj"
 
 	removePartial := func(path string) {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -145,12 +145,12 @@ func (vs *VolumeServer) fetchEcIndexFromPeers(peers []pb.ServerAddress, m storag
 			}
 			// .ecj is the source peer's deletion journal; .vif carries EC params
 			// and EncodeTsNs. Both are best-effort: a missing .ecj is recreated at
-			// mount and a missing .vif falls back to default EC parameters. A failed
-			// .ecj copy is an in-place append, so drop the partial file; the .vif
-			// copy stages and renames, leaving nothing to clean up.
-			if _, err := vs.doCopyFile(client, true, m.Collection, uint32(m.VolumeId), math.MaxUint32, math.MaxInt64, idxBaseFileName, ".ecj", true, true, nil); err != nil {
+			// mount and a missing .vif falls back to default EC parameters. The
+			// journal is a *set*: merge it as a union so a bounced volume
+			// cannot double it. The merge only appends whole records, and the
+			// .vif copy stages and renames, so a failure leaves nothing to clean.
+			if err := vs.copyEcjAndMerge(client, m.Collection, uint32(m.VolumeId), idxBaseFileName, util.NewWriteThrottler(vs.maintenanceBytePerSecond)); err != nil {
 				glog.Warningf("ec volume %d: copy .ecj from %s: %v", m.VolumeId, peer, err)
-				removePartial(ecjPath)
 			}
 			if _, err := vs.doCopyFile(client, true, m.Collection, uint32(m.VolumeId), math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil); err != nil {
 				glog.Warningf("ec volume %d: copy .vif from %s: %v", m.VolumeId, peer, err)

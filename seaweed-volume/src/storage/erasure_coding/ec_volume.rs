@@ -1650,23 +1650,33 @@ impl EcVolume {
             return Ok(());
         }
 
+        let mut buf = [0u8; NEEDLE_ID_SIZE];
+        needle_id.to_bytes(&mut buf);
+        self.append_journal(&buf)?;
+        if let Ok(mut set) = self.deleted_needles.write() {
+            set.insert(needle_id);
+        }
+        Ok(())
+    }
+
+    /// Append whole records to `.ecj` and sync them. On any failure the file is
+    /// truncated back to the pre-append length so the on-disk journal and
+    /// `deleted_needles` cannot drift.
+    fn append_journal(&mut self, records: &[u8]) -> io::Result<()> {
         let prev_ecj_size = self.ecj_file_size;
         let append_result: io::Result<()> = {
             let ecj_file = self
                 .ecj_file
                 .as_mut()
                 .ok_or_else(|| io::Error::other("ecj file not open"))?;
-            let mut buf = [0u8; NEEDLE_ID_SIZE];
-            needle_id.to_bytes(&mut buf);
-            ecj_file.write_all(&buf).and_then(|_| ecj_file.sync_all())
+            ecj_file
+                .write_all(records)
+                .and_then(|_| ecj_file.sync_all())
         };
 
         match append_result {
             Ok(()) => {
-                self.ecj_file_size += NEEDLE_ID_SIZE as i64;
-                if let Ok(mut set) = self.deleted_needles.write() {
-                    set.insert(needle_id);
-                }
+                self.ecj_file_size += records.len() as i64;
                 Ok(())
             }
             Err(e) => {
@@ -1677,20 +1687,12 @@ impl EcVolume {
                 // lacks FILE_WRITE_DATA, so set_len through it fails with
                 // ERROR_ACCESS_DENIED and the rollback would silently not
                 // happen.
-                let ecj_path = format!(
-                    "{}.ecj",
-                    crate::storage::volume::volume_file_name(
-                        &self.ecx_actual_dir,
-                        &self.collection,
-                        self.volume_id,
-                    )
-                );
+                let ecj_path = self.ecj_file_name();
                 let rollback = open_volume_file(OpenOptions::new().write(true), &ecj_path)
                     .and_then(|f| f.set_len(prev_ecj_size as u64).and_then(|_| f.sync_all()));
                 if let Err(trunc_err) = rollback {
                     tracing::error!(
                         volume_id = self.volume_id.0,
-                        needle_id = needle_id.0,
                         truncate_error = %trunc_err,
                         "failed to truncate ecj after append failure"
                     );
@@ -1834,6 +1836,24 @@ impl EcVolume {
             needles.push(id);
         }
         Ok(needles)
+    }
+
+    /// Fold a peer's deletion journal into this mounted volume: append only
+    /// the ids not already deleted here, in one write and one fsync, then
+    /// publish them into the in-memory set — the same commit order as
+    /// `journal_delete`. `&mut self` serializes it with deletes under the store
+    /// lock, and the live handle is appended to in place, so no delete can land
+    /// in an orphaned file. Returns how many ids were added.
+    pub fn merge_journal(&mut self, ids: &HashSet<NeedleId>) -> io::Result<usize> {
+        let delta = super::ecj_merge::ecj_delta(ids, |id| self.is_needle_deleted(*id));
+        if delta.is_empty() {
+            return Ok(0);
+        }
+        self.append_journal(&super::ecj_merge::encode_ecj_ids(&delta))?;
+        if let Ok(mut set) = self.deleted_needles.write() {
+            set.extend(delta.iter().copied());
+        }
+        Ok(delta.len())
     }
 
     // ---- Lifecycle ----
@@ -2520,6 +2540,71 @@ mod tests {
         vol.journal_delete(NeedleId(999)).unwrap();
         let (fc, dc) = vol.file_and_delete_count();
         assert_eq!((fc, dc), (2, 2));
+    }
+
+    /// A mounted volume merges a peer's journal through its own handle: only
+    /// the missing ids are appended, the file keeps its inode, the in-memory
+    /// set follows, and a later delete lands in the same live file.
+    #[test]
+    fn test_merge_journal_appends_missing_ids_in_place() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let entries: Vec<_> = (1..=5)
+            .map(|id| {
+                (
+                    NeedleId(id),
+                    Offset::from_actual_offset(8 * id as i64),
+                    Size(100),
+                )
+            })
+            .collect();
+        write_ecx_file(dir, "", VolumeId(1), &entries);
+
+        let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        vol.journal_delete(NeedleId(1)).unwrap();
+        let ecj_path = vol.ecj_file_name();
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&ecj_path).unwrap().ino()
+        };
+
+        let peer: HashSet<NeedleId> = [1, 2, 3].into_iter().map(NeedleId).collect();
+        assert_eq!(vol.merge_journal(&peer).unwrap(), 2);
+        assert_eq!(
+            vol.merge_journal(&peer).unwrap(),
+            0,
+            "a repeated merge appends nothing"
+        );
+        for id in 1..=3 {
+            assert!(vol.is_needle_deleted(NeedleId(id)), "id {}", id);
+        }
+        assert_eq!(vol.file_and_delete_count().1, 3);
+
+        vol.journal_delete(NeedleId(4)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                std::fs::metadata(&ecj_path).unwrap().ino(),
+                inode,
+                "the journal must never be replaced under the open handle"
+            );
+        }
+        assert_eq!(
+            vol.read_deleted_needles().unwrap(),
+            (1..=4).map(NeedleId).collect::<Vec<_>>()
+        );
+        vol.close();
+
+        let vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        for id in 1..=4 {
+            assert!(
+                vol.is_needle_deleted(NeedleId(id)),
+                "id {} survives remount",
+                id
+            );
+        }
     }
 
     /// Write a raw `.ecj` containing `ids` repeated `repeats` times, i.e. the
