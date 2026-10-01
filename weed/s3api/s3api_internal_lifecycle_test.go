@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"net"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -12,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -115,7 +117,7 @@ func TestIdentityMatches_AllFieldsCompared(t *testing.T) {
 
 func TestLifecycleDelete_RejectsEmptyRequest(t *testing.T) {
 	s := &S3ApiServer{}
-	resp, err := s.LifecycleDelete(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{})
+	resp, err := s.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{})
 	if err != nil {
 		t.Fatalf("unexpected gRPC error: %v", err)
 	}
@@ -138,7 +140,7 @@ func TestLifecycleAbortMPU_RejectsTraversalUploadIDs(t *testing.T) {
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {
-			resp, err := s.LifecycleDelete(nil, &s3_lifecycle_pb.LifecycleDeleteRequest{
+			resp, err := s.LifecycleDelete(s3LocalPeerCtx(), &s3_lifecycle_pb.LifecycleDeleteRequest{
 				Bucket:     "bk",
 				ObjectPath: path,
 				ActionKind: s3_lifecycle_pb.ActionKind_ABORT_MPU,
@@ -353,11 +355,23 @@ func TestLifecycleDelete_RequiresAdminAuth(t *testing.T) {
 	}
 }
 
-func TestLifecycleDelete_NoSigningKey_Allowed(t *testing.T) {
+func TestLifecycleDelete_NoSigningKey_LocalPeerOnly(t *testing.T) {
 	s := newTestS3IamCacheServer(t, "")
-	resp, err := s.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{})
+	_, err := s.LifecycleDelete(context.Background(), &s3_lifecycle_pb.LifecycleDeleteRequest{})
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("LifecycleDelete with no peer info: got code %v, want %v (err=%v)", got, want, err)
+	}
+	remoteCtx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 11111}})
+	_, err = s.LifecycleDelete(remoteCtx, &s3_lifecycle_pb.LifecycleDeleteRequest{})
+	if got, want := status.Code(err), codes.Unauthenticated; got != want {
+		t.Fatalf("LifecycleDelete from remote peer: got code %v, want %v (err=%v)", got, want, err)
+	}
+	localCtx := peer.NewContext(context.Background(),
+		&peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 11111}})
+	resp, err := s.LifecycleDelete(localCtx, &s3_lifecycle_pb.LifecycleDeleteRequest{})
 	if err != nil {
-		t.Fatalf("LifecycleDelete without signing key: unexpected error %v", err)
+		t.Fatalf("LifecycleDelete from loopback without signing key: unexpected error %v", err)
 	}
 	if resp == nil || resp.Outcome != s3_lifecycle_pb.LifecycleDeleteOutcome_BLOCKED {
 		t.Fatalf("expected BLOCKED for empty request without signing key, got %v", resp)
