@@ -988,6 +988,21 @@ func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) boo
 	return false
 }
 
+// SetReplicaReadOnlyFlag records what dn's latest heartbeat said about its
+// replica of vid, and nothing more: the writable list is left to
+// EnsureCorrectWritables and its capacity guards. Until now the flag only moved
+// on registration and volume.mark, so a replica that went read-only, or came
+// back, while the server ran kept its stale flag until the next restart. The
+// vacuum sweep reads this flag when it decides whether to skip a volume.
+func (vl *VolumeLayout) SetReplicaReadOnlyFlag(dn *DataNode, vid needle.VolumeId, readOnly bool) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	if location, ok := vl.vid2location[vid]; ok {
+		location.SetReadOnly(dn, readOnly)
+	}
+}
+
 func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
