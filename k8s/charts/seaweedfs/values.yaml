@@ -254,6 +254,14 @@ master:
 
   # Configure security context for Pod
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
@@ -261,6 +269,13 @@ master:
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
@@ -554,6 +569,14 @@ volume:
 
   # Configure security context for Pod
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
@@ -561,6 +584,13 @@ volume:
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
@@ -839,6 +869,14 @@ filer:
 
   # Configure security context for Pod
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
@@ -846,6 +884,13 @@ filer:
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
@@ -1121,6 +1166,14 @@ s3:
 
   # Configure security context for Pod
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
@@ -1128,6 +1181,13 @@ s3:
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
@@ -1878,6 +1938,14 @@ allInOne:
 
   # Configure security context for Pod
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
@@ -1885,6 +1953,13 @@ allInOne:
 
   # Configure security context for Container
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   allowPrivilegeEscalation: false
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
