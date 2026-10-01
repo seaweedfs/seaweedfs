@@ -610,8 +610,6 @@ volume:
     capabilities:
       drop:
         - ALL
-      add:
-        - DAC_OVERRIDE
     seccompProfile:
       type: RuntimeDefault
 
