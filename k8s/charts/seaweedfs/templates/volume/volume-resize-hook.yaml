@@ -32,6 +32,9 @@ spec:
     spec:
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
       restartPolicy: Never
+      {{- if .Values.volume.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.volume.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
       containers:
         - name: resize
           image: {{ .Values.volume.resizeHook.image }}
@@ -39,6 +42,9 @@ spec:
           args:
             - |
 {{ $commands | indent 14 }}
+          {{- if .Values.volume.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
