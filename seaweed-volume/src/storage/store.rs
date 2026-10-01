@@ -1216,6 +1216,7 @@ impl Store {
         found_vol.map(|v| (v, dirs))
     }
 
+    #[cfg(test)]
     pub fn delete_expired_ec_volumes(
         &mut self,
     ) -> (
@@ -1301,6 +1302,7 @@ impl Store {
     }
 
     /// Remove an EC volume from whichever location has it.
+    #[cfg(test)]
     pub fn remove_ec_volume(&mut self, vid: VolumeId) -> Option<EcVolume> {
         for loc in &mut self.locations {
             if let Some(ecv) = loc.remove_ec_volume(vid) {

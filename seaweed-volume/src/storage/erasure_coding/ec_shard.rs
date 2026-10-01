@@ -87,14 +87,14 @@ impl EcVolumeShard {
         Ok(())
     }
 
-    /// Read data at a specific offset.
+    /// Read data at a specific offset, filling `buf` unless the shard ends first.
     pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         let file = self
             .ecd_file
             .as_ref()
             .ok_or_else(|| io::Error::other("shard file not open"))?;
 
-        crate::storage::io::read_at(file, buf, offset)
+        crate::storage::io::read_full_at(file, buf, offset)
     }
 
     /// Write data to the shard file (appends).

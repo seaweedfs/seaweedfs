@@ -1308,6 +1308,16 @@ impl Volume {
         }
     }
 
+    /// Identifies this volume instance: a re-created or remounted volume gets
+    /// a new one, even at the same compaction revision.
+    pub(crate) fn instance(&self) -> Arc<DataFileAccessControl> {
+        self.data_file_access_control.clone()
+    }
+
+    pub(crate) fn is_instance(&self, instance: &Arc<DataFileAccessControl>) -> bool {
+        Arc::ptr_eq(instance, &self.data_file_access_control)
+    }
+
     /// Returns true if the volume is currently being compacted.
     pub fn is_compacting(&self) -> bool {
         self.is_compacting.load(Ordering::Acquire)
@@ -4248,6 +4258,15 @@ impl Volume {
         let Some(_claim) = CompactionClaim::try_claim(&self.is_compacting) else {
             return Ok(()); // already compacting, silently skip (matches Go)
         };
+        // The reload would read the remote object through the compacted .idx.
+        if self.has_remote_file() {
+            let _ = fs::remove_file(self.file_name(".cpd"));
+            let _ = fs::remove_file(self.file_name(".cpx"));
+            return Err(VolumeError::Io(io::Error::other(format!(
+                "volume {} is tiered to remote storage, cannot commit compaction",
+                self.id
+            ))));
+        }
         self.do_commit_compact()
     }
 

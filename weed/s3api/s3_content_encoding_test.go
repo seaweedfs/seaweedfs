@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -201,4 +202,58 @@ func TestContentEncodingWithOtherHeaders(t *testing.T) {
 	assert.Equal(t, "en-US", getResp.Header().Get("Content-Language"))
 	assert.Equal(t, "max-age=3600", getResp.Header().Get("Cache-Control"))
 	assert.Equal(t, "attachment; filename=test.txt", getResp.Header().Get("Content-Disposition"))
+}
+
+// TestContentEncodingDropsAwsChunked verifies that aws-chunked, the SigV4
+// streaming framing of the request body, is not stored with the object, also
+// when the encodings come in separate Content-Encoding fields
+func TestContentEncodingDropsAwsChunked(t *testing.T) {
+	testCases := []struct {
+		name   string
+		fields []string
+		stored string
+	}{
+		{"last", []string{"gzip, aws-chunked"}, "gzip"},
+		{"first", []string{"aws-chunked, gzip"}, "gzip"},
+		{"no spaces", []string{"aws-chunked,gzip,br"}, "gzip, br"},
+		{"alone", []string{"aws-chunked"}, ""},
+		{"capitals", []string{"AWS-Chunked"}, ""},
+		{"twice", []string{"aws-chunked, aws-chunked"}, ""},
+		{"separate fields", []string{"aws-chunked", "gzip"}, "gzip"},
+		{"separate fields, alone", []string{"aws-chunked", "aws-chunked"}, ""},
+		{"without aws-chunked", []string{"deflate, gzip"}, "deflate, gzip"},
+		{"without aws-chunked, separate fields", []string{"deflate", "gzip"}, "deflate, gzip"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.stored, storedContentEncoding(tc.fields))
+
+			// CreateMultipartUpload
+			putReq := httptest.NewRequest("PUT", "/test-bucket/test-object.txt", bytes.NewBufferString("body"))
+			for _, field := range tc.fields {
+				putReq.Header.Add("Content-Encoding", field)
+			}
+			metadata, errCode := ParseS3Metadata(putReq, nil, false)
+			require.Equal(t, 0, int(errCode))
+			if tc.stored == "" {
+				assert.NotContains(t, metadata, "Content-Encoding")
+			} else {
+				assert.Equal(t, []byte(tc.stored), metadata["Content-Encoding"])
+			}
+
+			// CopyObject with the REPLACE metadata directive
+			copyReq := http.Header{}
+			for _, field := range tc.fields {
+				copyReq.Add("Content-Encoding", field)
+			}
+			metadata, err := processMetadataBytes(copyReq, map[string][]byte{"Content-Encoding": []byte("br")}, true, false)
+			require.NoError(t, err)
+			if tc.stored == "" {
+				assert.NotContains(t, metadata, "Content-Encoding")
+			} else {
+				assert.Equal(t, []byte(tc.stored), metadata["Content-Encoding"])
+			}
+		})
+	}
 }
