@@ -10,9 +10,9 @@
 //!   appending to a replaced inode acknowledges deletes that are gone at the
 //!   next mount.
 //! - **Writers** append to or replace the path by name without holding it
-//!   open across calls: `VolumeEcShardsCopy` (`copy_ecj_file`) and EC index
-//!   recovery. Bytes they write after the compactor sized the journal would be
-//!   dropped by the rename.
+//!   open across calls: `VolumeEcShardsCopy` (`copy_ecj_file`), EC index
+//!   recovery and `ReceiveFile` of an EC `.ecj`. Bytes they write after the
+//!   compactor sized the journal would be dropped by the rename.
 //!
 //! Compaction therefore runs only while its caller is the sole holder and no
 //! writer is active, and while it runs no holder may open the path and no
@@ -146,7 +146,8 @@ impl Drop for EcjCompaction {
     }
 }
 
-/// An out-of-band writer (shard copy, index recovery) on a `.ecj` path.
+/// An out-of-band writer (shard copy, index recovery, `ReceiveFile`) on a
+/// `.ecj` path.
 /// Compaction does not start while one is alive.
 pub(crate) struct EcjWrite {
     key: PathBuf,

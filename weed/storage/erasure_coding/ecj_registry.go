@@ -16,7 +16,8 @@ import (
 //     one path are normal. A holder that keeps appending to a replaced inode
 //     acknowledges deletes that are gone at the next mount.
 //   - Writers append to or replace the path by name without holding it open
-//     across calls: VolumeEcShardsCopy (CopyEcjFile) and EC index recovery.
+//     across calls: VolumeEcShardsCopy (CopyEcjFile), EC index recovery and
+//     ReceiveFile of an EC .ecj.
 //     Bytes they write after the compactor sized the journal would be dropped
 //     by the rename.
 //
@@ -134,10 +135,10 @@ func (h *ecjHold) tryBeginCompaction() (end func(), ok bool) {
 	}, true
 }
 
-// BeginEcjWrite registers an out-of-band writer (shard copy, index recovery) of
-// ecjPath, waiting out any compaction in progress. Compaction does not start
-// until the returned func is called, so call it once the write, and any
-// cleanup of a partial file, is done.
+// BeginEcjWrite registers an out-of-band writer (shard copy, index recovery,
+// ReceiveFile) of ecjPath, waiting out any compaction in progress. Compaction
+// does not start until the returned func is called, so call it once the write,
+// and any cleanup of a partial file, is done.
 func BeginEcjWrite(ecjPath string) (done func()) {
 	key := ecjPathKey(ecjPath)
 	ecjUpdateWhenNotCompacting(key, func(st *ecjPathState) { st.writers++ })

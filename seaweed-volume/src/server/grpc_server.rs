@@ -2082,6 +2082,9 @@ impl VolumeServer for VolumeGrpcService {
         use tokio::io::AsyncWriteExt;
 
         let mut stream = request.into_inner();
+        // Held while an EC .ecj is received, through the cleanup of a partial
+        // file below. Declared before the file so it is dropped after it.
+        let mut ecj_write: Option<crate::storage::erasure_coding::ecj_registry::EcjWrite> = None;
         // tokio::fs + BufWriter, as `drain_copy_stream_to_file` below already
         // does: the chunk writes and the final fsync are disk I/O and must not
         // run on the runtime worker that is also driving this stream.
@@ -2230,6 +2233,20 @@ impl VolumeServer for VolumeGrpcService {
                                 )));
                             }
                         };
+
+                        // The mounted check above runs once; a volume can still
+                        // mount on this journal while the stream writes it.
+                        // Registered as a writer before the file is created,
+                        // that mount cannot compact the journal and leave the
+                        // rest of the stream in an unlinked inode.
+                        if info.is_ec_volume && info.ext == ".ecj" && ecj_write.is_none() {
+                            ecj_write = Some(
+                                crate::storage::erasure_coding::ecj_registry::begin_ecj_write_async(
+                                    &path,
+                                )
+                                .await,
+                            );
+                        }
 
                         let f = tokio::fs::File::create(&path).await.map_err(|e| {
                             Status::internal(format!("failed to create file: {}", e))
@@ -7787,6 +7804,101 @@ mod tests {
             "file on disk is a different length than the payload"
         );
         assert_eq!(written, payload, "file on disk does not match the payload");
+    }
+
+    /// A volume that mounts on a journal ReceiveFile is still writing must not
+    /// compact it: the rest of the stream would land in the replaced inode and
+    /// be gone at the next mount.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn receive_file_ecj_stream_blocks_mount_compaction() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let (port, _shutdown) = serve_source(service).await;
+        // An empty index is enough to mount; the store never sees this volume,
+        // so ReceiveFile's mounted check lets the .ecj through.
+        std::fs::write(format!("{}/4.ecx", dir), b"").unwrap();
+        let ecj_path = format!("{}/4.ecj", dir);
+
+        // A bloated prefix (100 ids, 4096 times over) the mount would compact,
+        // then an id only the second chunk carries.
+        let mut one = vec![0u8; 100 * NEEDLE_ID_SIZE];
+        for (i, entry) in one.chunks_exact_mut(NEEDLE_ID_SIZE).enumerate() {
+            NeedleId(1000 + i as u64).to_bytes(entry);
+        }
+        let bloated = one.repeat(4096);
+        let mut tail = vec![0u8; NEEDLE_ID_SIZE];
+        NeedleId(5000).to_bytes(&mut tail);
+
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::connect(
+            format!("http://127.0.0.1:{}", port),
+        )
+        .await
+        .unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let call = tokio::spawn(async move {
+            client
+                .receive_file(tokio_stream::wrappers::ReceiverStream::new(rx))
+                .await
+        });
+        let send = |data| volume_server_pb::ReceiveFileRequest { data: Some(data) };
+        tx.send(send(volume_server_pb::receive_file_request::Data::Info(
+            volume_server_pb::ReceiveFileInfo {
+                volume_id: 4,
+                ext: ".ecj".to_string(),
+                is_ec_volume: true,
+                file_size: (bloated.len() + tail.len()) as u64,
+                ..Default::default()
+            },
+        )))
+        .await
+        .unwrap();
+        tx.send(send(
+            volume_server_pb::receive_file_request::Data::FileContent(bloated.clone()),
+        ))
+        .await
+        .unwrap();
+
+        // Mount once the first chunk is on disk and before the second is sent.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::fs::metadata(&ecj_path).map_or(0, |m| m.len()) < bloated.len() as u64 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "first chunk never reached disk"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let mount_dir = dir.clone();
+        let mounted = tokio::task::spawn_blocking(move || {
+            crate::storage::erasure_coding::ec_volume::EcVolume::new(
+                &mount_dir,
+                &mount_dir,
+                "",
+                VolumeId(4),
+            )
+        })
+        .await
+        .unwrap()
+        .expect("mount during the stream");
+
+        tx.send(send(
+            volume_server_pb::receive_file_request::Data::FileContent(tail.clone()),
+        ))
+        .await
+        .unwrap();
+        drop(tx);
+        let response = call.await.unwrap().unwrap().into_inner();
+        assert_eq!(response.error, "", "ReceiveFile reported an error");
+        drop(mounted);
+
+        let mut want = bloated;
+        want.extend_from_slice(&tail);
+        let got = std::fs::read(&ecj_path).unwrap();
+        assert_eq!(
+            got.len(),
+            want.len(),
+            "journal on disk is not what the stream sent"
+        );
+        assert!(got == want, "journal on disk is not what the stream sent");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
