@@ -651,6 +651,12 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 	for _, v := range deletedVolumes {
 		t.UnRegisterVolumeLayout(v, dn)
 	}
+	for _, v := range changedVolumes {
+		if v.ReplicaPlacement == nil {
+			continue
+		}
+		t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, types.ToDiskType(v.DiskType)).SetReplicaReadOnlyFlag(dn, v.Id, v.ReadOnly)
+	}
 	// Update effective sizes for all reported volumes (decay pending estimates).
 	// If decay brings a volume eagerly removed by RecordAssign back under the
 	// writable threshold, restore the matching activeVolumeCount.
@@ -779,6 +785,9 @@ func (t *Topology) ApplyVolumeChanges(changed []*master_pb.VolumeInformationMess
 		}
 		if isNew || becameServable || tierTransition || isChanged {
 			newVolumes = append(newVolumes, vi)
+		}
+		if isChanged {
+			vl.SetReplicaReadOnlyFlag(dn, vi.Id, vi.ReadOnly)
 		}
 		vl.UpdateOversizedState(&vi, dn)
 		if vl.UpdateVolumeSize(vi.Id, vi.Size, vi.CompactRevision, true) {
