@@ -194,6 +194,43 @@ func TestMergeEcJournal_SharedJournalReachesEveryHolder(t *testing.T) {
 	assert.True(t, ev1.IsNeedleDeleted(2), "every journal holder must see the merged id")
 }
 
+// The picked runtime may journal to a different file than the copied one —
+// its index lives in its data directory while a sibling's lives in the index
+// directory. The ids must be published only to holders of the file they were
+// written to: the sibling's deleted set must not claim records its journal
+// lacks, or they come back after its remount.
+func TestMergeEcJournal_PublishesToActualJournalHolders(t *testing.T) {
+	tempDir := t.TempDir()
+	disk0 := filepath.Join(tempDir, "d0")
+	disk1 := filepath.Join(tempDir, "d1")
+	idxDir := filepath.Join(tempDir, "idx")
+	store := startEcJournalStoreDisks(t, idxDir, disk0, disk1)
+
+	const collection = "c"
+	vid := needle.VolumeId(9)
+	writeEcShard0(t, disk0, collection, vid)
+	writeEcShard0(t, disk1, collection, vid)
+	dataBase := writeEcIndex(t, disk0, collection, vid, 1)
+	idxBase := writeEcIndex(t, idxDir, collection, vid, 1)
+
+	ev0, err := store.Locations[0].LoadEcShard(collection, vid, 0)
+	require.NoError(t, err)
+	require.Equal(t, dataBase+".ecj", ev0.FileName(".ecj"))
+	ev1, err := store.Locations[1].LoadEcShard(collection, vid, 0)
+	require.NoError(t, err)
+	require.Equal(t, idxBase+".ecj", ev1.FileName(".ecj"))
+
+	// The copy targets the index-dir journal, but the receiving disk's runtime
+	// owns the data-dir one and the merge goes through it.
+	added, err := store.MergeEcJournal(vid, disk0, idxBase+".ecj", ecjIdSet(1, 2))
+	require.NoError(t, err)
+	assert.Equal(t, 1, added)
+	assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, dataBase+".ecj"))
+	assert.Equal(t, ecjRecords(1), mustReadFile(t, idxBase+".ecj"))
+	assert.True(t, ev0.IsNeedleDeleted(2))
+	assert.False(t, ev1.IsNeedleDeleted(2), "a different journal's holder must not claim the merged id")
+}
+
 // A sibling disk can mount vid from the receiving disk's index (#9212) while
 // the merge reads the journal unlocked. The append must notice that mount and
 // go through it instead of writing behind its open handle.

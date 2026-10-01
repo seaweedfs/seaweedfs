@@ -57,11 +57,15 @@ fn merge_ec_journal_with(
                 .write()
                 .map_err(|_| io::Error::other("store lock poisoned"))?;
             if let Some(primary) = mounted_ec_journal(&store, vid, data_dir, ecj_path)? {
-                let added = store.locations[primary]
+                let ecv = store.locations[primary]
                     .find_ec_volume_mut(vid)
-                    .expect("mounted journal runtime")
-                    .merge_journal(ids)?;
-                publish_to_journal_siblings(&store, primary, vid, ecj_path, ids);
+                    .expect("mounted journal runtime");
+                let journal_path = ecv.ecj_file_name();
+                let added = ecv.merge_journal(ids)?;
+                // Publish to the holders of the file the merge wrote to — the
+                // picked runtime's journal may live outside ecj_path, and a
+                // holder of a different file must not claim ids it lacks.
+                publish_to_journal_siblings(&store, primary, vid, &journal_path, ids);
                 return Ok(added);
             }
         }
@@ -71,11 +75,12 @@ fn merge_ec_journal_with(
             .map_err(|_| io::Error::other("store lock poisoned"))?;
         if let Some(primary) = mounted_ec_journal(&store, vid, data_dir, ecj_path)? {
             // Mounted since the read: its handle owns the journal now.
-            let added = store.locations[primary]
+            let ecv = store.locations[primary]
                 .find_ec_volume_mut(vid)
-                .expect("mounted journal runtime")
-                .merge_journal(ids)?;
-            publish_to_journal_siblings(&store, primary, vid, ecj_path, ids);
+                .expect("mounted journal runtime");
+            let journal_path = ecv.ecj_file_name();
+            let added = ecv.merge_journal(ids)?;
+            publish_to_journal_siblings(&store, primary, vid, &journal_path, ids);
             return Ok(added);
         }
         if let Some(added) = append_ecj_ids(ecj_path, &local, ids, size)? {
@@ -276,6 +281,43 @@ mod tests {
             "every journal holder must see the merged id"
         );
         assert_eq!(std::fs::read(&ecj).unwrap(), records(&[1, 2]));
+    }
+
+    /// The picked runtime may journal to a different file than the copied
+    /// one — its index lives in its data directory while a sibling's lives
+    /// in the index directory. The ids must be published only to holders of
+    /// the file they were written to.
+    #[test]
+    fn publishes_to_actual_journal_holders() {
+        let tmp = TempDir::new().unwrap();
+        let store = make_store(&tmp, &["d0", "d1"], Some("idx"));
+        write_shard0(&dir(&tmp, "d0"));
+        write_shard0(&dir(&tmp, "d1"));
+        let data_ecj = write_index(&dir(&tmp, "d0"), &[1]);
+        let idx_ecj = write_index(&dir(&tmp, "idx"), &[1]);
+        for i in 0..2 {
+            store.write().unwrap().locations[i]
+                .mount_ec_shards(VID, COLLECTION, &[0], "")
+                .unwrap();
+        }
+        assert_eq!(
+            store.read().unwrap().locations[0]
+                .find_ec_volume(VID)
+                .unwrap()
+                .ecj_file_name(),
+            data_ecj
+        );
+
+        let added =
+            merge_ec_journal(&store, VID, &dir(&tmp, "d0"), &idx_ecj, &id_set(&[1, 2])).unwrap();
+        assert_eq!(added, 1);
+        assert_eq!(std::fs::read(&data_ecj).unwrap(), records(&[1, 2]));
+        assert_eq!(std::fs::read(&idx_ecj).unwrap(), records(&[1]));
+        assert!(deleted_on(&store, 0, 2));
+        assert!(
+            !deleted_on(&store, 1, 2),
+            "a different journal's holder must not claim the merged id"
+        );
     }
 
     /// A sibling disk can mount `vid` from the receiving disk's index (#9212)

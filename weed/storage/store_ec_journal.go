@@ -162,12 +162,16 @@ func (s *Store) mergeIntoMountedEcJournal(owner *DiskLocation, vid needle.Volume
 			loc.ecVolumesLock.RUnlock()
 		}
 	}
+	journalPath := ev.FileName(".ecj")
 	added, err = ev.MergeJournal(ids)
 	mountedOn.ecVolumesLock.RUnlock()
 	if err != nil {
 		return added, true, err
 	}
-	s.withEcJournalHolders(vid, ecjPath, func(holders []*erasure_coding.EcVolume) {
+	// Publish to the holders of the file the merge wrote to — the picked
+	// runtime's journal may live outside ecjPath, and a holder of a different
+	// file must not claim ids that file lacks.
+	s.withEcJournalHolders(vid, journalPath, func(holders []*erasure_coding.EcVolume) {
 		for _, h := range holders {
 			if h != ev {
 				h.PublishMergedIds(ids)
