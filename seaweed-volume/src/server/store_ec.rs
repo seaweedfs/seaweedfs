@@ -1736,7 +1736,11 @@ async fn fetch_ec_index_from_one_peer(
     // .ecj is the source peer's deletion journal (appended); .vif carries EC
     // params. Both are best-effort: a missing .ecj is recreated at mount and a
     // missing .vif falls back to default EC parameters. A failed .ecj append
-    // leaves a partial file, so drop it.
+    // leaves a partial file, so drop it. The append and that cleanup are both
+    // writes by path, so they run registered as a writer: a volume mounting on
+    // this journal meanwhile must not compact it underneath them.
+    let ecj_write =
+        crate::storage::erasure_coding::ecj_registry::begin_ecj_write_async(ecj_path).await;
     match client.copy_file(copy_req(".ecj", true)).await {
         Ok(resp) => {
             if let Err(e) = drain_copy_stream(resp.into_inner(), ecj_path, true).await {
@@ -1746,6 +1750,7 @@ async fn fetch_ec_index_from_one_peer(
         }
         Err(e) => tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .ecj: {}", e),
     }
+    drop(ecj_write);
 
     match client.copy_file(copy_req(".vif", true)).await {
         Ok(resp) => {

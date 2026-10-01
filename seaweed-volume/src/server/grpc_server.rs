@@ -3255,6 +3255,11 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid);
                 format!("{}.ecj", base)
             };
+            // Registered as a writer for the whole append, so a volume mounting
+            // on this journal cannot compact it underneath the copy.
+            let _ecj_write =
+                crate::storage::erasure_coding::ecj_registry::begin_ecj_write_async(&file_path)
+                    .await;
             let file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)

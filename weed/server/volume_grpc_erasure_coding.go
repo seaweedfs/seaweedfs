@@ -437,8 +437,13 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 
 		if req.CopyEcjFile {
-			// copy ecj file
-			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecj", true, true, nil, throttler); err != nil {
+			// copy ecj file. Registered as a writer for the whole append, so a
+			// volume mounting on this journal cannot compact it underneath the
+			// copy.
+			done := erasure_coding.BeginEcjWrite(indexBaseFileName + ".ecj")
+			_, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecj", true, true, nil, throttler)
+			done()
+			if err != nil {
 				return err
 			}
 		}
@@ -679,13 +684,13 @@ func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation, hasE
 	dataBaseFilename := path.Join(location.Directory, bName)
 	if hasEcxFile {
 		// .ecx/.ecj may be in either dir depending on when -dir.idx was configured.
-		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
+		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj", indexBaseFilename + erasure_coding.EcjCompactTmpExt} {
 			if err := removeFileIfExists(p); err != nil {
 				return err
 			}
 		}
 		if location.IdxDirectory != location.Directory {
-			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
+			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj", dataBaseFilename + erasure_coding.EcjCompactTmpExt} {
 				if err := removeFileIfExists(p); err != nil {
 					return err
 				}
@@ -749,10 +754,12 @@ func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total in
 	// .ecx/.ecj/.ecsum may sit in either dir depending on -dir.idx; clear both.
 	record(removeFileIfExists(indexBaseFileName + ".ecx"))
 	record(removeFileIfExists(indexBaseFileName + ".ecj"))
+	record(removeFileIfExists(indexBaseFileName + erasure_coding.EcjCompactTmpExt))
 	record(removeBitrotSidecars(indexBaseFileName))
 	if dataBaseFileName != indexBaseFileName {
 		record(removeFileIfExists(dataBaseFileName + ".ecx"))
 		record(removeFileIfExists(dataBaseFileName + ".ecj"))
+		record(removeFileIfExists(dataBaseFileName + erasure_coding.EcjCompactTmpExt))
 		record(removeBitrotSidecars(dataBaseFileName))
 	}
 

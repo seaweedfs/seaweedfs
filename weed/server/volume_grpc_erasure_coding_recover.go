@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 // ecRecoveryLookupTimeout bounds the master LookupEcVolume call so a slow or
@@ -147,11 +148,16 @@ func (vs *VolumeServer) fetchEcIndexFromPeers(peers []pb.ServerAddress, m storag
 			// and EncodeTsNs. Both are best-effort: a missing .ecj is recreated at
 			// mount and a missing .vif falls back to default EC parameters. A failed
 			// .ecj copy is an in-place append, so drop the partial file; the .vif
-			// copy stages and renames, leaving nothing to clean up.
+			// copy stages and renames, leaving nothing to clean up. The append and
+			// that cleanup both write by path, so they run registered as a writer:
+			// a volume mounting on this journal meanwhile must not compact it
+			// underneath them.
+			done := erasure_coding.BeginEcjWrite(ecjPath)
 			if _, err := vs.doCopyFile(client, true, m.Collection, uint32(m.VolumeId), math.MaxUint32, math.MaxInt64, idxBaseFileName, ".ecj", true, true, nil); err != nil {
 				glog.Warningf("ec volume %d: copy .ecj from %s: %v", m.VolumeId, peer, err)
 				removePartial(ecjPath)
 			}
+			done()
 			if _, err := vs.doCopyFile(client, true, m.Collection, uint32(m.VolumeId), math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil); err != nil {
 				glog.Warningf("ec volume %d: copy .vif from %s: %v", m.VolumeId, peer, err)
 			}

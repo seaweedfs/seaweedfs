@@ -13,7 +13,9 @@ use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
 use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, ShardId};
-use crate::storage::erasure_coding::ec_volume::{EcVolume, is_usable_ecx_file};
+use crate::storage::erasure_coding::ec_volume::{
+    ECJ_COMPACT_TMP_EXT, EcVolume, is_usable_ecx_file,
+};
 use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
@@ -1419,10 +1421,12 @@ impl Store {
                     crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                 let _ = std::fs::remove_file(format!("{}.ecx", idx_base));
                 let _ = std::fs::remove_file(format!("{}.ecj", idx_base));
+                let _ = std::fs::remove_file(format!("{}{}", idx_base, ECJ_COMPACT_TMP_EXT));
                 // Also try data directory in case .ecx/.ecj were created before -dir.idx
                 if loc.idx_directory != loc.directory {
                     let _ = std::fs::remove_file(format!("{}.ecx", data_base));
                     let _ = std::fs::remove_file(format!("{}.ecj", data_base));
+                    let _ = std::fs::remove_file(format!("{}{}", data_base, ECJ_COMPACT_TMP_EXT));
                 }
                 // A shard-only disk also drops its stale .vif (Go
                 // removeEcSharedIndexFiles): a live .idx means this disk still
