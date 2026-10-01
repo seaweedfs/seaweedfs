@@ -7982,6 +7982,68 @@ mod tests {
         assert_eq!(read.unwrap(), b"needle-2");
     }
 
+    // An explicit vacuum of a tiered volume must not copy it out of remote
+    // storage only for the commit to refuse the result.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_compaction_refused_before_copying_a_tiered_volume() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        seed_compactable_volume(&service);
+        let dat_bytes = std::fs::read(tmp.path().join("1.dat")).unwrap();
+        let (endpoint, shutdown_tx, _deletes) = spawn_fake_s3_server(dat_bytes.clone());
+        register_tier_backend("s3.tiered_then_compact", endpoint);
+        {
+            let mut store = service.state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.update_remote_files(|files| {
+                files.push(volume_server_pb::RemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: "tiered_then_compact".to_string(),
+                    key: "remote-key".to_string(),
+                    offset: 0,
+                    file_size: dat_bytes.len() as u64,
+                    modified_time: 0,
+                    extension: ".dat".to_string(),
+                })
+            })
+            .unwrap();
+            vol.save_volume_info().unwrap();
+            vol.load_remote_dat_file().unwrap();
+        }
+        std::fs::remove_file(tmp.path().join("1.dat")).unwrap();
+
+        let mut stream = service
+            .vacuum_volume_compact(Request::new(volume_server_pb::VacuumVolumeCompactRequest {
+                volume_id: 1,
+                preallocate: 0,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let mut error = None;
+        while let Some(message) = stream.next().await {
+            if let Err(e) = message {
+                error = Some(e);
+            }
+        }
+        let compacting = {
+            let store = service.state.store.read().unwrap();
+            store.find_volume(VolumeId(1)).unwrap().1.is_compacting()
+        };
+        let read = read_surviving_needle(&service);
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.tiered_then_compact");
+        let _ = shutdown_tx.send(());
+
+        let err = error.expect("a tiered volume must refuse the compaction");
+        assert!(err.message().contains("tiered"), "{err:?}");
+        assert!(!tmp.path().join("1.cpd").exists());
+        assert!(!tmp.path().join("1.cpx").exists());
+        assert!(!compacting);
+        assert_eq!(read.unwrap(), b"needle-2");
+    }
+
     /// Build a local service whose volume has a `.dat` large enough to span
     /// several 2MB copy chunks, so the streaming copy paths are exercised
     /// across multiple messages rather than a single buffer.

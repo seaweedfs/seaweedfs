@@ -4408,6 +4408,13 @@ impl Volume {
             return Err(e);
         }
         let idx_size = nm.index_file_size();
+        // The copy would stream the .dat from remote storage for a commit that refuses it.
+        if self.has_remote_file() {
+            return Err(VolumeError::Io(io::Error::other(format!(
+                "volume {} is tiered to remote storage, cannot compact",
+                self.id
+            ))));
+        }
 
         // Fresh opens, not `try_clone`: see `dat_scan_plan`.
         let src_dat = if self.dat_file.is_some() {
@@ -8650,9 +8657,17 @@ mod tests {
     fn test_compaction_aborts_on_truncated_index() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut v = reload_as_tiered(dir, "vif_compact_test", 4);
+        {
+            let mut v = make_test_volume(dir);
+            for i in 1..=4u64 {
+                write_test_needle(&mut v, i, format!("needle-{i}").as_bytes());
+            }
+            v.set_read_only_persist(false, true).unwrap();
+            v.sync_to_disk().unwrap();
+        }
+        let mut v = make_test_volume(dir);
         let Some(NeedleMap::SortedFile(_)) = v.nm else {
-            panic!("tiered volume should search the on-disk .sdx");
+            panic!("read-only volume should search the on-disk .sdx");
         };
 
         let idx = OpenOptions::new()
@@ -8669,11 +8684,6 @@ mod tests {
             matches!(err, VolumeError::Io(ref e) if e.kind() == io::ErrorKind::UnexpectedEof),
             "unexpected error: {err:?}"
         );
-
-        crate::remote_storage::s3_tier::global_s3_tier_registry()
-            .write()
-            .unwrap()
-            .remove("s3.vif_compact_test");
     }
 
     // Building .sdx writes to the index directory, which a read-only volume's
