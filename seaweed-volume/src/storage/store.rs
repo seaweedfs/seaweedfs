@@ -750,7 +750,7 @@ impl Store {
             Err(e) => writes
                 .iter()
                 .map(|_| match e {
-                    VolumeError::ReadOnly(_) => Err(VolumeError::ReadOnly(vid)),
+                    VolumeError::ReadOnly(vid) => Err(VolumeError::ReadOnly(vid)),
                     _ => Err(VolumeError::NotFound),
                 })
                 .collect(),
