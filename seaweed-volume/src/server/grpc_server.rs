@@ -12099,4 +12099,71 @@ mod tests {
         result.unwrap();
         assert_decoded_volume(&service, (2, 0), &[1, 3], &[2]);
     }
+
+    // Among storage errors, the filer requeues a delete only on "is read only"
+    // (Go's DeleteVolumeNeedle text).
+    #[tokio::test]
+    async fn test_batch_delete_on_read_only_volume_says_is_read_only() {
+        let request = || {
+            Request::new(volume_server_pb::BatchDeleteRequest {
+                file_ids: vec!["1,b00003344".to_string()],
+                skip_cookie_check: false,
+            })
+        };
+
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .find_volume_mut(VolumeId(1))
+            .unwrap()
+            .1
+            .set_no_write_or_delete(true);
+        let resp = service.batch_delete(request()).await.unwrap().into_inner();
+        assert_eq!(resp.results.len(), 1);
+        assert_eq!(resp.results[0].status, 500);
+        assert_eq!(resp.results[0].error, "volume 1 is read only");
+
+        // Controls: a writable volume, and one read-only but deletable.
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let resp = service.batch_delete(request()).await.unwrap().into_inner();
+        assert_eq!(resp.results[0].status, 202, "{:?}", resp.results[0].error);
+
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .find_volume_mut(VolumeId(1))
+            .unwrap()
+            .1
+            .set_read_only_persist(true, false)
+            .unwrap();
+        let resp = service.batch_delete(request()).await.unwrap().into_inner();
+        assert_eq!(resp.results[0].status, 202, "{:?}", resp.results[0].error);
+    }
+
+    // Go says "volume N not found[ on host:port]" with the same statuses; the
+    // bare "not found" is kept on purpose: the filer skips it, whereas Go's
+    // text is booked permanent and outranks a retryable sibling replica.
+    #[tokio::test]
+    async fn test_batch_delete_on_missing_volume_says_not_found() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        for (skip_cookie_check, status) in [(false, 404), (true, 500)] {
+            let resp = service
+                .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
+                    file_ids: vec!["2,b00003344".to_string()],
+                    skip_cookie_check,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(resp.results[0].status, status, "skip={skip_cookie_check}");
+            assert_eq!(resp.results[0].error, "not found");
+        }
+    }
+
 }
