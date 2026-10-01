@@ -739,6 +739,7 @@ jobs:
           errors = []
           workloads = 0
           containers = 0
+          components = set()
           for path in sys.argv[1:]:
               with open(path) as stream:
                   documents = [document for document in yaml.safe_load_all(stream) if document]
@@ -748,27 +749,60 @@ jobs:
                   workloads += 1
                   name = document["metadata"]["name"]
                   pod = document["spec"]["template"]["spec"]
+                  component = document["spec"]["template"]["metadata"]["labels"].get("app.kubernetes.io/component")
+                  if component:
+                      components.add(component)
+                  else:
+                      errors.append(f"{name}: app.kubernetes.io/component label is missing")
                   pod_context = pod.get("securityContext", {})
+                  if "enabled" in pod_context:
+                      errors.append(f"{name}: internal enabled flag leaked into pod securityContext")
                   if pod_context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
                       errors.append(f"{name}: pod seccompProfile is not RuntimeDefault")
                   for container in pod.get("containers", []):
                       containers += 1
                       context = container.get("securityContext", {})
                       prefix = f"{name}/{container['name']}"
+                      if "enabled" in context:
+                          errors.append(f"{prefix}: internal enabled flag leaked into container securityContext")
                       if context.get("privileged") is not False:
                           errors.append(f"{prefix}: privileged is not false")
                       if context.get("allowPrivilegeEscalation") is not False:
                           errors.append(f"{prefix}: allowPrivilegeEscalation is not false")
-                      if "ALL" not in context.get("capabilities", {}).get("drop", []):
-                          errors.append(f"{prefix}: capabilities.drop does not contain ALL")
+                      if context.get("capabilities", {}).get("drop") != ["ALL"]:
+                          errors.append(f"{prefix}: capabilities.drop is not exactly [ALL]")
                       if context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
                           errors.append(f"{prefix}: seccompProfile is not RuntimeDefault")
+
+          expected_components = {
+              "master", "volume", "filer", "s3", "sftp", "admin", "worker",
+              "objectstorage-provisioner", "bucket-hook", "seaweedfs-all-in-one",
+          }
+          if components != expected_components:
+              errors.append(
+                  f"security context workload coverage is incomplete: "
+                  f"expected {sorted(expected_components)}, got {sorted(components)}"
+              )
+          if workloads != 10 or containers != 11:
+              errors.append(
+                  f"expected 10 workloads and 11 containers, got "
+                  f"{workloads} workloads and {containers} containers"
+              )
 
           if errors:
               print("\n".join(f"FAIL: {error}" for error in errors), file=sys.stderr)
               sys.exit(1)
           print(f"Validated security contexts on {workloads} workloads and {containers} containers")
           PYEOF
+
+          # The resize hook depends on lookup finding a live StatefulSet and
+          # therefore cannot render during helm template. Keep static coverage
+          # for both security-context blocks.
+          grep -q 'omit .Values.volume.podSecurityContext "enabled"' \
+            "$CHART_DIR/templates/volume/volume-resize-hook.yaml"
+          grep -q 'omit .Values.volume.containerSecurityContext "enabled"' \
+            "$CHART_DIR/templates/volume/volume-resize-hook.yaml"
+          echo "Volume resize hook security contexts are covered"
           
           echo ""
           echo "=== Testing long release name: service names match DNS references ==="

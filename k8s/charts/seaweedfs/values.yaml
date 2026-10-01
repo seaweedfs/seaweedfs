@@ -273,7 +273,13 @@ master:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
   containerSecurityContext:
@@ -588,7 +594,13 @@ volume:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
   containerSecurityContext:
@@ -888,7 +900,13 @@ filer:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
   containerSecurityContext:
@@ -1185,7 +1203,13 @@ s3:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
   containerSecurityContext:
@@ -1347,10 +1371,35 @@ sftp:
   priorityClassName: ""
   schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
       type: RuntimeDefault
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
@@ -1505,10 +1554,35 @@ admin:
   priorityClassName: ""
   schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
       type: RuntimeDefault
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
@@ -1673,10 +1747,35 @@ worker:
   priorityClassName: ""
   schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
       type: RuntimeDefault
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
@@ -1957,7 +2056,13 @@ allInOne:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
   #   seccompProfile:
   #     type: RuntimeDefault
   containerSecurityContext:
@@ -2006,10 +2111,35 @@ cosi:
   # should have a secret key called seaweedfs_s3_config with an inline json configure
   existingConfigSecret: null
 
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext:
     enabled: true
     seccompProfile:
       type: RuntimeDefault
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext:
     enabled: true
     privileged: false
