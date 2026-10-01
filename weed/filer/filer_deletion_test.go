@@ -18,7 +18,7 @@ func TestDeletionRetryQueue_AddAndRetrieve(t *testing.T) {
 	}
 
 	// Items not ready yet (initial delay is 5 minutes)
-	readyItems := queue.GetReadyItems(10)
+	readyItems, _ := queue.GetReadyItems(10)
 	if len(readyItems) != 0 {
 		t.Errorf("Expected 0 ready items, got %d", len(readyItems))
 	}
@@ -119,7 +119,7 @@ func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	queue.lock.Unlock()
 
 	// Try to get ready items - should be returned for the last retry (attempt #10)
-	readyItems := queue.GetReadyItems(10)
+	readyItems, _ := queue.GetReadyItems(10)
 	if len(readyItems) != 1 {
 		t.Fatalf("Expected 1 item for last retry, got %d", len(readyItems))
 	}
@@ -139,7 +139,7 @@ func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	queue.lock.Unlock()
 
 	// Now it should be discarded (retry count is 11, exceeds max of 10)
-	readyItems = queue.GetReadyItems(10)
+	readyItems, _ = queue.GetReadyItems(10)
 	if len(readyItems) != 0 {
 		t.Errorf("Expected 0 items (max attempts exceeded), got %d", len(readyItems))
 	}
@@ -248,7 +248,7 @@ func TestDeletionRetryQueue_HeapOrdering(t *testing.T) {
 	queue.lock.Unlock()
 
 	// GetReadyItems should return in NextRetryAt order
-	readyItems := queue.GetReadyItems(10)
+	readyItems, _ := queue.GetReadyItems(10)
 	expectedOrder := []string{"file1", "file2", "file3"}
 
 	if len(readyItems) != 3 {

@@ -89,6 +89,15 @@ type Filer struct {
 	deletionLedgerLock  sync.Mutex
 	pendingDeletions    map[string]struct{}
 	deletionLedgerDirty bool
+	deletionLedgerParts int
+	// deletionSnapshotLock serializes ledger writes in copy order so an
+	// in-flight timer snapshot cannot overwrite a newer shutdown snapshot.
+	deletionSnapshotLock sync.Mutex
+	// deletionLedgerBlocked is set when the startup ledger read fails: the
+	// persisted set is then unknown, so this run persists nothing rather than
+	// overwrite the unread ledger with a partial set.
+	deletionLedgerBlocked atomic.Bool
+	deletionLedgerFlush   chan struct{}
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -102,6 +111,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
+		deletionLedgerFlush: make(chan struct{}, 1),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
 		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
 		remoteTombstones:    newRemoteDeletionTombstones(),
@@ -223,8 +233,11 @@ func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 
 	// Recover deletions that were pending when a previous process died, and keep
 	// the durable ledger snapshotted while running (see filer_deletion_persist.go).
-	f.reloadDeletionLedger()
-	f.startDeletionLedgerSnapshotter()
+	// A failed ledger read leaves persistence off so snapshots cannot overwrite
+	// the unread ledger with a partial set.
+	if f.reloadDeletionLedger() {
+		f.startDeletionLedgerSnapshotter()
+	}
 
 	return isFresh
 }

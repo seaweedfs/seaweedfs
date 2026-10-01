@@ -3,9 +3,12 @@ package filer
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -13,7 +16,7 @@ import (
 // the filer is wired to, the same way a restarting filer would.
 func readPersistedLedger(t *testing.T, f *Filer) ([]string, bool) {
 	t.Helper()
-	raw, err := f.Store.KvGet(context.Background(), []byte(KvKeyDeletionLedger))
+	raw, err := f.Store.KvGet(context.Background(), []byte(f.deletionLedgerKey()))
 	if err != nil {
 		if err == ErrKvNotFound {
 			return nil, false
@@ -30,9 +33,16 @@ func readPersistedLedger(t *testing.T, f *Filer) ([]string, bool) {
 // withPersistedConfig pins the ledger knobs at viper's override tier so the test
 // sees deterministic semantics regardless of global SetDefault ordering (the
 // production getters SetDefault(true), which would otherwise win the tier race).
+// The overrides are restored on cleanup so later tests see production defaults.
 func withPersistedConfig(t *testing.T, enabled bool) {
 	t.Helper()
-	util.GetViper().Set("filer.deleteQueue.persist", enabled)
+	v := util.GetViper()
+	v.Set("filer.deleteQueue.persist", enabled)
+	v.Set("filer.deleteQueue.recoveryGrace", defaultDeletionRecoveryGrace)
+	t.Cleanup(func() {
+		v.Set("filer.deleteQueue.persist", true)
+		v.Set("filer.deleteQueue.recoveryGrace", defaultDeletionRecoveryGrace)
+	})
 }
 
 // newLedgerTestFiler builds a Filer with the pieces the ledger touches, backed by
@@ -169,6 +179,132 @@ func TestDeletionLedgerDisabled(t *testing.T) {
 	f2.reloadDeletionLedger()
 	if f2.pendingDeletionCount() != 0 {
 		t.Fatalf("reload must be a no-op when disabled, got %d pending", f2.pendingDeletionCount())
+	}
+}
+
+// Filers sharing one metadata store must not overwrite each other's ledgers:
+// each filer keys its ledger by its own address.
+func TestDeletionLedgerScopedPerFiler(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	fA := newLedgerTestFiler(store)
+	fA.Dlm = lock_manager.NewDistributedLockManager("filer-a:8888")
+	fB := newLedgerTestFiler(store)
+	fB.Dlm = lock_manager.NewDistributedLockManager("filer-b:8888")
+
+	fA.queueDeletions("1,01")
+	fB.queueDeletions("2,02")
+	fA.snapshotDeletionLedger()
+	fB.snapshotDeletionLedger()
+
+	idsA, okA := readPersistedLedger(t, fA)
+	idsB, okB := readPersistedLedger(t, fB)
+	if !okA || !okB {
+		t.Fatalf("both filers must have their own ledger, got %v %v", idsA, idsB)
+	}
+	if !contains(idsA, "1,01") || contains(idsA, "2,02") {
+		t.Fatalf("filer A ledger wrong: %v", idsA)
+	}
+	if !contains(idsB, "2,02") || contains(idsB, "1,01") {
+		t.Fatalf("filer B ledger wrong: %v", idsB)
+	}
+
+	// A restarted filer on B's address recovers only B's pending deletions.
+	fB2 := newLedgerTestFiler(store)
+	fB2.Dlm = lock_manager.NewDistributedLockManager("filer-b:8888")
+	if !fB2.reloadDeletionLedger() {
+		t.Fatalf("reload should succeed")
+	}
+	if fB2.pendingDeletionCount() != 1 {
+		t.Fatalf("B's restart should recover exactly its own id, got %d", fB2.pendingDeletionCount())
+	}
+}
+
+// A ledger bigger than one store value must still persist: it splits into part
+// keys under a manifest, and shrinking below the part size removes the parts.
+func TestDeletionLedgerChunked(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	f := newLedgerTestFiler(store)
+
+	var ids []string
+	for i := 0; i < 4000; i++ {
+		ids = append(ids, fmt.Sprintf("7,%08xbeefcafe", i))
+	}
+	f.queueDeletions(ids...)
+	f.snapshotDeletionLedger()
+
+	raw, err := f.Store.KvGet(context.Background(), []byte(f.deletionLedgerKey()))
+	if err != nil || len(raw) == 0 || raw[0] != '{' {
+		t.Fatalf("expected a chunked manifest, got %v %q", err, raw)
+	}
+
+	f2 := newLedgerTestFiler(store)
+	if !f2.reloadDeletionLedger() {
+		t.Fatalf("chunked ledger should reload")
+	}
+	if got := f2.pendingDeletionCount(); got != len(ids) {
+		t.Fatalf("recovered %d ids, want %d", got, len(ids))
+	}
+
+	// Forget everything; the next snapshot is a single value again and the
+	// part keys are removed.
+	for _, id := range ids {
+		f2.forgetDeletion(id)
+	}
+	f2.snapshotDeletionLedger()
+	raw, err = f.Store.KvGet(context.Background(), []byte(f2.deletionLedgerKey()))
+	if err != nil || len(raw) == 0 || raw[0] != '[' {
+		t.Fatalf("expected single-value ledger after shrink, got %v %q", err, raw)
+	}
+	if _, err := f.Store.KvGet(context.Background(), deletionLedgerPartKey(f2.deletionLedgerKey(), 0)); err != ErrKvNotFound {
+		t.Fatalf("stale part key must be removed, got %v", err)
+	}
+}
+
+// A startup ledger read that fails for a reason other than not-found must not
+// let snapshots overwrite the unread ledger with a partial set.
+func TestDeletionLedgerReadFailureBlocksPersistence(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	f := newLedgerTestFiler(store)
+	store.kvGetErr = errors.New("kv read down")
+
+	if f.reloadDeletionLedger() {
+		t.Fatalf("reload should report the ledger as unusable")
+	}
+	store.kvGetErr = nil
+
+	f.queueDeletions("1,01")
+	f.snapshotDeletionLedger()
+	if _, ok := readPersistedLedger(t, f); ok {
+		t.Fatalf("snapshot must not overwrite a ledger that was never read")
+	}
+}
+
+// Recovered ids join the pending set immediately — before the grace delay — so
+// an early snapshot rewrites the recovered ids instead of dropping them.
+func TestDeletionLedgerRecoveryKeepsIdsPending(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	f := newLedgerTestFiler(store)
+	f.queueDeletions("1,01", "1,02")
+	f.snapshotDeletionLedger()
+
+	util.GetViper().Set("filer.deleteQueue.recoveryGrace", time.Hour)
+	f2 := newLedgerTestFiler(store)
+	if !f2.reloadDeletionLedger() {
+		t.Fatalf("reload should succeed")
+	}
+	// Still inside the grace window, but the ids are already pending.
+	if f2.pendingDeletionCount() != 2 {
+		t.Fatalf("recovered ids must be pending immediately, got %d", f2.pendingDeletionCount())
+	}
+	// And an early shutdown snapshot keeps them.
+	f2.snapshotDeletionLedger()
+	persisted, ok := readPersistedLedger(t, f2)
+	if !ok || len(persisted) != 2 {
+		t.Fatalf("snapshot during grace must carry recovered ids, got %v", persisted)
 	}
 }
 

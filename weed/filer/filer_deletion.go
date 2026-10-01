@@ -216,18 +216,19 @@ func (q *DeletionRetryQueue) RequeueForRetry(item *DeletionRetryItem, errorMsg s
 	heap.Push(&q.heap, item)
 }
 
-// GetReadyItems returns items that are ready to be retried and marks them as in-flight
+// GetReadyItems returns items that are ready to be retried and marks them as in-flight.
+// Expired reports fileIds dropped for exceeding MaxRetryAttempts — permanent
+// dropouts the caller must also forget in the durable deletion ledger.
 // Time complexity: O(K log N) where K is the number of ready items
 // Items are processed in order of NextRetryAt (earliest first)
-func (q *DeletionRetryQueue) GetReadyItems(maxItems int) []*DeletionRetryItem {
+func (q *DeletionRetryQueue) GetReadyItems(maxItems int) (ready []*DeletionRetryItem, expired []string) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	now := time.Now()
-	var readyItems []*DeletionRetryItem
 
 	// Peek at items from the top of the heap (earliest NextRetryAt)
-	for len(q.heap) > 0 && len(readyItems) < maxItems {
+	for len(q.heap) > 0 && len(ready) < maxItems {
 		item := q.heap[0]
 
 		// If the earliest item is not ready yet, no other items are ready either
@@ -240,15 +241,16 @@ func (q *DeletionRetryQueue) GetReadyItems(maxItems int) []*DeletionRetryItem {
 
 		if item.RetryCount <= MaxRetryAttempts {
 			item.inFlight = true // Mark as being processed
-			readyItems = append(readyItems, item)
+			ready = append(ready, item)
 		} else {
 			// Max attempts reached, log and discard completely
 			delete(q.itemIndex, item.FileId)
+			expired = append(expired, item.FileId)
 			glog.Warningf("max retry attempts (%d) reached for %s, last error: %s", MaxRetryAttempts, item.FileId, item.LastError)
 		}
 	}
 
-	return readyItems
+	return ready, expired
 }
 
 // Remove removes an item from the queue (called when deletion succeeds or fails permanently)
@@ -527,7 +529,12 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			// Process all ready items in batches until queue is empty
 			totalProcessed := 0
 			for {
-				readyItems := f.DeletionRetryQueue.GetReadyItems(DeletionRetryBatchSize)
+				readyItems, expired := f.DeletionRetryQueue.GetReadyItems(DeletionRetryBatchSize)
+				for _, fileId := range expired {
+					// Permanently discarded — stop carrying it in the ledger or
+					// every restart would retry it again.
+					f.forgetDeletion(fileId)
+				}
 				if len(readyItems) == 0 {
 					break
 				}
