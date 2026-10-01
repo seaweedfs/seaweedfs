@@ -179,7 +179,7 @@ spec:
               {{ . }} \
               {{- end }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.master.containerSecurityContext) | nindent 12 }}
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
             {{- if or (eq .Values.master.logs.type "hostPath") (eq .Values.master.logs.type "persistentVolumeClaim") (eq .Values.master.logs.type "emptyDir") }}
@@ -259,7 +259,7 @@ spec:
         {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.master.sidecars "context" $) | nindent 8 }}
         {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.master.containerSecurityContext) | nindent 8 }}
         {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume

@@ -813,7 +813,7 @@ impl EncodeRun<'_> {
         // explicitly.
         for (i, buf) in self.buffers[..self.data_shards].iter_mut().enumerate() {
             let read_offset = offset + (i * block_size) as u64;
-            let n = read_at_most(self.dat_file, buf, read_offset)?;
+            let n = crate::storage::io::read_full_at(self.dat_file, buf, read_offset)?;
             buf[n..].fill(0);
         }
 
@@ -832,19 +832,6 @@ impl EncodeRun<'_> {
 
         Ok(())
     }
-}
-
-/// Read into `buf` at `offset` until it is full or EOF; returns bytes read.
-fn read_at_most(dat_file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-    let mut n = 0;
-    while n < buf.len() {
-        let r = crate::storage::io::read_at(dat_file, &mut buf[n..], offset + n as u64)?;
-        if r == 0 {
-            break;
-        }
-        n += r;
-    }
-    Ok(n)
 }
 
 #[cfg(test)]

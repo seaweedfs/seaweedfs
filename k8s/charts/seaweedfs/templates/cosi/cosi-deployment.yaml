@@ -113,7 +113,7 @@ spec:
             {{- end -}}
             {{- end }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.cosi.containerSecurityContext) | nindent 12 }}
             - mountPath: /var/lib/cosi
               name: socket
             {{- if .Values.cosi.enableAuth }}
@@ -163,7 +163,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.cosi.containerSecurityContext) | nindent 12 }}
             - mountPath: /var/lib/cosi
               name: socket
           {{- with .Values.cosi.sidecar.resources }}
@@ -177,7 +177,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.cosi.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.cosi.containerSecurityContext) | nindent 8 }}
         - name: socket
           emptyDir: {}
         {{- if .Values.cosi.enableAuth }}

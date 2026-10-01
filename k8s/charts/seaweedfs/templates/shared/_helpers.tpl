@@ -78,20 +78,28 @@ Inject extra environment vars in the format key:value, if populated
 
 {{/*
 Writable temporary directory for containers using a read-only root filesystem.
+Input: list of the root context and the component container security context.
 */}}
 {{- define "seaweedfs.tmpDirVolume" -}}
+{{- $root := index . 0 -}}
+{{- $securityContext := index . 1 -}}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem }}
 - name: seaweedfs-tmp
-  {{- with .Values.global.seaweedfs.tmpDir.sizeLimit }}
+  {{- with $root.Values.global.seaweedfs.tmpDir.sizeLimit }}
   emptyDir:
     sizeLimit: {{ . | quote }}
   {{- else }}
   emptyDir: {}
   {{- end }}
+{{- end }}
 {{- end -}}
 
 {{- define "seaweedfs.tmpDirVolumeMount" -}}
+{{- $securityContext := index . 1 -}}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem }}
 - name: seaweedfs-tmp
   mountPath: /tmp
+{{- end }}
 {{- end -}}
 
 {{/* Whether the mysql filer store is selected; a flag the chart cannot read counts as selected. */}}

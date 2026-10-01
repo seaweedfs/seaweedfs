@@ -192,7 +192,7 @@ spec:
               {{ $arg }}{{- if lt $index (sub (len $.Values.admin.extraArgs) 1) }} \{{ end }}
               {{- end }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.admin.containerSecurityContext) | nindent 12 }}
             {{- if or (eq .Values.admin.data.type "hostPath") (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.data.type "emptyDir") (eq .Values.admin.data.type "existingClaim") }}
             - name: admin-data
               mountPath: /data
@@ -268,7 +268,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.admin.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.admin.containerSecurityContext) | nindent 8 }}
         {{- if eq .Values.admin.data.type "hostPath" }}
         - name: admin-data
           hostPath:

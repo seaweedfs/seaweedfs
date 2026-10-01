@@ -202,8 +202,9 @@ spec:
                 /usr/bin/weed shell
           {{- end }}  
           {{- end }}
+        {{- if or (and .Values.filer.containerSecurityContext.enabled .Values.filer.containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
         volumeMounts:
-          {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 10 }}
+          {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.filer.containerSecurityContext) | nindent 10 }}
           {{- if $enableAuth }}
           - name: config-users
             mountPath: /etc/sw
@@ -215,6 +216,7 @@ spec:
             mountPath: /etc/seaweedfs/security.toml
             subPath: security.toml
           {{- end }}
+        {{- end }}
         ports:
           - containerPort: {{ .Values.master.port }}
             name: swfs-master
@@ -231,8 +233,9 @@ spec:
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
+    {{- if or (and .Values.filer.containerSecurityContext.enabled .Values.filer.containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.filer.containerSecurityContext) | nindent 8 }}
         {{- if $enableAuth }}
         - name: config-users
           secret:
@@ -248,4 +251,5 @@ spec:
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config
         {{- end }}
+    {{- end }}
 {{- end }}

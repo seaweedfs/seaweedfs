@@ -572,9 +572,9 @@ The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings 
 
 ## Pod and container security contexts
 
-The chart enables a `RuntimeDefault` seccomp profile at both pod and container level for all built-in workloads. Built-in containers also run with privilege escalation disabled, `privileged: false`, all Linux capabilities dropped, and a read-only root filesystem.
+Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, drop all Linux capabilities, and use a read-only root filesystem.
 
-SeaweedFS uses `/tmp` for Unix sockets, temporary uploads, worker task files, and other runtime data. The chart mounts a writable `emptyDir` at `/tmp` for every built-in container. Its optional size limit can be configured globally:
+SeaweedFS uses `/tmp` for Unix sockets, temporary uploads, worker task files, and other runtime data. When `readOnlyRootFilesystem` is enabled for a built-in component, the chart mounts a writable `emptyDir` at `/tmp` for its chart-managed containers. Its optional size limit can be configured globally:
 
 ```yaml
 global:
@@ -595,6 +595,7 @@ To deploy on OpenShift, use the provided `openshift-values.yaml` which overrides
 1. Use `PersistentVolumeClaims` instead of `hostPath`.
 2. Enable `runAsNonRoot` and omit hardcoded UIDs to allow OpenShift to assign valid UIDs automatically.
 3. Apply appropriate `seccompProfile` and drop capabilities.
+4. Use a read-only root filesystem with writable temporary storage at `/tmp`.
 
 Usage:
 ```bash

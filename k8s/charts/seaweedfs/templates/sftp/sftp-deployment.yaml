@@ -170,7 +170,7 @@ spec:
               -userStoreFile=/etc/sw/seaweedfs_sftp_config \
               -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.sftp.containerSecurityContext) | nindent 12 }}
             {{- if or (eq .Values.sftp.logs.type "hostPath") (eq .Values.sftp.logs.type "emptyDir") }}
             - name: logs
               mountPath: "/logs/"
@@ -250,7 +250,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.sftp.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.sftp.containerSecurityContext) | nindent 8 }}
         {{- if .Values.sftp.enableAuth }}
         - name: config-users
           secret:

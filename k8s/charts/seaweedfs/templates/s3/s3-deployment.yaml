@@ -157,7 +157,7 @@ spec:
               {{ . }} \
               {{- end }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" . | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.s3.containerSecurityContext) | nindent 12 }}
             {{- if or (eq .Values.s3.logs.type "hostPath") (eq .Values.s3.logs.type "emptyDir") }}
             - name: logs
               mountPath: "/logs/"
@@ -246,7 +246,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" . | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.s3.containerSecurityContext) | nindent 8 }}
         {{- if .Values.s3.enableAuth }}
         - name: config-users
           secret:
