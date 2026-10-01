@@ -148,6 +148,32 @@ func TestAppendEcjIds_RejectsChangedJournal(t *testing.T) {
 	assert.Equal(t, []types.NeedleId{1, 5}, readEcjRecords(t, path))
 }
 
+// Rolling back an unsynced append removes exactly its records, but leaves the
+// journal alone once something has been appended after them.
+func TestWriteEcjIds_Rollback(t *testing.T) {
+	for _, appendedAfter := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "vol.ecj")
+		require.NoError(t, os.WriteFile(path, ecjBytes(1), 0644))
+		local, size, err := erasure_coding.ReadEcjIds(path)
+		require.NoError(t, err)
+
+		a, err := erasure_coding.WriteEcjIds(path, local, idSet(1, 2), size)
+		require.NoError(t, err)
+		require.Equal(t, 1, a.Added)
+		want := []types.NeedleId{1}
+		if appendedAfter {
+			f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0644)
+			require.NoError(t, err)
+			_, err = f.Write(ecjBytes(3))
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+			want = []types.NeedleId{1, 2, 3}
+		}
+		a.Rollback()
+		assert.Equal(t, want, readEcjRecords(t, path), "appended after: %v", appendedAfter)
+	}
+}
+
 // A mounted volume merges through its own handle: the journal keeps its inode,
 // the in-memory set follows, and later deletes land in the same live file.
 func TestMergeJournal_MountedVolumeAppendsInPlace(t *testing.T) {

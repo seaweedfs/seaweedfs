@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -191,12 +193,83 @@ func TestMergeEcJournal_SiblingMountDuringReadIsMergedThrough(t *testing.T) {
 		}
 		return ids, size, err
 	}
-	added, err := store.mergeEcJournal(vid, disk0, ownerBase+".ecj", ecjIdSet(1, 2), read)
+	mio := defaultEcjMergeIO
+	mio.read = read
+	added, err := store.mergeEcJournal(vid, disk0, ownerBase+".ecj", ecjIdSet(1, 2), mio)
 	require.NoError(t, err)
 	assert.Equal(t, 1, added)
 	require.NotNil(t, sibling)
 	assert.True(t, sibling.IsNeedleDeleted(2), "the sibling mounted mid-merge must see the merged id")
 	assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, ownerBase+".ecj"))
+}
+
+// The unmounted append's fsync runs with no disk's EC lock held, so a slow
+// sync cannot hold off mounts, or the EC reads queued behind them, on every
+// disk.
+func TestMergeEcJournal_UnmountedSyncHoldsNoDiskLock(t *testing.T) {
+	tempDir := t.TempDir()
+	disk0 := filepath.Join(tempDir, "d0")
+	disk1 := filepath.Join(tempDir, "d1")
+	store := startEcJournalStoreDisks(t, "", disk0, disk1)
+
+	vid := needle.VolumeId(9)
+	journal := erasure_coding.EcShardFileName("", disk0, int(vid)) + ".ecj"
+	require.NoError(t, os.WriteFile(journal, ecjRecords(1), 0o644))
+
+	synced := false
+	mio := defaultEcjMergeIO
+	mio.sync = func(a *erasure_coding.EcjAppend) error {
+		for i, loc := range store.Locations {
+			if assert.True(t, loc.ecVolumesLock.TryLock(), "disk %d EC lock held across fsync", i) {
+				loc.ecVolumesLock.Unlock()
+			}
+		}
+		synced = true
+		return a.Sync()
+	}
+	added, err := store.mergeEcJournal(vid, disk0, journal, ecjIdSet(1, 2), mio)
+	require.NoError(t, err)
+	assert.Equal(t, 1, added)
+	assert.True(t, synced)
+	assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, journal))
+}
+
+// A failed fsync rolls the append back, unless a runtime mounted the journal
+// after the write: it has loaded the records and holds the file open, so they
+// stay rather than being cut from behind its handle.
+func TestMergeEcJournal_FailedSyncRollsBackUnlessMounted(t *testing.T) {
+	for _, mountFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mounted=%v", mountFirst), func(t *testing.T) {
+			tempDir := t.TempDir()
+			disk0 := filepath.Join(tempDir, "d0")
+			disk1 := filepath.Join(tempDir, "d1")
+			store := startEcJournalStoreDisks(t, "", disk0, disk1)
+
+			const collection = "c"
+			vid := needle.VolumeId(9)
+			ownerBase := writeEcIndex(t, disk0, collection, vid, 1)
+			writeEcShard0(t, disk1, collection, vid)
+
+			var sibling *erasure_coding.EcVolume
+			mio := defaultEcjMergeIO
+			mio.sync = func(*erasure_coding.EcjAppend) error {
+				if mountFirst {
+					var err error
+					sibling, err = store.Locations[1].loadEcShardWithIdxDir(collection, vid, 0, disk0)
+					require.NoError(t, err)
+				}
+				return errors.New("injected fsync failure")
+			}
+			_, err := store.mergeEcJournal(vid, disk0, ownerBase+".ecj", ecjIdSet(1, 2), mio)
+			require.Error(t, err)
+			if !mountFirst {
+				assert.Equal(t, ecjRecords(1), mustReadFile(t, ownerBase+".ecj"))
+				return
+			}
+			assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, ownerBase+".ecj"))
+			assert.True(t, sibling.IsNeedleDeleted(2))
+		})
+	}
 }
 
 // writeEcShard0 writes shard 0 of vid and its .vif into dataDir.

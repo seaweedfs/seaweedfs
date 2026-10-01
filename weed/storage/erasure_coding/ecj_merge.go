@@ -113,55 +113,107 @@ func encodeEcjIds(ids []types.NeedleId) []byte {
 }
 
 // AppendEcjIds appends to the journal at path the ids of incoming that local
-// lacks, in one write and one fsync. It is for a journal no EcVolume has open;
-// a mounted volume merges through EcVolume.MergeJournal instead. local and size
-// come from ReadEcjIds on the same path: if the journal's whole-record length
-// is no longer size, it returns ErrEcjChanged so the caller re-reads. A torn
-// tail past size is truncated first so the new records stay aligned.
+// lacks, in one write and one fsync, rolling the write back if the fsync
+// fails. It is WriteEcjIds followed by EcjAppend.Sync; see WriteEcjIds for the
+// contract.
 func AppendEcjIds(path string, local, incoming map[types.NeedleId]struct{}, size int64) (added int, err error) {
+	a, err := WriteEcjIds(path, local, incoming, size)
+	if a == nil || err != nil {
+		return 0, err
+	}
+	if err := a.Sync(); err != nil {
+		a.Rollback()
+		return 0, err
+	}
+	a.Close()
+	return a.Added, nil
+}
+
+// EcjAppend is a journal append WriteEcjIds wrote but did not sync. The owner
+// must end it with Close (after a successful Sync) or Rollback.
+type EcjAppend struct {
+	Added   int
+	f       *os.File
+	path    string
+	size    int64 // whole-record length before the append
+	created bool
+}
+
+// WriteEcjIds appends to the journal at path the ids of incoming that local
+// lacks, in one write, without syncing; it returns nil when there is nothing
+// to add. It is for a journal no EcVolume has open; a mounted volume merges
+// through EcVolume.MergeJournal instead. local and size come from ReadEcjIds
+// on the same path: if the journal's whole-record length is no longer size,
+// it returns ErrEcjChanged so the caller re-reads. A torn tail past size is
+// truncated first so the new records stay aligned.
+func WriteEcjIds(path string, local, incoming map[types.NeedleId]struct{}, size int64) (*EcjAppend, error) {
 	delta := ecjDelta(incoming, func(id types.NeedleId) bool {
 		_, ok := local[id]
 		return ok
 	})
 	if len(delta) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	_, statErr := os.Stat(path)
 	created := os.IsNotExist(statErr)
 	f, err := backend.OpenVolumeFile(path, os.O_RDWR|os.O_CREATE)
 	if err != nil {
-		return 0, fmt.Errorf("open %s: %w", path, err)
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	a := &EcjAppend{Added: len(delta), f: f, path: path, size: size, created: created}
 	fi, err := f.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("stat %s: %w", path, err)
+		a.Close()
+		return nil, fmt.Errorf("stat %s: %w", path, err)
 	}
 	if fi.Size()-fi.Size()%int64(types.NeedleIdSize) != size {
-		return 0, ErrEcjChanged
-	}
-	rollback := func() {
-		_ = f.Truncate(size)
+		a.Close()
+		return nil, ErrEcjChanged
 	}
 	if fi.Size() != size {
 		if err := f.Truncate(size); err != nil {
-			return 0, fmt.Errorf("truncate torn tail of %s: %w", path, err)
+			a.Close()
+			return nil, fmt.Errorf("truncate torn tail of %s: %w", path, err)
 		}
 	}
 	if _, err := f.WriteAt(encodeEcjIds(delta), size); err != nil {
-		rollback()
-		return 0, fmt.Errorf("append %s: %w", path, err)
+		_ = f.Truncate(size)
+		a.Close()
+		return nil, fmt.Errorf("append %s: %w", path, err)
 	}
-	if err := f.Sync(); err != nil {
-		rollback()
-		return 0, fmt.Errorf("sync %s: %w", path, err)
+	return a, nil
+}
+
+// Sync makes the append durable, including the journal's directory entry if
+// the append created it.
+func (a *EcjAppend) Sync() error {
+	if err := a.f.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", a.path, err)
 	}
-	if created {
-		if err := util.FsyncDir(filepath.Dir(path)); err != nil {
-			return 0, fmt.Errorf("fsync dir for %s: %w", path, err)
+	if a.created {
+		if err := util.FsyncDir(filepath.Dir(a.path)); err != nil {
+			return fmt.Errorf("fsync dir for %s: %w", a.path, err)
 		}
 	}
-	return len(delta), nil
+	return nil
+}
+
+// Rollback truncates the journal back to its length before the append and
+// closes it. Only safe while no EcVolume has the journal open. If the journal
+// grew past this append's records, a runtime mounted and journaled after it
+// in the meantime; truncating would drop those deletes, so the records stay.
+func (a *EcjAppend) Rollback() {
+	defer a.Close()
+	fi, err := a.f.Stat()
+	if err != nil || fi.Size() != a.size+int64(a.Added*types.NeedleIdSize) {
+		return
+	}
+	_ = a.f.Truncate(a.size)
+}
+
+// Close releases the journal, keeping whatever the append wrote.
+func (a *EcjAppend) Close() {
+	_ = a.f.Close()
 }
 
 // MergeJournal folds a peer's deletion journal into this mounted volume. Under
