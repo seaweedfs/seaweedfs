@@ -59,11 +59,9 @@ func (f *Filer) resolveMetadataLogAssignDiskType(targetFile string) (string, *fi
 	return util.Nvl(rule.DiskType, f.DefaultDiskType), rule
 }
 
-// metaLogCollectionFor returns the collection the system metadata log should
-// be assigned to: the explicit filer.options.metaLog.collection override first,
-// then the filer's default collection, then any storage rule matched on the log
-// path (same precedence spirit as the user write path, but the internal log
-// targets itself rather than inheriting whatever the filer happens to default to).
+// metaLogCollectionFor resolves the system metadata log's collection: the
+// filer.options.metaLog.collection override, then the filer default, then the
+// matched storage rule.
 func (f *Filer) metaLogCollectionFor(ruleCollection string) string {
 	return util.Nvl(f.metaLogTargetCollection, f.metaLogCollection, ruleCollection)
 }

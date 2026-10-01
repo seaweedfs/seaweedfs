@@ -72,9 +72,8 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if isDeleteCollection {
 		collectionName = f.bucketCollection(ctx, entry.Name())
 	}
-	// A preserved collection (shared, or holding the meta log) outlives the
-	// bucket: its entries' chunks must be collected per entry, and the children
-	// listed for that, instead of dying wholesale with the collection.
+	// A preserved collection outlives the bucket, so its chunks are collected
+	// per entry rather than dropped wholesale with it.
 	dropsCollection := isDeleteCollection && collectionName != ""
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself

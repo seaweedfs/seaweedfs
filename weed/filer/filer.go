@@ -57,14 +57,9 @@ type Filer struct {
 	LocalMetaLogBuffer  *log_buffer.LogBuffer
 	metaLogCollection   string
 	metaLogReplication  string
-	// metaLogTargetCollection/Replication override where the system
-	// metadata-log chunks are assigned, independently of the filer's
-	// default collection. Empty keeps today's behaviour (meta logs follow
-	// the filer default). This exists so operators can park the internal
-	// log volume in its own collection (e.g. "filer-meta") instead of
-	// polluting the default collection with system chunks that look like
-	// user data in collection.list and inflate it after every flap.
-	// Set via viper: filer.options.metaLog.collection / .replication.
+	// Override where system metadata-log chunks are assigned, keeping the
+	// internal log out of the default collection; empty keeps today's
+	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
 	metaLogTargetCollection       string
 	metaLogTargetReplication      string
 	DefaultDiskType               string
