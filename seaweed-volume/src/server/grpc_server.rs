@@ -868,6 +868,18 @@ impl VolumeGrpcService {
     }
 }
 
+struct EcDecodeClaim<'a>(&'a VolumeServerState, VolumeId);
+
+impl Drop for EcDecodeClaim<'_> {
+    fn drop(&mut self) {
+        self.0
+            .ec_decodes_in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.1);
+    }
+}
+
 #[tonic::async_trait]
 impl VolumeServer for VolumeGrpcService {
     // ---- Core volume operations ----
@@ -3920,9 +3932,8 @@ impl VolumeServer for VolumeGrpcService {
 
         let state = self.state.clone();
         tokio::task::spawn_blocking(move || {
-            let result = job.run(&state);
-            state.ec_decodes_in_flight.lock().unwrap().remove(&vid);
-            result
+            let _claim = EcDecodeClaim(&state, vid);
+            job.run(&state)
         })
         .await
         .map_err(|e| Status::internal(format!("decode ec volume {}: {}", vid, e)))??;
