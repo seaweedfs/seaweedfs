@@ -218,7 +218,9 @@ fn read_needle_for_get(
 /// A body that streams needle data from the dat file in chunks using pread,
 /// avoiding loading the entire payload into memory at once.
 struct StreamingBody {
-    source: crate::storage::volume::NeedleStreamSource,
+    /// Opened at plan time: it pins the inode the offset was resolved against,
+    /// so a vacuum commit mid-stream moves nothing under it.
+    source: Arc<crate::storage::volume::NeedleStreamSource>,
     data_offset: u64,
     data_size: u32,
     pos: usize,
@@ -226,20 +228,15 @@ struct StreamingBody {
     data_file_access_control: Arc<crate::storage::volume::DataFileAccessControl>,
     hold_read_lock_for_stream: bool,
     _held_read_lease: Option<crate::storage::volume::DataFileReadLease>,
-    /// Pending result from spawn_blocking, polled to completion.
-    pending: Option<tokio::task::JoinHandle<Result<bytes::Bytes, std::io::Error>>>,
+    io_unavailable: Arc<crate::storage::volume::IoUnavailable>,
+    /// Pending chunk read; it hands `buf` back with the result.
+    pending: Option<tokio::task::JoinHandle<(bytes::BytesMut, std::io::Result<bytes::Bytes>)>>,
+    /// Chunk buffer, reclaimed once the previous frame has been written out.
+    buf: bytes::BytesMut,
     /// For download throttling — released on drop.
     state: Option<Arc<VolumeServerState>>,
     tracked_bytes: i64,
-    /// Server state used to re-lookup needle offset if compaction occurs during streaming.
-    server_state: Arc<VolumeServerState>,
-    /// Volume ID for compaction-revision re-lookup.
-    volume_id: crate::storage::types::VolumeId,
-    /// Needle ID for compaction-revision re-lookup.
     needle_id: crate::storage::types::NeedleId,
-    /// Compaction revision at the time of the initial read; if the volume's revision
-    /// changes between chunks, the needle may have moved and we must re-lookup its offset.
-    compaction_revision: u16,
     /// Checksum stored in the needle tail.
     expected_checksum: u32,
     /// Running checksum over the emitted data.
@@ -261,6 +258,10 @@ impl http_body::Body for StreamingBody {
                     std::task::Poll::Pending => return std::task::Poll::Pending,
                     std::task::Poll::Ready(result) => {
                         self.pending = None;
+                        let result = result.map(|(buf, read)| {
+                            self.buf = buf;
+                            read
+                        });
                         match result {
                             Ok(Ok(chunk)) => {
                                 let len = chunk.len();
@@ -308,48 +309,13 @@ impl http_body::Body for StreamingBody {
                 return std::task::Poll::Ready(None);
             }
 
-            // Check if compaction has changed the needle's disk location (Go parity:
-            // readNeedleDataInto re-reads the needle offset when CompactionRevision changes).
-            let relookup_result = {
-                let store = self.server_state.store.read().unwrap();
-                if let Some((_, vol)) = store.find_volume(self.volume_id) {
-                    if let Some(e) = vol.unavailable_error() {
-                        return std::task::Poll::Ready(Some(Err(std::io::Error::other(e))));
-                    }
-                    if vol.super_block.compaction_revision != self.compaction_revision {
-                        // Compaction occurred — re-lookup the needle's data offset
-                        Some(vol.re_lookup_needle_data_offset(self.needle_id))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-            if let Some(result) = relookup_result {
-                match result {
-                    Ok((new_offset, new_rev)) => {
-                        self.data_offset = new_offset;
-                        self.compaction_revision = new_rev;
-                    }
-                    Err(_) => {
-                        return std::task::Poll::Ready(Some(Err(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            "needle not found after compaction",
-                        ))));
-                    }
-                }
-            }
-
             let chunk_len = std::cmp::min(self.chunk_size, total - self.pos);
             let file_offset = self.data_offset + self.pos as u64;
-
-            let source_clone = match self.source.clone_for_read() {
-                Ok(source) => source,
-                Err(e) => return std::task::Poll::Ready(Some(Err(e))),
-            };
+            let source = self.source.clone();
             let data_file_access_control = self.data_file_access_control.clone();
             let hold_read_lock_for_stream = self.hold_read_lock_for_stream;
+            let io_unavailable = self.io_unavailable.clone();
+            let mut buf = std::mem::take(&mut self.buf);
 
             let handle = tokio::task::spawn_blocking(move || {
                 let _lease = if hold_read_lock_for_stream {
@@ -357,9 +323,15 @@ impl http_body::Body for StreamingBody {
                 } else {
                     Some(data_file_access_control.read_lock())
                 };
-                let mut buf = vec![0u8; chunk_len];
-                source_clone.read_exact_at(&mut buf, file_offset)?;
-                Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(buf))
+                // Under the lease: a writer marks the volume holding the write lock.
+                if let Some(e) = io_unavailable.error() {
+                    return (buf, Err(std::io::Error::other(e)));
+                }
+                buf.resize(chunk_len, 0);
+                let read = source
+                    .read_exact_at(&mut buf, file_offset)
+                    .map(|()| buf.split().freeze());
+                (buf, read)
             });
 
             self.pending = Some(handle);
@@ -1571,7 +1543,7 @@ async fn get_or_head_handler_inner(
         };
 
         let streaming = StreamingBody {
-            source: info.source,
+            source: Arc::new(info.source),
             data_offset: info.data_file_offset,
             data_size: info.data_size,
             pos: 0,
@@ -1583,13 +1555,12 @@ async fn get_or_head_handler_inner(
             },
             data_file_access_control: info.data_file_access_control,
             hold_read_lock_for_stream: !state.has_slow_read,
+            io_unavailable: info.io_unavailable,
             pending: None,
+            buf: bytes::BytesMut::new(),
             state: tracking_state,
             tracked_bytes,
-            server_state: state.clone(),
-            volume_id: info.volume_id,
             needle_id: info.needle_id,
-            compaction_revision: info.compaction_revision,
             expected_checksum: info.checksum,
             crc: CRC(0),
         };
@@ -4671,6 +4642,37 @@ mod tests {
         server.abort();
     }
 
+    /// A body streaming `data_size` bytes of `file` from offset 0.
+    fn file_streaming_body(
+        file: &std::fs::File,
+        data_size: usize,
+        chunk_size: usize,
+        expected_checksum: u32,
+    ) -> StreamingBody {
+        StreamingBody {
+            source: Arc::new(crate::storage::volume::NeedleStreamSource::Local(
+                file.try_clone().unwrap(),
+            )),
+            data_offset: 0,
+            data_size: data_size as u32,
+            pos: 0,
+            chunk_size,
+            data_file_access_control: Arc::new(
+                crate::storage::volume::DataFileAccessControl::default(),
+            ),
+            hold_read_lock_for_stream: true,
+            _held_read_lease: None,
+            io_unavailable: Arc::default(),
+            pending: None,
+            buf: bytes::BytesMut::new(),
+            state: None,
+            tracked_bytes: 0,
+            needle_id: NeedleId(7),
+            expected_checksum,
+            crc: CRC(0),
+        }
+    }
+
     /// Repeated target response headers (e.g. Set-Cookie) must all reach the
     /// client, as Go's `w.Header().Add` does; only `Server` is dropped.
     #[tokio::test]
@@ -4804,25 +4806,8 @@ mod tests {
         tmp.write_all(&data).unwrap();
         let file = tmp.reopen().unwrap();
 
-        let control = Arc::new(crate::storage::volume::DataFileAccessControl::default());
-        let mk_body = |expected_checksum: u32, file: &std::fs::File| StreamingBody {
-            source: crate::storage::volume::NeedleStreamSource::Local(file.try_clone().unwrap()),
-            data_offset: 0,
-            data_size: data.len() as u32,
-            pos: 0,
-            chunk_size: 4096,
-            data_file_access_control: control.clone(),
-            hold_read_lock_for_stream: true,
-            _held_read_lease: None,
-            pending: None,
-            state: None,
-            tracked_bytes: 0,
-            server_state: streaming_test_state(),
-            volume_id: VolumeId(1),
-            needle_id: NeedleId(7),
-            compaction_revision: 0,
-            expected_checksum,
-            crc: CRC(0),
+        let mk_body = |expected_checksum: u32, file: &std::fs::File| {
+            file_streaming_body(file, data.len(), 4096, expected_checksum)
         };
 
         // Healthy needle: every byte is delivered.
@@ -5128,5 +5113,235 @@ mod tests {
 
         let (status, _, _) = send_read(&state, Method::GET, &path, None).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// Each chunk reuses the buffer of the previous frame once that frame has
+    /// been dropped, instead of allocating a new one.
+    #[tokio::test]
+    async fn test_streaming_body_reuses_its_chunk_buffer() {
+        use std::io::Write;
+
+        const CHUNK: usize = 4096;
+        let data: Vec<u8> = (0..3 * CHUNK + 100).map(|i| (i % 251) as u8).collect();
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&data).unwrap();
+        let file = tmp.reopen().unwrap();
+        let mut body = file_streaming_body(&file, data.len(), CHUNK, CRC::new(&data).0);
+
+        let mut got = Vec::new();
+        while let Some(frame) = std::future::poll_fn(|cx| {
+            http_body::Body::poll_frame(std::pin::Pin::new(&mut body), cx)
+        })
+        .await
+        {
+            let chunk = frame.unwrap().into_data().unwrap();
+            got.extend_from_slice(&chunk);
+            assert!(
+                !body.buf.try_reclaim(CHUNK),
+                "the buffer must be the one the live frame points into"
+            );
+            drop(chunk);
+            assert!(
+                body.buf.try_reclaim(CHUNK),
+                "the chunk buffer did not come back from the read"
+            );
+        }
+        assert_eq!(got, data);
+    }
+
+    /// Start a GET and return its body unread.
+    async fn open_read(state: &Arc<VolumeServerState>, path: &str) -> Body {
+        use tower::ServiceExt;
+        let resp = super::super::volume_server::build_public_router(state.clone())
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        resp.into_body()
+    }
+
+    /// A needle that streams in several chunks.
+    fn multi_chunk_data() -> Vec<u8> {
+        (0..9 * 1024 * 1024 + 123)
+            .map(|i| (i % 251) as u8)
+            .collect()
+    }
+
+    /// With -hasSlowRead=false a stream holds a data-file lease for its whole
+    /// life, and a writer waits for that lease under store.write(). Producing
+    /// a frame must not need the store lock, or the two wait on each other.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_streaming_body_progresses_while_a_writer_holds_the_store() {
+        use futures::StreamExt;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        const ID: u64 = 0x6e7a_0501;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        assert!(!state.has_slow_read);
+        let data = multi_chunk_data();
+        let path = put_test_needle(&state, ID, &data);
+
+        let mut stream = open_read(&state, &path).await.into_data_stream();
+        let mut got = stream.next().await.unwrap().unwrap().to_vec();
+        assert!(
+            got.len() < data.len(),
+            "the needle must span several frames"
+        );
+
+        // The writer takes store.write(), then parks on the stream's lease.
+        let (wrote_tx, wrote_rx) = mpsc::channel();
+        std::thread::spawn({
+            let state = state.clone();
+            move || {
+                put_test_needle(&state, ID + 1, b"written meanwhile");
+                let _ = wrote_tx.send(());
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while state.store.try_read().is_ok() {
+            assert!(Instant::now() < deadline, "the writer never took the store");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        // Drained off the runtime: a frame stuck on the store lock would block
+        // its thread, which a tokio timeout cannot interrupt.
+        let (done_tx, done_rx) = mpsc::channel();
+        let rt = tokio::runtime::Handle::current();
+        std::thread::spawn(move || {
+            let rest = rt.block_on(async move {
+                let mut rest = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    rest.extend_from_slice(&chunk?);
+                }
+                Ok::<_, axum::Error>(rest)
+            });
+            let _ = done_tx.send(rest);
+        });
+        let rest =
+            tokio::task::spawn_blocking(move || done_rx.recv_timeout(Duration::from_secs(10)))
+                .await
+                .unwrap()
+                .expect("the stream stalled behind a writer holding the store");
+        got.extend(rest.unwrap());
+        assert_eq!(got, data);
+
+        let wrote = tokio::task::spawn_blocking(move || {
+            wrote_rx.recv_timeout(Duration::from_secs(10)).is_ok()
+        })
+        .await
+        .unwrap();
+        assert!(wrote, "the writer must get the lease once the stream ends");
+    }
+
+    /// With -hasSlowRead a writer gets the data-file lease between chunks; if
+    /// its failed append leaves the volume unavailable, the stream must stop.
+    #[tokio::test]
+    async fn test_streaming_body_stops_once_the_volume_becomes_unavailable() {
+        use futures::StreamExt;
+
+        const ID: u64 = 0x6e7a_0701;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().has_slow_read = true;
+        let data = multi_chunk_data();
+        let path = put_test_needle(&state, ID, &data);
+
+        let mut stream = open_read(&state, &path).await.into_data_stream();
+        let first = stream.next().await.unwrap().unwrap();
+        assert!(
+            first.len() < data.len(),
+            "the needle must span several frames"
+        );
+
+        {
+            let mut store = state.store.write().unwrap();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.fail_next_fsync_for_test(true);
+            vol.fail_next_truncate_for_test(true);
+            let mut n = Needle {
+                id: NeedleId(ID + 1),
+                cookie: Cookie(TEST_COOKIE),
+                data: b"never-landed".to_vec(),
+                data_size: 12,
+                ..Needle::default()
+            };
+            store
+                .write_volume_needle(VolumeId(1), &mut n, true)
+                .unwrap_err();
+            let (_, vol) = store.find_volume_mut(VolumeId(1)).unwrap();
+            vol.fail_next_fsync_for_test(false);
+            vol.fail_next_truncate_for_test(false);
+            assert!(vol.unavailable_error().is_some());
+        }
+
+        match stream.next().await {
+            Some(Err(err)) => assert!(
+                err.to_string().contains("volume is unavailable"),
+                "unexpected stream error: {err}"
+            ),
+            other => panic!(
+                "the stream kept reading an unavailable volume: {:?}",
+                other.map(|chunk| chunk.map(|c| c.len()))
+            ),
+        }
+    }
+
+    /// A vacuum committed mid-stream must not change the bytes served: the
+    /// stream's handle pins the inode its offset was resolved against.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_streaming_body_survives_a_vacuum_that_moves_the_needle() {
+        use futures::StreamExt;
+
+        const FILLER: u64 = 0x6e7a_0601;
+        const ID: u64 = 0x6e7a_0602;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        put_test_needle(&state, FILLER, &[7u8; 4096]);
+        let data = multi_chunk_data();
+        let path = put_test_needle(&state, ID, &data);
+        let mut filler = Needle {
+            id: NeedleId(FILLER),
+            cookie: Cookie(TEST_COOKIE),
+            ..Needle::default()
+        };
+        state
+            .store
+            .write()
+            .unwrap()
+            .delete_volume_needle(VolumeId(1), &mut filler)
+            .unwrap();
+        let data_offset = || {
+            let mut plan = state
+                .store
+                .read()
+                .unwrap()
+                .needle_read_plan(VolumeId(1), NeedleId(ID), false)
+                .unwrap();
+            let mut n = Needle::default();
+            plan.read_meta(&mut n).unwrap();
+            plan.into_stream_info(&n).data_file_offset
+        };
+        let before = data_offset();
+
+        let mut stream = open_read(&state, &path).await.into_data_stream();
+        let mut got = stream.next().await.unwrap().unwrap().to_vec();
+        assert!(
+            got.len() < data.len(),
+            "the needle must span several frames"
+        );
+        {
+            let mut store = state.store.write().unwrap();
+            store.compact_volume(VolumeId(1), 0, 0, |_| true).unwrap();
+            store.commit_compact_volume(VolumeId(1)).unwrap();
+        }
+        assert_ne!(data_offset(), before, "the vacuum must move the needle");
+
+        while let Some(chunk) = stream.next().await {
+            got.extend_from_slice(&chunk.expect("the stream failed across a vacuum"));
+        }
+        assert_eq!(got, data);
     }
 }
