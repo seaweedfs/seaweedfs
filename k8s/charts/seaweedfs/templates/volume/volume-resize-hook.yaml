@@ -49,14 +49,14 @@ spec:
 {{ $commands | indent 14 }}
           {{- if and .Values.volume.containerSecurityContext.enabled .Values.volume.containerSecurityContext.readOnlyRootFilesystem }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.volume.containerSecurityContext) | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.volume.containerSecurityContext "" "") | nindent 12 }}
           {{- end }}
           {{- if .Values.volume.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if and .Values.volume.containerSecurityContext.enabled .Values.volume.containerSecurityContext.readOnlyRootFilesystem }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.volume.containerSecurityContext) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.volume.containerSecurityContext "" "") | nindent 8 }}
       {{- end }}
 ---
 apiVersion: v1

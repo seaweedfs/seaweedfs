@@ -16,6 +16,12 @@
 {{- $clusterUpper := upper $clusterAlias }}
 {{- $clusterMasterKey := printf "WEED_CLUSTER_%s_MASTER" $clusterUpper }}
 {{- $clusterFilerKey := printf "WEED_CLUSTER_%s_FILER" $clusterUpper }}
+{{- $podSecurityContext := .Values.filer.podSecurityContext }}
+{{- $containerSecurityContext := .Values.filer.containerSecurityContext }}
+{{- if .Values.allInOne.enabled }}
+  {{- $podSecurityContext = .Values.allInOne.podSecurityContext }}
+  {{- $containerSecurityContext = .Values.allInOne.containerSecurityContext }}
+{{- end }}
 
 {{- /* Check allInOne mode first */}}
 {{- if .Values.allInOne.enabled }}
@@ -71,8 +77,8 @@ spec:
         app.kubernetes.io/component: bucket-hook
     spec:
       restartPolicy: Never
-      {{- if .Values.filer.podSecurityContext.enabled }}
-      securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- if $podSecurityContext.enabled }}
+      securityContext: {{- omit $podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       containers:
@@ -202,9 +208,9 @@ spec:
                 /usr/bin/weed shell
           {{- end }}  
           {{- end }}
-        {{- if or (and .Values.filer.containerSecurityContext.enabled .Values.filer.containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
+        {{- if or (and $containerSecurityContext.enabled $containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
         volumeMounts:
-          {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.filer.containerSecurityContext) | nindent 10 }}
+          {{- include "seaweedfs.tmpDirVolumeMount" (list . $containerSecurityContext "" "") | nindent 10 }}
           {{- if $enableAuth }}
           - name: config-users
             mountPath: /etc/sw
@@ -230,12 +236,12 @@ spec:
         resources:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        {{- if .Values.filer.containerSecurityContext.enabled }}
-        securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+        {{- if $containerSecurityContext.enabled }}
+        securityContext: {{- omit $containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
-    {{- if or (and .Values.filer.containerSecurityContext.enabled .Values.filer.containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
+    {{- if or (and $containerSecurityContext.enabled $containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.filer.containerSecurityContext) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . $containerSecurityContext "" "") | nindent 8 }}
         {{- if $enableAuth }}
         - name: config-users
           secret:

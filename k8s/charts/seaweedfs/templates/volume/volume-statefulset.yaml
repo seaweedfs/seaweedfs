@@ -104,7 +104,7 @@ spec:
                 fi
               done
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" (list $ $volume.containerSecurityContext) | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list $ $volume.containerSecurityContext (tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName ($volume.extraVolumeMounts | default "")) $) (tpl ($volume.extraVolumes | default "") $)) | nindent 12 }}
             - name: idx
               mountPath: /idx
           {{- range $dir :=  $volume.dataDirs }}
@@ -225,7 +225,7 @@ spec:
                 {{ . }} \
                 {{- end }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" (list $ $volume.containerSecurityContext) | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list $ $volume.containerSecurityContext (tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName ($volume.extraVolumeMounts | default "")) $) (tpl ($volume.extraVolumes | default "") $)) | nindent 12 }}
             {{- range $dir := $volume.dataDirs }}
             {{- if not ( eq $dir.type "custom" ) }}
             - name: {{ $dir.name }}
@@ -308,7 +308,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.sidecars) "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list $ $volume.containerSecurityContext) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list $ $volume.containerSecurityContext (tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName ($volume.extraVolumeMounts | default "")) $) (tpl ($volume.extraVolumes | default "") $)) | nindent 8 }}
 
      {{- range $dir := $volume.dataDirs }}
 

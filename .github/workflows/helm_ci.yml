@@ -855,9 +855,9 @@ jobs:
                   f"security context workload coverage is incomplete: "
                   f"expected {sorted(expected_components)}, got {sorted(components)}"
               )
-          if workloads != 10 or containers != 11:
+          if workloads != 10 or containers != 12:
               errors.append(
-                  f"expected 10 workloads and 11 containers, got "
+                  f"expected 10 workloads and 12 containers, got "
                   f"{workloads} workloads and {containers} containers"
               )
           if chart_managed_init_containers != 1:

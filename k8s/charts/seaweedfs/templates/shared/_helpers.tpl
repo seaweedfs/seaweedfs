@@ -78,12 +78,20 @@ Inject extra environment vars in the format key:value, if populated
 
 {{/*
 Writable temporary directory for containers using a read-only root filesystem.
-Input: list of the root context and the component container security context.
+Input: list of the root context, the component container security context, and
+the rendered extraVolumeMounts and extraVolumes. A user-supplied /tmp mount or
+seaweedfs-tmp volume takes precedence so a duplicate is never emitted.
 */}}
+{{- define "seaweedfs.tmpDirCovered" -}}
+{{- regexMatch `(?m)^\s*-?\s*mountPath:\s*['"]?/tmp/?['"]?\s*(#.*)?$` (index . 2) -}}
+{{- end -}}
+
 {{- define "seaweedfs.tmpDirVolume" -}}
 {{- $root := index . 0 -}}
 {{- $securityContext := index . 1 -}}
-{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem }}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem
+  (ne (include "seaweedfs.tmpDirCovered" .) "true")
+  (not (regexMatch `(?m)^\s*-?\s*name:\s*['"]?seaweedfs-tmp['"]?\s*(#.*)?$` (index . 3))) }}
 - name: seaweedfs-tmp
   {{- with $root.Values.global.seaweedfs.tmpDir.sizeLimit }}
   emptyDir:
@@ -96,7 +104,8 @@ Input: list of the root context and the component container security context.
 
 {{- define "seaweedfs.tmpDirVolumeMount" -}}
 {{- $securityContext := index . 1 -}}
-{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem }}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem
+  (ne (include "seaweedfs.tmpDirCovered" .) "true") }}
 - name: seaweedfs-tmp
   mountPath: /tmp
 {{- end }}
