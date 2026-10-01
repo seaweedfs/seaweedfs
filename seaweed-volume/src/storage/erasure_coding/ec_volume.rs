@@ -77,11 +77,13 @@ fn open_ecj_append(path: &str) -> io::Result<File> {
     )
 }
 
-/// The filesystem steps that publish a compacted journal. Production uses
-/// [`EcjFsOps::REAL`]; tests substitute failing steps to cover the failure
-/// paths through the real mount.
+/// The filesystem steps of a mount's journal compaction: the reads that load
+/// the set it compacts from, and the steps that publish the compacted file.
+/// Production uses [`EcjFsOps::REAL`]; tests substitute their own steps to
+/// cover the failure paths and races through the real mount.
 #[derive(Clone, Copy)]
 struct EcjFsOps {
+    read_at: fn(&File, &mut [u8], u64) -> io::Result<()>,
     rename: fn(&str, &str) -> io::Result<()>,
     fsync_dir: fn(&str) -> io::Result<()>,
     reopen: fn(&str) -> io::Result<File>,
@@ -89,6 +91,7 @@ struct EcjFsOps {
 
 impl EcjFsOps {
     const REAL: EcjFsOps = EcjFsOps {
+        read_at: read_exact_at,
         rename: |from, to| fs::rename(from, to),
         fsync_dir: fsync_ecj_dir,
         reopen: open_ecj_append,
@@ -727,7 +730,7 @@ impl EcVolume {
         vol.ecj_file = Some(ecj_file);
 
         // Seed the in-memory deleted set from the journal.
-        vol.load_deleted_needles_from_ecj()?;
+        vol.load_deleted_needles_from_ecj(ecj_ops.read_at)?;
 
         // Load the generation-0 EC bitrot checksum sidecar. Optional, except
         // when it contradicts the volume's own geometry — see
@@ -934,7 +937,10 @@ impl EcVolume {
     /// core with a 31 MB RSS — the set stays small because the ids repeat —
     /// and never opened its HTTP port, which made the master unregister every
     /// volume it held. Chunked reads cut that by ~`ECJ_LOAD_CHUNK_BYTES / 8`.
-    fn load_deleted_needles_from_ecj(&mut self) -> io::Result<()> {
+    fn load_deleted_needles_from_ecj(
+        &mut self,
+        read_at: fn(&File, &mut [u8], u64) -> io::Result<()>,
+    ) -> io::Result<()> {
         let ecj_file = match self.ecj_file.as_ref() {
             Some(f) => f,
             None => return Ok(()),
@@ -958,22 +964,9 @@ impl EcVolume {
             if want == 0 {
                 break;
             }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::FileExt;
-                ecj_file.read_exact_at(&mut buf[..want], off)?;
-            }
-            #[cfg(windows)]
-            {
-                // Positional read so concurrent readers of the shared .ecj
-                // handle can't interleave seek/read. Mirrors the
-                // read_exact_at helper at the bottom of this file.
-                read_exact_at(ecj_file, &mut buf[..want], off)?;
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                compile_error!("Platform not supported: only unix and windows are supported");
-            }
+            // Positional read so concurrent readers of the shared .ecj handle
+            // can't interleave seek/read.
+            read_at(ecj_file, &mut buf[..want], off)?;
             for entry in buf[..want].chunks_exact(NEEDLE_ID_SIZE) {
                 loaded.insert(NeedleId::from_bytes(entry));
             }
@@ -3456,8 +3449,8 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let ops = EcjFsOps {
             rename: failing_rename,
-            fsync_dir: fsync_ecj_dir,
             reopen: failing_reopen,
+            ..EcjFsOps::REAL
         };
         let (vol, ecj_path, before) = mount_bloated_with(dir, VolumeId(53), ops);
         let msg = vol
@@ -3561,6 +3554,77 @@ mod tests {
             .expect("an unsynced replacement must fail the mount")
             .to_string();
         assert!(msg.contains("could not fsync its directory"), "{}", msg);
+    }
+
+    thread_local! {
+        /// The journal path and replacement bytes `rewrite_after_last_read`
+        /// writes; taken when it does.
+        static IN_PLACE_REWRITE: std::cell::RefCell<Option<(String, Vec<u8>)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// A load step that, once the last chunk is read, truncates and refills
+    /// the journal in place as a registered writer, start to finish, the way a
+    /// `ReceiveFile` would.
+    fn rewrite_after_last_read(f: &File, buf: &mut [u8], off: u64) -> io::Result<()> {
+        read_exact_at(f, buf, off)?;
+        let pending = IN_PLACE_REWRITE.with(|r| {
+            let mut r = r.borrow_mut();
+            match r.as_ref() {
+                Some((_, bytes)) if off + buf.len() as u64 >= bytes.len() as u64 => r.take(),
+                _ => None,
+            }
+        });
+        if let Some((path, bytes)) = pending {
+            let _write = crate::storage::erasure_coding::ecj_registry::begin_ecj_write(&path);
+            let mut out = OpenOptions::new().write(true).truncate(true).open(&path)?;
+            out.write_all(&bytes)?;
+        }
+        Ok(())
+    }
+
+    /// A `ReceiveFile` that runs during the mount's load and finishes before
+    /// compaction can leave the same inode at the same length with different
+    /// ids, which the inode-and-size re-check accepts. Compacting would then
+    /// overwrite the received ids with the stale set.
+    #[test]
+    fn test_in_place_rewrite_during_load_blocks_compaction() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let vid = VolumeId(56);
+        write_ecx_file(
+            dir,
+            "",
+            vid,
+            &[(NeedleId(7), Offset::from_actual_offset(8), Size(10))],
+        );
+        let ids: Vec<NeedleId> = (1000..1100).map(NeedleId).collect();
+        write_bloated_ecj(dir, "", vid, &ids, 4096);
+        let ecj_path = format!(
+            "{}.ecj",
+            crate::storage::volume::volume_file_name(dir, "", vid)
+        );
+        let mut one = vec![0u8; 100 * NEEDLE_ID_SIZE];
+        for (i, entry) in one.chunks_exact_mut(NEEDLE_ID_SIZE).enumerate() {
+            NeedleId(2000 + i as u64).to_bytes(entry);
+        }
+        let rewrite = one.repeat(4096);
+        IN_PLACE_REWRITE.with(|r| *r.borrow_mut() = Some((ecj_path.clone(), rewrite.clone())));
+
+        let ops = EcjFsOps {
+            read_at: rewrite_after_last_read,
+            ..EcjFsOps::REAL
+        };
+        let vol = EcVolume::open_with(dir, dir, "", vid, ops).unwrap();
+        assert!(
+            IN_PLACE_REWRITE.with(|r| r.borrow().is_none()),
+            "the rewrite never ran"
+        );
+        assert!(
+            std::fs::read(&ecj_path).unwrap() == rewrite,
+            "the received journal must not be compacted from the set loaded before it",
+        );
+        drop(vol);
     }
 
     #[test]

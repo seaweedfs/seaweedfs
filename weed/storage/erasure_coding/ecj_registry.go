@@ -26,6 +26,13 @@ import (
 // may start. Both wait instead; a compaction rewrites only the distinct id set,
 // so the wait is short.
 //
+// No writer active at the reservation is not enough: one that ran while the
+// holder loaded the journal, or after, and has finished may have rewritten it
+// in place to the same length (ReceiveFile truncates and refills), which the
+// inode-and-size re-check cannot see. So each writer bumps the path's write
+// generation as it starts, and a holder may compact only if no writer was
+// active when it registered and the generation has not moved since.
+//
 // Paths are keyed by their resolved parent directory, so two disk locations
 // that spell one directory differently still meet here.
 
@@ -33,6 +40,9 @@ type ecjPathState struct {
 	holders    int
 	writers    int
 	compacting bool
+	// writeGen counts writers that have started on the path. It survives as
+	// long as the entry does, and a registered holder keeps the entry.
+	writeGen uint64
 }
 
 var ecjPaths = struct {
@@ -96,13 +106,22 @@ func ecjRelease(key string, f func(*ecjPathState)) {
 type ecjHold struct {
 	key  string
 	once sync.Once
+	// The path's write generation when the hold was taken, and whether a
+	// writer was active then. Taken before the journal is opened and loaded,
+	// so they cover every write the load might have missed.
+	writeGen      uint64
+	writerAtStart bool
 }
 
 // acquireEcjHold registers a holder of ecjPath, first waiting out any
 // compaction in progress so the handle opened afterwards is on the final inode.
 func acquireEcjHold(ecjPath string) *ecjHold {
 	h := &ecjHold{key: ecjPathKey(ecjPath)}
-	ecjUpdateWhenNotCompacting(h.key, func(st *ecjPathState) { st.holders++ })
+	ecjUpdateWhenNotCompacting(h.key, func(st *ecjPathState) {
+		st.holders++
+		h.writeGen = st.writeGen
+		h.writerAtStart = st.writers > 0
+	})
 	return h
 }
 
@@ -117,13 +136,18 @@ func (h *ecjHold) release() {
 }
 
 // tryBeginCompaction reserves the path for a compaction, or reports false when
-// another holder or an active writer could still reach the current inode. The
-// returned func ends the reservation.
+// another holder or an active writer could still reach the current inode, or
+// when a writer has run on the path since the hold was taken, so the journal
+// may no longer be what the holder loaded. The returned func ends the
+// reservation.
 func (h *ecjHold) tryBeginCompaction() (end func(), ok bool) {
 	ecjPaths.Lock()
 	defer ecjPaths.Unlock()
 	st := ecjPaths.state[h.key]
 	if st == nil || st.holders != 1 || st.writers != 0 || st.compacting {
+		return nil, false
+	}
+	if h.writerAtStart || st.writeGen != h.writeGen {
 		return nil, false
 	}
 	st.compacting = true
@@ -141,7 +165,10 @@ func (h *ecjHold) tryBeginCompaction() (end func(), ok bool) {
 // and any cleanup of a partial file, is done.
 func BeginEcjWrite(ecjPath string) (done func()) {
 	key := ecjPathKey(ecjPath)
-	ecjUpdateWhenNotCompacting(key, func(st *ecjPathState) { st.writers++ })
+	ecjUpdateWhenNotCompacting(key, func(st *ecjPathState) {
+		st.writers++
+		st.writeGen++
+	})
 	var once sync.Once
 	return func() {
 		once.Do(func() {

@@ -191,6 +191,80 @@ func TestEcjWriterWaitsForCompaction(t *testing.T) {
 	}
 }
 
+// A writer that ran after the hold was taken, or was already running then,
+// may have changed the journal the holder loaded, even though it has finished
+// by the time compaction asks.
+func TestEcjFinishedWriterSinceHoldBlocksCompaction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "1.ecj")
+	// End a wrongly granted reservation, or the next writer waits on it forever.
+	refused := func(hold *ecjHold) bool {
+		end, ok := hold.tryBeginCompaction()
+		if ok {
+			end()
+		}
+		return !ok
+	}
+
+	hold := acquireEcjHold(path)
+	BeginEcjWrite(path)()
+	assert.True(t, refused(hold), "a writer that started after the hold")
+	hold.release()
+
+	done := BeginEcjWrite(path)
+	hold = acquireEcjHold(path)
+	done()
+	assert.True(t, refused(hold), "a writer active when the hold was taken")
+	hold.release()
+
+	hold = acquireEcjHold(path)
+	defer hold.release()
+	end, ok := hold.tryBeginCompaction()
+	require.True(t, ok, "no writer since the hold")
+	end()
+}
+
+// A ReceiveFile truncates the journal and refills it. One that runs during the
+// mount's load and finishes before compaction can leave the same inode at the
+// same length with different ids, which the inode-and-size re-check accepts;
+// compacting would then overwrite the received ids with the stale set.
+func TestEcjInPlaceRewriteDuringLoadBlocksCompaction(t *testing.T) {
+	dir := t.TempDir()
+	base := writeCompactTestVolume(t, dir, 66, compactEcjBytes(compactTestIds(), 4096))
+	received := make([]types.NeedleId, 0, 100)
+	for i := 0; i < 100; i++ {
+		received = append(received, types.NeedleId(2000+i))
+	}
+	rewrite := compactEcjBytes(received, 4096)
+
+	rewritten := false
+	ops := withEcjOps(func(o *ecjFsOps) {
+		o.readAt = func(f *os.File, b []byte, off int64) (int, error) {
+			n, err := f.ReadAt(b, off)
+			if !rewritten && off+int64(len(b)) >= int64(len(rewrite)) {
+				// The last chunk is read: a stream truncates and refills the
+				// journal in place, start to finish, before compaction.
+				rewritten = true
+				done := BeginEcjWrite(base + ".ecj")
+				w, openErr := os.OpenFile(base+".ecj", os.O_WRONLY|os.O_TRUNC, 0644)
+				require.NoError(t, openErr)
+				_, writeErr := w.Write(rewrite)
+				require.NoError(t, writeErr)
+				require.NoError(t, w.Close())
+				done()
+			}
+			return n, err
+		}
+	})
+	ev, err := mountCompactTest(dir, 66, ops)
+	require.NoError(t, err)
+	defer ev.Close()
+	require.True(t, rewritten)
+
+	got, err := os.ReadFile(base + ".ecj")
+	require.NoError(t, err)
+	assert.Equal(t, rewrite, got, "the received journal must not be compacted from the set loaded before it")
+}
+
 // Two spellings of one directory must meet in the registry.
 func TestEcjRegistryKeysResolveDirectories(t *testing.T) {
 	dir := t.TempDir()

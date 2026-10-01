@@ -19,6 +19,13 @@
 //! writer may start. Both wait instead; a compaction rewrites only the distinct
 //! id set, so the wait is short.
 //!
+//! No writer active at the reservation is not enough: one that ran while the
+//! holder loaded the journal, or after, and has finished may have rewritten it
+//! in place to the same length (`ReceiveFile` truncates and refills), which
+//! the inode-and-size re-check cannot see. So each writer bumps the path's
+//! write generation as it starts, and a holder may compact only if no writer
+//! was active when it registered and the generation has not moved since.
+//!
 //! Paths are keyed by their canonical parent directory, so two disk locations
 //! that spell one directory differently still meet here.
 
@@ -31,6 +38,9 @@ struct PathState {
     holders: usize,
     writers: usize,
     compacting: bool,
+    /// Writers that have started on the path. Lives as long as the entry,
+    /// which a registered holder keeps.
+    write_gen: u64,
 }
 
 impl PathState {
@@ -75,7 +85,7 @@ fn key_for(path: &str) -> PathBuf {
 }
 
 /// Block until no compaction is running on `key`, then apply `f` to its state.
-fn update_when_not_compacting(key: &Path, f: impl FnOnce(&mut PathState)) {
+fn update_when_not_compacting<R>(key: &Path, f: impl FnOnce(&mut PathState) -> R) -> R {
     let mut paths = lock();
     while paths.get(key).is_some_and(|s| s.compacting) {
         paths = REGISTRY
@@ -83,7 +93,7 @@ fn update_when_not_compacting(key: &Path, f: impl FnOnce(&mut PathState)) {
             .wait(paths)
             .unwrap_or_else(|e| e.into_inner());
     }
-    f(paths.entry(key.to_path_buf()).or_default());
+    f(paths.entry(key.to_path_buf()).or_default())
 }
 
 fn release(key: &Path, f: impl FnOnce(&mut PathState)) {
@@ -102,6 +112,11 @@ fn release(key: &Path, f: impl FnOnce(&mut PathState)) {
 /// the journal is opened and released when dropped.
 pub(crate) struct EcjHold {
     key: PathBuf,
+    /// The path's write generation when the hold was taken, and whether a
+    /// writer was active then. Taken before the journal is opened and loaded,
+    /// so they cover every write the load might have missed.
+    write_gen: u64,
+    writer_at_start: bool,
 }
 
 impl EcjHold {
@@ -109,16 +124,28 @@ impl EcjHold {
     /// progress so the handle opened afterwards is on the final inode.
     pub(crate) fn acquire(ecj_path: &str) -> Self {
         let key = key_for(ecj_path);
-        update_when_not_compacting(&key, |s| s.holders += 1);
-        EcjHold { key }
+        let (write_gen, writer_at_start) = update_when_not_compacting(&key, |s| {
+            s.holders += 1;
+            (s.write_gen, s.writers > 0)
+        });
+        EcjHold {
+            key,
+            write_gen,
+            writer_at_start,
+        }
     }
 
     /// Reserve the path for a compaction, or `None` when another holder or an
-    /// active writer could still reach the current inode.
+    /// active writer could still reach the current inode, or when a writer
+    /// has run on the path since the hold was taken, so the journal may no
+    /// longer be what the holder loaded.
     pub(crate) fn try_begin_compaction(&self) -> Option<EcjCompaction> {
         let mut paths = lock();
         let state = paths.get_mut(&self.key)?;
         if state.holders != 1 || state.writers != 0 || state.compacting {
+            return None;
+        }
+        if self.writer_at_start || state.write_gen != self.write_gen {
             return None;
         }
         state.compacting = true;
@@ -163,7 +190,10 @@ impl Drop for EcjWrite {
 /// Blocks; async callers use [`begin_ecj_write_async`].
 pub(crate) fn begin_ecj_write(ecj_path: &str) -> EcjWrite {
     let key = key_for(ecj_path);
-    update_when_not_compacting(&key, |s| s.writers += 1);
+    update_when_not_compacting(&key, |s| {
+        s.writers += 1;
+        s.write_gen += 1;
+    });
     EcjWrite { key }
 }
 
@@ -214,7 +244,42 @@ mod tests {
         let w = begin_ecj_write(&ecj(&dir));
         assert!(hold.try_begin_compaction().is_none());
         drop(w);
+        // This hold loaded before the write; a later one may compact.
+        drop(hold);
+        let hold = EcjHold::acquire(&ecj(&dir));
         assert!(hold.try_begin_compaction().is_some());
+    }
+
+    /// A writer that ran after the hold was taken, or was already running
+    /// then, may have changed the journal the holder loaded, even though it
+    /// has finished by the time compaction asks.
+    #[test]
+    fn finished_writer_since_hold_blocks_compaction() {
+        let dir = TempDir::new().unwrap();
+        let path = ecj(&dir);
+
+        let hold = EcjHold::acquire(&path);
+        drop(begin_ecj_write(&path));
+        assert!(
+            hold.try_begin_compaction().is_none(),
+            "a writer that started after the hold",
+        );
+        drop(hold);
+
+        let w = begin_ecj_write(&path);
+        let hold = EcjHold::acquire(&path);
+        drop(w);
+        assert!(
+            hold.try_begin_compaction().is_none(),
+            "a writer active when the hold was taken",
+        );
+        drop(hold);
+
+        let hold = EcjHold::acquire(&path);
+        assert!(
+            hold.try_begin_compaction().is_some(),
+            "no writer since the hold",
+        );
     }
 
     #[test]
