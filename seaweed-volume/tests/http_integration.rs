@@ -477,6 +477,74 @@ async fn delete_then_get_returns_404() {
     );
 }
 
+// Go answers both with 500 and an error containing "volume N is read only"
+// (the write behind "failed to write to local disk: ").
+#[tokio::test]
+async fn write_and_delete_on_read_only_volume_say_is_read_only() {
+    let (state, _tmp) = test_state();
+    let uri = "/1,01637037d6";
+
+    let request = |method: &str, body: &[u8]| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::from(body.to_vec()))
+            .unwrap()
+    };
+    let error_of = |body: Vec<u8>| -> String {
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        json["error"].as_str().unwrap_or_default().to_string()
+    };
+
+    let response = build_admin_router(state.clone())
+        .oneshot(request("POST", b"written before read-only"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    state
+        .store
+        .write()
+        .unwrap()
+        .find_volume_mut(VolumeId(1))
+        .unwrap()
+        .1
+        .set_no_write_or_delete(true);
+
+    let response = build_admin_router(state.clone())
+        .oneshot(request("POST", b"refused"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let error = error_of(body_bytes(response).await);
+    assert!(error.contains("volume 1 is read only"), "{error}");
+
+    let response = build_admin_router(state.clone())
+        .oneshot(request("DELETE", b""))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        error_of(body_bytes(response).await),
+        "Deletion Failed: volume 1 is read only"
+    );
+
+    // The needle is still there to delete once the volume is writable again.
+    state
+        .store
+        .write()
+        .unwrap()
+        .find_volume_mut(VolumeId(1))
+        .unwrap()
+        .1
+        .set_no_write_or_delete(false);
+    let response = build_admin_router(state.clone())
+        .oneshot(request("DELETE", b""))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
 // ============================================================================
 // 6. HEAD returns headers without body
 // ============================================================================
