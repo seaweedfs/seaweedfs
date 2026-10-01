@@ -950,7 +950,7 @@ async fn proxy_request(
         if name.as_str().eq_ignore_ascii_case("server") {
             continue;
         }
-        response_headers.insert(name.clone(), value.clone());
+        response_headers.append(name.clone(), value.clone());
     }
 
     // Stream the proxy response body instead of buffering it entirely
@@ -4667,6 +4667,64 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert_eq!(locations[0].url, "10.0.0.2:5301");
         assert_eq!(locations[0].grpc_port, 5311);
+
+        server.abort();
+    }
+
+    /// Repeated target response headers (e.g. Set-Cookie) must all reach the
+    /// client, as Go's `w.Header().Add` does; only `Server` is dropped.
+    #[tokio::test]
+    async fn test_proxy_request_keeps_repeated_response_headers() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/3,01637037d6",
+            get(|| async {
+                (
+                    axum::response::AppendHeaders([
+                        (header::SET_COOKIE, "a=1"),
+                        (header::SET_COOKIE, "b=2"),
+                        (header::SERVER, "target"),
+                    ]),
+                    "payload",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let info = ProxyRequestInfo {
+            original_headers: HeaderMap::new(),
+            original_query: String::new(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let target = VolumeLocation {
+            url: addr.to_string(),
+            public_url: String::new(),
+            grpc_port: 0,
+            read_only: false,
+            read_only_can_delete: false,
+        };
+
+        let response = proxy_request(&streaming_test_state(), &info, &target).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(cookies, vec!["a=1", "b=2"]);
+        assert!(response.headers().get(header::SERVER).is_none());
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"payload");
 
         server.abort();
     }
