@@ -72,9 +72,13 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if isDeleteCollection {
 		collectionName = f.bucketCollection(ctx, entry.Name())
 	}
+	// A preserved collection (shared, or holding the meta log) outlives the
+	// bucket: its entries' chunks must be collected per entry, and the children
+	// listed for that, instead of dying wholesale with the collection.
+	dropsCollection := isDeleteCollection && collectionName != ""
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
-		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
+		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !dropsCollection, isDeleteCollection && (dropsCollection || !shouldDeleteChunks), isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
 			// A case not handled:
 			// what if the chunk is in a different collection?
 			if shouldDeleteChunks {
@@ -97,7 +101,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return fmt.Errorf("delete file %s: %v", p, err)
 	}
 
-	if shouldDeleteChunks && !isDeleteCollection {
+	if shouldDeleteChunks && !dropsCollection {
 		if len(entry.HardLinkId) != 0 && entry.HardLinkCounter > 1 {
 			// if the file is a hard link and there are other hard links, do not delete the chunks
 		} else {

@@ -18,7 +18,9 @@ recursive_delete = false
 #s3.empty_folder_cleanup_delay = "2m"
 # where the filer's internal system metadata log chunks are stored.
 # By default the log follows the filer's -collection flag; set this to keep
-# the internal log in its own collection, out of the default one:
+# the internal log in its own collection, out of the default one.
+# Keep the target stable: log chunks written under an older value are not
+# moved, and old log entries keep referencing that collection's volumes.
 #metaLog.collection = "filer-meta"
 #metaLog.replication = ""
 
