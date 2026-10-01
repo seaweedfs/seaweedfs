@@ -136,6 +136,7 @@ type EcjAppend struct {
 	f       *os.File
 	path    string
 	size    int64 // whole-record length before the append
+	delta   []types.NeedleId
 	created bool
 }
 
@@ -160,7 +161,7 @@ func WriteEcjIds(path string, local, incoming map[types.NeedleId]struct{}, size 
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	a := &EcjAppend{Added: len(delta), f: f, path: path, size: size, created: created}
+	a := &EcjAppend{Added: len(delta), f: f, path: path, size: size, delta: delta, created: created}
 	fi, err := f.Stat()
 	if err != nil {
 		a.Close()
@@ -209,6 +210,35 @@ func (a *EcjAppend) Rollback() {
 		return
 	}
 	_ = a.f.Truncate(a.size)
+}
+
+// UndoUnsyncedAppend rolls back an append whose fsync failed after this volume
+// mounted the journal and loaded the append's records. It recovers the way a
+// failed fsync in appendJournalLocked does: the journal is truncated back and
+// the ids leave the in-memory set, so disk and memory agree the merge did not
+// happen and a retried merge appends and syncs them again. Retrying the fsync
+// instead proves nothing: after a failed writeback the kernel may already have
+// dropped the pages and still report the next fsync as clean. It returns false
+// and changes nothing if this volume journaled anything after the append, as
+// truncating would drop those deletes.
+func (ev *EcVolume) UndoUnsyncedAppend(a *EcjAppend) bool {
+	ev.ecjFileAccessLock.Lock()
+	defer ev.ecjFileAccessLock.Unlock()
+	if ev.ecjFile == nil || ev.ecjFileSize != a.size+int64(len(a.delta)*types.NeedleIdSize) {
+		return false
+	}
+	if err := ev.ecjFile.Truncate(a.size); err != nil {
+		return false
+	}
+	ev.ecjFileSize = a.size
+	// The journal held exactly the ids read before the append, which exclude
+	// the delta, so every delta id in the set came from the append.
+	ev.deletedNeedlesLock.Lock()
+	for _, id := range a.delta {
+		delete(ev.deletedNeedles, id)
+	}
+	ev.deletedNeedlesLock.Unlock()
+	return true
 }
 
 // Close releases the journal, keeping whatever the append wrote.

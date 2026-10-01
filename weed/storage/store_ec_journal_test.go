@@ -2,7 +2,6 @@ package storage
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -234,12 +233,22 @@ func TestMergeEcJournal_UnmountedSyncHoldsNoDiskLock(t *testing.T) {
 	assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, journal))
 }
 
-// A failed fsync rolls the append back, unless a runtime mounted the journal
-// after the write: it has loaded the records and holds the file open, so they
-// stay rather than being cut from behind its handle.
-func TestMergeEcJournal_FailedSyncRollsBackUnlessMounted(t *testing.T) {
-	for _, mountFirst := range []bool{false, true} {
-		t.Run(fmt.Sprintf("mounted=%v", mountFirst), func(t *testing.T) {
+// A failed fsync rolls the append back, also through a runtime that mounted
+// the journal after the write: its deleted set must not keep ids the journal
+// may never have persisted. Only a delete journaled by that runtime since
+// keeps the records, as truncating would lose it.
+func TestMergeEcJournal_FailedSyncRollsBack(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		mount        bool
+		journalAfter bool
+		wantJournal  []types.NeedleId
+	}{
+		{name: "unmounted", wantJournal: []types.NeedleId{1}},
+		{name: "mounted since the write", mount: true, wantJournal: []types.NeedleId{1}},
+		{name: "mounted and journaled since", mount: true, journalAfter: true, wantJournal: []types.NeedleId{1, 2, 3}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			tempDir := t.TempDir()
 			disk0 := filepath.Join(tempDir, "d0")
 			disk1 := filepath.Join(tempDir, "d1")
@@ -247,26 +256,36 @@ func TestMergeEcJournal_FailedSyncRollsBackUnlessMounted(t *testing.T) {
 
 			const collection = "c"
 			vid := needle.VolumeId(9)
-			ownerBase := writeEcIndex(t, disk0, collection, vid, 1)
+			journal := writeEcIndex(t, disk0, collection, vid, 1) + ".ecj"
 			writeEcShard0(t, disk1, collection, vid)
 
 			var sibling *erasure_coding.EcVolume
 			mio := defaultEcjMergeIO
 			mio.sync = func(*erasure_coding.EcjAppend) error {
-				if mountFirst {
+				if tt.mount {
 					var err error
 					sibling, err = store.Locations[1].loadEcShardWithIdxDir(collection, vid, 0, disk0)
+					require.NoError(t, err)
+					require.True(t, sibling.IsNeedleDeleted(2), "the mount loads the unsynced record")
+				}
+				if tt.journalAfter {
+					_, err := sibling.MergeJournal(ecjIdSet(3))
 					require.NoError(t, err)
 				}
 				return errors.New("injected fsync failure")
 			}
-			_, err := store.mergeEcJournal(vid, disk0, ownerBase+".ecj", ecjIdSet(1, 2), mio)
+			_, err := store.mergeEcJournal(vid, disk0, journal, ecjIdSet(1, 2), mio)
 			require.Error(t, err)
-			if !mountFirst {
-				assert.Equal(t, ecjRecords(1), mustReadFile(t, ownerBase+".ecj"))
+			assert.Equal(t, ecjRecords(tt.wantJournal...), mustReadFile(t, journal))
+			if !tt.mount {
 				return
 			}
-			assert.Equal(t, ecjRecords(1, 2), mustReadFile(t, ownerBase+".ecj"))
+			assert.Equal(t, tt.journalAfter, sibling.IsNeedleDeleted(2), "the deleted set follows the journal")
+
+			// A retried merge appends and syncs the id again.
+			added, err := store.MergeEcJournal(vid, disk0, journal, ecjIdSet(1, 2))
+			require.NoError(t, err)
+			assert.Equal(t, map[bool]int{false: 1, true: 0}[tt.journalAfter], added)
 			assert.True(t, sibling.IsNeedleDeleted(2))
 		})
 	}

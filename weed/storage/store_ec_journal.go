@@ -178,7 +178,7 @@ func (s *Store) appendUnmountedEcJournal(owner *DiskLocation, vid needle.VolumeI
 		return 0, mounted, err
 	}
 	if err := sync(pending); err != nil {
-		s.rollbackUnmountedEcJournal(owner, vid, ecjPath, pending)
+		s.rollbackUnmountedEcJournal(vid, ecjPath, pending)
 		return 0, false, err
 	}
 	pending.Close()
@@ -195,17 +195,29 @@ func (s *Store) writeUnmountedEcJournal(owner *DiskLocation, vid needle.VolumeId
 	return pending, false, err
 }
 
-// rollbackUnmountedEcJournal undoes an append whose fsync failed, unless a
-// runtime mounted the journal after the write: it has loaded those records
-// and holds the file open, so truncating would cut the journal behind its
-// handle. The records then stay, as they are already in its deleted set.
-func (s *Store) rollbackUnmountedEcJournal(owner *DiskLocation, vid needle.VolumeId, ecjPath string, pending *erasure_coding.EcjAppend) {
+// rollbackUnmountedEcJournal undoes an append whose fsync failed. A runtime
+// that mounted the journal after the write has loaded those records and holds
+// the file open, so the rollback goes through it: truncate and drop the ids
+// from its deleted set, as its own failed journal fsync would. If it has
+// journaled since, the records stay rather than lose that delete. No fsync
+// runs here, so the locks are held only for in-memory work and a truncate.
+func (s *Store) rollbackUnmountedEcJournal(vid needle.VolumeId, ecjPath string, pending *erasure_coding.EcjAppend) {
 	unlock := s.rLockEcVolumes()
 	defer unlock()
-	if ev, _ := s.mountedEcJournal(owner, vid, ecjPath); ev != nil {
-		glog.Warningf("ec volume %d: keeping unsynced merge records in %s: mounted since the write", vid, ecjPath)
-		pending.Close()
+	var holders []*erasure_coding.EcVolume
+	for _, loc := range s.Locations {
+		if ev, found := loc.ecVolumes[vid]; found && filepath.Clean(ev.FileName(".ecj")) == filepath.Clean(ecjPath) {
+			holders = append(holders, ev)
+		}
+	}
+	if len(holders) == 0 {
+		pending.Rollback()
 		return
 	}
-	pending.Rollback()
+	defer pending.Close()
+	for _, ev := range holders {
+		if !ev.UndoUnsyncedAppend(pending) {
+			glog.Errorf("ec volume %d: keeping unsynced merge records in %s: journaled since the failed fsync", vid, ecjPath)
+		}
+	}
 }
