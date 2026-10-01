@@ -744,6 +744,8 @@ jobs:
             --set admin.enabled=true \
             --set admin.secret.adminPassword=ci-admin-password \
             --set worker.enabled=true \
+            --set volume.idx.type=hostPath \
+            --set volume.idx.hostPathPrefix=/tmp \
             --set cosi.enabled=true > /tmp/security-contexts.yaml
           helm template test $CHART_DIR \
             "${security_context_args[@]}" \
@@ -756,7 +758,22 @@ jobs:
           errors = []
           workloads = 0
           containers = 0
+          chart_managed_init_containers = 0
           components = set()
+
+          def validate_container(workload_name, container):
+              context = container.get("securityContext", {})
+              prefix = f"{workload_name}/{container['name']}"
+              if "enabled" in context:
+                  errors.append(f"{prefix}: internal enabled flag leaked into container securityContext")
+              if context.get("privileged") is not False:
+                  errors.append(f"{prefix}: privileged is not false")
+              if context.get("allowPrivilegeEscalation") is not False:
+                  errors.append(f"{prefix}: allowPrivilegeEscalation is not false")
+              if context.get("capabilities", {}).get("drop") != ["ALL"]:
+                  errors.append(f"{prefix}: capabilities.drop is not exactly [ALL]")
+              if context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
+                  errors.append(f"{prefix}: seccompProfile is not RuntimeDefault")
 
           with open(sys.argv[1]) as stream:
               default_documents = [document for document in yaml.safe_load_all(stream) if document]
@@ -795,18 +812,12 @@ jobs:
                       errors.append(f"{name}: pod seccompProfile is not RuntimeDefault")
                   for container in pod.get("containers", []):
                       containers += 1
-                      context = container.get("securityContext", {})
-                      prefix = f"{name}/{container['name']}"
-                      if "enabled" in context:
-                          errors.append(f"{prefix}: internal enabled flag leaked into container securityContext")
-                      if context.get("privileged") is not False:
-                          errors.append(f"{prefix}: privileged is not false")
-                      if context.get("allowPrivilegeEscalation") is not False:
-                          errors.append(f"{prefix}: allowPrivilegeEscalation is not false")
-                      if context.get("capabilities", {}).get("drop") != ["ALL"]:
-                          errors.append(f"{prefix}: capabilities.drop is not exactly [ALL]")
-                      if context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
-                          errors.append(f"{prefix}: seccompProfile is not RuntimeDefault")
+                      validate_container(name, container)
+                  for container in pod.get("initContainers", []):
+                      if container["name"] != "seaweedfs-vol-move-idx":
+                          continue
+                      chart_managed_init_containers += 1
+                      validate_container(name, container)
 
           expected_components = {
               "master", "volume", "filer", "s3", "sftp", "admin", "worker",
@@ -822,6 +833,11 @@ jobs:
                   f"expected 10 workloads and 11 containers, got "
                   f"{workloads} workloads and {containers} containers"
               )
+          if chart_managed_init_containers != 1:
+              errors.append(
+                  f"expected one chart-managed seaweedfs-vol-move-idx init container, "
+                  f"got {chart_managed_init_containers}"
+              )
 
           if errors:
               print("\n".join(f"FAIL: {error}" for error in errors), file=sys.stderr)
@@ -832,9 +848,9 @@ jobs:
           # The resize hook depends on lookup finding a live StatefulSet and
           # therefore cannot render during helm template. Keep static coverage
           # for both security-context blocks.
-          grep -q 'omit .Values.volume.podSecurityContext "enabled"' \
+          grep -Fqx '      securityContext: {{- omit .Values.volume.podSecurityContext "enabled" | toYaml | nindent 8 }}' \
             "$CHART_DIR/templates/volume/volume-resize-hook.yaml"
-          grep -q 'omit .Values.volume.containerSecurityContext "enabled"' \
+          grep -Fqx '          securityContext: {{- omit .Values.volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}' \
             "$CHART_DIR/templates/volume/volume-resize-hook.yaml"
           echo "Volume resize hook security contexts are covered"
           
@@ -1723,6 +1739,69 @@ jobs:
 
       - name: Create kind cluster
         uses: helm/kind-action@v1.15.0
+
+      - name: Verify volume resize hook security contexts
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="resize-hook-security"
+          kubectl create namespace "$NS"
+          kubectl apply -n "$NS" -f - <<'EOF'
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: data1-resize-seaweedfs-volume-0
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+          EOF
+
+          helm template resize "$CHART_DIR" -n "$NS" --dry-run=server \
+            --set volume.dataDirs[0].name=data1 \
+            --set volume.dataDirs[0].type=persistentVolumeClaim \
+            --set volume.dataDirs[0].size=2Gi \
+            --set volume.podSecurityContext.enabled=true \
+            --set volume.podSecurityContext.seccompProfile.type=RuntimeDefault \
+            --set volume.containerSecurityContext.enabled=true \
+            --set volume.containerSecurityContext.privileged=false \
+            --set volume.containerSecurityContext.allowPrivilegeEscalation=false \
+            --set volume.containerSecurityContext.capabilities.drop[0]=ALL \
+            --set volume.containerSecurityContext.seccompProfile.type=RuntimeDefault \
+            > /tmp/security-context-resize-hook.yaml
+
+          python3 - /tmp/security-context-resize-hook.yaml <<'PYEOF'
+          import sys
+
+          import yaml
+
+          with open(sys.argv[1]) as stream:
+              documents = [document for document in yaml.safe_load_all(stream) if document]
+
+          jobs = [
+              document for document in documents
+              if document.get("kind") == "Job"
+              and document["metadata"]["name"].endswith("-volume-resize-hook")
+          ]
+          if len(jobs) != 1:
+              raise AssertionError(f"expected one volume resize hook Job, got {len(jobs)}")
+
+          pod = jobs[0]["spec"]["template"]["spec"]
+          assert pod["securityContext"] == {
+              "seccompProfile": {"type": "RuntimeDefault"},
+          }
+          assert len(pod["containers"]) == 1
+          assert pod["containers"][0]["securityContext"] == {
+              "allowPrivilegeEscalation": False,
+              "capabilities": {"drop": ["ALL"]},
+              "privileged": False,
+              "seccompProfile": {"type": "RuntimeDefault"},
+          }
+          PYEOF
+          kubectl delete namespace "$NS"
+          echo "Volume resize hook security contexts render correctly"
 
       - name: Run chart-testing (install)
         run: |
