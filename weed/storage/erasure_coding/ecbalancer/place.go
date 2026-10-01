@@ -251,9 +251,11 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 	// valid tiered cluster — e.g. SSDs in only 2 of 4 racks — is not capped
 	// impossibly low.
 	rackRoom := make(map[string]int, len(rackKeys))
+	rackRoomRP := make(map[string]int, len(rackKeys))
 	numEligibleRacks := 0
 	for _, rk := range rackKeys {
 		rackRoom[rk] = rackShardRoom(racks[rk], vk, eligible, parityShards)
+		rackRoomRP[rk] = rackShardRoomUnderRP(racks[rk], vk, eligible, parityShards, rp)
 		if rackRoom[rk] > 0 {
 			numEligibleRacks++
 		}
@@ -264,12 +266,21 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 
 	// The per-type caps spread data and parity independently, so together they
 	// can still stack e.g. 2 data + 1 parity on one rack. Cap the TOTAL per rack
-	// as well, at the lowest value the racks' free capacity allows.
+	// as well, at the lowest value the racks' free capacity allows. Attempts that
+	// enforce ReplicaPlacement size it from the room left under SameRackCount, so
+	// a rack of few nodes does not count disk room its nodes may not use.
 	totalShards := len(need)
 	for _, n := range rackShardCount {
 		totalShards += n
 	}
 	maxTotalPerRack := rackTotalCap(rackKeys, rackShardCount, rackRoom, totalShards)
+	maxTotalPerRackRP := rackTotalCap(rackKeys, rackShardCount, rackRoomRP, totalShards)
+	rackCap := func(rl relaxation) int {
+		if rl.rp {
+			return maxTotalPerRackRP
+		}
+		return maxTotalPerRack
+	}
 
 	attempts := strictAttempts
 	if mode == PlaceDurabilityFirst {
@@ -286,7 +297,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, parityShards, maxTotalPerRack, racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
+			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, parityShards, rackCap(rl), racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
 			if !ok {
 				continue
 			}
@@ -325,7 +336,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 				e.node.freeSlots++
 				racks[e.rackKey].freeSlots++
 			}
-			return nil, fmt.Errorf("cannot place EC shard %d of volume %d (collection %q) (rack total cap %d, per-disk cap %d)", sid, vk.vid, vk.collection, maxTotalPerRack, parityShards)
+			return nil, fmt.Errorf("cannot place EC shard %d of volume %d (collection %q) (rack total cap %d, per-disk cap %d)", sid, vk.vid, vk.collection, rackCap(attempts[len(attempts)-1]), parityShards)
 		}
 	}
 
@@ -446,6 +457,20 @@ func rackShardRoom(r *rack, vk volKey, eligible func(*disk) bool, maxPerDisk int
 	room := 0
 	for _, n := range r.nodes {
 		room += nodeShardRoom(n, vk, eligible, maxPerDisk)
+	}
+	return room
+}
+
+// rackShardRoomUnderRP is rackShardRoom with each node further bounded by the
+// shards it may still take under ReplicaPlacement's SameRackCount (max shards of
+// the volume per node), which pickNodeInRackEligible enforces.
+func rackShardRoomUnderRP(r *rack, vk volKey, eligible func(*disk) bool, maxPerDisk int, rp *super_block.ReplicaPlacement) int {
+	if rp == nil || rp.SameRackCount <= 0 {
+		return rackShardRoom(r, vk, eligible, maxPerDisk)
+	}
+	room := 0
+	for _, n := range r.nodes {
+		room += min(nodeShardRoom(n, vk, eligible, maxPerDisk), max(rp.SameRackCount-volumeShardCount(n, vk), 0))
 	}
 	return room
 }

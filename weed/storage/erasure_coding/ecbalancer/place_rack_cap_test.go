@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 // Total-shards-per-rack cap for Place / PlaceDurabilityFirst.
@@ -211,6 +212,51 @@ func TestPlaceSkipsRackWithFullDisks(t *testing.T) {
 	totals := placedTotalsPerRack(t, res)
 	if totals["rack1"] > erasure_coding.ParityShardsCount {
 		t.Errorf("rack1 holds %d shards on one disk, want at most %d", totals["rack1"], erasure_coding.ParityShardsCount)
+	}
+}
+
+// TestPlaceTotalCapCountsSameRackCount: with SameRackCount=1, a one-node rack
+// takes a single shard however much disk room it has, so the cap must be sized
+// from the room left under that limit. Four one-node racks and four three-node
+// racks fit 10+4 as 1 per small rack and up to 3 per large rack; a cap sized from
+// disk room alone is 2, which fits only 4 + 4*2 = 12, so strict placement failed
+// and durability-first relaxed replica placement.
+func TestPlaceTotalCapCountsSameRackCount(t *testing.T) {
+	rp := &super_block.ReplicaPlacement{SameRackCount: 1} // <=1 shard per node
+	modes := []struct {
+		name string
+		mode PlacementMode
+	}{{"strict", PlaceStrict}, {"durability-first", PlaceDurabilityFirst}}
+	for _, m := range modes {
+		t.Run(m.name, func(t *testing.T) {
+			topo := NewTopology()
+			for r := 0; r < 8; r++ {
+				nodes := 1
+				if r >= 4 {
+					nodes = 3
+				}
+				for n := 0; n < nodes; n++ {
+					node := topo.AddNode(fmt.Sprintf("10.0.%d.%d:8080", r, n), "dc1", fmt.Sprintf("dc1:rack%d", r), 50)
+					node.AddDisk(0, "", 50, 0)
+				}
+			}
+			res, err := topo.Place(1, "c1", allShards(), Constraints{ReplicaPlacement: rp}, m.mode)
+			if err != nil {
+				t.Fatalf("Place: %v", err)
+			}
+			assertMaxPerRack(t, placedTotalsPerRack(t, res), 3)
+			assertNotRelaxed(t, res, "replica-placement")
+			assertNotRelaxed(t, res, "rack-total-cap")
+			perNode := map[string]int{}
+			for _, d := range res.Destinations {
+				perNode[d.Node]++
+			}
+			for node, n := range perNode {
+				if n > rp.SameRackCount {
+					t.Errorf("node %s holds %d shards, want at most %d", node, n, rp.SameRackCount)
+				}
+			}
+		})
 	}
 }
 
