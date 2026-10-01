@@ -95,20 +95,41 @@ struct Snapshot {
     encode_ts_ns: i64,
 }
 
-/// Top-level entry point. Returns `Ok(None)` for "not found" (matches
-/// Go's `ReadEcShardNeedle`); errors propagate as `io::Error`.
+/// Why a distributed EC read has no needle to return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EcMiss {
+    NotFound,
+    /// Tombstoned in the local `.ecx`/`.ecj`, or reported deleted by a peer.
+    Deleted,
+    VolumeNotFound,
+}
+
+/// Top-level entry point. Returns `Ok(None)` for any miss — absent,
+/// deleted, or volume gone; errors propagate as `io::Error`.
 pub async fn read_ec_shard_needle_distributed(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
 ) -> io::Result<Option<Needle>> {
+    Ok(read_ec_shard_needle_or_miss(state, vid, needle_id)
+        .await?
+        .ok())
+}
+
+/// Like `read_ec_shard_needle_distributed`, but says why there is no needle,
+/// as Go's `ReadEcShardNeedle` tells `ErrorDeleted` from not-found.
+pub async fn read_ec_shard_needle_or_miss(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+) -> io::Result<Result<Needle, EcMiss>> {
     // Phase A — under the Store read lock, locate the needle, compute
     // intervals, and read any locally-mounted shard intervals. We must
     // not `.await` while holding this guard (std::sync::RwLockReadGuard
     // is !Send).
     let mut snapshot = match snapshot_under_lock(state, vid, needle_id)? {
-        Some(s) => s,
-        None => return Ok(None),
+        Ok(s) => s,
+        Err(miss) => return Ok(Err(miss)),
     };
 
     // Phase B — refresh the shard_locations cache from the master if
@@ -210,17 +231,11 @@ pub async fn read_ec_shard_needle_distributed(
         .collect()
         .await;
 
-    let mut assembled: Vec<Vec<u8>> = Vec::with_capacity(fetched.len());
-    for res in fetched {
-        let (buf, is_deleted) = res?;
-        // A peer reports the needle deleted (a cross-server window where the
-        // local index still shows it live): treat as not-found rather than
-        // serving zeros, mirroring Go's ErrorDeleted.
-        if is_deleted {
-            return Ok(None);
-        }
-        assembled.push(buf);
-    }
+    // A peer reports the needle deleted (a cross-server window where the
+    // local index still shows it live): answer deleted rather than serving zeros.
+    let Some(assembled) = gather_intervals(fetched)? else {
+        return Ok(Err(EcMiss::Deleted));
+    };
 
     // Phase D — assemble and parse the Needle. Mirrors the tail of
     // `EcVolume::read_ec_shard_needle`.
@@ -252,7 +267,20 @@ pub async fn read_ec_shard_needle_distributed(
         snapshot.version,
     )
     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}", e)))?;
-    Ok(Some(n))
+    Ok(Ok(n))
+}
+
+/// `None` when any holder reported the needle deleted. That outranks another
+/// interval's error: deletes are never invented, so the needle is gone either way.
+fn gather_intervals(fetched: Vec<io::Result<(Vec<u8>, bool)>>) -> io::Result<Option<Vec<Vec<u8>>>> {
+    if fetched.iter().any(|r| matches!(r, Ok((_, true)))) {
+        return Ok(None);
+    }
+    fetched
+        .into_iter()
+        .map(|r| r.map(|(buf, _)| buf))
+        .collect::<io::Result<_>>()
+        .map(Some)
 }
 
 /// What one EC delete RPC carries — `VolumeEcBlobDeleteRequest` minus tonic.
@@ -864,11 +892,10 @@ fn snapshot_under_lock(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
-) -> io::Result<Option<Snapshot>> {
+) -> io::Result<Result<Snapshot, EcMiss>> {
     let store = state.store.read().unwrap();
-    let ecv = match store.find_ec_volume(vid) {
-        Some(v) => v,
-        None => return Ok(None),
+    let Some(ecv) = store.find_ec_volume(vid) else {
+        return Ok(Err(EcMiss::VolumeNotFound));
     };
 
     // Reuse EcVolume::locate_needle for offset/size resolution AND
@@ -876,11 +903,17 @@ fn snapshot_under_lock(
     // local-only read path uses, so we stay byte-identical on the
     // shard-size + interval boundaries. locate_needle applies the runtime
     // delete mask, which is correct for serving reads.
-    let (offset, size, intervals) = match ecv.locate_needle(needle_id)? {
-        Some(v) => v,
-        None => return Ok(None),
+    let Some((offset, size, intervals)) = ecv.locate_needle(needle_id)? else {
+        // locate_needle folds a tombstone into not-found.
+        let deleted =
+            matches!(ecv.find_needle_from_ecx(needle_id)?, Some((_, s)) if s.is_deleted());
+        return Ok(Err(if deleted {
+            EcMiss::Deleted
+        } else {
+            EcMiss::NotFound
+        }));
     };
-    build_snapshot(ecv, offset, size, &intervals).map(Some)
+    build_snapshot(ecv, offset, size, &intervals).map(Ok)
 }
 
 /// Like `snapshot_under_lock`, but locates intervals from the RAW .ecx
@@ -1794,6 +1827,21 @@ async fn drain_copy_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gather_intervals_puts_a_reported_deletion_ahead_of_errors() {
+        let failed = || Err(io::Error::other("shard unreachable"));
+        assert!(
+            gather_intervals(vec![failed(), Ok((Vec::new(), true))])
+                .unwrap()
+                .is_none()
+        );
+        assert!(gather_intervals(vec![failed(), Ok((vec![1], false))]).is_err());
+        assert_eq!(
+            gather_intervals(vec![Ok((vec![1], false)), Ok((vec![2], false))]).unwrap(),
+            Some(vec![vec![1], vec![2]])
+        );
+    }
 
     fn locations(count: usize) -> HashMap<ShardId, Vec<String>> {
         (0..count)

@@ -134,6 +134,40 @@ enum EcjPublishError {
     HandleLost(io::Error),
 }
 
+/// Adds every whole needle id in the first `len` bytes of `ecj_file` to `ids`,
+/// reading `ECJ_LOAD_CHUNK_BYTES` at a time; a trailing partial record is
+/// ignored.
+pub(crate) fn read_ecj_ids(
+    ecj_file: &File,
+    len: u64,
+    ids: &mut HashSet<NeedleId>,
+) -> io::Result<()> {
+    read_ecj_ids_with(read_exact_at, ecj_file, len, ids)
+}
+
+/// [`read_ecj_ids`] with the positional read supplied by the caller, so the
+/// mount can load through its injectable [`EcjFsOps`] steps.
+fn read_ecj_ids_with(
+    read_at: fn(&File, &mut [u8], u64) -> io::Result<()>,
+    ecj_file: &File,
+    len: u64,
+    ids: &mut HashSet<NeedleId>,
+) -> io::Result<()> {
+    let mut buf = vec![0u8; std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len) as usize];
+    let mut off: u64 = 0;
+    while off + NEEDLE_ID_SIZE as u64 <= len {
+        let mut want = std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len - off) as usize;
+        want -= want % NEEDLE_ID_SIZE;
+        // Positional read: the loader's handle is shared with journal appends.
+        read_at(ecj_file, &mut buf[..want], off)?;
+        for entry in buf[..want].as_chunks::<NEEDLE_ID_SIZE>().0 {
+            ids.insert(NeedleId::from_bytes(entry));
+        }
+        off += want as u64;
+    }
+    Ok(())
+}
+
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
     pub volume_id: VolumeId,
@@ -953,25 +987,7 @@ impl EcVolume {
         // held the `deleted_needles` write lock for the whole scan, which on a
         // bloated journal is the entire (unbounded) startup.
         let mut loaded: HashSet<NeedleId> = HashSet::new();
-        let mut buf = vec![0u8; ECJ_LOAD_CHUNK_BYTES];
-        let end = self.ecj_file_size as u64;
-        let mut off: u64 = 0;
-        while off + NEEDLE_ID_SIZE as u64 <= end {
-            // Whole entries only; a trailing partial record is ignored, as the
-            // per-entry loop did by construction.
-            let mut want = std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, end - off) as usize;
-            want -= want % NEEDLE_ID_SIZE;
-            if want == 0 {
-                break;
-            }
-            // Positional read so concurrent readers of the shared .ecj handle
-            // can't interleave seek/read.
-            read_at(ecj_file, &mut buf[..want], off)?;
-            for entry in buf[..want].chunks_exact(NEEDLE_ID_SIZE) {
-                loaded.insert(NeedleId::from_bytes(entry));
-            }
-            off += want as u64;
-        }
+        read_ecj_ids_with(read_at, ecj_file, self.ecj_file_size as u64, &mut loaded)?;
 
         let mut set = self
             .deleted_needles
@@ -5657,7 +5673,7 @@ impl EcLocalShard {
             .file
             .as_ref()
             .map_err(|e| io::Error::new(e.kind(), e.to_string()))?;
-        crate::storage::io::read_at(file, buf, offset)
+        crate::storage::io::read_full_at(file, buf, offset)
     }
 }
 
