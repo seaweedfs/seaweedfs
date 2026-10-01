@@ -43,10 +43,10 @@ type filerHealth struct {
 type FilerClient struct {
 	*vidMapClient
 	filerAddresses     []pb.ServerAddress
-	filerAddressesMu   sync.RWMutex   // Protects filerAddresses and filerHealth
-	filerIndex         int32          // atomic: current filer index for round-robin
-	filerHealth        []*filerHealth // health status per filer (same order as filerAddresses)
-	peerUpdates        uint64         // pushed filer updates applied; protected by filerAddressesMu
+	filerAddressesMu   sync.RWMutex                  // Protects filerAddresses and filerHealth
+	filerIndex         int32                         // atomic: current filer index for round-robin
+	filerHealth        []*filerHealth                // health status per filer (same order as filerAddresses)
+	peerUpdates        uint64                        // pushed filer updates applied; protected by filerAddressesMu
 	deferredLeaves     map[pb.ServerAddress]struct{} // leaves suppressed while the filer was the last known; protected by filerAddressesMu
 	grpcDialOption     grpc.DialOption
 	urlPreference      UrlPreference
@@ -381,6 +381,7 @@ func (fc *FilerClient) applyDiscoverySnapshot(discoveredFilers map[pb.ServerAddr
 		glog.V(1).Infof("FilerClient: discarding discovery snapshot for group '%s' superseded by pushed updates", fc.filerGroup)
 		return
 	}
+	fc.deferredLeaves = nil
 	fc.applyDiscoveredFilersLocked(discoveredFilers)
 }
 
@@ -415,6 +416,7 @@ func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.
 
 	changed := false
 	if update.IsAdd {
+		delete(fc.deferredLeaves, addr)
 		if _, ok := filers[addr]; !ok {
 			filers[addr] = struct{}{}
 			changed = true

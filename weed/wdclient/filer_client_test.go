@@ -230,3 +230,31 @@ func TestOnPeerUpdateNoopDoesNotDiscardSnapshot(t *testing.T) {
 		t.Fatalf("no-op push should not discard the snapshot, got %v", got)
 	}
 }
+
+func TestOnPeerUpdateRejoinCancelsDeferredLeave(t *testing.T) {
+	restarted := pb.ServerAddress("10.0.0.1:8888")
+	joined := pb.ServerAddress("10.0.1.1:8888")
+	fc := newTestFilerClient(restarted)
+
+	fc.OnPeerUpdate(filerUpdate(restarted, false), time.Now())
+	fc.OnPeerUpdate(filerUpdate(restarted, true), time.Now())
+	fc.OnPeerUpdate(filerUpdate(joined, true), time.Now())
+
+	if got := filerAddressList(fc); len(got) != 2 || got[0] != restarted || got[1] != joined {
+		t.Fatalf("rejoined filer was dropped by its stale deferred leave: %v", got)
+	}
+}
+
+func TestDiscoverySnapshotClearsDeferredLeaves(t *testing.T) {
+	departed := pb.ServerAddress("10.0.0.1:8888")
+	replacement := pb.ServerAddress("10.0.1.1:8888")
+	fc := newTestFilerClient(departed)
+
+	fc.OnPeerUpdate(filerUpdate(departed, false), time.Now())
+	fc.applyDiscoverySnapshot(map[pb.ServerAddress]struct{}{replacement: {}}, fc.peerUpdateGeneration())
+	fc.OnPeerUpdate(filerUpdate(departed, true), time.Now())
+
+	if got := filerAddressList(fc); len(got) != 2 || got[0] != replacement || got[1] != departed {
+		t.Fatalf("rejoined filer was dropped by a deferred leave the poll should have cleared: %v", got)
+	}
+}
