@@ -5683,7 +5683,8 @@ impl VolumeCopyJob {
                     v.deleted_count() as u64,
                 )
             {
-                store.unmount_volume(vid);
+                // Cannot fail: mounted under this same guard, so it cannot be compacting.
+                let _ = store.unmount_volume(vid);
                 return Err(Status::internal(format!(
                     "failed to mount or validate volume {}: {}",
                     vid, e
