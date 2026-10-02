@@ -174,7 +174,13 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerE
 		// The existing retry schedule should proceed.
 		// RetryCount is only incremented in RequeueForRetry when an actual retry is performed.
 		item.LastError = errorMsg
-		item.ledgerEpoch = ledgerEpoch
+		// Keep the recorded epoch while the item is in flight: an expiry or
+		// permanent outcome from that attempt must forget only the record it
+		// started with, not a newer enqueue for the same id. This also keeps
+		// the field immutable once the worker can read it without the lock.
+		if !item.inFlight {
+			item.ledgerEpoch = ledgerEpoch
+		}
 		if item.inFlight {
 			glog.V(2).Infof("retry for %s in-flight: attempt %d, will preserve retry state", fileId, item.RetryCount)
 		} else {

@@ -306,3 +306,27 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 		t.Errorf("Expected LastError to be updated to 'timeout error again', got %q", item2.LastError)
 	}
 }
+
+// AddOrUpdate must not overwrite the ledger epoch on an in-flight item: the
+// worker that popped it reads that field without the queue lock, and its
+// expiry/permanent-forget must only match the record the attempt started with.
+func TestDeletionRetryQueue_InFlightKeepsEpoch(t *testing.T) {
+	queue := NewDeletionRetryQueue()
+	queue.AddOrUpdate("file1", "timeout", 7)
+
+	queue.lock.Lock()
+	item := queue.itemIndex["file1"]
+	item.NextRetryAt = time.Now().Add(-time.Second)
+	heap.Init(&queue.heap)
+	queue.lock.Unlock()
+
+	ready, _ := queue.GetReadyItems(1)
+	if len(ready) != 1 {
+		t.Fatalf("expected the item ready, got %d", len(ready))
+	}
+
+	queue.AddOrUpdate("file1", "newer error", 42)
+	if got := ready[0].ledgerEpoch; got != 7 {
+		t.Fatalf("in-flight epoch must stay 7, got %d", got)
+	}
+}

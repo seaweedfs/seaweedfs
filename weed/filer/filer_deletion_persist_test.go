@@ -485,6 +485,67 @@ func TestDeletionLedgerLegacyMigrationDurable(t *testing.T) {
 	}
 }
 
+// An indexed ledger that cannot be read must not be skipped: claiming the
+// readable ones and leaving the unreadable one behind would strand it, since
+// the index is only searched while the filer's own key is absent. The claim
+// aborts so the reload is retried.
+func TestDeletionLedgerUnreadableForeignBlocks(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	stranded := KvKeyDeletionLedger + ".filer-old:8888"
+	store.kv[stranded] = []byte(`{"parts":2,"gen":1}`) // manifest without parts = corrupt
+	index, _ := json.Marshal([]string{stranded})
+	store.kv[KvKeyDeletionLedgerIndex] = index
+
+	f := newLedgerTestFiler(store)
+	f.Dlm = lock_manager.NewDistributedLockManager("filer-new:9999")
+	if f.reloadDeletionLedger() {
+		t.Fatalf("an unreadable indexed ledger must fail the reload")
+	}
+	if _, err := store.KvGet(context.Background(), []byte(stranded)); err != nil {
+		t.Fatalf("unreadable ledger must be left untouched, got %v", err)
+	}
+	if _, ok := readPersistedLedger(t, f); ok {
+		t.Fatalf("no scoped ledger may be written while a claim source is unreadable")
+	}
+}
+
+// A live filer's ledger is not deleted when it republished between the claim's
+// read and cleanup: the source stays and its newer ids merge into the claim.
+// The hook swaps the source content on its second read — the claim's first
+// read sees the old set, the verification read sees the republished one,
+// exactly like a peer snapshot landing mid-claim.
+func TestDeletionLedgerClaimKeepsChangedSource(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	srcKey := KvKeyDeletionLedger + ".filer-old:8888"
+	store.kv[srcKey] = []byte(`["1,01","1,02"]`)
+	index, _ := json.Marshal([]string{srcKey})
+	store.kv[KvKeyDeletionLedgerIndex] = index
+
+	srcReads := 0
+	store.kvGetHook = func(key []byte) {
+		if string(key) == srcKey {
+			srcReads++
+			if srcReads == 2 {
+				store.kv[srcKey] = []byte(`["1,01","1,02","1,03"]`)
+			}
+		}
+	}
+
+	f := newLedgerTestFiler(store)
+	f.Dlm = lock_manager.NewDistributedLockManager("filer-new:9999")
+	if !f.reloadDeletionLedger() {
+		t.Fatalf("claim should succeed")
+	}
+	if got := string(store.kv[srcKey]); got != `["1,01","1,02","1,03"]` {
+		t.Fatalf("republished source must be left intact, got %q", got)
+	}
+	if f.pendingDeletionCount() != 3 {
+		t.Fatalf("republished ids must merge into the pending set, got %d", f.pendingDeletionCount())
+	}
+}
+
 // An expired retry item must not erase a newer enqueue for the same file id:
 // expiry forgets only the epoch the retry item recorded.
 func TestForgetDeletionEpochSkipsNewer(t *testing.T) {

@@ -453,21 +453,32 @@ func (f *Filer) loadStaleLedgerParts(ctx context.Context, key string) {
 }
 
 // touchLedgerIndex records this filer's scoped key in the shared index so the
-// ledger remains discoverable if the filer restarts under a new address.
+// ledger remains discoverable if the filer restarts under a new address. The
+// index is a read-modify-write list with no CAS, so the write is verified and
+// retried: a peer's concurrent update must not drop this key.
 func (f *Filer) touchLedgerIndex(ctx context.Context, key string) {
 	if key == KvKeyDeletionLedger {
 		return
 	}
-	keys, _ := f.readLedgerIndex(ctx)
-	for _, k := range keys {
-		if k == key {
+	for attempt := 0; attempt < 3; attempt++ {
+		keys, _ := f.readLedgerIndex(ctx)
+		found := false
+		for _, k := range keys {
+			if k == key {
+				found = true
+				break
+			}
+		}
+		if found {
+			return
+		}
+		payload, _ := json.Marshal(append(keys, key))
+		if err := f.Store.KvPut(ctx, []byte(KvKeyDeletionLedgerIndex), payload); err != nil {
+			glog.V(1).Infof("failed to update deletion ledger index: %v", err)
 			return
 		}
 	}
-	payload, _ := json.Marshal(append(keys, key))
-	if err := f.Store.KvPut(ctx, []byte(KvKeyDeletionLedgerIndex), payload); err != nil {
-		glog.V(1).Infof("failed to update deletion ledger index: %v", err)
-	}
+	glog.V(1).Infof("deletion ledger index lost %q to a concurrent update; retrying on the next snapshot", key)
 }
 
 func (f *Filer) readLedgerIndex(ctx context.Context) ([]string, error) {
@@ -545,36 +556,39 @@ func (f *Filer) readDeletionLedger(key string) (ids []string, gen, parts int, er
 func (f *Filer) recoverForeignDeletionLedgers(key string) (ids []string, err error) {
 	ctx := context.Background()
 
-	claimed := map[string][2]int{} // source key -> {gen, parts}
+	claimed := map[string]ledgerClaim{} // source key -> what was read
 	lIds, lGen, lParts, lErr := f.readDeletionLedger(KvKeyDeletionLedger)
 	switch {
 	case lErr == nil:
 		ids = append(ids, lIds...)
-		claimed[KvKeyDeletionLedger] = [2]int{lGen, lParts}
+		claimed[KvKeyDeletionLedger] = ledgerClaim{lIds, lGen, lParts}
 		f.loadStaleLedgerParts(ctx, KvKeyDeletionLedger)
 	case lErr != ErrKvNotFound:
 		return nil, lErr
 	}
 
+	// Any read failure aborts the whole claim so reload retries: skipping an
+	// unreadable source would strand it, since a successful claim here means
+	// the index is never searched again.
 	indexKeys, idxErr := f.readLedgerIndex(ctx)
-	if idxErr == nil {
-		for _, other := range indexKeys {
-			if other == key {
-				continue
-			}
-			oIds, oGen, oParts, oErr := f.readDeletionLedger(other)
-			if oErr == ErrKvNotFound {
-				f.pruneLedgerIndex(ctx, other)
-				continue
-			}
-			if oErr != nil {
-				glog.Warningf("skipping unreadable deletion ledger %s: %v", other, oErr)
-				continue
-			}
-			ids = append(ids, oIds...)
-			claimed[other] = [2]int{oGen, oParts}
-			f.loadStaleLedgerParts(ctx, other)
+	if idxErr != nil && idxErr != ErrKvNotFound {
+		return nil, idxErr
+	}
+	for _, other := range indexKeys {
+		if other == key {
+			continue
 		}
+		oIds, oGen, oParts, oErr := f.readDeletionLedger(other)
+		if oErr == ErrKvNotFound {
+			f.pruneLedgerIndex(ctx, other)
+			continue
+		}
+		if oErr != nil {
+			return nil, fmt.Errorf("deletion ledger %s unreadable: %w", other, oErr)
+		}
+		ids = append(ids, oIds...)
+		claimed[other] = ledgerClaim{oIds, oGen, oParts}
+		f.loadStaleLedgerParts(ctx, other)
 	}
 
 	if len(claimed) == 0 {
@@ -583,13 +597,45 @@ func (f *Filer) recoverForeignDeletionLedgers(key string) (ids []string, err err
 	if err := f.writeDeletionLedger(ids); err != nil {
 		return nil, err
 	}
-	for src, gp := range claimed {
-		f.deleteLedgerParts(ctx, src, gp[0], gp[1])
+	for src, claim := range claimed {
+		// A source republished since we read it belongs to a live filer
+		// (or a racing claimer): merge the newer ids and leave it in place.
+		curIds, curGen, curParts, rerr := f.readDeletionLedger(src)
+		if rerr != nil || curGen != claim.gen || curParts != claim.parts || !sameStringSet(curIds, claim.ids) {
+			if rerr == nil {
+				ids = append(ids, curIds...)
+			}
+			glog.V(0).Infof("deletion ledger %s changed while claiming; leaving it for its owner", src)
+			continue
+		}
+		f.deleteLedgerParts(ctx, src, claim.gen, claim.parts)
 		_ = f.Store.KvDelete(ctx, []byte(src))
 		_ = f.Store.KvDelete(ctx, []byte(src+".stale"))
 		f.pruneLedgerIndex(ctx, src)
 	}
 	return ids, nil
+}
+
+type ledgerClaim struct {
+	ids   []string
+	gen   int
+	parts int
+}
+
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		seen[s] = struct{}{}
+	}
+	for _, s := range b {
+		if _, ok := seen[s]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // reloadDeletionLedger re-enqueues any pending deletions found in the store after
@@ -657,7 +703,13 @@ func (f *Filer) reloadDeletionLedger() bool {
 	glog.V(0).Infof("recovered %d pending deletions from ledger, applying in %v", len(ids), grace)
 
 	go func() {
-		time.Sleep(grace)
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-f.deletionQuit:
+			return
+		case <-timer.C:
+		}
 		// The ids are already in the pending set; only the queue push waits
 		// for peer meta-aggregation to settle. The ledger is deliberately NOT
 		// cleared here: it shrinks only as the delete pipeline confirms each
