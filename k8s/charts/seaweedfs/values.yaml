@@ -25,6 +25,9 @@ global:
     imagePullPolicy: IfNotPresent
     restartPolicy: Always
     loggingLevel: 1
+    # Writable temporary storage used when containers run with a read-only root filesystem.
+    tmpDir:
+      sizeLimit: ""
     enableSecurity: false
     masterServer: null
     # filerWrite: true mounts security.toml on filer + admin without needing
@@ -274,6 +277,7 @@ master:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -584,6 +588,7 @@ volume:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -879,6 +884,7 @@ filer:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -1171,6 +1177,7 @@ s3:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -1348,6 +1355,7 @@ sftp:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -1520,6 +1528,7 @@ admin:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -1702,6 +1711,7 @@ worker:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -1980,6 +1990,7 @@ allInOne:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL
@@ -2044,6 +2055,7 @@ cosi:
   #   runAsNonRoot: true
   #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
   #   capabilities:
   #     drop:
   #       - ALL

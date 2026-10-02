@@ -731,6 +731,7 @@ jobs:
               --set "$component.containerSecurityContext.enabled=true"
               --set "$component.containerSecurityContext.privileged=false"
               --set "$component.containerSecurityContext.allowPrivilegeEscalation=false"
+              --set "$component.containerSecurityContext.readOnlyRootFilesystem=true"
               --set "$component.containerSecurityContext.capabilities.drop[0]=ALL"
               --set "$component.containerSecurityContext.seccompProfile.type=RuntimeDefault"
             )
@@ -746,10 +747,15 @@ jobs:
             --set worker.enabled=true \
             --set volume.idx.type=hostPath \
             --set volume.idx.hostPathPrefix=/tmp \
-            --set cosi.enabled=true > /tmp/security-contexts.yaml
+            --set cosi.enabled=true \
+            --set global.seaweedfs.tmpDir.sizeLimit=64Mi > /tmp/security-contexts.yaml
           helm template test $CHART_DIR \
             "${security_context_args[@]}" \
-            --set allInOne.enabled=true > /tmp/security-contexts-aio.yaml
+            --set allInOne.enabled=true \
+            --set master.enabled=false \
+            --set volume.enabled=false \
+            --set filer.enabled=false \
+            --set global.seaweedfs.tmpDir.sizeLimit=64Mi > /tmp/security-contexts-aio.yaml
           python3 - /tmp/security-context-defaults.yaml /tmp/security-contexts.yaml /tmp/security-contexts-aio.yaml <<'PYEOF'
           import sys
 
@@ -770,10 +776,15 @@ jobs:
                   errors.append(f"{prefix}: privileged is not false")
               if context.get("allowPrivilegeEscalation") is not False:
                   errors.append(f"{prefix}: allowPrivilegeEscalation is not false")
+              if context.get("readOnlyRootFilesystem") is not True:
+                  errors.append(f"{prefix}: readOnlyRootFilesystem is not true")
               if context.get("capabilities", {}).get("drop") != ["ALL"]:
                   errors.append(f"{prefix}: capabilities.drop is not exactly [ALL]")
               if context.get("seccompProfile", {}).get("type") != "RuntimeDefault":
                   errors.append(f"{prefix}: seccompProfile is not RuntimeDefault")
+              mounts = {mount["name"]: mount for mount in container.get("volumeMounts", [])}
+              if mounts.get("seaweedfs-tmp", {}).get("mountPath") != "/tmp":
+                  errors.append(f"{prefix}: writable temporary volume is not mounted at /tmp")
 
           with open(sys.argv[1]) as stream:
               default_documents = [document for document in yaml.safe_load_all(stream) if document]
@@ -784,10 +795,20 @@ jobs:
               pod = document["spec"]["template"]["spec"]
               if "securityContext" in pod:
                   errors.append(f"{name}: pod securityContext should be absent by default")
+              if any(volume["name"] == "seaweedfs-tmp" for volume in pod.get("volumes", [])):
+                  errors.append(f"{name}: writable /tmp volume should be absent by default")
               for container in pod.get("containers", []):
                   if "securityContext" in container:
                       errors.append(
                           f"{name}/{container['name']}: container securityContext "
+                          f"should be absent by default"
+                      )
+                  if any(
+                      mount["name"] == "seaweedfs-tmp"
+                      for mount in container.get("volumeMounts", [])
+                  ):
+                      errors.append(
+                          f"{name}/{container['name']}: writable /tmp mount "
                           f"should be absent by default"
                       )
 
@@ -800,6 +821,12 @@ jobs:
                   workloads += 1
                   name = document["metadata"]["name"]
                   pod = document["spec"]["template"]["spec"]
+                  volumes = {volume["name"]: volume for volume in pod.get("volumes", [])}
+                  temporary = volumes.get("seaweedfs-tmp", {}).get("emptyDir")
+                  if temporary is None:
+                      errors.append(f"{name}: writable /tmp emptyDir is missing")
+                  elif temporary.get("sizeLimit") != "64Mi":
+                      errors.append(f"{name}: temporary volume sizeLimit is not 64Mi")
                   component = document["spec"]["template"]["metadata"]["labels"].get("app.kubernetes.io/component")
                   if component:
                       components.add(component)
@@ -828,9 +855,9 @@ jobs:
                   f"security context workload coverage is incomplete: "
                   f"expected {sorted(expected_components)}, got {sorted(components)}"
               )
-          if workloads != 10 or containers != 11:
+          if workloads != 10 or containers != 12:
               errors.append(
-                  f"expected 10 workloads and 11 containers, got "
+                  f"expected 10 workloads and 12 containers, got "
                   f"{workloads} workloads and {containers} containers"
               )
           if chart_managed_init_containers != 1:
@@ -1768,8 +1795,10 @@ jobs:
             --set volume.containerSecurityContext.enabled=true \
             --set volume.containerSecurityContext.privileged=false \
             --set volume.containerSecurityContext.allowPrivilegeEscalation=false \
+            --set volume.containerSecurityContext.readOnlyRootFilesystem=true \
             --set volume.containerSecurityContext.capabilities.drop[0]=ALL \
             --set volume.containerSecurityContext.seccompProfile.type=RuntimeDefault \
+            --set global.seaweedfs.tmpDir.sizeLimit=64Mi \
             > /tmp/security-context-resize-hook.yaml
 
           python3 - /tmp/security-context-resize-hook.yaml <<'PYEOF'
@@ -1797,8 +1826,15 @@ jobs:
               "allowPrivilegeEscalation": False,
               "capabilities": {"drop": ["ALL"]},
               "privileged": False,
+              "readOnlyRootFilesystem": True,
               "seccompProfile": {"type": "RuntimeDefault"},
           }
+          assert pod["containers"][0]["volumeMounts"] == [
+              {"mountPath": "/tmp", "name": "seaweedfs-tmp"},
+          ]
+          assert pod["volumes"] == [
+              {"emptyDir": {"sizeLimit": "64Mi"}, "name": "seaweedfs-tmp"},
+          ]
           PYEOF
           kubectl delete namespace "$NS"
           echo "Volume resize hook security contexts render correctly"
