@@ -544,6 +544,10 @@ func TestDeletionLedgerClaimKeepsChangedSource(t *testing.T) {
 	if f.pendingDeletionCount() != 3 {
 		t.Fatalf("republished ids must merge into the pending set, got %d", f.pendingDeletionCount())
 	}
+	persisted, ok := readPersistedLedger(t, f)
+	if !ok || len(persisted) != 3 {
+		t.Fatalf("merged ids must be durable under our key, got %v", persisted)
+	}
 }
 
 // An expired retry item must not erase a newer enqueue for the same file id:

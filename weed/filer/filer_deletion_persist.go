@@ -227,18 +227,24 @@ func (f *Filer) forgetDeletion(fileId string) {
 
 // forgetDeletionEpoch removes the ledger record only when its epoch still
 // matches the one captured when the deletion attempt began. A mismatch means
-// the id was re-queued meanwhile, so the newer record wins.
-func (f *Filer) forgetDeletionEpoch(fileId string, epoch uint64) {
+// the id was re-queued meanwhile, so the newer record wins. Reports whether
+// the record was removed.
+func (f *Filer) forgetDeletionEpoch(fileId string, epoch uint64) bool {
 	if fileId == "" {
-		return
+		return false
 	}
+	removed := false
 	f.deletionLedgerLock.Lock()
 	if cur, exists := f.pendingDeletions[fileId]; exists && cur == epoch {
 		delete(f.pendingDeletions, fileId)
 		f.deletionLedgerDirty = true
+		removed = true
 	}
 	f.deletionLedgerLock.Unlock()
-	f.signalLedgerFlush()
+	if removed {
+		f.signalLedgerFlush()
+	}
+	return removed
 }
 
 // snapshotDeletionLedger serialises the current pending set to the store.
@@ -461,7 +467,16 @@ func (f *Filer) touchLedgerIndex(ctx context.Context, key string) {
 		return
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		keys, _ := f.readLedgerIndex(ctx)
+		keys, err := f.readLedgerIndex(ctx)
+		if err != nil {
+			// Only a genuinely absent index means "empty"; a store error must
+			// not let us write a one-key list that drops every peer entry.
+			if err != ErrKvNotFound {
+				glog.V(1).Infof("deletion ledger index unreadable, skipping update: %v", err)
+				return
+			}
+			keys = nil
+		}
 		found := false
 		for _, k := range keys {
 			if k == key {
@@ -597,13 +612,19 @@ func (f *Filer) recoverForeignDeletionLedgers(key string) (ids []string, err err
 	if err := f.writeDeletionLedger(ids); err != nil {
 		return nil, err
 	}
+	mergedMore := false
 	for src, claim := range claimed {
 		// A source republished since we read it belongs to a live filer
 		// (or a racing claimer): merge the newer ids and leave it in place.
 		curIds, curGen, curParts, rerr := f.readDeletionLedger(src)
 		if rerr != nil || curGen != claim.gen || curParts != claim.parts || !sameStringSet(curIds, claim.ids) {
 			if rerr == nil {
-				ids = append(ids, curIds...)
+				for _, id := range curIds {
+					if !containsId(ids, id) {
+						ids = append(ids, id)
+						mergedMore = true
+					}
+				}
 			}
 			glog.V(0).Infof("deletion ledger %s changed while claiming; leaving it for its owner", src)
 			continue
@@ -613,7 +634,23 @@ func (f *Filer) recoverForeignDeletionLedgers(key string) (ids []string, err err
 		_ = f.Store.KvDelete(ctx, []byte(src+".stale"))
 		f.pruneLedgerIndex(ctx, src)
 	}
+	if mergedMore {
+		// Ids from a changed source are durable only under that source's key;
+		// rewrite our ledger so they survive under ours too.
+		if err := f.writeDeletionLedger(ids); err != nil {
+			return nil, err
+		}
+	}
 	return ids, nil
+}
+
+func containsId(ids []string, id string) bool {
+	for _, s := range ids {
+		if s == id {
+			return true
+		}
+	}
+	return false
 }
 
 type ledgerClaim struct {

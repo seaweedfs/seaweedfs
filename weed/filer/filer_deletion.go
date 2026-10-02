@@ -550,8 +550,11 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 				for _, item := range expired {
 					// Permanently discarded — drop the ledger record, but only
 					// if the id was not re-queued after this retry item was
-					// recorded.
-					f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch)
+					// recorded. A surviving newer record still needs work, so
+					// it goes back through the hot queue.
+					if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
+						f.queueDeletions(item.FileId)
+					}
 				}
 				if len(readyItems) == 0 {
 					break
@@ -607,7 +610,10 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 			permanentErrorCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (permanent failure)
 			// gave up: drop the record, unless the id was re-queued meanwhile
-			f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch)
+			// — a surviving newer record goes back through the hot queue.
+			if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
+				f.queueDeletions(item.FileId)
+			}
 			glog.Warningf("permanent error on retry for %s after %d attempts: %s", item.FileId, item.RetryCount, outcome.errorMsg)
 		}
 	}
