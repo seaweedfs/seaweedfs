@@ -62,8 +62,9 @@ func TestFilerSyncOffsetStaysFreshOnFilteredMarker(t *testing.T) {
 	var timeline []gaugeWrite
 	var heartbeatCalls, markerToProcessFn int
 
-	// AddSyncJob drops empty events and does not advance the watermark; the real
-	// processor is checked in command.TestMetadataProcessorEmptyMarkerKeepsWatermarkStale.
+	// This consumer sets no resume callback, so markers keep moving StartTsNs
+	// and never reach processEventFn; the callback path is checked in
+	// TestFilerSyncMarkerReachesCallbackConsumer.
 	realProcessFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		if filer_pb.IsEmpty(resp) {
 			markerToProcessFn++
@@ -318,8 +319,50 @@ func TestFilerSyncRecoveredEventAdvancesCursor(t *testing.T) {
 	if err := makeSubscribeMetadataFunc(option, processFn)(&fakeFilerClient{stream: stream}); err != nil {
 		t.Fatalf("follow: %v", err)
 	}
+	if calls != 2 {
+		t.Fatalf("expected the event retried once (2 calls), got %d", calls)
+	}
 	if option.StartTsNs != 300 {
 		t.Fatalf("expected StartTsNs 300 after the retry succeeded, got %d", option.StartTsNs)
+	}
+}
+
+// A consumer with a resume callback keeps its cursor in its processed
+// watermark, so a filtered-progress marker is handed to processEventFn (which
+// can count it as processed) instead of mutating StartTsNs.
+func TestFilerSyncMarkerReachesCallbackConsumer(t *testing.T) {
+	var markers, events int
+	option := &MetadataFollowOption{
+		ClientName: "syncFrom_A_To_B",
+		StartTsNs:  100,
+		GetResumeTsNs: func() int64 {
+			return 100
+		},
+	}
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{Directory: "/watched", TsNs: 300, EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file"},
+			}},
+			{TsNs: 500, EventNotification: &filer_pb.EventNotification{}},
+		},
+	}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if filer_pb.IsEmpty(resp) {
+			markers++
+		} else {
+			events++
+		}
+		return nil
+	})
+	if err := fn(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if markers != 1 || events != 1 {
+		t.Fatalf("expected 1 marker and 1 event at processEventFn, got %d and %d", markers, events)
+	}
+	if option.StartTsNs != 100 {
+		t.Fatalf("callback consumer must not mutate StartTsNs, got %d", option.StartTsNs)
 	}
 }
 

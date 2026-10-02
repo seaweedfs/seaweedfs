@@ -281,6 +281,15 @@ func (t *MetadataProcessor) conflictsWith(resp *filer_pb.SubscribeMetadataRespon
 
 func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse) {
 	if filer_pb.IsEmpty(resp) {
+		// A filtered-progress marker means the source skipped everything below
+		// it for us; once all earlier work has finished, the watermark can move
+		// to it so idle stretches still advance the resume point.
+		t.activeJobsLock.Lock()
+		defer t.activeJobsLock.Unlock()
+		if len(t.activeJobs) == 0 && resp.TsNs > t.processedTsWatermark.Load() &&
+			(t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs) {
+			t.processedTsWatermark.Store(resp.TsNs)
+		}
 		return
 	}
 

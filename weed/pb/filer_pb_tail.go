@@ -130,9 +130,13 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 					option.OnIdleHeartbeat(resp.TsNs)
 				}
 				// The marker advances the resume cursor past the filtered range; the
-				// heartbeat leaves StartTsNs put so a restart cannot outrun a straggler.
+				// heartbeat leaves it put so a restart cannot outrun a straggler. A
+				// consumer with a resume callback keeps its cursor in its processed
+				// watermark, so it sees the marker instead.
 				if resp.EventNotification != nil && resp.TsNs > 0 {
-					if option.GetResumeTsNs == nil {
+					if option.GetResumeTsNs != nil {
+						_ = processEventFn(resp)
+					} else {
 						option.StartTsNs = resp.TsNs
 					}
 				}

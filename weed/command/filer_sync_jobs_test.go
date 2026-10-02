@@ -586,32 +586,6 @@ func BenchmarkConflictCheck(b *testing.B) {
 	}
 }
 
-// TestMetadataProcessorEmptyMarkerKeepsWatermarkStale: the MaxUnsyncedEvents
-// marker (empty EventNotification, fresh timestamp) is dropped by AddSyncJob and
-// does NOT advance processedTsWatermark, so offsetFunc keeps publishing the stale
-// offset. This is why the client must not drive sync_offset off the watermark
-// for these markers.
-func TestMetadataProcessorEmptyMarkerKeepsWatermarkStale(t *testing.T) {
-	const staleOffset = int64(1_000_000_000)
-	freshTs := staleOffset + int64(time.Hour) // a "now"-ish source timestamp
-
-	p := NewMetadataProcessor(func(*filer_pb.SubscribeMetadataResponse) error { return nil }, 4, staleOffset)
-
-	marker := &filer_pb.SubscribeMetadataResponse{
-		TsNs:              freshTs,
-		EventNotification: &filer_pb.EventNotification{},
-	}
-	if !filer_pb.IsEmpty(marker) {
-		t.Fatal("marker should be IsEmpty")
-	}
-
-	p.AddSyncJob(marker)
-
-	if got := p.processedTsWatermark.Load(); got != staleOffset {
-		t.Fatalf("empty marker advanced watermark to %d; want it to stay stale at %d", got, staleOffset)
-	}
-	t.Logf("marker carried fresh ts %d but watermark stayed stale at %d", freshTs, staleOffset)
-}
 
 // waitForJobsToDrain blocks until every job goroutine has finished bookkeeping.
 func waitForJobsToDrain(t *testing.T, p *MetadataProcessor) {
@@ -741,4 +715,56 @@ func TestSyncStreamMetrics(t *testing.T) {
 			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
 		}
 	}
+}
+
+// TestFilteredMarkerAdvancesWatermark verifies that a filtered-progress marker
+// (empty event with a timestamp) moves the watermark once all earlier work has
+// finished, but never past an in-flight job or an unresolved failure.
+func TestFilteredMarkerAdvancesWatermark(t *testing.T) {
+	marker := func(ts int64) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{TsNs: ts, EventNotification: &filer_pb.EventNotification{}}
+	}
+
+	t.Run("idle", func(t *testing.T) {
+		p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error { return nil }, 100, 50)
+		p.AddSyncJob(marker(90))
+		if got := p.processedTsWatermark.Load(); got != 90 {
+			t.Fatalf("watermark = %d after marker, want 90", got)
+		}
+	})
+
+	t.Run("behind in-flight job", func(t *testing.T) {
+		release := make(chan struct{})
+		p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+			<-release
+			return nil
+		}, 100, 50)
+		p.AddSyncJob(makeResp("/dir", "f.txt", false, 60, true))
+		p.AddSyncJob(marker(80))
+		if got := p.processedTsWatermark.Load(); got != 50 {
+			t.Fatalf("watermark = %d with a job in flight, want 50", got)
+		}
+		close(release)
+		waitForJobsToDrain(t, p)
+		p.AddSyncJob(marker(90))
+		if got := p.processedTsWatermark.Load(); got != 90 {
+			t.Fatalf("watermark = %d after drain and marker, want 90", got)
+		}
+	})
+
+	t.Run("behind a failure", func(t *testing.T) {
+		p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+			return errors.New("AccessDenied: Access Denied")
+		}, 100, 50)
+		p.AddSyncJob(makeResp("/dir", "f.txt", false, 100, true))
+		waitForJobsToDrain(t, p)
+		p.AddSyncJob(marker(200))
+		if got := p.processedTsWatermark.Load(); got != 50 {
+			t.Fatalf("watermark = %d past a failure pin, want 50", got)
+		}
+		p.AddSyncJob(marker(70))
+		if got := p.processedTsWatermark.Load(); got != 70 {
+			t.Fatalf("watermark = %d behind the pin, want 70", got)
+		}
+	})
 }
