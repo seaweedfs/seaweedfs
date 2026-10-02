@@ -1093,12 +1093,13 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("uncached meanwhile: the old key is the only copy and is kept", func(t *testing.T) {
+	t.Run("uncached meanwhile: the old key is the only copy, kept, and the event fails", func(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
 		remote := &recordingRemote{}
 		filerClient := &stubFilerClient{entry: current}
-		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
-			t.Fatalf("err = %v, want nil", err)
+		err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp)
+		if err == nil || !strings.Contains(err.Error(), "only on the old remote object") {
+			t.Fatalf("err = %v, want the event to fail so the offset holds for recovery", err)
 		}
 		if len(remote.deletes) != 0 {
 			t.Errorf("deletes = %+v, want none: a.txt is the only copy of the content", remote.deletes)

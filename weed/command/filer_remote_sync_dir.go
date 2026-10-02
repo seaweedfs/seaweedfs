@@ -288,14 +288,17 @@ func processUpdateEvent(
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
 		// The snapshot had data; the filer may not any more (remote.uncache
-		// between the event and now). The old key is then the only copy.
+		// between the event and now). The old key is then the only copy, and
+		// remote-only reads of the entry resolve by the new path, where no
+		// object exists. The daemon cannot make the destination readable from
+		// here, so the event fails: the old key is kept, the offset holds, and
+		// the event is replayed until the content is restored.
 		remoteOnly, err := renamedEntryIsRemoteOnly(filerSource, message.NewParentPath, message.NewEntry.Name)
 		if err != nil {
 			return err
 		}
 		if remoteOnly {
-			glog.V(0).Infof("skip uploading renamed entry %s: its content is now only on the old remote object, which is kept", remote_storage.FormatLocation(dest))
-			return nil
+			return fmt.Errorf("%s: content is only on the old remote object %s, kept; the destination is unreadable until restored", util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remote_storage.FormatLocation(oldDest))
 		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 		if err := client.DeleteFile(oldDest); err != nil {
