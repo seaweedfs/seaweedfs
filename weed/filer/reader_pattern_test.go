@@ -123,3 +123,16 @@ func TestReaderPatternRangedReadStaysRandom(t *testing.T) {
 	}
 }
 
+
+// A reader pinned random (a known small ranged request) must stay random
+// for every buffer of the request, near or far.
+func TestReaderPatternPinnedRandom(t *testing.T) {
+	rp := NewReaderPattern()
+	rp.PinRandomMode()
+	for i := int64(0); i < 10; i++ {
+		rp.MonitorReadAt(i*256*1024, 256*1024) // contiguous from the start
+		if !rp.IsRandomMode() {
+			t.Fatalf("pinned reader flipped to sequential at read %d", i+1)
+		}
+	}
+}

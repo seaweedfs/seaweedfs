@@ -1104,6 +1104,12 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, offset, size)
 	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
 	defer reader.ReleaseStream()
+	// A small ranged request reads back less than a whole chunk; pin random
+	// mode so every buffer fetch stays a range read instead of downloading
+	// each covered chunk in full.
+	if isRangeRequest && size <= filer.SeqTolerance {
+		reader.PinRandomMode()
+	}
 	streamPrepTime = time.Since(tStreamPrep)
 
 	// A cached chunk whose volume server is down, or whose needle was evicted and

@@ -7,6 +7,7 @@ import (
 type ReaderPattern struct {
 	isSequentialCounter int64
 	readFrontier        int64 // highest (offset+size) observed across reads
+	pinnedRandom        int64 // set when the caller already knows the reads are a partial range
 }
 
 const ModeChangeLimit = 3
@@ -65,5 +66,12 @@ func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
 }
 
 func (rp *ReaderPattern) IsRandomMode() bool {
-	return atomic.LoadInt64(&rp.isSequentialCounter) < 0
+	return atomic.LoadInt64(&rp.pinnedRandom) != 0 || atomic.LoadInt64(&rp.isSequentialCounter) < 0
+}
+
+// PinRandomMode pins the pattern to random for readers that already know
+// they serve a partial range, e.g. a small ranged GET: contiguous buffer
+// reads within the request must not escalate into whole-chunk fetches.
+func (rp *ReaderPattern) PinRandomMode() {
+	atomic.StoreInt64(&rp.pinnedRandom, 1)
 }

@@ -180,6 +180,12 @@ func (c *ChunkReadAt) ReleaseStream() {
 	c.readerCache.releaseStream(&c.stream)
 }
 
+// PinRandomMode pins this reader to range fetches; used by callers that
+// already know the request is a partial read, e.g. a small ranged GET.
+func (c *ChunkReadAt) PinRandomMode() {
+	c.readerPattern.PinRandomMode()
+}
+
 func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 
 	c.readerPattern.MonitorReadAt(offset, len(p))
