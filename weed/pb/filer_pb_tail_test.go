@@ -192,3 +192,100 @@ func TestFilerSyncBatchedFreshnessSignalDoesNotCrash(t *testing.T) {
 		t.Errorf("expected StartTsNs %d (marker), got %d (heartbeat must not advance the cursor)", markerTs, option.StartTsNs)
 	}
 }
+
+// TestFilerSyncResumeFromProcessedWatermarkOnReconnect verifies that when GetResumeTsNs is
+// configured, reconnection uses the processed watermark instead of skipping ahead to the
+// latest received timestamp.
+func TestFilerSyncResumeFromProcessedWatermarkOnReconnect(t *testing.T) {
+	const initialTs = int64(100)
+	const watermarkTs = int64(200)
+	const latestStreamTs = int64(500)
+
+	var capturedSinceNs int64
+	recordingClient := &recordingFilerClient{
+		onSubscribe: func(req *filer_pb.SubscribeMetadataRequest) {
+			capturedSinceNs = req.SinceNs
+		},
+		stream: &fakeSubscribeStream{
+			responses: []*filer_pb.SubscribeMetadataResponse{
+				{
+					Directory:         "/watched",
+					TsNs:              latestStreamTs,
+					EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "file"}},
+				},
+			},
+		},
+	}
+
+	option := &MetadataFollowOption{
+		ClientName: "syncFrom_A_To_B",
+		StartTsNs:  initialTs,
+		GetResumeTsNs: func() int64 {
+			return watermarkTs
+		},
+	}
+
+	processFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	}
+
+	fn := makeSubscribeMetadataFunc(option, processFn)
+	if err := fn(recordingClient); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedSinceNs != watermarkTs {
+		t.Fatalf("expected subscribe SinceNs to be watermark %d, got %d", watermarkTs, capturedSinceNs)
+	}
+	// StartTsNs must not be mutated when GetResumeTsNs is set
+	if option.StartTsNs != initialTs {
+		t.Fatalf("expected option.StartTsNs to remain %d, got %d", initialTs, option.StartTsNs)
+	}
+}
+
+// TestFilerSyncDoesNotAdvanceStartTsNsOnProcessError verifies that a failing synchronous
+// processEventFn does not advance option.StartTsNs past the failed event.
+func TestFilerSyncDoesNotAdvanceStartTsNsOnProcessError(t *testing.T) {
+	const initialTs = int64(100)
+	const failedTs = int64(200)
+
+	option := &MetadataFollowOption{
+		ClientName:     "syncFrom_A_To_B",
+		StartTsNs:      initialTs,
+		EventErrorType: TrivialOnError,
+	}
+
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{
+				Directory:         "/watched",
+				TsNs:              failedTs,
+				EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "bad"}},
+			},
+		},
+	}
+
+	processFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return io.ErrUnexpectedEOF
+	}
+
+	fn := makeSubscribeMetadataFunc(option, processFn)
+	_ = fn(&fakeFilerClient{stream: stream})
+
+	if option.StartTsNs != initialTs {
+		t.Fatalf("expected StartTsNs to stay at %d on error, got %d", initialTs, option.StartTsNs)
+	}
+}
+
+type recordingFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	onSubscribe func(req *filer_pb.SubscribeMetadataRequest)
+	stream      *fakeSubscribeStream
+}
+
+func (c *recordingFilerClient) SubscribeMetadata(ctx context.Context, in *filer_pb.SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.SubscribeMetadataResponse], error) {
+	if c.onSubscribe != nil {
+		c.onSubscribe(in)
+	}
+	return c.stream, nil
+}

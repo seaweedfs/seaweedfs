@@ -44,6 +44,9 @@ type MetadataFollowOption struct {
 	// a freshness signal only and does not advance StartTsNs, so the resume
 	// checkpoint stays on the last real event.
 	OnIdleHeartbeat func(tsNs int64)
+	// GetResumeTsNs, when non-nil, returns the timestamp to resume from on reconnect.
+	// When nil, StartTsNs is used directly.
+	GetResumeTsNs func() int64
 }
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
@@ -71,12 +74,18 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		sinceNs := option.StartTsNs
+		if option.GetResumeTsNs != nil {
+			if resumeTs := option.GetResumeTsNs(); resumeTs > 0 {
+				sinceNs = resumeTs
+			}
+		}
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   option.ClientName,
 			PathPrefix:                   option.PathPrefix,
 			PathPrefixes:                 option.AdditionalPathPrefixes,
 			Directories:                  option.DirectoriesToWatch,
-			SinceNs:                      option.StartTsNs,
+			SinceNs:                      sinceNs,
 			Signature:                    option.SelfSignature,
 			ClientId:                     option.ClientId,
 			ClientEpoch:                  option.ClientEpoch,
@@ -123,14 +132,19 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				// The marker advances the resume cursor past the filtered range; the
 				// heartbeat leaves StartTsNs put so a restart cannot outrun a straggler.
 				if resp.EventNotification != nil && resp.TsNs > 0 {
-					option.StartTsNs = resp.TsNs
+					if option.GetResumeTsNs == nil {
+						option.StartTsNs = resp.TsNs
+					}
 				}
 				return
 			}
 			if err := processEventFn(resp); err != nil {
 				handleErr(resp, err)
+				return
 			}
-			option.StartTsNs = resp.TsNs
+			if option.GetResumeTsNs == nil {
+				option.StartTsNs = resp.TsNs
+			}
 		}
 
 		var pendingRefs []*filer_pb.LogFileChunkRef
