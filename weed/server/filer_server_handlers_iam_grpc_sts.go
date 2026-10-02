@@ -269,9 +269,9 @@ func lookupRole(ctx context.Context, store integration.RoleStore, name string) (
 	return role, nil
 }
 
-// PutRole creates or replaces a role in the filer's role store. A role an S3
-// server's IAM config file defines is served by that server ahead of the
-// store, so a stored role of the same name has no effect there.
+// PutRole creates or replaces a role in the filer's role store. A stored role
+// takes precedence over a same-named role in an S3 server's IAM config file;
+// deleting the stored one restores the config-file role.
 func (s *IamGrpcServer) PutRole(ctx context.Context, req *iam_pb.PutRoleRequest) (*iam_pb.PutRoleResponse, error) {
 	if err := s.checkAdminAuth(ctx); err != nil {
 		return nil, err
@@ -312,6 +312,9 @@ func (s *IamGrpcServer) PutRole(ctx context.Context, req *iam_pb.PutRoleRequest)
 	}
 	if err := integration.PrepareRoleDefinition(in.RoleName, role); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if len(role.AttachedPolicies) > 0 && s.credentialManager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 	for _, name := range role.AttachedPolicies {
 		existing, err := s.credentialManager.GetPolicy(ctx, name)
