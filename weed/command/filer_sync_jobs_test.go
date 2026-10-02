@@ -717,6 +717,42 @@ func TestSyncStreamMetrics(t *testing.T) {
 	}
 }
 
+// TestFailedJobReplaySuccessClearsPin verifies that when the failed event is
+// replayed (a reconnect resubscribing from the watermark) and succeeds this
+// time, the failure pin clears and the watermark can move again. Without the
+// clear, every later reconnect would replay the same backlog forever.
+func TestFailedJobReplaySuccessClearsPin(t *testing.T) {
+	failed := true
+	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 200 && failed {
+			failed = false
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}
+	p := NewMetadataProcessor(fn, 1, 0)
+
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	p.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 200 {
+		t.Fatalf("oldest failed = %d, want 200", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 100 {
+		t.Fatalf("watermark = %d, want it held at 100 by the failure at 200", got)
+	}
+
+	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 0 {
+		t.Fatalf("oldest failed = %d after a successful replay, want 0", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 200 {
+		t.Fatalf("watermark = %d after recovery, want 200", got)
+	}
+}
+
 // TestFilteredMarkerAdvancesWatermark verifies that a filtered-progress marker
 // (empty event with a timestamp) moves the watermark once all earlier work has
 // finished, but never past an in-flight job or an unresolved failure.

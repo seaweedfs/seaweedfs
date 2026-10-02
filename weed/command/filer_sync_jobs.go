@@ -105,10 +105,12 @@ type MetadataProcessor struct {
 	// used for O(log n) amortized watermark tracking.
 	tsHeap tsMinHeap
 
-	// oldestFailedTsNs is the timestamp of the oldest event whose job returned
-	// an error, or 0 when none has. The watermark is never advanced to it or
-	// past it, so the persisted sync offset stays behind the failure and a
-	// restart replays the event instead of skipping it forever.
+	// failedTs records every event whose job returned an error and has not
+	// since completed, and oldestFailedTsNs caches its minimum (0 when empty).
+	// The watermark is never advanced to it or past it, so the persisted sync
+	// offset stays behind the failure and a restart replays the event instead
+	// of skipping it forever.
+	failedTs         map[int64]struct{}
 	oldestFailedTsNs int64
 
 	// metrics is nil for callers that do not report per-event metrics.
@@ -124,6 +126,7 @@ func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs
 		activeBarrierDirPaths:    make(map[util.FullPath]int),
 		activeNonBarrierDirPaths: make(map[util.FullPath]int),
 		descendantCount:          make(map[util.FullPath]int),
+		failedTs:                 make(map[int64]struct{}),
 	}
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
@@ -337,11 +340,24 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		defer t.activeJobsLock.Unlock()
 
 		if jobErr != nil {
-			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
-				t.oldestFailedTsNs = resp.TsNs
-				glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
-			} else {
-				glog.Errorf("process %v: %v", resp, jobErr)
+			if _, recorded := t.failedTs[resp.TsNs]; !recorded {
+				t.failedTs[resp.TsNs] = struct{}{}
+				if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
+					t.oldestFailedTsNs = resp.TsNs
+					glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
+				} else {
+					glog.Errorf("process %v: %v", resp, jobErr)
+				}
+			}
+		} else if _, recorded := t.failedTs[resp.TsNs]; recorded {
+			delete(t.failedTs, resp.TsNs)
+			if resp.TsNs == t.oldestFailedTsNs {
+				t.oldestFailedTsNs = 0
+				for ts := range t.failedTs {
+					if t.oldestFailedTsNs == 0 || ts < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = ts
+					}
+				}
 			}
 		}
 
