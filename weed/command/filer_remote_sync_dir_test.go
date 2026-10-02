@@ -662,12 +662,39 @@ type recordingRemote struct {
 	remote_storage.RemoteStorageClient
 	deletes   []*remote_pb.RemoteStorageLocation
 	writes    []*remote_pb.RemoteStorageLocation
+	written   [][]byte
 	deleteErr error
+	// objects present on the remote, by path: StatFile and ReadFile answer
+	// from it, everything else is ErrRemoteObjectNotFound.
+	objects map[string][]byte
 }
 
-func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, _ io.Reader) (*filer_pb.RemoteEntry, error) {
+func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
 	r.writes = append(r.writes, loc)
+	// A chunked upload's reader walks volume servers the stub filer cannot
+	// name; only the copy scenarios (objects set) hand over a plain reader.
+	var body []byte
+	if reader != nil && r.objects != nil {
+		body, _ = io.ReadAll(reader)
+	}
+	r.written = append(r.written, body)
 	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteETag: "etag", RemoteSize: int64(len(entry.Content)), RemoteMtime: entry.Attributes.GetMtime()}, nil
+}
+
+func (r *recordingRemote) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+	body, ok := r.objects[loc.Path]
+	if !ok {
+		return nil, remote_storage.ErrRemoteObjectNotFound
+	}
+	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body))}, nil
+}
+
+func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) ([]byte, error) {
+	body, ok := r.objects[loc.Path]
+	if !ok {
+		return nil, remote_storage.ErrRemoteObjectNotFound
+	}
+	return body[offset : offset+size], nil
 }
 
 func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
@@ -1093,19 +1120,72 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("uncached meanwhile: the old key is the only copy, kept, and the event fails", func(t *testing.T) {
-		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
-		remote := &recordingRemote{}
+	t.Run("uncached meanwhile, old object present: copied to the destination, stamped, old key deleted", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload")}}
 		filerClient := &stubFilerClient{entry: current}
-		err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp)
-		if err == nil || !strings.Contains(err.Error(), "only on the old remote object") {
-			t.Fatalf("err = %v, want the event to fail so the offset holds for recovery", err)
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v, want nil", err)
 		}
-		if len(remote.deletes) != 0 {
-			t.Errorf("deletes = %+v, want none: a.txt is the only copy of the content", remote.deletes)
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) || string(remote.written[0]) != "payload" {
+			t.Fatalf("writes = %+v (%q), want the old object's bytes written at %s", remote.writes, remote.written, remote_storage.FormatLocation(wantWrite))
+		}
+		if filerClient.updates != 1 {
+			t.Errorf("stamped %d times, want 1: the entry now points at the destination object", filerClient.updates)
+		}
+		if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
+			t.Errorf("deletes = %+v, want the old key deleted after the copy", remote.deletes)
+		}
+	})
+
+	t.Run("uncached after an earlier run completed the rename: destination present, old key deleted, nothing written", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload"), "/b/dir/b.txt": []byte("payload")}}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v, want nil: the replayed rename is already complete", err)
 		}
 		if len(remote.writes) != 0 {
 			t.Errorf("writes = %+v, want none", remote.writes)
+		}
+		if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
+			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
+		}
+	})
+
+	t.Run("uncached and neither object exists: the event fails and holds the offset", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: current}
+		err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp)
+		if err == nil || !strings.Contains(err.Error(), "neither") {
+			t.Fatalf("err = %v, want the lost-content failure", err)
+		}
+		if len(remote.writes) != 0 || len(remote.deletes) != 0 {
+			t.Errorf("writes = %+v deletes = %+v, want none", remote.writes, remote.deletes)
+		}
+	})
+
+	t.Run("snapshot already remote-only: completed the same way", func(t *testing.T) {
+		remoteOnly := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7}
+		snapshot := &filer_pb.SubscribeMetadataResponse{
+			Directory: "/buckets/b/dir",
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      entryWith("a.txt", remoteOnly),
+				NewParentPath: "/buckets/b/dir",
+				NewEntry:      entryWith("b.txt", remoteOnly),
+			},
+		}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload")}}
+		filerClient := &stubFilerClient{entry: entryWith("b.txt", remoteOnly)}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, snapshot); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if len(remote.writes) != 1 || string(remote.written[0]) != "payload" {
+			t.Errorf("writes = %+v (%q), want the old object copied to the destination", remote.writes, remote.written)
+		}
+		if len(remote.deletes) != 1 {
+			t.Errorf("deletes = %+v, want the old key deleted after the copy", remote.deletes)
 		}
 	})
 

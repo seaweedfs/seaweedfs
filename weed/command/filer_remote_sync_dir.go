@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -281,24 +282,23 @@ func processUpdateEvent(
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
-	if !proto.Equal(oldDest, dest) && !filer.HasData(message.NewEntry) && message.NewEntry.IsInRemoteOnly() {
-		glog.V(0).Infof("skip uploading renamed remote-only entry %s: content is only on the deleted remote object", remote_storage.FormatLocation(dest))
-		return nil
-	}
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
-		// The snapshot had data; the filer may not any more (remote.uncache
-		// between the event and now). The old key is then the only copy, and
-		// remote-only reads of the entry resolve by the new path, where no
-		// object exists. The daemon cannot make the destination readable from
-		// here, so the event fails: the old key is kept, the offset holds, and
-		// the event is replayed until the content is restored.
-		remoteOnly, err := renamedEntryIsRemoteOnly(filerSource, message.NewParentPath, message.NewEntry.Name)
+		// A renamed entry without local data holds its content only as a
+		// remote object: either the snapshot was already remote-only, or
+		// remote.uncache ran between the event and now. Remote-only reads
+		// resolve by the entry's own path, so the rename completes only once
+		// the destination object exists.
+		current, err := currentEntry(filerSource, message.NewParentPath, message.NewEntry.Name)
 		if err != nil {
 			return err
 		}
-		if remoteOnly {
-			return fmt.Errorf("%s: content is only on the old remote object %s, kept; the destination is unreadable until restored", util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remote_storage.FormatLocation(oldDest))
+		if isRemoteOnly(message.NewEntry) || isRemoteOnly(current) {
+			if current == nil {
+				glog.V(0).Infof("skip renamed remote-only entry %s: deleted since the event was logged", remote_storage.FormatLocation(dest))
+				return nil
+			}
+			return completeRemoteOnlyRename(filerClient, client, message.NewParentPath, current, oldDest, dest, storageClass)
 		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 		if err := client.DeleteFile(oldDest); err != nil {
@@ -324,19 +324,72 @@ func processUpdateEvent(
 	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 }
 
-// renamedEntryIsRemoteOnly reports whether the filer now holds the renamed
-// entry without local data while it still carries a RemoteEntry: the content
-// exists only as the old remote object. An entry that is gone is not remote
-// only; its delete follows in the log and needs no remote content.
-func renamedEntryIsRemoteOnly(filerSource filer_pb.FilerClient, dir, name string) (bool, error) {
+// currentEntry returns what the filer holds at dir/name now, nil when the
+// entry is gone.
+func currentEntry(filerSource filer_pb.FilerClient, dir, name string) (*filer_pb.Entry, error) {
 	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return !filer.HasData(current) && current.IsInRemoteOnly(), nil
+	return current, nil
+}
+
+// isRemoteOnly reports an entry whose content exists only as its remote
+// object: no local data, a RemoteEntry with a size.
+func isRemoteOnly(entry *filer_pb.Entry) bool {
+	return entry != nil && !filer.HasData(entry) && entry.IsInRemoteOnly()
+}
+
+// completeRemoteOnlyRename finishes a rename whose content exists only on the
+// remote. When the destination object already exists (the rename ran before,
+// its offset was not persisted, and remote.uncache followed), the old key
+// goes. Otherwise the old object is copied to the destination, the entry is
+// stamped with the copy, and the old key goes. With neither object present
+// the content is lost: the event fails and holds the offset for recovery.
+func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir string, current *filer_pb.Entry, oldDest, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
+	if _, err := client.StatFile(dest); err == nil {
+		glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
+		return deleteRemoteFile(client, oldDest)
+	} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return err
+	}
+	stat, err := client.StatFile(oldDest)
+	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return fmt.Errorf("%s: content is on neither %s nor %s", util.NewFullPath(dir, current.Name), remote_storage.FormatLocation(oldDest), remote_storage.FormatLocation(dest))
+	}
+	if err != nil {
+		return err
+	}
+	reader, err := openRemoteObject(client, oldDest, stat.RemoteSize)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	glog.V(0).Infof("copy %s -> %s", remote_storage.FormatLocation(oldDest), remote_storage.FormatLocation(dest))
+	remoteEntry, err := client.WriteFile(dest, remoteWriteEntry(current, storageClass), reader)
+	if err != nil {
+		return err
+	}
+	if err := updateLocalEntry(filerClient, dir, current, remoteEntry); err != nil {
+		return err
+	}
+	return deleteRemoteFile(client, oldDest)
+}
+
+// openRemoteObject streams the object when the client can, and reads it whole
+// otherwise.
+func openRemoteObject(client remote_storage.RemoteStorageClient, loc *remote_pb.RemoteStorageLocation, size int64) (io.ReadCloser, error) {
+	if streamer, ok := client.(remote_storage.RemoteStorageStreamReader); ok {
+		return streamer.ReadFileAsStream(context.Background(), loc, 0, size)
+	}
+	data, err := client.ReadFile(loc, 0, size)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 // uploadCurrentEntry uploads what the filer holds at dir/name now, when the
