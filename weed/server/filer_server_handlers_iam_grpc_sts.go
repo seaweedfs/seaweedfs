@@ -95,21 +95,25 @@ func (s *IamGrpcServer) PutOIDCProvider(ctx context.Context, req *iam_pb.PutOIDC
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	existing, err := lookupOIDCProvider(ctx, store, rec.ARN)
+	// Put replaces what the request carries and keeps what it cannot. The
+	// store's atomic update decides which against the record as it is when
+	// written, so a delete racing the put is not merged back from a stale read.
+	err = store.UpdateProvider(ctx, "", rec.ARN, func(existing *integration.OIDCProviderRecord) (*integration.OIDCProviderRecord, error) {
+		next := *rec
+		next.ClientIDs = append([]string(nil), rec.ClientIDs...)
+		next.Thumbprints = append([]string(nil), rec.Thumbprints...)
+		now := time.Now().UTC()
+		next.CreatedAt, next.UpdatedAt = now, now
+		if existing != nil {
+			next.CreatedAt = existing.CreatedAt
+			next.Tags = existing.Tags
+			next.AllowedPrincipalTagKeys = existing.AllowedPrincipalTagKeys
+			next.PolicyClaim = existing.PolicyClaim
+		}
+		return &next, nil
+	})
 	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UTC()
-	rec.CreatedAt, rec.UpdatedAt = now, now
-	if existing != nil {
-		// Put replaces what the request carries and keeps what it cannot.
-		rec.CreatedAt = existing.CreatedAt
-		rec.Tags = existing.Tags
-		rec.AllowedPrincipalTagKeys = existing.AllowedPrincipalTagKeys
-		rec.PolicyClaim = existing.PolicyClaim
-	}
-	if err := store.StoreProvider(ctx, "", rec); err != nil {
-		return nil, status.Errorf(codes.Internal, "store OIDC provider: %v", err)
+		return nil, status.Errorf(codes.Unavailable, "store OIDC provider: %v", err)
 	}
 	return &iam_pb.PutOIDCProviderResponse{Arn: rec.ARN}, nil
 }
@@ -183,15 +187,34 @@ func (s *IamGrpcServer) DeleteOIDCProvider(ctx context.Context, req *iam_pb.Dele
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	existing, err := lookupOIDCProvider(ctx, store, arn)
-	if err != nil {
-		return nil, err
-	}
-	if existing == nil {
+	// Delete the provider as this request first saw it. The store's delete is
+	// conditional (OIDCProviderStore.UpdateProvider), and a retry that finds
+	// the record replaced by a PutOIDCProvider in between refuses rather than
+	// delete the newer record: the caller decides again against it.
+	var seen []byte
+	err = store.UpdateProvider(ctx, "", arn, func(existing *integration.OIDCProviderRecord) (*integration.OIDCProviderRecord, error) {
+		if existing == nil {
+			return nil, integration.ErrOIDCProviderNotFound
+		}
+		current, err := json.Marshal(existing)
+		if err != nil {
+			return nil, err
+		}
+		if seen == nil {
+			seen = current
+		} else if !bytes.Equal(seen, current) {
+			return nil, errProviderReplacedDuringDelete
+		}
+		return nil, nil
+	})
+	if errors.Is(err, integration.ErrOIDCProviderNotFound) {
 		return nil, status.Errorf(codes.NotFound, "OIDC provider %s not found", arn)
 	}
-	if err := store.DeleteProvider(ctx, "", arn); err != nil {
-		return nil, status.Errorf(codes.Internal, "delete OIDC provider: %v", err)
+	if errors.Is(err, errProviderReplacedDuringDelete) {
+		return nil, status.Errorf(codes.Aborted, "OIDC provider %s changed while it was being deleted; retry", arn)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "delete OIDC provider: %v", err)
 	}
 	return &iam_pb.DeleteOIDCProviderResponse{}, nil
 }
@@ -352,8 +375,10 @@ func (s *IamGrpcServer) GetRole(ctx context.Context, req *iam_pb.GetRoleRequest)
 // policies to be detached first: this API is declarative, and the role and its
 // attachments are one object here.
 // errRoleReplacedDuringDelete aborts a DeleteRole whose role was replaced
-// between the request's read and its delete.
+// between the request's read and its delete. errProviderReplacedDuringDelete
+// is the same for a DeleteOIDCProvider.
 var errRoleReplacedDuringDelete = errors.New("role replaced during delete")
+var errProviderReplacedDuringDelete = errors.New("OIDC provider replaced during delete")
 
 func (s *IamGrpcServer) DeleteRole(ctx context.Context, req *iam_pb.DeleteRoleRequest) (*iam_pb.DeleteRoleResponse, error) {
 	if err := s.checkAdminAuth(ctx); err != nil {

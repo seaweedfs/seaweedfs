@@ -197,6 +197,11 @@ func (unreadableProviders) GetProviderByARN(context.Context, string, string) (*i
 	return nil, errors.New("lookup OIDC provider: filer unavailable")
 }
 
+// UpdateProvider reads the record first, as the filer store's does.
+func (unreadableProviders) UpdateProvider(context.Context, string, string, integration.OIDCProviderUpdate) error {
+	return errors.New("lookup OIDC provider: filer unavailable")
+}
+
 type unreadableRoles struct{ *integration.MemoryRoleStore }
 
 func (unreadableRoles) GetRole(context.Context, string, string) (*integration.RoleDefinition, error) {
@@ -412,4 +417,83 @@ func TestIamGrpc_DeleteRoleDoesNotDeleteARoleReplacedMeanwhile(t *testing.T) {
 	role, err := store.GetRole(context.Background(), "", "app")
 	require.NoError(t, err, "the replacement role was deleted")
 	assert.Equal(t, "AROA-NEW", role.RoleId)
+}
+
+// deletedDuringPutProviders has UpdateProvider behave as the filer store's
+// does when a delete lands between its read and its write: the conditional
+// write fails, and the update is applied again to the record as it now
+// is — absent.
+type deletedDuringPutProviders struct {
+	*integration.MemoryOIDCProviderStore
+	earlier *integration.OIDCProviderRecord
+}
+
+func (s deletedDuringPutProviders) UpdateProvider(ctx context.Context, addr, arn string, update integration.OIDCProviderUpdate) error {
+	if _, err := update(s.earlier); err != nil { // the write that loses to the delete
+		return err
+	}
+	next, err := update(nil)
+	if err != nil {
+		return err
+	}
+	return s.MemoryOIDCProviderStore.StoreProvider(ctx, addr, next)
+}
+
+// A PutOIDCProvider racing a DeleteOIDCProvider must not carry the deleted
+// record's fields over to the new one — the request decides them.
+func TestIamGrpc_PutOIDCProviderRacingADeleteKeepsNoOldFields(t *testing.T) {
+	s, ctx, _, roles := newSTSTestServer(t)
+	arn := "arn:aws:iam::111122223333:oidc-provider/oidc.example"
+	store := deletedDuringPutProviders{
+		MemoryOIDCProviderStore: integration.NewMemoryOIDCProviderStore(),
+		earlier: &integration.OIDCProviderRecord{
+			ARN: arn, URL: "https://oidc.example", Tags: map[string]string{"env": "deleted"}, PolicyClaim: "stale",
+		},
+	}
+	s.SetSTSStores(store, roles)
+
+	_, err := s.PutOIDCProvider(ctx, &iam_pb.PutOIDCProviderRequest{
+		IssuerUrl: "https://oidc.example", ClientIds: []string{"aud"}, AccountId: "111122223333",
+	})
+	require.NoError(t, err)
+	rec, err := store.MemoryOIDCProviderStore.GetProviderByARN(context.Background(), "", arn)
+	require.NoError(t, err)
+	assert.Empty(t, rec.Tags, "the deleted record's tags were carried over")
+	assert.Empty(t, rec.PolicyClaim, "the deleted record's policy claim was carried over")
+	assert.Equal(t, []string{"aud"}, rec.ClientIDs)
+}
+
+// replacedDuringDeleteProviders has UpdateProvider behave as the filer
+// store's does when a PutOIDCProvider replaces the record between the
+// delete's read and its write: the conditional delete fails and the update
+// runs again on the replacement.
+type replacedDuringDeleteProviders struct {
+	*integration.MemoryOIDCProviderStore
+	earlier *integration.OIDCProviderRecord
+}
+
+func (s replacedDuringDeleteProviders) UpdateProvider(ctx context.Context, addr, arn string, update integration.OIDCProviderUpdate) error {
+	if _, err := update(s.earlier); err != nil { // the delete that loses to the put
+		return err
+	}
+	return s.MemoryOIDCProviderStore.UpdateProvider(ctx, addr, arn, update)
+}
+
+// A DeleteOIDCProvider racing a PutOIDCProvider does not delete the record
+// the put wrote: it is refused as Aborted, and the caller decides again.
+func TestIamGrpc_DeleteOIDCProviderDoesNotDeleteAProviderReplacedMeanwhile(t *testing.T) {
+	s, ctx, _, roles := newSTSTestServer(t)
+	arn := "arn:aws:iam::111122223333:oidc-provider/oidc.example"
+	store := replacedDuringDeleteProviders{
+		MemoryOIDCProviderStore: integration.NewMemoryOIDCProviderStore(),
+		earlier:                 &integration.OIDCProviderRecord{ARN: arn, URL: "https://oidc.example", ClientIDs: []string{"old"}},
+	}
+	require.NoError(t, store.StoreProvider(context.Background(), "", &integration.OIDCProviderRecord{ARN: arn, URL: "https://oidc.example", ClientIDs: []string{"new"}}))
+	s.SetSTSStores(store, roles)
+
+	_, err := s.DeleteOIDCProvider(ctx, &iam_pb.DeleteOIDCProviderRequest{IssuerUrl: "https://oidc.example", AccountId: "111122223333"})
+	requireCode(t, err, codes.Aborted)
+	rec, err := store.GetProviderByARN(context.Background(), "", arn)
+	require.NoError(t, err, "the replacement record was deleted")
+	assert.Equal(t, []string{"new"}, rec.ClientIDs)
 }
