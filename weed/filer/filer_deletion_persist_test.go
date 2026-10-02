@@ -273,12 +273,21 @@ func TestDeletionLedgerReadFailureBlocksPersistence(t *testing.T) {
 	if f.reloadDeletionLedger() {
 		t.Fatalf("reload should report the ledger as unusable")
 	}
-	store.kvGetErr = nil
 
 	f.queueDeletions("1,01")
 	f.snapshotDeletionLedger()
-	if _, ok := readPersistedLedger(t, f); ok {
-		t.Fatalf("snapshot must not overwrite a ledger that was never read")
+	if len(store.kv) != 0 {
+		t.Fatalf("snapshot must not overwrite a ledger that was never read, wrote %v", store.kv)
+	}
+
+	// The block is not permanent: once the store reads again, persistence
+	// resumes — a transient failure must not disable the ledger for the life
+	// of the process.
+	store.kvGetErr = nil
+	f.snapshotDeletionLedger()
+	persisted, ok := readPersistedLedger(t, f)
+	if !ok || len(persisted) != 1 || persisted[0] != "1,01" {
+		t.Fatalf("persistence should resume once the ledger reads, got %v", persisted)
 	}
 }
 
@@ -324,6 +333,179 @@ func TestDeletionLedgerZeroValueFiler(t *testing.T) {
 	f.forgetDeletion("0,01")
 	if f.pendingDeletionCount() != 0 {
 		t.Fatalf("forget on zero-value filer failed, got %d", f.pendingDeletionCount())
+	}
+}
+
+// A manifest that references a part the store cannot return is corruption, not
+// absence: reload must report failure and nothing may overwrite the surviving
+// manifest with only the in-memory set.
+func TestDeletionLedgerMissingPartBlocks(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	f := newLedgerTestFiler(store)
+
+	key := f.deletionLedgerKey()
+	store.kv[key] = []byte(`{"parts":2,"gen":4}`)
+	store.kv[string(deletionLedgerGenPartKey(key, 4, 0))] = []byte(`["1,01"]`)
+	// Part 1 of generation 4 is missing.
+
+	if f.reloadDeletionLedger() {
+		t.Fatalf("a manifest referencing a missing part is corrupt, not absent")
+	}
+	f.queueDeletions("9,99")
+	f.snapshotDeletionLedger()
+	if got := string(store.kv[key]); got != `{"parts":2,"gen":4}` {
+		t.Fatalf("unread ledger must not be overwritten, got %q", got)
+	}
+}
+
+// A filer restarting under a new advertised address must still find its
+// previous ledger: the index lists scoped keys, the ids are published under
+// the new key first, and only then is the stranded key removed.
+func TestDeletionLedgerAddressChangeClaim(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	fOld := newLedgerTestFiler(store)
+	fOld.Dlm = lock_manager.NewDistributedLockManager("filer-old:8888")
+	fOld.queueDeletions("1,01", "1,02")
+	fOld.snapshotDeletionLedger()
+
+	fNew := newLedgerTestFiler(store)
+	fNew.Dlm = lock_manager.NewDistributedLockManager("filer-new:9999")
+	if !fNew.reloadDeletionLedger() {
+		t.Fatalf("reload should claim the stranded ledger")
+	}
+	if fNew.pendingDeletionCount() != 2 {
+		t.Fatalf("expected 2 claimed ids, got %d", fNew.pendingDeletionCount())
+	}
+	if _, err := store.KvGet(context.Background(), []byte(fOld.deletionLedgerKey())); err != ErrKvNotFound {
+		t.Fatalf("stranded ledger must be removed after claim, got %v", err)
+	}
+	persisted, ok := readPersistedLedger(t, fNew)
+	if !ok || len(persisted) != 2 {
+		t.Fatalf("claimed ids must be durably stored under the new key, got %v", persisted)
+	}
+	indexKeys, _ := fNew.readLedgerIndex(context.Background())
+	if contains(indexKeys, fOld.deletionLedgerKey()) {
+		t.Fatalf("claimed key must leave the index, got %v", indexKeys)
+	}
+}
+
+// Every multipart snapshot writes a fresh generation's part keys and publishes
+// the manifest only after all parts land, so the committed generation is never
+// overwritten. The previous generation is removed after publication.
+func TestDeletionLedgerGenerationPublish(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	f := newLedgerTestFiler(store)
+
+	var ids []string
+	for i := 0; i < 4000; i++ {
+		ids = append(ids, fmt.Sprintf("7,%08xbeefcafe", i))
+	}
+	f.queueDeletions(ids...)
+	f.snapshotDeletionLedger()
+	key := f.deletionLedgerKey()
+	if _, err := store.KvGet(context.Background(), deletionLedgerGenPartKey(key, 1, 0)); err != nil {
+		t.Fatalf("generation 1 part must exist, got %v", err)
+	}
+
+	f.queueDeletions("8,08")
+	f.snapshotDeletionLedger()
+	if _, err := store.KvGet(context.Background(), deletionLedgerGenPartKey(key, 2, 0)); err != nil {
+		t.Fatalf("generation 2 part must exist, got %v", err)
+	}
+	if _, err := store.KvGet(context.Background(), deletionLedgerGenPartKey(key, 1, 0)); err != ErrKvNotFound {
+		t.Fatalf("generation 1 part must be cleaned after publication, got %v", err)
+	}
+	var manifest struct {
+		Parts int `json:"parts"`
+		Gen   int `json:"gen"`
+	}
+	raw, _ := store.KvGet(context.Background(), []byte(key))
+	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Gen != 2 {
+		t.Fatalf("manifest must publish generation 2, got %q", raw)
+	}
+}
+
+// A failed cleanup of a superseded generation is retried by the next snapshot
+// instead of leaking the part keys.
+func TestDeletionLedgerStalePartsRetried(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	f := newLedgerTestFiler(store)
+
+	var ids []string
+	for i := 0; i < 4000; i++ {
+		ids = append(ids, fmt.Sprintf("7,%08xbeefcafe", i))
+	}
+	f.queueDeletions(ids...)
+	f.snapshotDeletionLedger()
+	key := f.deletionLedgerKey()
+
+	store.kvDeleteErr = errors.New("delete down")
+	f.queueDeletions("8,08")
+	f.snapshotDeletionLedger()
+	if len(f.deletionLedgerStale) == 0 {
+		t.Fatalf("failed part deletes must be tracked for retry")
+	}
+	store.kvDeleteErr = nil
+	f.queueDeletions("8,09")
+	f.snapshotDeletionLedger()
+	if len(f.deletionLedgerStale) != 0 {
+		t.Fatalf("stale parts must flush once deletes work, got %v", f.deletionLedgerStale)
+	}
+	if _, err := store.KvGet(context.Background(), deletionLedgerGenPartKey(key, 1, 0)); err != ErrKvNotFound {
+		t.Fatalf("stale generation part must be deleted, got %v", err)
+	}
+}
+
+// A pre-scoping ledger under the base key must migrate only after the scoped
+// copy is durable: the recovered ids are written under the scoped key first,
+// then the base key is removed.
+func TestDeletionLedgerLegacyMigrationDurable(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	store.kv[KvKeyDeletionLedger] = []byte(`["1,01","1,02"]`)
+
+	f := newLedgerTestFiler(store)
+	f.Dlm = lock_manager.NewDistributedLockManager("filer-new:9999")
+	if !f.reloadDeletionLedger() {
+		t.Fatalf("reload should migrate the legacy ledger")
+	}
+	persisted, ok := readPersistedLedger(t, f)
+	if !ok || len(persisted) != 2 {
+		t.Fatalf("legacy ids must land under the scoped key first, got %v", persisted)
+	}
+	if _, err := store.KvGet(context.Background(), []byte(KvKeyDeletionLedger)); err != ErrKvNotFound {
+		t.Fatalf("legacy key must be removed once the scoped write is durable, got %v", err)
+	}
+	if f.pendingDeletionCount() != 2 {
+		t.Fatalf("migrated ids must join the pending set, got %d", f.pendingDeletionCount())
+	}
+}
+
+// An expired retry item must not erase a newer enqueue for the same file id:
+// expiry forgets only the epoch the retry item recorded.
+func TestForgetDeletionEpochSkipsNewer(t *testing.T) {
+	withPersistedConfig(t, true)
+	f := newLedgerTestFiler(newStubFilerStore())
+
+	f.queueDeletions("1,01")
+	oldEpoch := f.deletionEpoch("1,01")
+	f.queueDeletions("1,01") // re-enqueue bumps the epoch
+	newEpoch := f.deletionEpoch("1,01")
+	if oldEpoch == newEpoch {
+		t.Fatalf("re-enqueue must bump the epoch")
+	}
+
+	f.forgetDeletionEpoch("1,01", oldEpoch)
+	if f.pendingDeletionCount() != 1 {
+		t.Fatalf("stale expiry must not erase a newer enqueue")
+	}
+	f.forgetDeletionEpoch("1,01", newEpoch)
+	if f.pendingDeletionCount() != 0 {
+		t.Fatalf("matching expiry must forget the id")
 	}
 }
 

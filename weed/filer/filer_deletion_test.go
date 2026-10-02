@@ -10,8 +10,8 @@ func TestDeletionRetryQueue_AddAndRetrieve(t *testing.T) {
 	queue := NewDeletionRetryQueue()
 
 	// Add items
-	queue.AddOrUpdate("file1", "is read only")
-	queue.AddOrUpdate("file2", "connection reset")
+	queue.AddOrUpdate("file1", "is read only", 0)
+	queue.AddOrUpdate("file2", "connection reset", 0)
 
 	if queue.Size() != 2 {
 		t.Errorf("Expected queue size 2, got %d", queue.Size())
@@ -104,7 +104,7 @@ func TestDeletionRetryQueue_MaxAttemptsReached(t *testing.T) {
 	queue := NewDeletionRetryQueue()
 
 	// Add item
-	queue.AddOrUpdate("file1", "error")
+	queue.AddOrUpdate("file1", "error", 0)
 
 	// Manually set retry count to max
 	queue.lock.Lock()
@@ -266,7 +266,7 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 	queue := NewDeletionRetryQueue()
 
 	// Add same file ID twice with retryable error - simulates duplicate in batch
-	queue.AddOrUpdate("file1", "timeout error")
+	queue.AddOrUpdate("file1", "timeout error", 0)
 
 	// Verify only one item exists in queue
 	if queue.Size() != 1 {
@@ -284,7 +284,7 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 	queue.lock.Unlock()
 
 	// Add same file ID again - should NOT increment retry count (just update error)
-	queue.AddOrUpdate("file1", "timeout error again")
+	queue.AddOrUpdate("file1", "timeout error again", 0)
 
 	// Verify still only one item exists in queue (not duplicated)
 	if queue.Size() != 1 {

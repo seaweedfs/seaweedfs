@@ -86,16 +86,23 @@ type Filer struct {
 	// fileIds that still need deleting but are not yet confirmed gone, mirrored
 	// to the store so a restart does not leak chunks. Guarded by
 	// deletionLedgerLock; nil-safe for Filer literals in tests.
+	// pendingDeletions maps each id to its enqueue epoch so an expiry-forget
+	// cannot erase a re-queued id.
 	deletionLedgerLock  sync.Mutex
-	pendingDeletions    map[string]struct{}
+	pendingDeletions    map[string]uint64
+	deletionSeq         uint64
 	deletionLedgerDirty bool
 	deletionLedgerParts int
+	deletionLedgerGen   int
+	// deletionLedgerStale holds orphan part keys from abandoned multipart
+	// writes, retried on the next snapshot.
+	deletionLedgerStale []string
 	// deletionSnapshotLock serializes ledger writes in copy order so an
 	// in-flight timer snapshot cannot overwrite a newer shutdown snapshot.
 	deletionSnapshotLock sync.Mutex
 	// deletionLedgerBlocked is set when the startup ledger read fails: the
-	// persisted set is then unknown, so this run persists nothing rather than
-	// overwrite the unread ledger with a partial set.
+	// persisted set is then unknown, so snapshots retry the read instead of
+	// overwriting the unread ledger with a partial set.
 	deletionLedgerBlocked atomic.Bool
 	deletionLedgerFlush   chan struct{}
 }
@@ -233,11 +240,10 @@ func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 
 	// Recover deletions that were pending when a previous process died, and keep
 	// the durable ledger snapshotted while running (see filer_deletion_persist.go).
-	// A failed ledger read leaves persistence off so snapshots cannot overwrite
-	// the unread ledger with a partial set.
-	if f.reloadDeletionLedger() {
-		f.startDeletionLedgerSnapshotter()
-	}
+	// A failed ledger read leaves writes blocked until a snapshot retries and
+	// the read succeeds, so the unread ledger is never overwritten.
+	f.reloadDeletionLedger()
+	f.startDeletionLedgerSnapshotter()
 
 	return isFresh
 }

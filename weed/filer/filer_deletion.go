@@ -66,8 +66,9 @@ type DeletionRetryItem struct {
 	RetryCount  int
 	NextRetryAt time.Time
 	LastError   string
-	heapIndex   int  // index in the heap (for heap.Interface)
-	inFlight    bool // true when item is being processed, prevents duplicate additions
+	ledgerEpoch uint64 // pendingDeletions epoch when the item was queued; expiry forgets only a matching epoch
+	heapIndex   int    // index in the heap (for heap.Interface)
+	inFlight    bool   // true when item is being processed, prevents duplicate additions
 }
 
 // retryHeap implements heap.Interface for DeletionRetryItem
@@ -163,7 +164,7 @@ func calculateBackoff(retryCount int) time.Duration {
 
 // AddOrUpdate adds a new failed deletion or updates an existing one
 // Time complexity: O(log N) for insertion/update
-func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
+func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -173,6 +174,7 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
 		// The existing retry schedule should proceed.
 		// RetryCount is only incremented in RequeueForRetry when an actual retry is performed.
 		item.LastError = errorMsg
+		item.ledgerEpoch = ledgerEpoch
 		if item.inFlight {
 			glog.V(2).Infof("retry for %s in-flight: attempt %d, will preserve retry state", fileId, item.RetryCount)
 		} else {
@@ -188,6 +190,7 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
 		RetryCount:  1,
 		NextRetryAt: time.Now().Add(delay),
 		LastError:   errorMsg,
+		ledgerEpoch: ledgerEpoch,
 		inFlight:    false,
 	}
 	heap.Push(&q.heap, item)
@@ -221,7 +224,7 @@ func (q *DeletionRetryQueue) RequeueForRetry(item *DeletionRetryItem, errorMsg s
 // dropouts the caller must also forget in the durable deletion ledger.
 // Time complexity: O(K log N) where K is the number of ready items
 // Items are processed in order of NextRetryAt (earliest first)
-func (q *DeletionRetryQueue) GetReadyItems(maxItems int) (ready []*DeletionRetryItem, expired []string) {
+func (q *DeletionRetryQueue) GetReadyItems(maxItems int) (ready []*DeletionRetryItem, expired []*DeletionRetryItem) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -245,7 +248,7 @@ func (q *DeletionRetryQueue) GetReadyItems(maxItems int) (ready []*DeletionRetry
 		} else {
 			// Max attempts reached, log and discard completely
 			delete(q.itemIndex, item.FileId)
-			expired = append(expired, item.FileId)
+			expired = append(expired, item)
 			glog.Warningf("max retry attempts (%d) reached for %s, last error: %s", MaxRetryAttempts, item.FileId, item.LastError)
 		}
 	}
@@ -345,6 +348,13 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 		return
 	}
 
+	// Remember each id's ledger epoch before the remote deletes run: a
+	// permanent outcome below must not erase a record re-queued mid-flight.
+	epochs := make(map[string]uint64, len(uniqueFileIdsSlice))
+	for _, fileId := range uniqueFileIdsSlice {
+		epochs[fileId] = f.deletionEpoch(fileId)
+	}
+
 	// Delete files and classify outcomes
 	outcomes := deleteFilesAndClassify(ctx, f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
 
@@ -365,13 +375,14 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryableErrorCount++
 			// Keep in the durable ledger: not confirmed, must survive restarts.
-			f.DeletionRetryQueue.AddOrUpdate(fileId, outcome.errorMsg)
+			f.DeletionRetryQueue.AddOrUpdate(fileId, outcome.errorMsg, f.deletionEpoch(fileId))
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (will retry)")
 			}
 		case deletionOutcomePermanent:
 			permanentErrorCount++
-			f.forgetDeletion(fileId) // gave up: stop carrying it in the ledger
+			// gave up: drop the record, unless the id was re-queued meanwhile
+			f.forgetDeletionEpoch(fileId, epochs[fileId])
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (permanent)")
 			}
@@ -530,10 +541,11 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			totalProcessed := 0
 			for {
 				readyItems, expired := f.DeletionRetryQueue.GetReadyItems(DeletionRetryBatchSize)
-				for _, fileId := range expired {
-					// Permanently discarded — stop carrying it in the ledger or
-					// every restart would retry it again.
-					f.forgetDeletion(fileId)
+				for _, item := range expired {
+					// Permanently discarded — drop the ledger record, but only
+					// if the id was not re-queued after this retry item was
+					// recorded.
+					f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch)
 				}
 				if len(readyItems) == 0 {
 					break
@@ -588,7 +600,8 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 		case deletionOutcomePermanent:
 			permanentErrorCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (permanent failure)
-			f.forgetDeletion(item.FileId)     // gave up: stop carrying it in the ledger
+			// gave up: drop the record, unless the id was re-queued meanwhile
+			f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch)
 			glog.Warningf("permanent error on retry for %s after %d attempts: %s", item.FileId, item.RetryCount, outcome.errorMsg)
 		}
 	}
