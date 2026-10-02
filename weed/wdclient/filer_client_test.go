@@ -258,3 +258,21 @@ func TestDiscoverySnapshotClearsDeferredLeaves(t *testing.T) {
 		t.Fatalf("rejoined filer was dropped by a deferred leave the poll should have cleared: %v", got)
 	}
 }
+
+// A poll that started after a deferred leave but before the filer rejoined can
+// return a snapshot lacking the rejoined filer; the rejoin must bump the
+// generation so that snapshot is discarded.
+func TestOnPeerUpdateRejoinBumpsGeneration(t *testing.T) {
+	old := pb.ServerAddress("10.0.0.1:8888")
+	other := pb.ServerAddress("10.0.1.1:8888")
+	fc := newTestFilerClient(old)
+
+	fc.OnPeerUpdate(filerUpdate(old, false), time.Now())
+	generation := fc.peerUpdateGeneration()
+	fc.OnPeerUpdate(filerUpdate(old, true), time.Now())
+	fc.applyDiscoverySnapshot(map[pb.ServerAddress]struct{}{other: {}}, generation)
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != old {
+		t.Fatalf("rejoined filer was pruned by an in-flight snapshot: %v", got)
+	}
+}

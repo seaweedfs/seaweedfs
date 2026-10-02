@@ -416,7 +416,12 @@ func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.
 
 	changed := false
 	if update.IsAdd {
-		delete(fc.deferredLeaves, addr)
+		// A rejoin cancels its deferred leave; bumping the generation keeps an
+		// in-flight snapshot that lacks the rejoined filer from pruning it.
+		if _, ok := fc.deferredLeaves[addr]; ok {
+			delete(fc.deferredLeaves, addr)
+			changed = true
+		}
 		if _, ok := filers[addr]; !ok {
 			filers[addr] = struct{}{}
 			changed = true
