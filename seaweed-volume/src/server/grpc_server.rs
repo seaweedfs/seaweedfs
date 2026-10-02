@@ -897,6 +897,18 @@ impl Drop for EcDecodeTailGuard<'_> {
     }
 }
 
+/// Whether `vid`'s .ecj appends must wait for the decode publishing tail.
+/// Only meaningful read under the store write lock: a decode can claim the
+/// tail while a caller waits for the decoder's read lock, so membership
+/// tested before acquiring the write lock is stale by commit time.
+pub(crate) fn ec_decode_tail_contains(state: &VolumeServerState, vid: VolumeId) -> bool {
+    state
+        .ec_decode_tail
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&vid)
+}
+
 /// Blocks a local .ecj append until `vid` leaves `ec_decode_tail`. Mirrors
 /// Go's `EcVolume.ecjFileAccessLock`: decode holds it across journal
 /// catch-up, .idx publication and compaction, so no committed delete falls
@@ -3788,14 +3800,23 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let needle_id = NeedleId(req.file_key);
 
-        // If this volume is mid-decode publishing tail, wait it out: a delete
-        // committed between the last journal catch_up and the compaction swap
-        // would be absent from the rebuilt .idx.
-        wait_ec_decode_tail(&self.state, vid).await;
+        // A delete committed between the last journal catch_up and the
+        // compaction swap would be absent from the rebuilt .idx, so the
+        // tail membership must be checked under the store write lock: a
+        // decode can claim the tail while this delete waits for the
+        // decoder's read lock, and a check taken before acquiring it would
+        // be stale by the time the append commits.
+        let mut store = loop {
+            let store = self.state.store.write().unwrap();
+            if !ec_decode_tail_contains(&self.state, vid) {
+                break store;
+            }
+            drop(store);
+            wait_ec_decode_tail(&self.state, vid).await;
+        };
 
         // Go's handler locates the needle first: absent fails the RPC so the
         // caller moves to the next holder; an existing tombstone is a no-op.
-        let mut store = self.state.store.write().unwrap();
         if let Some(ec_vol) = store.find_ec_volume_mut(vid) {
             match ec_vol.find_needle_from_ecx(needle_id) {
                 Ok(Some((_, size))) if size.is_deleted() => {
@@ -12293,6 +12314,73 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unavailable);
+    }
+
+    /// The blob-delete tail check must run under the store write lock: a
+    /// delete that passed an unlocked check could still be parked behind
+    /// the decoder's read lock when the decode claims the tail, then commit
+    /// its journal append after the rebuilt .idx — an acknowledged delete
+    /// the mount would never see.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_ec_blob_delete_rechecks_tail_under_write_lock() {
+        let (service, _tmp, _data, idx, _) = make_split_idx_ec_decode_service(&[], false).await;
+        let state = service.state.clone();
+
+        // Park the delete on the store write lock, claimed in a thread so a
+        // std guard is never held across .await; the tail is claimed while
+        // it waits — the interleaving an unlocked check missed.
+        let claimed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let releaser = {
+            let claimed = claimed.clone();
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let held = state.store.write().unwrap();
+                while !claimed.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                drop(held);
+            })
+        };
+        let delete = tokio::spawn(async move {
+            service
+                .volume_ec_blob_delete(Request::new(volume_server_pb::VolumeEcBlobDeleteRequest {
+                    volume_id: 1,
+                    file_key: 1,
+                    collection: String::new(),
+                    version: 0,
+                }))
+                .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        state
+            .ec_decode_tail
+            .lock()
+            .unwrap()
+            .insert(VolumeId(1));
+        claimed.store(true, Ordering::SeqCst);
+        releaser.join().unwrap();
+
+        // Under the lock the delete sees the tail and parks on the notify.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(
+            !delete.is_finished(),
+            "a delete must not commit while its volume is in the decode tail"
+        );
+
+        state
+            .ec_decode_tail
+            .lock()
+            .unwrap()
+            .remove(&VolumeId(1));
+        state.ec_decode_tail_notify.notify_waiters();
+        delete.await.unwrap().unwrap();
+
+        let ecj = std::fs::read(format!("{idx}/1.ecj")).unwrap();
+        assert_eq!(
+            ecj.len(),
+            NEEDLE_ID_SIZE,
+            "the delayed delete must land on the surviving journal"
+        );
     }
 
     // Among storage errors, the filer requeues a delete only on "is read only"

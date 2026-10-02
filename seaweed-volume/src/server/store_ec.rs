@@ -419,16 +419,24 @@ async fn delete_on_ec_shard_holders(
 
     let mut last_err = None;
     if local_shards.contains(&shard_id) {
-        // A decode in its publishing tail must not miss this delete: wait
-        // for .idx publication + compaction to finish before journaling.
-        crate::server::grpc_server::wait_ec_decode_tail(state, target.vid).await;
-        match journal_delete_local(state, target.vid, target.needle_id) {
-            Ok(()) => return Ok(true),
-            // Nothing was committed — the volume unmounted or remounted
-            // without the needle — so it is safe to fall back to other
-            // shard holders, unlike an RPC failure which may have landed.
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(e) => last_err = Some(e),
+        // A decode in its publishing tail must not miss this delete. The
+        // tail membership is verified again under the store write lock
+        // inside journal_delete_local — WouldBlock means the decode claimed
+        // it in the gap after this wait — so wait and retry.
+        loop {
+            crate::server::grpc_server::wait_ec_decode_tail(state, target.vid).await;
+            match journal_delete_local(state, target.vid, target.needle_id) {
+                Ok(()) => return Ok(true),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                // Nothing was committed — the volume unmounted or remounted
+                // without the needle — so it is safe to fall back to other
+                // shard holders, unlike an RPC failure which may have landed.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => {
+                    last_err = Some(e);
+                    break;
+                }
+            }
         }
     }
     if let Some(addrs) = addrs {
@@ -490,6 +498,15 @@ fn journal_delete_local(
     needle_id: NeedleId,
 ) -> io::Result<()> {
     let mut store = state.store.write().unwrap();
+    // Membership is read under the write lock: a decode can claim the
+    // publishing tail while this call waited for the decoder's read lock,
+    // so a check taken earlier would be stale by commit time.
+    if crate::server::grpc_server::ec_decode_tail_contains(state, vid) {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            format!("ec volume {} is in decode publishing tail", vid.0),
+        ));
+    }
     let ecv = store.find_ec_volume_mut(vid).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
