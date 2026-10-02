@@ -102,3 +102,24 @@ func TestReaderPatternRecoversFromRandom(t *testing.T) {
 		t.Fatal("sustained near reads must recover sequential mode")
 	}
 }
+
+// A ranged request's first read lands far from the frontier, but its
+// remaining buffer reads are contiguous. The random verdict must stick for
+// them — otherwise the tail of every range >256KiB pays a whole-chunk fetch.
+func TestReaderPatternRangedReadStaysRandom(t *testing.T) {
+	rp := NewReaderPattern()
+	rp.MonitorReadAt(500*mb, 256*1024) // far first read -> -ModeChangeLimit
+	for i := 1; i <= 2; i++ {
+		rp.MonitorReadAt(500*mb+int64(i)*256*1024, 256*1024)
+		if !rp.IsRandomMode() {
+			t.Fatalf("contiguous read %d of a ranged request flipped back to sequential", i+1)
+		}
+	}
+	for i := 3; i < 10; i++ {
+		rp.MonitorReadAt(500*mb+int64(i)*256*1024, 256*1024)
+	}
+	if rp.IsRandomMode() {
+		t.Fatal("sustained sequential reads should restore sequential mode")
+	}
+}
+
