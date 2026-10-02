@@ -24,6 +24,17 @@ var (
 	re = regexp.MustCompile(`\.ec\d{2,3}`)
 )
 
+// markEcDestroying records a pending destroy for vid and returns the channel
+// closed when it finishes. Callers must hold ecVolumesLock for writing.
+func (l *DiskLocation) markEcDestroying(vid needle.VolumeId) chan struct{} {
+	if l.ecVolumesDestroying == nil {
+		l.ecVolumesDestroying = make(map[needle.VolumeId]chan struct{})
+	}
+	done := make(chan struct{})
+	l.ecVolumesDestroying[vid] = done
+	return done
+}
+
 func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
@@ -38,18 +49,26 @@ func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolu
 func (l *DiskLocation) DestroyEcVolume(vid needle.VolumeId) {
 	l.ecVolumesLock.Lock()
 	ecVolume, found := l.ecVolumes[vid]
+	var done chan struct{}
 	if found {
+		done = l.markEcDestroying(vid)
 		delete(l.ecVolumes, vid)
 	}
 	l.ecVolumesLock.Unlock()
 
+	if !found {
+		return
+	}
 	// Destroy outside the write lock: EcVolume.Destroy's Close waits on the
 	// deletion-journal lock, which a running ec.decode can hold — under the
 	// map lock that wait would stall every EC lookup and invert the
 	// map->journal lock order.
-	if found {
-		ecVolume.Destroy()
-	}
+	ecVolume.Destroy()
+
+	// The tombstone stays after close() as this vid's destroy generation: a
+	// remount compares it before and after opening files to spot a destroy
+	// that ran inside the window. The next successful mount clears it.
+	close(done)
 }
 
 // UnloadEcVolume drops the in-memory EcVolume for vid from this one disk without
@@ -147,17 +166,57 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 // (issue #9212).
 func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, idxDir string) (*erasure_coding.EcVolume, error) {
 
-	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
-	if err != nil {
-		if err == os.ErrNotExist {
-			return nil, os.ErrNotExist
+	// A destroy-in-progress or already-finished one leaves a tombstone; it
+	// stays in the map until a mount clears it, so comparing the channel
+	// before and after opening the shard detects any destroy that could have
+	// unlinked the files in between — including one that ran to completion
+	// inside the window.
+	var ecVolumeShard *erasure_coding.EcVolumeShard
+	for {
+		l.ecVolumesLock.Lock()
+		gen := l.ecVolumesDestroying[vid]
+		l.ecVolumesLock.Unlock()
+		if gen != nil {
+			select {
+			case <-gen:
+				// Destroy already finished; the closed tombstone is the
+				// generation token the post-open recheck compares against.
+			default:
+				// Destroy in flight: its unlinks could detach anything this
+				// mount opens, so wait it out and take a fresh generation.
+				<-gen
+				continue
+			}
 		}
-		return nil, fmt.Errorf("failed to create ec shard %d.%d: %w", vid, shardId, err)
+
+		var err error
+		ecVolumeShard, err = erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
+		if err != nil {
+			if err == os.ErrNotExist {
+				return nil, os.ErrNotExist
+			}
+			return nil, fmt.Errorf("failed to create ec shard %d.%d: %w", vid, shardId, err)
+		}
+
+		l.ecVolumesLock.Lock()
+		if cur := l.ecVolumesDestroying[vid]; cur != gen {
+			// A destroy intervened while the shard was being opened; its
+			// unlink may have detached the file. Drop the handle, wait for
+			// the destroy, and retry on a clean slate.
+			l.ecVolumesLock.Unlock()
+			ecVolumeShard.Unmount() // release the gauge the constructor's Mount took
+			ecVolumeShard.Close()
+			if cur != nil {
+				<-cur
+			}
+			continue
+		}
+		break
 	}
-	l.ecVolumesLock.Lock()
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
+		var err error
 		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, idxDir, collection, vid)
 		if err != nil {
 			// Wrap with %w so MountEcShards / startup reconcile can use
@@ -166,6 +225,9 @@ func (l *DiskLocation) loadEcShardWithIdxDir(collection string, vid needle.Volum
 			return nil, fmt.Errorf("failed to create ec volume %d: %w", vid, err)
 		}
 		l.ecVolumes[vid] = ecVolume
+		// Fresh generation for this vid: the next destroy sets a new
+		// tombstone rather than matching the cleared one.
+		delete(l.ecVolumesDestroying, vid)
 	}
 	added, err := ecVolume.AddEcVolumeShard(ecVolumeShard)
 	if err != nil {
@@ -397,7 +459,9 @@ func (l *DiskLocation) loadEcShardsWithIdxDir(shards []string, collection string
 func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
 	l.ecVolumesLock.Lock()
 	ecVolume, ok := l.ecVolumes[vid]
+	var done chan struct{}
 	if ok {
+		done = l.markEcDestroying(vid)
 		delete(l.ecVolumes, vid)
 	}
 	l.ecVolumesLock.Unlock()
@@ -407,6 +471,7 @@ func (l *DiskLocation) deleteEcVolumeById(vid needle.VolumeId) (e error) {
 	}
 	// Destroy outside the map lock — see DestroyEcVolume.
 	ecVolume.Destroy()
+	close(done)
 	return
 }
 
@@ -418,8 +483,11 @@ func (l *DiskLocation) unmountEcVolumeByCollection(collectionName string) map[ne
 		}
 	}
 
-	for k, _ := range deltaVols {
+	for k := range deltaVols {
 		delete(l.ecVolumes, k)
+		// Caller destroys these outside the lock; tombstone until then so a
+		// remount can't open files the destroy is about to unlink.
+		l.markEcDestroying(k)
 	}
 	return deltaVols
 }
