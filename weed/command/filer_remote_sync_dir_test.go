@@ -555,6 +555,23 @@ func TestIsSuperseded(t *testing.T) {
 		})
 	}
 
+	t.Run("written since: the event described an entry without data", func(t *testing.T) {
+		remoteOnly := entryWith("video.mp4", &filer_pb.RemoteEntry{StorageName: "b2", RemoteSize: 20971520, RemoteMtime: 1786096669})
+		if !isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry, chunk("3,09", "e9"))}, dir, remoteOnly) {
+			t.Error("isSuperseded = false, want true: the filer wrote local data to a remote-only entry")
+		}
+		if isSuperseded(&stubFilerClient{entry: entryWith("video.mp4", remoteOnly.RemoteEntry)}, dir, remoteOnly) {
+			t.Error("isSuperseded = true, want false: the entry is still remote-only")
+		}
+		empty := &filer_pb.Entry{Name: "touch.txt", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}}
+		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt", Content: []byte("now")}}, dir, empty) {
+			t.Error("isSuperseded = false, want true: the empty file was written to")
+		}
+		if isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "touch.txt"}}, dir, empty) {
+			t.Error("isSuperseded = true, want false: the file is still empty")
+		}
+	})
+
 	t.Run("inline content rewritten since", func(t *testing.T) {
 		event := &filer_pb.Entry{Name: "note.txt", Content: []byte("v1")}
 		if !isSuperseded(&stubFilerClient{entry: &filer_pb.Entry{Name: "note.txt", Content: []byte("v2")}}, dir, event) {
@@ -660,10 +677,12 @@ func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
 
 type recordingRemote struct {
 	remote_storage.RemoteStorageClient
-	deletes   []*remote_pb.RemoteStorageLocation
-	writes    []*remote_pb.RemoteStorageLocation
-	written   [][]byte
-	deleteErr error
+	deletes []*remote_pb.RemoteStorageLocation
+	writes  []*remote_pb.RemoteStorageLocation
+	written [][]byte
+	// chunk ids of each written entry: which version of the file went up
+	writtenChunks [][]string
+	deleteErr     error
 	// objects present on the remote, by path: StatFile and ReadFile answer
 	// from it, everything else is ErrRemoteObjectNotFound.
 	objects map[string][]byte
@@ -671,6 +690,11 @@ type recordingRemote struct {
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
 	r.writes = append(r.writes, loc)
+	var ids []string
+	for _, c := range entry.GetChunks() {
+		ids = append(ids, c.GetFileIdString())
+	}
+	r.writtenChunks = append(r.writtenChunks, ids)
 	// A chunked upload's reader walks volume servers the stub filer cannot
 	// name, so it is not read; the copy path hands over the old object's
 	// stream for a chunkless entry, which is drained.
@@ -1201,6 +1225,9 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		}
 		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
 			t.Fatalf("writes = %+v, want one upload of the rewritten b.txt", remote.writes)
+		}
+		if len(remote.writtenChunks[0]) != 1 || remote.writtenChunks[0][0] != "3,09" {
+			t.Errorf("uploaded chunks = %v, want the rewrite's chunk 3,09, not the chunkless snapshot", remote.writtenChunks[0])
 		}
 		if string(remote.written[0]) == "payload" {
 			t.Error("the old object's bytes were copied over a rewritten entry")

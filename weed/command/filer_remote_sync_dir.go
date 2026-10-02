@@ -464,6 +464,12 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 	if err != nil {
 		return false
 	}
+	if !filer.HasData(entry) && filer.HasData(current) {
+		// The event described an entry without data (remote-only, or empty);
+		// the filer has written to it since. Uploading the snapshot would put
+		// an empty object where the write belongs.
+		return true
+	}
 	if len(entry.Content) > 0 || len(current.Content) > 0 {
 		return !bytes.Equal(entry.Content, current.Content)
 	}
