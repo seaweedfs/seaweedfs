@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -85,6 +86,30 @@ type Filer struct {
 	// rebuild finishes; lazy remote reads wait on it so a pending delete
 	// cannot resurrect in the gap.
 	remoteTombstonesDone atomic.Pointer[chan struct{}]
+
+	// Durable deletion ledger (see filer_deletion_persist.go). The set of
+	// fileIds that still need deleting but are not yet confirmed gone, mirrored
+	// to the store so a restart does not leak chunks. Guarded by
+	// deletionLedgerLock; nil-safe for Filer literals in tests.
+	// pendingDeletions maps each id to its enqueue epoch so an expiry-forget
+	// cannot erase a re-queued id.
+	deletionLedgerLock  sync.Mutex
+	pendingDeletions    map[string]uint64
+	deletionSeq         uint64
+	deletionLedgerDirty bool
+	deletionLedgerParts int
+	deletionLedgerGen   int
+	// deletionLedgerStale holds orphan part keys from abandoned multipart
+	// writes, retried on the next snapshot.
+	deletionLedgerStale []string
+	// deletionSnapshotLock serializes ledger writes in copy order so an
+	// in-flight timer snapshot cannot overwrite a newer shutdown snapshot.
+	deletionSnapshotLock sync.Mutex
+	// deletionLedgerBlocked is set when the startup ledger read fails: the
+	// persisted set is then unknown, so snapshots retry the read instead of
+	// overwriting the unread ledger with a partial set.
+	deletionLedgerBlocked atomic.Bool
+	deletionLedgerFlush   chan struct{}
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -98,6 +123,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
+		deletionLedgerFlush: make(chan struct{}, 1),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
 		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
 		remoteTombstones:    newRemoteDeletionTombstones(),
@@ -228,7 +254,16 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 	f.Store = NewFilerStoreWrapper(store)
 
-	return f.setOrLoadFilerStoreSignature(store)
+	isFresh = f.setOrLoadFilerStoreSignature(store)
+
+	// Recover deletions that were pending when a previous process died, and keep
+	// the durable ledger snapshotted while running (see filer_deletion_persist.go).
+	// A failed ledger read leaves writes blocked until a snapshot retries and
+	// the read succeeds, so the unread ledger is never overwritten.
+	f.reloadDeletionLedger()
+	f.startDeletionLedgerSnapshotter()
+
+	return isFresh
 }
 
 func (f *Filer) setOrLoadFilerStoreSignature(store FilerStore) (isFresh bool) {
@@ -776,6 +811,9 @@ func (f *Filer) Shutdown() {
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	// The final metadata-log flush still needs the store to append its entry.
 	f.LocalMetaLogBuffer.WaitForShutdown()
+	// Persist the deletion ledger one last time before the store closes, so a
+	// clean shutdown leaves the recovery set exactly consistent with reality.
+	f.snapshotDeletionLedger()
 	f.Store.Shutdown()
 }
 
