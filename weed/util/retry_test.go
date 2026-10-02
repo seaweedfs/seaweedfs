@@ -83,6 +83,10 @@ func TestIsTransientErrorMessage(t *testing.T) {
 		"Connection reset by peer",
 		"dial tcp 10.0.0.1:8888: connect: no route to host",
 		"rpc error: code = Unavailable desc = the connection is unavailable",
+		// GCS per-object mutation limit on a hot file; the next attempt after a
+		// one-second backoff is under it
+		"googleapi: Error 429: The object bucket/samples.json exceeded the rate limit for object mutation operations (create, update, and delete). Please reduce your request rate. See https://cloud.google.com/storage/docs/gcs429., rateLimitExceeded",
+		"429 Too Many Requests",
 	}
 	for _, msg := range transient {
 		if !IsTransientErrorMessage(msg) {

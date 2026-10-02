@@ -171,7 +171,6 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, remoteWriteEntry(message.NewEntry, *option.storageClass))
 			}
-			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, remoteWriteEntry(message.NewEntry, *option.storageClass), dest)
 			if errors.Is(writeErr, errSuperseded) {
 				glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
@@ -191,20 +190,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
-			// Skip deletion of internal version files; individual version
-			// deletes should not propagate to the remote object
-			if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
-				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
-				return nil
-			}
-			glog.V(2).Infof("delete: %+v", resp)
-			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
-			if message.OldEntry.IsDirectory {
-				glog.V(0).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
-				return client.RemoveDirectory(dest)
-			}
-			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
-			return client.DeleteFile(dest)
+			return processDeleteEvent(client, mountedDir, remoteStorageMountLocation, resp)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
 			return processUpdateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp)
@@ -213,6 +199,45 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		return nil
 	}
 	return eachEntryFunc, nil
+}
+
+// processDeleteEvent removes the remote object an entry mapped to. A remote
+// object that is already absent counts as deleted: the entry was never
+// uploaded (created and deleted faster than the sync ran, or a replay of an
+// event the inline delete already handled), and GCS reports that case as
+// ErrRemoteObjectNotFound where S3 and Azure answer an idempotent success.
+// Returning the error would pin the sync offset on an event that has nothing
+// left to do.
+func processDeleteEvent(
+	client remote_storage.RemoteStorageClient,
+	mountedDir string,
+	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
+	resp *filer_pb.SubscribeMetadataResponse,
+) error {
+	message := resp.EventNotification
+	// Skip deletion of internal version files; individual version
+	// deletes should not propagate to the remote object
+	if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
+		glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
+		return nil
+	}
+	glog.V(2).Infof("delete: %+v", resp)
+	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
+	if message.OldEntry.IsDirectory {
+		glog.V(0).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
+		return client.RemoveDirectory(dest)
+	}
+	glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
+	return deleteRemoteFile(client, dest)
+}
+
+// deleteRemoteFile deletes the object and treats an already-absent object as
+// deleted.
+func deleteRemoteFile(client remote_storage.RemoteStorageClient, dest *remote_pb.RemoteStorageLocation) error {
+	if err := client.DeleteFile(dest); err != nil && !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return err
+	}
+	return nil
 }
 
 func processUpdateEvent(
@@ -314,11 +339,18 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 // moved past (isSuperseded). The caller skips the event instead of failing it.
 var errSuperseded = errors.New("deleted or rewritten since the event was logged")
 
-// retriedWriteFile uploads the entry, retrying transient failures. Every failed
-// attempt first asks the filer whether the entry is superseded, and stops at
-// once when it is: a dead chunk reads as a transient "RequestError" from the
-// SDK, and waiting out the backoff on it buys nothing.
+// retriedWriteFile uploads the entry, retrying transient failures. The filer is
+// asked whether the entry is superseded before the first attempt and after
+// every failed one, and the upload stops at once when it is. Before: a backlog
+// (a restart resuming from an old offset) carries every intermediate version
+// of a hot file, and uploading each one in turn is wasted bandwidth that can
+// trip the remote's per-object mutation rate limit; only the version the filer
+// still holds is worth sending. After: a dead chunk reads as a transient
+// "RequestError" from the SDK, and waiting out the backoff on it buys nothing.
 func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource filer_pb.FilerClient, dir string, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	if isSuperseded(filerSource, dir, newEntry) {
+		return nil, fmt.Errorf("%s %w", util.NewFullPath(dir, newEntry.Name), errSuperseded)
+	}
 	err = util.RetryOnError("writeFile", func(err error) bool {
 		return !errors.Is(err, errSuperseded) && util.IsTransientError(err)
 	}, func() error {
@@ -453,7 +485,26 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 		glog.Errorf("skipping stale stamp of %s: %v", util.NewFullPath(dir, entry.Name), err)
 		return nil
 	}
+	if isEntryGone(err) {
+		glog.Errorf("skipping stamp of %s: deleted since the event was logged: %v", util.NewFullPath(dir, entry.Name), err)
+		return nil
+	}
 	return err
+}
+
+// isEntryGone reports an UpdateEntry the filer refused because the entry no
+// longer exists: a delete that followed the event superseded the stamp, and
+// the delete's own event follows in the log. The filer answers with a plain
+// error carrying filer_pb.ErrNotFound's text (gRPC code Unknown), so the text
+// is matched the way filer_pb's lookups match it.
+func isEntryGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+		return true
+	}
+	return strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
 }
 
 // ifEntryEqual builds the precondition that the stored entry still equals the
@@ -501,7 +552,7 @@ func syncDeleteMarker(
 	dest *remote_pb.RemoteStorageLocation,
 ) error {
 	glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
-	if err := client.DeleteFile(dest); err != nil {
+	if err := deleteRemoteFile(client, dest); err != nil {
 		return err
 	}
 	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
