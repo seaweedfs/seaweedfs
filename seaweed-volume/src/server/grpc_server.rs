@@ -6631,17 +6631,32 @@ impl EcDecodeJob {
         // Deletions journaled beside the .ecx, or collected by
         // VolumeEcShardsCopy into the idx dir, count as deleted throughout.
         // The first pass runs unlocked — a slow journal must not stall every
-        // store writer — then rescan runs with appends quiesced by the read
-        // lock: it drops whatever the unlocked pass read and re-reads the
-        // committed content, so a rolled-back append cannot survive as a
-        // phantom tombstone.
+        // store writer — then a second pass runs with appends quiesced by the
+        // read lock. The rollback epoch proves whether it needs to be a full
+        // rescan: an unchanged epoch means no append was rolled back inside
+        // the window, so every id folded in was committed and catch_up only
+        // needs to pick up records appended meanwhile.
+        let epoch_before = crate::storage::erasure_coding::ec_volume::ECJ_ROLLBACK_EPOCH
+            .load(std::sync::atomic::Ordering::Acquire);
         let mut deleted = ec_decoder::EcjDeletions::read(&[&ecx_dir, &idx_dir], &collection, vid)
             .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
         {
             let _guard = state.store.read().unwrap();
-            deleted
-                .rescan()
-                .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+            if epoch_before
+                == crate::storage::erasure_coding::ec_volume::ECJ_ROLLBACK_EPOCH
+                    .load(std::sync::atomic::Ordering::Acquire)
+            {
+                deleted
+                    .catch_up()
+                    .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+            } else {
+                // A rollback ran inside the window: the unlocked pass may
+                // have folded in bytes that were truncated away, or missed a
+                // record re-appended to the freed offset — re-read it all.
+                deleted
+                    .rescan()
+                    .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+            }
         }
         let has_live = ec_decoder::has_live_needles(&ecx_dir, &collection, vid, &deleted.ids)
             .map_err(|e| Status::internal(format!("HasLiveNeedles: {}", e)))?;

@@ -144,7 +144,13 @@ impl EcjDeletions {
                         break;
                     }
                 }
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                // A journal that was read before and is now gone shrank to
+                // nothing (e.g. the volume was destroyed mid-scan) — the ids
+                // read from it no longer reflect committed content.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    shrank = true;
+                    break;
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -950,5 +956,11 @@ mod tests {
         std::fs::write(&ecj_path, entry(9)).unwrap();
         deletions.catch_up().unwrap();
         assert_eq!(ids(&deletions), [9]);
+
+        // A journal removed since it was read is the extreme shrink: its
+        // earlier ids must go with it, not linger.
+        std::fs::remove_file(&ecj_path).unwrap();
+        deletions.catch_up().unwrap();
+        assert!(deletions.ids.is_empty());
     }
 }
