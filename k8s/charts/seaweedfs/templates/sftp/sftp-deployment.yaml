@@ -250,7 +250,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.sftp.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.sftp.containerSecurityContext (tpl (.Values.sftp.extraVolumeMounts | default "") .) (tpl (.Values.sftp.extraVolumes | default "") .)) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.sftp.containerSecurityContext (tpl (.Values.sftp.extraVolumeMounts | default "") .) (tpl (.Values.sftp.extraVolumes | default "") .) false) | nindent 8 }}
         {{- if .Values.sftp.enableAuth }}
         - name: config-users
           secret:

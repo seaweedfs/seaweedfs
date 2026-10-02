@@ -268,7 +268,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.admin.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.admin.containerSecurityContext (tpl (.Values.admin.extraVolumeMounts | default "") .) (tpl (.Values.admin.extraVolumes | default "") .)) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.admin.containerSecurityContext (tpl (.Values.admin.extraVolumeMounts | default "") .) (tpl (.Values.admin.extraVolumes | default "") .) false) | nindent 8 }}
         {{- if eq .Values.admin.data.type "hostPath" }}
         - name: admin-data
           hostPath:

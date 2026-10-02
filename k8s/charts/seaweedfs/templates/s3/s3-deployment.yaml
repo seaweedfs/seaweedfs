@@ -246,7 +246,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.s3.containerSecurityContext (tpl (.Values.s3.extraVolumeMounts | default "") .) (tpl (.Values.s3.extraVolumes | default "") .)) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.s3.containerSecurityContext (tpl (.Values.s3.extraVolumeMounts | default "") .) (tpl (.Values.s3.extraVolumes | default "") .) false) | nindent 8 }}
         {{- if .Values.s3.enableAuth }}
         - name: config-users
           secret:

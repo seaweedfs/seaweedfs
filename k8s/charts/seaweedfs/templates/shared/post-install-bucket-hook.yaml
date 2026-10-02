@@ -241,7 +241,7 @@ spec:
         {{- end }}
     {{- if or (and $containerSecurityContext.enabled $containerSecurityContext.readOnlyRootFilesystem) $enableAuth (include "seaweedfs.securityConfigEnabled" .) }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . $containerSecurityContext "" "") | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . $containerSecurityContext "" "" false) | nindent 8 }}
         {{- if $enableAuth }}
         - name: config-users
           secret:

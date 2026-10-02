@@ -264,7 +264,7 @@ spec:
               {{- end }}
               --max-concurrency={{ .Values.worker.maxExecute }}
           volumeMounts:
-            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .)) | nindent 12 }}
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.worker.containerSecurityContext "" "") | nindent 12 }}
             {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: ca-cert
               readOnly: true
@@ -304,7 +304,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .)) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .) (ne (include "seaweedfs.worker.lanceNamespaceUrl" .) "")) | nindent 8 }}
         {{- if eq .Values.worker.data.type "hostPath" }}
         - name: worker-data
           hostPath:

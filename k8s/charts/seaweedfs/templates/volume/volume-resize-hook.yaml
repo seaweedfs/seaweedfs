@@ -56,7 +56,7 @@ spec:
           {{- end }}
       {{- if and .Values.volume.containerSecurityContext.enabled .Values.volume.containerSecurityContext.readOnlyRootFilesystem }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.volume.containerSecurityContext "" "") | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.volume.containerSecurityContext "" "" false) | nindent 8 }}
       {{- end }}
 ---
 apiVersion: v1
