@@ -46,17 +46,22 @@ var (
 )
 
 type Filer struct {
-	UniqueFilerId                 int32
-	UniqueFilerEpoch              int32
-	Store                         VirtualFilerStore
-	MasterClient                  *wdclient.MasterClient
-	FileIdDeletionQueue           *util.UnboundedQueue
-	GrpcDialOption                grpc.DialOption
-	DirBucketsPath                string
-	Cipher                        bool
-	LocalMetaLogBuffer            *log_buffer.LogBuffer
-	metaLogCollection             string
-	metaLogReplication            string
+	UniqueFilerId       int32
+	UniqueFilerEpoch    int32
+	Store               VirtualFilerStore
+	MasterClient        *wdclient.MasterClient
+	FileIdDeletionQueue *util.UnboundedQueue
+	GrpcDialOption      grpc.DialOption
+	DirBucketsPath      string
+	Cipher              bool
+	LocalMetaLogBuffer  *log_buffer.LogBuffer
+	metaLogCollection   string
+	metaLogReplication  string
+	// Override where system metadata-log chunks are assigned, keeping the
+	// internal log out of the default collection; empty keeps today's
+	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
+	metaLogTargetCollection       string
+	metaLogTargetReplication      string
 	DefaultDiskType               string
 	MetaAggregator                *MetaAggregator
 	Signature                     int32
@@ -110,6 +115,19 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, nil, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
+
+	// Optional override for where the system metadata-log chunks land, so
+	// operators can keep internal log volumes out of the default collection.
+	// Unset (""), this changes nothing: meta logs keep following the filer
+	// default exactly as before.
+	v := util.GetViper()
+	v.SetDefault("filer.options.metaLog.collection", "")
+	v.SetDefault("filer.options.metaLog.replication", "")
+	f.metaLogTargetCollection = v.GetString("filer.options.metaLog.collection")
+	f.metaLogTargetReplication = v.GetString("filer.options.metaLog.replication")
+	if f.metaLogTargetCollection != "" {
+		glog.V(0).Infof("system metadata logs will be stored in collection %q", f.metaLogTargetCollection)
+	}
 
 	if newPlacementOverlay != nil {
 		f.placementOverlay = newPlacementOverlay(f)
