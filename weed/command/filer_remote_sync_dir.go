@@ -284,20 +284,18 @@ func processUpdateEvent(
 	}
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
-		// A renamed entry without local data holds its content only as a
-		// remote object: either the snapshot was already remote-only, or
-		// remote.uncache ran between the event and now. Remote-only reads
-		// resolve by the entry's own path, so the rename completes only once
-		// the destination object exists.
+		// A renamed entry that holds no local data now (the snapshot was
+		// remote-only, or remote.uncache ran since) has its content only as a
+		// remote object. Remote-only reads resolve by the entry's own path, so
+		// the rename completes only once the destination object holds it. The
+		// filer's current state decides, not the snapshot: an entry rewritten
+		// since the event has local data again, and the rewrite's bytes are
+		// what the destination must hold.
 		current, err := currentEntry(filerSource, message.NewParentPath, message.NewEntry.Name)
 		if err != nil {
 			return err
 		}
-		if isRemoteOnly(message.NewEntry) || isRemoteOnly(current) {
-			if current == nil {
-				glog.V(0).Infof("skip renamed remote-only entry %s: deleted since the event was logged", remote_storage.FormatLocation(dest))
-				return nil
-			}
+		if isRemoteOnly(current) {
 			return completeRemoteOnlyRename(filerClient, client, message.NewParentPath, current, oldDest, dest, storageClass)
 		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
@@ -344,15 +342,19 @@ func isRemoteOnly(entry *filer_pb.Entry) bool {
 }
 
 // completeRemoteOnlyRename finishes a rename whose content exists only on the
-// remote. When the destination object already exists (the rename ran before,
-// its offset was not persisted, and remote.uncache followed), the old key
-// goes. Otherwise the old object is copied to the destination, the entry is
-// stamped with the copy, and the old key goes. With neither object present
-// the content is lost: the event fails and holds the offset for recovery.
+// remote. When the destination object already holds what the entry's stamp
+// describes (the rename ran before, its offset was not persisted, and
+// remote.uncache followed), the old key goes. Otherwise the old object is
+// copied over the destination, the entry is stamped with the copy, and the
+// old key goes. With neither object present the content is lost: the event
+// fails and holds the offset for recovery.
 func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir string, current *filer_pb.Entry, oldDest, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
-	if _, err := client.StatFile(dest); err == nil {
-		glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
-		return deleteRemoteFile(client, oldDest)
+	if existing, err := client.StatFile(dest); err == nil {
+		if describes(current.RemoteEntry, existing) {
+			glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
+			return deleteRemoteFile(client, oldDest)
+		}
+		glog.V(0).Infof("%s holds an object the entry does not describe (size %d, want %d); replacing it from %s", remote_storage.FormatLocation(dest), existing.RemoteSize, current.RemoteEntry.RemoteSize, remote_storage.FormatLocation(oldDest))
 	} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
 		return err
 	}
@@ -377,6 +379,17 @@ func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_st
 		return err
 	}
 	return deleteRemoteFile(client, oldDest)
+}
+
+// describes reports whether the object a stat returned is the one the entry's
+// stamp describes: same size, and the same ETag when both sides carry one (a
+// copy written as one stream can legitimately carry a different ETag from a
+// multipart original).
+func describes(stamp, object *filer_pb.RemoteEntry) bool {
+	if stamp == nil || object == nil || stamp.RemoteSize != object.RemoteSize {
+		return false
+	}
+	return stamp.RemoteETag == "" || object.RemoteETag == "" || stamp.RemoteETag == object.RemoteETag
 }
 
 // openRemoteObject streams the object when the client can, and reads it whole

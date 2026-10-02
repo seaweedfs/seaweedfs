@@ -672,10 +672,11 @@ type recordingRemote struct {
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
 	r.writes = append(r.writes, loc)
 	// A chunked upload's reader walks volume servers the stub filer cannot
-	// name; only the copy scenarios (objects set) hand over a plain reader.
+	// name, so it is not read; the copy path hands over the old object's
+	// stream for a chunkless entry, which is drained.
 	var body []byte
-	if reader != nil && r.objects != nil {
-		body, _ = io.ReadAll(reader)
+	if rc, ok := reader.(io.ReadCloser); ok && len(entry.GetChunks()) == 0 && r.objects != nil {
+		body, _ = io.ReadAll(rc)
 	}
 	r.written = append(r.written, body)
 	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteETag: "etag", RemoteSize: int64(len(entry.Content)), RemoteMtime: entry.Attributes.GetMtime()}, nil
@@ -1163,6 +1164,49 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		}
 		if len(remote.writes) != 0 || len(remote.deletes) != 0 {
 			t.Errorf("writes = %+v deletes = %+v, want none", remote.writes, remote.deletes)
+		}
+	})
+
+	t.Run("destination holds an object of another size: replaced from the old key", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload"), "/b/dir/b.txt": []byte("something else")}}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if len(remote.writes) != 1 || string(remote.written[0]) != "payload" {
+			t.Fatalf("writes = %+v (%q), want the old object copied over the destination", remote.writes, remote.written)
+		}
+		if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
+			t.Errorf("deletes = %+v, want the old key deleted after the copy", remote.deletes)
+		}
+	})
+
+	t.Run("snapshot remote-only but rewritten since: the rewrite's bytes go up, nothing is copied", func(t *testing.T) {
+		remoteOnly := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7}
+		snapshot := &filer_pb.SubscribeMetadataResponse{
+			Directory: "/buckets/b/dir",
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      entryWith("a.txt", remoteOnly),
+				NewParentPath: "/buckets/b/dir",
+				NewEntry:      entryWith("b.txt", remoteOnly),
+			},
+		}
+		// rewritten with the inherited stamp still hiding it from shouldSendToRemote
+		current := entryWith("b.txt", remoteOnly, chunk("3,09", "e9"))
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload")}}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, snapshot); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+			t.Fatalf("writes = %+v, want one upload of the rewritten b.txt", remote.writes)
+		}
+		if string(remote.written[0]) == "payload" {
+			t.Error("the old object's bytes were copied over a rewritten entry")
+		}
+		if len(remote.deletes) != 1 {
+			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
 		}
 	})
 
