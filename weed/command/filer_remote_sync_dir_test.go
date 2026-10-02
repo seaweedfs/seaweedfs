@@ -1029,14 +1029,14 @@ func TestUpdateLocalEntrySkipsDeletedEntry(t *testing.T) {
 
 // TestSupersededRenameUploadsCurrentEntry: a rename A -> B queued behind a
 // rewrite of B. The rename's snapshot is superseded (B's chunks changed) and
-// the old key A is already deleted; the rewrite's own event can be skipped by
-// shouldSendToRemote on the inherited RemoteEntry, so the rename must leave B
-// holding what the filer holds now.
+// the old key A is already deleted. The rewrite's own event uploads B unless
+// shouldSendToRemote skips it on the inherited RemoteEntry (same-second
+// mtimes); only then does the rename upload what the filer holds now, so the
+// content goes up exactly once.
 func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 	const mountedDir = "/buckets"
 	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
 	eventEntry := entryWith("b.txt", nil, chunk("3,01", "e1"))
-	currentEntry := entryWith("b.txt", nil, chunk("3,02", "e2"))
 	resp := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/buckets/b/dir",
 		EventNotification: &filer_pb.EventNotification{
@@ -1045,22 +1045,42 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 			NewEntry:      eventEntry,
 		},
 	}
-	remote := &recordingRemote{}
-	filerClient := &stubFilerClient{entry: currentEntry}
-	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
 	wantDelete := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dir/a.txt"}
-	if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
-		t.Errorf("deletes = %+v, want the old key %s deleted", remote.deletes, remote_storage.FormatLocation(wantDelete))
-	}
 	wantWrite := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dir/b.txt"}
-	if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
-		t.Fatalf("writes = %+v, want the new key %s written once with the current entry", remote.writes, remote_storage.FormatLocation(wantWrite))
-	}
-	if filerClient.updates != 1 {
-		t.Errorf("stamped %d times, want 1: the current entry is stamped", filerClient.updates)
-	}
+
+	t.Run("rewrite hidden by the inherited stamp: upload once here", func(t *testing.T) {
+		// RemoteMtime inherited from a.txt equals the rewrite's mtime.
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024}, chunk("3,02", "e2"))
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
+			t.Errorf("deletes = %+v, want the old key %s deleted", remote.deletes, remote_storage.FormatLocation(wantDelete))
+		}
+		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
+			t.Fatalf("writes = %+v, want the new key %s written once with the current entry", remote.writes, remote_storage.FormatLocation(wantWrite))
+		}
+		if filerClient.updates != 1 {
+			t.Errorf("stamped %d times, want 1: the current entry is stamped", filerClient.updates)
+		}
+	})
+
+	t.Run("rewrite newer than the stamp: its own event uploads, not this one", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096000, RemoteSize: 1024}, chunk("3,02", "e2"))
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if len(remote.deletes) != 1 {
+			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none: the rewrite event behind this one uploads b.txt", remote.writes)
+		}
+	})
 
 	t.Run("deleted meanwhile: nothing to upload", func(t *testing.T) {
 		remote := &recordingRemote{}
@@ -1070,6 +1090,34 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		}
 		if len(remote.writes) != 0 {
 			t.Errorf("writes = %+v, want none: the delete event follows", remote.writes)
+		}
+	})
+
+	t.Run("uncached meanwhile: the old key is the only copy and is kept", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none: a.txt is the only copy of the content", remote.deletes)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none", remote.writes)
+		}
+	})
+
+	t.Run("uncached after the old key was deleted: the event fails and holds the offset", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: current}
+		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantWrite, "")
+		if err == nil || !strings.Contains(err.Error(), "only on the deleted remote object") {
+			t.Errorf("err = %v, want the lost-content failure", err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none", remote.writes)
 		}
 	})
 }

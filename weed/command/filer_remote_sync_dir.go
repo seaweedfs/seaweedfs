@@ -287,6 +287,16 @@ func processUpdateEvent(
 	}
 	glog.V(2).Infof("update: %+v", resp)
 	if !proto.Equal(oldDest, dest) {
+		// The snapshot had data; the filer may not any more (remote.uncache
+		// between the event and now). The old key is then the only copy.
+		remoteOnly, err := renamedEntryIsRemoteOnly(filerSource, message.NewParentPath, message.NewEntry.Name)
+		if err != nil {
+			return err
+		}
+		if remoteOnly {
+			glog.V(0).Infof("skip uploading renamed entry %s: its content is now only on the old remote object, which is kept", remote_storage.FormatLocation(dest))
+			return nil
+		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 		if err := client.DeleteFile(oldDest); err != nil {
 			if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
@@ -311,11 +321,29 @@ func processUpdateEvent(
 	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 }
 
-// uploadCurrentEntry uploads what the filer holds at dir/name now. A rename
-// whose snapshot is superseded has already deleted the old key, and the
-// rewrite that superseded it may be skipped by shouldSendToRemote: the entry
-// inherits the source's RemoteEntry, whose RemoteMtime can equal the rewrite's
-// mtime within the same second. Without this, neither key holds the file.
+// renamedEntryIsRemoteOnly reports whether the filer now holds the renamed
+// entry without local data while it still carries a RemoteEntry: the content
+// exists only as the old remote object. An entry that is gone is not remote
+// only; its delete follows in the log and needs no remote content.
+func renamedEntryIsRemoteOnly(filerSource filer_pb.FilerClient, dir, name string) (bool, error) {
+	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !filer.HasData(current) && current.IsInRemoteOnly(), nil
+}
+
+// uploadCurrentEntry uploads what the filer holds at dir/name now, when the
+// event that superseded this rename will not. A rename whose snapshot is
+// superseded has already deleted the old key; the rewrite behind it in the
+// log uploads the destination itself unless shouldSendToRemote skips it on
+// the inherited RemoteEntry, whose RemoteMtime can equal the rewrite's mtime
+// within the same second. Only that case uploads here, so the content goes
+// up once. A remote-only entry at this point has lost its only copy with the
+// old key; that is an error, so the offset holds and the event is retried.
 func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
 	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
@@ -324,7 +352,14 @@ func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.F
 	if err != nil {
 		return err
 	}
-	if current.IsDirectory || !filer.HasData(current) {
+	if current.IsDirectory {
+		return nil
+	}
+	if !filer.HasData(current) && current.IsInRemoteOnly() {
+		return fmt.Errorf("%s: content is only on the deleted remote object %s", util.NewFullPath(dir, name), remote_storage.FormatLocation(dest))
+	}
+	if shouldSendToRemote(current) {
+		glog.V(0).Infof("leaving %s to the rewrite that superseded the rename", remote_storage.FormatLocation(dest))
 		return nil
 	}
 	glog.V(0).Infof("uploading the current %s in place of the superseded rename", remote_storage.FormatLocation(dest))
