@@ -300,12 +300,43 @@ func processUpdateEvent(
 	remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, remoteWriteEntry(message.NewEntry, storageClass), dest)
 	if errors.Is(writeErr, errSuperseded) {
 		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+		if !proto.Equal(oldDest, dest) {
+			return uploadCurrentEntry(filerClient, filerSource, client, message.NewParentPath, message.NewEntry.Name, dest, storageClass)
+		}
 		return nil
 	}
 	if writeErr != nil {
 		return writeErr
 	}
 	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
+}
+
+// uploadCurrentEntry uploads what the filer holds at dir/name now. A rename
+// whose snapshot is superseded has already deleted the old key, and the
+// rewrite that superseded it may be skipped by shouldSendToRemote: the entry
+// inherits the source's RemoteEntry, whose RemoteMtime can equal the rewrite's
+// mtime within the same second. Without this, neither key holds the file.
+func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
+	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current.IsDirectory || !filer.HasData(current) {
+		return nil
+	}
+	glog.V(0).Infof("uploading the current %s in place of the superseded rename", remote_storage.FormatLocation(dest))
+	remoteEntry, writeErr := retriedWriteFile(client, filerSource, dir, remoteWriteEntry(current, storageClass), dest)
+	if errors.Is(writeErr, errSuperseded) {
+		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
+		return nil
+	}
+	if writeErr != nil {
+		return writeErr
+	}
+	return updateLocalEntry(filerClient, dir, current, remoteEntry)
 }
 
 // isSuperseded reports whether the filer has moved past the entry an event
@@ -494,9 +525,10 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 
 // isEntryGone reports an UpdateEntry the filer refused because the entry no
 // longer exists: a delete that followed the event superseded the stamp, and
-// the delete's own event follows in the log. The filer answers with a plain
-// error carrying filer_pb.ErrNotFound's text (gRPC code Unknown), so the text
-// is matched the way filer_pb's lookups match it.
+// the delete's own event follows in the log. A filer with the typed answer
+// returns codes.NotFound; an older filer returns a plain error of the form
+// "not found <path>: <cause>", so the cause (the message's tail, never the
+// path) is matched against filer_pb.ErrNotFound's text.
 func isEntryGone(err error) bool {
 	if err == nil {
 		return false
@@ -504,7 +536,7 @@ func isEntryGone(err error) bool {
 	if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 		return true
 	}
-	return strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
+	return strings.HasSuffix(strings.TrimSpace(err.Error()), filer_pb.ErrNotFound.Error())
 }
 
 // ifEntryEqual builds the precondition that the stored entry still equals the
