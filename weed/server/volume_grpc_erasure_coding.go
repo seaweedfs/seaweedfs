@@ -1236,6 +1236,13 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		0,
 		vs.compactionBytePerSecond,
 	); err != nil {
+		// Benign only when the swap never started or was settled: a surviving
+		// .cpc marker means the commit was decided but the renames could not
+		// be reconciled, so .dat/.idx may be a mismatched pair — fail the
+		// decode and let the caller keep the shards.
+		if util.FileExists(dataBaseFileName + ".cpc") {
+			return nil, fmt.Errorf("CompactVolumeFiles %s: %w", dataBaseFileName, err)
+		}
 		glog.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
 	}
 

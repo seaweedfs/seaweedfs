@@ -6793,6 +6793,20 @@ impl EcDecodeJob {
             vid,
             needle_map_kind,
         ) {
+            // Benign only when the swap never started or was settled: a
+            // surviving .cpc marker means the commit was decided but the
+            // renames could not be reconciled, so .dat/.idx may be a
+            // mismatched pair — fail the decode and let the caller keep
+            // the shards rather than mount a corrupt volume.
+            let marker = format!(
+                "{}.cpc",
+                crate::storage::volume::volume_file_name(&dat_dir, &collection, vid)
+            );
+            if std::path::Path::new(&marker).exists() {
+                return Err(Status::internal(format!(
+                    "compact decoded volume {vid}: {e}"
+                )));
+            }
             tracing::error!(volume_id = vid.0, error = %e, "compact decoded volume");
         }
         Ok(())
