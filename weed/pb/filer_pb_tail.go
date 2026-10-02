@@ -44,8 +44,10 @@ type MetadataFollowOption struct {
 	// a freshness signal only and does not advance StartTsNs, so the resume
 	// checkpoint stays on the last real event.
 	OnIdleHeartbeat func(tsNs int64)
-	// GetResumeTsNs, when non-nil, returns the timestamp to resume from on reconnect.
-	// When nil, StartTsNs is used directly.
+	// GetResumeTsNs, when non-nil, supplies the reconnect position instead of
+	// StartTsNs. It is read on every subscribe, so a callback can return the
+	// durably processed watermark while StartTsNs keeps tracking positions the
+	// stream has merely seen.
 	GetResumeTsNs func() int64
 }
 
@@ -76,9 +78,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		defer cancel()
 		sinceNs := option.StartTsNs
 		if option.GetResumeTsNs != nil {
-			if resumeTs := option.GetResumeTsNs(); resumeTs > 0 {
-				sinceNs = resumeTs
-			}
+			sinceNs = option.GetResumeTsNs()
 		}
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   option.ClientName,

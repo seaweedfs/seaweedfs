@@ -3,6 +3,8 @@ package pb
 import (
 	"context"
 	"io"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -288,4 +290,51 @@ func (c *recordingFilerClient) SubscribeMetadata(ctx context.Context, in *filer_
 		c.onSubscribe(in)
 	}
 	return c.stream, nil
+}
+
+// Each subscribe call re-reads the callback, so a reconnect after the consumer
+// made progress resumes from the newer watermark.
+func TestFilerSyncReconnectReadsWatermarkEachSubscribe(t *testing.T) {
+	var watermark atomic.Int64
+	watermark.Store(100)
+	var sinceNs []int64
+	var mu sync.Mutex
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{Directory: "/watched", TsNs: 300, EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file"},
+			}},
+		},
+	}
+	client := &recordingFilerClient{
+		onSubscribe: func(req *filer_pb.SubscribeMetadataRequest) {
+			mu.Lock()
+			sinceNs = append(sinceNs, req.SinceNs)
+			mu.Unlock()
+		},
+		stream: stream,
+	}
+	option := &MetadataFollowOption{
+		ClientName: "syncFrom_A_To_B",
+		StartTsNs:  100,
+		GetResumeTsNs: func() int64 {
+			return watermark.Load()
+		},
+	}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		watermark.Store(resp.TsNs)
+		return nil
+	})
+	if err := fn(client); err != nil {
+		t.Fatalf("first subscribe: %v", err)
+	}
+	client.stream = &fakeSubscribeStream{}
+	if err := fn(client); err != nil {
+		t.Fatalf("resubscribe: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sinceNs) != 2 || sinceNs[0] != 100 || sinceNs[1] != 300 {
+		t.Fatalf("expected subscribes at 100 then 300, got %v", sinceNs)
+	}
 }
