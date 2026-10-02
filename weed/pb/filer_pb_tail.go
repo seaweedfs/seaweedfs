@@ -140,7 +140,11 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			}
 			if err := processEventFn(resp); err != nil {
 				handleErr(resp, err)
-				return
+				// RetryForeverOnError only returns once the event was handled;
+				// other modes leave it failed and the cursor stays behind it.
+				if option.EventErrorType != RetryForeverOnError {
+					return
+				}
 			}
 			if option.GetResumeTsNs == nil {
 				option.StartTsNs = resp.TsNs

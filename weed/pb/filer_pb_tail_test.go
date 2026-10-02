@@ -292,6 +292,37 @@ func (c *recordingFilerClient) SubscribeMetadata(ctx context.Context, in *filer_
 	return c.stream, nil
 }
 
+// RetryForeverOnError resolves a failure inside handleErr, so the cursor must
+// still move past the recovered event instead of replaying it on reconnect.
+func TestFilerSyncRecoveredEventAdvancesCursor(t *testing.T) {
+	var calls int
+	processFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		calls++
+		if calls == 1 {
+			return io.ErrUnexpectedEOF
+		}
+		return nil
+	}
+	option := &MetadataFollowOption{
+		ClientName:     "syncFrom_A_To_B",
+		StartTsNs:      100,
+		EventErrorType: RetryForeverOnError,
+	}
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{Directory: "/watched", TsNs: 300, EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file"},
+			}},
+		},
+	}
+	if err := makeSubscribeMetadataFunc(option, processFn)(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if option.StartTsNs != 300 {
+		t.Fatalf("expected StartTsNs 300 after the retry succeeded, got %d", option.StartTsNs)
+	}
+}
+
 // Each subscribe call re-reads the callback, so a reconnect after the consumer
 // made progress resumes from the newer watermark.
 func TestFilerSyncReconnectReadsWatermarkEachSubscribe(t *testing.T) {
