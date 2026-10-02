@@ -1162,6 +1162,11 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, err
 	}
 
+	// Runtime deletes serialize on the volume's journal lock; holding it from
+	// the journal-consuming index write through the offline compaction keeps a
+	// committed delete from slipping past the rebuilt .idx.
+	defer v.LockDeletionJournal()()
+
 	// write .idx file from .ecx and .ecj files
 	if err := erasure_coding.WriteIdxFileFromEcIndex(indexBaseFileName); err != nil {
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)

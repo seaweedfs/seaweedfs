@@ -100,6 +100,15 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 	return nil
 }
 
+// LockDeletionJournal serializes the caller against runtime .ecj appends
+// (DeleteNeedleFromEcx) until the returned func is called. Decode holds it
+// while consuming the journal into the rebuilt index so a committed delete
+// cannot slip past the publish.
+func (ev *EcVolume) LockDeletionJournal() func() {
+	ev.ecjFileAccessLock.Lock()
+	return ev.ecjFileAccessLock.Unlock
+}
+
 func RebuildEcxFile(baseFileName string) error {
 
 	if !util.FileExists(baseFileName + ".ecj") {

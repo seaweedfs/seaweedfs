@@ -6594,14 +6594,14 @@ impl EcDecodeJob {
 
         // Deletes journaled while the .dat was written. Journal appends hold
         // the store write lock through their sync-or-truncate, so a read lock
-        // held across catch_up guarantees every record read is committed —
-        // a rolled-back delete cannot leave a tombstone in the index.
-        {
-            let _guard = state.store.read().unwrap();
-            deleted
-                .catch_up()
-                .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
-        }
+        // held from catch_up through the compaction commit guarantees every
+        // record read is committed — a rolled-back delete cannot leave a
+        // tombstone in the index — and no new journal record can be missed by
+        // the rebuilt .idx.
+        let _guard = state.store.read().unwrap();
+        deleted
+            .catch_up()
+            .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
 
         // Write .idx from the .ecx wherever it lives, beside the .dat where
         // the mount looks first (Go moves it there after the rebuild).
