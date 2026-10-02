@@ -17,6 +17,7 @@ use crate::pb::master_pb;
 use crate::pb::volume_server_pb;
 use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
 use crate::storage::erasure_coding::ec_shard::{DATA_SHARDS_COUNT, ShardId, shard_id_try_from};
+use crate::storage::erasure_coding::ecj_merge::EcjIdDecoder;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 use crate::storage::volume::VolumeSpec;
@@ -3239,7 +3240,10 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        // Copy .ecj file if requested
+        // Copy .ecj file if requested. The journal is a *set* of ids: merge
+        // the source's into the local one as a union, never append it whole,
+        // or every balance round trip doubles it. A source without one
+        // is not an error.
         if req.copy_ecj_file {
             let copy_req = volume_server_pb::CopyFileRequest {
                 volume_id: req.volume_id,
@@ -3261,19 +3265,26 @@ impl VolumeServer for VolumeGrpcService {
                     ))
                 })?
                 .into_inner();
-
-            let file_path = {
-                let base =
-                    crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid);
-                format!("{}.ecj", base)
-            };
-            let file = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            drain_copy_stream_to_file(&mut stream, file, &file_path, ".ecj").await?;
+            let (ids, found) = receive_ecj_ids(&mut stream).await.map_err(|e| {
+                Status::internal(format!(
+                    "VolumeEcShardsCopy volume {} copy .ecj: {}",
+                    vid, e
+                ))
+            })?;
+            if found {
+                let ecj_path = format!(
+                    "{}.ecj",
+                    crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid)
+                );
+                merge_ecj_ids(&self.state, vid, dest_dir.clone(), ecj_path, ids)
+                    .await
+                    .map_err(|e| {
+                        Status::internal(format!(
+                            "VolumeEcShardsCopy volume {} merge .ecj: {}",
+                            vid, e
+                        ))
+                    })?;
+            }
         }
 
         // Copy .vif file if requested
@@ -5958,6 +5969,50 @@ async fn drain_copy_stream_to_file(
             Err(e)
         }
     }
+}
+
+/// Decode a CopyFile stream of an `.ecj` into its distinct ids without staging
+/// it on disk. `found` is false only when the source has no journal, which it
+/// signals with neither a modified time nor any bytes; an empty journal still
+/// carries its modified time.
+pub(crate) async fn receive_ecj_ids(
+    stream: &mut tonic::Streaming<volume_server_pb::CopyFileResponse>,
+) -> std::io::Result<(std::collections::HashSet<NeedleId>, bool)> {
+    let mut decoder = EcjIdDecoder::default();
+    let mut found = false;
+    while let Some(chunk) = stream
+        .message()
+        .await
+        .map_err(|e| std::io::Error::other(format!("recv .ecj: {}", e)))?
+    {
+        found |= chunk.modified_ts_ns != 0 || !chunk.file_content.is_empty();
+        decoder.push(&chunk.file_content);
+    }
+    Ok((decoder.into_ids(), found))
+}
+
+/// Merge received `.ecj` ids into vid's local journal at `ecj_path` on the
+/// disk whose data directory is `data_dir`, off the async runtime (the merge
+/// reads, appends and fsyncs). Shared by shard copy and index recovery.
+pub(crate) async fn merge_ecj_ids(
+    state: &std::sync::Arc<super::volume_server::VolumeServerState>,
+    vid: VolumeId,
+    data_dir: String,
+    ecj_path: String,
+    ids: std::collections::HashSet<NeedleId>,
+) -> std::io::Result<usize> {
+    let state = std::sync::Arc::clone(state);
+    tokio::task::spawn_blocking(move || {
+        crate::storage::store_ec_journal::merge_ec_journal(
+            &state.store,
+            vid,
+            &data_dir,
+            &ecj_path,
+            &ids,
+        )
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("join .ecj merge: {}", e)))?
 }
 
 /// One file of a volume copy: what to ask the source for and where it lands.

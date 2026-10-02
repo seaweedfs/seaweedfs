@@ -74,7 +74,21 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)
+	if err := ev.appendJournalLocked(b); err != nil {
+		return err
+	}
 
+	// Publish into the in-memory set only after the journal is durable.
+	ev.markNeedleDeletedInMemory(needleId)
+
+	return nil
+}
+
+// appendJournalLocked appends whole records to .ecj and syncs them. A partial
+// write is truncated back to the known-good size so the on-disk journal and
+// deletedNeedles cannot drift. Callers hold ecjFileAccessLock and have checked
+// that ecjFile is open.
+func (ev *EcVolume) appendJournalLocked(b []byte) error {
 	prevEcjSize := ev.ecjFileSize
 	if _, seekErr := ev.ecjFile.Seek(0, io.SeekEnd); seekErr != nil {
 		return fmt.Errorf("seek ecj: %w", seekErr)
@@ -93,10 +107,6 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 		return fmt.Errorf("sync ecj: %w", syncErr)
 	}
 	ev.ecjFileSize += int64(n)
-
-	// Publish into the in-memory set only after the journal is durable.
-	ev.markNeedleDeletedInMemory(needleId)
-
 	return nil
 }
 
