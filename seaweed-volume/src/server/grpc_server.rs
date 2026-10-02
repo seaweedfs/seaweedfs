@@ -1590,27 +1590,29 @@ impl VolumeServer for VolumeGrpcService {
 
         // A decode in flight may be mid-compaction on this volume's
         // .dat/.idx; mounting across the .cpd/.cpx swap could load a mixed
-        // pair. Hold the set lock through the mount so a decode cannot
-        // claim the vid in between — decode never takes this lock while
-        // holding the store lock, so there is no ordering cycle.
+        // pair. Claim the vid for the mount rather than hold the set lock
+        // through it — the same exclusion for this vid, while unrelated
+        // mounts and decode claims stay unblocked.
         // Retryable — the caller mounts after the decode RPC returns.
-        let inflight = self
+        if !self
             .state
             .ec_decodes_in_flight
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if inflight.contains(&vid) {
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(vid)
+        {
             return Err(Status::unavailable(format!(
                 "volume {} is being decoded",
                 req.volume_id
             )));
         }
+        let _claim = EcDecodeClaim(&self.state, vid);
 
         let mut store = self.state.store.write().unwrap();
         store
             .mount_volume_by_id(vid, req.collection.as_deref())
             .map_err(|e| Status::internal(e.to_string()))?;
-        drop(inflight);
+        drop(store);
         self.state.volume_state_notify.notify_one();
 
         Ok(Response::new(volume_server_pb::VolumeMountResponse {}))
@@ -3859,20 +3861,23 @@ impl VolumeServer for VolumeGrpcService {
         // is no in-place decode to run.
         if req.from_staged {
             // An in-place decode in flight for this vid is rebuilding the
-            // same .dat/.idx the staged files would overwrite. Hold the
-            // set lock through the adoption below so a decode cannot claim
-            // the vid mid-rename.
-            let inflight = self
+            // same .dat/.idx the staged files would overwrite. Claim the
+            // vid for the adoption rather than hold the set lock through
+            // it — the same exclusion for this vid, while unrelated mounts
+            // and decode claims stay unblocked.
+            if !self
                 .state
                 .ec_decodes_in_flight
                 .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if inflight.contains(&vid) {
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(vid)
+            {
                 return Err(Status::unavailable(format!(
                     "ec volume {} is already being decoded",
                     req.volume_id
                 )));
             }
+            let _claim = EcDecodeClaim(&self.state, vid);
             let want = DiskType::from_string(&req.disk_type);
             let base = {
                 let store = self.state.store.read().unwrap();
@@ -12380,6 +12385,47 @@ mod tests {
             ecj.len(),
             NEEDLE_ID_SIZE,
             "the delayed delete must land on the surviving journal"
+        );
+    }
+
+    /// A normal mount must exclude an in-flight decode for the same volume —
+    /// it could observe a half-swapped .dat/.idx — without holding the set
+    /// lock across the disk work, and the claim must not outlive the call.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_volume_mount_claims_the_vid_against_decodes() {
+        let (service, _tmp) = make_local_service_with_volume("mount_claim", None);
+        let mount_req = |volume_id| {
+            Request::new(volume_server_pb::VolumeMountRequest {
+                volume_id,
+                collection: Some(String::new()),
+            })
+        };
+
+        service
+            .state
+            .ec_decodes_in_flight
+            .lock()
+            .unwrap()
+            .insert(VolumeId(1));
+        let err = service.volume_mount(mount_req(1)).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unavailable);
+        service
+            .state
+            .ec_decodes_in_flight
+            .lock()
+            .unwrap()
+            .remove(&VolumeId(1));
+
+        // A mount that fails on disk still releases the claim it took.
+        let _ = service.volume_mount(mount_req(2)).await;
+        assert!(
+            service
+                .state
+                .ec_decodes_in_flight
+                .lock()
+                .unwrap()
+                .is_empty(),
+            "the mount claim must not outlive the call"
         );
     }
 
