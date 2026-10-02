@@ -126,8 +126,34 @@ impl EcjDeletions {
     }
 
     /// Adds the ids appended to each journal since the last read. A journal
-    /// that shrank is read again from the start.
+    /// that shrank is read again from the start — and the whole set rebuilt,
+    /// since ids already folded in from the truncated tail may have been a
+    /// rolled-back append. Non-regular journals (the FIFOs the tests stand
+    /// in for a blocking disk) stat empty and cannot be rolled back, so they
+    /// never count as shrunk.
     pub fn catch_up(&mut self) -> io::Result<()> {
+        let mut shrank = false;
+        for (path, read_to) in &self.journals {
+            if *read_to == 0 {
+                continue;
+            }
+            match std::fs::metadata(path) {
+                Ok(m) => {
+                    if m.is_file() && m.len() < *read_to {
+                        shrank = true;
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if shrank {
+            self.ids.clear();
+            for (_, read_to) in &mut self.journals {
+                *read_to = 0;
+            }
+        }
         for (path, read_to) in &mut self.journals {
             let file = match File::open(&*path) {
                 Ok(file) => file,
@@ -142,6 +168,19 @@ impl EcjDeletions {
             *read_to = len - len % NEEDLE_ID_SIZE as u64;
         }
         Ok(())
+    }
+
+    /// Clears the set and re-reads every journal from the start. Run under
+    /// the caller's store read lock (no append in flight): the result is
+    /// then exactly the committed content — an earlier unlocked read may
+    /// have folded in bytes a rolled-back append later truncated, or missed
+    /// a record re-appended to the very offset a rollback freed.
+    pub fn rescan(&mut self) -> io::Result<()> {
+        self.ids.clear();
+        for (_, read_to) in &mut self.journals {
+            *read_to = 0;
+        }
+        self.catch_up()
     }
 }
 
@@ -905,8 +944,11 @@ mod tests {
         deletions.catch_up().unwrap();
         assert_eq!(ids(&deletions), [1, 2, 3]);
 
+        // A shrunk journal is rebuilt from its surviving content: ids folded
+        // in from the truncated tail may have been rolled back and must not
+        // linger as phantom tombstones.
         std::fs::write(&ecj_path, entry(9)).unwrap();
         deletions.catch_up().unwrap();
-        assert_eq!(ids(&deletions), [1, 2, 3, 9]);
+        assert_eq!(ids(&deletions), [9]);
     }
 }

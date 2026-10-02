@@ -419,6 +419,9 @@ async fn delete_on_ec_shard_holders(
 
     let mut last_err = None;
     if local_shards.contains(&shard_id) {
+        // A decode in its publishing tail must not miss this delete: wait
+        // for .idx publication + compaction to finish before journaling.
+        crate::server::grpc_server::wait_ec_decode_tail(state, target.vid).await;
         match journal_delete_local(state, target.vid, target.needle_id) {
             Ok(()) => return Ok(true),
             // Nothing was committed — the volume unmounted or remounted

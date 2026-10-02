@@ -880,6 +880,48 @@ impl Drop for EcDecodeClaim<'_> {
     }
 }
 
+/// Keeps `vid` in `ec_decode_tail` while the decode publishes .idx and
+/// compacts; local .ecj appenders wait that span out rather than commit a
+/// delete the rebuilt index would miss. Dropping — including on panic —
+/// lifts the marker and wakes the waiters.
+struct EcDecodeTailGuard<'a>(&'a VolumeServerState, VolumeId);
+
+impl Drop for EcDecodeTailGuard<'_> {
+    fn drop(&mut self) {
+        self.0
+            .ec_decode_tail
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.1);
+        self.0.ec_decode_tail_notify.notify_waiters();
+    }
+}
+
+/// Blocks a local .ecj append until `vid` leaves `ec_decode_tail`. Mirrors
+/// Go's `EcVolume.ecjFileAccessLock`: decode holds it across journal
+/// catch-up, .idx publication and compaction, so no committed delete falls
+/// between the last catch_up and the .cpd/.cpx swap. Async wait — the
+/// caller holds no lock while sleeping, so decode can never be deadlocked
+/// by the append it is delaying.
+pub(crate) async fn wait_ec_decode_tail(state: &Arc<VolumeServerState>, vid: VolumeId) {
+    loop {
+        let notified = state.ec_decode_tail_notify.notified();
+        tokio::pin!(notified);
+        // Register before testing the set so a tail that ends between the
+        // check and the await still wakes us.
+        notified.as_mut().enable();
+        let in_tail = state
+            .ec_decode_tail
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&vid);
+        if !in_tail {
+            return;
+        }
+        notified.await;
+    }
+}
+
 #[tonic::async_trait]
 impl VolumeServer for VolumeGrpcService {
     // ---- Core volume operations ----
@@ -1534,10 +1576,29 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
+        // A decode in flight may be mid-compaction on this volume's
+        // .dat/.idx; mounting across the .cpd/.cpx swap could load a mixed
+        // pair. Hold the set lock through the mount so a decode cannot
+        // claim the vid in between — decode never takes this lock while
+        // holding the store lock, so there is no ordering cycle.
+        // Retryable — the caller mounts after the decode RPC returns.
+        let inflight = self
+            .state
+            .ec_decodes_in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if inflight.contains(&vid) {
+            return Err(Status::unavailable(format!(
+                "volume {} is being decoded",
+                req.volume_id
+            )));
+        }
+
         let mut store = self.state.store.write().unwrap();
         store
             .mount_volume_by_id(vid, req.collection.as_deref())
             .map_err(|e| Status::internal(e.to_string()))?;
+        drop(inflight);
         self.state.volume_state_notify.notify_one();
 
         Ok(Response::new(volume_server_pb::VolumeMountResponse {}))
@@ -3727,6 +3788,11 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let needle_id = NeedleId(req.file_key);
 
+        // If this volume is mid-decode publishing tail, wait it out: a delete
+        // committed between the last journal catch_up and the compaction swap
+        // would be absent from the rebuilt .idx.
+        wait_ec_decode_tail(&self.state, vid).await;
+
         // Go's handler locates the needle first: absent fails the RPC so the
         // caller moves to the next holder; an existing tombstone is a no-op.
         let mut store = self.state.store.write().unwrap();
@@ -3771,6 +3837,21 @@ impl VolumeServer for VolumeGrpcService {
         // marker, then mount. This server holds no EC shards for the vid, so there
         // is no in-place decode to run.
         if req.from_staged {
+            // An in-place decode in flight for this vid is rebuilding the
+            // same .dat/.idx the staged files would overwrite. Hold the
+            // set lock through the adoption below so a decode cannot claim
+            // the vid mid-rename.
+            let inflight = self
+                .state
+                .ec_decodes_in_flight
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if inflight.contains(&vid) {
+                return Err(Status::unavailable(format!(
+                    "ec volume {} is already being decoded",
+                    req.volume_id
+                )));
+            }
             let want = DiskType::from_string(&req.disk_type);
             let base = {
                 let store = self.state.store.read().unwrap();
@@ -6549,8 +6630,19 @@ impl EcDecodeJob {
 
         // Deletions journaled beside the .ecx, or collected by
         // VolumeEcShardsCopy into the idx dir, count as deleted throughout.
+        // The first pass runs unlocked — a slow journal must not stall every
+        // store writer — then rescan runs with appends quiesced by the read
+        // lock: it drops whatever the unlocked pass read and re-reads the
+        // committed content, so a rolled-back append cannot survive as a
+        // phantom tombstone.
         let mut deleted = ec_decoder::EcjDeletions::read(&[&ecx_dir, &idx_dir], &collection, vid)
             .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+        {
+            let _guard = state.store.read().unwrap();
+            deleted
+                .rescan()
+                .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+        }
         let has_live = ec_decoder::has_live_needles(&ecx_dir, &collection, vid, &deleted.ids)
             .map_err(|e| Status::internal(format!("HasLiveNeedles: {}", e)))?;
         if !has_live {
@@ -6592,28 +6684,46 @@ impl EcDecodeJob {
         ec_decoder::verify_decoded_dat_file(&dat_dir, &collection, vid, dat_file_size)
             .map_err(|e| Status::internal(format!("VerifyDecodedDatFile: {}", e)))?;
 
+        // Publishing phase: local .ecj appends for this vid wait on
+        // ec_decode_tail_notify until the .idx is written and compaction
+        // done, so a delete committed mid-tail can never slip between
+        // catch_up and the .cpd/.cpx swap. Unlike a store lock held across
+        // all of it, this stalls writers for this volume only — an append
+        // that would commit now instead commits right after the tail, on a
+        // .ecj that survives like any post-decode journal record (Go holds
+        // EcVolume.ecjFileAccessLock over the same span).
+        state
+            .ec_decode_tail
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(vid);
+        let _tail = EcDecodeTailGuard(state, vid);
+
         // Deletes journaled while the .dat was written. Journal appends hold
         // the store write lock through their sync-or-truncate, so a read lock
-        // held from catch_up through the compaction commit guarantees every
-        // record read is committed — a rolled-back delete cannot leave a
-        // tombstone in the index — and no new journal record can be missed by
-        // the rebuilt .idx.
-        let _guard = state.store.read().unwrap();
-        deleted
-            .catch_up()
-            .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
+        // held from catch_up through the .idx publish guarantees every record
+        // read is committed — a rolled-back delete cannot leave a tombstone
+        // in the index — and no new journal record can be missed by the
+        // rebuilt .idx.
+        {
+            let _guard = state.store.read().unwrap();
+            deleted
+                .catch_up()
+                .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
 
-        // Write .idx from the .ecx wherever it lives, beside the .dat where
-        // the mount looks first (Go moves it there after the rebuild).
-        ec_decoder::write_idx_file_from_ec_index_with_dirs(
-            &ecx_dir,
-            &dat_dir,
-            &collection,
-            vid,
-            &deleted.ids,
-            dat_file_size,
-        )
-        .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
+            // Write .idx from the .ecx wherever it lives, beside the .dat
+            // where the mount looks first (Go moves it there after the
+            // rebuild).
+            ec_decoder::write_idx_file_from_ec_index_with_dirs(
+                &ecx_dir,
+                &dat_dir,
+                &collection,
+                vid,
+                &deleted.ids,
+                dat_file_size,
+            )
+            .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
+        }
 
         // The EC generation is gone; a stale .ecsum must not pass for the
         // protection of a later re-encode.
@@ -6628,7 +6738,12 @@ impl EcDecodeJob {
             }
         }
 
-        // Drop the deleted needles. A failure is only logged, as in Go: the
+        // Drop the deleted needles — without the store lock, which must not
+        // be held through this rewrite: on a slow or large volume it would
+        // stall every store writer (journal appends, mounts) for unrelated
+        // volumes. This volume's own appends still wait on the tail set, and
+        // VolumeMount is held off by the decode claim, so the .cpd/.cpx swap
+        // cannot be raced. A failure is only logged, as in Go: the
         // uncompacted .dat/.idx already make a complete volume.
         if let Err(e) = crate::storage::store::Store::compact_volume_files(
             &dat_dir,
@@ -7119,6 +7234,8 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
 
         (
@@ -7231,6 +7348,8 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
 
         (VolumeGrpcService { state }, tmp)
@@ -9239,6 +9358,8 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
 
         (VolumeGrpcService { state }, tmp)
@@ -10887,6 +11008,8 @@ mod tests {
             cli_white_list: vec![],
             state_file_path: String::new(),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail_notify: tokio::sync::Notify::new(),
         });
 
         VolumeGrpcService { state }

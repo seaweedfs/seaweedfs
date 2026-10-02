@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -268,7 +268,23 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	if !util.FileExists(indexBaseFileName+".ecx") && rebuildLocation.IdxDirectory != rebuildLocation.Directory {
 		indexBaseFileName = path.Join(rebuildLocation.Directory, baseFileName)
 	}
-	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+	if ev, found := rebuildLocation.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+		// A mounted volume appends runtime deletes through ev.ecjFile, so the
+		// fold runs under its journal lock on the journal's own base, and the
+		// handle is repointed: otherwise RebuildEcxFile's unlink strands later
+		// appends on the detached inode.
+		indexBaseFileName = ev.EcIndexBaseFileName()
+		unlockJournal := ev.LockDeletionJournal()
+		err := erasure_coding.RebuildEcxFile(indexBaseFileName)
+		if err == nil {
+			err = ev.ReopenDeletionJournal()
+		}
+		unlockJournal()
+		if err != nil {
+			recordEcRebuild("failure", time.Since(start))
+			return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+		}
+	} else if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
 		recordEcRebuild("failure", time.Since(start))
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
@@ -1115,18 +1131,50 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		}
 	}
 
-	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
-	if !util.FileExists(indexBaseFileName + ".ecx") {
-		indexBaseFileName = dataBaseFileName
+	dataBaseFileName := v.DataBaseFileName()
+	// The fold and the index write must work on the same .ecj that runtime
+	// deletes append to through ecjFile — the volume's resolved index dir,
+	// which can differ from IndexBaseFileName when an .ecx copy exists in
+	// both the data and index directories.
+	indexBaseFileName := v.EcIndexBaseFileName()
+
+	// Resolve the offline-compaction location before taking the journal
+	// lock: FindEcVolume takes the ec-volume map lock, and acquiring it inside
+	// the journal lock inverts DestroyEcVolume's map->journal order — a decode
+	// holding the journal lock while waiting on the map deadlocks a destroy
+	// holding the map lock while waiting on the journal.
+	var volumeLocation *storage.DiskLocation
+	for _, location := range vs.store.Locations {
+		if candidate, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found && candidate == v {
+			volumeLocation = location
+			break
+		}
+	}
+	if volumeLocation == nil {
+		return nil, fmt.Errorf("ec volume %d location not found for offline compaction", req.VolumeId)
 	}
 
 	// Merge .ecj deletions into .ecx so that HasLiveNeedles and FindDatFileSize
 	// see the full set of deleted needles. Without this, needles deleted after the
 	// last ecx rebuild would still appear live, causing the decoded .dat to include
 	// data that should be skipped and HasLiveNeedles to return a false positive.
+	//
+	// The journal lock is held across the fold: RebuildEcxFile unlinks .ecj,
+	// and a delete committed between its read and the unlink would land on the
+	// detached inode that ecjFile keeps open — synced, successful, and
+	// invisible to every path-based reader. ReopenDeletionJournal then points
+	// the handle back at a fresh journal, so deletes committed during the .dat
+	// rebuild stay durable and reach the index write below.
+	unlockJournal := v.LockDeletionJournal()
 	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+		unlockJournal()
 		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
+	if err := v.ReopenDeletionJournal(); err != nil {
+		unlockJournal()
+		return nil, fmt.Errorf("reopen deletion journal %s: %v", indexBaseFileName, err)
+	}
+	unlockJournal()
 
 	// If the EC index contains no live entries, decoding should be a no-op:
 	// just allow the caller to purge EC shards and do not generate an empty normal volume.
@@ -1177,17 +1225,6 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	removeBitrotSidecars(dataBaseFileName)
 	if indexBaseFileName != dataBaseFileName {
 		removeBitrotSidecars(indexBaseFileName)
-	}
-
-	var volumeLocation *storage.DiskLocation
-	for _, location := range vs.store.Locations {
-		if candidate, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found && candidate == v {
-			volumeLocation = location
-			break
-		}
-	}
-	if volumeLocation == nil {
-		return nil, fmt.Errorf("ec volume %d location not found for offline compaction", req.VolumeId)
 	}
 
 	if err := vs.store.CompactVolumeFiles(

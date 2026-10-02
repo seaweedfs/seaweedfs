@@ -535,6 +535,15 @@ func (ev *EcVolume) IndexBaseFileName() string {
 	return EcShardFileName(ev.Collection, ev.dirIdx, int(ev.VolumeId))
 }
 
+// EcIndexBaseFileName returns the base path of the volume's live .ecx/.ecj
+// pair — where NewEcVolume actually found them (ecxActualDir), which can
+// differ from IndexBaseFileName when an .ecx copy exists in both the data
+// and index directories. Anything that must agree with the live journal
+// handle (ecjFile) uses this, not the configured index dir.
+func (ev *EcVolume) EcIndexBaseFileName() string {
+	return EcShardFileName(ev.Collection, ev.ecxActualDir, int(ev.VolumeId))
+}
+
 func (ev *EcVolume) ShardSize() uint64 {
 	if len(ev.Shards) > 0 {
 		return uint64(ev.Shards[0].Size())

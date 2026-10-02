@@ -109,6 +109,8 @@ fn build_test_state(
         maintenance_byte_per_second: 0,
         is_heartbeating: std::sync::atomic::AtomicBool::new(true),
         ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail_notify: tokio::sync::Notify::new(),
         has_master: false,
         pre_stop_seconds: 0,
         volume_state_notify: tokio::sync::Notify::new(),

@@ -649,10 +649,19 @@ func (l *DiskLocation) Close() {
 	l.volumesLock.Unlock()
 
 	l.ecVolumesLock.Lock()
-	for _, ecVolume := range l.ecVolumes {
-		ecVolume.Close()
+	ecVolumes := make([]*erasure_coding.EcVolume, 0, len(l.ecVolumes))
+	for vid, ecVolume := range l.ecVolumes {
+		ecVolumes = append(ecVolumes, ecVolume)
+		delete(l.ecVolumes, vid)
 	}
 	l.ecVolumesLock.Unlock()
+
+	// Close outside the write lock: EcVolume.Close takes the deletion-journal
+	// lock, which a running ec.decode can hold — closing under the map lock
+	// would stall every EC lookup and invert the map->journal lock order.
+	for _, ecVolume := range ecVolumes {
+		ecVolume.Close()
+	}
 
 	close(l.closeCh)
 	return

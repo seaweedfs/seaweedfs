@@ -119,6 +119,16 @@ pub struct VolumeServerState {
     /// same volume files.
     pub ec_decodes_in_flight:
         std::sync::Mutex<std::collections::HashSet<crate::storage::types::VolumeId>>,
+    /// Volumes whose EC decode is in its publishing tail (journal catch-up,
+    /// .idx write, compaction). Local .ecj appenders wait on
+    /// `ec_decode_tail_notify` while their vid is listed, so no committed
+    /// delete falls between the last catch_up and the .cpd/.cpx swap —
+    /// the per-volume slice of Go's EcVolume.ecjFileAccessLock.
+    pub ec_decode_tail:
+        std::sync::Mutex<std::collections::HashSet<crate::storage::types::VolumeId>>,
+    /// Wakes .ecj appenders waiting on `ec_decode_tail` when a decode's
+    /// publishing tail ends.
+    pub ec_decode_tail_notify: tokio::sync::Notify,
 }
 
 impl VolumeServerState {
