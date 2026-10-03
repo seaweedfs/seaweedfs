@@ -139,6 +139,12 @@ type MetadataProcessor struct {
 	resubscribeCh   chan struct{}
 	resubscribeOnce sync.Once
 
+	// stopped is set with the resubscribe signal; it releases a blocked
+	// AddSyncJob and drops later events instead of queueing them into a
+	// processor that is about to be abandoned — every skipped event replays
+	// from the pinned watermark after the reconnect.
+	stopped bool
+
 	// metrics is nil for callers that do not report per-event metrics.
 	metrics *syncStreamMetrics
 }
@@ -344,8 +350,11 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
 
-	for len(t.activeJobs) >= t.concurrencyLimit || t.conflictsWith(resp) {
+	for !t.stopped && (len(t.activeJobs) >= t.concurrencyLimit || t.conflictsWith(resp)) {
 		t.activeJobsCond.Wait()
+	}
+	if t.stopped {
+		return
 	}
 
 	p, newPath, kind := extractJobInfo(resp)
@@ -450,7 +459,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			t.processedTsWatermark.Store(t.filteredTsNs)
 		}
 		if t.oldestFailedTsNs != 0 && len(t.activeJobs) == 0 {
+			t.stopped = true
 			t.resubscribeOnce.Do(func() { close(t.resubscribeCh) })
+			t.activeJobsCond.Broadcast()
 		}
 		t.activeJobsCond.Signal()
 	}()

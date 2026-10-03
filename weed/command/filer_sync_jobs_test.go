@@ -624,35 +624,53 @@ func TestFailedJobHoldsWatermark(t *testing.T) {
 		t.Fatalf("watermark = %d after a successful job, want 100", got)
 	}
 
-	p.AddSyncJob(makeResp("/dir", "b.txt", false, failedTsNs, true))
-	waitForJobsToDrain(t, p)
-	if got := p.processedTsWatermark.Load(); got != 100 {
-		t.Fatalf("watermark = %d after a failed job, want it held at 100", got)
+	// a later event still in flight when the failure lands finishes fine, but
+	// the offset stays behind the failure
+	release := make(chan struct{})
+	slowFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 300 {
+			<-release
+		}
+		return fn(resp)
 	}
-
-	// later events keep flowing, but the offset stays behind the failure
-	p.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
-	waitForJobsToDrain(t, p)
-	if got := p.processedTsWatermark.Load(); got != 100 {
+	p2 := NewMetadataProcessor(slowFn, 10, 0)
+	p2.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	p2.AddSyncJob(makeResp("/dir", "b.txt", false, failedTsNs, true))
+	p2.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
+	deadline := time.Now().Add(10 * time.Second)
+	for p2.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if p2.OldestFailedTsNs() != failedTsNs {
+		t.Fatalf("oldest failed = %d, want the pin at %d", p2.OldestFailedTsNs(), failedTsNs)
+	}
+	close(release)
+	waitForJobsToDrain(t, p2)
+	if got := p2.processedTsWatermark.Load(); got != 100 {
 		t.Fatalf("watermark = %d after a later success, want it held at 100", got)
 	}
 }
 
 // TestFailedJobHoldsWatermarkAtOldestFailure verifies that the watermark is
-// pinned by the oldest failure, not the most recent one.
+// pinned by the oldest failure, not the most recent one. Once the processor
+// drains it stops accepting events for the resubscribe, so both failures have
+// to be in the same drained batch.
 func TestFailedJobHoldsWatermarkAtOldestFailure(t *testing.T) {
+	release := make(chan struct{})
 	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		<-release
 		if resp.TsNs == 200 || resp.TsNs == 400 {
 			return errors.New("AccessDenied: Access Denied")
 		}
 		return nil
 	}
-	p := NewMetadataProcessor(fn, 1, 0)
+	p := NewMetadataProcessor(fn, 10, 0)
 
 	for _, ts := range []int64{100, 200, 300, 400, 500} {
 		p.AddSyncJob(makeResp("/dir", fmt.Sprintf("f%d.txt", ts), false, ts, true))
-		waitForJobsToDrain(t, p)
 	}
+	close(release)
+	waitForJobsToDrain(t, p)
 
 	if got := p.processedTsWatermark.Load(); got != 100 {
 		t.Fatalf("watermark = %d, want it held at 100 by the failure at 200", got)
@@ -665,7 +683,9 @@ func TestFailedJobHoldsWatermarkAtOldestFailure(t *testing.T) {
 // update's new 60-byte chunk but not its shared one, and nothing for the
 // delete despite its chunk.
 func TestSyncStreamMetrics(t *testing.T) {
+	release := make(chan struct{})
 	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		<-release
 		if resp.TsNs == 2 {
 			return errors.New("AccessDenied: Access Denied")
 		}
@@ -694,6 +714,7 @@ func TestSyncStreamMetrics(t *testing.T) {
 	for _, resp := range []*filer_pb.SubscribeMetadataResponse{create, failing, update, del} {
 		p.AddSyncJob(resp)
 	}
+	close(release)
 	waitForJobsToDrain(t, p)
 
 	for _, tc := range []struct {
@@ -717,24 +738,32 @@ func TestSyncStreamMetrics(t *testing.T) {
 }
 
 // TestFailedJobReplaySuccessClearsPin verifies that when the failed event is
-// replayed (a reconnect resubscribing from the watermark) and succeeds this
-// time, the failure pin clears and the watermark can move again. Without the
-// clear, every later reconnect would replay the same backlog forever.
+// redelivered while the processor is still alive and succeeds this time, the
+// failure pin clears and the watermark can move again. Without the clear,
+// every later reconnect would replay the same backlog forever.
 func TestFailedJobReplaySuccessClearsPin(t *testing.T) {
 	failed := true
+	release := make(chan struct{})
 	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 300 {
+			<-release
+		}
 		if resp.TsNs == 200 && failed {
 			failed = false
 			return errors.New("AccessDenied: Access Denied")
 		}
 		return nil
 	}
-	p := NewMetadataProcessor(fn, 1, 0)
+	p := NewMetadataProcessor(fn, 10, 0)
 
 	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
 	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
 	p.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
-	waitForJobsToDrain(t, p)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if got := p.OldestFailedTsNs(); got != 200 {
 		t.Fatalf("oldest failed = %d, want 200", got)
 	}
@@ -742,13 +771,26 @@ func TestFailedJobReplaySuccessClearsPin(t *testing.T) {
 		t.Fatalf("watermark = %d, want it held at 100 by the failure at 200", got)
 	}
 
+	// the redelivery lands before the drain, clears the pin, and the
+	// processor drains without needing a resubscribe
 	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
-	waitForJobsToDrain(t, p)
+	deadline = time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if got := p.OldestFailedTsNs(); got != 0 {
 		t.Fatalf("oldest failed = %d after a successful replay, want 0", got)
 	}
-	if got := p.processedTsWatermark.Load(); got != 200 {
-		t.Fatalf("watermark = %d after recovery, want 200", got)
+
+	close(release)
+	waitForJobsToDrain(t, p)
+	select {
+	case <-p.ResubscribeCh():
+		t.Fatal("resubscribe signaled even though the pin cleared before the drain")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := p.processedTsWatermark.Load(); got != 300 {
+		t.Fatalf("watermark = %d after recovery, want 300", got)
 	}
 }
 
@@ -816,7 +858,9 @@ func TestFailedLedgerCapsAndStaysPinned(t *testing.T) {
 	maxFailedSyncEvents = 4
 
 	fail := true
+	release := make(chan struct{})
 	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		<-release
 		if fail {
 			return errors.New("AccessDenied: Access Denied")
 		}
@@ -825,6 +869,7 @@ func TestFailedLedgerCapsAndStaysPinned(t *testing.T) {
 	for i := int64(1); i <= 10; i++ {
 		p.AddSyncJob(makeResp("/dir", fmt.Sprintf("f%d.txt", i), false, i*100, true))
 	}
+	close(release)
 	waitForJobsToDrain(t, p)
 
 	if !p.failedSticky {
@@ -850,20 +895,38 @@ func TestFailedLedgerCapsAndStaysPinned(t *testing.T) {
 
 // TestFailedLedgerDistinguishesEventsAtSameTs verifies that a success for one
 // event does not clear the pin recorded for a different event that happened to
-// share its timestamp — the ledger keys on event identity, not just TsNs.
+// share its timestamp — the ledger keys on event identity, not just TsNs. A
+// slow job keeps the processor undrained so the later events still admit.
 func TestFailedLedgerDistinguishesEventsAtSameTs(t *testing.T) {
 	fail := true
+	release := make(chan struct{})
+	goodDone := make(chan struct{})
 	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
-		if fail && resp.EventNotification.NewEntry.GetName() == "bad.txt" {
-			return errors.New("AccessDenied: Access Denied")
+		switch resp.EventNotification.NewEntry.GetName() {
+		case "slow.txt":
+			<-release
+		case "bad.txt":
+			if fail {
+				return errors.New("AccessDenied: Access Denied")
+			}
+		case "good.txt":
+			close(goodDone)
 		}
 		return nil
 	}, 100, 0)
 
 	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
-	waitForJobsToDrain(t, p)
+	p.AddSyncJob(makeResp("/dir", "slow.txt", false, 900, true))
+	deadline := time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	p.AddSyncJob(makeResp("/dir", "good.txt", false, 200, true))
-	waitForJobsToDrain(t, p)
+	select {
+	case <-goodDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("good.txt never ran")
+	}
 
 	if got := p.OldestFailedTsNs(); got != 200 {
 		t.Fatalf("oldest failed = %d, want the other event's pin held at 200", got)
@@ -874,6 +937,11 @@ func TestFailedLedgerDistinguishesEventsAtSameTs(t *testing.T) {
 
 	fail = false
 	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	deadline = time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
 	waitForJobsToDrain(t, p)
 	if got := p.OldestFailedTsNs(); got != 0 {
 		t.Fatalf("oldest failed = %d after the failed event itself recovered, want 0", got)
