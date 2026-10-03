@@ -12725,17 +12725,25 @@ mod tests {
         // std guard is never held across .await; the tail is claimed while
         // it waits — the interleaving an unlocked check missed.
         let claimed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let held = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let releaser = {
             let claimed = claimed.clone();
+            let held = held.clone();
             let state = state.clone();
             std::thread::spawn(move || {
-                let held = state.store.write().unwrap();
+                let guard = state.store.write().unwrap();
+                held.store(true, Ordering::SeqCst);
                 while !claimed.load(Ordering::SeqCst) {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-                drop(held);
+                drop(guard);
             })
         };
+        // Spawn only once the write lock is held: on a slow runner the delete
+        // could otherwise acquire it first and commit before the tail exists.
+        while !held.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
         let delete = tokio::spawn(async move {
             service
                 .volume_ec_blob_delete(Request::new(volume_server_pb::VolumeEcBlobDeleteRequest {
