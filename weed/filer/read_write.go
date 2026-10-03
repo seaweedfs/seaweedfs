@@ -75,6 +75,9 @@ func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 		})
 	} else if err == nil {
 		entry := resp.Entry
+		if bytes.Equal(entry.Content, content) {
+			return nil
+		}
 		entry.Content = content
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = uint64(len(content))
