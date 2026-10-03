@@ -2,6 +2,7 @@ package pb
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -435,5 +436,54 @@ func TestFilerSyncReconnectReadsWatermarkEachSubscribe(t *testing.T) {
 	defer mu.Unlock()
 	if len(sinceNs) != 2 || sinceNs[0] != 100 || sinceNs[1] != 300 {
 		t.Fatalf("expected subscribes at 100 then 300, got %v", sinceNs)
+	}
+}
+
+// blockingFilerClient returns a stream whose Recv parks until the subscribe
+// context ends, standing in for a quiet source stream during a sink outage.
+type blockingFilerClient struct {
+	filer_pb.SeaweedFilerClient
+}
+
+func (c *blockingFilerClient) SubscribeMetadata(ctx context.Context, in *filer_pb.SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.SubscribeMetadataResponse], error) {
+	return &blockingSubscribeStream{ctx: ctx}, nil
+}
+
+type blockingSubscribeStream struct {
+	grpc.ClientStream
+	ctx context.Context
+}
+
+func (s *blockingSubscribeStream) Recv() (*filer_pb.SubscribeMetadataResponse, error) {
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+// A consumer that pins an event asks for the stream to drop so the reconnect
+// replays it; the follower must end with ErrResubscribe, not sit on Recv.
+func TestFilerSyncResubscribeSignalEndsStream(t *testing.T) {
+	resubscribe := make(chan struct{})
+	option := &MetadataFollowOption{
+		ClientName:     "syncFrom_A_To_B",
+		EventErrorType: DontLogError,
+		Resubscribe:    resubscribe,
+	}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- fn(&blockingFilerClient{})
+	}()
+
+	close(resubscribe)
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrResubscribe) {
+			t.Fatalf("expected ErrResubscribe, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("follower did not end after the resubscribe signal")
 	}
 }
