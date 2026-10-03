@@ -263,6 +263,7 @@ type fakeVacuumServer struct {
 	compactErr error
 	hang       string
 	entered    chan string
+	cancelled  chan struct{}
 }
 
 func (f *fakeVacuumServer) stall(ctx context.Context, phase string) error {
@@ -271,6 +272,15 @@ func (f *fakeVacuumServer) stall(ctx context.Context, phase string) error {
 	default:
 	}
 	<-ctx.Done()
+	f.mu.Lock()
+	if f.cancelled != nil {
+		select {
+		case <-f.cancelled:
+		default:
+			close(f.cancelled)
+		}
+	}
+	f.mu.Unlock()
 	return ctx.Err()
 }
 
@@ -404,9 +414,10 @@ func TestVacuumStalledVolumeServerReleasesGuard(t *testing.T) {
 			defer func() { vacuumPhaseTimeout = old }()
 
 			hangFake := &fakeVacuumServer{
-				checks:  map[uint32]*volume_server_pb.VacuumVolumeCheckResponse{1: {GarbageRatio: 0.9}},
-				hang:    phase,
-				entered: make(chan string, 1),
+				checks:    map[uint32]*volume_server_pb.VacuumVolumeCheckResponse{1: {GarbageRatio: 0.9}},
+				hang:      phase,
+				entered:   make(chan string, 1),
+				cancelled: make(chan struct{}),
 			}
 			if phase == "cleanup" {
 				hangFake.compactErr = errors.New("compact failed")
@@ -458,6 +469,11 @@ func TestVacuumStalledVolumeServerReleasesGuard(t *testing.T) {
 			case <-done:
 			case <-time.After(15 * time.Second):
 				t.Fatalf("vacuum did not return while the %s RPC was pending", phase)
+			}
+			select {
+			case <-hangFake.cancelled:
+			case <-time.After(15 * time.Second):
+				t.Fatalf("the %s RPC was not cancelled", phase)
 			}
 			if c := atomic.LoadInt64(&topo.vacuumLockCounter); c != 0 {
 				t.Fatalf("vacuumLockCounter = %d, want 0", c)
