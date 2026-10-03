@@ -40,6 +40,8 @@ func TestIsTransientError(t *testing.T) {
 		errors.New("AccessDenied: Access Denied"),
 		errors.New("NoSuchBucket: The specified bucket does not exist"),
 		context.Canceled,
+		status.Error(codes.Canceled, context.Canceled.Error()),
+		fmt.Errorf("send: %w", status.Error(codes.Canceled, context.Canceled.Error())),
 		fmt.Errorf("write: %w", context.DeadlineExceeded),
 	}
 	for _, err := range permanent {

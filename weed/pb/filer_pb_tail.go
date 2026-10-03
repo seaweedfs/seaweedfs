@@ -135,7 +135,9 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				// watermark, so it sees the marker instead.
 				if resp.EventNotification != nil && resp.TsNs > 0 {
 					if option.GetResumeTsNs != nil {
-						_ = processEventFn(resp)
+						if err := processEventFn(resp); err != nil {
+							handleErr(resp, err)
+						}
 					} else {
 						option.StartTsNs = resp.TsNs
 					}

@@ -92,11 +92,11 @@ func IsTransientError(err error) bool {
 		return true
 	}
 	if st, ok := ServerStatus(err); ok {
-		// A peer-sent Canceled ("the client connection is closing" and other
-		// transport teardown) differs from the caller's own context cancel,
-		// which errors.Is already excluded above.
+		if st.Code() == codes.Canceled {
+			return strings.Contains(st.Message(), "the client connection is closing")
+		}
 		return st.Code() == codes.Unavailable || st.Code() == codes.ResourceExhausted ||
-			st.Code() == codes.Canceled || IsTransientErrorMessage(st.Message())
+			IsTransientErrorMessage(st.Message())
 	}
 	return IsTransientErrorMessage(err.Error())
 }

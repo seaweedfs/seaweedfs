@@ -586,7 +586,6 @@ func BenchmarkConflictCheck(b *testing.B) {
 	}
 }
 
-
 // waitForJobsToDrain blocks until every job goroutine has finished bookkeeping.
 func waitForJobsToDrain(t *testing.T, p *MetadataProcessor) {
 	t.Helper()
@@ -782,6 +781,9 @@ func TestFilteredMarkerAdvancesWatermark(t *testing.T) {
 		}
 		close(release)
 		waitForJobsToDrain(t, p)
+		if got := p.processedTsWatermark.Load(); got != 80 {
+			t.Fatalf("watermark = %d after drain, want the retained marker at 80", got)
+		}
 		p.AddSyncJob(marker(90))
 		if got := p.processedTsWatermark.Load(); got != 90 {
 			t.Fatalf("watermark = %d after drain and marker, want 90", got)

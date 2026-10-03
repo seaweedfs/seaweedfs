@@ -366,6 +366,31 @@ func TestFilerSyncMarkerReachesCallbackConsumer(t *testing.T) {
 	}
 }
 
+func TestFilerSyncMarkerCallbackRetries(t *testing.T) {
+	var calls int
+	option := &MetadataFollowOption{
+		StartTsNs:      100,
+		EventErrorType: RetryForeverOnError,
+		GetResumeTsNs:  func() int64 { return 100 },
+	}
+	stream := &fakeSubscribeStream{responses: []*filer_pb.SubscribeMetadataResponse{
+		{TsNs: 500, EventNotification: &filer_pb.EventNotification{}},
+	}}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		calls++
+		if calls == 1 {
+			return io.ErrUnexpectedEOF
+		}
+		return nil
+	})
+	if err := fn(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if calls != 2 || option.StartTsNs != 100 {
+		t.Fatalf("calls = %d, cursor = %d; want 2 calls and unchanged cursor 100", calls, option.StartTsNs)
+	}
+}
+
 // Each subscribe call re-reads the callback, so a reconnect after the consumer
 // made progress resumes from the newer watermark.
 func TestFilerSyncReconnectReadsWatermarkEachSubscribe(t *testing.T) {

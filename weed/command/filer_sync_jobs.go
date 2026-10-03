@@ -80,6 +80,7 @@ type MetadataProcessor struct {
 	concurrencyLimit     int
 	fn                   pb.ProcessMetadataFunc
 	processedTsWatermark atomic.Int64
+	filteredTsNs         int64
 
 	// Indexes for O(depth) conflict detection, replacing O(n) linear scan.
 	// activeFilePaths counts active file jobs at each exact path.
@@ -289,6 +290,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		// to it so idle stretches still advance the resume point.
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
+		if resp.TsNs > t.filteredTsNs {
+			t.filteredTsNs = resp.TsNs
+		}
 		if len(t.activeJobs) == 0 && resp.TsNs > t.processedTsWatermark.Load() &&
 			(t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs) {
 			t.processedTsWatermark.Store(resp.TsNs)
@@ -393,6 +397,10 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
 				t.processedTsWatermark.Store(resp.TsNs)
 			}
+		}
+		if len(t.activeJobs) == 0 && t.filteredTsNs > t.processedTsWatermark.Load() &&
+			(t.oldestFailedTsNs == 0 || t.filteredTsNs < t.oldestFailedTsNs) {
+			t.processedTsWatermark.Store(t.filteredTsNs)
 		}
 		t.activeJobsCond.Signal()
 	}()
