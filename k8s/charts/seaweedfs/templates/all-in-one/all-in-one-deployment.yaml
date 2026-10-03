@@ -306,6 +306,7 @@ spec:
               {{- end }}
 
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.allInOne.containerSecurityContext (tpl (.Values.allInOne.extraVolumeMounts | default "") .) (tpl (.Values.allInOne.extraVolumes | default "") .)) | nindent 12 }}
             - name: data
               mountPath: /data
             {{- if and .Values.allInOne.s3.enabled (or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
@@ -433,6 +434,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.allInOne.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.allInOne.containerSecurityContext (tpl (.Values.allInOne.extraVolumeMounts | default "") .) (tpl (.Values.allInOne.extraVolumes | default "") .) false) | nindent 8 }}
         {{- include "seaweedfs.licenseVolume" . | nindent 8 }}
         - name: data
           {{- if eq .Values.allInOne.data.type "hostPath" }}

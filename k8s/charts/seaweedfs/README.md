@@ -572,11 +572,20 @@ The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings 
 
 ## Pod and container security contexts
 
-Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, and drop all Linux capabilities.
+Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, drop all Linux capabilities, and use a read-only root filesystem.
+
+SeaweedFS uses `/tmp` for Unix sockets, temporary uploads, worker task files, and other runtime data. When `readOnlyRootFilesystem` is enabled for a built-in component, the chart mounts a writable `emptyDir` at `/tmp` for its chart-managed containers. Its optional size limit can be configured globally:
+
+```yaml
+global:
+  seaweedfs:
+    tmpDir:
+      sizeLimit: 1Gi
+```
 
 The chart does not enable `runAsNonRoot` by default because its default `hostPath` storage may be owned by root. To enforce the Kubernetes `restricted` Pod Security Standard, use storage that is writable by a non-root user and configure `runAsNonRoot` or use the OpenShift overrides below.
 
-Security contexts configured for a component also apply to the chart-managed helper containers for that component. User-provided init containers and sidecars must define their own container security context.
+Security contexts configured for a component also apply to the chart-managed helper containers for that component. User-provided init containers and sidecars must define their own container security context and writable mounts.
 
 ## OpenShift Support
 
@@ -586,6 +595,7 @@ To deploy on OpenShift, use the provided `openshift-values.yaml` which overrides
 1. Use `PersistentVolumeClaims` instead of `hostPath`.
 2. Enable `runAsNonRoot` and omit hardcoded UIDs to allow OpenShift to assign valid UIDs automatically.
 3. Apply appropriate `seccompProfile` and drop capabilities.
+4. Use a read-only root filesystem with writable temporary storage at `/tmp`.
 
 Usage:
 ```bash
