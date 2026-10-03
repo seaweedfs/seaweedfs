@@ -1287,17 +1287,4 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
 		}
 	})
-
-	t.Run("already stamped by the superseding event: nothing to upload", func(t *testing.T) {
-		synced := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024, LastLocalSyncTsNs: 1786096669 * 1e9}
-		current := entryWith("b.txt", synced, chunk("3,02", "e2"))
-		remote := &recordingRemote{}
-		filerClient := &stubFilerClient{entry: current}
-		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, ""); err != nil {
-			t.Fatalf("err = %v, want nil", err)
-		}
-		if len(remote.writes) != 0 {
-			t.Errorf("writes = %+v, want none: the rewrite's event already uploaded this version", remote.writes)
-		}
-	})
 }

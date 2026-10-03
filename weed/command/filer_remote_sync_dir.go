@@ -428,12 +428,6 @@ func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.F
 	if isRemoteOnly(current) {
 		return completeRemoteOnlyRename(filerClient, client, dir, current, oldDest, dest, storageClass)
 	}
-	// A stamp newer than the content means the superseding event already
-	// uploaded this version; uploading it again wastes the write.
-	if remote := current.RemoteEntry; remote != nil &&
-		remote.LastLocalSyncTsNs >= current.Attributes.GetMtime()*1e9+int64(current.Attributes.GetMtimeNs()) {
-		return nil
-	}
 	if shouldSendToRemote(current) {
 		glog.V(0).Infof("leaving %s to the rewrite that superseded the rename", remote_storage.FormatLocation(dest))
 		return nil
