@@ -18,7 +18,9 @@ use crate::storage::erasure_coding::ec_shard::{
     DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
     EcVolumeShard, ShardId,
 };
-use crate::storage::erasure_coding::ec_volume::{EcVolume, is_usable_ecx_file};
+use crate::storage::erasure_coding::ec_volume::{
+    ECJ_COMPACT_TMP_EXT, EcVolume, is_usable_ecx_file,
+};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::*;
@@ -460,13 +462,16 @@ impl DiskLocation {
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         const MAX_SHARD_COUNT: usize = 32;
 
-        // Remove index files from idx directory (.ecx, .ecj)
+        // Remove index files from idx directory (.ecx, .ecj, and a compaction
+        // tmp a crash may have left beside the .ecj)
         rm_if_present(format!("{}.ecx", idx_base))?;
         rm_if_present(format!("{}.ecj", idx_base))?;
+        rm_if_present(format!("{}{}", idx_base, ECJ_COMPACT_TMP_EXT))?;
         // Also try data directory in case .ecx/.ecj were created before -dir.idx was configured
         if self.idx_directory != self.directory {
             rm_if_present(format!("{}.ecx", base))?;
             rm_if_present(format!("{}.ecj", base))?;
+            rm_if_present(format!("{}{}", base, ECJ_COMPACT_TMP_EXT))?;
         }
 
         // Remove all EC shard files (.ec00 ~ .ec31)

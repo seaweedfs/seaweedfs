@@ -735,13 +735,13 @@ func removeEcSharedIndexFiles(bName string, location *storage.DiskLocation, hasE
 	dataBaseFilename := path.Join(location.Directory, bName)
 	if hasEcxFile {
 		// .ecx/.ecj may be in either dir depending on when -dir.idx was configured.
-		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj"} {
+		for _, p := range []string{indexBaseFilename + ".ecx", indexBaseFilename + ".ecj", indexBaseFilename + erasure_coding.EcjCompactTmpExt} {
 			if err := removeFileIfExists(p); err != nil {
 				return err
 			}
 		}
 		if location.IdxDirectory != location.Directory {
-			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj"} {
+			for _, p := range []string{dataBaseFilename + ".ecx", dataBaseFilename + ".ecj", dataBaseFilename + erasure_coding.EcjCompactTmpExt} {
 				if err := removeFileIfExists(p); err != nil {
 					return err
 				}
@@ -805,10 +805,12 @@ func removeStaleEcArtifacts(dataBaseFileName, indexBaseFileName string, total in
 	// .ecx/.ecj/.ecsum may sit in either dir depending on -dir.idx; clear both.
 	record(removeFileIfExists(indexBaseFileName + ".ecx"))
 	record(removeFileIfExists(indexBaseFileName + ".ecj"))
+	record(removeFileIfExists(indexBaseFileName + erasure_coding.EcjCompactTmpExt))
 	record(removeBitrotSidecars(indexBaseFileName))
 	if dataBaseFileName != indexBaseFileName {
 		record(removeFileIfExists(dataBaseFileName + ".ecx"))
 		record(removeFileIfExists(dataBaseFileName + ".ecj"))
+		record(removeFileIfExists(dataBaseFileName + erasure_coding.EcjCompactTmpExt))
 		record(removeBitrotSidecars(dataBaseFileName))
 	}
 
