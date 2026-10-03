@@ -67,6 +67,7 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 		GetResumeTsNs: func() int64 {
 			return processor.processedTsWatermark.Load()
 		},
+		Resubscribe: processor.ResubscribeCh(),
 	}
 
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)

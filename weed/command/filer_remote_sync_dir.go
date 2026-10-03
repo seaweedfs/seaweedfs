@@ -79,6 +79,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		GetResumeTsNs: func() int64 {
 			return processor.processedTsWatermark.Load()
 		},
+		Resubscribe: processor.ResubscribeCh(),
 	}
 
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
@@ -539,6 +540,11 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 		}
 	} else {
 		lastOffsetTs = time.Now().Add(-timeAgo)
+		if lastOffsetTsNs, err := remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir); err == nil && lastOffsetTsNs > 0 {
+			if savedOffsetTs := time.Unix(0, lastOffsetTsNs); savedOffsetTs.Before(lastOffsetTs) {
+				lastOffsetTs = savedOffsetTs
+			}
+		}
 	}
 	return lastOffsetTs
 }

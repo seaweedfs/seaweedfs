@@ -2,6 +2,7 @@ package pb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -49,7 +50,17 @@ type MetadataFollowOption struct {
 	// durably processed watermark while StartTsNs keeps tracking positions the
 	// stream has merely seen.
 	GetResumeTsNs func() int64
+	// Resubscribe, when closed, drops the stream with ErrResubscribe so the
+	// caller's reconnect loop resubscribes from GetResumeTsNs and replays the
+	// events still pinning the processed watermark. Target-side job failures
+	// never surface on this stream, so without it a pinned event waits for an
+	// unrelated source-stream reconnect (or a restart) to be replayed.
+	Resubscribe <-chan struct{}
 }
+
+// ErrResubscribe ends a metadata follow when the consumer asked for the
+// stream to drop so the reconnect replays what the resume watermark pins.
+var ErrResubscribe = errors.New("resubscribe to replay events behind the failed offset")
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
@@ -98,6 +109,16 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			return fmt.Errorf("subscribe: %w", err)
 		}
 
+		if option.Resubscribe != nil {
+			go func() {
+				select {
+				case <-option.Resubscribe:
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+		}
+
 		handleErr := func(resp *filer_pb.SubscribeMetadataResponse, err error) {
 			switch option.EventErrorType {
 			case TrivialOnError:
@@ -105,12 +126,21 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			case FatalOnError:
 				glog.Fatalf("process %v: %v", resp, err)
 			case RetryForeverOnError:
-				util.RetryUntil("followMetaUpdates", func() error {
-					return processEventFn(resp)
-				}, func(err error) bool {
-					glog.Errorf("process %v: %v", resp, err)
-					return true
-				})
+				waitTime := time.Second
+				for ctx.Err() == nil {
+					if err := processEventFn(resp); err == nil {
+						break
+					} else {
+						glog.Errorf("process %v: %v", resp, err)
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(waitTime):
+					}
+					if waitTime < util.RetryWaitTime {
+						waitTime += waitTime / 2
+					}
+				}
 			case DontLogError:
 				// pass
 			default:
@@ -200,6 +230,11 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				return drainPendingRefs()
 			}
 			if listenErr != nil {
+				select {
+				case <-option.Resubscribe:
+					return ErrResubscribe
+				default:
+				}
 				return listenErr
 			}
 
