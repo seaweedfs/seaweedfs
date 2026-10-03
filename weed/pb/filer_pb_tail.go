@@ -126,12 +126,21 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			case FatalOnError:
 				glog.Fatalf("process %v: %v", resp, err)
 			case RetryForeverOnError:
-				util.RetryUntil("followMetaUpdates", func() error {
-					return processEventFn(resp)
-				}, func(err error) bool {
-					glog.Errorf("process %v: %v", resp, err)
-					return ctx.Err() == nil
-				})
+				waitTime := time.Second
+				for ctx.Err() == nil {
+					if err := processEventFn(resp); err == nil {
+						break
+					} else {
+						glog.Errorf("process %v: %v", resp, err)
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(waitTime):
+					}
+					if waitTime < util.RetryWaitTime {
+						waitTime += waitTime / 2
+					}
+				}
 			case DontLogError:
 				// pass
 			default:
