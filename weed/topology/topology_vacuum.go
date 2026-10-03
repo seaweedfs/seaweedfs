@@ -230,7 +230,9 @@ func (t *Topology) batchVacuumVolumeCleanup(grpcDialOption grpc.DialOption, vl *
 	for _, dn := range locationlist.list {
 		glog.V(0).Infoln("Start cleaning up", vid, "on", dn.Url())
 		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-			_, err := volumeServerClient.VacuumVolumeCleanup(context.Background(), &volume_server_pb.VacuumVolumeCleanupRequest{
+			ctx, cancel := context.WithTimeout(context.Background(), t.vacuumRPCTimeout())
+			defer cancel()
+			_, err := volumeServerClient.VacuumVolumeCleanup(ctx, &volume_server_pb.VacuumVolumeCleanupRequest{
 				VolumeId: uint32(vid),
 			})
 			return err
