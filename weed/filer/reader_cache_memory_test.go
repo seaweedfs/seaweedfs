@@ -72,7 +72,7 @@ func TestReaderCacheBudgetInFlight(t *testing.T) {
 					return len(buffer), nil
 				}
 				if prefetch {
-					rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ChunkSize: 3 << 10}}, 1)
+					rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ViewSize: 3 << 10, ChunkSize: 3 << 10}}, 1)
 				} else {
 					readers.Add(1)
 					go func() {
@@ -180,7 +180,7 @@ func TestReaderCacheFailedPrefetchReleasesBudget(t *testing.T) {
 			rc.fetchChunkDataFn = func(_ context.Context, _ []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, _ string, _ util_http.RefreshUrlsFunc) (int, error) {
 				return 0, fmt.Errorf("fetch failed")
 			}
-			rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "failed", ChunkSize: 1024}}, 1)
+			rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "failed", ViewSize: 1024, ChunkSize: 1024}}, 1)
 			deadline := time.Now().Add(5 * time.Second)
 			for {
 				rc.Lock()
@@ -278,7 +278,7 @@ func TestReaderCachePrefetchBufferDroppedAfterRead(t *testing.T) {
 		buffer[0] = 42
 		return len(buffer), nil
 	}
-	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ChunkSize: 4 << 10}}, 1)
+	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ViewSize: 4 << 10, ChunkSize: 4 << 10}}, 1)
 
 	buf := make([]byte, 4<<10)
 	n, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false)

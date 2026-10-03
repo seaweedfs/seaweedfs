@@ -100,6 +100,11 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 			// abort when slots are filled
 			return
 		}
+		if !chunkView.IsFullChunk() {
+			// the view is clipped to part of the chunk, so the rest is never
+			// read; prefetching it whole would download bytes nobody needs
+			continue
+		}
 
 		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
 		// cache this chunk if not yet
@@ -112,6 +117,20 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 	}
 
 	return
+}
+
+// fetchChunkRange downloads only [offset, offset+len(buffer)) of a chunk,
+// for views clipped to part of their chunk and for random-mode reads. It
+// goes through fetchChunkDataFn so tests observe range fetches the same way
+// they observe whole-chunk downloads.
+func (rc *ReaderCache) fetchChunkRange(ctx context.Context, buffer []byte, chunkView *ChunkView, offset int64) (int, error) {
+	urlStrings, err := rc.lookupFileIdFn(ctx, chunkView.FileId)
+	if err != nil {
+		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		return 0, err
+	}
+	return rc.fetchChunkDataFn(ctx, buffer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, false, offset, chunkView.FileId,
+		refreshUrls(ctx, rc.cacheInvalidator, rc.lookupFileIdFn, chunkView.FileId))
 }
 
 // chunkStream is one sequential reader's position in a shared ReaderCache.

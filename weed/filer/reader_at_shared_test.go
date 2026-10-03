@@ -208,6 +208,143 @@ func TestChunkStreamConcurrentReadsOnOneReader(t *testing.T) {
 	}
 }
 
+type recordedFetch struct {
+	fileId      string
+	isFullChunk bool
+	offset      int64
+	size        int
+}
+
+// fetchRecorder stubs the volume fetch and records how each chunk was
+// requested: isFullChunk=false is a range fetch of just the view's slice,
+// isFullChunk=true is a whole-chunk download into the shared cache.
+func fetchRecorder(rc *ReaderCache) (fetches *[]recordedFetch) {
+	var mu sync.Mutex
+	recorded := &[]recordedFetch{}
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, isFullChunk bool, offset int64, fileId string, _ util_http.RefreshUrlsFunc) (int, error) {
+		mu.Lock()
+		*recorded = append(*recorded, recordedFetch{fileId, isFullChunk, offset, len(buffer)})
+		mu.Unlock()
+		for i := range buffer {
+			buffer[i] = fileId[len(fileId)-1]
+		}
+		return len(buffer), nil
+	}
+	return recorded
+}
+
+// A reader whose views are clipped to a request window — how the S3 gateway
+// builds a ranged GET — must fetch only the covered part of each chunk:
+// clipped edge views take range fetches, a fully covered chunk keeps the
+// shared whole-chunk path. This is what keeps a ranged GET larger than a
+// buffer from multiplying volume-server reads (issue #11564), without giving
+// up whole-chunk caching where the whole chunk is actually wanted.
+func TestChunkReadAtClippedViewsFetchOnlyCoveredParts(t *testing.T) {
+	const chunkSize = 64 << 10
+
+	rc := NewReaderCache(64, (*chunk_cache.TieredChunkCache)(nil), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	fetches := fetchRecorder(rc)
+
+	// Window [56KiB, 136KiB): tail of chunk0, all of chunk1, head of chunk2.
+	views := NewIntervalList[*ChunkView]()
+	views.AppendInterval(&Interval[*ChunkView]{
+		StartOffset: chunkSize - 8<<10,
+		StopOffset:  chunkSize,
+		Value:       &ChunkView{FileId: "chunk0", OffsetInChunk: chunkSize - 8<<10, ViewSize: 8 << 10, ViewOffset: chunkSize - 8<<10, ChunkSize: chunkSize},
+	})
+	views.AppendInterval(&Interval[*ChunkView]{
+		StartOffset: chunkSize,
+		StopOffset:  2 * chunkSize,
+		Value:       &ChunkView{FileId: "chunk1", ViewSize: chunkSize, ViewOffset: chunkSize, ChunkSize: chunkSize},
+	})
+	views.AppendInterval(&Interval[*ChunkView]{
+		StartOffset: 2 * chunkSize,
+		StopOffset:  2*chunkSize + 8<<10,
+		Value:       &ChunkView{FileId: "chunk2", ViewSize: 8 << 10, ViewOffset: 2 * chunkSize, ChunkSize: chunkSize},
+	})
+
+	reader := NewChunkReaderAtFromClient(context.Background(), rc, views, 3*chunkSize, 0)
+	buf := make([]byte, chunkSize+16<<10)
+	if n, err := reader.ReadAt(buf, chunkSize-8<<10); err != nil || n != len(buf) {
+		t.Fatalf("window read: n=%d err=%v", n, err)
+	}
+	// buf holds [56KiB, 136KiB): chunk0's tail, chunk1, chunk2's head.
+	for i, b := range buf {
+		want := byte('1')
+		if i < 8<<10 {
+			want = '0'
+		} else if i >= 8<<10+chunkSize {
+			want = '2'
+		}
+		if b != want {
+			t.Fatalf("buf[%d]=%q, want %q", i, b, want)
+		}
+	}
+
+	want := []recordedFetch{
+		{fileId: "chunk0", isFullChunk: false, offset: chunkSize - 8<<10, size: 8 << 10},
+		{fileId: "chunk1", isFullChunk: true, offset: 0, size: chunkSize},
+		{fileId: "chunk2", isFullChunk: false, offset: 0, size: 8 << 10},
+	}
+	got := map[string]recordedFetch{}
+	for _, f := range *fetches {
+		if _, dup := got[f.fileId]; dup {
+			t.Fatalf("chunk %s fetched more than once: %+v", f.fileId, *fetches)
+		}
+		got[f.fileId] = f
+	}
+	for _, w := range want {
+		if g, ok := got[w.fileId]; !ok {
+			t.Fatalf("chunk %s never fetched: %+v", w.fileId, *fetches)
+		} else if g != w {
+			t.Fatalf("chunk %s fetched as %+v, want %+v", w.fileId, g, w)
+		}
+	}
+}
+
+// The regression from issue #11564: a ranged GET sitting inside one big
+// chunk. Every buffer of the request must stay a range fetch — none may
+// escalate into a whole-chunk download once the reads look sequential.
+func TestChunkReadAtRangeInsideOneChunkStaysRangeFetch(t *testing.T) {
+	const chunkSize = 1 << 20
+	const sliceSize = 16 << 10
+
+	rc := NewReaderCache(64, (*chunk_cache.TieredChunkCache)(nil), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil)
+	defer rc.destroy()
+	fetches := fetchRecorder(rc)
+
+	// Range [32KiB, 96KiB) inside one 1MiB chunk: a single clipped view.
+	views := NewIntervalList[*ChunkView]()
+	views.AppendInterval(&Interval[*ChunkView]{
+		StartOffset: 32 << 10,
+		StopOffset:  96 << 10,
+		Value:       &ChunkView{FileId: "chunk0", OffsetInChunk: 32 << 10, ViewSize: 64 << 10, ViewOffset: 32 << 10, ChunkSize: chunkSize},
+	})
+
+	reader := NewChunkReaderAtFromClient(context.Background(), rc, views, chunkSize, 0)
+	for offset := int64(32 << 10); offset < 96<<10; offset += sliceSize {
+		buf := make([]byte, sliceSize)
+		if n, err := reader.ReadAt(buf, offset); err != nil || n != sliceSize {
+			t.Fatalf("read at %d: n=%d err=%v", offset, n, err)
+		}
+	}
+
+	if len(*fetches) != 4 {
+		t.Fatalf("got %d fetches, want 4 range fetches: %+v", len(*fetches), *fetches)
+	}
+	for i, f := range *fetches {
+		wantOffset := int64(32<<10) + int64(i)*sliceSize
+		if f.isFullChunk || f.offset != wantOffset || f.size != sliceSize {
+			t.Fatalf("fetch %d = %+v, want range fetch offset=%d size=%d", i, f, wantOffset, sliceSize)
+		}
+	}
+}
+
 // A chunk a stream is positioned in must outlast downloader-limit eviction:
 // otherwise a busy cache drops the buffer mid-stream and forces a refetch.
 func TestChunkReadAtPinnedChunkSurvivesEviction(t *testing.T) {
