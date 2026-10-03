@@ -34,10 +34,12 @@ func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid ne
 	locationlist *VolumeLocationList, garbageThreshold float64, skipReadOnly bool) (*VolumeLocationList, bool) {
 	ch := make(chan int, locationlist.Length())
 	errCount := int32(0)
+	ctx, cancel := context.WithTimeout(context.Background(), t.vacuumRPCTimeout())
+	defer cancel()
 	for index, dn := range locationlist.list {
 		go func(index int, dn *DataNode, url pb.ServerAddress, vid needle.VolumeId) {
 			err := operation.WithVolumeServerClient(false, url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				resp, err := volumeServerClient.VacuumVolumeCheck(context.Background(), &volume_server_pb.VacuumVolumeCheckRequest{
+				resp, err := volumeServerClient.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{
 					VolumeId: uint32(vid),
 				})
 				if err != nil {
@@ -74,16 +76,13 @@ func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid ne
 	}
 	vacuumLocationList := NewVolumeLocationList()
 
-	waitTimeout := time.NewTimer(time.Minute * time.Duration(t.volumeSizeLimit/1024/1024/1000+1))
-	defer waitTimeout.Stop()
-
 	for range locationlist.list {
 		select {
 		case index := <-ch:
 			if index != -1 {
 				vacuumLocationList.list = append(vacuumLocationList.list, locationlist.list[index])
 			}
-		case <-waitTimeout.C:
+		case <-ctx.Done():
 			return vacuumLocationList, false
 		}
 	}
@@ -95,11 +94,13 @@ func (t *Topology) batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *
 	vl.DrainAndRemoveFromWritable(vid)
 
 	ch := make(chan bool, locationlist.Length())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*t.vacuumRPCTimeout())
+	defer cancel()
 	for index, dn := range locationlist.list {
 		go func(index int, url pb.ServerAddress, vid needle.VolumeId) {
 			glog.V(0).Infoln(index, "Start vacuuming", vid, "on", url)
 			err := operation.WithVolumeServerClient(true, url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				stream, err := volumeServerClient.VacuumVolumeCompact(context.Background(), &volume_server_pb.VacuumVolumeCompactRequest{
+				stream, err := volumeServerClient.VacuumVolumeCompact(ctx, &volume_server_pb.VacuumVolumeCompactRequest{
 					VolumeId:    uint32(vid),
 					Preallocate: preallocate,
 				})
@@ -132,14 +133,11 @@ func (t *Topology) batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *
 	}
 	isVacuumSuccess := true
 
-	waitTimeout := time.NewTimer(3 * time.Minute * time.Duration(t.volumeSizeLimit/1024/1024/1000+1))
-	defer waitTimeout.Stop()
-
 	for range locationlist.list {
 		select {
 		case canCommit := <-ch:
 			isVacuumSuccess = isVacuumSuccess && canCommit
-		case <-waitTimeout.C:
+		case <-ctx.Done():
 			return false
 		}
 	}
