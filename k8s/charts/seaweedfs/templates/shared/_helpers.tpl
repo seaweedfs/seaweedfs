@@ -504,8 +504,9 @@ true
 {{-             $pvcName := printf "%s-%s-%s-%d" $dir.name $seaweedfsName $volumeName $e }}
 {{-             $currentPVC := (lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $pvcName) }}
 {{-             if $currentPVC }}
-{{-               $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage }}
-{{-               $newSize := include "seaweedfs.resource-quantity" $desiredSize }}
+{{- /* include returns a string such as "6.442450944e+10"; convert back to a number, or gt compares lexically */}}
+{{-               $oldSize := include "seaweedfs.resource-quantity" $currentPVC.spec.resources.requests.storage | float64 }}
+{{-               $newSize := include "seaweedfs.resource-quantity" $desiredSize | float64 }}
 {{-               if gt $newSize $oldSize }}
 {{-                 $commands = append $commands (printf "kubectl patch pvc %s-%s-%s-%d -p '{\"spec\":{\"resources\":{\"requests\":{\"storage\":\"%s\"}}}}'" $dir.name $seaweedfsName $volumeName $e $desiredSize) }}
 {{-               end }}
