@@ -22,6 +22,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
+// vacuumPhaseTimeout bounds one synchronous vacuum RPC per GB of the volume
+// size limit, so a stalled volume server cannot hold the vacuum guard forever.
+var vacuumPhaseTimeout = time.Minute
+
+func (t *Topology) vacuumRPCTimeout() time.Duration {
+	return vacuumPhaseTimeout * time.Duration(t.volumeSizeLimit/1024/1024/1000+1)
+}
+
 func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid needle.VolumeId,
 	locationlist *VolumeLocationList, garbageThreshold float64, skipReadOnly bool) (*VolumeLocationList, bool) {
 	ch := make(chan int, locationlist.Length())
@@ -145,7 +153,9 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 	for _, dn := range vacuumLocationList.list {
 		glog.V(0).Infoln("Start Committing vacuum", vid, "on", dn.Url())
 		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-			resp, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
+			ctx, cancel := context.WithTimeout(context.Background(), t.vacuumRPCTimeout())
+			defer cancel()
+			resp, err := volumeServerClient.VacuumVolumeCommit(ctx, &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumeId: uint32(vid),
 			})
 			if resp != nil {
