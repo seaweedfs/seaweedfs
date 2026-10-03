@@ -94,8 +94,8 @@ func TestFileVsFileConflict(t *testing.T) {
 
 	// Add a file job
 	active := makeResp("/dir1", "file.txt", false, 1, true)
-	path, newPath, kind := extractJobInfo(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	path, _, kind := extractJobInfo(active)
+	p.activeJobTs[active.TsNs] = 1
 	p.addPathToIndex(path, kind)
 
 	// Same file should conflict
@@ -125,8 +125,8 @@ func TestFileUnderActiveDirConflict(t *testing.T) {
 
 	// Add a directory job at /dir1
 	active := makeResp("/", "dir1", true, 1, true)
-	path, newPath, kind := extractJobInfo(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	path, _, kind := extractJobInfo(active)
+	p.activeJobTs[active.TsNs] = 1
 	p.addPathToIndex(path, kind)
 
 	// File under /dir1 should conflict
@@ -163,8 +163,8 @@ func TestDirWithActiveFileUnder(t *testing.T) {
 
 	// Add file jobs under /dir1
 	f1 := makeResp("/dir1/sub", "file.txt", false, 1, true)
-	path, newPath, kind := extractJobInfo(f1)
-	p.activeJobs[f1.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	path, _, kind := extractJobInfo(f1)
+	p.activeJobTs[f1.TsNs] = 1
 	p.addPathToIndex(path, kind)
 
 	// Directory /dir1 should conflict (has active file under it)
@@ -187,8 +187,8 @@ func TestDirVsDirConflict(t *testing.T) {
 
 	// Add directory job at /a/b
 	active := makeResp("/a", "b", true, 1, true)
-	path, newPath, kind := extractJobInfo(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	path, _, kind := extractJobInfo(active)
+	p.activeJobTs[active.TsNs] = 1
 	p.addPathToIndex(path, kind)
 
 	// /a/b/c (descendant) should conflict
@@ -224,8 +224,8 @@ func TestRenameConflict(t *testing.T) {
 
 	// Add file job at /dir1/file.txt
 	f1 := makeResp("/dir1", "file.txt", false, 1, true)
-	path, newPath, kind := extractJobInfo(f1)
-	p.activeJobs[f1.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	path, _, kind := extractJobInfo(f1)
+	p.activeJobTs[f1.TsNs] = 1
 	p.addPathToIndex(path, kind)
 
 	// Rename from /dir2/a.txt to /dir1/file.txt should conflict (newPath matches)
@@ -255,7 +255,7 @@ func TestActiveRenameConflict(t *testing.T) {
 	// Add active rename job: /dir1/old.txt -> /dir2/new.txt
 	rename := makeRenameResp("/dir1", "old.txt", "/dir2", "new.txt", false, 1)
 	path, newPath, kind := extractJobInfo(rename)
-	p.activeJobs[rename.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.activeJobTs[rename.TsNs] = 1
 	p.addPathToIndex(path, kind)
 	if newPath != "" {
 		p.addPathToIndex(newPath, kind)
@@ -289,8 +289,8 @@ func TestRootDirConflict(t *testing.T) {
 	// Note: a dir entry at "/" would be created as FullPath("/").Child("somedir")
 	// But let's test what happens with an active dir at /some/path and check root
 	active := makeResp("/some", "dir", true, 1, true)
-	path, newPath, kind := extractJobInfo(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	path, _, kind := extractJobInfo(active)
+	p.activeJobTs[active.TsNs] = 1
 	p.addPathToIndex(path, kind)
 
 	// Root dir should conflict because active dir /some/dir is under /
@@ -334,7 +334,7 @@ func TestWatermarkWithHeap(t *testing.T) {
 	// Simulate adding jobs in order
 	for _, ts := range []int64{10, 20, 30} {
 		jobPath := util.FullPath("/file" + string(rune('0'+ts/10)))
-		p.activeJobs[ts] = &syncJobPaths{path: jobPath, kind: kindFile}
+		p.activeJobTs[ts] = 1
 		p.addPathToIndex(jobPath, kindFile)
 		heap.Push(&p.tsHeap, ts)
 	}
@@ -344,11 +344,11 @@ func TestWatermarkWithHeap(t *testing.T) {
 	}
 
 	// Remove non-oldest (ts=20) — heap top should stay 10
-	delete(p.activeJobs, 20)
+	delete(p.activeJobTs, 20)
 	p.removePathFromIndex("/file2", kindFile)
 	// Lazy clean: top is 10 which is still active, so no pop
 	for p.tsHeap.Len() > 0 {
-		if _, active := p.activeJobs[p.tsHeap[0]]; active {
+		if p.activeJobTs[p.tsHeap[0]] > 0 {
 			break
 		}
 		heap.Pop(&p.tsHeap)
@@ -358,10 +358,10 @@ func TestWatermarkWithHeap(t *testing.T) {
 	}
 
 	// Remove oldest (ts=10) — lazy clean should find 30
-	delete(p.activeJobs, 10)
+	delete(p.activeJobTs, 10)
 	p.removePathFromIndex("/file1", kindFile)
 	for p.tsHeap.Len() > 0 {
-		if _, active := p.activeJobs[p.tsHeap[0]]; active {
+		if p.activeJobTs[p.tsHeap[0]] > 0 {
 			break
 		}
 		heap.Pop(&p.tsHeap)
@@ -383,11 +383,11 @@ func TestNonBarrierDirUpdateDoesNotBlockDescendants(t *testing.T) {
 
 		// Active non-barrier: attribute update on /dir1.
 		active := makeDirUpdateResp("/", "dir1", 1)
-		path, newPath, kind := extractJobInfo(active)
+		path, _, kind := extractJobInfo(active)
 		if kind != kindNonBarrierDir {
 			t.Fatalf("expected kindNonBarrierDir for dir attribute update, got %v", kind)
 		}
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		// File under /dir1 should NOT conflict with the attribute update.
@@ -407,11 +407,11 @@ func TestNonBarrierDirUpdateDoesNotBlockDescendants(t *testing.T) {
 		p := NewMetadataProcessor(noop, 100, 0)
 
 		active := makeResp("/", "dir1", true, 1, true) // create
-		path, newPath, kind := extractJobInfo(active)
+		path, _, kind := extractJobInfo(active)
 		if kind != kindBarrierDir {
 			t.Fatalf("expected kindBarrierDir for dir create, got %v", kind)
 		}
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		under := makeResp("/dir1", "file.txt", false, 2, true)
@@ -425,8 +425,8 @@ func TestNonBarrierDirUpdateDoesNotBlockDescendants(t *testing.T) {
 
 		// Active file under /dir1.
 		f := makeResp("/dir1", "file.txt", false, 1, true)
-		path, newPath, kind := extractJobInfo(f)
-		p.activeJobs[f.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		path, _, kind := extractJobInfo(f)
+		p.activeJobTs[f.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		// Incoming barrier delete on /dir1 should still wait for the
@@ -442,8 +442,8 @@ func TestNonBarrierDirUpdateDoesNotBlockDescendants(t *testing.T) {
 
 		// Active non-barrier dir update at /a/b.
 		upd := makeDirUpdateResp("/a", "b", 1)
-		path, newPath, kind := extractJobInfo(upd)
-		p.activeJobs[upd.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		path, _, kind := extractJobInfo(upd)
+		p.activeJobTs[upd.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		// A barrier delete on /a (the ancestor) should wait for it.
@@ -464,8 +464,8 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 	t.Run("barrier dir at p blocks same-path file", func(t *testing.T) {
 		p := NewMetadataProcessor(noop, 100, 0)
 		active := makeResp("/", "dir1", true, 1, true) // dir create
-		path, newPath, kind := extractJobInfo(active)
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		path, _, kind := extractJobInfo(active)
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		file := makeResp("/", "dir1", false, 2, true)
@@ -477,8 +477,8 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 	t.Run("barrier dir at p blocks another same-path barrier dir", func(t *testing.T) {
 		p := NewMetadataProcessor(noop, 100, 0)
 		active := makeResp("/", "dir1", true, 1, true) // dir create
-		path, newPath, kind := extractJobInfo(active)
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		path, _, kind := extractJobInfo(active)
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		del := makeResp("/", "dir1", true, 2, false) // dir delete, same path
@@ -490,8 +490,8 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 	t.Run("barrier dir at p blocks non-barrier update at same path", func(t *testing.T) {
 		p := NewMetadataProcessor(noop, 100, 0)
 		active := makeResp("/", "dir1", true, 1, true) // dir create
-		path, newPath, kind := extractJobInfo(active)
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		path, _, kind := extractJobInfo(active)
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		upd := makeDirUpdateResp("/", "dir1", 2)
@@ -503,8 +503,8 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 	t.Run("file at p blocks same-path barrier dir", func(t *testing.T) {
 		p := NewMetadataProcessor(noop, 100, 0)
 		active := makeResp("/", "thing", false, 1, true) // file create at /thing
-		path, newPath, kind := extractJobInfo(active)
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		path, _, kind := extractJobInfo(active)
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		// Barrier dir at /thing (e.g. a file→dir promotion) must wait.
@@ -520,11 +520,11 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 		// delete/rename/create on /dir1.
 		p := NewMetadataProcessor(noop, 100, 0)
 		active := makeDirUpdateResp("/", "dir1", 1)
-		path, newPath, kind := extractJobInfo(active)
+		path, _, kind := extractJobInfo(active)
 		if kind != kindNonBarrierDir {
 			t.Fatalf("expected kindNonBarrierDir, got %v", kind)
 		}
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		del := makeResp("/", "dir1", true, 2, false) // dir delete
@@ -541,8 +541,8 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 	t.Run("non-barrier update at p does NOT block same-path non-barrier update", func(t *testing.T) {
 		p := NewMetadataProcessor(noop, 100, 0)
 		active := makeDirUpdateResp("/", "dir1", 1)
-		path, newPath, kind := extractJobInfo(active)
-		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		path, _, kind := extractJobInfo(active)
+		p.activeJobTs[active.TsNs] = 1
 		p.addPathToIndex(path, kind)
 
 		// Concurrent attribute bumps are allowed: last writer wins.
@@ -569,8 +569,8 @@ func BenchmarkConflictCheck(b *testing.B) {
 				dir := fmt.Sprintf("/dir%d/sub%d", i/100, i%100)
 				name := fmt.Sprintf("file%d.txt", i)
 				resp := makeResp(dir, name, false, int64(i+1), true)
-				path, newPath, kind := extractJobInfo(resp)
-				p.activeJobs[resp.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+				path, _, kind := extractJobInfo(resp)
+				p.activeJobTs[resp.TsNs] = 1
 				p.addPathToIndex(path, kind)
 			}
 
@@ -592,7 +592,7 @@ func waitForJobsToDrain(t *testing.T, p *MetadataProcessor) {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		p.activeJobsLock.Lock()
-		remaining := len(p.activeJobs)
+		remaining := p.activeJobCount
 		p.activeJobsLock.Unlock()
 		if remaining == 0 {
 			return
@@ -634,9 +634,10 @@ func TestFailedJobHoldsWatermark(t *testing.T) {
 		return fn(resp)
 	}
 	p2 := NewMetadataProcessor(slowFn, 10, 0)
+	// admit the slow job first so it is in flight when the failure lands
+	p2.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
 	p2.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
 	p2.AddSyncJob(makeResp("/dir", "b.txt", false, failedTsNs, true))
-	p2.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
 	deadline := time.Now().Add(10 * time.Second)
 	for p2.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -692,7 +693,9 @@ func TestSyncStreamMetrics(t *testing.T) {
 		return nil
 	}
 	p := NewMetadataProcessor(fn, 100, 0)
-	p.SetMetrics("srcFiler", "dstFiler", "TestSyncStreamMetrics", "/")
+	// the counters are process-global: a unique client name keeps repeated
+	// runs (-count>1) from accumulating into each other
+	p.SetMetrics("srcFiler", "dstFiler", fmt.Sprintf("TestSyncStreamMetrics-%d", time.Now().UnixNano()), "/")
 
 	create := makeResp("/dir1", "a.txt", false, 1, true)
 	create.EventNotification.NewEntry.Chunks = []*filer_pb.FileChunk{{FileId: "1,a0", Size: 100}}
@@ -739,8 +742,9 @@ func TestSyncStreamMetrics(t *testing.T) {
 
 // TestFailedJobReplaySuccessClearsPin verifies that when the failed event is
 // redelivered while the processor is still alive and succeeds this time, the
-// failure pin clears and the watermark can move again. Without the clear,
-// every later reconnect would replay the same backlog forever.
+// failure pin clears and the watermark can move again. It is the one event a
+// stopped processor still runs. The resubscribe still signals once the jobs
+// drain: anything dropped after the stop has to replay too.
 func TestFailedJobReplaySuccessClearsPin(t *testing.T) {
 	failed := true
 	release := make(chan struct{})
@@ -756,23 +760,30 @@ func TestFailedJobReplaySuccessClearsPin(t *testing.T) {
 	}
 	p := NewMetadataProcessor(fn, 10, 0)
 
-	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
-	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	// the slow job is admitted first so the processor has in-flight work when
+	// the failure lands, keeping the drain — and the resubscribe — open
 	p.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
+	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
 
 	deadline := time.Now().Add(10 * time.Second)
-	for p.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
+	for p.OldestFailedTsNs() != 200 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
 	if got := p.OldestFailedTsNs(); got != 200 {
 		t.Fatalf("oldest failed = %d, want 200", got)
 	}
-	if got := p.processedTsWatermark.Load(); got != 100 {
-		t.Fatalf("watermark = %d, want it held at 100 by the failure at 200", got)
+
+	// once stopped, a new event drops instead of queueing into a processor
+	// that is about to be abandoned — it replays after the resubscribe
+	p.AddSyncJob(makeResp("/dir", "d.txt", false, 400, true))
+	p.activeJobsLock.Lock()
+	dropped := p.activeJobTs[400] == 0
+	p.activeJobsLock.Unlock()
+	if !dropped {
+		t.Fatal("new event admitted after the failure stopped the processor")
 	}
 
-	// the redelivery lands before the drain, clears the pin, and the
-	// processor drains without needing a resubscribe
+	// the redelivery is the exception: it runs and its success clears the pin
 	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
 	deadline = time.Now().Add(10 * time.Second)
 	for p.OldestFailedTsNs() != 0 && time.Now().Before(deadline) {
@@ -786,8 +797,8 @@ func TestFailedJobReplaySuccessClearsPin(t *testing.T) {
 	waitForJobsToDrain(t, p)
 	select {
 	case <-p.ResubscribeCh():
-		t.Fatal("resubscribe signaled even though the pin cleared before the drain")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(time.Second):
+		t.Fatal("resubscribe never signaled after the stopped processor drained")
 	}
 	if got := p.processedTsWatermark.Load(); got != 300 {
 		t.Fatalf("watermark = %d after recovery, want 300", got)
@@ -896,38 +907,35 @@ func TestFailedLedgerCapsAndStaysPinned(t *testing.T) {
 // TestFailedLedgerDistinguishesEventsAtSameTs verifies that a success for one
 // event does not clear the pin recorded for a different event that happened to
 // share its timestamp — the ledger keys on event identity, not just TsNs. A
-// slow job keeps the processor undrained so the later events still admit.
+// slow job holds the drain open so the redelivery still lands on this
+// processor generation.
 func TestFailedLedgerDistinguishesEventsAtSameTs(t *testing.T) {
 	fail := true
 	release := make(chan struct{})
-	goodDone := make(chan struct{})
+	hold := make(chan struct{})
 	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
-		switch resp.EventNotification.NewEntry.GetName() {
-		case "slow.txt":
+		if resp.EventNotification.NewEntry.GetName() == "slow.txt" {
+			<-hold
+		} else {
 			<-release
-		case "bad.txt":
-			if fail {
-				return errors.New("AccessDenied: Access Denied")
-			}
-		case "good.txt":
-			close(goodDone)
+		}
+		if resp.EventNotification.NewEntry.GetName() == "bad.txt" && fail {
+			return errors.New("AccessDenied: Access Denied")
 		}
 		return nil
 	}, 100, 0)
 
-	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	// both same-ts events admit before either resolves, so the success lands
+	// while the failure is already pinned
 	p.AddSyncJob(makeResp("/dir", "slow.txt", false, 900, true))
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	p.AddSyncJob(makeResp("/dir", "good.txt", false, 200, true))
+	close(release)
+
 	deadline := time.Now().Add(10 * time.Second)
-	for p.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
+	for p.OldestFailedTsNs() != 200 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	p.AddSyncJob(makeResp("/dir", "good.txt", false, 200, true))
-	select {
-	case <-goodDone:
-	case <-time.After(10 * time.Second):
-		t.Fatal("good.txt never ran")
-	}
-
 	if got := p.OldestFailedTsNs(); got != 200 {
 		t.Fatalf("oldest failed = %d, want the other event's pin held at 200", got)
 	}
@@ -935,16 +943,21 @@ func TestFailedLedgerDistinguishesEventsAtSameTs(t *testing.T) {
 		t.Fatalf("watermark = %d, want it still pinned at 0", got)
 	}
 
+	// redelivering the failed event itself is what clears the pin — and it is
+	// the one event a stopped processor still admits
 	fail = false
 	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
 	deadline = time.Now().Add(10 * time.Second)
 	for p.OldestFailedTsNs() != 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	close(release)
+	close(hold)
 	waitForJobsToDrain(t, p)
 	if got := p.OldestFailedTsNs(); got != 0 {
 		t.Fatalf("oldest failed = %d after the failed event itself recovered, want 0", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 900 {
+		t.Fatalf("watermark = %d after the pin cleared and the rest drained, want 900", got)
 	}
 }
 
@@ -972,6 +985,8 @@ func TestFailedJobSignalsResubscribe(t *testing.T) {
 // TestResubscribeWaitsForInFlightJobs verifies the signal stays open while
 // jobs admitted before the failure are still running — replaying behind them
 // could restore older state over their writes — and closes once they drain.
+// An event arriving after the stop drops instead of keeping the drain open,
+// so a busy stream cannot starve the replay.
 func TestResubscribeWaitsForInFlightJobs(t *testing.T) {
 	release := make(chan struct{})
 	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -982,8 +997,9 @@ func TestResubscribeWaitsForInFlightJobs(t *testing.T) {
 		return nil
 	}, 100, 0)
 
-	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	// the slow job admits first so it is in flight when the failure lands
 	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
 
 	deadline := time.Now().Add(10 * time.Second)
 	for p.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
@@ -998,11 +1014,62 @@ func TestResubscribeWaitsForInFlightJobs(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
+	// the processor stopped on the failure, so this event drops — it replays
+	// after the resubscribe — instead of starving the drain
+	p.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
+	p.activeJobsLock.Lock()
+	dropped := p.activeJobTs[300] == 0
+	p.activeJobsLock.Unlock()
+	if !dropped {
+		t.Fatal("event admitted after the processor stopped")
+	}
+
 	close(release)
 	waitForJobsToDrain(t, p)
 	select {
 	case <-p.ResubscribeCh():
 	case <-time.After(time.Second):
 		t.Fatal("resubscribe channel never closed after the in-flight jobs drained")
+	}
+}
+
+// TestResubscribeWaitsForSameTsSibling guards the per-timestamp job
+// counting: events in one batch can share a TsNs, and the failed job must
+// not free the bookkeeping of a sibling still running at that timestamp.
+// Otherwise its completion could report the processor drained and the
+// resubscribe would replay over the sibling's writes.
+func TestResubscribeWaitsForSameTsSibling(t *testing.T) {
+	release := make(chan struct{})
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.EventNotification.NewEntry.GetName() == "bad.txt" {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		<-release
+		return nil
+	}, 100, 0)
+
+	// the slow job admits first so it is in flight when the same-ts failure lands
+	p.AddSyncJob(makeResp("/dir", "slow.txt", false, 200, true))
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+
+	deadline := time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if p.OldestFailedTsNs() != 200 {
+		t.Fatalf("oldest failed = %d, want the pin at 200", p.OldestFailedTsNs())
+	}
+	select {
+	case <-p.ResubscribeCh():
+		t.Fatal("resubscribe signaled while a same-ts job was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	waitForJobsToDrain(t, p)
+	select {
+	case <-p.ResubscribeCh():
+	case <-time.After(time.Second):
+		t.Fatal("resubscribe channel never closed after the same-ts jobs drained")
 	}
 }
