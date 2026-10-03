@@ -1753,7 +1753,7 @@ async fn fetch_ec_index_from_one_peer(
         .await
         .map_err(|e| io::Error::other(format!("copy .ecx: {}", e)))?
         .into_inner();
-    drain_copy_stream(stream, ecx_path, false).await?;
+    drain_copy_stream(stream, ecx_path).await?;
 
     let meta =
         fs::metadata(ecx_path).map_err(|e| io::Error::other(format!("stat copied .ecx: {}", e)))?;
@@ -1766,28 +1766,38 @@ async fn fetch_ec_index_from_one_peer(
         )));
     }
 
-    // .ecj is the source peer's deletion journal (appended); .vif carries EC
-    // params. Both are best-effort: a missing .ecj is recreated at mount and a
-    // missing .vif falls back to default EC parameters. A failed .ecj append
-    // leaves a partial file, so drop it. The append and that cleanup are both
-    // writes by path, so they run registered as a writer: a volume mounting on
-    // this journal meanwhile must not compact it underneath them.
-    let ecj_write =
-        crate::storage::erasure_coding::ecj_registry::begin_ecj_write_async(ecj_path).await;
+    // .ecj is the source peer's deletion journal; .vif carries EC params. Both
+    // are best-effort: a missing .ecj is recreated at mount and a missing .vif
+    // falls back to default EC parameters. The journal is a *set*: merge the
+    // peer's ids into any local ones as a union instead of appending, so
+    // a volume bounced between servers cannot double its journal. The merge
+    // only appends whole records, so a failure leaves nothing to clean up.
     match client.copy_file(copy_req(".ecj", true)).await {
         Ok(resp) => {
-            if let Err(e) = drain_copy_stream(resp.into_inner(), ecj_path, true).await {
+            let mut stream = resp.into_inner();
+            let merged = match crate::server::grpc_server::receive_ecj_ids(&mut stream).await {
+                Ok((ids, true)) => crate::server::grpc_server::merge_ecj_ids(
+                    state,
+                    m.vid,
+                    m.data_dir.clone(),
+                    ecj_path.to_string(),
+                    ids,
+                )
+                .await
+                .map(|_| ()),
+                Ok((_, false)) => Ok(()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = merged {
                 tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .ecj: {}", e);
-                let _ = fs::remove_file(ecj_path);
             }
         }
         Err(e) => tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .ecj: {}", e),
     }
-    drop(ecj_write);
 
     match client.copy_file(copy_req(".vif", true)).await {
         Ok(resp) => {
-            if let Err(e) = drain_copy_stream(resp.into_inner(), vif_path, false).await {
+            if let Err(e) = drain_copy_stream(resp.into_inner(), vif_path).await {
                 tracing::warn!(volume_id = m.vid.0, peer = %peer, "copy .vif: {}", e);
             }
         }
@@ -1797,22 +1807,14 @@ async fn fetch_ec_index_from_one_peer(
     Ok(())
 }
 
-/// Drain a CopyFile stream into a local file, appending or truncating.
+/// Drain a CopyFile stream into a local file, truncating it first.
 async fn drain_copy_stream(
     mut stream: tonic::Streaming<crate::pb::volume_server_pb::CopyFileResponse>,
     dest_path: &str,
-    append: bool,
 ) -> io::Result<()> {
     use std::io::Write;
-    let mut file = if append {
-        fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dest_path)
-    } else {
-        fs::File::create(dest_path)
-    }
-    .map_err(|e| io::Error::other(format!("create {}: {}", dest_path, e)))?;
+    let mut file = fs::File::create(dest_path)
+        .map_err(|e| io::Error::other(format!("create {}: {}", dest_path, e)))?;
     while let Some(chunk) = stream
         .message()
         .await

@@ -16,8 +16,9 @@ import (
 //     one path are normal. A holder that keeps appending to a replaced inode
 //     acknowledges deletes that are gone at the next mount.
 //   - Writers append to or replace the path by name without holding it open
-//     across calls: VolumeEcShardsCopy (CopyEcjFile), EC index recovery and
-//     ReceiveFile of an EC .ecj.
+//     across calls: ReceiveFile of an EC .ecj, and the unmounted append in
+//     Store.MergeEcJournal, which VolumeEcShardsCopy and EC index recovery
+//     funnel a peer's journal through.
 //     Bytes they write after the compactor sized the journal would be dropped
 //     by the rename.
 //

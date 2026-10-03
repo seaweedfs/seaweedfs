@@ -76,6 +76,43 @@ Inject extra environment vars in the format key:value, if populated
 {{- end }}
 {{- end -}}
 
+{{/*
+Writable temporary directory for containers using a read-only root filesystem.
+Input: list of the root context, the component container security context, the
+rendered extraVolumeMounts and extraVolumes, and whether the pod has secondary
+chart-managed containers that mount seaweedfs-tmp. A user-supplied /tmp mount
+only covers the main container, so the volume is still emitted for secondaries;
+a user-supplied seaweedfs-tmp volume is reused rather than duplicated.
+*/}}
+{{- define "seaweedfs.tmpDirCovered" -}}
+{{- regexMatch `(?m)^\s*-?\s*mountPath:\s*['"]?/tmp/?['"]?\s*(#.*)?$` (index . 2) -}}
+{{- end -}}
+
+{{- define "seaweedfs.tmpDirVolume" -}}
+{{- $root := index . 0 -}}
+{{- $securityContext := index . 1 -}}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem
+  (or (index . 4) (ne (include "seaweedfs.tmpDirCovered" .) "true"))
+  (not (regexMatch `(?m)^\s*-?\s*name:\s*['"]?seaweedfs-tmp['"]?\s*(#.*)?$` (index . 3))) }}
+- name: seaweedfs-tmp
+  {{- with $root.Values.global.seaweedfs.tmpDir.sizeLimit }}
+  emptyDir:
+    sizeLimit: {{ . | quote }}
+  {{- else }}
+  emptyDir: {}
+  {{- end }}
+{{- end }}
+{{- end -}}
+
+{{- define "seaweedfs.tmpDirVolumeMount" -}}
+{{- $securityContext := index . 1 -}}
+{{- if and $securityContext.enabled $securityContext.readOnlyRootFilesystem
+  (ne (include "seaweedfs.tmpDirCovered" .) "true") }}
+- name: seaweedfs-tmp
+  mountPath: /tmp
+{{- end }}
+{{- end -}}
+
 {{/* Whether the mysql filer store is selected; a flag the chart cannot read counts as selected. */}}
 {{- define "seaweedfs.filer.mysqlEnabled" -}}
 {{- $merged := dict -}}

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -437,13 +437,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 
 		if req.CopyEcjFile {
-			// copy ecj file. Registered as a writer for the whole append, so a
-			// volume mounting on this journal cannot compact it underneath the
-			// copy.
-			done := erasure_coding.BeginEcjWrite(indexBaseFileName + ".ecj")
-			_, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecj", true, true, nil, throttler)
-			done()
-			if err != nil {
+			// The journal is a *set* of ids: merge the source's into the
+			// local one as a union, never append it whole.
+			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
 				return err
 			}
 		}
@@ -472,6 +468,61 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}
 
 	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+// copyEcjAndMerge folds the source peer's .ecj into the local journal of vid
+// as a set union: only ids the local journal lacks are appended, so a
+// shard bounced between servers cannot grow it. The source journal streams
+// straight into memory — no staging file — and a source without one is not an
+// error. destDir is the receiving disk's data directory and destBase its index
+// base name.
+func (vs *VolumeServer) copyEcjAndMerge(client volume_server_pb.VolumeServerClient, collection string, vid uint32, destDir, destBase string, throttler *util.WriteThrottler) error {
+	stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
+		VolumeId:                 vid,
+		Ext:                      ".ecj",
+		CompactionRevision:       math.MaxUint32,
+		StopOffset:               math.MaxInt64,
+		Collection:               collection,
+		IsEcVolume:               true,
+		IgnoreSourceFileNotFound: true,
+	})
+	if err != nil {
+		return fmt.Errorf("volume %d: start copying .ecj: %w", vid, err)
+	}
+	ids, found, err := receiveEcjIds(stream, throttler)
+	if err != nil {
+		return fmt.Errorf("volume %d: copy .ecj: %w", vid, err)
+	}
+	if !found {
+		return nil
+	}
+	if _, err := vs.store.MergeEcJournal(needle.VolumeId(vid), destDir, destBase+".ecj", ids); err != nil {
+		return fmt.Errorf("volume %d: merge .ecj: %w", vid, err)
+	}
+	return nil
+}
+
+// receiveEcjIds decodes a CopyFile stream of an .ecj into its distinct ids.
+// found is false only when the source has no journal, which the source
+// signals with neither a modified time nor any bytes; an empty journal still
+// carries its modified time.
+func receiveEcjIds(stream volume_server_pb.VolumeServer_CopyFileClient, throttler *util.WriteThrottler) (ids map[types.NeedleId]struct{}, found bool, err error) {
+	decoder := erasure_coding.NewEcjIdDecoder()
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			return nil, false, recvErr
+		}
+		if resp.ModifiedTsNs != 0 || len(resp.FileContent) > 0 {
+			found = true
+		}
+		decoder.Write(resp.FileContent)
+		throttler.MaybeSlowdown(int64(len(resp.FileContent)))
+	}
+	return decoder.Ids(), found, nil
 }
 
 // VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed

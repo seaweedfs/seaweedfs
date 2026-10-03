@@ -9,6 +9,7 @@ pub mod ec_encoder;
 pub mod ec_locate;
 pub mod ec_shard;
 pub mod ec_volume;
+pub mod ecj_merge;
 pub(crate) mod ecj_registry;
 
 pub use ec_shard::{

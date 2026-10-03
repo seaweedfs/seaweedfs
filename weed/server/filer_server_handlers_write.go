@@ -26,7 +26,9 @@ var (
 	OS_UID = uint32(os.Getuid())
 	OS_GID = uint32(os.Getgid())
 
-	ErrReadOnly = errors.New("read only")
+	// ErrReadOnly is filer_pb.ErrReadOnly so errors.Is matches on either side
+	// of the gRPC boundary.
+	ErrReadOnly = filer_pb.ErrReadOnly
 )
 
 type FilerPostResult struct {

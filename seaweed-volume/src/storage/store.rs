@@ -728,17 +728,6 @@ impl Store {
         vol.needle_read_plan(id, read_deleted)
     }
 
-    /// Re-lookup a needle's data-file offset after compaction may have moved it.
-    /// Returns `(new_data_file_offset, current_compaction_revision)`.
-    pub fn re_lookup_needle_data_offset(
-        &self,
-        vid: VolumeId,
-        needle_id: NeedleId,
-    ) -> Result<(u64, u16), VolumeError> {
-        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
-        vol.re_lookup_needle_data_offset(needle_id)
-    }
-
     /// Write a needle to a volume. With `fsync` the volume flushes its .dat
     /// before returning, so the caller can ack a durable write.
     pub fn write_volume_needle(
@@ -2485,6 +2474,52 @@ mod tests {
         let selected =
             store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive, None);
         assert_eq!(selected, Some(0));
+    }
+
+    // VolumeCopy picks a disk before deleting the replica it replaces, so only
+    // the location actually holding that replica may count its slot as free.
+    #[test]
+    fn test_find_free_location_predicate_credits_only_the_holding_location() {
+        let tmp1 = TempDir::new().unwrap();
+        let dir1 = tmp1.path().to_str().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let dir2 = tmp2.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for dir in [dir1, dir2] {
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    1,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        for vid in [81, 82] {
+            store
+                .add_volume(VolumeId(vid), DiskType::HardDrive, &VolumeSpec::default())
+                .unwrap();
+        }
+        let loc_of = |vid| store.find_volume(VolumeId(vid)).unwrap().0;
+        assert_ne!(loc_of(81), loc_of(82), "fixture must fill both locations");
+
+        let hdd = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.find_free_location_predicate(hdd, None), None);
+        assert_eq!(
+            store.find_free_location_predicate(hdd, Some(VolumeId(99))),
+            None
+        );
+        assert_eq!(
+            store.find_free_location_predicate(hdd, Some(VolumeId(81))),
+            Some(loc_of(81))
+        );
+        assert_eq!(
+            store.find_free_location_predicate(hdd, Some(VolumeId(82))),
+            Some(loc_of(82))
+        );
     }
 
     #[test]

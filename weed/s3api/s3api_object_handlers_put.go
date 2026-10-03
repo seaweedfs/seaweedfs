@@ -580,8 +580,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			if err != nil {
 				return fmt.Errorf("assign volume: %w", err)
 			}
-			if resp.Error != "" {
-				return fmt.Errorf("assign volume: %v", resp.Error)
+			if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
+				return fmt.Errorf("assign volume: %w", err)
 			}
 			assignResult = resp
 			return nil
@@ -1491,8 +1491,13 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // added later that does — a request budget, an auth deadline, shutdown draining —
 // would have to cancel with its own cause and be excluded here, otherwise a body
 // truncated at that instant gets attributed to the peer.
+//
+// A read-only destination (the filer refused the volume assign, e.g. bucket over
+// quota) is AccessDenied, as in filerErrorToS3Error and mapCopyErrorToS3Error.
 func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.ErrorCode {
 	switch {
+	case errors.Is(err, weed_server.ErrReadOnly):
+		return s3err.ErrAccessDenied
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):
