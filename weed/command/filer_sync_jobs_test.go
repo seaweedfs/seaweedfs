@@ -900,3 +900,41 @@ func TestFailedJobSignalsResubscribe(t *testing.T) {
 		t.Fatalf("oldest failed = %d, want 100", got)
 	}
 }
+
+// TestResubscribeWaitsForInFlightJobs verifies the signal stays open while
+// jobs admitted before the failure are still running — replaying behind them
+// could restore older state over their writes — and closes once they drain.
+func TestResubscribeWaitsForInFlightJobs(t *testing.T) {
+	release := make(chan struct{})
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 100 {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		<-release
+		return nil
+	}, 100, 0)
+
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+
+	deadline := time.Now().Add(10 * time.Second)
+	for p.OldestFailedTsNs() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if p.OldestFailedTsNs() != 100 {
+		t.Fatalf("oldest failed = %d, want the pin at 100", p.OldestFailedTsNs())
+	}
+	select {
+	case <-p.ResubscribeCh():
+		t.Fatal("resubscribe signaled while an in-flight job could still race the replay")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	waitForJobsToDrain(t, p)
+	select {
+	case <-p.ResubscribeCh():
+	case <-time.After(time.Second):
+		t.Fatal("resubscribe channel never closed after the in-flight jobs drained")
+	}
+}

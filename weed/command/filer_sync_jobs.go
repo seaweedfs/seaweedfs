@@ -132,9 +132,10 @@ type MetadataProcessor struct {
 	failedSticky     bool
 	oldestFailedTsNs int64
 
-	// resubscribeCh closes when the first job failure pins the watermark, asking
-	// the metadata follower to drop the stream so the caller's reconnect replays
-	// the pinned events in order instead of waiting for a restart.
+	// resubscribeCh closes once a failure pins the watermark and all in-flight
+	// jobs have drained, asking the metadata follower to drop the stream so the
+	// caller's reconnect replays the pinned events in order — and never races
+	// the replay against work still running in this abandoned processor.
 	resubscribeCh   chan struct{}
 	resubscribeOnce sync.Once
 
@@ -376,7 +377,6 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 
 		failedKey := failedEventKey{tsNs: resp.TsNs, path: jobPaths.path, newPath: jobPaths.newPath, kind: jobPaths.kind}
 		if jobErr != nil {
-			t.resubscribeOnce.Do(func() { close(t.resubscribeCh) })
 			if t.failedSticky {
 				if resp.TsNs < t.oldestFailedTsNs {
 					t.oldestFailedTsNs = resp.TsNs
@@ -448,6 +448,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		if len(t.activeJobs) == 0 && t.filteredTsNs > t.processedTsWatermark.Load() &&
 			(t.oldestFailedTsNs == 0 || t.filteredTsNs < t.oldestFailedTsNs) {
 			t.processedTsWatermark.Store(t.filteredTsNs)
+		}
+		if t.oldestFailedTsNs != 0 && len(t.activeJobs) == 0 {
+			t.resubscribeOnce.Do(func() { close(t.resubscribeCh) })
 		}
 		t.activeJobsCond.Signal()
 	}()
