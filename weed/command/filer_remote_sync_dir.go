@@ -312,7 +312,7 @@ func processUpdateEvent(
 	if errors.Is(writeErr, errSuperseded) {
 		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
 		if !proto.Equal(oldDest, dest) {
-			return uploadCurrentEntry(filerClient, filerSource, client, message.NewParentPath, message.NewEntry.Name, dest, storageClass)
+			return uploadCurrentEntry(filerClient, filerSource, client, message.NewParentPath, message.NewEntry.Name, oldDest, dest, storageClass)
 		}
 		return nil
 	}
@@ -411,9 +411,10 @@ func openRemoteObject(client remote_storage.RemoteStorageClient, loc *remote_pb.
 // log uploads the destination itself unless shouldSendToRemote skips it on
 // the inherited RemoteEntry, whose RemoteMtime can equal the rewrite's mtime
 // within the same second. Only that case uploads here, so the content goes
-// up once. A remote-only entry at this point has lost its only copy with the
-// old key; that is an error, so the offset holds and the event is retried.
-func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
+// up once. A remote-only entry is finished the way completeRemoteOnlyRename
+// finishes a rename: its stamp can already describe the destination (a sync
+// plus remote.uncache in the meantime), and only then is it complete.
+func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, oldDest, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
 	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return nil
@@ -424,8 +425,14 @@ func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.F
 	if current.IsDirectory {
 		return nil
 	}
-	if !filer.HasData(current) && current.IsInRemoteOnly() {
-		return fmt.Errorf("%s: content is only on the deleted remote object %s", util.NewFullPath(dir, name), remote_storage.FormatLocation(dest))
+	if isRemoteOnly(current) {
+		return completeRemoteOnlyRename(filerClient, client, dir, current, oldDest, dest, storageClass)
+	}
+	// A stamp newer than the content means the superseding event already
+	// uploaded this version; uploading it again wastes the write.
+	if remote := current.RemoteEntry; remote != nil &&
+		remote.LastLocalSyncTsNs >= current.Attributes.GetMtime()*1e9+int64(current.Attributes.GetMtimeNs()) {
+		return nil
 	}
 	if shouldSendToRemote(current) {
 		glog.V(0).Infof("leaving %s to the rewrite that superseded the rename", remote_storage.FormatLocation(dest))

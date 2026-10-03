@@ -1264,12 +1264,40 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
 		remote := &recordingRemote{}
 		filerClient := &stubFilerClient{entry: current}
-		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantWrite, "")
-		if err == nil || !strings.Contains(err.Error(), "only on the deleted remote object") {
+		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, "")
+		if err == nil || !strings.Contains(err.Error(), "neither") {
 			t.Errorf("err = %v, want the lost-content failure", err)
 		}
 		if len(remote.writes) != 0 {
 			t.Errorf("writes = %+v, want none", remote.writes)
+		}
+	})
+
+	t.Run("uncached with the destination already synced: complete without a write", func(t *testing.T) {
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/b.txt": []byte("payload")}}
+		filerClient := &stubFilerClient{entry: current}
+		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, ""); err != nil {
+			t.Fatalf("err = %v, want nil: the destination object matches the entry's stamp", err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none", remote.writes)
+		}
+		if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
+			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
+		}
+	})
+
+	t.Run("already stamped by the superseding event: nothing to upload", func(t *testing.T) {
+		synced := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024, LastLocalSyncTsNs: 1786096669 * 1e9}
+		current := entryWith("b.txt", synced, chunk("3,02", "e2"))
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: current}
+		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, ""); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none: the rewrite's event already uploaded this version", remote.writes)
 		}
 	})
 }
