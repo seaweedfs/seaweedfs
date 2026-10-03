@@ -2342,9 +2342,12 @@ impl Volume {
         let mut refused = false;
         for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
             if refused {
-                if r.is_ok() {
-                    *r = Err(VolumeError::ReadOnly(self.id));
-                }
+                // On its own the entry would meet the refusal before any check
+                // of its own, so one staged as a cookie mismatch gets it too.
+                *r = Err(self
+                    .check_writable()
+                    .err()
+                    .unwrap_or(VolumeError::ReadOnly(self.id)));
             } else if let Ok(Some(offset)) = *r
                 && let Err(e) = self.publish_write(n, offset, *fsync)
             {
@@ -6537,7 +6540,8 @@ mod tests {
     /// there they would be acked and then lost: a torn row puts every row
     /// appended after it off alignment, and the next load parses them as
     /// garbage. The entries before it are still acked, their rows synced by
-    /// the run's one .idx sync.
+    /// the run's one .idx sync. One already staged as a cookie mismatch is
+    /// refused too, as it would be on its own.
     #[test]
     fn test_grouped_failed_durable_index_refuses_rest_of_run() {
         let tmp = TempDir::new().unwrap();
@@ -6545,6 +6549,8 @@ mod tests {
         let mut v = make_test_volume(dir);
         let mut kept = batch_needle(4, 0xdd, b"kept");
         v.write_needle(&mut kept, true, true).unwrap();
+        let mut other = batch_needle(5, 0xee, b"other");
+        v.write_needle(&mut other, true, true).unwrap();
 
         let nm = v.nm.as_mut().unwrap();
         let idx_len = nm.index_file_size();
@@ -6566,9 +6572,11 @@ mod tests {
             (batch_needle(2, 0xbb, b"torn"), true),
             (batch_needle(3, 0xcc, b"after"), true),
             (batch_needle(4, 0xdd, b"kept"), true),
+            (batch_needle(5, 0xef, b"wrong cookie"), true),
         ];
         let results = v.write_needles_grouped(&mut writes);
-        assert_eq!(v.sync_counts_for_test(), (2, 2));
+        // Two setup writes, then the run's one sync of each file.
+        assert_eq!(v.sync_counts_for_test(), (3, 3));
         assert!(v.is_read_only());
         drop(v);
 
