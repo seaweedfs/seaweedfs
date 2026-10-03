@@ -586,33 +586,6 @@ func BenchmarkConflictCheck(b *testing.B) {
 	}
 }
 
-// TestMetadataProcessorEmptyMarkerKeepsWatermarkStale: the MaxUnsyncedEvents
-// marker (empty EventNotification, fresh timestamp) is dropped by AddSyncJob and
-// does NOT advance processedTsWatermark, so offsetFunc keeps publishing the stale
-// offset. This is why the client must not drive sync_offset off the watermark
-// for these markers.
-func TestMetadataProcessorEmptyMarkerKeepsWatermarkStale(t *testing.T) {
-	const staleOffset = int64(1_000_000_000)
-	freshTs := staleOffset + int64(time.Hour) // a "now"-ish source timestamp
-
-	p := NewMetadataProcessor(func(*filer_pb.SubscribeMetadataResponse) error { return nil }, 4, staleOffset)
-
-	marker := &filer_pb.SubscribeMetadataResponse{
-		TsNs:              freshTs,
-		EventNotification: &filer_pb.EventNotification{},
-	}
-	if !filer_pb.IsEmpty(marker) {
-		t.Fatal("marker should be IsEmpty")
-	}
-
-	p.AddSyncJob(marker)
-
-	if got := p.processedTsWatermark.Load(); got != staleOffset {
-		t.Fatalf("empty marker advanced watermark to %d; want it to stay stale at %d", got, staleOffset)
-	}
-	t.Logf("marker carried fresh ts %d but watermark stayed stale at %d", freshTs, staleOffset)
-}
-
 // waitForJobsToDrain blocks until every job goroutine has finished bookkeeping.
 func waitForJobsToDrain(t *testing.T, p *MetadataProcessor) {
 	t.Helper()
@@ -740,5 +713,169 @@ func TestSyncStreamMetrics(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("%s = %v, want %v", tc.name, tc.got, tc.want)
 		}
+	}
+}
+
+// TestFailedJobReplaySuccessClearsPin verifies that when the failed event is
+// replayed (a reconnect resubscribing from the watermark) and succeeds this
+// time, the failure pin clears and the watermark can move again. Without the
+// clear, every later reconnect would replay the same backlog forever.
+func TestFailedJobReplaySuccessClearsPin(t *testing.T) {
+	failed := true
+	fn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.TsNs == 200 && failed {
+			failed = false
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}
+	p := NewMetadataProcessor(fn, 1, 0)
+
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	p.AddSyncJob(makeResp("/dir", "c.txt", false, 300, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 200 {
+		t.Fatalf("oldest failed = %d, want 200", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 100 {
+		t.Fatalf("watermark = %d, want it held at 100 by the failure at 200", got)
+	}
+
+	p.AddSyncJob(makeResp("/dir", "b.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 0 {
+		t.Fatalf("oldest failed = %d after a successful replay, want 0", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 200 {
+		t.Fatalf("watermark = %d after recovery, want 200", got)
+	}
+}
+
+// TestFilteredMarkerAdvancesWatermark verifies that a filtered-progress marker
+// (empty event with a timestamp) moves the watermark once all earlier work has
+// finished, but never past an in-flight job or an unresolved failure.
+func TestFilteredMarkerAdvancesWatermark(t *testing.T) {
+	marker := func(ts int64) *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{TsNs: ts, EventNotification: &filer_pb.EventNotification{}}
+	}
+
+	t.Run("idle", func(t *testing.T) {
+		p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error { return nil }, 100, 50)
+		p.AddSyncJob(marker(90))
+		if got := p.processedTsWatermark.Load(); got != 90 {
+			t.Fatalf("watermark = %d after marker, want 90", got)
+		}
+	})
+
+	t.Run("behind in-flight job", func(t *testing.T) {
+		release := make(chan struct{})
+		p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+			<-release
+			return nil
+		}, 100, 50)
+		p.AddSyncJob(makeResp("/dir", "f.txt", false, 60, true))
+		p.AddSyncJob(marker(80))
+		if got := p.processedTsWatermark.Load(); got != 50 {
+			t.Fatalf("watermark = %d with a job in flight, want 50", got)
+		}
+		close(release)
+		waitForJobsToDrain(t, p)
+		if got := p.processedTsWatermark.Load(); got != 80 {
+			t.Fatalf("watermark = %d after drain, want the retained marker at 80", got)
+		}
+		p.AddSyncJob(marker(90))
+		if got := p.processedTsWatermark.Load(); got != 90 {
+			t.Fatalf("watermark = %d after drain and marker, want 90", got)
+		}
+	})
+
+	t.Run("behind a failure", func(t *testing.T) {
+		p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+			return errors.New("AccessDenied: Access Denied")
+		}, 100, 50)
+		p.AddSyncJob(makeResp("/dir", "f.txt", false, 100, true))
+		waitForJobsToDrain(t, p)
+		p.AddSyncJob(marker(200))
+		if got := p.processedTsWatermark.Load(); got != 50 {
+			t.Fatalf("watermark = %d past a failure pin, want 50", got)
+		}
+		p.AddSyncJob(marker(70))
+		if got := p.processedTsWatermark.Load(); got != 70 {
+			t.Fatalf("watermark = %d behind the pin, want 70", got)
+		}
+	})
+}
+
+// TestFailedLedgerCapsAndStaysPinned verifies that a sustained run of distinct
+// failures cannot grow failedTs without bound: past maxFailedSyncEvents the
+// ledger collapses to a sticky pin at the oldest failure, so the watermark
+// still replays from it while memory stays bounded.
+func TestFailedLedgerCapsAndStaysPinned(t *testing.T) {
+	defer func(old int) { maxFailedSyncEvents = old }(maxFailedSyncEvents)
+	maxFailedSyncEvents = 4
+
+	fail := true
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if fail {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}, 100, 0)
+	for i := int64(1); i <= 10; i++ {
+		p.AddSyncJob(makeResp("/dir", fmt.Sprintf("f%d.txt", i), false, i*100, true))
+	}
+	waitForJobsToDrain(t, p)
+
+	if !p.failedSticky {
+		t.Fatal("ledger did not collapse past the cap")
+	}
+	if got := p.OldestFailedTsNs(); got != 100 {
+		t.Fatalf("oldest failed = %d, want the pin at the oldest failure 100", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d, want it pinned at 0", got)
+	}
+
+	fail = false
+	p.AddSyncJob(makeResp("/dir", "f1.txt", false, 100, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 100 {
+		t.Fatalf("oldest failed = %d after a collapsed replay, want the pin held at 100", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d after a collapsed replay, want it still pinned at 0", got)
+	}
+}
+
+// TestFailedLedgerDistinguishesEventsAtSameTs verifies that a success for one
+// event does not clear the pin recorded for a different event that happened to
+// share its timestamp — the ledger keys on event identity, not just TsNs.
+func TestFailedLedgerDistinguishesEventsAtSameTs(t *testing.T) {
+	fail := true
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if fail && resp.EventNotification.NewEntry.GetName() == "bad.txt" {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}, 100, 0)
+
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+	p.AddSyncJob(makeResp("/dir", "good.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+
+	if got := p.OldestFailedTsNs(); got != 200 {
+		t.Fatalf("oldest failed = %d, want the other event's pin held at 200", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d, want it still pinned at 0", got)
+	}
+
+	fail = false
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 0 {
+		t.Fatalf("oldest failed = %d after the failed event itself recovered, want 0", got)
 	}
 }

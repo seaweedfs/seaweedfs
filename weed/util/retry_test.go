@@ -25,6 +25,9 @@ func TestIsTransientError(t *testing.T) {
 		fmt.Errorf("send: %w", syscall.ETIMEDOUT),
 		&net.DNSError{Err: "operation timed out", IsTimeout: true},
 		io.ErrUnexpectedEOF,
+		// transport teardown the peer reports as Canceled, not the caller's
+		// own context cancel
+		status.Error(codes.Canceled, "grpc: the client connection is closing"),
 	}
 	for _, err := range transient {
 		if !IsTransientError(err) {
@@ -37,6 +40,8 @@ func TestIsTransientError(t *testing.T) {
 		errors.New("AccessDenied: Access Denied"),
 		errors.New("NoSuchBucket: The specified bucket does not exist"),
 		context.Canceled,
+		status.Error(codes.Canceled, context.Canceled.Error()),
+		fmt.Errorf("send: %w", status.Error(codes.Canceled, context.Canceled.Error())),
 		fmt.Errorf("write: %w", context.DeadlineExceeded),
 	}
 	for _, err := range permanent {

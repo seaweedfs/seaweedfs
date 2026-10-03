@@ -16,6 +16,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// maxFailedSyncEvents bounds the failedTs ledger. A destination rejecting
+// every event would otherwise add an entry per source event for the life of
+// the processor.
+var maxFailedSyncEvents = 1 << 16
+
 // tsMinHeap implements heap.Interface for int64 timestamps.
 type tsMinHeap []int64
 
@@ -60,6 +65,16 @@ type syncJobPaths struct {
 	dataSize int64
 }
 
+// failedEventKey identifies an event for the failure ledger. A timestamp alone
+// is not unique across events, so a success for one event must not clear an
+// unresolved failure recorded for a different event at the same TsNs.
+type failedEventKey struct {
+	tsNs    int64
+	path    util.FullPath
+	newPath util.FullPath
+	kind    jobKind
+}
+
 // syncStreamMetrics holds the metric children for one sync stream, curried
 // once so per-event updates skip the label lookup.
 type syncStreamMetrics struct {
@@ -80,6 +95,7 @@ type MetadataProcessor struct {
 	concurrencyLimit     int
 	fn                   pb.ProcessMetadataFunc
 	processedTsWatermark atomic.Int64
+	filteredTsNs         int64
 
 	// Indexes for O(depth) conflict detection, replacing O(n) linear scan.
 	// activeFilePaths counts active file jobs at each exact path.
@@ -105,10 +121,15 @@ type MetadataProcessor struct {
 	// used for O(log n) amortized watermark tracking.
 	tsHeap tsMinHeap
 
-	// oldestFailedTsNs is the timestamp of the oldest event whose job returned
-	// an error, or 0 when none has. The watermark is never advanced to it or
-	// past it, so the persisted sync offset stays behind the failure and a
-	// restart replays the event instead of skipping it forever.
+	// failedTs records every event whose job returned an error and has not
+	// since completed, and oldestFailedTsNs caches its minimum (0 when empty).
+	// The watermark is never advanced to it or past it, so the persisted sync
+	// offset stays behind the failure and a restart replays the event instead
+	// of skipping it forever. Past maxFailedSyncEvents the set collapses to a
+	// sticky pin at the smallest failure seen: replay from the oldest failure
+	// still works, but individual recoveries no longer unpin until a restart.
+	failedTs         map[failedEventKey]struct{}
+	failedSticky     bool
 	oldestFailedTsNs int64
 
 	// metrics is nil for callers that do not report per-event metrics.
@@ -124,6 +145,7 @@ func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs
 		activeBarrierDirPaths:    make(map[util.FullPath]int),
 		activeNonBarrierDirPaths: make(map[util.FullPath]int),
 		descendantCount:          make(map[util.FullPath]int),
+		failedTs:                 make(map[failedEventKey]struct{}),
 	}
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
@@ -281,6 +303,18 @@ func (t *MetadataProcessor) conflictsWith(resp *filer_pb.SubscribeMetadataRespon
 
 func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse) {
 	if filer_pb.IsEmpty(resp) {
+		// A filtered-progress marker means the source skipped everything below
+		// it for us; once all earlier work has finished, the watermark can move
+		// to it so idle stretches still advance the resume point.
+		t.activeJobsLock.Lock()
+		defer t.activeJobsLock.Unlock()
+		if resp.TsNs > t.filteredTsNs {
+			t.filteredTsNs = resp.TsNs
+		}
+		if len(t.activeJobs) == 0 && resp.TsNs > t.processedTsWatermark.Load() &&
+			(t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs) {
+			t.processedTsWatermark.Store(resp.TsNs)
+		}
 		return
 	}
 
@@ -327,12 +361,40 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
 
+		failedKey := failedEventKey{tsNs: resp.TsNs, path: jobPaths.path, newPath: jobPaths.newPath, kind: jobPaths.kind}
 		if jobErr != nil {
-			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
-				t.oldestFailedTsNs = resp.TsNs
-				glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
-			} else {
+			if t.failedSticky {
+				if resp.TsNs < t.oldestFailedTsNs {
+					t.oldestFailedTsNs = resp.TsNs
+				}
 				glog.Errorf("process %v: %v", resp, jobErr)
+			} else if _, recorded := t.failedTs[failedKey]; !recorded {
+				if len(t.failedTs) >= maxFailedSyncEvents {
+					t.failedSticky = true
+					t.failedTs = nil
+					if resp.TsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = resp.TsNs
+					}
+					glog.Warningf("process %v: %v; over %d unresolved failures, pinning sync offset at %v until restart", resp, jobErr, maxFailedSyncEvents, time.Unix(0, t.oldestFailedTsNs))
+				} else {
+					t.failedTs[failedKey] = struct{}{}
+					if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = resp.TsNs
+						glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
+					} else {
+						glog.Errorf("process %v: %v", resp, jobErr)
+					}
+				}
+			}
+		} else if _, recorded := t.failedTs[failedKey]; recorded {
+			delete(t.failedTs, failedKey)
+			if resp.TsNs == t.oldestFailedTsNs {
+				t.oldestFailedTsNs = 0
+				for k := range t.failedTs {
+					if t.oldestFailedTsNs == 0 || k.tsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = k.tsNs
+					}
+				}
 			}
 		}
 
@@ -368,6 +430,10 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
 				t.processedTsWatermark.Store(resp.TsNs)
 			}
+		}
+		if len(t.activeJobs) == 0 && t.filteredTsNs > t.processedTsWatermark.Load() &&
+			(t.oldestFailedTsNs == 0 || t.filteredTsNs < t.oldestFailedTsNs) {
+			t.processedTsWatermark.Store(t.filteredTsNs)
 		}
 		t.activeJobsCond.Signal()
 	}()
