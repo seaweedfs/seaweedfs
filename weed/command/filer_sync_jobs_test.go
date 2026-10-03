@@ -806,3 +806,44 @@ func TestFilteredMarkerAdvancesWatermark(t *testing.T) {
 		}
 	})
 }
+
+// TestFailedLedgerCapsAndStaysPinned verifies that a sustained run of distinct
+// failures cannot grow failedTs without bound: past maxFailedSyncEvents the
+// ledger collapses to a sticky pin at the oldest failure, so the watermark
+// still replays from it while memory stays bounded.
+func TestFailedLedgerCapsAndStaysPinned(t *testing.T) {
+	defer func(old int) { maxFailedSyncEvents = old }(maxFailedSyncEvents)
+	maxFailedSyncEvents = 4
+
+	fail := true
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if fail {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}, 100, 0)
+	for i := int64(1); i <= 10; i++ {
+		p.AddSyncJob(makeResp("/dir", fmt.Sprintf("f%d.txt", i), false, i*100, true))
+	}
+	waitForJobsToDrain(t, p)
+
+	if !p.failedSticky {
+		t.Fatal("ledger did not collapse past the cap")
+	}
+	if got := p.OldestFailedTsNs(); got != 100 {
+		t.Fatalf("oldest failed = %d, want the pin at the oldest failure 100", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d, want it pinned at 0", got)
+	}
+
+	fail = false
+	p.AddSyncJob(makeResp("/dir", "f1.txt", false, 100, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 100 {
+		t.Fatalf("oldest failed = %d after a collapsed replay, want the pin held at 100", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d after a collapsed replay, want it still pinned at 0", got)
+	}
+}

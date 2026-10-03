@@ -16,6 +16,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// maxFailedSyncEvents bounds the failedTs ledger. A destination rejecting
+// every event would otherwise add an entry per source event for the life of
+// the processor.
+var maxFailedSyncEvents = 1 << 16
+
 // tsMinHeap implements heap.Interface for int64 timestamps.
 type tsMinHeap []int64
 
@@ -110,8 +115,11 @@ type MetadataProcessor struct {
 	// since completed, and oldestFailedTsNs caches its minimum (0 when empty).
 	// The watermark is never advanced to it or past it, so the persisted sync
 	// offset stays behind the failure and a restart replays the event instead
-	// of skipping it forever.
+	// of skipping it forever. Past maxFailedSyncEvents the set collapses to a
+	// sticky pin at the smallest failure seen: replay from the oldest failure
+	// still works, but individual recoveries no longer unpin until a restart.
 	failedTs         map[int64]struct{}
+	failedSticky     bool
 	oldestFailedTsNs int64
 
 	// metrics is nil for callers that do not report per-event metrics.
@@ -344,13 +352,27 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		defer t.activeJobsLock.Unlock()
 
 		if jobErr != nil {
-			if _, recorded := t.failedTs[resp.TsNs]; !recorded {
-				t.failedTs[resp.TsNs] = struct{}{}
-				if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
+			if t.failedSticky {
+				if resp.TsNs < t.oldestFailedTsNs {
 					t.oldestFailedTsNs = resp.TsNs
-					glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
+				}
+				glog.Errorf("process %v: %v", resp, jobErr)
+			} else if _, recorded := t.failedTs[resp.TsNs]; !recorded {
+				if len(t.failedTs) >= maxFailedSyncEvents {
+					t.failedSticky = true
+					t.failedTs = nil
+					if resp.TsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = resp.TsNs
+					}
+					glog.Warningf("process %v: %v; over %d unresolved failures, pinning sync offset at %v until restart", resp, jobErr, maxFailedSyncEvents, time.Unix(0, t.oldestFailedTsNs))
 				} else {
-					glog.Errorf("process %v: %v", resp, jobErr)
+					t.failedTs[resp.TsNs] = struct{}{}
+					if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = resp.TsNs
+						glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
+					} else {
+						glog.Errorf("process %v: %v", resp, jobErr)
+					}
 				}
 			}
 		} else if _, recorded := t.failedTs[resp.TsNs]; recorded {

@@ -169,8 +169,15 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			if len(pendingRefs) == 0 || option.LogFileReaderFn == nil {
 				return nil
 			}
+			readFromNs := option.StartTsNs
+			if option.GetResumeTsNs != nil {
+				// The resume cursor lives in the processed watermark, so a
+				// resubscribed ref replay must not be filtered by positions the
+				// previous stream had only seen.
+				readFromNs = sinceNs
+			}
 			lastTs, readErr := ReadLogFileRefs(pendingRefs, option.LogFileReaderFn,
-				option.StartTsNs, option.StopTsNs,
+				readFromNs, option.StopTsNs,
 				PathFilter{
 					PathPrefix:             option.PathPrefix,
 					AdditionalPathPrefixes: option.AdditionalPathPrefixes,
@@ -180,7 +187,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			if readErr != nil {
 				return fmt.Errorf("%w: %w", ErrLogFileRead, readErr)
 			}
-			if lastTs > 0 {
+			if lastTs > 0 && option.GetResumeTsNs == nil {
 				option.StartTsNs = lastTs
 			}
 			pendingRefs = nil
