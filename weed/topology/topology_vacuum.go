@@ -188,7 +188,9 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 			}
 			if !isFound {
 				err := operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-					resp, err := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
+					ctx, cancel := context.WithTimeout(context.Background(), t.vacuumRPCTimeout())
+					defer cancel()
+					resp, err := volumeServerClient.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
 						VolumeId: uint32(vid),
 					})
 					if resp != nil {
