@@ -117,7 +117,7 @@ func TestDeleteVolumeGuardWaitsForInFlightCopyWrite(t *testing.T) {
 	// The write wins; the delete must see the new needle and refuse, leaving
 	// every copy intact.
 	n := &needle.Needle{Id: types.Uint64ToNeedleId(1), Data: []byte("x")}
-	_, _, _, err := copy1.doWriteRequest(n, false)
+	_, _, _, err := copy1.doWriteRequest(n, false, false)
 	require.NoError(t, err)
 	copy1.dataFileAccessLock.Unlock()
 
