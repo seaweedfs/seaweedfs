@@ -22,8 +22,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
-// vacuumPhaseTimeout bounds one synchronous vacuum RPC per GB of the volume
-// size limit, so a stalled volume server cannot hold the vacuum guard forever.
+// vacuumPhaseTimeout bounds one synchronous vacuum RPC, scaled with the
+// volume size limit, so a stalled volume server cannot hold the vacuum
+// guard forever.
 var vacuumPhaseTimeout = time.Minute
 
 func (t *Topology) vacuumRPCTimeout() time.Duration {
