@@ -55,6 +55,9 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 	fs, fsErr := procfs.NewDefaultFS()
 	var sendErr error
 	err := vs.store.CompactVolume(needle.VolumeId(req.VolumeId), req.Preallocate, vs.compactionBytePerSecond, func(processed int64) bool {
+		if stream.Context().Err() != nil {
+			return false
+		}
 		if processed > nextReportTarget {
 			resp.ProcessedBytes = processed
 			if fsErr == nil && numCPU > 0 {
