@@ -97,21 +97,97 @@ pub fn read_ecj_deletions(
     collection: &str,
     volume_id: VolumeId,
 ) -> io::Result<HashSet<NeedleId>> {
-    let mut ids = HashSet::new();
-    for (i, dir) in dirs.iter().enumerate() {
-        if dirs[..i].contains(dir) {
-            continue;
+    Ok(EcjDeletions::read(dirs, collection, volume_id)?.ids)
+}
+
+/// The ids [`read_ecj_deletions`] returns, plus how far each journal was read
+/// so that ids journaled later can be added.
+pub struct EcjDeletions {
+    pub ids: HashSet<NeedleId>,
+    /// Each distinct journal path and the whole-record length read so far.
+    journals: Vec<(String, u64)>,
+}
+
+impl EcjDeletions {
+    pub fn read(dirs: &[&str], collection: &str, volume_id: VolumeId) -> io::Result<Self> {
+        let mut journals: Vec<(String, u64)> = Vec::new();
+        for dir in dirs {
+            let path = format!("{}.ecj", volume_file_name(dir, collection, volume_id));
+            if !journals.iter().any(|(p, _)| *p == path) {
+                journals.push((path, 0));
+            }
         }
-        let path = format!("{}.ecj", volume_file_name(dir, collection, volume_id));
-        let file = match File::open(&path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
+        let mut deletions = EcjDeletions {
+            ids: HashSet::new(),
+            journals,
         };
-        let len = file.metadata()?.len();
-        read_ecj_ids(&file, len, &mut ids)?;
+        deletions.catch_up()?;
+        Ok(deletions)
     }
-    Ok(ids)
+
+    /// Adds the ids appended to each journal since the last read. A journal
+    /// that shrank is read again from the start — and the whole set rebuilt,
+    /// since ids already folded in from the truncated tail may have been a
+    /// rolled-back append. Non-regular journals (the FIFOs the tests stand
+    /// in for a blocking disk) stat empty and cannot be rolled back, so they
+    /// never count as shrunk.
+    pub fn catch_up(&mut self) -> io::Result<()> {
+        let mut shrank = false;
+        for (path, read_to) in &self.journals {
+            if *read_to == 0 {
+                continue;
+            }
+            match std::fs::metadata(path) {
+                Ok(m) => {
+                    if m.is_file() && m.len() < *read_to {
+                        shrank = true;
+                        break;
+                    }
+                }
+                // A journal that was read before and is now gone shrank to
+                // nothing (e.g. the volume was destroyed mid-scan) — the ids
+                // read from it no longer reflect committed content.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    shrank = true;
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        if shrank {
+            self.ids.clear();
+            for (_, read_to) in &mut self.journals {
+                *read_to = 0;
+            }
+        }
+        for (path, read_to) in &mut self.journals {
+            let file = match File::open(&*path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            let len = file.metadata()?.len();
+            if len < *read_to {
+                *read_to = 0;
+            }
+            read_ecj_ids(&file, *read_to, len, &mut self.ids)?;
+            *read_to = len - len % NEEDLE_ID_SIZE as u64;
+        }
+        Ok(())
+    }
+
+    /// Clears the set and re-reads every journal from the start. Run under
+    /// the caller's store read lock (no append in flight): the result is
+    /// then exactly the committed content — an earlier unlocked read may
+    /// have folded in bytes a rolled-back append later truncated, or missed
+    /// a record re-appended to the very offset a rollback freed.
+    pub fn rescan(&mut self) -> io::Result<()> {
+        self.ids.clear();
+        for (_, read_to) in &mut self.journals {
+            *read_to = 0;
+        }
+        self.catch_up()
+    }
 }
 
 /// What it takes to rebuild a volume's .dat from its EC data shards.
@@ -310,6 +386,30 @@ pub fn write_dat_file_from_shards(spec: &DatRebuild<'_>) -> io::Result<()> {
         let _ = std::fs::remove_file(&tmp_path);
     }
     write_result
+}
+
+/// Fails when the decoded `.dat` in `dat_dir` is shorter than the
+/// `dat_file_size` bytes its EC index references: the caller deletes the
+/// shards next, and they are the only other copy of the needles past the cut.
+/// A longer file passes.
+pub fn verify_decoded_dat_file(
+    dat_dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+    dat_file_size: i64,
+) -> io::Result<()> {
+    let dat_path = format!("{}.dat", volume_file_name(dat_dir, collection, volume_id));
+    let size = std::fs::metadata(&dat_path)?.len();
+    if (size as i64) < dat_file_size {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!(
+                "decoded {} is {} bytes, short of the {} its ec index references",
+                dat_path, size, dat_file_size
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Write .idx file from .ecx index + .ecj deletion journal.
@@ -789,5 +889,78 @@ mod tests {
         let ids = read_ecj_deletions(&[data, idx, idx, missing], "", VolumeId(1)).unwrap();
         let expected: HashSet<NeedleId> = [1, 2, 3, 7, 9].into_iter().map(NeedleId).collect();
         assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn test_verify_decoded_dat_file_rejects_a_short_dat() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let dat_path = format!("{dir}/1.dat");
+
+        let err = verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+
+        std::fs::write(&dat_path, vec![0u8; 99]).unwrap();
+        let err = verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap_err();
+        assert!(err.to_string().contains("short of the 100"), "{err}");
+
+        std::fs::write(&dat_path, vec![0u8; 100]).unwrap();
+        verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
+        std::fs::write(&dat_path, vec![0u8; 101]).unwrap();
+        verify_decoded_dat_file(dir, "", VolumeId(1), 100).unwrap();
+    }
+
+    /// Ids appended after the first read, including the rest of a record torn
+    /// at that point, are picked up; a journal that shrank is read again.
+    #[test]
+    fn test_ecj_deletions_catch_up_reads_appended_ids() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ecj_path = format!("{dir}/1.ecj");
+        let entry = |id: u64| {
+            let mut buf = [0u8; NEEDLE_ID_SIZE];
+            NeedleId(id).to_bytes(&mut buf);
+            buf
+        };
+        let append = |bytes: &[u8]| {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&ecj_path)
+                .unwrap();
+            f.write_all(bytes).unwrap();
+        };
+        let ids = |d: &EcjDeletions| {
+            let mut ids: Vec<u64> = d.ids.iter().map(|id| id.0).collect();
+            ids.sort();
+            ids
+        };
+
+        // No journal yet.
+        let mut deletions = EcjDeletions::read(&[dir, dir], "", VolumeId(1)).unwrap();
+        assert!(deletions.ids.is_empty());
+
+        append(&entry(1));
+        append(&entry(2)[..3]);
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [1]);
+
+        append(&entry(2)[3..]);
+        append(&entry(3));
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [1, 2, 3]);
+
+        // A shrunk journal is rebuilt from its surviving content: ids folded
+        // in from the truncated tail may have been rolled back and must not
+        // linger as phantom tombstones.
+        std::fs::write(&ecj_path, entry(9)).unwrap();
+        deletions.catch_up().unwrap();
+        assert_eq!(ids(&deletions), [9]);
+
+        // A journal removed since it was read is the extreme shrink: its
+        // earlier ids must go with it, not linger.
+        std::fs::remove_file(&ecj_path).unwrap();
+        deletions.catch_up().unwrap();
+        assert!(deletions.ids.is_empty());
     }
 }

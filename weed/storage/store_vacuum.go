@@ -184,6 +184,12 @@ func (s *Store) CompactVolumeFiles(vid needle.VolumeId, collection string, locat
 	}
 
 	if err := tempVolume.CommitCompact(); err != nil {
+		// A failed commit may have swapped only one of .dat/.idx; reconcile
+		// rolls a decided swap forward or removes orphan temp files before
+		// this volume can mount with a mismatched pair.
+		if reconcileErr := tempVolume.reconcileCompactState(); reconcileErr != nil {
+			return fmt.Errorf("commit compact volume %d: %v (reconcile failed: %v)", vid, err, reconcileErr)
+		}
 		if cleanupErr := tempVolume.cleanupCompact(); cleanupErr != nil {
 			return fmt.Errorf("commit compact volume %d: %v (cleanup failed: %v)", vid, err, cleanupErr)
 		}

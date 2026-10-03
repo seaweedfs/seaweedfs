@@ -22,6 +22,36 @@ use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
 
+/// Mirrors Go's ensureCompactVolumeSpace, per filesystem: the new .dat lands
+/// next to the old one and the new .idx next to the old index, so when the
+/// index directory is on another filesystem each disk answers for its own
+/// share, while two directories on one filesystem must cover the sum.
+fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), VolumeError> {
+    let (data_bytes, index_bytes) = compaction_space_needed(v, preallocate);
+    let (dir, dir_idx) = (v.dir(), v.dir_idx());
+    let check = |dir: &str, needed: u64| -> Result<(), VolumeError> {
+        let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+        if free < needed {
+            return Err(VolumeError::InsufficientSpace {
+                vid: v.id,
+                required: needed,
+                free,
+            });
+        }
+        Ok(())
+    };
+
+    if dir_idx.is_empty() || dir_idx == dir {
+        check(dir, data_bytes + index_bytes)
+    } else if !same_filesystem(dir, dir_idx) {
+        check(dir, data_bytes)?;
+        check(dir_idx, index_bytes)
+    } else {
+        check(dir, data_bytes + index_bytes)?;
+        check(dir_idx, index_bytes)
+    }
+}
+
 /// Top-level storage manager containing all disk locations and their volumes.
 pub struct Store {
     pub locations: Vec<DiskLocation>,
@@ -1557,46 +1587,46 @@ impl Store {
         vid: VolumeId,
         preallocate: u64,
     ) -> Result<Option<CompactionJob>, VolumeError> {
-        // Mirrors Go's ensureCompactVolumeSpace, per filesystem.
-        let (dir, dir_idx, data_bytes, index_bytes) = {
-            let (_, v) = self
-                .find_volume(vid)
-                .ok_or(VolumeError::VolumeNotFound(vid))?;
-            let (data_bytes, index_bytes) = compaction_space_needed(v, preallocate);
-            (
-                v.dir().to_string(),
-                v.dir_idx().to_string(),
-                data_bytes,
-                index_bytes,
-            )
-        };
-
-        let check = |dir: &str, needed: u64| -> Result<(), VolumeError> {
-            let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
-            if free < needed {
-                return Err(VolumeError::InsufficientSpace {
-                    vid,
-                    required: needed,
-                    free,
-                });
-            }
-            Ok(())
-        };
-
-        if dir_idx.is_empty() || dir_idx == dir {
-            check(&dir, data_bytes + index_bytes)?;
-        } else if !same_filesystem(&dir, &dir_idx) {
-            check(&dir, data_bytes)?;
-            check(&dir_idx, index_bytes)?;
-        } else {
-            check(&dir, data_bytes + index_bytes)?;
-            check(&dir_idx, index_bytes)?;
-        }
+        let (_, v) = self
+            .find_volume(vid)
+            .ok_or(VolumeError::VolumeNotFound(vid))?;
+        ensure_compact_volume_space(v, preallocate)?;
 
         let (_, v) = self
             .find_volume_mut(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
         v.begin_compact_by_index()
+    }
+
+    /// Rewrite the volume in `dir`/`dir_idx`, which is not mounted, with its
+    /// live needles only. Go's `Store.CompactVolumeFiles`.
+    pub fn compact_volume_files(
+        dir: &str,
+        dir_idx: &str,
+        collection: &str,
+        vid: VolumeId,
+        needle_map_kind: NeedleMapKind,
+    ) -> Result<(), VolumeError> {
+        let spec = VolumeSpec {
+            collection,
+            ..VolumeSpec::default()
+        };
+        let mut v = Volume::new(dir, dir_idx, vid, needle_map_kind, &spec)?;
+        let mut compact = || -> Result<(), VolumeError> {
+            ensure_compact_volume_space(&v, 0)?;
+            v.compact_by_index(0, 0, |_| true)?;
+            v.commit_compact()
+        };
+        let result = compact();
+        if result.is_err() {
+            // A failed commit may have swapped only one of .dat/.idx;
+            // reconcile rolls a decided swap forward or removes orphan
+            // temp files before this volume can mount a mismatched pair.
+            let _ = v.reconcile_compact_state();
+            let _ = v.cleanup_compact();
+        }
+        v.close();
+        result
     }
 
     /// Commit a completed compaction: swap files and reload.

@@ -49,6 +49,15 @@ pub(crate) struct ShardLocationCache {
 /// A multiple of `NEEDLE_ID_SIZE`; 1 MiB is 131072 entries per syscall.
 const ECJ_LOAD_CHUNK_BYTES: usize = 1 << 20;
 
+/// Process-wide epoch bumped whenever a failed .ecj append truncates its
+/// uncommitted tail. A decode that read the journal without the store lock
+/// compares a sample taken before the read with one taken under the
+/// quiescing lock: equal means no rollback ran in between, so every id it
+/// folded in was committed and only incremental catch-up remains — the
+/// full rescan is needed only when the epoch moved.
+pub(crate) static ECJ_ROLLBACK_EPOCH: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// A `.ecj` smaller than this is never rewritten, however redundant. Below a
 /// megabyte the duplication costs nothing and the rewrite is pure churn.
 const ECJ_COMPACT_MIN_BYTES: i64 = 1 << 20;
@@ -134,15 +143,16 @@ enum EcjPublishError {
     HandleLost(io::Error),
 }
 
-/// Adds every whole needle id in the first `len` bytes of `ecj_file` to `ids`,
+/// Adds every whole needle id in bytes `from..len` of `ecj_file` to `ids`,
 /// reading `ECJ_LOAD_CHUNK_BYTES` at a time; a trailing partial record is
-/// ignored.
+/// ignored. `from` is a record boundary.
 pub(crate) fn read_ecj_ids(
     ecj_file: &File,
+    from: u64,
     len: u64,
     ids: &mut HashSet<NeedleId>,
 ) -> io::Result<()> {
-    read_ecj_ids_with(read_exact_at, ecj_file, len, ids)
+    read_ecj_ids_with(read_exact_at, ecj_file, from, len, ids)
 }
 
 /// [`read_ecj_ids`] with the positional read supplied by the caller, so the
@@ -150,11 +160,13 @@ pub(crate) fn read_ecj_ids(
 fn read_ecj_ids_with(
     read_at: fn(&File, &mut [u8], u64) -> io::Result<()>,
     ecj_file: &File,
+    from: u64,
     len: u64,
     ids: &mut HashSet<NeedleId>,
 ) -> io::Result<()> {
-    let mut buf = vec![0u8; std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len) as usize];
-    let mut off: u64 = 0;
+    let mut buf =
+        vec![0u8; std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len.saturating_sub(from)) as usize];
+    let mut off: u64 = from;
     while off + NEEDLE_ID_SIZE as u64 <= len {
         let mut want = std::cmp::min(ECJ_LOAD_CHUNK_BYTES as u64, len - off) as usize;
         want -= want % NEEDLE_ID_SIZE;
@@ -987,7 +999,7 @@ impl EcVolume {
         // held the `deleted_needles` write lock for the whole scan, which on a
         // bloated journal is the entire (unbounded) startup.
         let mut loaded: HashSet<NeedleId> = HashSet::new();
-        read_ecj_ids_with(read_at, ecj_file, self.ecj_file_size as u64, &mut loaded)?;
+        read_ecj_ids_with(read_at, ecj_file, 0, self.ecj_file_size as u64, &mut loaded)?;
 
         let mut set = self
             .deleted_needles
@@ -2038,6 +2050,11 @@ impl EcVolume {
                 let ecj_path = self.ecj_file_name();
                 let rollback = open_volume_file(OpenOptions::new().write(true), &ecj_path)
                     .and_then(|f| f.set_len(prev_ecj_size as u64).and_then(|_| f.sync_all()));
+                // Bumped on attempt, not success: a failed rollback leaves the
+                // bytes in place and a decode re-reading for the epoch change
+                // simply sees them — harmless — while a successful one must
+                // never go unnoticed by an unlocked journal read.
+                ECJ_ROLLBACK_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if let Err(trunc_err) = rollback {
                     tracing::error!(
                         volume_id = self.volume_id.0,

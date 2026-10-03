@@ -60,6 +60,11 @@ type VolumeServer struct {
 	fileSizeLimitBytes            int64
 	isHeartbeating                bool
 	stopChan                      chan bool
+
+	// Volumes with an EC decode in flight. A cancelled request does not
+	// stop the handler; this keeps a retry from racing it on the same
+	// volume files.
+	ecDecodesInFlight sync.Map
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
