@@ -130,7 +130,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 					return processEventFn(resp)
 				}, func(err error) bool {
 					glog.Errorf("process %v: %v", resp, err)
-					return true
+					return ctx.Err() == nil
 				})
 			case DontLogError:
 				// pass
