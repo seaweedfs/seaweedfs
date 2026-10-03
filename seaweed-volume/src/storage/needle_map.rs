@@ -224,6 +224,9 @@ pub struct CompactNeedleMap {
     metric: NeedleMapMetric,
     idx_file: Option<Box<dyn IdxFileWriter>>,
     idx_file_offset: u64,
+    /// The file holds bytes past `idx_file_offset` that must be trimmed
+    /// before another row can land aligned.
+    idx_torn: bool,
 }
 
 impl Default for CompactNeedleMap {
@@ -240,6 +243,7 @@ impl CompactNeedleMap {
             metric: NeedleMapMetric::default(),
             idx_file: None,
             idx_file_offset: 0,
+            idx_torn: false,
         }
     }
 
@@ -264,6 +268,7 @@ impl CompactNeedleMap {
     pub fn set_idx_file(&mut self, file: Box<dyn IdxFileWriter>, offset: u64) {
         self.idx_file = Some(file);
         self.idx_file_offset = offset;
+        self.idx_torn = false;
     }
 
     /// True when an .idx file writer is attached. A read-only load leaves
@@ -291,8 +296,9 @@ impl CompactNeedleMap {
 
     /// Append one row to the .idx file. A row left half-written by a failed
     /// append is trimmed back to `idx_file_offset` so the next row still lands
-    /// aligned; without that every later row would parse as garbage on load.
-    /// The offset itself is advanced by the caller once the row counts.
+    /// aligned; while the trim keeps failing no row is appended at all, or it
+    /// would sit off alignment and parse as garbage on load. The offset
+    /// itself is advanced by the caller once the row counts.
     fn append_to_index_file(
         &mut self,
         key: NeedleId,
@@ -302,8 +308,19 @@ impl CompactNeedleMap {
         let Some(idx_file) = self.idx_file.as_mut() else {
             return Ok(());
         };
+        if self.idx_torn {
+            match idx_file.truncate_to(self.idx_file_offset) {
+                Ok(()) => self.idx_torn = false,
+                Err(e) => {
+                    return Err(io::Error::other(format!(
+                        "index file still holds a torn row: {e}"
+                    )));
+                }
+            }
+        }
         if let Err(e) = idx::write_index_entry(idx_file, key, offset, size) {
             if let Err(te) = idx_file.truncate_to(self.idx_file_offset) {
+                self.idx_torn = true;
                 tracing::warn!("failed to trim torn .idx row: {}", te);
             }
             return Err(e);
@@ -486,6 +503,9 @@ pub struct RedbNeedleMap {
     metric: NeedleMapMetric,
     idx_file: Option<Box<dyn IdxFileWriter>>,
     idx_file_offset: u64,
+    /// The file holds bytes past `idx_file_offset` that must be trimmed
+    /// before another row can land aligned.
+    idx_torn: bool,
     /// Puts/deletes since the last durable checkpoint.
     writes_since_checkpoint: u32,
 }
@@ -592,6 +612,7 @@ impl RedbNeedleMap {
             metric: NeedleMapMetric::default(),
             idx_file: None,
             idx_file_offset: 0,
+            idx_torn: false,
             writes_since_checkpoint: 0,
         })
     }
@@ -689,6 +710,7 @@ impl RedbNeedleMap {
             metric: NeedleMapMetric::default(),
             idx_file: None,
             idx_file_offset: 0,
+            idx_torn: false,
             writes_since_checkpoint: 0,
         };
 
@@ -880,6 +902,7 @@ impl RedbNeedleMap {
     pub fn set_idx_file(&mut self, file: Box<dyn IdxFileWriter>, offset: u64) {
         self.idx_file = Some(file);
         self.idx_file_offset = offset;
+        self.idx_torn = false;
     }
 
     /// True when an .idx file writer is attached. See CompactNeedleMap.
@@ -969,8 +992,9 @@ impl RedbNeedleMap {
 
     /// Append one row to the .idx file. A row left half-written by a failed
     /// append is trimmed back to `idx_file_offset` so the next row still lands
-    /// aligned; without that every later row would parse as garbage on load.
-    /// The offset itself is advanced by the caller once the row counts.
+    /// aligned; while the trim keeps failing no row is appended at all, or it
+    /// would sit off alignment and parse as garbage on load. The offset
+    /// itself is advanced by the caller once the row counts.
     fn append_to_index_file(
         &mut self,
         key: NeedleId,
@@ -980,8 +1004,19 @@ impl RedbNeedleMap {
         let Some(idx_file) = self.idx_file.as_mut() else {
             return Ok(());
         };
+        if self.idx_torn {
+            match idx_file.truncate_to(self.idx_file_offset) {
+                Ok(()) => self.idx_torn = false,
+                Err(e) => {
+                    return Err(io::Error::other(format!(
+                        "index file still holds a torn row: {e}"
+                    )));
+                }
+            }
+        }
         if let Err(e) = idx::write_index_entry(idx_file, key, offset, size) {
             if let Err(te) = idx_file.truncate_to(self.idx_file_offset) {
+                self.idx_torn = true;
                 tracing::warn!("failed to trim torn .idx row: {}", te);
             }
             return Err(e);
@@ -1125,10 +1160,13 @@ impl RedbNeedleMap {
     /// a failed redb commit. Without this the next successful write appends
     /// after the orphan, `idx_file_offset` advances past it, and a later
     /// checkpoint records an offset that makes the reload skip the orphan.
+    /// When the trim fails the file is latched torn so no later row lands
+    /// after bytes the map does not reflect.
     fn truncate_idx_to_offset(&mut self) {
         if let Some(ref mut idx_file) = self.idx_file
             && let Err(e) = idx_file.truncate_to(self.idx_file_offset)
         {
+            self.idx_torn = true;
             tracing::warn!("failed to truncate orphan .idx row: {}", e);
         }
     }
@@ -1179,6 +1217,7 @@ impl RedbNeedleMap {
         self.db = reopened.db;
         self.metric = reopened.metric;
         self.idx_file_offset = actual_idx_size;
+        self.idx_torn = reopened.idx_torn;
         // The reopen replayed all rows since the last durable checkpoint
         // non-durably; start the counter fresh.
         self.writes_since_checkpoint = 0;

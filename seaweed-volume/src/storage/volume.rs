@@ -1730,8 +1730,10 @@ impl Volume {
             let mut idx_reader = io::BufReader::new(&idx_file);
             let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader, self.version())?;
 
-            // Re-open for append-only writes
-            let write_file = OpenOptions::new().append(true).open(idx_path)?;
+            // Re-open for appends; write access lets a failed row be trimmed
+            // (append alone cannot set_len on Windows).
+            #[allow(clippy::ineffective_open_options)]
+            let write_file = OpenOptions::new().write(true).append(true).open(idx_path)?;
             nm.set_idx_file(Box::new(write_file), idx_size);
             self.nm = Some(NeedleMap::InMemory(nm));
         }
@@ -1788,8 +1790,10 @@ impl Volume {
                 cache_bytes,
             )?;
 
-            // Re-open for append-only writes
-            let write_file = OpenOptions::new().append(true).open(idx_path)?;
+            // Re-open for appends; write access lets a failed row be trimmed
+            // (append alone cannot set_len on Windows).
+            #[allow(clippy::ineffective_open_options)]
+            let write_file = OpenOptions::new().write(true).append(true).open(idx_path)?;
             nm.set_idx_file(Box::new(write_file), idx_size);
             self.nm = Some(NeedleMap::Redb(nm));
         }
@@ -3647,7 +3651,10 @@ impl Volume {
             .unwrap_or(false);
         if needs_idx_writer {
             let idx_path = self.file_name(".idx");
+            // Append alone lacks the write access set_len needs on Windows.
+            #[allow(clippy::ineffective_open_options)]
             let write_file = OpenOptions::new()
+                .write(true)
                 .append(true)
                 .create(true)
                 .open(&idx_path)?;
@@ -6505,6 +6512,7 @@ mod tests {
         file: File,
         writes: usize,
         tear_at: usize,
+        fail_truncates: bool,
     }
 
     impl Write for TornIdxWriter {
@@ -6528,6 +6536,9 @@ mod tests {
         }
 
         fn truncate_to(&mut self, len: u64) -> io::Result<()> {
+            if self.fail_truncates {
+                return Err(io::Error::other("injected trim failure"));
+            }
             self.file.set_len(len)
         }
     }
@@ -6549,6 +6560,7 @@ mod tests {
         let nm = v.nm.as_mut().unwrap();
         let idx_len = nm.index_file_size();
         let file = OpenOptions::new()
+            .write(true)
             .append(true)
             .open(format!("{dir}/1.idx"))
             .unwrap();
@@ -6557,6 +6569,7 @@ mod tests {
                 file,
                 writes: 0,
                 tear_at: 2,
+                fail_truncates: false,
             }),
             idx_len,
         );
@@ -6620,6 +6633,7 @@ mod tests {
         let nm = v.nm.as_mut().unwrap();
         let idx_len = nm.index_file_size();
         let file = OpenOptions::new()
+            .write(true)
             .append(true)
             .open(format!("{dir}/1.idx"))
             .unwrap();
@@ -6628,6 +6642,7 @@ mod tests {
                 file,
                 writes: 0,
                 tear_at: 1,
+                fail_truncates: false,
             }),
             idx_len,
         );
@@ -6657,6 +6672,44 @@ mod tests {
         };
         reopened.read_needle(&mut got).unwrap();
         assert_eq!(got.data, b"after");
+    }
+
+    /// When the trim of a torn .idx row itself fails, no later row is
+    /// appended after the torn bytes.
+    #[test]
+    fn test_untrimmed_torn_row_refuses_later_appends() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let nm = v.nm.as_mut().unwrap();
+        let idx_len = nm.index_file_size();
+        let file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(format!("{dir}/1.idx"))
+            .unwrap();
+        nm.set_idx_file(
+            Box::new(TornIdxWriter {
+                file,
+                writes: 0,
+                tear_at: 1,
+                fail_truncates: true,
+            }),
+            idx_len,
+        );
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"torn"), false),
+            (batch_needle(2, 0xbb, b"after"), false),
+        ];
+        let results = v.write_needles_grouped(&mut writes);
+        assert!(matches!(results[0], Err(VolumeError::Io(_))), "{results:?}");
+        assert!(results[1].is_err(), "{results:?}");
+
+        // The second row was never appended behind the torn bytes.
+        let size = std::fs::metadata(format!("{dir}/1.idx")).unwrap().len();
+        assert_eq!(size, idx_len + 8);
     }
 
     /// The I/O error streak after writing four durable needles, the ones in
