@@ -847,3 +847,35 @@ func TestFailedLedgerCapsAndStaysPinned(t *testing.T) {
 		t.Fatalf("watermark = %d after a collapsed replay, want it still pinned at 0", got)
 	}
 }
+
+// TestFailedLedgerDistinguishesEventsAtSameTs verifies that a success for one
+// event does not clear the pin recorded for a different event that happened to
+// share its timestamp — the ledger keys on event identity, not just TsNs.
+func TestFailedLedgerDistinguishesEventsAtSameTs(t *testing.T) {
+	fail := true
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if fail && resp.EventNotification.NewEntry.GetName() == "bad.txt" {
+			return errors.New("AccessDenied: Access Denied")
+		}
+		return nil
+	}, 100, 0)
+
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+	p.AddSyncJob(makeResp("/dir", "good.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+
+	if got := p.OldestFailedTsNs(); got != 200 {
+		t.Fatalf("oldest failed = %d, want the other event's pin held at 200", got)
+	}
+	if got := p.processedTsWatermark.Load(); got != 0 {
+		t.Fatalf("watermark = %d, want it still pinned at 0", got)
+	}
+
+	fail = false
+	p.AddSyncJob(makeResp("/dir", "bad.txt", false, 200, true))
+	waitForJobsToDrain(t, p)
+	if got := p.OldestFailedTsNs(); got != 0 {
+		t.Fatalf("oldest failed = %d after the failed event itself recovered, want 0", got)
+	}
+}

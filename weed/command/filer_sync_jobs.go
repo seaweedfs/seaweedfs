@@ -65,6 +65,16 @@ type syncJobPaths struct {
 	dataSize int64
 }
 
+// failedEventKey identifies an event for the failure ledger. A timestamp alone
+// is not unique across events, so a success for one event must not clear an
+// unresolved failure recorded for a different event at the same TsNs.
+type failedEventKey struct {
+	tsNs    int64
+	path    util.FullPath
+	newPath util.FullPath
+	kind    jobKind
+}
+
 // syncStreamMetrics holds the metric children for one sync stream, curried
 // once so per-event updates skip the label lookup.
 type syncStreamMetrics struct {
@@ -118,7 +128,7 @@ type MetadataProcessor struct {
 	// of skipping it forever. Past maxFailedSyncEvents the set collapses to a
 	// sticky pin at the smallest failure seen: replay from the oldest failure
 	// still works, but individual recoveries no longer unpin until a restart.
-	failedTs         map[int64]struct{}
+	failedTs         map[failedEventKey]struct{}
 	failedSticky     bool
 	oldestFailedTsNs int64
 
@@ -135,7 +145,7 @@ func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs
 		activeBarrierDirPaths:    make(map[util.FullPath]int),
 		activeNonBarrierDirPaths: make(map[util.FullPath]int),
 		descendantCount:          make(map[util.FullPath]int),
-		failedTs:                 make(map[int64]struct{}),
+		failedTs:                 make(map[failedEventKey]struct{}),
 	}
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
@@ -351,13 +361,14 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
 
+		failedKey := failedEventKey{tsNs: resp.TsNs, path: jobPaths.path, newPath: jobPaths.newPath, kind: jobPaths.kind}
 		if jobErr != nil {
 			if t.failedSticky {
 				if resp.TsNs < t.oldestFailedTsNs {
 					t.oldestFailedTsNs = resp.TsNs
 				}
 				glog.Errorf("process %v: %v", resp, jobErr)
-			} else if _, recorded := t.failedTs[resp.TsNs]; !recorded {
+			} else if _, recorded := t.failedTs[failedKey]; !recorded {
 				if len(t.failedTs) >= maxFailedSyncEvents {
 					t.failedSticky = true
 					t.failedTs = nil
@@ -366,7 +377,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 					}
 					glog.Warningf("process %v: %v; over %d unresolved failures, pinning sync offset at %v until restart", resp, jobErr, maxFailedSyncEvents, time.Unix(0, t.oldestFailedTsNs))
 				} else {
-					t.failedTs[resp.TsNs] = struct{}{}
+					t.failedTs[failedKey] = struct{}{}
 					if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
 						t.oldestFailedTsNs = resp.TsNs
 						glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
@@ -375,13 +386,13 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 					}
 				}
 			}
-		} else if _, recorded := t.failedTs[resp.TsNs]; recorded {
-			delete(t.failedTs, resp.TsNs)
+		} else if _, recorded := t.failedTs[failedKey]; recorded {
+			delete(t.failedTs, failedKey)
 			if resp.TsNs == t.oldestFailedTsNs {
 				t.oldestFailedTsNs = 0
-				for ts := range t.failedTs {
-					if t.oldestFailedTsNs == 0 || ts < t.oldestFailedTsNs {
-						t.oldestFailedTsNs = ts
+				for k := range t.failedTs {
+					if t.oldestFailedTsNs == 0 || k.tsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = k.tsNs
 					}
 				}
 			}
