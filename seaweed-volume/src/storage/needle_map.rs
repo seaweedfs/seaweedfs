@@ -195,7 +195,12 @@ impl NeedleMapKind {
 // ============================================================================
 
 /// Trait for appending to an index file.
-pub trait IdxFileWriter: Write + Send + Sync {
+///
+/// The file is opened without append mode and each row is written at the
+/// current `idx_file_offset` — the same positioned-write model the Go
+/// server uses — because an append-mode handle cannot truncate on Windows,
+/// where the std library keeps it strictly append-only.
+pub trait IdxFileWriter: Write + Seek + Send + Sync {
     fn sync_all(&self) -> io::Result<()>;
     /// Truncate the file to `len` bytes. Used to remove an orphan .idx row
     /// left by a failed redb commit so `idx_file_offset` stays a contiguous
@@ -294,11 +299,11 @@ impl CompactNeedleMap {
         Ok(())
     }
 
-    /// Append one row to the .idx file. A row left half-written by a failed
-    /// append is trimmed back to `idx_file_offset` so the next row still lands
-    /// aligned; while the trim keeps failing no row is appended at all, or it
-    /// would sit off alignment and parse as garbage on load. The offset
-    /// itself is advanced by the caller once the row counts.
+    /// Write one row to the .idx file at `idx_file_offset`. A row left
+    /// half-written by a failed write is trimmed back to the offset so the
+    /// next row still lands aligned; while the trim keeps failing no row is
+    /// written at all, or it would sit off alignment and parse as garbage on
+    /// load. The offset itself is advanced by the caller once the row counts.
     fn append_to_index_file(
         &mut self,
         key: NeedleId,
@@ -318,6 +323,7 @@ impl CompactNeedleMap {
                 }
             }
         }
+        idx_file.seek(io::SeekFrom::Start(self.idx_file_offset))?;
         if let Err(e) = idx::write_index_entry(idx_file, key, offset, size) {
             if let Err(te) = idx_file.truncate_to(self.idx_file_offset) {
                 self.idx_torn = true;
@@ -990,11 +996,11 @@ impl RedbNeedleMap {
         Ok(())
     }
 
-    /// Append one row to the .idx file. A row left half-written by a failed
-    /// append is trimmed back to `idx_file_offset` so the next row still lands
-    /// aligned; while the trim keeps failing no row is appended at all, or it
-    /// would sit off alignment and parse as garbage on load. The offset
-    /// itself is advanced by the caller once the row counts.
+    /// Write one row to the .idx file at `idx_file_offset`. A row left
+    /// half-written by a failed write is trimmed back to the offset so the
+    /// next row still lands aligned; while the trim keeps failing no row is
+    /// written at all, or it would sit off alignment and parse as garbage on
+    /// load. The offset itself is advanced by the caller once the row counts.
     fn append_to_index_file(
         &mut self,
         key: NeedleId,
@@ -1014,6 +1020,7 @@ impl RedbNeedleMap {
                 }
             }
         }
+        idx_file.seek(io::SeekFrom::Start(self.idx_file_offset))?;
         if let Err(e) = idx::write_index_entry(idx_file, key, offset, size) {
             if let Err(te) = idx_file.truncate_to(self.idx_file_offset) {
                 self.idx_torn = true;
@@ -1770,7 +1777,7 @@ mod tests {
         )
         .unwrap();
         let writer = std::fs::OpenOptions::new()
-            .append(true)
+            .write(true)
             .open(&idx_path)
             .unwrap();
         nm.set_idx_file(Box::new(writer), idx_size);

@@ -1730,10 +1730,10 @@ impl Volume {
             let mut idx_reader = io::BufReader::new(&idx_file);
             let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader, self.version())?;
 
-            // Re-open for appends; write access lets a failed row be trimmed
-            // (append alone cannot set_len on Windows).
-            #[allow(clippy::ineffective_open_options)]
-            let write_file = OpenOptions::new().write(true).append(true).open(idx_path)?;
+            // Re-open for positioned writes: rows are written at
+            // idx_file_offset so a torn tail can be trimmed (an append-mode
+            // handle cannot set_len on Windows).
+            let write_file = OpenOptions::new().write(true).open(idx_path)?;
             nm.set_idx_file(Box::new(write_file), idx_size);
             self.nm = Some(NeedleMap::InMemory(nm));
         }
@@ -1790,10 +1790,10 @@ impl Volume {
                 cache_bytes,
             )?;
 
-            // Re-open for appends; write access lets a failed row be trimmed
-            // (append alone cannot set_len on Windows).
-            #[allow(clippy::ineffective_open_options)]
-            let write_file = OpenOptions::new().write(true).append(true).open(idx_path)?;
+            // Re-open for positioned writes: rows are written at
+            // idx_file_offset so a torn tail can be trimmed (an append-mode
+            // handle cannot set_len on Windows).
+            let write_file = OpenOptions::new().write(true).open(idx_path)?;
             nm.set_idx_file(Box::new(write_file), idx_size);
             self.nm = Some(NeedleMap::Redb(nm));
         }
@@ -3651,12 +3651,12 @@ impl Volume {
             .unwrap_or(false);
         if needs_idx_writer {
             let idx_path = self.file_name(".idx");
-            // Append alone lacks the write access set_len needs on Windows.
-            #[allow(clippy::ineffective_open_options)]
+            // Positioned writes: an append-mode handle cannot set_len on
+            // Windows.
             let write_file = OpenOptions::new()
                 .write(true)
-                .append(true)
                 .create(true)
+                .truncate(false)
                 .open(&idx_path)?;
             let idx_size = trim_torn_idx_tail(&write_file, &idx_path)?;
             if let Some(ref mut nm) = self.nm {
@@ -6530,6 +6530,12 @@ mod tests {
         }
     }
 
+    impl Seek for TornIdxWriter {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.file.seek(pos)
+        }
+    }
+
     impl crate::storage::needle_map::IdxFileWriter for TornIdxWriter {
         fn sync_all(&self) -> io::Result<()> {
             self.file.sync_all()
@@ -6561,7 +6567,6 @@ mod tests {
         let idx_len = nm.index_file_size();
         let file = OpenOptions::new()
             .write(true)
-            .append(true)
             .open(format!("{dir}/1.idx"))
             .unwrap();
         nm.set_idx_file(
@@ -6634,7 +6639,6 @@ mod tests {
         let idx_len = nm.index_file_size();
         let file = OpenOptions::new()
             .write(true)
-            .append(true)
             .open(format!("{dir}/1.idx"))
             .unwrap();
         nm.set_idx_file(
@@ -6686,7 +6690,6 @@ mod tests {
         let idx_len = nm.index_file_size();
         let file = OpenOptions::new()
             .write(true)
-            .append(true)
             .open(format!("{dir}/1.idx"))
             .unwrap();
         nm.set_idx_file(
