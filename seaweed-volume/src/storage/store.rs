@@ -1553,32 +1553,40 @@ impl Store {
         vid: VolumeId,
         preallocate: u64,
     ) -> Result<Option<CompactionJob>, VolumeError> {
-        // Required space matches Go's CompactVolume check: the larger of the
-        // requested preallocation and the estimated compacted size — the live
-        // needles, not the .dat the garbage already occupies, so a full disk
-        // can still be reclaimed.
-        let (loc_idx, space_needed) = {
-            let (loc_idx, v) = self
+        // Mirrors Go's ensureCompactVolumeSpace, per filesystem.
+        let (dir, dir_idx, data_bytes, index_bytes) = {
+            let (_, v) = self
                 .find_volume(vid)
                 .ok_or(VolumeError::VolumeNotFound(vid))?;
-            let live_count = (v.file_count() - v.deleted_count()).max(0) as u64;
-            let live_bytes = v.content_size().saturating_sub(v.deleted_size());
-            let per_needle = (get_actual_size(Size(0), v.version())
-                + NEEDLE_PADDING_SIZE as i64
-                + NEEDLE_MAP_ENTRY_SIZE as i64) as u64;
-            let estimated = SUPER_BLOCK_SIZE as u64 + live_count * per_needle + live_bytes;
-            let space_needed = std::cmp::max(preallocate, estimated);
-            (loc_idx, space_needed + space_needed / 10)
+            let (data_bytes, index_bytes) = compaction_space_needed(v, preallocate);
+            (
+                v.dir().to_string(),
+                v.dir_idx().to_string(),
+                data_bytes,
+                index_bytes,
+            )
         };
 
-        let dir = self.locations[loc_idx].directory.clone();
-        let (_, free) = crate::storage::disk_location::get_disk_stats(&dir);
-        if free < space_needed {
-            return Err(VolumeError::InsufficientSpace {
-                vid,
-                required: space_needed,
-                free,
-            });
+        let check = |dir: &str, needed: u64| -> Result<(), VolumeError> {
+            let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+            if free < needed {
+                return Err(VolumeError::InsufficientSpace {
+                    vid,
+                    required: needed,
+                    free,
+                });
+            }
+            Ok(())
+        };
+
+        if dir_idx.is_empty() || dir_idx == dir {
+            check(&dir, data_bytes + index_bytes)?;
+        } else if !same_filesystem(&dir, &dir_idx) {
+            check(&dir, data_bytes)?;
+            check(&dir_idx, index_bytes)?;
+        } else {
+            check(&dir, data_bytes + index_bytes)?;
+            check(&dir_idx, index_bytes)?;
         }
 
         let (_, v) = self
@@ -1749,6 +1757,65 @@ fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[ShardId]
         .iter()
         .filter(|&&shard_id| ecv.has_shard(shard_id))
         .count()
+}
+
+/// Mirrors Go's compactionSpaceNeeded: what compaction will write, split into
+/// the new .dat and rebuilt .idx shares, each capped at its current file.
+fn compaction_space_needed(v: &Volume, preallocate: u64) -> (u64, u64) {
+    let mut data_bytes = v.current_dat_file_size().unwrap_or(0);
+    let mut index_bytes = v.idx_file_size();
+
+    let live_count = v.file_count() - v.deleted_count();
+    let live_content = v.content_size() as i64 - v.deleted_size() as i64;
+    // Unknown or inconsistent deleted sizes: the whole volume stays the
+    // estimate.
+    let deleted_size_known = v.deleted_count() == 0 || v.deleted_size() > 0;
+    if deleted_size_known && live_count >= 0 && live_content >= 0 {
+        // Empty-needle framing plus a padding unit covers the worst case.
+        let per_needle =
+            (get_actual_size(Size(0), v.version()) + NEEDLE_PADDING_SIZE as i64) as u64;
+        let estimate = with_headroom(
+            SUPER_BLOCK_SIZE as u64 + live_content as u64 + live_count as u64 * per_needle,
+        );
+        if estimate < data_bytes {
+            data_bytes = estimate;
+        }
+        let estimate = with_headroom(live_count as u64 * NEEDLE_MAP_ENTRY_SIZE as u64);
+        if estimate < index_bytes {
+            index_bytes = estimate;
+        }
+    }
+    if preallocate > data_bytes {
+        data_bytes = preallocate;
+    }
+    (data_bytes, index_bytes)
+}
+
+/// Headroom for Bloom-filter false positives in the live/deleted counters.
+fn with_headroom(estimate: u64) -> u64 {
+    estimate + estimate / 16
+}
+
+/// Whether two directories draw on the same free-space pool; in doubt, yes.
+fn same_filesystem(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    same_filesystem_impl(a, b)
+}
+
+#[cfg(unix)]
+fn same_filesystem_impl(a: &str, b: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(ma), Ok(mb)) => ma.dev() == mb.dev(),
+        _ => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_filesystem_impl(_a: &str, _b: &str) -> bool {
+    true
 }
 
 // ============================================================================
