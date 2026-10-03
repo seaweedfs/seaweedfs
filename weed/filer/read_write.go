@@ -75,7 +75,7 @@ func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 		})
 	} else if err == nil {
 		entry := resp.Entry
-		if bytes.Equal(entry.Content, content) {
+		if bytes.Equal(entry.Content, content) && bytes.Equal(entry.GetAttributes().GetMd5(), contentMd5[:]) {
 			return nil
 		}
 		entry.Content = content
