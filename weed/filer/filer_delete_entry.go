@@ -72,9 +72,12 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if isDeleteCollection {
 		collectionName = f.bucketCollection(ctx, entry.Name())
 	}
+	// A preserved collection outlives the bucket, so its chunks are collected
+	// per entry rather than dropped wholesale with it.
+	dropsCollection := isDeleteCollection && collectionName != ""
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
-		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
+		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !dropsCollection, isDeleteCollection && (dropsCollection || !shouldDeleteChunks), isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
 			// A case not handled:
 			// what if the chunk is in a different collection?
 			if shouldDeleteChunks {
@@ -97,7 +100,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return fmt.Errorf("delete file %s: %v", p, err)
 	}
 
-	if shouldDeleteChunks && !isDeleteCollection {
+	if shouldDeleteChunks && !dropsCollection {
 		if len(entry.HardLinkId) != 0 && entry.HardLinkCounter > 1 {
 			// if the file is a hard link and there are other hard links, do not delete the chunks
 		} else {
@@ -261,8 +264,15 @@ func (f *Filer) bucketCollection(ctx context.Context, bucket string) (collection
 	collection = resolve(bucketDir, bucket)
 
 	// Rule-less writes outside buckets fall back to the filer's default
-	// collection, so a bucket resolving there shares it with them.
+	// collection, so a bucket resolving there shares it with them. The
+	// system metadata-log collection (when explicitly redirected via
+	// filer.options.metaLog.collection) is in the same boat: it backs internal
+	// log volumes, so a bucket that resolves there must never drop it
+	// either.
 	if collection == f.metaLogCollection {
+		return ""
+	}
+	if f.metaLogTargetCollection != "" && collection == f.metaLogTargetCollection {
 		return ""
 	}
 

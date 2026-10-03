@@ -25,6 +25,9 @@ global:
     imagePullPolicy: IfNotPresent
     restartPolicy: Always
     loggingLevel: 1
+    # Writable temporary storage used when containers run with a read-only root filesystem.
+    tmpDir:
+      sizeLimit: ""
     enableSecurity: false
     masterServer: null
     # filerWrite: true mounts security.toml on filer + admin without needing
@@ -260,6 +263,8 @@ master:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -268,7 +273,16 @@ master:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   ingress:
@@ -560,6 +574,8 @@ volume:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -568,7 +584,16 @@ volume:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   # used to configure livenessProbe on volume-server containers
@@ -845,6 +870,8 @@ filer:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -853,7 +880,16 @@ filer:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   ingresses:
@@ -1127,6 +1163,8 @@ s3:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -1135,7 +1173,16 @@ s3:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   # You can also use emptyDir storage:
@@ -1287,7 +1334,33 @@ sftp:
   priorityClassName: ""
   schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   logs:
@@ -1434,7 +1507,33 @@ admin:
   priorityClassName: ""
   schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   extraEnvironmentVars: {}
@@ -1591,7 +1690,33 @@ worker:
   priorityClassName: ""
   schedulerName: ""
   serviceAccountName: ""
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   extraEnvironmentVars: {}
@@ -1851,6 +1976,8 @@ allInOne:
   #   runAsUser: 1000
   #   runAsGroup: 3000
   #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
 
   # Configure security context for Container
@@ -1859,7 +1986,16 @@ allInOne:
   # containerSecurityContext:
   #   enabled: true
   #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
   #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   # Resource management
@@ -1898,7 +2034,33 @@ cosi:
   # should have a secret key called seaweedfs_s3_config with an inline json configure
   existingConfigSecret: null
 
+  # Configure security context for Pod
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # podSecurityContext:
+  #   enabled: true
+  #   runAsUser: 1000
+  #   runAsGroup: 3000
+  #   fsGroup: 2000
+  #   seccompProfile:
+  #     type: RuntimeDefault
   podSecurityContext: {}
+  # Configure security context for Container
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+  # Example:
+  # containerSecurityContext:
+  #   enabled: true
+  #   runAsUser: 2000
+  #   runAsGroup: 3000
+  #   runAsNonRoot: true
+  #   privileged: false
+  #   allowPrivilegeEscalation: false
+  #   readOnlyRootFilesystem: true
+  #   capabilities:
+  #     drop:
+  #       - ALL
+  #   seccompProfile:
+  #     type: RuntimeDefault
   containerSecurityContext: {}
 
   # used to assign a custom scheduler to cosi pods
