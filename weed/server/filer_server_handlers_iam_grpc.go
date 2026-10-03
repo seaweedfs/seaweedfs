@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -25,6 +26,8 @@ type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
 	credentialManager *credential.CredentialManager
 	adminSigningKey   security.SigningKey
+	oidcProviderStore integration.OIDCProviderStore
+	roleStore         integration.RoleStore
 }
 
 // NewIamGrpcServer creates a new IAM gRPC server. If adminSigningKey is empty
@@ -477,6 +480,18 @@ func (s *IamGrpcServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 
 	if s.credentialManager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
+	}
+
+	// Roles attach policies by name; deleting one still attached would let a
+	// policy created later under that name take effect on the role.
+	if s.roleStore != nil {
+		roles, err := integration.RolesAttachingPolicy(ctx, s.roleStore, req.Name)
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "check role attachments: %v", err)
+		}
+		if len(roles) > 0 {
+			return nil, status.Errorf(codes.FailedPrecondition, "policy %s is attached to role %s", req.Name, roles[0])
+		}
 	}
 
 	err := s.credentialManager.DeletePolicy(ctx, req.Name)

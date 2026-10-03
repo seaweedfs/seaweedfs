@@ -2155,3 +2155,24 @@ func (m *IAMManager) ValidateTrustPolicyForCredentials(ctx context.Context, role
 	// Use existing trust policy validation logic
 	return m.validateTrustPolicyForCredentials(ctx, roleDef, mockRequest)
 }
+
+// PrepareOIDCProviderRecord builds and validates the record that
+// CreateOpenIDConnectProvider stores for an issuer, deriving its ARN from the
+// account ID and issuer URL.
+func PrepareOIDCProviderRecord(accountID, issuerURL string, clientIDs, thumbprints []string) (*OIDCProviderRecord, error) {
+	arn, err := DeriveOIDCProviderARN(accountID, issuerURL)
+	if err != nil {
+		return nil, err
+	}
+	rec := &OIDCProviderRecord{
+		AccountID:   accountID,
+		ARN:         arn,
+		URL:         issuerURL,
+		ClientIDs:   append([]string(nil), clientIDs...),
+		Thumbprints: append([]string(nil), thumbprints...),
+	}
+	if err := validateOIDCProviderRecord(rec); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
