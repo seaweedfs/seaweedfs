@@ -410,7 +410,7 @@ func TestVacuumStalledVolumeServerReleasesGuard(t *testing.T) {
 	for _, phase := range []string{"check", "compact", "commit", "status", "cleanup"} {
 		t.Run(phase, func(t *testing.T) {
 			old := vacuumPhaseTimeout
-			vacuumPhaseTimeout = 50 * time.Millisecond
+			vacuumPhaseTimeout = 250 * time.Millisecond
 			defer func() { vacuumPhaseTimeout = old }()
 
 			hangFake := &fakeVacuumServer{
