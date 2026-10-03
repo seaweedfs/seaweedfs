@@ -113,6 +113,7 @@ spec:
             {{- end -}}
             {{- end }}
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.cosi.containerSecurityContext (tpl (.Values.cosi.extraVolumeMounts | default "") .) (tpl (.Values.cosi.extraVolumes | default "") .)) | nindent 12 }}
             - mountPath: /var/lib/cosi
               name: socket
             {{- if .Values.cosi.enableAuth }}
@@ -148,6 +149,9 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.cosi.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.cosi.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
         - name: seaweedfs-cosi-sidecar
           image: "{{ .Values.cosi.sidecar.image }}"
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
@@ -159,6 +163,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           volumeMounts:
+            {{- include "seaweedfs.tmpDirVolumeMount" (list . .Values.cosi.containerSecurityContext "" "") | nindent 12 }}
             - mountPath: /var/lib/cosi
               name: socket
           {{- with .Values.cosi.sidecar.resources }}
@@ -172,6 +177,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.cosi.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.cosi.containerSecurityContext (tpl (.Values.cosi.extraVolumeMounts | default "") .) (tpl (.Values.cosi.extraVolumes | default "") .) true) | nindent 8 }}
         - name: socket
           emptyDir: {}
         {{- if .Values.cosi.enableAuth }}

@@ -59,13 +59,24 @@ func (f *Filer) resolveMetadataLogAssignDiskType(targetFile string) (string, *fi
 	return util.Nvl(rule.DiskType, f.DefaultDiskType), rule
 }
 
+// metaLogCollectionFor resolves the system metadata log's collection: the
+// filer.options.metaLog.collection override, then the filer default, then the
+// matched storage rule.
+func (f *Filer) metaLogCollectionFor(ruleCollection string) string {
+	return util.Nvl(f.metaLogTargetCollection, f.metaLogCollection, ruleCollection)
+}
+
+func (f *Filer) metaLogReplicationFor(ruleReplication string) string {
+	return util.Nvl(f.metaLogTargetReplication, f.metaLogReplication, ruleReplication)
+}
+
 func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 	// assign a volume location
 	diskType, rule := f.resolveMetadataLogAssignDiskType(targetFile)
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:               1,
-		Collection:          util.Nvl(f.metaLogCollection, rule.Collection),
-		Replication:         util.Nvl(f.metaLogReplication, rule.Replication),
+		Collection:          f.metaLogCollectionFor(rule.Collection),
+		Replication:         f.metaLogReplicationFor(rule.Replication),
 		DiskType:            diskType,
 		WritableVolumeCount: rule.VolumeGrowthCount,
 		ExpectedDataSize:    uint64(len(data)),

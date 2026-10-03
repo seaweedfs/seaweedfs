@@ -234,6 +234,7 @@ var (
 	ErrExistingIsDirectory = errors.New("existing entry is a directory")
 	ErrExistingIsFile      = errors.New("existing entry is a file")
 	ErrEntryAlreadyExists  = errors.New("entry already exists")
+	ErrReadOnly            = errors.New("read only")
 )
 
 // FilerErrorToSentinel maps a proto FilerError code to its sentinel error.
@@ -250,10 +251,32 @@ func FilerErrorToSentinel(code FilerError) error {
 		return ErrExistingIsFile
 	case FilerError_ENTRY_ALREADY_EXISTS:
 		return ErrEntryAlreadyExists
+	case FilerError_READ_ONLY:
+		return ErrReadOnly
 	default:
 		return nil
 	}
 }
+
+// AssignVolumeResponseError returns the failure resp reports, or nil. The error
+// keeps the filer's text and, when error_code is set, unwraps to its sentinel so
+// callers can match it with errors.Is.
+func AssignVolumeResponseError(resp *AssignVolumeResponse) error {
+	if resp.Error == "" && resp.ErrorCode == FilerError_OK {
+		return nil
+	}
+	return &codedError{msg: resp.Error, sentinel: FilerErrorToSentinel(resp.ErrorCode)}
+}
+
+// codedError is a filer error message paired with the sentinel of the code
+// sent alongside it (nil for OK or an unknown code).
+type codedError struct {
+	msg      string
+	sentinel error
+}
+
+func (e *codedError) Error() string { return e.msg }
+func (e *codedError) Unwrap() error { return e.sentinel }
 
 func IsEmpty(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry == nil

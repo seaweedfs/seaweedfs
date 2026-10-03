@@ -1084,7 +1084,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		dstChunks, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstAssignPath)
 		if err != nil {
 			glog.Errorf("CopyObjectPartHandler copy chunks error: %v", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			s3err.WriteErrorResponse(w, r, s3a.mapCopyErrorToS3Error(err))
 			return
 		}
 		dstEntry.Chunks = dstChunks
@@ -1310,7 +1310,7 @@ func (s3a *S3ApiServer) copyChunks(entry *filer_pb.Entry, dstPath string) ([]*fi
 		executor.Execute(func() {
 			dstChunk, err := s3a.copySingleChunk(chunk, dstPath)
 			if err != nil {
-				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
+				errChan <- fmt.Errorf("chunk %d: %w", chunkIndex, err)
 				return
 			}
 			dstChunks[chunkIndex] = dstChunk
@@ -1444,8 +1444,8 @@ func (s3a *S3ApiServer) assignNewVolume(dstPath string, expectedDataSize uint64)
 		if err != nil {
 			return fmt.Errorf("assign volume: %w", err)
 		}
-		if resp.Error != "" {
-			return fmt.Errorf("assign volume: %v", resp.Error)
+		if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
+			return fmt.Errorf("assign volume: %w", err)
 		}
 		assignResult = resp
 		return nil
@@ -1528,7 +1528,7 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 		executor.Execute(func() {
 			dstChunk, err := s3a.copySingleChunkForRange(originalChunk, chunk, startOffset, endOffset, dstPath)
 			if err != nil {
-				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
+				errChan <- fmt.Errorf("chunk %d: %w", chunkIndex, err)
 				return
 			}
 			dstChunks[chunkIndex] = dstChunk
@@ -2653,7 +2653,7 @@ func (s3a *S3ApiServer) copyChunksWithReencryption(entry *filer_pb.Entry, copySo
 		executor.Execute(func() {
 			dstChunk, err := s3a.copyChunkWithReencryption(chunk, copySourceKey, destKey, dstPath, entry.Extended, destIV)
 			if err != nil {
-				errChan <- fmt.Errorf("chunk %d: %v", chunkIndex, err)
+				errChan <- fmt.Errorf("chunk %d: %w", chunkIndex, err)
 				return
 			}
 			dstChunks[chunkIndex] = dstChunk
