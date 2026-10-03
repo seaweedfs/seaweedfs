@@ -266,6 +266,9 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	if err := v.UnavailableError(); err != nil {
 		return 0, 0, false, err
 	}
+	if v.IsReadOnly() {
+		return 0, 0, false, fmt.Errorf("volume %d is read only", v.Id)
+	}
 
 	// A caller can still hold the volume after it was closed or destroyed, which
 	// leaves both of these nil. Refuse the write rather than dereference them.
@@ -274,7 +277,7 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	}
 
 	if !fsync {
-		return v.doWriteRequest(n, checkCookie)
+		return v.doWriteRequest(n, checkCookie, fsync)
 	}
 
 	end, _, statErr := v.DataBackend.GetStat()
@@ -286,7 +289,7 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 		priorOffset, priorSize, hasPrior = nv.Offset, nv.Size, true
 	}
 
-	offset, size, isUnchanged, err = v.doWriteRequest(n, checkCookie)
+	offset, size, isUnchanged, err = v.doWriteRequest(n, checkCookie, fsync)
 	if err != nil {
 		return
 	}
@@ -367,7 +370,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, is
 	}
 }
 
-func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint64, size Size, isUnchanged bool, err error) {
+func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
@@ -412,6 +415,14 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint
 		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
 			err = fmt.Errorf("index needle %d of volume %d at offset %d: %w", n.Id, v.Id, offset, err)
 			glog.V(0).Info(err)
+			if fsync {
+				// The record is down but nothing indexes it. Stop taking
+				// writes rather than append past it, same as the Rust
+				// volume server.
+				v.noWriteLock.Lock()
+				v.noWriteOrDelete = true
+				v.noWriteLock.Unlock()
+			}
 		}
 	}
 	if v.lastModifiedTsSeconds < n.LastModified {
@@ -427,6 +438,9 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 
 	if err := v.UnavailableError(); err != nil {
 		return 0, err
+	}
+	if _, noWriteOrDelete, _, _ := v.ReadOnlyReasons(); noWriteOrDelete {
+		return 0, fmt.Errorf("volume %d is read only", v.Id)
 	}
 
 	if v.nm == nil {
@@ -519,12 +533,27 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 			batchSnapshots[needleID] = snapshot
 			orderedSnapshots = append(orderedSnapshots, snapshot)
 		}
+		// Every queued request meets the same refusal it would get sent on
+		// its own: once a durable index update fails the volume stops taking
+		// writes, and a lone write is turned away before it appends.
 		if currentRequests[i].IsWriteRequest {
-			offset, size, isUnchanged, err := v.doWriteRequest(currentRequests[i].N, true)
-			currentRequests[i].UpdateResult(offset, uint64(size), isUnchanged, err)
+			if unavailableErr := v.UnavailableError(); unavailableErr != nil {
+				currentRequests[i].UpdateResult(0, 0, false, unavailableErr)
+			} else if v.IsReadOnly() {
+				currentRequests[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is read only", v.Id))
+			} else {
+				offset, size, isUnchanged, err := v.doWriteRequest(currentRequests[i].N, true, true)
+				currentRequests[i].UpdateResult(offset, uint64(size), isUnchanged, err)
+			}
 		} else {
-			size, err := v.doDeleteRequest(currentRequests[i].N)
-			currentRequests[i].UpdateResult(0, uint64(size), false, err)
+			if unavailableErr := v.UnavailableError(); unavailableErr != nil {
+				currentRequests[i].UpdateResult(0, 0, false, unavailableErr)
+			} else if _, noWriteOrDelete, _, _ := v.ReadOnlyReasons(); noWriteOrDelete {
+				currentRequests[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is read only", v.Id))
+			} else {
+				size, err := v.doDeleteRequest(currentRequests[i].N)
+				currentRequests[i].UpdateResult(0, uint64(size), false, err)
+			}
 		}
 		snapshot.observeCurrent(v)
 	}
