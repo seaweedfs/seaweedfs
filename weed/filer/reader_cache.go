@@ -100,9 +100,11 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 			// abort when slots are filled
 			return
 		}
-		if !chunkView.IsFullChunk() {
-			// the view is clipped to part of the chunk, so the rest is never
-			// read; prefetching it whole would download bytes nobody needs
+		if chunkView.CipherKey == nil && !chunkView.IsFullChunk() {
+			// the view is clipped to part of the chunk and will be
+			// range-fetched, so prefetching it whole would download bytes
+			// nobody needs; a ciphered partial view needs the whole blob
+			// anyway and is worth prefetching
 			continue
 		}
 

@@ -248,7 +248,8 @@ func TestChunkReadAtClippedViewsFetchOnlyCoveredParts(t *testing.T) {
 	defer rc.destroy()
 	fetches := fetchRecorder(rc)
 
-	// Window [56KiB, 136KiB): tail of chunk0, all of chunk1, head of chunk2.
+	// Window [56KiB, 144KiB): tail of chunk0, all of chunk1, head of
+	// chunk2, head of ciphered chunk3 (file chunks need not be aligned).
 	views := NewIntervalList[*ChunkView]()
 	views.AppendInterval(&Interval[*ChunkView]{
 		StartOffset: chunkSize - 8<<10,
@@ -265,17 +266,25 @@ func TestChunkReadAtClippedViewsFetchOnlyCoveredParts(t *testing.T) {
 		StopOffset:  2*chunkSize + 8<<10,
 		Value:       &ChunkView{FileId: "chunk2", ViewSize: 8 << 10, ViewOffset: 2 * chunkSize, ChunkSize: chunkSize},
 	})
+	views.AppendInterval(&Interval[*ChunkView]{
+		StartOffset: 2*chunkSize + 8<<10,
+		StopOffset:  2*chunkSize + 16<<10,
+		Value:       &ChunkView{FileId: "chunk3", ViewSize: 8 << 10, ViewOffset: 2*chunkSize + 8<<10, ChunkSize: chunkSize, CipherKey: []byte("key")},
+	})
 
-	reader := NewChunkReaderAtFromClient(context.Background(), rc, views, 3*chunkSize, 0)
-	buf := make([]byte, chunkSize+16<<10)
+	reader := NewChunkReaderAtFromClient(context.Background(), rc, views, 4*chunkSize, 0)
+	buf := make([]byte, chunkSize+24<<10)
 	if n, err := reader.ReadAt(buf, chunkSize-8<<10); err != nil || n != len(buf) {
 		t.Fatalf("window read: n=%d err=%v", n, err)
 	}
-	// buf holds [56KiB, 136KiB): chunk0's tail, chunk1, chunk2's head.
+	// buf holds [56KiB, 144KiB): chunk0's tail, chunk1, chunk2's and
+	// chunk3's heads.
 	for i, b := range buf {
 		want := byte('1')
 		if i < 8<<10 {
 			want = '0'
+		} else if i >= 16<<10+chunkSize {
+			want = '3'
 		} else if i >= 8<<10+chunkSize {
 			want = '2'
 		}
@@ -288,6 +297,9 @@ func TestChunkReadAtClippedViewsFetchOnlyCoveredParts(t *testing.T) {
 		{fileId: "chunk0", isFullChunk: false, offset: chunkSize - 8<<10, size: 8 << 10},
 		{fileId: "chunk1", isFullChunk: true, offset: 0, size: chunkSize},
 		{fileId: "chunk2", isFullChunk: false, offset: 0, size: 8 << 10},
+		// partial view, but a ciphered chunk downloads whole either way and
+		// the shared path decrypts once for every buffer
+		{fileId: "chunk3", isFullChunk: true, offset: 0, size: chunkSize},
 	}
 	got := map[string]recordedFetch{}
 	for _, f := range *fetches {
