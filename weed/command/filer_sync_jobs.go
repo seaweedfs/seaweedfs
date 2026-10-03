@@ -132,6 +132,12 @@ type MetadataProcessor struct {
 	failedSticky     bool
 	oldestFailedTsNs int64
 
+	// resubscribeCh closes when the first job failure pins the watermark, asking
+	// the metadata follower to drop the stream so the caller's reconnect replays
+	// the pinned events in order instead of waiting for a restart.
+	resubscribeCh   chan struct{}
+	resubscribeOnce sync.Once
+
 	// metrics is nil for callers that do not report per-event metrics.
 	metrics *syncStreamMetrics
 }
@@ -146,6 +152,7 @@ func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs
 		activeNonBarrierDirPaths: make(map[util.FullPath]int),
 		descendantCount:          make(map[util.FullPath]int),
 		failedTs:                 make(map[failedEventKey]struct{}),
+		resubscribeCh:            make(chan struct{}),
 	}
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
@@ -173,6 +180,12 @@ func (t *MetadataProcessor) OldestFailedTsNs() int64 {
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
 	return t.oldestFailedTsNs
+}
+
+// ResubscribeCh closes once a job failure has pinned the watermark, signaling
+// the metadata follower to drop the stream so a reconnect replays the event.
+func (t *MetadataProcessor) ResubscribeCh() <-chan struct{} {
+	return t.resubscribeCh
 }
 
 // pathAncestors returns all proper ancestor directories of p.
@@ -363,6 +376,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 
 		failedKey := failedEventKey{tsNs: resp.TsNs, path: jobPaths.path, newPath: jobPaths.newPath, kind: jobPaths.kind}
 		if jobErr != nil {
+			t.resubscribeOnce.Do(func() { close(t.resubscribeCh) })
 			if t.failedSticky {
 				if resp.TsNs < t.oldestFailedTsNs {
 					t.oldestFailedTsNs = resp.TsNs

@@ -879,3 +879,24 @@ func TestFailedLedgerDistinguishesEventsAtSameTs(t *testing.T) {
 		t.Fatalf("oldest failed = %d after the failed event itself recovered, want 0", got)
 	}
 }
+
+// TestFailedJobSignalsResubscribe verifies that a job exhausting its retries
+// closes ResubscribeCh so the follower drops the stream and the reconnect
+// replays the pinned event — the path that used to wait for a restart.
+func TestFailedJobSignalsResubscribe(t *testing.T) {
+	p := NewMetadataProcessor(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return errors.New("AccessDenied: Access Denied")
+	}, 100, 0)
+
+	p.AddSyncJob(makeResp("/dir", "a.txt", false, 100, true))
+	waitForJobsToDrain(t, p)
+
+	select {
+	case <-p.ResubscribeCh():
+	case <-time.After(time.Second):
+		t.Fatal("resubscribe channel never closed after the failure pinned the watermark")
+	}
+	if got := p.OldestFailedTsNs(); got != 100 {
+		t.Fatalf("oldest failed = %d, want 100", got)
+	}
+}
