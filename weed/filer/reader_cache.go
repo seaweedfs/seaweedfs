@@ -100,11 +100,12 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 			// abort when slots are filled
 			return
 		}
-		if chunkView.CanRangeFetch() && !chunkView.IsFullChunk() {
+		if (chunkView.CanRangeFetch() || !rc.budget.canFit(int(chunkView.ChunkSize))) && !chunkView.IsFullChunk() {
 			// the view is clipped to part of the chunk and will be
 			// range-fetched, so prefetching it whole would download bytes
 			// nobody needs; a ciphered or compressed partial view needs
-			// the whole blob anyway and is worth prefetching
+			// the whole blob anyway and is worth prefetching, but not when
+			// it cannot fit the budget at all
 			continue
 		}
 

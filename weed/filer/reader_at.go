@@ -355,8 +355,11 @@ func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunk
 	// Fetching the chunk whole would multiply volume-server reads. Ciphered
 	// and compressed chunks are the exception: the volume server reads the
 	// whole blob to serve a range, so they take the shared whole-chunk path
-	// where one download serves every buffer.
-	if chunkView.CanRangeFetch() && (!chunkView.IsFullChunk() || c.readerPattern.IsRandomMode()) {
+	// where one download serves every buffer — unless the whole chunk cannot
+	// even fit the reader budget, in which case a range fetch is the only
+	// way to serve the request.
+	rangeFetch := chunkView.CanRangeFetch() || !c.readerCache.budget.canFit(int(chunkView.ChunkSize))
+	if rangeFetch && (!chunkView.IsFullChunk() || c.readerPattern.IsRandomMode()) {
 		c.readerCache.releaseStream(&c.stream)
 		n, err := c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)
 		if n > 0 {
@@ -386,7 +389,7 @@ func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunk
 // readChunkSliceAtForParallel is a simplified version for parallel chunk fetching
 // It doesn't update lastChunkFid or trigger prefetch (handled by the caller)
 func (c *ChunkReadAt) readChunkSliceAtForParallel(ctx context.Context, buffer []byte, chunkView *ChunkView, offset uint64) (n int, err error) {
-	if chunkView.CanRangeFetch() && !chunkView.IsFullChunk() {
+	if (chunkView.CanRangeFetch() || !c.readerCache.budget.canFit(int(chunkView.ChunkSize))) && !chunkView.IsFullChunk() {
 		n, err = c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)
 		if n > 0 {
 			return n, err

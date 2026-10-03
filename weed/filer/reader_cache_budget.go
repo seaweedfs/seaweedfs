@@ -93,6 +93,13 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 	}
 }
 
+// canFit reports whether a whole-chunk buffer of this size can ever be
+// reserved. A chunk bigger than the budget cannot be read through the
+// whole-chunk path at all, so callers must fall back to range fetches.
+func (b *ReaderCacheBudget) canFit(size int) bool {
+	return b == nil || int64(mem.AllocationSize(size)) <= b.limit
+}
+
 func (b *ReaderCacheBudget) complete(s *SingleChunkCacher) {
 	if b == nil {
 		return

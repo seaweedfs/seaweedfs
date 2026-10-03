@@ -367,6 +367,42 @@ func TestChunkReadAtRangeInsideOneChunkStaysRangeFetch(t *testing.T) {
 	}
 }
 
+// A compressed chunk larger than the reader cache budget can never be
+// downloaded whole — the budget rejects the buffer — so its partial view
+// must fall back to a range fetch even though each range costs a full
+// decompress server-side. The alternative is a failed GET.
+func TestChunkReadAtOversizedCompressedChunkFallsBackToRange(t *testing.T) {
+	const chunkSize = 1 << 20
+	const sliceSize = 16 << 10
+
+	budget := NewReaderCacheBudget(64 << 10) // smaller than the chunk
+	rc := NewReaderCache(64, (*chunk_cache.TieredChunkCache)(nil), func(context.Context, string) ([]string, error) {
+		return []string{"unused"}, nil
+	}, nil, budget)
+	defer rc.destroy()
+	fetches := fetchRecorder(rc)
+
+	views := NewIntervalList[*ChunkView]()
+	views.AppendInterval(&Interval[*ChunkView]{
+		StartOffset: 32 << 10,
+		StopOffset:  64 << 10,
+		Value:       &ChunkView{FileId: "chunk0", OffsetInChunk: 32 << 10, ViewSize: 32 << 10, ViewOffset: 32 << 10, ChunkSize: chunkSize, IsGzipped: true},
+	})
+
+	reader := NewChunkReaderAtFromClient(context.Background(), rc, views, chunkSize, 0)
+	buf := make([]byte, 32<<10)
+	if n, err := reader.ReadAt(buf, 32<<10); err != nil || n != len(buf) {
+		t.Fatalf("read: n=%d err=%v", n, err)
+	}
+
+	if len(*fetches) != 1 {
+		t.Fatalf("got %d fetches, want 1 range fetch: %+v", len(*fetches), *fetches)
+	}
+	if f := (*fetches)[0]; f.isFullChunk || f.offset != 32<<10 || f.size != 32<<10 {
+		t.Fatalf("fetch = %+v, want range fetch offset=%d size=%d", f, 32<<10, 32<<10)
+	}
+}
+
 // A chunk a stream is positioned in must outlast downloader-limit eviction:
 // otherwise a busy cache drops the buffer mid-stream and forces a refetch.
 func TestChunkReadAtPinnedChunkSurvivesEviction(t *testing.T) {
