@@ -2337,13 +2337,11 @@ impl Volume {
         self.last_append_at_ns = last_append_at_ns;
 
         // A durable entry that fails to publish stops the volume taking
-        // writes, so every entry staged after it is refused, as it would be
-        // sent on its own, instead of indexed behind a row that may be torn.
+        // writes, so the entries after it are refused the way a lone
+        // write would be.
         let mut refused = false;
         for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
             if refused {
-                // On its own the entry would meet the refusal before any check
-                // of its own, so one staged as a cookie mismatch gets it too.
                 *r = Err(self
                     .check_writable()
                     .err()
@@ -6535,13 +6533,9 @@ mod tests {
     }
 
     /// A durable entry whose index update fails stops the volume taking
-    /// writes, as it does when sent on its own, so the entries staged after
-    /// it in the same run are refused instead of indexed behind it. Indexed
-    /// there they would be acked and then lost: a torn row puts every row
-    /// appended after it off alignment, and the next load parses them as
-    /// garbage. The entries before it are still acked, their rows synced by
-    /// the run's one .idx sync. One already staged as a cookie mismatch is
-    /// refused too, as it would be on its own.
+    /// writes, as it does when sent on its own, so the entries after it in
+    /// the run are refused instead of indexed behind a row that may be
+    /// torn. Entries before it stay acked.
     #[test]
     fn test_grouped_failed_durable_index_refuses_rest_of_run() {
         let tmp = TempDir::new().unwrap();
@@ -6613,6 +6607,56 @@ mod tests {
                 "refused as it would be sent on its own: {results:?}"
             );
         }
+    }
+
+    /// A torn .idx row is trimmed back, so the row a later write appends
+    /// still lands aligned and survives a reload.
+    #[test]
+    fn test_failed_index_write_is_trimmed() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let nm = v.nm.as_mut().unwrap();
+        let idx_len = nm.index_file_size();
+        let file = OpenOptions::new()
+            .append(true)
+            .open(format!("{dir}/1.idx"))
+            .unwrap();
+        nm.set_idx_file(
+            Box::new(TornIdxWriter {
+                file,
+                writes: 0,
+                tear_at: 1,
+            }),
+            idx_len,
+        );
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"torn"), false),
+            (batch_needle(2, 0xbb, b"after"), true),
+        ];
+        let results = v.write_needles_grouped(&mut writes);
+        assert!(matches!(results[0], Err(VolumeError::Io(_))), "{results:?}");
+        assert!(matches!(results[1], Ok((_, _, false))), "{results:?}");
+        drop(v);
+
+        let reopened = match Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        ) {
+            Ok(v) => v,
+            Err(e) => panic!("the volume does not reload: {e}"),
+        };
+        let mut got = Needle {
+            id: NeedleId(2),
+            ..Needle::default()
+        };
+        reopened.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"after");
     }
 
     /// The I/O error streak after writing four durable needles, the ones in

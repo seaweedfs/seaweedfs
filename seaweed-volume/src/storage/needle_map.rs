@@ -278,14 +278,36 @@ impl CompactNeedleMap {
     /// Insert or update an entry. Appends to .idx file if present.
     pub fn put(&mut self, key: NeedleId, offset: Offset, size: Size) -> io::Result<()> {
         // Persist to idx file BEFORE mutating in-memory state for crash consistency
-        if let Some(ref mut idx_file) = self.idx_file {
-            idx::write_index_entry(idx_file, key, offset, size)?;
+        self.append_to_index_file(key, offset, size)?;
+        if self.idx_file.is_some() {
             self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
         }
 
         let old = self.map.get(key);
         self.metric.on_put(key, old.as_ref(), size);
         self.map.set(key, offset, size);
+        Ok(())
+    }
+
+    /// Append one row to the .idx file. A row left half-written by a failed
+    /// append is trimmed back to `idx_file_offset` so the next row still lands
+    /// aligned; without that every later row would parse as garbage on load.
+    /// The offset itself is advanced by the caller once the row counts.
+    fn append_to_index_file(
+        &mut self,
+        key: NeedleId,
+        offset: Offset,
+        size: Size,
+    ) -> io::Result<()> {
+        let Some(idx_file) = self.idx_file.as_mut() else {
+            return Ok(());
+        };
+        if let Err(e) = idx::write_index_entry(idx_file, key, offset, size) {
+            if let Err(te) = idx_file.truncate_to(self.idx_file_offset) {
+                tracing::warn!("failed to trim torn .idx row: {}", te);
+            }
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -313,8 +335,8 @@ impl CompactNeedleMap {
         }
 
         // Always write tombstone to idx file (matching Go)
-        if let Some(ref mut idx_file) = self.idx_file {
-            idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
+        self.append_to_index_file(key, offset, TOMBSTONE_FILE_SIZE)?;
+        if self.idx_file.is_some() {
             self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
         }
 
@@ -874,9 +896,7 @@ impl RedbNeedleMap {
         // commit leaves an orphan row in .idx that redb doesn't reflect, and
         // advancing the offset here would let a later checkpoint record it as
         // reflected, making the reload skip it permanently.
-        if let Some(ref mut idx_file) = self.idx_file {
-            idx::write_index_entry(idx_file, key, offset, size)?;
-        }
+        self.append_to_index_file(key, offset, size)?;
 
         let key_u64: u64 = key.into();
         let packed = pack_needle_value(&NeedleValue { offset, size });
@@ -947,6 +967,28 @@ impl RedbNeedleMap {
         Ok(())
     }
 
+    /// Append one row to the .idx file. A row left half-written by a failed
+    /// append is trimmed back to `idx_file_offset` so the next row still lands
+    /// aligned; without that every later row would parse as garbage on load.
+    /// The offset itself is advanced by the caller once the row counts.
+    fn append_to_index_file(
+        &mut self,
+        key: NeedleId,
+        offset: Offset,
+        size: Size,
+    ) -> io::Result<()> {
+        let Some(idx_file) = self.idx_file.as_mut() else {
+            return Ok(());
+        };
+        if let Err(e) = idx::write_index_entry(idx_file, key, offset, size) {
+            if let Err(te) = idx_file.truncate_to(self.idx_file_offset) {
+                tracing::warn!("failed to trim torn .idx row: {}", te);
+            }
+            return Err(e);
+        }
+        Ok(())
+    }
+
     /// Look up a needle. A redb failure is an ERROR, not an absent needle:
     /// answering "not found" would turn a database problem into a read miss
     /// and let a delete report success without recording a tombstone.
@@ -993,9 +1035,7 @@ impl RedbNeedleMap {
             return Ok(None);
         };
 
-        if let Some(ref mut idx_file) = self.idx_file {
-            idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
-        }
+        self.append_to_index_file(key, offset, TOMBSTONE_FILE_SIZE)?;
 
         let deleted_nv = NeedleValue {
             offset: old.offset,
