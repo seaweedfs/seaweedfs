@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,108 +12,180 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-func TestSpaceCalculation(t *testing.T) {
-	// Test the space calculation logic
-	testCases := []struct {
-		name        string
-		volumeSize  uint64
-		indexSize   uint64
-		preallocate int64
-		expectedMin int64
-	}{
-		{
-			name:        "Large volume, small preallocate",
-			volumeSize:  244 * 1024 * 1024 * 1024,                          // 244GB
-			indexSize:   1024 * 1024,                                       // 1MB
-			preallocate: 1024,                                              // 1KB
-			expectedMin: int64((244*1024*1024*1024 + 1024*1024) * 11 / 10), // +10% buffer
-		},
-		{
-			name:        "Small volume, large preallocate",
-			volumeSize:  100 * 1024 * 1024,                   // 100MB
-			indexSize:   1024,                                // 1KB
-			preallocate: 1024 * 1024 * 1024,                  // 1GB
-			expectedMin: int64(1024 * 1024 * 1024 * 11 / 10), // preallocate + 10%
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Calculate space needed using the same logic as our fix
-			estimatedCompactSize := int64(tc.volumeSize + tc.indexSize)
-			spaceNeeded := tc.preallocate
-			if estimatedCompactSize > tc.preallocate {
-				spaceNeeded = estimatedCompactSize
-			}
-			// Add 10% safety buffer
-			spaceNeeded = spaceNeeded + (spaceNeeded / 10)
-
-			if spaceNeeded < tc.expectedMin {
-				t.Errorf("Space calculation too low: got %d, expected at least %d", spaceNeeded, tc.expectedMin)
-			}
-
-			t.Logf("Volume size: %d bytes, Space needed: %d bytes (%.2f%% of volume size)",
-				tc.volumeSize, spaceNeeded, float64(spaceNeeded)/float64(tc.volumeSize)*100)
-		})
-	}
-}
-
-// Compaction writes live needles only, so the space check must be measured
-// against the live size, not the .dat the garbage occupies — a full disk
-// needs the estimate to shrink or it can never reclaim.
-func TestEstimatedCompactedSizeCountsLiveNeedles(t *testing.T) {
+// newVolumeWithGarbage writes live+deleted needles and deletes the first
+// deleted ones, so the volume carries that much garbage on disk.
+func newVolumeWithGarbage(t *testing.T, live, deleted int) *Volume {
+	t.Helper()
 	dir := t.TempDir()
-
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
 	if err != nil {
-		t.Fatalf("volume creation: %v", err)
+		t.Fatalf("NewVolume: %v", err)
 	}
-	defer v.Close()
-
-	const count = 20
-	for i := 1; i <= count; i++ {
+	t.Cleanup(v.Close)
+	for i := 1; i <= live+deleted; i++ {
 		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
 	}
-	datSize, _, _ := v.FileStat()
-
-	fullEstimate := estimatedCompactedSize(v)
-	if fullEstimate <= super_block.SuperBlockSize {
-		t.Fatalf("estimate for all-live volume = %d, want > superblock", fullEstimate)
-	}
-
-	for i := 1; i < count; i++ {
-		if _, err := v.doDeleteRequest(newEmptyNeedle(uint64(i))); err != nil {
+	for i := 1; i <= deleted; i++ {
+		if _, err := v.deleteNeedle2(newEmptyNeedle(uint64(i))); err != nil {
 			t.Fatalf("delete needle %d: %v", i, err)
 		}
 	}
+	return v
+}
 
-	estimate := estimatedCompactedSize(v)
-	if estimate >= int64(datSize) {
-		t.Fatalf("estimate %d not below .dat size %d with 19/20 needles deleted", estimate, datSize)
-	}
-	if estimate <= super_block.SuperBlockSize {
-		t.Fatalf("estimate %d lost the one live needle", estimate)
-	}
-	live := int64(v.FileCount()-v.DeletedCount())*types.NeedleMapEntrySize + super_block.SuperBlockSize
-	if estimate < live {
-		t.Fatalf("estimate %d below superblock + live index entries %d", estimate, live)
-	}
+func stubCompactionDiskFree(t *testing.T, free uint64) {
+	t.Helper()
+	prev := compactionDiskFree
+	compactionDiskFree = func(string) uint64 { return free }
+	t.Cleanup(func() { compactionDiskFree = prev })
+}
 
-	if _, err := v.doDeleteRequest(newEmptyNeedle(uint64(count))); err != nil {
-		t.Fatalf("delete last needle: %v", err)
+func TestCompactionSpaceNeeded_CountsLiveBytesNotVolumeSize(t *testing.T) {
+	v := newVolumeWithGarbage(t, 20, 2000)
+	datSize, idxSize, _ := v.FileStat()
+	liveContent := int64(v.ContentSize() - v.DeletedSize())
+
+	dataBytes, indexBytes := compactionSpaceNeeded(v, 0)
+
+	if dataBytes < liveContent+super_block.SuperBlockSize {
+		t.Fatalf("data estimate %d does not cover the %d live content bytes plus the superblock", dataBytes, liveContent)
 	}
-	if estimate := estimatedCompactedSize(v); estimate != super_block.SuperBlockSize {
-		t.Fatalf("all-deleted estimate = %d, want superblock only (%d)", estimate, super_block.SuperBlockSize)
+	if indexBytes < 20*types.NeedleMapEntrySize {
+		t.Fatalf("index estimate %d does not cover 20 live entries", indexBytes)
+	}
+	if dataBytes+indexBytes >= int64(datSize+idxSize) {
+		t.Fatalf("space needed %d is not below the current volume size %d: a mostly-garbage volume must not require its own size to compact", dataBytes+indexBytes, datSize+idxSize)
 	}
 }
 
-// The estimate must cover what compaction writes on disk: each live needle's
-// content plus its header, checksum, timestamp and padding. An all-live
-// volume's compacted .dat is byte-for-byte its current one, so the estimate
-// may not fall below the current file.
-func TestEstimatedCompactedSizeCoversNeedleFraming(t *testing.T) {
+func TestCompactionSpaceNeeded_AllGarbageNeedsAlmostNothing(t *testing.T) {
+	v := newVolumeWithGarbage(t, 0, 2000)
+	datSize, _, _ := v.FileStat()
+
+	dataBytes, indexBytes := compactionSpaceNeeded(v, 0)
+
+	if needed := dataBytes + indexBytes; needed > int64(datSize)/10 {
+		t.Fatalf("an all-garbage volume of %d bytes still asks for %d bytes", datSize, needed)
+	}
+}
+
+func TestCompactionSpaceNeeded_NeverAboveCurrentVolume(t *testing.T) {
+	// Nothing deleted: the estimate may not exceed what is already on disk.
+	v := newVolumeWithGarbage(t, 200, 0)
+	datSize, idxSize, _ := v.FileStat()
+
+	dataBytes, indexBytes := compactionSpaceNeeded(v, 0)
+
+	if dataBytes > int64(datSize) || indexBytes > int64(idxSize) {
+		t.Fatalf("estimate data=%d index=%d exceeds the current files data=%d index=%d", dataBytes, indexBytes, datSize, idxSize)
+	}
+}
+
+func TestCompactionSpaceNeeded_PreallocateWinsForDataOnly(t *testing.T) {
+	// The new .dat is preallocated to this size; the rebuilt index is a
+	// separate file and still needs its own room.
+	v := newVolumeWithGarbage(t, 5, 5)
+	const preallocate = int64(1) << 30
+
+	dataBytes, indexBytes := compactionSpaceNeeded(v, preallocate)
+
+	if dataBytes != preallocate {
+		t.Fatalf("data estimate %d, want the preallocate size %d", dataBytes, preallocate)
+	}
+	if indexBytes < 5*types.NeedleMapEntrySize {
+		t.Fatalf("index estimate %d does not cover 5 live entries", indexBytes)
+	}
+}
+
+func TestEnsureCompactVolumeSpace_FullDiskWithGarbage(t *testing.T) {
+	// The disk-full case from #11516: free space is far below the volume's
+	// size, but well above what compacting its live needles will write.
+	v := newVolumeWithGarbage(t, 20, 2000)
+	datSize, idxSize, _ := v.FileStat()
+	dataBytes, indexBytes := compactionSpaceNeeded(v, 0)
+	needed := dataBytes + indexBytes
+	if uint64(needed) >= datSize+idxSize {
+		t.Fatalf("test setup: estimate %d is not below volume size %d", needed, datSize+idxSize)
+	}
+
+	stubCompactionDiskFree(t, uint64(needed))
+	if err := ensureCompactVolumeSpace(v, 0); err != nil {
+		t.Fatalf("free %d covers the estimate %d, volume is %d: unexpected %v", needed, needed, datSize+idxSize, err)
+	}
+
+	stubCompactionDiskFree(t, uint64(needed)-1)
+	err := ensureCompactVolumeSpace(v, 0)
+	if !errors.Is(err, ErrInsufficientSpace) {
+		t.Fatalf("free %d below the estimate %d: got %v, want ErrInsufficientSpace", needed-1, needed, err)
+	}
+}
+
+func TestEnsureCompactVolumeSpace_SeparateIndexDisk(t *testing.T) {
+	dataDir, idxDir := t.TempDir(), t.TempDir()
+	v, err := NewVolume(dataDir, idxDir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("NewVolume: %v", err)
+	}
+	t.Cleanup(v.Close)
+	for i := 1; i <= 50; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	dataBytes, indexBytes := compactionSpaceNeeded(v, 0)
+
+	free := map[string]uint64{dataDir: uint64(dataBytes), idxDir: uint64(indexBytes)}
+	prevFree, prevSame := compactionDiskFree, compactionSameFilesystem
+	compactionDiskFree = func(dir string) uint64 { return free[dir] }
+	compactionSameFilesystem = func(string, string) bool { return false }
+	t.Cleanup(func() { compactionDiskFree, compactionSameFilesystem = prevFree, prevSame })
+
+	if err := ensureCompactVolumeSpace(v, 0); err != nil {
+		t.Fatalf("each disk covers its own share: unexpected %v", err)
+	}
+	// Plenty of room on the data disk cannot make up for a full index disk.
+	free[dataDir] = uint64(dataBytes) * 10
+	free[idxDir] = uint64(indexBytes) - 1
+	if err := ensureCompactVolumeSpace(v, 0); !errors.Is(err, ErrInsufficientSpace) {
+		t.Fatalf("full index disk: got %v, want ErrInsufficientSpace", err)
+	}
+
+	// Two directories on one filesystem draw on the same free space, so the
+	// data and the index estimates must be covered together.
+	compactionSameFilesystem = func(string, string) bool { return true }
+	free[dataDir] = uint64(dataBytes+indexBytes) - 1
+	free[idxDir] = uint64(dataBytes+indexBytes) - 1
+	if err := ensureCompactVolumeSpace(v, 0); !errors.Is(err, ErrInsufficientSpace) {
+		t.Fatalf("shared filesystem short of the sum: got %v, want ErrInsufficientSpace", err)
+	}
+	free[dataDir] = uint64(dataBytes + indexBytes)
+	free[idxDir] = uint64(dataBytes + indexBytes)
+	if err := ensureCompactVolumeSpace(v, 0); err != nil {
+		t.Fatalf("shared filesystem covering the sum: unexpected %v", err)
+	}
+	// A mount point the identity check cannot see: the index directory
+	// reports its own, smaller pool and must still be checked.
+	free[idxDir] = uint64(indexBytes) - 1
+	if err := ensureCompactVolumeSpace(v, 0); !errors.Is(err, ErrInsufficientSpace) {
+		t.Fatalf("index mount point short of the index: got %v, want ErrInsufficientSpace", err)
+	}
+}
+
+func TestSameFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	if !sameFilesystem(dir, dir) {
+		t.Fatal("a directory is on its own filesystem")
+	}
+	if !sameFilesystem(dir, filepath.Join(dir, "missing")) {
+		t.Fatal("an unreadable path must be treated as shared, so the check asks for the sum")
+	}
+}
+
+// The estimate may not fall below the current .dat size: an all-live
+// volume's compacted copy is byte-for-byte its current one.
+func TestCompactionSpaceNeededCoversNeedleFraming(t *testing.T) {
 	dir := t.TempDir()
 
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -127,14 +201,13 @@ func TestEstimatedCompactedSizeCoversNeedleFraming(t *testing.T) {
 	}
 	datSize, _, _ := v.FileStat()
 
-	if estimate := estimatedCompactedSize(v); estimate < int64(datSize) {
-		t.Fatalf("estimate %d below .dat size %d for an all-live volume: missing per-needle framing", estimate, datSize)
+	dataBytes, _ := compactionSpaceNeeded(v, 0)
+	if dataBytes < int64(datSize) {
+		t.Fatalf("estimate %d below .dat size %d for an all-live volume: missing per-needle framing", dataBytes, datSize)
 	}
 }
 
-// disk_space_low is only reported when low space is the sole read-only cause,
-// so a volume also marked read-only by an operator or quarantined by failed
-// I/O stays out of the sweep.
+// disk_space_low is only reported when low space is the sole read-only cause.
 func TestCheckCompactVolumeDiskLowSoleCauseOnly(t *testing.T) {
 	dir := t.TempDir()
 	store := newSingleDirStore(t, dir)

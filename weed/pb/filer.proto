@@ -325,6 +325,7 @@ enum FilerError {
     EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
     ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
     PRECONDITION_FAILED   = 6; // WriteCondition not satisfied
+    READ_ONLY             = 7; // path matches a read-only storage rule (e.g. bucket over quota)
 }
 
 // ObjectMutation is one entry-level change applied by ObjectTransaction. All
@@ -572,6 +573,9 @@ message AssignVolumeResponse {
     // fsync is the storage rule's fsync decision for the assigned path, so the
     // client can carry it onto the volume server upload request.
     bool fsync = 11;
+    // error_code classifies error for callers that must branch on it; error
+    // keeps the human-readable text for clients that predate the field.
+    FilerError error_code = 12;
 }
 
 message LookupVolumeRequest {

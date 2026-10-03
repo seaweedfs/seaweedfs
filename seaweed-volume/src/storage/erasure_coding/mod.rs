@@ -9,6 +9,8 @@ pub mod ec_encoder;
 pub mod ec_locate;
 pub mod ec_shard;
 pub mod ec_volume;
+pub mod ecj_merge;
+pub(crate) mod ecj_registry;
 
 pub use ec_shard::{
     DATA_SHARDS_COUNT, EcVolumeShard, MAX_SHARD_COUNT, MIN_TOTAL_DISKS, PARITY_SHARDS_COUNT,

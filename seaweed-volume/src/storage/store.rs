@@ -13,36 +13,43 @@ use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
 use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT, ShardId};
-use crate::storage::erasure_coding::ec_volume::{EcVolume, is_usable_ecx_file};
+use crate::storage::erasure_coding::ec_volume::{
+    ECJ_COMPACT_TMP_EXT, EcVolume, is_usable_ecx_file,
+};
 use crate::storage::needle::needle::{Needle, get_actual_size};
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::{ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 use crate::storage::volume::{CompactionJob, VifVolumeInfo, Volume, VolumeError, VolumeSpec};
 
-/// Fails unless `dir` has room to compact `v`, as Go's CompactVolume checks:
-/// the larger of `preallocate` and the estimated compacted size (the live
-/// needles, not the .dat the garbage already occupies, so a full disk can
-/// still be reclaimed), plus a tenth.
-fn check_compact_space(dir: &str, v: &Volume, preallocate: u64) -> Result<(), VolumeError> {
-    let live_count = (v.file_count() - v.deleted_count()).max(0) as u64;
-    let live_bytes = v.content_size().saturating_sub(v.deleted_size());
-    let per_needle = (get_actual_size(Size(0), v.version())
-        + NEEDLE_PADDING_SIZE as i64
-        + NEEDLE_MAP_ENTRY_SIZE as i64) as u64;
-    let estimated = SUPER_BLOCK_SIZE as u64 + live_count * per_needle + live_bytes;
-    let space_needed = std::cmp::max(preallocate, estimated);
-    let space_needed = space_needed + space_needed / 10;
+/// Mirrors Go's ensureCompactVolumeSpace, per filesystem: the new .dat lands
+/// next to the old one and the new .idx next to the old index, so when the
+/// index directory is on another filesystem each disk answers for its own
+/// share, while two directories on one filesystem must cover the sum.
+fn ensure_compact_volume_space(v: &Volume, preallocate: u64) -> Result<(), VolumeError> {
+    let (data_bytes, index_bytes) = compaction_space_needed(v, preallocate);
+    let (dir, dir_idx) = (v.dir(), v.dir_idx());
+    let check = |dir: &str, needed: u64| -> Result<(), VolumeError> {
+        let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
+        if free < needed {
+            return Err(VolumeError::InsufficientSpace {
+                vid: v.id,
+                required: needed,
+                free,
+            });
+        }
+        Ok(())
+    };
 
-    let (_, free) = crate::storage::disk_location::get_disk_stats(dir);
-    if free < space_needed {
-        return Err(VolumeError::InsufficientSpace {
-            vid: v.id,
-            required: space_needed,
-            free,
-        });
+    if dir_idx.is_empty() || dir_idx == dir {
+        check(dir, data_bytes + index_bytes)
+    } else if !same_filesystem(dir, dir_idx) {
+        check(dir, data_bytes)?;
+        check(dir_idx, index_bytes)
+    } else {
+        check(dir, data_bytes + index_bytes)?;
+        check(dir_idx, index_bytes)
     }
-    Ok(())
 }
 
 /// Top-level storage manager containing all disk locations and their volumes.
@@ -749,17 +756,6 @@ impl Store {
     ) -> Result<crate::storage::volume::NeedleReadPlan, VolumeError> {
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         vol.needle_read_plan(id, read_deleted)
-    }
-
-    /// Re-lookup a needle's data-file offset after compaction may have moved it.
-    /// Returns `(new_data_file_offset, current_compaction_revision)`.
-    pub fn re_lookup_needle_data_offset(
-        &self,
-        vid: VolumeId,
-        needle_id: NeedleId,
-    ) -> Result<(u64, u16), VolumeError> {
-        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
-        vol.re_lookup_needle_data_offset(needle_id)
     }
 
     /// Write a needle to a volume. With `fsync` the volume flushes its .dat
@@ -1470,10 +1466,12 @@ impl Store {
                     crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                 let _ = std::fs::remove_file(format!("{}.ecx", idx_base));
                 let _ = std::fs::remove_file(format!("{}.ecj", idx_base));
+                let _ = std::fs::remove_file(format!("{}{}", idx_base, ECJ_COMPACT_TMP_EXT));
                 // Also try data directory in case .ecx/.ecj were created before -dir.idx
                 if loc.idx_directory != loc.directory {
                     let _ = std::fs::remove_file(format!("{}.ecx", data_base));
                     let _ = std::fs::remove_file(format!("{}.ecj", data_base));
+                    let _ = std::fs::remove_file(format!("{}{}", data_base, ECJ_COMPACT_TMP_EXT));
                 }
                 // A shard-only disk also drops its stale .vif (Go
                 // removeEcSharedIndexFiles): a live .idx means this disk still
@@ -1589,10 +1587,10 @@ impl Store {
         vid: VolumeId,
         preallocate: u64,
     ) -> Result<Option<CompactionJob>, VolumeError> {
-        let (loc_idx, v) = self
+        let (_, v) = self
             .find_volume(vid)
             .ok_or(VolumeError::VolumeNotFound(vid))?;
-        check_compact_space(&self.locations[loc_idx].directory, v, preallocate)?;
+        ensure_compact_volume_space(v, preallocate)?;
 
         let (_, v) = self
             .find_volume_mut(vid)
@@ -1615,7 +1613,7 @@ impl Store {
         };
         let mut v = Volume::new(dir, dir_idx, vid, needle_map_kind, &spec)?;
         let mut compact = || -> Result<(), VolumeError> {
-            check_compact_space(dir, &v, 0)?;
+            ensure_compact_volume_space(&v, 0)?;
             v.compact_by_index(0, 0, |_| true)?;
             v.commit_compact()
         };
@@ -1793,6 +1791,65 @@ fn owned_ec_shard_count(loc: &DiskLocation, vid: VolumeId, shard_ids: &[ShardId]
         .iter()
         .filter(|&&shard_id| ecv.has_shard(shard_id))
         .count()
+}
+
+/// Mirrors Go's compactionSpaceNeeded: what compaction will write, split into
+/// the new .dat and rebuilt .idx shares, each capped at its current file.
+fn compaction_space_needed(v: &Volume, preallocate: u64) -> (u64, u64) {
+    let mut data_bytes = v.current_dat_file_size().unwrap_or(0);
+    let mut index_bytes = v.idx_file_size();
+
+    let live_count = v.file_count() - v.deleted_count();
+    let live_content = v.content_size() as i64 - v.deleted_size() as i64;
+    // Unknown or inconsistent deleted sizes: the whole volume stays the
+    // estimate.
+    let deleted_size_known = v.deleted_count() == 0 || v.deleted_size() > 0;
+    if deleted_size_known && live_count >= 0 && live_content >= 0 {
+        // Empty-needle framing plus a padding unit covers the worst case.
+        let per_needle =
+            (get_actual_size(Size(0), v.version()) + NEEDLE_PADDING_SIZE as i64) as u64;
+        let estimate = with_headroom(
+            SUPER_BLOCK_SIZE as u64 + live_content as u64 + live_count as u64 * per_needle,
+        );
+        if estimate < data_bytes {
+            data_bytes = estimate;
+        }
+        let estimate = with_headroom(live_count as u64 * NEEDLE_MAP_ENTRY_SIZE as u64);
+        if estimate < index_bytes {
+            index_bytes = estimate;
+        }
+    }
+    if preallocate > data_bytes {
+        data_bytes = preallocate;
+    }
+    (data_bytes, index_bytes)
+}
+
+/// Headroom for Bloom-filter false positives in the live/deleted counters.
+fn with_headroom(estimate: u64) -> u64 {
+    estimate + estimate / 16
+}
+
+/// Whether two directories draw on the same free-space pool; in doubt, yes.
+fn same_filesystem(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    same_filesystem_impl(a, b)
+}
+
+#[cfg(unix)]
+fn same_filesystem_impl(a: &str, b: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(ma), Ok(mb)) => ma.dev() == mb.dev(),
+        _ => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_filesystem_impl(_a: &str, _b: &str) -> bool {
+    true
 }
 
 // ============================================================================
@@ -2514,6 +2571,52 @@ mod tests {
         let selected =
             store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive, None);
         assert_eq!(selected, Some(0));
+    }
+
+    // VolumeCopy picks a disk before deleting the replica it replaces, so only
+    // the location actually holding that replica may count its slot as free.
+    #[test]
+    fn test_find_free_location_predicate_credits_only_the_holding_location() {
+        let tmp1 = TempDir::new().unwrap();
+        let dir1 = tmp1.path().to_str().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let dir2 = tmp2.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        for dir in [dir1, dir2] {
+            store
+                .add_location(
+                    dir,
+                    dir,
+                    1,
+                    DiskType::HardDrive,
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+        }
+        for vid in [81, 82] {
+            store
+                .add_volume(VolumeId(vid), DiskType::HardDrive, &VolumeSpec::default())
+                .unwrap();
+        }
+        let loc_of = |vid| store.find_volume(VolumeId(vid)).unwrap().0;
+        assert_ne!(loc_of(81), loc_of(82), "fixture must fill both locations");
+
+        let hdd = |loc: &DiskLocation| loc.disk_type == DiskType::HardDrive;
+        assert_eq!(store.find_free_location_predicate(hdd, None), None);
+        assert_eq!(
+            store.find_free_location_predicate(hdd, Some(VolumeId(99))),
+            None
+        );
+        assert_eq!(
+            store.find_free_location_predicate(hdd, Some(VolumeId(81))),
+            Some(loc_of(81))
+        );
+        assert_eq!(
+            store.find_free_location_predicate(hdd, Some(VolumeId(82))),
+            Some(loc_of(82))
+        );
     }
 
     #[test]
