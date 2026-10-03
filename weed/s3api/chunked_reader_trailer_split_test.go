@@ -9,9 +9,7 @@ import (
 	"testing"
 )
 
-// segmentedReader returns each segment from its own Read call, the way a
-// client that flushes small writes separately (the AWS SDK for Java on a
-// Linux JDK) delivers a streaming upload over TCP.
+// segmentedReader returns one segment per Read call.
 type segmentedReader struct{ segments [][]byte }
 
 func (s *segmentedReader) Read(p []byte) (int, error) {
@@ -28,15 +26,15 @@ func (s *segmentedReader) Read(p []byte) (int, error) {
 
 func TestTrailerChecksumSurvivesSplitTrailerLines(t *testing.T) {
 	payload := []byte("hello, trailer\n")
-	sum := crc32.ChecksumIEEE(payload)
-	checksum := base64.StdEncoding.EncodeToString([]byte{byte(sum >> 24), byte(sum >> 16), byte(sum >> 8), byte(sum)})
+	crcWriter := crc32.NewIEEE()
+	crcWriter.Write(payload)
+	checksum := base64.StdEncoding.EncodeToString(crcWriter.Sum(nil))
 	sig := "0000000000000000000000000000000000000000000000000000000000000000"
 
 	segments := [][]byte{
 		[]byte("f;chunk-signature=" + sig + "\r\n"),
 		append(payload, "\r\n"...),
 		[]byte("0;chunk-signature=" + sig + "\r\n"),
-		// The trailer lines arrive in separate segments.
 		[]byte("x-amz-checksum-crc32:" + checksum),
 		[]byte("\r\n"),
 		[]byte("x-amz-trailer-signature:" + sig + "\r\n\r\n"),
