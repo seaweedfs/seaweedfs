@@ -373,7 +373,6 @@ func TestChunkReadAtRangeInsideOneChunkStaysRangeFetch(t *testing.T) {
 // decompress server-side. The alternative is a failed GET.
 func TestChunkReadAtOversizedCompressedChunkFallsBackToRange(t *testing.T) {
 	const chunkSize = 1 << 20
-	const sliceSize = 16 << 10
 
 	budget := NewReaderCacheBudget(64 << 10) // smaller than the chunk
 	rc := NewReaderCache(64, (*chunk_cache.TieredChunkCache)(nil), func(context.Context, string) ([]string, error) {
