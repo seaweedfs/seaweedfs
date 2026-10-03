@@ -478,6 +478,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		GetResumeTsNs: func() int64 {
 			return processor.processedTsWatermark.Load()
 		},
+		Resubscribe: processor.ResubscribeCh(),
 		// While the source has only read activity it emits no metadata events, so
 		// the watermark above never advances and sync_offset would look stuck.
 		// The idle heartbeat moves the gauge to the source's current time once we
