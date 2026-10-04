@@ -667,6 +667,167 @@ func TestFilerInlineAppendRealThresholdBoundaries(t *testing.T) {
 	}
 }
 
+func TestFilerInlineAppendEmptyFileStaysInline(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/append.txt"
+	appendContent := []byte("new-")
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(filePath),
+		Attr: filer.Attr{
+			Mtime:  time.Unix(1, 0),
+			Crtime: time.Unix(1, 0),
+		},
+	}); err != nil {
+		t.Fatalf("insert empty entry: %v", err)
+	}
+
+	fs := &FilerServer{filer: f, option: &FilerOption{SaveToFilerLimit: 12, MaxMB: 1}}
+	r := httptest.NewRequest(http.MethodPut, filePath+"?op=append", bytes.NewReader(appendContent))
+	r.ContentLength = -1
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(
+		ctx, httptest.NewRecorder(), r, r.Body, 4, "append.txt", "", -1, &operation.StorageOption{},
+	)
+	if err != nil {
+		t.Fatalf("prepare append to empty file: %v", err)
+	}
+	if len(fileChunks) != 0 || !bytes.Equal(smallContent, appendContent) {
+		t.Fatalf("append to empty file uploaded instead of inline: chunks=%d inline=%q", len(fileChunks), smallContent)
+	}
+
+	result, err, cleanupChunks := fs.saveMetaData(ctx, r, "append.txt", "", &operation.StorageOption{}, 4, md5Hash.Sum(nil), fileChunks, chunkOffset, smallContent)
+	if err != nil {
+		t.Fatalf("save append to empty file: %v", err)
+	}
+	if len(cleanupChunks) != 0 || result == nil || result.Size != int64(len(appendContent)) {
+		t.Fatalf("append result=%#v cleanup=%d", result, len(cleanupChunks))
+	}
+	updated, err := f.FindEntry(ctx, util.FullPath(filePath))
+	if err != nil {
+		t.Fatalf("find updated entry: %v", err)
+	}
+	if !bytes.Equal(updated.Content, appendContent) || len(updated.Chunks) != 0 || updated.FileSize != uint64(len(appendContent)) {
+		t.Fatalf("append to empty file: content=%q chunks=%d size=%d", updated.Content, len(updated.Chunks), updated.FileSize)
+	}
+}
+
+func TestFilerInlineAppendKeepsETag(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/append.txt"
+	oldContent := []byte("old-")
+	appendContent := []byte("new-")
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(filePath),
+		Attr: filer.Attr{
+			Mtime:    time.Unix(1, 0),
+			Crtime:   time.Unix(1, 0),
+			FileSize: uint64(len(oldContent)),
+		},
+		Content: append([]byte(nil), oldContent...),
+	}); err != nil {
+		t.Fatalf("insert inline entry: %v", err)
+	}
+
+	fs := &FilerServer{filer: f, option: &FilerOption{SaveToFilerLimit: 12, MaxMB: 1}}
+	r := httptest.NewRequest(http.MethodPut, filePath+"?op=append", bytes.NewReader(appendContent))
+	r.ContentLength = -1
+	if _, err, cleanupChunks := fs.saveMetaData(ctx, r, "append.txt", "", &operation.StorageOption{}, 4, nil, nil, int64(len(appendContent)), appendContent); err != nil {
+		t.Fatalf("save inline append: %v", err)
+	} else if len(cleanupChunks) != 0 {
+		t.Fatalf("inline append returned cleanup chunks: %#v", cleanupChunks)
+	}
+	updated, err := f.FindEntry(ctx, util.FullPath(filePath))
+	if err != nil {
+		t.Fatalf("find updated entry: %v", err)
+	}
+	wantContent := append(append([]byte(nil), oldContent...), appendContent...)
+	wantMD5 := md5.Sum(wantContent)
+	if !bytes.Equal(updated.Md5, wantMD5[:]) {
+		t.Fatalf("entry MD5 = %x, want %x", updated.Md5, wantMD5)
+	}
+	if got, want := filer.ETagEntry(updated), fmt.Sprintf("%x", wantMD5); got != want {
+		t.Fatalf("entry ETag = %q, want %q", got, want)
+	}
+}
+
+func TestFilerInlineAppendConcurrentKeepsAllData(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/append.txt"
+	oldContent := []byte("old-")
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	f.Store = filer.NewFilerStoreWrapper(&inlineAppendSlowFindStore{renameTestStore: store, delay: 2 * time.Millisecond})
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(filePath),
+		Attr: filer.Attr{
+			Mtime:    time.Unix(1, 0),
+			Crtime:   time.Unix(1, 0),
+			FileSize: uint64(len(oldContent)),
+		},
+		Content: append([]byte(nil), oldContent...),
+	}); err != nil {
+		t.Fatalf("insert inline entry: %v", err)
+	}
+
+	fs := &FilerServer{
+		filer:          f,
+		option:         &FilerOption{SaveToFilerLimit: 64, MaxMB: 1},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	markers := []string{"A1", "B2", "C3", "D4", "E5", "F6", "G7", "H8"}
+	var wg sync.WaitGroup
+	errs := make(chan error, len(markers))
+	for _, marker := range markers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPut, filePath+"?op=append", strings.NewReader(marker))
+			_, err, _ := fs.saveMetaData(ctx, r, "append.txt", "", &operation.StorageOption{}, 4, nil, nil, int64(len(marker)), []byte(marker))
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent append failed: %v", err)
+		}
+	}
+
+	updated, err := f.FindEntry(ctx, util.FullPath(filePath))
+	if err != nil {
+		t.Fatalf("find updated entry: %v", err)
+	}
+	if len(updated.Chunks) != 0 {
+		t.Fatalf("concurrent appends promoted the entry to %d chunks", len(updated.Chunks))
+	}
+	got := string(updated.Content)
+	if !strings.HasPrefix(got, string(oldContent)) {
+		t.Fatalf("concurrent append content = %q, want prefix %q", got, oldContent)
+	}
+	for _, marker := range markers {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("concurrent append lost marker %q: content = %q", marker, got)
+		}
+	}
+	if updated.FileSize != uint64(len(oldContent)+len(markers)*2) {
+		t.Fatalf("final size = %d, want %d", updated.FileSize, len(oldContent)+len(markers)*2)
+	}
+}
+
+type inlineAppendSlowFindStore struct {
+	*renameTestStore
+	delay time.Duration
+}
+
+func (s *inlineAppendSlowFindStore) FindEntry(ctx context.Context, path util.FullPath) (*filer.Entry, error) {
+	time.Sleep(s.delay)
+	return s.renameTestStore.FindEntry(ctx, path)
+}
+
 type inlineAppendFailUpdateStore struct {
 	*renameTestStore
 	err error
@@ -805,4 +966,95 @@ func newInlineAppendUploadServer(t *testing.T, f *filer.Filer, saveToFilerLimit 
 		option:         &FilerOption{SaveToFilerLimit: saveToFilerLimit, MaxMB: maxMB},
 		grpcDialOption: dialOption,
 	}, uploaded
+}
+
+// inlineAppendDriftingStore commits a competing update right after the read
+// that prepares an append, before the recheck ahead of the metadata commit.
+type inlineAppendDriftingStore struct {
+	*renameTestStore
+	reads   int
+	drifted bool
+}
+
+func (s *inlineAppendDriftingStore) FindEntry(ctx context.Context, path util.FullPath) (*filer.Entry, error) {
+	entry, err := s.renameTestStore.FindEntry(ctx, path)
+	if err == nil && entry != nil {
+		s.reads++
+		if s.reads == 2 && !s.drifted {
+			s.drifted = true
+			competing := entry.ShallowClone()
+			competing.Content = append([]byte(nil), append(competing.Content, '!')...)
+			competing.FileSize = uint64(len(competing.Content))
+			if updateErr := s.renameTestStore.UpdateEntry(ctx, competing); updateErr != nil {
+				return nil, updateErr
+			}
+		}
+	}
+	return entry, err
+}
+
+func TestFilerInlineAppendRejectsEntryChangedMidWrite(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/append.txt"
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	drifting := &inlineAppendDriftingStore{renameTestStore: store}
+	f.Store = filer.NewFilerStoreWrapper(drifting)
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(filePath),
+		Attr: filer.Attr{
+			Mtime:    time.Unix(1, 0),
+			Crtime:   time.Unix(1, 0),
+			FileSize: 4,
+		},
+		Content: []byte("old-"),
+	}); err != nil {
+		t.Fatalf("insert inline entry: %v", err)
+	}
+
+	fs := &FilerServer{filer: f, option: &FilerOption{SaveToFilerLimit: 64, MaxMB: 1}}
+	r := httptest.NewRequest(http.MethodPut, filePath+"?op=append", strings.NewReader("new"))
+	if _, err, _ := fs.saveMetaData(ctx, r, "append.txt", "", &operation.StorageOption{}, 4, nil, nil, 3, []byte("new")); err == nil {
+		t.Fatal("append succeeded despite the entry changing before commit")
+	}
+
+	unchanged, err := store.FindEntry(ctx, util.FullPath(filePath))
+	if err != nil {
+		t.Fatalf("find entry after rejected append: %v", err)
+	}
+	if string(unchanged.Content) != "old-!" {
+		t.Fatalf("rejected append overwrote the competing write: %q", unchanged.Content)
+	}
+}
+
+func TestFilerChunkAppendWithExtendedHeaders(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/chunked.txt"
+	oldChunk := &filer_pb.FileChunk{FileId: "1,00000001", Offset: 0, Size: 4}
+	newChunk := &filer_pb.FileChunk{FileId: "1,00000002", Offset: 0, Size: 3}
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(filePath),
+		Attr: filer.Attr{
+			Mtime:    time.Unix(1, 0),
+			Crtime:   time.Unix(1, 0),
+			FileSize: 4,
+		},
+		Chunks:   []*filer_pb.FileChunk{oldChunk},
+		Extended: map[string][]byte{"existing": []byte("value")},
+	}); err != nil {
+		t.Fatalf("insert chunk-backed entry: %v", err)
+	}
+
+	fs := &FilerServer{filer: f, option: &FilerOption{SaveToFilerLimit: 12, MaxMB: 1}}
+	r := httptest.NewRequest(http.MethodPut, filePath+"?op=append", strings.NewReader("new"))
+	r.Header.Set("Cache-Control", "max-age=60")
+	result, err, _ := fs.saveMetaData(ctx, r, "chunked.txt", "", &operation.StorageOption{}, 4, nil, []*filer_pb.FileChunk{newChunk}, 3, nil)
+	if err != nil {
+		t.Fatalf("append with extended-attribute header: %v", err)
+	}
+	if result == nil || result.Size != 7 {
+		t.Fatalf("append result=%#v, want size 7", result)
+	}
 }

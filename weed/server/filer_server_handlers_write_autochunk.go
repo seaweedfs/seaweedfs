@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -20,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
+	"google.golang.org/protobuf/proto"
 )
 
 func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, contentLength int64, so *operation.StorageOption) {
@@ -255,26 +257,48 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	isAppend := isAppend(r)
 	isOffsetWrite := len(fileChunks) > 0 && fileChunks[0].Offset > 0
+	var existingEntry *filer.Entry
+	var existingSnapshot *filer_pb.Entry
+	var distributedLock *cluster.LiveLock
 	// when it is an append
 	if isAppend || isOffsetWrite {
-		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
+		if fs.filer.Dlm != nil && len(fs.filer.Dlm.LockRing.GetSnapshot()) > 1 {
+			lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
+			distributedLock = lockClient.NewBlockingLongLivedLock(path, string(fs.option.Host), 0)
+			if distributedLock == nil {
+				replyerr = fmt.Errorf("failed to acquire lock for %s; retry the request", path)
+				return
+			}
+			defer distributedLock.Stop()
+		}
+		if fs.entryLockTable != nil {
+			pathLock := fs.entryLockTable.AcquireLock("appendEntry", util.FullPath(path), util.ExclusiveLock)
+			defer fs.entryLockTable.ReleaseLock(util.FullPath(path), pathLock)
+		}
+		var findErr error
+		existingEntry, findErr = fs.filer.FindEntry(ctx, util.FullPath(path))
 		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 			glog.V(0).InfofCtx(ctx, "failing to find %s: %v", path, findErr)
 			replyerr = fmt.Errorf("find entry %q: %w", path, findErr)
 			return
 		}
-		entry = existingEntry
+		if existingEntry != nil {
+			existingSnapshot = existingEntry.ToProtoEntry()
+			entry = cloneEntryForAppend(existingEntry)
+		}
 	}
 
 	inlineAppendHandled := false
 	inlineAppendConverted := false
 	if entry != nil {
-		if isAppend && !so.SaveInside && content != nil && len(entry.Content) == 0 {
+		inlineCandidate := len(entry.Content) > 0 ||
+			(isAppend && entry.FileSize == 0 && entry.Remote == nil && len(entry.HardLinkId) == 0 && len(entry.GetChunks()) == 0)
+		if isAppend && !so.SaveInside && content != nil && !inlineCandidate {
 			replyerr = fmt.Errorf("inline file changed while preparing append; retry the request")
 			return
 		}
 
-		if len(entry.Content) > 0 {
+		if inlineCandidate {
 			if isOffsetWrite {
 				// TODO: support inline offset writes separately from append semantics.
 				replyerr = fmt.Errorf("offset write to inline small file is not supported yet")
@@ -284,12 +308,11 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 				replyerr = fmt.Errorf("append to inline content with this storage mode is not supported")
 				return
 			}
-			if entry.FileSize != uint64(len(entry.Content)) {
+			if entry.FileSize > uint64(len(entry.Content)) {
 				replyerr = fmt.Errorf("inline file %q has inconsistent size: metadata=%d content=%d", path, entry.FileSize, len(entry.Content))
 				return
 			}
 
-			entry = cloneEntryForAppend(entry)
 			entry.Mtime = time.Now()
 			entry.Md5 = nil
 			oldContentSize := int64(len(entry.Content))
@@ -308,6 +331,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 					entry.Content = combinedContent
 					entry.Chunks = nil
 					entry.FileSize = uint64(combinedSize)
+					entry.Md5 = util.Md5(combinedContent)
 					newChunks = nil
 					inlineAppendHandled = true
 				} else {
@@ -356,6 +380,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 				// An empty append must not migrate an inline file, even if the
 				// current threshold is disabled or lower than the file's size.
 				entry.FileSize = uint64(oldContentSize)
+				entry.Md5 = util.Md5(entry.Content)
 				newChunks = nil
 				inlineAppendHandled = true
 			default:
@@ -449,6 +474,25 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			if k == "Response-Content-Disposition" {
 				entry.Extended["Content-Disposition"] = []byte(v[0])
 			}
+		}
+	}
+
+	if isAppend || isOffsetWrite {
+		if distributedLock != nil && !distributedLock.IsLocked() {
+			replyerr = fmt.Errorf("lost distributed lock for %s; retry the request", path)
+			return
+		}
+		freshEntry, freshErr := fs.filer.FindEntry(ctx, util.FullPath(path))
+		if freshErr != nil && !errors.Is(freshErr, filer_pb.ErrNotFound) {
+			replyerr = fmt.Errorf("failed to recheck entry %q before write: %w", path, freshErr)
+			return
+		}
+		sameEntry := freshEntry == nil && existingSnapshot == nil ||
+			freshEntry != nil && existingSnapshot != nil &&
+				proto.Equal(existingSnapshot, freshEntry.ToProtoEntry())
+		if !sameEntry {
+			replyerr = fmt.Errorf("entry %s changed during append; retry the request", path)
+			return
 		}
 	}
 

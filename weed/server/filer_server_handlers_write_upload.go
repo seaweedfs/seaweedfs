@@ -54,8 +54,8 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 			return nil, nil, 0, fmt.Errorf("find entry for append %q: %w", fullPath, findErr), nil
 		}
-		if findErr == nil && entry != nil && !entry.IsDirectory() && entry.Remote == nil && len(entry.HardLinkId) == 0 && len(entry.GetChunks()) == 0 && len(entry.Content) > 0 {
-			if entry.FileSize != uint64(len(entry.Content)) {
+		if findErr == nil && entry != nil && !entry.IsDirectory() && entry.Remote == nil && len(entry.HardLinkId) == 0 && len(entry.GetChunks()) == 0 && (len(entry.Content) > 0 || entry.FileSize == 0) {
+			if entry.FileSize > uint64(len(entry.Content)) {
 				return nil, nil, 0, fmt.Errorf("inline file %q has inconsistent size: metadata=%d content=%d", fullPath, entry.FileSize, len(entry.Content)), nil
 			}
 
