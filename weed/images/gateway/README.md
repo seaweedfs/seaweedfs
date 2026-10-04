@@ -27,7 +27,8 @@ flowchart LR
 
 - `resize` accepts `w`, `h`, `m_lfit`, and `limit_1`. It preserves aspect ratio
   and never enlarges the source. One dimension determines the other; two
-  dimensions specify a bounding box.
+  dimensions specify a bounding box. Any unspecified axis uses `maxDimension`
+  as its bound, including format-only requests; neither output axis can exceed it.
 - `quality,Q_1` through `quality,Q_100` specify absolute quality, defaulting to 85.
   Aliyun's relative quality `q` has no equivalent here and returns 400.
 - `format` accepts `jpg`, `jpeg`, `png`, and `webp`, defaulting to WebP.
@@ -64,7 +65,8 @@ weed image \
 `source` fixes the source HTTP(S) URL, optionally including a bucket path or a
 bucket domain pointing to S3. With `http://s3:8333/public-bucket`, a client request
 for `/a/b.png` reads `http://s3:8333/public-bucket/a/b.png`. Both backend URLs must
-omit credentials, queries, and fragments. Dot segments and backslashes, including
+omit credentials, queries, and fragments. The imgproxy URL must be a root URL
+without a path prefix; prefixed URLs are rejected at startup. Dot segments and backslashes, including
 repeatedly escaped forms, are rejected to prevent backend path normalization from
 escaping a fixed bucket prefix. The gateway and imgproxy must reach the same source.
 
@@ -115,8 +117,11 @@ frequent source overwrites.
 Concurrent misses for the same result share one encoding job. A cancelled waiter
 does not cancel work needed by other waiters. If all waiters leave, the job may run
 until its independent processing timeout; separate work tokens still bound such
-background jobs. Backend processing and client writes each receive a full timeout
-budget. Requests, result sizes, duration, and concurrency are bounded. Original
+background jobs. Source metadata checks, shared encoding (including its final
+source recheck), and client writes each receive a full timeout budget. A slow
+initial HEAD does not shorten the caller's wait for shared encoding. The HTTP
+server also bounds request body reads to 10 seconds. Requests, result sizes,
+duration, and concurrency are bounded. Original
 single-range responses are limited by the complete object's size, not just the
 selected range. Excess concurrency returns 429; errors are never cached. The cache
 is limited by bytes and 1024 entries, defaults to 64 MiB, and can be disabled with

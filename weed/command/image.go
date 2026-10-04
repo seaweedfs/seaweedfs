@@ -42,7 +42,7 @@ func init() {
 	imageOptions.cacheMB = cmdImage.Flag.Int64("cacheCapacityMB", 64, "Processed image memory cache in MiB; 0 disables caching")
 	imageOptions.sourceMB = cmdImage.Flag.Int64("maxSourceMB", 25, "Maximum source image size in MiB")
 	imageOptions.resultMB = cmdImage.Flag.Int64("maxResultMB", 10, "Maximum processed image size in MiB")
-	imageOptions.timeout = cmdImage.Flag.Duration("timeout", 15*time.Second, "Separate timeout budgets for backend processing and client writes")
+	imageOptions.timeout = cmdImage.Flag.Duration("timeout", 15*time.Second, "Separate timeout budgets for source metadata, shared encoding, and client writes")
 }
 
 // runImage starts the gateway, reading signing material from the environment rather than process arguments.
@@ -68,10 +68,13 @@ func runImage(cmd *Command, args []string) bool {
 		glog.Errorf("Invalid image gateway port")
 		return false
 	}
+	// Bound the initial source check, shared encoding, and response write phases.
+	// ReadTimeout also limits draining of ignored request bodies after the handler returns.
 	server := &http.Server{
 		Addr: net.JoinHostPort(*imageOptions.bind, strconv.Itoa(*imageOptions.port)), Handler: handler,
-		ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 2 * *imageOptions.timeout,
-		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+		WriteTimeout: 3 * *imageOptions.timeout,
+		IdleTimeout:  60 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 	glog.V(0).Infof("Image gateway listening on %s", server.Addr)
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

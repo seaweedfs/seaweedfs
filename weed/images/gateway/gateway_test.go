@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -22,20 +23,22 @@ const transform = "image/resize,w_640/quality,Q_85/format,webp"
 
 // fixture models S3 access, revisions, and an external encoder for HTTP-level tests.
 type fixture struct {
-	origin, processor *httptest.Server
-	gateway           *Gateway
-	mu                sync.Mutex
-	status            int
-	etag, version     string
-	sourceBytes       int64
-	processStatus     int
-	processType       string
-	data              []byte
-	original          []byte
-	sources           []string
-	heads             atomic.Int32
-	encodes           atomic.Int32
-	started, release  chan struct{}
+	origin, processor        *httptest.Server
+	gateway                  *Gateway
+	mu                       sync.Mutex
+	status                   int
+	etag, version            string
+	sourceBytes              int64
+	processStatus            int
+	processType              string
+	data                     []byte
+	original                 []byte
+	sources                  []string
+	heads                    atomic.Int32
+	encodes                  atomic.Int32
+	started, release         chan struct{}
+	headStarted, headRelease chan struct{}
+	headPaused               atomic.Bool
 }
 
 // newFixture creates HTTP backends that fail tests if credentials are forwarded.
@@ -44,6 +47,15 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{status: 200, etag: "\"source-v1\"", sourceBytes: 100, processStatus: 200,
 		processType: "image/webp", data: []byte("RIFF transformed webp bytes"), original: []byte("original-image")}
 	f.origin = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Pause only the initial source check; the post-encoding recheck remains fast.
+		if r.Method == http.MethodHead && f.headRelease != nil && f.headPaused.CompareAndSwap(false, true) {
+			close(f.headStarted)
+			select {
+			case <-f.headRelease:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.URL.Query().Get("x-oss-process") != "" {
@@ -587,5 +599,84 @@ func TestWriteBudgetStartsAfterProcessing(t *testing.T) {
 	<-done
 	if w.calls != 1 || w.deadline.Before(released.Add(f.gateway.config.Timeout)) || w.Code != 200 {
 		t.Fatal("response did not receive a separate full write timeout")
+	}
+}
+
+// TestSlowMetadataDoesNotConsumeEncodingWait checks independent source and work budgets.
+func TestSlowMetadataDoesNotConsumeEncodingWait(t *testing.T) {
+	f := newFixture(t)
+	f.gateway.config.Timeout = 300 * time.Millisecond
+	f.headStarted, f.headRelease = make(chan struct{}), make(chan struct{})
+	f.started, f.release = make(chan struct{}, 1), make(chan struct{})
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- f.request("GET", imagePath(), nil) }()
+	<-f.headStarted
+	time.Sleep(200 * time.Millisecond)
+	close(f.headRelease)
+	<-f.started
+	time.Sleep(200 * time.Millisecond)
+	close(f.release)
+	response := <-done
+	if response.Code != 200 || response.Body.String() != string(f.data) {
+		t.Fatalf("initial metadata consumed the encoding wait budget: %d", response.Code)
+	}
+}
+
+// TestOriginalContentEncoding checks original encoded bytes, HEAD, ranges, and real client decoding.
+func TestOriginalContentEncoding(t *testing.T) {
+	f := newFixture(t)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, _ = writer.Write(f.original)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Length", fmt.Sprint(compressed.Len()))
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(compressed.Bytes()))
+	}))
+	defer source.Close()
+	f.gateway.source, _ = url.Parse(source.URL)
+	get := f.request("GET", "/encoded.png", nil)
+	if get.Code != 200 || get.Header().Get("Content-Encoding") != "gzip" || !bytes.Equal(get.Body.Bytes(), compressed.Bytes()) {
+		t.Fatal("original response lost its content encoding or changed stored bytes")
+	}
+	head := f.request("HEAD", "/encoded.png", nil)
+	if head.Header().Get("Content-Encoding") != "gzip" || head.Header().Get("Content-Length") != fmt.Sprint(compressed.Len()) || head.Body.Len() != 0 {
+		t.Fatal("encoded original HEAD lost representation metadata")
+	}
+	ranged := f.request("GET", "/encoded.png", http.Header{"Range": {"bytes=0-2"}})
+	if ranged.Code != 206 || ranged.Header().Get("Content-Encoding") != "gzip" || !bytes.Equal(ranged.Body.Bytes(), compressed.Bytes()[:3]) {
+		t.Fatal("encoded original range did not preserve stored representation")
+	}
+	server := httptest.NewServer(f.gateway)
+	defer server.Close()
+	response, err := http.Get(server.URL + "/encoded.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	decoded, err := io.ReadAll(response.Body)
+	if err != nil || !bytes.Equal(decoded, f.original) {
+		t.Fatal("real client could not decode the original representation")
+	}
+}
+
+// TestRepeatedSlashesPreserveBucketPrefix checks actual forwarded URLs rather than assuming traversal.
+func TestRepeatedSlashesPreserveBucketPrefix(t *testing.T) {
+	f := newFixture(t)
+	for _, path := range []string{"//other-bucket/image.png", "/nested//image.png", "/%2fother-bucket/image.png"} {
+		if response := f.request("GET", path+"?x-oss-process="+url.QueryEscape(transform), nil); response.Code != 200 {
+			t.Fatalf("valid repeated-slash key was not served: %s %d", path, response.Code)
+		}
+		f.mu.Lock()
+		encodedSource := f.sources[len(f.sources)-1]
+		f.mu.Unlock()
+		source, err := url.Parse(encodedSource)
+		if err != nil || source.Host != strings.TrimPrefix(f.origin.URL, "http://") || !strings.HasPrefix(source.Path, "/bucket/") {
+			t.Fatalf("repeated slashes escaped the fixed source: %s", encodedSource)
+		}
 	}
 }

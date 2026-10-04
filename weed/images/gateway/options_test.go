@@ -80,3 +80,42 @@ func TestConfigurationRejectsUnsafeBackends(t *testing.T) {
 		}
 	}
 }
+
+// TestOutputBounds covers width-only, height-only, and format-only output limits.
+func TestOutputBounds(t *testing.T) {
+	for _, test := range []struct {
+		value         string
+		width, height int
+	}{
+		{"image/resize,w_640", 640, 4096},
+		{"image/resize,h_640", 4096, 640},
+		{"image/format,png", 4096, 4096},
+		{"image/resize,w_240,h_640", 240, 640},
+	} {
+		o, err := parseOptions(test.value, 4096)
+		if err != nil || o.width != test.width || o.height != test.height {
+			t.Fatalf("missing output axis bound for %s: %+v %v", test.value, o, err)
+		}
+	}
+}
+
+// TestProcessorRootURL rejects ambiguous path prefixes while allowing root URLs.
+func TestProcessorRootURL(t *testing.T) {
+	base := Config{Source: "http://localhost:8333/bucket", Concurrency: 1, MaxDimension: 4096, MaxSourceBytes: 1024, MaxResultBytes: 1024, Timeout: time.Second}
+	for _, address := range []string{"http://localhost:8080/imgproxy", "http://localhost:8080/prefix/", "http://localhost:8080/%2f"} {
+		c := base
+		c.Imgproxy = address
+		if _, err := New(c); err == nil {
+			t.Fatalf("prefixed imgproxy URL accepted: %s", address)
+		}
+	}
+	for _, address := range []string{"http://localhost:8080", "http://localhost:8080/"} {
+		c := base
+		c.Imgproxy = address
+		g, err := New(c)
+		if err != nil {
+			t.Fatalf("root imgproxy URL rejected: %s %v", address, err)
+		}
+		g.client.CloseIdleConnections()
+	}
+}

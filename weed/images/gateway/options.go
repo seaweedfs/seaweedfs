@@ -88,6 +88,13 @@ func parseOptions(value string, maxDimension int) (options, error) {
 			return o, fmt.Errorf("unsupported image processing operation")
 		}
 	}
+	// Bound both output axes, including format-only and single-dimension requests.
+	if o.width == 0 {
+		o.width = maxDimension
+	}
+	if o.height == 0 {
+		o.height = maxDimension
+	}
 	return o, nil
 }
 

@@ -99,6 +99,10 @@ func New(c Config) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
+	// imgproxy signs its root-relative processing path; reject ambiguous proxy prefixes.
+	if processor.Path != "" && processor.Path != "/" || processor.RawPath != "" {
+		return nil, fmt.Errorf("imgproxy URL must not contain a path prefix")
+	}
 	key, keyErr := hex.DecodeString(c.Key)
 	salt, saltErr := hex.DecodeString(c.Salt)
 	if keyErr != nil || saltErr != nil || (len(key) == 0) != (len(salt) == 0) {
@@ -196,6 +200,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		image = g.cache.get(cacheKey)
 	}
 	if image == nil {
+		// Source metadata and shared work each have their own bounded phase.
+		// A slow HEAD must not consume the time needed to await a valid encoding job.
+		waitCtx, waitCancel := context.WithTimeout(r.Context(), g.config.Timeout)
+		defer waitCancel()
+		cancel()
 		flight := g.flights.DoChan(cacheKey, func() (interface{}, error) {
 			if cacheable {
 				if hit := g.cache.get(cacheKey); hit != nil {
@@ -236,7 +245,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			image = outcome.Val.(*result)
-		case <-ctx.Done():
+		case <-waitCtx.Done():
 			g.writeError(w, r, &failure{504, "image processing timed out or request was cancelled"})
 			return
 		}
@@ -402,7 +411,7 @@ func (g *Gateway) serveOriginal(w http.ResponseWriter, r *http.Request, source *
 			return
 		}
 	}
-	for _, key := range []string{"Content-Type", "Content-Length", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "x-amz-version-id"} {
+	for _, key := range []string{"Content-Type", "Content-Encoding", "Content-Length", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "x-amz-version-id"} {
 		if value := resp.Header.Get(key); value != "" {
 			w.Header().Set(key, value)
 		}
