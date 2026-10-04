@@ -136,6 +136,7 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "repeated grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`, policy: "bucket-condition-deny", status: 403, errorCode: "AccessDenied"},
 		{name: "single line grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
 		{name: "presigned grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, presigned: true, policy: "bucket-condition-deny", conditionValue: `id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
+		{name: "joined grant list preserves condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

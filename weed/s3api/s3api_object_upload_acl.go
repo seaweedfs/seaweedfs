@@ -83,13 +83,20 @@ func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object st
 			continue
 		}
 		// Every grantee is persisted, so policy conditions must evaluate each
-		// one. Expose them as separate header values regardless of whether the
-		// client sent one line, repeated lines, or a signed query parameter.
+		// one. Keep the raw wire values for exact-match conditions and add one
+		// canonical value per grantee, regardless of how the client encoded it.
 		pairs, pairCode := parseAclGranteePairs(value)
 		if pairCode != s3err.ErrNone {
 			return r, pairCode
 		}
 		policyRequest.Header.Del(header)
+		wireValues := r.Header.Values(header)
+		if len(wireValues) == 0 {
+			wireValues = []string{value}
+		}
+		for _, wireValue := range wireValues {
+			policyRequest.Header.Add(header, wireValue)
+		}
 		for _, pair := range pairs {
 			encoded, _ := json.Marshal(pair[1])
 			policyRequest.Header.Add(header, pair[0]+"="+string(encoded))
