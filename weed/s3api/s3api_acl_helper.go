@@ -110,7 +110,7 @@ func ParseCustomAclHeaders(r *http.Request, grants *[]*s3.Grant) s3err.ErrorCode
 	customAclHeaders := []string{s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp}
 	var errCode s3err.ErrorCode
 	for _, customAclHeader := range customAclHeaders {
-		headerValue := r.Header.Get(customAclHeader)
+		headerValue := strings.Join(r.Header.Values(customAclHeader), ",")
 		switch customAclHeader {
 		case s3_constants.AmzAclRead:
 			errCode = ParseCustomAclHeader(headerValue, s3_constants.PermissionRead, grants)
@@ -130,75 +130,48 @@ func ParseCustomAclHeaders(r *http.Request, grants *[]*s3.Grant) s3err.ErrorCode
 	return s3err.ErrNone
 }
 
-// splitAclGrantees splits a comma-separated grantee list, ignoring commas
-// inside double-quoted values so `id="a",id="b"` and `id="a", id="b"` both work.
-func splitAclGrantees(headerValue string) []string {
-	var grantees []string
-	start := 0
-	inQuote := false
-	for i := 0; i < len(headerValue); i++ {
-		switch headerValue[i] {
-		case '"':
-			inQuote = !inQuote
-		case ',':
-			if !inQuote {
-				if g := strings.TrimSpace(headerValue[start:i]); g != "" {
-					grantees = append(grantees, g)
-				}
-				start = i + 1
-			}
-		}
-	}
-	if g := strings.TrimSpace(headerValue[start:]); g != "" {
-		grantees = append(grantees, g)
-	}
-	return grantees
-}
-
+// ParseCustomAclHeader parses a comma-separated list of quoted grantees. Decode
+// each value before splitting so commas and equals signs inside quotes survive.
 func ParseCustomAclHeader(headerValue, permission string, grants *[]*s3.Grant) s3err.ErrorCode {
-	for _, grantStr := range splitAclGrantees(headerValue) {
-		key, value, found := strings.Cut(grantStr, "=")
-		if !found {
+	if headerValue == "" {
+		return s3err.ErrNone
+	}
+	remaining := strings.TrimSpace(headerValue)
+	var parsed []*s3.Grant
+	for {
+		key, encoded, ok := strings.Cut(remaining, "=")
+		if !ok {
 			return s3err.ErrInvalidRequest
 		}
-
-		switch key {
+		decoder := json.NewDecoder(strings.NewReader(encoded))
+		var value string
+		if decoder.Decode(&value) != nil || value == "" {
+			return s3err.ErrInvalidRequest
+		}
+		grantee := &s3.Grantee{}
+		switch strings.TrimSpace(key) {
 		case "id":
-			var accountId string
-			_ = json.Unmarshal([]byte(value), &accountId)
-			*grants = append(*grants, &s3.Grant{
-				Grantee: &s3.Grantee{
-					Type: &s3_constants.GrantTypeCanonicalUser,
-					ID:   &accountId,
-				},
-				Permission: &permission,
-			})
+			grantee.Type, grantee.ID = &s3_constants.GrantTypeCanonicalUser, &value
 		case "emailAddress":
-			var emailAddress string
-			_ = json.Unmarshal([]byte(value), &emailAddress)
-			*grants = append(*grants, &s3.Grant{
-				Grantee: &s3.Grantee{
-					Type:         &s3_constants.GrantTypeAmazonCustomerByEmail,
-					EmailAddress: &emailAddress,
-				},
-				Permission: &permission,
-			})
+			grantee.Type, grantee.EmailAddress = &s3_constants.GrantTypeAmazonCustomerByEmail, &value
 		case "uri":
-			var groupName string
-			_ = json.Unmarshal([]byte(value), &groupName)
-			*grants = append(*grants, &s3.Grant{
-				Grantee: &s3.Grantee{
-					Type: &s3_constants.GrantTypeGroup,
-					URI:  &groupName,
-				},
-				Permission: &permission,
-			})
+			grantee.Type, grantee.URI = &s3_constants.GrantTypeGroup, &value
 		default:
 			return s3err.ErrInvalidRequest
 		}
+		parsed = append(parsed, &s3.Grant{Grantee: grantee, Permission: &permission})
+		remaining = strings.TrimSpace(encoded[decoder.InputOffset():])
+		if remaining == "" {
+			break
+		}
+		if remaining[0] != ',' {
+			return s3err.ErrInvalidRequest
+		}
+		remaining = strings.TrimSpace(remaining[1:])
 	}
+	// Do not leave partially parsed grants behind when any list element fails.
+	*grants = append(*grants, parsed...)
 	return s3err.ErrNone
-
 }
 
 func ParseCannedAclHeader(bucketOwnership, bucketOwnerId, accountId, cannedAcl string, putAcl bool) (ownerId string, grants []*s3.Grant, err s3err.ErrorCode) {

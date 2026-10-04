@@ -1371,9 +1371,14 @@ func detectRequestedChecksumAlgorithmQ(r *http.Request, query url.Values) (Check
 const defaultFileMode = uint32(0660)
 
 // resolveFileMode determines the file permission mode for an S3 upload.
-// Priority: per-object X-Amz-Acl header > server default > defaultFileMode.
+// Priority: validated PUT ACL > X-Amz-Acl header > server default > defaultFileMode.
 func (s3a *S3ApiServer) resolveFileMode(r *http.Request) uint32 {
-	if cannedAcl := r.Header.Get(s3_constants.AmzCannedAcl); cannedAcl != "" {
+	cannedAcl := r.Header.Get(s3_constants.AmzCannedAcl)
+	if metadata, ok := r.Context().Value(putObjectACLContextKey{}).(putObjectACLMetadata); ok {
+		// Signed query ACLs must resolve identically to signed ACL headers.
+		cannedAcl = metadata.canned
+	}
+	if cannedAcl != "" {
 		switch cannedAcl {
 		case s3_constants.CannedAclPublicRead, s3_constants.CannedAclAuthenticatedRead,
 			s3_constants.CannedAclBucketOwnerRead:

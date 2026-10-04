@@ -1778,6 +1778,13 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	}
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
+	// Verify the original signature first, then evaluate policies against the
+	// effective PUT ACL, including signed query parameters hoisted by presigners.
+	originalRequest := r
+	r, s3Err = putObjectACLPolicyRequest(r, action, bucket, object)
+	if s3Err != s3err.ErrNone {
+		return identity, s3Err, reqAuthType
+	}
 	prefix := s3_constants.GetPrefix(r)
 
 	// For bucket listings, use prefix for permission checking if available:
@@ -1873,7 +1880,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		}
 	}
 
-	r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+	originalRequest.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
 
 	return identity, s3err.ErrNone, reqAuthType
 
