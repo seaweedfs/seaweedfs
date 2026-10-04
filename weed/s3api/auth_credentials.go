@@ -2565,6 +2565,7 @@ func (iam *IdentityAccessManagement) evaluateAttachedIAMPolicies(r *http.Request
 		Conditions: conditions,
 		Claims:     identity.Claims,
 	}
+	evalArgs.OriginalGrantConditions = policy_engine.OriginalGrantConditionsFromRequest(r)
 
 	// Evaluate user's own policies
 	for _, policyName := range identity.PolicyNames {

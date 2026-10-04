@@ -141,7 +141,9 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	if hasObject && query.Has("uploadId") {
 		switch method {
 		case http.MethodPut:
-			if query.Has("partNumber") {
+			// 与分片路由的 [0-9]+ 一致，无效分片参数仍落入普通上传路由。
+			partNumber := query.Get("partNumber")
+			if partNumber != "" && strings.Trim(partNumber, "0123456789") == "" {
 				return s3_constants.S3_ACTION_UPLOAD_PART
 			}
 		case http.MethodPost:

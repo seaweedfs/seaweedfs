@@ -608,6 +608,13 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 		return s3err.ErrNone, false
 	}
 
+	// 上传处理器的二次检查与认证阶段使用相同 ACL 条件，原签名请求保持不变。
+	policyRequest, policyCode := putObjectACLPolicyRequest(r, Action(action), bucket, object)
+	if policyCode != s3err.ErrNone {
+		return policyCode, true
+	}
+	r = policyRequest
+
 	identityRaw := GetIdentityFromContext(r)
 	var identity *Identity
 	if identityRaw != nil {

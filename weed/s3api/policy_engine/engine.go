@@ -246,6 +246,10 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
 		}
 		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
+		// 保留完整原始列表的正字符串拒绝；允许、负条件及变量仍使用规范化值。
+		if !match && stmt.Statement.Effect == PolicyEffectDeny && len(args.OriginalGrantConditions) != 0 {
+			match = evaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims, args.OriginalGrantConditions)
+		}
 		if !match {
 			return false
 		}
