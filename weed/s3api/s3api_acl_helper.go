@@ -21,8 +21,25 @@ type AccountManager interface {
 	GetAccountIdByIdentityName(name string) string
 }
 
+// aclOwnerAccountManager recognizes the stored resource owner as a valid
+// grantee even if that account is no longer registered, while every other
+// unknown account id is still rejected by the wrapped registry lookup.
+type aclOwnerAccountManager struct {
+	AccountManager
+	ownerId string
+}
+
+func (m aclOwnerAccountManager) GetAccountNameById(canonicalId string) string {
+	name := m.AccountManager.GetAccountNameById(canonicalId)
+	if name == "" && canonicalId != "" && canonicalId == m.ownerId {
+		return canonicalId
+	}
+	return name
+}
+
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
 func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
+	accountManager = aclOwnerAccountManager{AccountManager: accountManager, ownerId: ownerId}
 	if r.Body != nil && r.Body != http.NoBody {
 		defer util_http.CloseRequest(r)
 
@@ -40,7 +57,10 @@ func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucke
 
 		return ValidateAndTransferGrants(accountManager, acp.Grants)
 	} else {
-		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, accountId, true)
+		// Canned and default ACLs grant FULL_CONTROL to the resource owner,
+		// not the requesting account: an admin updating another account's
+		// object must not take over its full-control grant.
+		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, ownerId, true)
 		return grants, errCode
 	}
 }
