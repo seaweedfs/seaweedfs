@@ -3,7 +3,6 @@ package s3api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -225,8 +224,8 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		// 3. Check object-level WRITE_ACP permission
-		// Create the specific action for this object
-		writeAcpAction := Action(fmt.Sprintf("WriteAcp:%s/%s", bucket, object))
+		// authRequest和CanDo负责拼接资源路径，此处只传基础动作，避免重复限定路径。
+		writeAcpAction := Action(s3_constants.ACTION_WRITE_ACP)
 		identity, errCode := s3a.iam.authRequest(r, writeAcpAction)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("PutObjectAclHandler: Auth failed for WriteAcp action on %s/%s: %v", bucket, object, errCode)

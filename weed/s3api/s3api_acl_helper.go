@@ -40,7 +40,8 @@ func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucke
 
 		return ValidateAndTransferGrants(accountManager, acp.Grants)
 	} else {
-		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, accountId, true)
+		// 修改ACL时预定义授权归属于资源拥有者；管理员代为修改不会转移其完全控制权限。
+		_, grants, errCode = ParseAndValidateAclHeadersOrElseDefault(r, accountManager, ownership, bucketOwnerId, ownerId, true)
 		return grants, errCode
 	}
 }
