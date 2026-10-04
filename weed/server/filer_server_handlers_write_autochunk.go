@@ -98,7 +98,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		buf := bufPool.Get().(*bytes.Buffer)
 		buf.Reset()
 		buf.ReadFrom(part1)
-		filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, nil, nil, 0, buf.Bytes())
+		filerResult, replyerr, _ = fs.saveMetaData(ctx, r, fileName, contentType, so, chunkSize, nil, nil, 0, buf.Bytes())
 		bufPool.Put(buf)
 		return
 	}
@@ -114,9 +114,10 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
-	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
+	var uncommittedChunks []*filer_pb.FileChunk
+	filerResult, replyerr, uncommittedChunks = fs.saveMetaData(ctx, r, fileName, contentType, so, chunkSize, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
-		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
+		fs.filer.DeleteUncommittedChunks(ctx, uncommittedChunks)
 	}
 
 	return
@@ -146,9 +147,10 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
-	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
+	var uncommittedChunks []*filer_pb.FileChunk
+	filerResult, replyerr, uncommittedChunks = fs.saveMetaData(ctx, r, fileName, contentType, so, chunkSize, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
-		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
+		fs.filer.DeleteUncommittedChunks(ctx, uncommittedChunks)
 	}
 
 	return
@@ -231,6 +233,8 @@ func (fs *FilerServer) fixFilePath(ctx context.Context, r *http.Request, fileNam
 }
 
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, chunkSize int32, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error, uncommittedChunks []*filer_pb.FileChunk) {
+	uncommittedChunks = fileChunks
 
 	// detect file mode
 	modeStr := r.URL.Query().Get("mode")
@@ -255,30 +259,131 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	// when it is an append
 	if isAppend || isOffsetWrite {
 		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
-		if findErr != nil && findErr != filer_pb.ErrNotFound {
+		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 			glog.V(0).InfofCtx(ctx, "failing to find %s: %v", path, findErr)
+			replyerr = fmt.Errorf("find entry %q: %w", path, findErr)
+			return
 		}
 		entry = existingEntry
 	}
-	if entry != nil {
-		entry.Mtime = time.Now()
-		entry.Md5 = nil
-		// adjust chunk offsets
-		if isAppend {
-			for _, chunk := range fileChunks {
-				chunk.Offset += int64(entry.FileSize)
-			}
-			entry.FileSize += uint64(chunkOffset)
-		}
-		newChunks = append(entry.GetChunks(), fileChunks...)
 
-		// TODO
-		if len(entry.Content) > 0 {
-			replyerr = fmt.Errorf("append to small file is not supported yet")
+	inlineAppendHandled := false
+	inlineAppendConverted := false
+	if entry != nil {
+		if isAppend && !so.SaveInside && content != nil && len(entry.Content) == 0 {
+			replyerr = fmt.Errorf("inline file changed while preparing append; retry the request")
 			return
 		}
 
+		if len(entry.Content) > 0 {
+			if isOffsetWrite {
+				// TODO: support inline offset writes separately from append semantics.
+				replyerr = fmt.Errorf("offset write to inline small file is not supported yet")
+				return
+			}
+			if !isAppend || so.SaveInside || entry.Remote != nil || len(entry.HardLinkId) != 0 || len(entry.GetChunks()) != 0 {
+				replyerr = fmt.Errorf("append to inline content with this storage mode is not supported")
+				return
+			}
+			if entry.FileSize != uint64(len(entry.Content)) {
+				replyerr = fmt.Errorf("inline file %q has inconsistent size: metadata=%d content=%d", path, entry.FileSize, len(entry.Content))
+				return
+			}
+
+			entry = cloneEntryForAppend(entry)
+			entry.Mtime = time.Now()
+			entry.Md5 = nil
+			oldContentSize := int64(len(entry.Content))
+
+			switch {
+			case content != nil:
+				if int64(len(content)) != chunkOffset || len(fileChunks) != 0 {
+					replyerr = fmt.Errorf("invalid buffered inline append: size=%d offset=%d chunks=%d", len(content), chunkOffset, len(fileChunks))
+					return
+				}
+				combinedSize := oldContentSize + int64(len(content))
+				if len(content) == 0 || (fs.option.SaveToFilerLimit > 0 && combinedSize < fs.option.SaveToFilerLimit) {
+					combinedContent := make([]byte, 0, combinedSize)
+					combinedContent = append(combinedContent, entry.Content...)
+					combinedContent = append(combinedContent, content...)
+					entry.Content = combinedContent
+					entry.Chunks = nil
+					entry.FileSize = uint64(combinedSize)
+					newChunks = nil
+					inlineAppendHandled = true
+				} else {
+					// The file grew after the upload path chose inline buffering. Promote
+					// the complete current file and this append as one chunk stream.
+					combinedContent := make([]byte, 0, combinedSize)
+					combinedContent = append(combinedContent, entry.Content...)
+					combinedContent = append(combinedContent, content...)
+					fileChunks, _, chunkOffset, replyerr, _ = fs.uploadReaderToChunks(ctx, r, bytes.NewReader(combinedContent), 0, chunkSize, fileName, contentType, true, so)
+					if replyerr != nil {
+						return
+					}
+					if chunkOffset != combinedSize {
+						uncommittedChunks = fileChunks
+						replyerr = fmt.Errorf("promoted inline append size mismatch: uploaded=%d expected=%d", chunkOffset, combinedSize)
+						return
+					}
+					entry.Content = nil
+					entry.FileSize = uint64(chunkOffset)
+					newChunks = fileChunks
+					uncommittedChunks = fileChunks
+					inlineAppendHandled = true
+					inlineAppendConverted = true
+				}
+			case len(fileChunks) > 0:
+				prefixChunks, _, prefixOffset, uploadErr, _ := fs.uploadReaderToChunks(ctx, r, bytes.NewReader(entry.Content), 0, chunkSize, fileName, contentType, true, so)
+				if uploadErr != nil {
+					replyerr = uploadErr
+					return
+				}
+				uncommittedChunks = append(append([]*filer_pb.FileChunk(nil), fileChunks...), prefixChunks...)
+				if prefixOffset != oldContentSize {
+					replyerr = fmt.Errorf("converted inline content size mismatch: uploaded=%d expected=%d", prefixOffset, oldContentSize)
+					return
+				}
+				for _, chunk := range fileChunks {
+					chunk.Offset += oldContentSize
+				}
+				newChunks = append(append([]*filer_pb.FileChunk(nil), prefixChunks...), fileChunks...)
+				entry.Content = nil
+				entry.FileSize = uint64(oldContentSize) + uint64(chunkOffset)
+				inlineAppendHandled = true
+				inlineAppendConverted = true
+				uncommittedChunks = newChunks
+			case chunkOffset == 0:
+				// An empty append must not migrate an inline file, even if the
+				// current threshold is disabled or lower than the file's size.
+				entry.FileSize = uint64(oldContentSize)
+				newChunks = nil
+				inlineAppendHandled = true
+			default:
+				replyerr = fmt.Errorf("inline append has no content or uploaded chunks")
+				return
+			}
+		}
+
+		if !inlineAppendHandled {
+			entry.Mtime = time.Now()
+			entry.Md5 = nil
+			// New request chunks start at offset zero; append them after the
+			// existing chunk-backed file.
+			if isAppend {
+				for _, chunk := range fileChunks {
+					chunk.Offset += int64(entry.FileSize)
+				}
+				entry.FileSize += uint64(chunkOffset)
+			}
+			newChunks = append(append([]*filer_pb.FileChunk(nil), entry.GetChunks()...), fileChunks...)
+		}
+
 	} else {
+		if isAppend && !so.SaveInside && content != nil {
+			replyerr = fmt.Errorf("inline append target disappeared while uploading; retry the request")
+			return
+		}
 		glog.V(4).InfolnCtx(ctx, "saving", path)
 		newChunks = fileChunks
 		entry = &filer.Entry{
@@ -304,12 +409,21 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		glog.V(0).InfofCtx(ctx, "merge chunks %s: %v", r.RequestURI, replyerr)
 		mergedChunks = newChunks
 	}
+	if inlineAppendConverted {
+		uncommittedChunks = mergedChunks
+	}
 
 	// maybe compact entry chunks
 	mergedChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, mergedChunks)
 	if replyerr != nil {
 		glog.V(0).InfofCtx(ctx, "manifestize %s: %v", r.RequestURI, replyerr)
+		if inlineAppendConverted {
+			uncommittedChunks = mergedChunks
+		}
 		return
+	}
+	if inlineAppendConverted {
+		uncommittedChunks = mergedChunks
 	}
 	entry.Chunks = mergedChunks
 	if isOffsetWrite {
@@ -344,8 +458,55 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
 		glog.V(0).InfofCtx(ctx, "failing to write %s to filer server : %v", path, dbErr)
+		if inlineAppendConverted {
+			uncommittedChunks = fs.inlineAppendChunksNotReferenced(ctx, util.FullPath(path), mergedChunks)
+		}
+	} else {
+		uncommittedChunks = nil
 	}
-	return filerResult, replyerr
+	return
+}
+
+func cloneEntryForAppend(entry *filer.Entry) *filer.Entry {
+	cloned := entry.ShallowClone()
+	cloned.Attr.Md5 = append([]byte(nil), entry.Md5...)
+	cloned.Attr.GroupNames = append([]string(nil), entry.GroupNames...)
+	cloned.Chunks = append([]*filer_pb.FileChunk(nil), entry.GetChunks()...)
+	cloned.Content = append([]byte(nil), entry.Content...)
+	cloned.WORMEnforcedAtTsNs = entry.WORMEnforcedAtTsNs
+	if entry.Extended != nil {
+		cloned.Extended = make(map[string][]byte, len(entry.Extended))
+		for key, value := range entry.Extended {
+			cloned.Extended[key] = append([]byte(nil), value...)
+		}
+	}
+	return cloned
+}
+
+func (fs *FilerServer) inlineAppendChunksNotReferenced(ctx context.Context, path util.FullPath, chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	entry, err := fs.filer.FindEntry(verifyCtx, path)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.V(0).InfofCtx(verifyCtx, "cannot verify inline append chunks for %s after metadata write failure: %v; retaining them", path, err)
+		return nil
+	}
+
+	referenced := make(map[string]struct{})
+	if entry != nil {
+		for _, chunk := range entry.GetChunks() {
+			referenced[chunk.GetFileIdString()] = struct{}{}
+		}
+	}
+
+	var unreferenced []*filer_pb.FileChunk
+	for _, chunk := range chunks {
+		if _, found := referenced[chunk.GetFileIdString()]; !found {
+			unreferenced = append(unreferenced, chunk)
+		}
+	}
+	return unreferenced
 }
 
 func (fs *FilerServer) saveAsChunk(ctx context.Context, so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
