@@ -171,6 +171,7 @@ const (
 	ErrInvalidRenameSource
 	ErrRenameDestinationSameAsSource
 	ErrIdempotentParameterMismatch
+	ErrAccessControlListNotSupported
 )
 
 // Error message constants for checksum validation
@@ -563,6 +564,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidRequest: {
 		Code:           "InvalidRequest",
 		Description:    "Invalid Request",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrAccessControlListNotSupported: {
+		Code:           "AccessControlListNotSupported",
+		Description:    "The bucket does not allow ACLs",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidRange: {

@@ -147,6 +147,13 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		var aclCode s3err.ErrorCode
+		r, aclCode = s3a.preparePutObjectACL(r, bucket)
+		if aclCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, aclCode)
+			return
+		}
+
 		objectLockEnabled, lockErr := s3a.isObjectLockEnabled(bucket)
 		if lockErr != nil && !errors.Is(lockErr, filer_pb.ErrNotFound) {
 			glog.Errorf("PutObjectHandler: failed to check object lock for bucket %s: %v", bucket, lockErr)
@@ -230,6 +237,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 					// Set object owner for directory objects (same as regular objects)
 					s3a.setObjectOwnerFromRequest(r, bucket, entry)
+					applyPutObjectACL(r, entry)
 
 					if lockErr := s3a.extractObjectLockMetadataFromRequest(r, entry); lockErr != nil {
 						glog.Errorf("PutObjectHandler: failed to extract object lock metadata for %s/%s: %v", bucket, object, lockErr)
@@ -266,6 +274,13 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}
+		}
+
+		var aclCode s3err.ErrorCode
+		r, aclCode = s3a.preparePutObjectACL(r, bucket)
+		if aclCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, aclCode)
+			return
 		}
 
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
@@ -796,6 +811,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Set object owner according to bucket ownership settings.
 	s3a.setObjectOwnerFromRequest(r, bucket, entry)
+	applyPutObjectACL(r, entry)
 
 	// Set version ID if present. It is later used as a filer path segment, so a
 	// value carrying "/", "\\" or ".." must never be stored.
