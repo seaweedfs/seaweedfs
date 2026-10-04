@@ -133,10 +133,13 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "query grant iam condition denies", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, presigned: true, policy: "iam-condition-deny", status: 403, errorCode: "AccessDenied"},
 		{name: "disabled authentication query condition denies acl", unsigned: true, presigned: true, acl: "public-read", policy: "bucket-condition-deny", status: 403, errorCode: "AccessDenied"},
 		{name: "disabled authentication query condition denies upload", unsigned: true, presigned: true, acl: "public-read", policy: "bucket-put-condition-deny", status: 403, errorCode: "AccessDenied"},
-		{name: "repeated grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`, policy: "bucket-condition-deny", status: 403, errorCode: "AccessDenied"},
-		{name: "single line grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
-		{name: "presigned grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, presigned: true, policy: "bucket-condition-deny", conditionValue: `id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
-		{name: "joined grant list preserves condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
+		// Policy conditions compare the canonical grant list as a whole, so a
+		// deny on the exact list fires identically for repeated header lines, a
+		// single comma-joined line, or a signed query parameter.
+		{name: "repeated grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
+		{name: "single line grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
+		{name: "presigned grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, presigned: true, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
+		{name: "extra grantee defeats allow condition", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`, writeOnly: true, policy: "bucket-condition-allow", conditionValue: `id="bucket-owner"`, status: 403, errorCode: "AccessDenied"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
