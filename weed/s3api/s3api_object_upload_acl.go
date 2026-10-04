@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -109,8 +110,15 @@ func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object st
 		}
 		var tokens []string
 		for _, pair := range pairs {
-			encoded, _ := json.Marshal(pair[1])
-			tokens = append(tokens, pair[0]+"="+string(encoded))
+			// Grant conditions use JSON quoting without HTML escaping, so valid
+			// literal characters in an account or email still match the policy.
+			var encoded strings.Builder
+			encoder := json.NewEncoder(&encoded)
+			encoder.SetEscapeHTML(false)
+			if err := encoder.Encode(pair[1]); err != nil {
+				return r, s3err.ErrInvalidRequest
+			}
+			tokens = append(tokens, pair[0]+"="+strings.TrimSuffix(encoded.String(), "\n"))
 		}
 		policyRequest.Header.Set(header, strings.Join(tokens, ","))
 	}
@@ -217,6 +225,27 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 	}
 	if code != s3err.ErrNone {
 		return r, code
+	}
+	if custom {
+		// Custom upload grants supplement the owner's default full control.
+		// Check after email resolution to avoid duplicating an explicit owner
+		// grant; the authenticated owner need not be in the static directory.
+		ownerFullControl := false
+		for _, grant := range grants {
+			if grant.Grantee != nil && grant.Grantee.Type != nil &&
+				*grant.Grantee.Type == s3_constants.GrantTypeCanonicalUser &&
+				grant.Grantee.ID != nil && *grant.Grantee.ID == owner &&
+				grant.Permission != nil && *grant.Permission == s3_constants.PermissionFullControl {
+				ownerFullControl = true
+				break
+			}
+		}
+		if !ownerFullControl {
+			grants = append(grants, &s3.Grant{
+				Grantee:    &s3.Grantee{Type: &s3_constants.GrantTypeCanonicalUser, ID: &owner},
+				Permission: &s3_constants.PermissionFullControl,
+			})
+		}
 	}
 	entry := &filer_pb.Entry{}
 	if code = AssembleEntryWithAcp(entry, owner, grants); code != s3err.ErrNone {

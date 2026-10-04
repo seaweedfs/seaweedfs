@@ -3,6 +3,7 @@ package s3api
 import (
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/xml"
 	"fmt"
 	"hash/crc32"
 	"net/http"
@@ -42,6 +43,8 @@ func TestPutObjectUploadACL(t *testing.T) {
 		policyOnly                                                               bool
 		route                                                                    bool
 		copySource                                                               string
+		grantAccount, grantEmail                                                 string
+		unregisteredWriter                                                       bool
 	}
 	tests := []uploadACLTest{
 		{name: "default private", status: 200},
@@ -54,6 +57,10 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "custom read acp", grantHeader: s3_constants.AmzAclReadAcp, grant: `id="bucket-owner"`, status: 200},
 		{name: "custom write acp", grantHeader: s3_constants.AmzAclWriteAcp, grant: `id="bucket-owner"`, status: 200},
 		{name: "custom full control", grantHeader: s3_constants.AmzAclFullControl, grant: `id="bucket-owner"`, status: 200},
+		{name: "custom owner full control is not duplicated", grantHeader: s3_constants.AmzAclFullControl, grant: `id="upload-writer"`, grantees: []string{writer}, status: 200},
+		{name: "custom owner email full control is not duplicated", grantHeader: s3_constants.AmzAclFullControl, grant: `emailAddress="writer@example.com"`, grantEmail: "writer@example.com", grantAccount: writer, grantees: []string{writer}, status: 200},
+		{name: "custom owner read retains full control", grantHeader: s3_constants.AmzAclRead, grant: `id="upload-writer"`, grantees: []string{writer}, status: 200},
+		{name: "custom dynamic writer keeps full control", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, unregisteredWriter: true, status: 200},
 		{name: "unknown grantee", grantHeader: s3_constants.AmzAclRead, grant: `id="unknown"`, status: 400, errorCode: "InvalidRequest"},
 		{name: "unknown canned acl", acl: "invalid", status: 400, errorCode: "InvalidRequest"},
 		{name: "conflicting acl headers", acl: "public-read", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, status: 400, errorCode: "InvalidRequest"},
@@ -270,6 +277,41 @@ func TestPutObjectUploadACL(t *testing.T) {
 			}
 		}
 	}
+	// Special characters must remain literal in canonical policy values, while
+	// authorization still checks both upload permissions and complete grant lists.
+	for _, grantee := range []struct{ key, value, account string }{
+		{"emailAddress", "a&b@example.com", "email-reader"},
+		{"id", "reader<account", "reader<account"},
+		{"id", "reader>account", "reader>account"},
+	} {
+		grant := fmt.Sprintf("%s=%q", grantee.key, grantee.value)
+		for _, policy := range []string{"bucket", "iam"} {
+			for _, presigned := range []bool{false, true} {
+				for _, rule := range []struct {
+					name, operator, policy string
+					status                 int
+				}{
+					{"allow", "StringEquals", "-all-condition-allow", 200},
+					{"approved negative deny", "StringNotEquals", "-condition-deny", 200},
+					{"positive deny", "StringEquals", "-condition-deny", 403},
+				} {
+					tt := uploadACLTest{
+						name:        fmt.Sprintf("html grant %s %s %s presigned %t", grantee.value, policy, rule.name, presigned),
+						grantHeader: s3_constants.AmzAclRead, grant: grant, grantAccount: grantee.account,
+						conditionValue: grant, conditionOperator: rule.operator, policy: policy + rule.policy,
+						presigned: presigned, policyOnly: rule.name == "allow", grantees: []string{grantee.account}, status: rule.status,
+					}
+					if grantee.key == "emailAddress" {
+						tt.grantEmail = grantee.value
+					}
+					if rule.status == 403 {
+						tt.errorCode = "AccessDenied"
+					}
+					tests = append(tests, tt)
+				}
+			}
+		}
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			key := object
@@ -301,6 +343,16 @@ func TestPutObjectUploadACL(t *testing.T) {
 			s3a.iam.nameToIdentity[identity.Name] = identity
 			s3a.iam.accounts[writer] = account
 			s3a.iam.accounts[bucketOwner] = &Account{Id: bucketOwner, DisplayName: bucketOwner}
+			if tt.grantAccount != "" {
+				grantee := &Account{Id: tt.grantAccount, DisplayName: tt.grantAccount, EmailAddress: tt.grantEmail}
+				s3a.iam.accounts[tt.grantAccount] = grantee
+				if tt.grantEmail != "" {
+					s3a.iam.emailAccount[tt.grantEmail] = grantee
+				}
+			}
+			if tt.unregisteredWriter {
+				delete(s3a.iam.accounts, writer)
+			}
 			if tt.unregisteredAccounts {
 				// JWT/STS authentication supplies trusted accounts dynamically;
 				// their IDs are not registered in the static grantee directory.
@@ -468,25 +520,35 @@ func TestPutObjectUploadACL(t *testing.T) {
 				s3a.iam.Auth(s3a.PutObjectHandler, s3_constants.ACTION_WRITE)(rr, req)
 			}
 			require.Equal(t, tt.status, rr.Code, rr.Body.String())
-			filer.mu.Lock()
-			defer filer.mu.Unlock()
-			if tt.status != http.StatusOK {
-				require.Contains(t, rr.Body.String(), "<Code>"+tt.errorCode+"</Code>")
-				require.Zero(t, filer.nextKey, "rejected ACLs must not allocate chunks")
-				require.True(t, proto.Equal(original, filer.entries["/buckets/"+bucket+"/"+strings.TrimSuffix(key, "/")]), "rejected uploads must not replace the object")
-				return
-			}
-			stored := filer.entries["/buckets/"+bucket+"/"+strings.TrimSuffix(key, "/")]
-			if tt.versioning == s3_constants.VersioningEnabled {
-				versionID := rr.Header().Get("x-amz-version-id")
-				require.NotEmpty(t, versionID)
-				stored = nil
-				for _, entry := range filer.entries {
-					if string(entry.Extended[s3_constants.ExtVersionIdKey]) == versionID {
-						stored = entry
-						break
+			// Snapshot the committed entry under the fixture lock, then release it
+			// before GetObjectAcl makes another RPC to the fake filer.
+			var allocatedChunks uint64
+			stored := func() *filer_pb.Entry {
+				filer.mu.Lock()
+				defer filer.mu.Unlock()
+				allocatedChunks = filer.nextKey
+				entry := filer.entries["/buckets/"+bucket+"/"+strings.TrimSuffix(key, "/")]
+				if tt.status == http.StatusOK && tt.versioning == s3_constants.VersioningEnabled {
+					versionID := rr.Header().Get("x-amz-version-id")
+					require.NotEmpty(t, versionID)
+					entry = nil
+					for _, candidate := range filer.entries {
+						if string(candidate.Extended[s3_constants.ExtVersionIdKey]) == versionID {
+							entry = candidate
+							break
+						}
 					}
 				}
+				if entry == nil {
+					return nil
+				}
+				return proto.Clone(entry).(*filer_pb.Entry)
+			}()
+			if tt.status != http.StatusOK {
+				require.Contains(t, rr.Body.String(), "<Code>"+tt.errorCode+"</Code>")
+				require.Zero(t, allocatedChunks, "rejected ACLs must not allocate chunks")
+				require.True(t, proto.Equal(original, stored), "rejected uploads must not replace the object")
+				return
 			}
 			wantACL, wantGrantHeader := tt.acl, tt.grantHeader
 			if strings.HasPrefix(tt.signature, "v2") && tt.presigned && tt.signature != "v2-header" {
@@ -523,7 +585,6 @@ func TestPutObjectUploadACL(t *testing.T) {
 				if wantGrantees == nil {
 					wantGrantees = []string{bucketOwner}
 				}
-				require.Len(t, grants, len(wantGrantees))
 				wantPermission := map[string]string{
 					s3_constants.AmzAclRead:        s3_constants.PermissionRead,
 					s3_constants.AmzAclWrite:       s3_constants.PermissionWrite,
@@ -531,9 +592,24 @@ func TestPutObjectUploadACL(t *testing.T) {
 					s3_constants.AmzAclWriteAcp:    s3_constants.PermissionWriteAcp,
 					s3_constants.AmzAclFullControl: s3_constants.PermissionFullControl,
 				}[wantGrantHeader]
+				ownerFullControl := false
+				for _, grantee := range wantGrantees {
+					ownerFullControl = ownerFullControl || (grantee == wantOwner && wantPermission == s3_constants.PermissionFullControl)
+				}
+				wantCount := len(wantGrantees)
+				if !ownerFullControl {
+					wantCount++
+				}
+				require.Len(t, grants, wantCount, "custom uploads must retain the owner's full control")
 				for i, grantee := range wantGrantees {
 					require.Equal(t, grantee, aws.StringValue(grants[i].Grantee.ID))
 					require.Equal(t, wantPermission, aws.StringValue(grants[i].Permission))
+				}
+				if !ownerFullControl {
+					ownerGrant := grants[len(grants)-1]
+					require.Equal(t, wantOwner, aws.StringValue(ownerGrant.Grantee.ID))
+					require.Equal(t, s3_constants.GrantTypeCanonicalUser, aws.StringValue(ownerGrant.Grantee.Type))
+					require.Equal(t, s3_constants.PermissionFullControl, aws.StringValue(ownerGrant.Permission))
 				}
 			} else {
 				require.Equal(t, wantOwner, aws.StringValue(grants[0].Grantee.ID))
@@ -564,6 +640,22 @@ func TestPutObjectUploadACL(t *testing.T) {
 					require.Equal(t, wantPermission, aws.StringValue(grants[1].Permission))
 				} else {
 					require.Len(t, grants, 1)
+				}
+			}
+			if wantGrantHeader != "" {
+				aclRequest := httptest.NewRequest(http.MethodGet, "http://s3/"+bucket+"/"+key+"?acl", nil)
+				aclRequest = mux.SetURLVars(aclRequest, map[string]string{"bucket": bucket, "object": key})
+				aclRequest.Header.Set(s3_constants.AmzAccountId, wantOwner)
+				aclResponse := httptest.NewRecorder()
+				s3a.GetObjectAclHandler(aclResponse, aclRequest)
+				require.Equal(t, http.StatusOK, aclResponse.Code, aclResponse.Body.String())
+				var acl AccessControlPolicy
+				require.NoError(t, xml.Unmarshal(aclResponse.Body.Bytes(), &acl))
+				require.Equal(t, wantOwner, acl.Owner.ID)
+				require.Len(t, acl.AccessControlList.Grant, len(grants))
+				for i, grant := range acl.AccessControlList.Grant {
+					require.Equal(t, aws.StringValue(grants[i].Grantee.ID), grant.Grantee.ID)
+					require.Equal(t, Permission(aws.StringValue(grants[i].Permission)), grant.Permission)
 				}
 			}
 		})
