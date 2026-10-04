@@ -27,7 +27,7 @@ import (
 // entry, including rejection before any volume allocation or object replacement.
 func TestPutObjectUploadACL(t *testing.T) {
 	const bucket, object, writer, bucketOwner = "acl-bucket", "allowed/image.png", "upload-writer", "bucket-owner"
-	tests := []struct {
+	type uploadACLTest struct {
 		name, acl, grantHeader, grant, ownership, policy, versioning, errorCode  string
 		writeOnly, wrongScope, marker, presigned, overwrite, unsigned, streaming bool
 		status                                                                   int
@@ -36,10 +36,14 @@ func TestPutObjectUploadACL(t *testing.T) {
 		grantees                                                                 []string
 		repeatedGrant                                                            string
 		conditionValue                                                           string
+		conditionOperator                                                        string
 		defaultMode                                                              uint32
 		unregisteredAccounts                                                     bool
 		policyOnly                                                               bool
-	}{
+		route                                                                    bool
+		copySource                                                               string
+	}
+	tests := []uploadACLTest{
 		{name: "default private", status: 200},
 		{name: "explicit private", acl: "private", status: 200},
 		{name: "public read", acl: "public-read", status: 200},
@@ -141,6 +145,131 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "presigned grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, presigned: true, policy: "bucket-condition-deny", conditionValue: `id="bucket-owner",id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
 		{name: "extra grantee defeats allow condition", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`, writeOnly: true, policy: "bucket-condition-allow", conditionValue: `id="bucket-owner"`, status: 403, errorCode: "AccessDenied"},
 	}
+	// Invalid multipart parameters or copy headers must not bypass policy normalization on the actual regular-upload route.
+	for _, policy := range []string{"bucket", "iam"} {
+		for _, shape := range []string{"upload id only", "invalid part number", "invalid copy source"} {
+			query, copySource := url.Values{}, ""
+			switch shape {
+			case "upload id only":
+				query.Set("uploadId", "opaque")
+			case "invalid part number":
+				query.Set("uploadId", "opaque")
+				query.Set("partNumber", "abc")
+			case "invalid copy source":
+				copySource = "bogus"
+			}
+			tests = append(tests, uploadACLTest{
+				name: "routed extra grant denied " + policy + " " + shape, route: true, query: query, copySource: copySource,
+				grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`,
+				conditionValue: `id="bucket-owner"`, policy: policy + "-all-condition-allow", policyOnly: true,
+				status: 403, errorCode: "AccessDenied",
+			})
+		}
+		for _, presigned := range []bool{false, true} {
+			tests = append(tests, uploadACLTest{
+				name:        fmt.Sprintf("put action approved negative deny %s presigned %t", policy, presigned),
+				grantHeader: s3_constants.AmzAclRead, grant: `id = "bucket-owner" , id = "upload-writer"`,
+				conditionValue: `id="bucket-owner",id="upload-writer"`, conditionOperator: "StringNotEquals",
+				policy: policy + "-put-condition-deny", presigned: presigned, grantees: []string{bucketOwner, writer}, status: 200,
+			})
+		}
+	}
+	// Every grant header must pass the same policy boundary, not just read grants.
+	for _, header := range []string{s3_constants.AmzAclRead, s3_constants.AmzAclWrite, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWriteAcp, s3_constants.AmzAclFullControl} {
+		for _, policy := range []string{"bucket", "iam"} {
+			for _, presigned := range []bool{false, true} {
+				tests = append(tests, uploadACLTest{
+					name:        fmt.Sprintf("raw grant header deny %s %s presigned %t", header, policy, presigned),
+					grantHeader: header, grant: `id = "bucket-owner"`, policy: policy + "-condition-deny", presigned: presigned,
+					status: 403, errorCode: "AccessDenied",
+				})
+			}
+		}
+	}
+	for _, presigned := range []bool{false, true} {
+		tests = append(tests, uploadACLTest{
+			name:        fmt.Sprintf("disabled authentication raw deny presigned %t", presigned),
+			grantHeader: s3_constants.AmzAclRead, grant: `id = "bucket-owner"`, unsigned: true, presigned: presigned,
+			policy: "bucket-condition-deny", status: 403, errorCode: "AccessDenied",
+		})
+		for _, policy := range []string{"bucket", "iam"} {
+			for _, repeated := range []bool{false, true} {
+				grant, extra := `id="bucket-owner",id="upload-writer"`, ""
+				if repeated {
+					grant, extra = `id="bucket-owner"`, `id="upload-writer"`
+				}
+				tests = append(tests, uploadACLTest{
+					name:        fmt.Sprintf("whole list deny preserves extra grantee %s presigned %t repeated %t", policy, presigned, repeated),
+					grantHeader: s3_constants.AmzAclRead, grant: grant, repeatedGrant: extra,
+					conditionValue: `id="bucket-owner"`, policy: policy + "-condition-deny", presigned: presigned,
+					grantees: []string{bucketOwner, writer}, status: 200,
+				}, uploadACLTest{
+					name:        fmt.Sprintf("whole list allow rejects extra grantee %s presigned %t repeated %t", policy, presigned, repeated),
+					grantHeader: s3_constants.AmzAclRead, grant: grant, repeatedGrant: extra,
+					conditionValue: `id="bucket-owner"`, policy: policy + "-all-condition-allow", presigned: presigned,
+					policyOnly: true, status: 403, errorCode: "AccessDenied",
+				})
+			}
+			tests = append(tests, uploadACLTest{
+				name:        fmt.Sprintf("canonical approved allow with whitespace %s presigned %t", policy, presigned),
+				grantHeader: s3_constants.AmzAclRead, grant: `id = "bucket-owner" , id = "upload-writer"`,
+				conditionValue: `id="bucket-owner",id="upload-writer"`, policy: policy + "-all-condition-allow", presigned: presigned,
+				policyOnly: true, grantees: []string{bucketOwner, writer}, status: 200,
+			})
+		}
+	}
+	// Explicit denies on original complete grant values must survive whitespace and escape normalization.
+	for _, policy := range []string{"bucket", "iam"} {
+		for _, presigned := range []bool{false, true} {
+			for _, grant := range []string{
+				`id="bucket-owner",id="upload-writer"`,
+				`id = "bucket-owner" , id = "upload-writer"`,
+				`id="bucket-\u006fwner",id="upload-writer"`,
+			} {
+				for _, operator := range []string{"StringEquals", "StringEqualsIgnoreCase", "StringLike"} {
+					tests = append(tests, uploadACLTest{
+						name:        fmt.Sprintf("raw grant deny %s %s presigned %t %s", policy, operator, presigned, grant),
+						grantHeader: s3_constants.AmzAclRead, grant: grant, presigned: presigned,
+						conditionOperator: operator, policy: policy + "-condition-deny", status: 403, errorCode: "AccessDenied",
+					})
+				}
+			}
+			// Repeated headers and presigned queries must check all grants; an approved value cannot hide an added grantee.
+			tests = append(tests, uploadACLTest{
+				name:        fmt.Sprintf("joined repeated raw deny %s presigned %t", policy, presigned),
+				grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`,
+				conditionValue: `id="bucket-owner",id="upload-writer"`, policy: policy + "-condition-deny", presigned: presigned,
+				status: 403, errorCode: "AccessDenied",
+			}, uploadACLTest{
+				name:        fmt.Sprintf("original repeated line deny %s presigned %t", policy, presigned),
+				grantHeader: s3_constants.AmzAclRead, grant: `id = "bucket-owner"`, repeatedGrant: `id="upload-writer"`,
+				conditionValue: `*id = "bucket-owner"*`, conditionOperator: "StringLike", policy: policy + "-condition-deny", presigned: presigned,
+				status: 403, errorCode: "AccessDenied",
+			})
+			// Negative conditions still compare the canonical complete list, preserving equivalent encodings of approved lists.
+			for _, operator := range []string{"StringNotEquals", "StringNotLike", "StringNotEqualsIgnoreCase"} {
+				for _, grant := range []string{`id="bucket-owner",id="upload-writer"`, `id = "bucket-owner" , id = "upload-writer"`} {
+					tests = append(tests, uploadACLTest{
+						name:        fmt.Sprintf("approved negative deny %s %s presigned %t %s", policy, operator, presigned, grant),
+						grantHeader: s3_constants.AmzAclRead, grant: grant, conditionOperator: operator,
+						conditionValue: `id="bucket-owner",id="upload-writer"`, policy: policy + "-condition-deny", presigned: presigned,
+						grantees: []string{bucketOwner, writer}, status: 200,
+					}, uploadACLTest{
+						name:        fmt.Sprintf("negative allow unchanged %s %s presigned %t %s", policy, operator, presigned, grant),
+						grantHeader: s3_constants.AmzAclRead, grant: grant, conditionOperator: operator,
+						conditionValue: `id="bucket-owner",id="upload-writer"`, policy: policy + "-all-condition-allow", presigned: presigned,
+						policyOnly: true, status: 403, errorCode: "AccessDenied",
+					})
+				}
+				tests = append(tests, uploadACLTest{
+					name:        fmt.Sprintf("extra repeated grantee denied %s %s presigned %t", policy, operator, presigned),
+					grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`,
+					conditionOperator: operator, conditionValue: `id="bucket-owner"`, policy: policy + "-condition-deny", presigned: presigned,
+					status: 403, errorCode: "AccessDenied",
+				})
+			}
+		}
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			key := object
@@ -222,7 +351,11 @@ func TestPutObjectUploadACL(t *testing.T) {
 					if tt.conditionValue != "" {
 						value = tt.conditionValue
 					}
-					condition := fmt.Sprintf(`,"Condition":{"StringEquals":{%q:%q}}}`, "s3:"+strings.ToLower(header), value)
+					operator := tt.conditionOperator
+					if operator == "" {
+						operator = "StringEquals"
+					}
+					condition := fmt.Sprintf(`,"Condition":{%q:{%q:%q}}}`, operator, "s3:"+strings.ToLower(header), value)
 					statement = strings.TrimSuffix(statement, "}") + condition
 				}
 				if strings.HasPrefix(tt.policy, "iam") {
@@ -254,6 +387,9 @@ func TestPutObjectUploadACL(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"/"+key, strings.NewReader(wireBody))
 			req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": key})
 			req.Header.Set("Content-Type", "text/plain")
+			if tt.copySource != "" {
+				req.Header.Set("X-Amz-Copy-Source", tt.copySource)
+			}
 			if tt.acl != "" {
 				req.Header.Set(s3_constants.AmzCannedAcl, tt.acl)
 			}
@@ -279,7 +415,7 @@ func TestPutObjectUploadACL(t *testing.T) {
 					req.Header.Del(s3_constants.AmzCannedAcl)
 				}
 				if tt.grantHeader != "" {
-					query.Set(tt.grantHeader, tt.grant)
+					query.Set(tt.grantHeader, strings.Join(req.Header.Values(tt.grantHeader), ","))
 					req.Header.Del(tt.grantHeader)
 				}
 				req.URL.RawQuery = query.Encode()
@@ -323,7 +459,14 @@ func TestPutObjectUploadACL(t *testing.T) {
 				}
 			}
 			rr := httptest.NewRecorder()
-			s3a.iam.Auth(s3a.PutObjectHandler, s3_constants.ACTION_WRITE)(rr, req)
+			if tt.route {
+				s3a.cb = &CircuitBreaker{s3a: s3a}
+				router := mux.NewRouter()
+				s3a.registerRouter(router)
+				router.ServeHTTP(rr, req)
+			} else {
+				s3a.iam.Auth(s3a.PutObjectHandler, s3_constants.ACTION_WRITE)(rr, req)
+			}
 			require.Equal(t, tt.status, rr.Code, rr.Body.String())
 			filer.mu.Lock()
 			defer filer.mu.Unlock()
@@ -434,6 +577,7 @@ func TestPutObjectACLPolicyScope(t *testing.T) {
 		name, method, object, subresource string
 		action                            Action
 		copy                              bool
+		repeatedCopy                      bool
 		wantACL                           string
 	}{
 		{name: "upload", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE, wantACL: "public-read"},
@@ -441,7 +585,11 @@ func TestPutObjectACLPolicyScope(t *testing.T) {
 		{name: "bucket", method: http.MethodPut, action: s3_constants.ACTION_WRITE},
 		{name: "post form", method: http.MethodPost, object: "key", action: s3_constants.ACTION_WRITE},
 		{name: "copy", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE, copy: true},
+		{name: "repeated copy source", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE, repeatedCopy: true},
 		{name: "multipart part", method: http.MethodPut, object: "key", subresource: "uploadId=upload&partNumber=1", action: s3_constants.ACTION_WRITE},
+		{name: "multipart leading zero", method: http.MethodPut, object: "key", subresource: "uploadId=upload&partNumber=01", action: s3_constants.ACTION_WRITE},
+		{name: "upload id only", method: http.MethodPut, object: "key", subresource: "uploadId=upload", action: s3_constants.ACTION_WRITE, wantACL: "public-read"},
+		{name: "invalid part number", method: http.MethodPut, object: "key", subresource: "uploadId=upload&partNumber=abc", action: s3_constants.ACTION_WRITE, wantACL: "public-read"},
 		{name: "standalone acl", method: http.MethodPut, object: "key", subresource: "acl=", action: s3_constants.ACTION_WRITE_ACP},
 		{name: "tagging", method: http.MethodPut, object: "key", subresource: "tagging=", action: s3_constants.ACTION_WRITE},
 		{name: "retention", method: http.MethodPut, object: "key", subresource: "retention=", action: s3_constants.ACTION_WRITE},
@@ -452,6 +600,10 @@ func TestPutObjectACLPolicyScope(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "http://s3/bucket/"+tt.object+"?x-amz-acl=public-read&"+tt.subresource, nil)
 			if tt.copy {
 				req.Header.Set("X-Amz-Copy-Source", "/source/key")
+			}
+			if tt.repeatedCopy {
+				req.Header.Set("X-Amz-Copy-Source", "bogus")
+				req.Header.Add("X-Amz-Copy-Source", "%2fsource%2fkey")
 			}
 			policyRequest, code := putObjectACLPolicyRequest(req, tt.action, "bucket", tt.object)
 			require.Equal(t, s3err.ErrNone, code)

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -62,14 +63,27 @@ func putObjectACLValue(r *http.Request, query url.Values, header string) (string
 // putObjectACLPolicyRequest exposes effective PUT ACLs to policy conditions only
 // after authentication. Other operations keep their original request semantics.
 func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object string) (*http.Request, s3err.ErrorCode) {
+	// Copy routes match any repeated header value, so checking only the first line can misclassify a copy as a regular upload.
+	copyRequest := false
+	for _, copySource := range r.Header.Values("X-Amz-Copy-Source") {
+		if strings.Contains(copySource, "/") || strings.Contains(strings.ToLower(copySource), "%2f") {
+			copyRequest = true
+			break
+		}
+	}
 	if (action != s3_constants.ACTION_WRITE && action != s3_constants.ACTION_WRITE_ACP) ||
 		r.Method != http.MethodPut || object == "" || object == "/" ||
-		r.Header.Get("X-Amz-Copy-Source") != "" || r.URL.Query().Has("uploadId") ||
+		copyRequest ||
 		ResolveS3Action(r, string(s3_constants.ACTION_WRITE), bucket, object) != s3_constants.S3_ACTION_PUT_OBJECT {
+		return r, s3err.ErrNone
+	}
+	// Rechecks reuse the normalized internal request, preserving signed original values without false query conflicts.
+	if len(policy_engine.OriginalGrantConditionsFromRequest(r)) != 0 {
 		return r, s3err.ErrNone
 	}
 	policyRequest := r.Clone(r.Context())
 	query := parseRequestQuery(r)
+	originalGrants := make(map[string][]string)
 	for _, header := range []string{s3_constants.AmzCannedAcl, s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
 		value, code := putObjectACLValue(r, query, header)
 		if code != s3err.ErrNone {
@@ -82,6 +96,8 @@ func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object st
 			policyRequest.Header.Set(header, value)
 			continue
 		}
+		// Preserve only the complete effective list for original-string denies, not individual header lines as separate lists.
+		originalGrants["s3:"+strings.ToLower(header)] = []string{value}
 		// Policy conditions see the canonical grant list: one comma-separated
 		// value covering every persisted grantee, identical for a single line,
 		// repeated lines, or a signed query parameter. Sneaking an extra grantee
@@ -97,6 +113,9 @@ func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object st
 			tokens = append(tokens, pair[0]+"="+string(encoded))
 		}
 		policyRequest.Header.Set(header, strings.Join(tokens, ","))
+	}
+	if len(originalGrants) != 0 {
+		policyRequest = policy_engine.WithOriginalGrantConditions(policyRequest, originalGrants)
 	}
 	return policyRequest, s3err.ErrNone
 }

@@ -608,6 +608,13 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 		return s3err.ErrNone, false
 	}
 
+	// Upload handler rechecks use the same effective ACL conditions as authentication without changing the signed request.
+	policyRequest, policyCode := putObjectACLPolicyRequest(r, Action(action), bucket, object)
+	if policyCode != s3err.ErrNone {
+		return policyCode, true
+	}
+	r = policyRequest
+
 	identityRaw := GetIdentityFromContext(r)
 	var identity *Identity
 	if identityRaw != nil {
