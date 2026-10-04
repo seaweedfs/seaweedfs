@@ -222,6 +222,14 @@ spec:
             mountPath: /etc/seaweedfs/security.toml
             subPath: security.toml
           {{- end }}
+          {{- if .Values.global.seaweedfs.enableSecurity }}
+          - name: ca-cert
+            readOnly: true
+            mountPath: /usr/local/share/ca-certificates/ca/
+          - name: client-cert
+            readOnly: true
+            mountPath: /usr/local/share/ca-certificates/client/
+          {{- end }}
         {{- end }}
         ports:
           - containerPort: {{ .Values.master.port }}
@@ -256,6 +264,14 @@ spec:
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config
+        {{- end }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
+        - name: ca-cert
+          secret:
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
+        - name: client-cert
+          secret:
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
     {{- end }}
 {{- end }}
