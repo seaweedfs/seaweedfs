@@ -232,7 +232,6 @@ func (fs *FilerServer) fixFilePath(ctx context.Context, r *http.Request, fileNam
 	return fullPath
 }
 
-func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, chunkSize int32, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error, uncommittedChunks []*filer_pb.FileChunk) {
 	uncommittedChunks = fileChunks
 
