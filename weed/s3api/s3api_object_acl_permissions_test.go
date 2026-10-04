@@ -40,14 +40,15 @@ func TestPutObjectAclPermissions(t *testing.T) {
 		return fmt.Sprintf(`<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>%s</ID></Owner><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>%s</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant></AccessControlList></AccessControlPolicy>`, ownerID, granteeID)
 	}
 	tests := []struct {
-		name         string
-		account      string
-		action       Action
-		acl          string
-		policy       string
-		retiredOwner bool
-		body         string
-		status       int
+		name          string
+		account       string
+		action        Action
+		acl           string
+		policy        string
+		retiredOwner  bool
+		ownerMetadata string
+		body          string
+		status        int
 	}{
 		{name: "桶内授权", account: owner, action: "WriteAcp:acl-bucket", acl: "private", status: http.StatusOK},
 		{name: "前缀内授权", account: owner, action: "WriteAcp:acl-bucket/allowed/*", acl: "public-read", status: http.StatusOK},
@@ -68,12 +69,28 @@ func TestPutObjectAclPermissions(t *testing.T) {
 		{name: "XML保留历史拥有者", account: AccountAdmin.Id, action: "Admin", body: xmlACL(owner, owner), retiredOwner: true, status: http.StatusOK},
 		{name: "XML未知授权对象拒绝", account: AccountAdmin.Id, action: "Admin", body: xmlACL(owner, "unknown-grantee"), retiredOwner: true, status: http.StatusBadRequest},
 		{name: "XML更换拥有者拒绝", account: AccountAdmin.Id, action: "Admin", body: xmlACL("other-owner", owner), status: http.StatusForbidden},
+		{name: "无扩展元数据拒绝", account: owner, action: "WriteAcp:acl-bucket", acl: "private", ownerMetadata: "nil", status: http.StatusForbidden},
+		{name: "缺少拥有者拒绝", account: owner, action: "WriteAcp:acl-bucket", acl: "private", ownerMetadata: "absent", status: http.StatusForbidden},
+		{name: "空拥有者拒绝", account: owner, action: "WriteAcp:acl-bucket", acl: "private", ownerMetadata: "empty", status: http.StatusForbidden},
+		{name: "无拥有者IAM策略拒绝", account: owner, policy: "iam-allow", acl: "private", ownerMetadata: "absent", status: http.StatusForbidden},
+		{name: "无拥有者桶策略拒绝", account: owner, policy: "bucket-allow", acl: "private", ownerMetadata: "absent", status: http.StatusForbidden},
+		{name: "管理员接管无拥有者私有", account: AccountAdmin.Id, action: "Admin", acl: "private", ownerMetadata: "absent", status: http.StatusOK},
+		{name: "管理员接管无拥有者公共读", account: AccountAdmin.Id, action: "Admin", acl: "public-read", ownerMetadata: "nil", status: http.StatusOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			filer := &objectACLUpdateFiler{fakeLookupFiler: fakeLookupFiler{entry: &filer_pb.Entry{
 				Name: "image.png", Extended: map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte(owner)},
 			}}}
+			// 模拟Filer直接写入或历史对象的不同缺失形式，不能将请求账号当作真实拥有者。
+			switch tt.ownerMetadata {
+			case "nil":
+				filer.entry.Extended = nil
+			case "absent":
+				delete(filer.entry.Extended, s3_constants.ExtAmzOwnerKey)
+			case "empty":
+				filer.entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte{}
+			}
 			s3a := newHeadBucketTestServer(t, filer)
 			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
 			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Ownership: s3_constants.OwnershipObjectWriter, Owner: bucketOwner})
@@ -132,14 +149,19 @@ func TestPutObjectAclPermissions(t *testing.T) {
 			}
 			require.NotNil(t, update)
 			require.Equal(t, "/buckets/acl-bucket/allowed", update.Directory)
-			require.Equal(t, owner, string(update.Entry.Extended[s3_constants.ExtAmzOwnerKey]))
+			wantOwner := owner
+			if tt.ownerMetadata != "" {
+				// 管理员继续按既有规则为无拥有者对象建立拥有者和完全控制授权。
+				wantOwner = tt.account
+			}
+			require.Equal(t, wantOwner, string(update.Entry.Extended[s3_constants.ExtAmzOwnerKey]))
 			grants := GetAcpGrants(update.Entry.Extended)
 			wantGrants := 1
 			if tt.acl == "public-read" || strings.HasPrefix(tt.acl, "bucket-owner-") {
 				wantGrants = 2
 			}
 			require.Len(t, grants, wantGrants)
-			require.Equal(t, owner, aws.StringValue(grants[0].Grantee.ID), "完全控制授权必须保留给原拥有者")
+			require.Equal(t, wantOwner, aws.StringValue(grants[0].Grantee.ID), "完全控制授权必须与对象拥有者一致")
 			require.Equal(t, s3_constants.PermissionFullControl, aws.StringValue(grants[0].Permission))
 			if tt.acl == "public-read" {
 				require.Equal(t, s3_constants.GranteeGroupAllUsers, aws.StringValue(grants[1].Grantee.URI))

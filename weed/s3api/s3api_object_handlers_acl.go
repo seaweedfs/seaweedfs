@@ -206,7 +206,14 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Fallback to current account if no owner stored
+	// 拥有者缺失时无法证明普通请求账号的所有权，拒绝其修改ACL或接管对象。
+	isAdmin := s3a.isUserAdmin(r)
+	if objectOwner == "" && !isAdmin {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+
+	// 管理员保留既有回退能力，为没有拥有者元数据的对象建立拥有者。
 	if objectOwner == "" {
 		objectOwner = amzAccountId
 	}
@@ -214,7 +221,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	// **PERMISSION CHECKS**
 
 	// 1. Check if user is admin (admins can modify any ACL)
-	if !s3a.isUserAdmin(r) {
+	if !isAdmin {
 		// 2. Check object ownership - only object owner can modify ACL (unless admin)
 		if objectOwner != amzAccountId {
 			glog.V(3).Infof("PutObjectAclHandler: Access denied - user %s is not owner of object %s/%s (owner: %s)",
