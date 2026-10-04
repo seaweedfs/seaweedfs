@@ -413,23 +413,20 @@ func (g *Gateway) serveOriginal(w http.ResponseWriter, r *http.Request, source *
 	}
 	// Serving executable documents under this origin allows cross-site scripting.
 	mediaType, _, mediaErr := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if mediaErr != nil {
-		mediaType = resp.Header.Get("Content-Type")
+	if resp.StatusCode != 304 && (mediaErr != nil || !allowedSourceType(mediaType)) {
+		g.writeError(w, r, &failure{502, "source image has an unsupported media type"})
+		return
 	}
 	var data []byte
 	if r.Method != http.MethodHead && resp.StatusCode != 304 {
-		if !allowedSourceType(mediaType) {
-			g.writeError(w, r, &failure{502, "source image has an unsupported media type"})
-			return
-		}
 		data, err = io.ReadAll(io.LimitReader(resp.Body, g.config.MaxSourceBytes+1))
 		if err != nil || int64(len(data)) > g.config.MaxSourceBytes {
 			g.writeError(w, r, &failure{502, "source read failed or exceeded size limit"})
 			return
 		}
 	}
-	if mediaType != "" {
-		w.Header().Set("Content-Type", mediaType)
+	if value := resp.Header.Get("Content-Type"); value != "" {
+		w.Header().Set("Content-Type", value)
 	}
 	for _, key := range []string{"Content-Encoding", "Content-Length", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "x-amz-version-id"} {
 		if value := resp.Header.Get(key); value != "" {
@@ -438,7 +435,7 @@ func (g *Gateway) serveOriginal(w http.ResponseWriter, r *http.Request, source *
 	}
 	w.WriteHeader(resp.StatusCode)
 	if len(data) != 0 {
-		_, _ = w.Write(data)
+		_, _ = io.Copy(w, bytes.NewReader(data))
 	}
 }
 

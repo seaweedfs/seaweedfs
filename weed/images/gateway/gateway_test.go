@@ -64,6 +64,7 @@ func newFixture(t *testing.T) *fixture {
 		}
 		if r.Method == http.MethodHead {
 			f.heads.Add(1)
+			w.Header().Set("Content-Type", f.contentType)
 			w.Header().Set("ETag", f.etag)
 			w.Header().Set("Content-Length", fmt.Sprint(f.sourceBytes))
 			w.Header().Set("Last-Modified", "Sun, 04 Oct 2026 10:00:00 GMT")
@@ -685,20 +686,22 @@ func TestRepeatedSlashesPreserveBucketPrefix(t *testing.T) {
 // TestOriginalMediaType checks executable documents cannot be served under this origin.
 func TestOriginalMediaType(t *testing.T) {
 	f := newFixture(t)
-	for _, mediaType := range []string{"text/html", "image/svg+xml", "application/xhtml+xml", "text/xml", ""} {
+	for _, mediaType := range []string{"text/html", "image/svg+xml", "image/svg+xml; bad", "application/xhtml+xml", "text/xml", ""} {
 		f.contentType = mediaType
-		if response := f.request("GET", "/page", nil); response.Code != 502 {
-			t.Fatalf("executable source type %q was served: %d", mediaType, response.Code)
+		for _, method := range []string{"GET", "HEAD"} {
+			if response := f.request(method, "/page", nil); response.Code != 502 {
+				t.Fatalf("executable source type %q was served for %s: %d", mediaType, method, response.Code)
+			}
 		}
 	}
-	for _, mediaType := range []string{"image/png; charset=binary", "image/webp", "application/octet-stream"} {
+	for _, mediaType := range []string{"image/avif; codecs=\"av01.0.08M.08\"", "image/webp", "application/octet-stream"} {
 		f.contentType = mediaType
 		response := f.request("GET", "/image.png", nil)
 		if response.Code != 200 || response.Body.String() != "original-image" {
 			t.Fatalf("safe source type %q was rejected: %d", mediaType, response.Code)
 		}
-		if got := response.Header().Get("Content-Type"); strings.Contains(got, "html") || strings.Contains(got, "svg") {
-			t.Fatalf("unsafe content type forwarded: %q", got)
+		if got := response.Header().Get("Content-Type"); got != mediaType {
+			t.Fatalf("source content type %q forwarded as %q", mediaType, got)
 		}
 	}
 }
