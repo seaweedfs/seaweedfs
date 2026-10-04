@@ -26,9 +26,10 @@ import (
 func TestPutObjectUploadACL(t *testing.T) {
 	const bucket, object, writer, bucketOwner = "acl-bucket", "allowed/image.png", "upload-writer", "bucket-owner"
 	tests := []struct {
-		name, acl, grantHeader, grant, ownership, policy, versioning, errorCode  string
-		writeOnly, wrongScope, marker, presigned, overwrite, unsigned, streaming bool
-		status                                                                   int
+		name, acl, grantHeader, grant, ownership, policy, versioning, errorCode         string
+		writeOnly, wrongScope, marker, presigned, overwrite, unsigned, streaming, sigV2 bool
+		noAccount                                                                       bool
+		status                                                                          int
 	}{
 		{name: "default private", status: 200},
 		{name: "explicit private", acl: "private", status: 200},
@@ -40,7 +41,9 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "custom read acp", grantHeader: s3_constants.AmzAclReadAcp, grant: `id="bucket-owner"`, status: 200},
 		{name: "custom write acp", grantHeader: s3_constants.AmzAclWriteAcp, grant: `id="bucket-owner"`, status: 200},
 		{name: "custom full control", grantHeader: s3_constants.AmzAclFullControl, grant: `id="bucket-owner"`, status: 200},
+		{name: "multi grantee without space", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, status: 200},
 		{name: "unknown grantee", grantHeader: s3_constants.AmzAclRead, grant: `id="unknown"`, status: 400, errorCode: "InvalidRequest"},
+		{name: "unknown grantee key", grantHeader: s3_constants.AmzAclRead, grant: `account="bucket-owner"`, status: 400, errorCode: "InvalidRequest"},
 		{name: "unknown canned acl", acl: "invalid", status: 400, errorCode: "InvalidRequest"},
 		{name: "conflicting acl headers", acl: "public-read", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, status: 400, errorCode: "InvalidRequest"},
 		{name: "bucket owner read", acl: "bucket-owner-read", status: 200},
@@ -52,6 +55,10 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "enforced rejects private", acl: "private", ownership: s3_constants.OwnershipBucketOwnerEnforced, status: 400, errorCode: "AccessControlListNotSupported"},
 		{name: "enforced rejects public", acl: "public-read", ownership: s3_constants.OwnershipBucketOwnerEnforced, status: 400, errorCode: "AccessControlListNotSupported"},
 		{name: "enforced rejects grants", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, ownership: s3_constants.OwnershipBucketOwnerEnforced, status: 400, errorCode: "AccessControlListNotSupported"},
+		// Buckets without a stored ownership control keep accepting ACLs.
+		{name: "absent ownership default", ownership: "absent", status: 200},
+		{name: "absent ownership public read", acl: "public-read", ownership: "absent", status: 200},
+		{name: "absent ownership grants", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, ownership: "absent", status: 200},
 		{name: "write only default", writeOnly: true, status: 200},
 		{name: "write only rejects explicit private", acl: "private", writeOnly: true, status: 403, errorCode: "AccessDenied"},
 		{name: "write only rejects public", acl: "public-read", writeOnly: true, status: 403, errorCode: "AccessDenied"},
@@ -64,6 +71,8 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "presigned public read", acl: "public-read", presigned: true, status: 200},
 		{name: "presigned requires acl permission", acl: "public-read", presigned: true, writeOnly: true, status: 403, errorCode: "AccessDenied"},
 		{name: "presigned custom read", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, presigned: true, status: 200},
+		{name: "sigv2 ignores unsigned query acl", sigV2: true, status: 200},
+		{name: "external account uploader", acl: "public-read", noAccount: true, status: 200},
 		{name: "unsigned with authentication disabled", acl: "public-read", unsigned: true, status: 200},
 		{name: "streaming unsigned payload", acl: "public-read", streaming: true, status: 200},
 		{name: "directory marker", acl: "public-read", marker: true, status: 200},
@@ -98,17 +107,26 @@ func TestPutObjectUploadACL(t *testing.T) {
 			}
 			s3a.iam.accessKeyIdent[routingTestAccessKey] = identity
 			s3a.iam.nameToIdentity[identity.Name] = identity
-			s3a.iam.accounts[writer] = account
+			if !tt.noAccount {
+				s3a.iam.accounts[writer] = account
+			}
 			s3a.iam.accounts[bucketOwner] = &Account{Id: bucketOwner, DisplayName: bucketOwner}
 			ownership := tt.ownership
 			if ownership == "" {
 				ownership = s3_constants.OwnershipObjectWriter
 			}
 			bucketEntry := &filer_pb.Entry{Name: bucket, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{},
-				Extended: map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte(bucketOwner), s3_constants.ExtOwnershipKey: []byte(ownership)}}
+				Extended: map[string][]byte{s3_constants.ExtAmzOwnerKey: []byte(bucketOwner)}}
+			if ownership != "absent" {
+				bucketEntry.Extended[s3_constants.ExtOwnershipKey] = []byte(ownership)
+			}
 			filer.entries["/buckets/"+bucket] = bucketEntry
+			storedOwnership := ownership
+			if storedOwnership == "absent" {
+				storedOwnership = ""
+			}
 			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
-			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Owner: bucketOwner, Ownership: ownership, Versioning: tt.versioning})
+			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Owner: bucketOwner, Ownership: storedOwnership, Versioning: tt.versioning})
 			s3a.bucketRegistry = NewBucketRegistry(s3a)
 			s3a.bucketRegistry.LoadBucketMetadata(bucketEntry)
 			if tt.versioning == s3_constants.VersioningEnabled {
@@ -162,6 +180,14 @@ func TestPutObjectUploadACL(t *testing.T) {
 				// Disabled authentication uses the admin account, not a caller's
 				// forged internal account header.
 				req.Header.Set(s3_constants.AmzAccountId, "forged-account")
+			} else if tt.sigV2 {
+				cred := &Credential{AccessKey: routingTestAccessKey, SecretKey: routingTestSecretKey}
+				req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+				req.Header.Set("Authorization", signatureV2(cred, req.Method, req.URL.Path, req.URL.Query().Encode(), req.Header))
+				// SigV2 does not sign this parameter, so it must not take effect.
+				query := req.URL.Query()
+				query.Set(s3_constants.AmzCannedAcl, "public-read")
+				req.URL.RawQuery = query.Encode()
 			} else if tt.presigned {
 				// Exercise ACLs in the signed query rather than relying on a
 				// particular SDK version's automatic header-hoisting behavior.
@@ -211,15 +237,22 @@ func TestPutObjectUploadACL(t *testing.T) {
 			if tt.unsigned {
 				wantOwner = AccountAdmin.Id
 			}
-			if ownership == s3_constants.OwnershipBucketOwnerEnforced || (ownership == s3_constants.OwnershipBucketOwnerPreferred && tt.acl == "bucket-owner-full-control") {
+			effective := s3_constants.EffectiveOwnership(storedOwnership)
+			if effective == s3_constants.OwnershipBucketOwnerEnforced || (ownership == s3_constants.OwnershipBucketOwnerPreferred && tt.acl == "bucket-owner-full-control") {
 				wantOwner = bucketOwner
 			}
 			require.Equal(t, wantOwner, string(stored.Extended[s3_constants.ExtAmzOwnerKey]))
+			if tt.acl == "public-read" && !tt.marker {
+				require.Equal(t, uint32(0644), stored.Attributes.FileMode, "public-read must set the file mode")
+			}
 			grants := GetAcpGrants(stored.Extended)
 			require.NotEmpty(t, grants, "ACL must be persisted in the object create")
 			if tt.grantHeader != "" {
-				require.Len(t, grants, 1)
-				require.Equal(t, bucketOwner, aws.StringValue(grants[0].Grantee.ID))
+				wantIDs := []string{bucketOwner}
+				if strings.Contains(tt.grant, ",") {
+					wantIDs = append(wantIDs, writer)
+				}
+				require.Len(t, grants, len(wantIDs))
 				wantPermission := map[string]string{
 					s3_constants.AmzAclRead:        s3_constants.PermissionRead,
 					s3_constants.AmzAclWrite:       s3_constants.PermissionWrite,
@@ -227,7 +260,10 @@ func TestPutObjectUploadACL(t *testing.T) {
 					s3_constants.AmzAclWriteAcp:    s3_constants.PermissionWriteAcp,
 					s3_constants.AmzAclFullControl: s3_constants.PermissionFullControl,
 				}[tt.grantHeader]
-				require.Equal(t, wantPermission, aws.StringValue(grants[0].Permission))
+				for i, id := range wantIDs {
+					require.Equal(t, id, aws.StringValue(grants[i].Grantee.ID))
+					require.Equal(t, wantPermission, aws.StringValue(grants[i].Permission))
+				}
 			} else {
 				require.Equal(t, wantOwner, aws.StringValue(grants[0].Grantee.ID))
 				require.Equal(t, s3_constants.PermissionFullControl, aws.StringValue(grants[0].Permission))

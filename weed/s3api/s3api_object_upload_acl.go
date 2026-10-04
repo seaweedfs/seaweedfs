@@ -4,51 +4,56 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// putObjectACLContextKey carries validated ACL metadata to every PutObject write
-// path without exposing an internal header that a client could forge.
+// putObjectACLContextKey carries validated ACL metadata to the created entry
+// without exposing an internal header that a client could forge.
 type putObjectACLContextKey struct{}
 
 // preparePutObjectACL validates and authorizes ACLs before the upload body is
-// consumed. The resulting metadata is committed in the same entry as the object.
+// consumed, so a rejected ACL neither allocates chunks nor replaces an object.
 func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*http.Request, s3err.ErrorCode) {
-	metadata, code := s3a.getBucketConfig(bucket)
+	bucketConfig, code := s3a.getBucketConfig(bucket)
 	if code != s3err.ErrNone {
 		return r, code
 	}
-	if metadata == nil || s3a.iam == nil {
+	if bucketConfig == nil || s3a.iam == nil {
 		return r, s3err.ErrInternalError
 	}
 
-	// Presigners can hoist ACL headers into the signed query string. Normalize a
-	// separate request for parsing, preserving the original for signature checks.
-	aclRequest := r.Clone(r.Context())
+	// Presigners can hoist ACL headers into the signed query string. SigV2 does
+	// not sign arbitrary query parameters, so it accepts only headers.
 	query := parseRequestQuery(r)
-	custom := false
-	for _, header := range []string{s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
-		value := lookupHeaderOrQuery(r, query, header)
-		if value != "" {
-			custom = true
-			aclRequest.Header.Set(header, value)
-		}
+	if r.Header.Get(s3_constants.AmzAuthType) == "SigV2" {
+		query = nil
 	}
 	canned := lookupHeaderOrQuery(r, query, s3_constants.AmzCannedAcl)
-	aclRequest.Header.Set(s3_constants.AmzCannedAcl, canned)
+	custom := false
+	customValues := map[string]string{}
+	for _, header := range []string{s3_constants.AmzAclFullControl, s3_constants.AmzAclRead, s3_constants.AmzAclReadAcp, s3_constants.AmzAclWrite, s3_constants.AmzAclWriteAcp} {
+		if value := lookupHeaderOrQuery(r, query, header); value != "" {
+			custom = true
+			customValues[header] = value
+		}
+	}
 	explicit := canned != "" || custom
+
 	accountID := r.Header.Get(s3_constants.AmzAccountId)
 	if !s3a.iam.isEnabled() {
 		accountID = AccountAdmin.Id
 	} else if explicit {
-		// Setting an ACL during PutObject also requires s3:PutObjectAcl. Use the
-		// unified authorization path so bucket-policy allows and explicit denies
-		// retain the same semantics as standalone ACL requests.
+		// Setting an ACL during PutObject also requires s3:PutObjectAcl. This
+		// re-verifies the signature, so request headers must stay untouched.
 		identity, authCode := s3a.iam.authRequest(r.Clone(r.Context()), s3_constants.ACTION_WRITE_ACP)
 		if authCode != s3err.ErrNone {
 			return r, authCode
+		}
+		if identity == nil || identity.Account == nil {
+			return r, s3err.ErrAccessDenied
 		}
 		accountID = identity.Account.Id
 	}
@@ -65,25 +70,54 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 		return r, s3err.ErrInvalidRequest
 	}
 
-	bucketOwner := metadata.Owner
+	bucketOwner := bucketConfig.Owner
 	if bucketOwner == "" {
-		// Buckets created outside S3 can have no recorded owner, matching the
-		// bucket registry's existing admin fallback for these entries.
 		bucketOwner = AccountAdmin.Id
 	}
-	ownership := s3_constants.EffectiveOwnership(metadata.Ownership)
+	ownership := s3_constants.EffectiveOwnership(bucketConfig.Ownership)
 	if ownership == s3_constants.OwnershipBucketOwnerEnforced {
-		if custom || (canned != "" && canned != s3_constants.CannedAclBucketOwnerFullControl) {
-			return r, s3err.ErrAccessControlListNotSupported
+		if bucketConfig.Ownership == s3_constants.OwnershipBucketOwnerEnforced {
+			// Buckets without an ownership control keep accepting ACLs; only an
+			// explicit BucketOwnerEnforced control disables them.
+			if custom || (canned != "" && canned != s3_constants.CannedAclBucketOwnerFullControl) {
+				return r, s3err.ErrAccessControlListNotSupported
+			}
+			canned = s3_constants.CannedAclPrivate
 		}
-		// ACLs are disabled: the bucket owner is the only effective grantee,
-		// including when bucket-owner-full-control accompanies the upload.
 		accountID = bucketOwner
-		aclRequest.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclPrivate)
 	}
-	owner, grants, code := ParseAndValidateAclHeadersOrElseDefault(aclRequest, s3a.iam, ownership, bucketOwner, accountID, false)
+
+	// ACL headers may have arrived in the signed query; mirroring them into the
+	// headers keeps grant parsing and resolveFileMode consistent. This is safe
+	// only after signature verification above.
+	for header, value := range customValues {
+		r.Header.Set(header, value)
+	}
+	if canned != "" {
+		r.Header.Set(s3_constants.AmzCannedAcl, canned)
+	}
+
+	owner, grants, code := ParseAclHeaders(r, ownership, bucketOwner, accountID, false)
 	if code != s3err.ErrNone {
 		return r, code
+	}
+	if custom {
+		// Only caller-supplied grantees need registry validation; canned and
+		// default grants are built from trusted account ids, which JWT or
+		// otherwise external accounts may not appear in.
+		grants, code = ValidateAndTransferGrants(s3a.iam, grants)
+		if code != s3err.ErrNone {
+			return r, code
+		}
+	}
+	if len(grants) == 0 {
+		grants = append(grants, &s3.Grant{
+			Grantee: &s3.Grantee{
+				Type: &s3_constants.GrantTypeCanonicalUser,
+				ID:   &owner,
+			},
+			Permission: &s3_constants.PermissionFullControl,
+		})
 	}
 	entry := &filer_pb.Entry{}
 	if code = AssembleEntryWithAcp(entry, owner, grants); code != s3err.ErrNone {

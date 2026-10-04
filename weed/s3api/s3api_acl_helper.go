@@ -130,47 +130,71 @@ func ParseCustomAclHeaders(r *http.Request, grants *[]*s3.Grant) s3err.ErrorCode
 	return s3err.ErrNone
 }
 
-func ParseCustomAclHeader(headerValue, permission string, grants *[]*s3.Grant) s3err.ErrorCode {
-	if len(headerValue) > 0 {
-		split := strings.Split(headerValue, ", ")
-		for _, grantStr := range split {
-			kv := strings.Split(grantStr, "=")
-			if len(kv) != 2 {
-				return s3err.ErrInvalidRequest
+// splitAclGrantees splits a comma-separated grantee list, ignoring commas
+// inside double-quoted values so `id="a",id="b"` and `id="a", id="b"` both work.
+func splitAclGrantees(headerValue string) []string {
+	var grantees []string
+	start := 0
+	inQuote := false
+	for i := 0; i < len(headerValue); i++ {
+		switch headerValue[i] {
+		case '"':
+			inQuote = !inQuote
+		case ',':
+			if !inQuote {
+				if g := strings.TrimSpace(headerValue[start:i]); g != "" {
+					grantees = append(grantees, g)
+				}
+				start = i + 1
 			}
+		}
+	}
+	if g := strings.TrimSpace(headerValue[start:]); g != "" {
+		grantees = append(grantees, g)
+	}
+	return grantees
+}
 
-			switch kv[0] {
-			case "id":
-				var accountId string
-				_ = json.Unmarshal([]byte(kv[1]), &accountId)
-				*grants = append(*grants, &s3.Grant{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &accountId,
-					},
-					Permission: &permission,
-				})
-			case "emailAddress":
-				var emailAddress string
-				_ = json.Unmarshal([]byte(kv[1]), &emailAddress)
-				*grants = append(*grants, &s3.Grant{
-					Grantee: &s3.Grantee{
-						Type:         &s3_constants.GrantTypeAmazonCustomerByEmail,
-						EmailAddress: &emailAddress,
-					},
-					Permission: &permission,
-				})
-			case "uri":
-				var groupName string
-				_ = json.Unmarshal([]byte(kv[1]), &groupName)
-				*grants = append(*grants, &s3.Grant{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeGroup,
-						URI:  &groupName,
-					},
-					Permission: &permission,
-				})
-			}
+func ParseCustomAclHeader(headerValue, permission string, grants *[]*s3.Grant) s3err.ErrorCode {
+	for _, grantStr := range splitAclGrantees(headerValue) {
+		key, value, found := strings.Cut(grantStr, "=")
+		if !found {
+			return s3err.ErrInvalidRequest
+		}
+
+		switch key {
+		case "id":
+			var accountId string
+			_ = json.Unmarshal([]byte(value), &accountId)
+			*grants = append(*grants, &s3.Grant{
+				Grantee: &s3.Grantee{
+					Type: &s3_constants.GrantTypeCanonicalUser,
+					ID:   &accountId,
+				},
+				Permission: &permission,
+			})
+		case "emailAddress":
+			var emailAddress string
+			_ = json.Unmarshal([]byte(value), &emailAddress)
+			*grants = append(*grants, &s3.Grant{
+				Grantee: &s3.Grantee{
+					Type:         &s3_constants.GrantTypeAmazonCustomerByEmail,
+					EmailAddress: &emailAddress,
+				},
+				Permission: &permission,
+			})
+		case "uri":
+			var groupName string
+			_ = json.Unmarshal([]byte(value), &groupName)
+			*grants = append(*grants, &s3.Grant{
+				Grantee: &s3.Grantee{
+					Type: &s3_constants.GrantTypeGroup,
+					URI:  &groupName,
+				},
+				Permission: &permission,
+			})
+		default:
+			return s3err.ErrInvalidRequest
 		}
 	}
 	return s3err.ErrNone
