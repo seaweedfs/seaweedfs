@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -74,8 +75,24 @@ func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object st
 		if code != s3err.ErrNone {
 			return r, code
 		}
-		if len(r.Header.Values(header)) == 0 && value != "" {
+		if value == "" {
+			continue
+		}
+		if header == s3_constants.AmzCannedAcl {
 			policyRequest.Header.Set(header, value)
+			continue
+		}
+		// Every grantee is persisted, so policy conditions must evaluate each
+		// one. Expose them as separate header values regardless of whether the
+		// client sent one line, repeated lines, or a signed query parameter.
+		pairs, pairCode := parseAclGranteePairs(value)
+		if pairCode != s3err.ErrNone {
+			return r, pairCode
+		}
+		policyRequest.Header.Del(header)
+		for _, pair := range pairs {
+			encoded, _ := json.Marshal(pair[1])
+			policyRequest.Header.Add(header, pair[0]+"="+string(encoded))
 		}
 	}
 	return policyRequest, s3err.ErrNone

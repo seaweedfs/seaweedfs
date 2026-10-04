@@ -35,6 +35,7 @@ func TestPutObjectUploadACL(t *testing.T) {
 		query, afterSigning                                                      url.Values
 		grantees                                                                 []string
 		repeatedGrant                                                            string
+		conditionValue                                                           string
 		defaultMode                                                              uint32
 		unregisteredAccounts                                                     bool
 		policyOnly                                                               bool
@@ -133,6 +134,8 @@ func TestPutObjectUploadACL(t *testing.T) {
 		{name: "disabled authentication query condition denies acl", unsigned: true, presigned: true, acl: "public-read", policy: "bucket-condition-deny", status: 403, errorCode: "AccessDenied"},
 		{name: "disabled authentication query condition denies upload", unsigned: true, presigned: true, acl: "public-read", policy: "bucket-put-condition-deny", status: 403, errorCode: "AccessDenied"},
 		{name: "repeated grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner"`, repeatedGrant: `id="upload-writer"`, policy: "bucket-condition-deny", status: 403, errorCode: "AccessDenied"},
+		{name: "single line grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, policy: "bucket-condition-deny", conditionValue: `id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
+		{name: "presigned grants preserve condition deny", grantHeader: s3_constants.AmzAclRead, grant: `id="bucket-owner",id="upload-writer"`, presigned: true, policy: "bucket-condition-deny", conditionValue: `id="upload-writer"`, status: 403, errorCode: "AccessDenied"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -211,6 +214,9 @@ func TestPutObjectUploadACL(t *testing.T) {
 					header, value := s3_constants.AmzCannedAcl, tt.acl
 					if tt.grantHeader != "" {
 						header, value = tt.grantHeader, tt.grant
+					}
+					if tt.conditionValue != "" {
+						value = tt.conditionValue
 					}
 					condition := fmt.Sprintf(`,"Condition":{"StringEquals":{%q:%q}}}`, "s3:"+strings.ToLower(header), value)
 					statement = strings.TrimSuffix(statement, "}") + condition

@@ -130,44 +130,60 @@ func ParseCustomAclHeaders(r *http.Request, grants *[]*s3.Grant) s3err.ErrorCode
 	return s3err.ErrNone
 }
 
-// ParseCustomAclHeader parses a comma-separated list of quoted grantees. Decode
-// each value before splitting so commas and equals signs inside quotes survive.
-func ParseCustomAclHeader(headerValue, permission string, grants *[]*s3.Grant) s3err.ErrorCode {
+// parseAclGranteePairs decodes a comma-separated list of quoted grantees into
+// key/value pairs. Decoding each value before splitting keeps commas and equals
+// signs inside quotes intact.
+func parseAclGranteePairs(headerValue string) (pairs [][2]string, errCode s3err.ErrorCode) {
 	if headerValue == "" {
-		return s3err.ErrNone
+		return nil, s3err.ErrNone
 	}
 	remaining := strings.TrimSpace(headerValue)
-	var parsed []*s3.Grant
 	for {
 		key, encoded, ok := strings.Cut(remaining, "=")
 		if !ok {
-			return s3err.ErrInvalidRequest
+			return nil, s3err.ErrInvalidRequest
 		}
 		decoder := json.NewDecoder(strings.NewReader(encoded))
 		var value string
 		if decoder.Decode(&value) != nil || value == "" {
-			return s3err.ErrInvalidRequest
+			return nil, s3err.ErrInvalidRequest
 		}
-		grantee := &s3.Grantee{}
-		switch strings.TrimSpace(key) {
-		case "id":
-			grantee.Type, grantee.ID = &s3_constants.GrantTypeCanonicalUser, &value
-		case "emailAddress":
-			grantee.Type, grantee.EmailAddress = &s3_constants.GrantTypeAmazonCustomerByEmail, &value
-		case "uri":
-			grantee.Type, grantee.URI = &s3_constants.GrantTypeGroup, &value
+		key = strings.TrimSpace(key)
+		switch key {
+		case "id", "emailAddress", "uri":
 		default:
-			return s3err.ErrInvalidRequest
+			return nil, s3err.ErrInvalidRequest
 		}
-		parsed = append(parsed, &s3.Grant{Grantee: grantee, Permission: &permission})
+		pairs = append(pairs, [2]string{key, value})
 		remaining = strings.TrimSpace(encoded[decoder.InputOffset():])
 		if remaining == "" {
 			break
 		}
 		if remaining[0] != ',' {
-			return s3err.ErrInvalidRequest
+			return nil, s3err.ErrInvalidRequest
 		}
 		remaining = strings.TrimSpace(remaining[1:])
+	}
+	return pairs, s3err.ErrNone
+}
+
+func ParseCustomAclHeader(headerValue, permission string, grants *[]*s3.Grant) s3err.ErrorCode {
+	pairs, errCode := parseAclGranteePairs(headerValue)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+	var parsed []*s3.Grant
+	for i := range pairs {
+		grantee := &s3.Grantee{}
+		switch pairs[i][0] {
+		case "id":
+			grantee.Type, grantee.ID = &s3_constants.GrantTypeCanonicalUser, &pairs[i][1]
+		case "emailAddress":
+			grantee.Type, grantee.EmailAddress = &s3_constants.GrantTypeAmazonCustomerByEmail, &pairs[i][1]
+		case "uri":
+			grantee.Type, grantee.URI = &s3_constants.GrantTypeGroup, &pairs[i][1]
+		}
+		parsed = append(parsed, &s3.Grant{Grantee: grantee, Permission: &permission})
 	}
 	// Do not leave partially parsed grants behind when any list element fails.
 	*grants = append(*grants, parsed...)
