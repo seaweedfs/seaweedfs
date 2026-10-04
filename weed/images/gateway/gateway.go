@@ -278,6 +278,14 @@ func safeObjectPath(value string) bool {
 	return false
 }
 
+// allowedSourceType permits only media types browsers cannot execute as documents.
+func allowedSourceType(mediaType string) bool {
+	if mediaType == "image/svg+xml" {
+		return false
+	}
+	return strings.HasPrefix(mediaType, "image/") || mediaType == "application/octet-stream" || mediaType == "binary/octet-stream"
+}
+
 // revision includes S3 version and content validators in the cache key.
 func revision(h http.Header) string {
 	return h.Get("ETag") + "\n" + h.Get("Last-Modified") + "\n" + h.Get("Content-Length") + "\n" + h.Get("x-amz-version-id")
@@ -403,15 +411,27 @@ func (g *Gateway) serveOriginal(w http.ResponseWriter, r *http.Request, source *
 		g.writeError(w, r, &failure{413, "source image exceeds size limit"})
 		return
 	}
+	// Serving executable documents under this origin allows cross-site scripting.
+	mediaType, _, mediaErr := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if mediaErr != nil {
+		mediaType = resp.Header.Get("Content-Type")
+	}
 	var data []byte
 	if r.Method != http.MethodHead && resp.StatusCode != 304 {
+		if !allowedSourceType(mediaType) {
+			g.writeError(w, r, &failure{502, "source image has an unsupported media type"})
+			return
+		}
 		data, err = io.ReadAll(io.LimitReader(resp.Body, g.config.MaxSourceBytes+1))
 		if err != nil || int64(len(data)) > g.config.MaxSourceBytes {
 			g.writeError(w, r, &failure{502, "source read failed or exceeded size limit"})
 			return
 		}
 	}
-	for _, key := range []string{"Content-Type", "Content-Encoding", "Content-Length", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "x-amz-version-id"} {
+	if mediaType != "" {
+		w.Header().Set("Content-Type", mediaType)
+	}
+	for _, key := range []string{"Content-Encoding", "Content-Length", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "x-amz-version-id"} {
 		if value := resp.Header.Get(key); value != "" {
 			w.Header().Set(key, value)
 		}

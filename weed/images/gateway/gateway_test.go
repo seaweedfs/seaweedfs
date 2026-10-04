@@ -28,6 +28,7 @@ type fixture struct {
 	mu                       sync.Mutex
 	status                   int
 	etag, version            string
+	contentType              string
 	sourceBytes              int64
 	processStatus            int
 	processType              string
@@ -44,7 +45,7 @@ type fixture struct {
 // newFixture creates HTTP backends that fail tests if credentials are forwarded.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{status: 200, etag: "\"source-v1\"", sourceBytes: 100, processStatus: 200,
+	f := &fixture{status: 200, etag: "\"source-v1\"", sourceBytes: 100, contentType: "image/png", processStatus: 200,
 		processType: "image/webp", data: []byte("RIFF transformed webp bytes"), original: []byte("original-image")}
 	f.origin = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Pause only the initial source check; the post-encoding recheck remains fast.
@@ -76,7 +77,7 @@ func newFixture(t *testing.T) *fixture {
 			w.WriteHeader(f.status)
 			return
 		}
-		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Type", f.contentType)
 		w.Header().Set("ETag", f.etag)
 		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(f.original))
 	}))
@@ -677,6 +678,27 @@ func TestRepeatedSlashesPreserveBucketPrefix(t *testing.T) {
 		source, err := url.Parse(encodedSource)
 		if err != nil || source.Host != strings.TrimPrefix(f.origin.URL, "http://") || !strings.HasPrefix(source.Path, "/bucket/") {
 			t.Fatalf("repeated slashes escaped the fixed source: %s", encodedSource)
+		}
+	}
+}
+
+// TestOriginalMediaType checks executable documents cannot be served under this origin.
+func TestOriginalMediaType(t *testing.T) {
+	f := newFixture(t)
+	for _, mediaType := range []string{"text/html", "image/svg+xml", "application/xhtml+xml", "text/xml", ""} {
+		f.contentType = mediaType
+		if response := f.request("GET", "/page", nil); response.Code != 502 {
+			t.Fatalf("executable source type %q was served: %d", mediaType, response.Code)
+		}
+	}
+	for _, mediaType := range []string{"image/png; charset=binary", "image/webp", "application/octet-stream"} {
+		f.contentType = mediaType
+		response := f.request("GET", "/image.png", nil)
+		if response.Code != 200 || response.Body.String() != "original-image" {
+			t.Fatalf("safe source type %q was rejected: %d", mediaType, response.Code)
+		}
+		if got := response.Header().Get("Content-Type"); strings.Contains(got, "html") || strings.Contains(got, "svg") {
+			t.Fatalf("unsafe content type forwarded: %q", got)
 		}
 	}
 }
