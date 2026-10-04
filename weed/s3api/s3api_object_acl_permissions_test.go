@@ -2,8 +2,10 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,24 +32,42 @@ func (f *objectACLUpdateFiler) UpdateEntry(_ context.Context, req *filer_pb.Upda
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
-// TestPutObjectAclPermissions 通过签名请求验证桶和前缀授权，以及管理员修改时的拥有者授权。
+// TestPutObjectAclPermissions 验证签名请求的策略和范围授权，以及历史拥有者的ACL授权。
 func TestPutObjectAclPermissions(t *testing.T) {
 	const bucket, object, owner = "acl-bucket", "allowed/image.png", "object-owner"
+	const bucketOwner = "bucket-owner"
+	xmlACL := func(ownerID, granteeID string) string {
+		return fmt.Sprintf(`<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>%s</ID></Owner><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>%s</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant></AccessControlList></AccessControlPolicy>`, ownerID, granteeID)
+	}
 	tests := []struct {
-		name    string
-		account string
-		action  Action
-		acl     string
-		status  int
+		name         string
+		account      string
+		action       Action
+		acl          string
+		policy       string
+		retiredOwner bool
+		body         string
+		status       int
 	}{
-		{"桶内授权", owner, "WriteAcp:acl-bucket", "private", http.StatusOK},
-		{"前缀内授权", owner, "WriteAcp:acl-bucket/allowed/*", "public-read", http.StatusOK},
-		{"前缀外拒绝", owner, "WriteAcp:acl-bucket/other/*", "private", http.StatusForbidden},
-		{"其他桶拒绝", owner, "WriteAcp:other-bucket", "private", http.StatusForbidden},
-		{"只读权限拒绝", owner, "Read:acl-bucket", "private", http.StatusForbidden},
-		{"非拥有者拒绝", "other-owner", "WriteAcp:acl-bucket", "private", http.StatusForbidden},
-		{"管理员设置私有", AccountAdmin.Id, "Admin", "private", http.StatusOK},
-		{"管理员设置公共读", AccountAdmin.Id, "Admin", "public-read", http.StatusOK},
+		{name: "桶内授权", account: owner, action: "WriteAcp:acl-bucket", acl: "private", status: http.StatusOK},
+		{name: "前缀内授权", account: owner, action: "WriteAcp:acl-bucket/allowed/*", acl: "public-read", status: http.StatusOK},
+		{name: "前缀外拒绝", account: owner, action: "WriteAcp:acl-bucket/other/*", acl: "private", status: http.StatusForbidden},
+		{name: "其他桶拒绝", account: owner, action: "WriteAcp:other-bucket", acl: "private", status: http.StatusForbidden},
+		{name: "只读权限拒绝", account: owner, action: "Read:acl-bucket", acl: "private", status: http.StatusForbidden},
+		{name: "非拥有者拒绝", account: "other-owner", action: "WriteAcp:acl-bucket", acl: "private", status: http.StatusForbidden},
+		{name: "管理员设置私有", account: AccountAdmin.Id, action: "Admin", acl: "private", status: http.StatusOK},
+		{name: "管理员设置公共读", account: AccountAdmin.Id, action: "Admin", acl: "public-read", status: http.StatusOK},
+		{name: "IAM策略授权", account: owner, policy: "iam-allow", acl: "private", status: http.StatusOK},
+		{name: "桶策略授权", account: owner, policy: "bucket-allow", acl: "private", status: http.StatusOK},
+		{name: "IAM显式拒绝", account: owner, action: "WriteAcp:acl-bucket", policy: "iam-deny", acl: "private", status: http.StatusForbidden},
+		{name: "桶策略显式拒绝", account: owner, action: "WriteAcp:acl-bucket", policy: "bucket-deny", acl: "private", status: http.StatusForbidden},
+		{name: "历史拥有者私有", account: AccountAdmin.Id, action: "Admin", acl: "private", retiredOwner: true, status: http.StatusOK},
+		{name: "历史拥有者公共读", account: AccountAdmin.Id, action: "Admin", acl: "public-read", retiredOwner: true, status: http.StatusOK},
+		{name: "不同桶拥有者读权限", account: AccountAdmin.Id, action: "Admin", acl: "bucket-owner-read", status: http.StatusOK},
+		{name: "不同桶拥有者完全控制", account: AccountAdmin.Id, action: "Admin", acl: "bucket-owner-full-control", status: http.StatusOK},
+		{name: "XML保留历史拥有者", account: AccountAdmin.Id, action: "Admin", body: xmlACL(owner, owner), retiredOwner: true, status: http.StatusOK},
+		{name: "XML未知授权对象拒绝", account: AccountAdmin.Id, action: "Admin", body: xmlACL(owner, "unknown-grantee"), retiredOwner: true, status: http.StatusBadRequest},
+		{name: "XML更换拥有者拒绝", account: AccountAdmin.Id, action: "Admin", body: xmlACL("other-owner", owner), status: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,7 +76,7 @@ func TestPutObjectAclPermissions(t *testing.T) {
 			}}}
 			s3a := newHeadBucketTestServer(t, filer)
 			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
-			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Ownership: s3_constants.OwnershipObjectWriter, Owner: owner})
+			s3a.bucketConfigCache.Set(bucket, &BucketConfig{Name: bucket, Ownership: s3_constants.OwnershipObjectWriter, Owner: bucketOwner})
 			s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
 			t.Cleanup(s3a.iam.Shutdown)
 			s3a.iam.isAuthEnabled = true
@@ -65,17 +85,40 @@ func TestPutObjectAclPermissions(t *testing.T) {
 				Name: "acl-test-user", Account: account, Actions: []Action{tt.action}, IsStatic: true,
 				Credentials: []*Credential{{AccessKey: routingTestAccessKey, SecretKey: routingTestSecretKey}},
 			}
+			if tt.action == "" {
+				identity.Actions = nil
+			}
 			s3a.iam.accessKeyIdent[routingTestAccessKey] = identity
 			s3a.iam.nameToIdentity[identity.Name] = identity
-			s3a.iam.accounts[owner] = &Account{Id: owner, DisplayName: owner}
+			if !tt.retiredOwner {
+				s3a.iam.accounts[owner] = &Account{Id: owner, DisplayName: owner}
+			}
+			s3a.iam.accounts[bucketOwner] = &Account{Id: bucketOwner, DisplayName: bucketOwner}
 			s3a.iam.accounts[account.Id] = account
+			if tt.policy != "" {
+				effect := "Allow"
+				if strings.HasSuffix(tt.policy, "deny") {
+					effect = "Deny"
+				}
+				statement := fmt.Sprintf(`{"Effect":%q,"Action":"s3:PutObjectAcl","Resource":"arn:aws:s3:::acl-bucket/allowed/*"}`, effect)
+				if strings.HasPrefix(tt.policy, "iam") {
+					require.NoError(t, s3a.iam.PutPolicy("acl-policy", `{"Version":"2012-10-17","Statement":[`+statement+`]}`))
+					identity.PolicyNames = []string{"acl-policy"}
+				} else {
+					statement = strings.Replace(statement, `{"Effect":`, `{"Principal":"*","Effect":`, 1)
+					s3a.iam.policyEngine = NewBucketPolicyEngine()
+					require.NoError(t, s3a.iam.policyEngine.engine.SetBucketPolicy(bucket, `{"Version":"2012-10-17","Statement":[`+statement+`]}`))
+				}
+			}
 
-			req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"/"+object+"?acl", nil)
+			req := httptest.NewRequest(http.MethodPut, "http://s3/"+bucket+"/"+object+"?acl", strings.NewReader(tt.body))
 			req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": object})
 			req.Header.Set(s3_constants.AmzCannedAcl, tt.acl)
-			signRoutingTestRequest(t, req, "", "s3")
+			signRoutingTestRequest(t, req, tt.body, "s3")
 			// 签名助手会替换正文；还原真实HTTP服务端的无正文请求，避免被当成空XML。
-			req.Body = http.NoBody
+			if tt.body == "" {
+				req.Body = http.NoBody
+			}
 			rr := httptest.NewRecorder()
 			s3a.iam.Auth(s3a.PutObjectAclHandler, s3_constants.ACTION_WRITE_ACP)(rr, req)
 			require.Equal(t, tt.status, rr.Code, rr.Body.String())
@@ -92,7 +135,7 @@ func TestPutObjectAclPermissions(t *testing.T) {
 			require.Equal(t, owner, string(update.Entry.Extended[s3_constants.ExtAmzOwnerKey]))
 			grants := GetAcpGrants(update.Entry.Extended)
 			wantGrants := 1
-			if tt.acl == "public-read" {
+			if tt.acl == "public-read" || strings.HasPrefix(tt.acl, "bucket-owner-") {
 				wantGrants = 2
 			}
 			require.Len(t, grants, wantGrants)
@@ -101,6 +144,14 @@ func TestPutObjectAclPermissions(t *testing.T) {
 			if tt.acl == "public-read" {
 				require.Equal(t, s3_constants.GranteeGroupAllUsers, aws.StringValue(grants[1].Grantee.URI))
 				require.Equal(t, s3_constants.PermissionRead, aws.StringValue(grants[1].Permission))
+			}
+			if strings.HasPrefix(tt.acl, "bucket-owner-") {
+				require.Equal(t, bucketOwner, aws.StringValue(grants[1].Grantee.ID))
+				permission := s3_constants.PermissionRead
+				if tt.acl == "bucket-owner-full-control" {
+					permission = s3_constants.PermissionFullControl
+				}
+				require.Equal(t, permission, aws.StringValue(grants[1].Permission))
 			}
 		})
 	}

@@ -21,8 +21,24 @@ type AccountManager interface {
 	GetAccountIdByIdentityName(name string) string
 }
 
+// aclOwnerAccountManager 仅认可已有资源的不可变拥有者，不放行其他未知授权对象。
+type aclOwnerAccountManager struct {
+	AccountManager
+	ownerId string
+}
+
+// GetAccountNameById 允许历史拥有者保留授权，其余账号继续按原注册表验证。
+func (m aclOwnerAccountManager) GetAccountNameById(canonicalId string) string {
+	name := m.AccountManager.GetAccountNameById(canonicalId)
+	if name == "" && canonicalId != "" && canonicalId == m.ownerId {
+		return canonicalId
+	}
+	return name
+}
+
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
 func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
+	accountManager = aclOwnerAccountManager{AccountManager: accountManager, ownerId: ownerId}
 	if r.Body != nil && r.Body != http.NoBody {
 		defer util_http.CloseRequest(r)
 

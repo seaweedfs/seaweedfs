@@ -224,18 +224,11 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		// 3. Check object-level WRITE_ACP permission
-		// authRequest和CanDo负责拼接资源路径，此处只传基础动作，避免重复限定路径。
+		// 使用统一的策略与资源范围校验，此处只传基础动作，避免重复限定路径。
 		writeAcpAction := Action(s3_constants.ACTION_WRITE_ACP)
-		identity, errCode := s3a.iam.authRequest(r, writeAcpAction)
+		_, errCode := s3a.iam.authRequest(r, writeAcpAction)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("PutObjectAclHandler: Auth failed for WriteAcp action on %s/%s: %v", bucket, object, errCode)
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
-		}
-
-		// 4. Verify the authenticated identity can perform WriteAcp on this specific object
-		if identity == nil || !identity.CanDo(writeAcpAction, bucket, object) {
-			glog.V(3).Infof("PutObjectAclHandler: Identity %v cannot perform WriteAcp on %s/%s", identity, bucket, object)
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
