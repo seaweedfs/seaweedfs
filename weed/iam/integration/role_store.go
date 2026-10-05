@@ -358,7 +358,7 @@ func (f *FilerRoleStore) UpdateRole(ctx context.Context, filerAddress string, ro
 				},
 				Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{clause}},
 			})
-			if isRoleWriteConflict(created, err) {
+			if isEntryWriteConflict(created, err) {
 				glog.V(3).Infof("Role %s changed during update; retrying", roleName)
 				continue
 			}
@@ -404,10 +404,10 @@ func (f *FilerRoleStore) deleteRoleEntryIfUnchanged(ctx context.Context, client 
 	return true, nil
 }
 
-// isRoleWriteConflict reports a write the filer refused because its condition
+// isEntryWriteConflict reports a write the filer refused because its condition
 // no longer held: in the response, or as FailedPrecondition when the write
 // was forwarded to the entry's owner filer.
-func isRoleWriteConflict(resp *filer_pb.CreateEntryResponse, err error) bool {
+func isEntryWriteConflict(resp *filer_pb.CreateEntryResponse, err error) bool {
 	if err != nil {
 		return status.Code(err) == codes.FailedPrecondition
 	}

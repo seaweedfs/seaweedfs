@@ -188,6 +188,12 @@ func (s *Store) mergeIntoMountedEcJournal(owner *DiskLocation, vid needle.Volume
 // the write reads the new records like any others. mounted reports that a
 // runtime appeared before the write; the caller then merges through it.
 func (s *Store) appendUnmountedEcJournal(owner *DiskLocation, vid needle.VolumeId, ecjPath string, local, ids map[types.NeedleId]struct{}, size int64, sync func(*erasure_coding.EcjAppend) error) (added int, mounted bool, err error) {
+	// The append and its sync, rollback or rewrite touch ecjPath through the
+	// open handle past the disk locks writeUnmountedEcJournal holds, so they
+	// run registered as a writer: a mount compacting this journal must not
+	// swap its inode underneath them.
+	done := erasure_coding.BeginEcjWrite(ecjPath)
+	defer done()
 	pending, mounted, err := s.writeUnmountedEcJournal(owner, vid, ecjPath, local, ids, size)
 	if pending == nil {
 		return 0, mounted, err

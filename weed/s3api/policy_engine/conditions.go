@@ -756,6 +756,12 @@ func getConditionContextValue(key string, contextValues map[string][]string, obj
 // objectEntry is the object's metadata from entry.Extended (can be nil)
 // claims are JWT claims for jwt:* policy variables (can be nil)
 func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]string, objectEntry map[string][]byte, claims map[string]interface{}) bool {
+	return evaluateConditions(conditions, contextValues, objectEntry, claims, nil)
+}
+
+// evaluateConditions supplements positive string grant conditions in explicit denies with the original complete list.
+// Select values per operator so whitespace or escapes cannot change negative conditions on the same key.
+func evaluateConditions(conditions PolicyConditions, contextValues map[string][]string, objectEntry map[string][]byte, claims map[string]interface{}, originalGrants map[string][]string) bool {
 	if len(conditions) == 0 {
 		return true // No conditions means always true
 	}
@@ -769,6 +775,12 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 
 		for key, value := range conditionMap {
 			contextVals := getConditionContextValue(key, contextValues, objectEntry)
+			if original := originalGrants[key]; len(original) != 0 && isGrantConditionKey(key) {
+				switch operator {
+				case "StringEquals", "StringEqualsIgnoreCase", "StringLike", "ArnEquals", "ArnLike":
+					contextVals = append(append([]string(nil), contextVals...), original...)
+				}
+			}
 
 			// Substitute variables in expected values
 			expectedValues := value.Strings()

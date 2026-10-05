@@ -229,14 +229,15 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 				objectWriteLockClient.ResetRing()
 			})
 		}
-		// Start the master client connection loop - required for GetMaster() to work
-		go masterClient.KeepConnectedToMaster(context.Background())
-
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
 			MasterClient:      masterClient,
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
 		})
+		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
+
+		// Start the master client connection loop - required for GetMaster() to work
+		go masterClient.KeepConnectedToMaster(context.Background())
 
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
 			len(option.Filers), option.FilerGroup, option.Masters)
@@ -606,6 +607,13 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 	if !hasPolicy {
 		return s3err.ErrNone, false
 	}
+
+	// Upload handler rechecks use the same effective ACL conditions as authentication without changing the signed request.
+	policyRequest, policyCode := putObjectACLPolicyRequest(r, Action(action), bucket, object)
+	if policyCode != s3err.ErrNone {
+		return policyCode, true
+	}
+	r = policyRequest
 
 	identityRaw := GetIdentityFromContext(r)
 	var identity *Identity

@@ -1730,8 +1730,10 @@ impl Volume {
             let mut idx_reader = io::BufReader::new(&idx_file);
             let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader, self.version())?;
 
-            // Re-open for append-only writes
-            let write_file = OpenOptions::new().append(true).open(idx_path)?;
+            // Re-open for positioned writes: rows are written at
+            // idx_file_offset so a torn tail can be trimmed (an append-mode
+            // handle cannot set_len on Windows).
+            let write_file = OpenOptions::new().write(true).open(idx_path)?;
             nm.set_idx_file(Box::new(write_file), idx_size);
             self.nm = Some(NeedleMap::InMemory(nm));
         }
@@ -1788,8 +1790,10 @@ impl Volume {
                 cache_bytes,
             )?;
 
-            // Re-open for append-only writes
-            let write_file = OpenOptions::new().append(true).open(idx_path)?;
+            // Re-open for positioned writes: rows are written at
+            // idx_file_offset so a torn tail can be trimmed (an append-mode
+            // handle cannot set_len on Windows).
+            let write_file = OpenOptions::new().write(true).open(idx_path)?;
             nm.set_idx_file(Box::new(write_file), idx_size);
             self.nm = Some(NeedleMap::Redb(nm));
         }
@@ -1860,7 +1864,7 @@ impl Volume {
         self.dat_file.is_some() || self.remote_dat_file.is_some()
     }
 
-    fn current_dat_file_size(&self) -> io::Result<u64> {
+    pub(crate) fn current_dat_file_size(&self) -> io::Result<u64> {
         if let Some(ref f) = self.dat_file {
             Ok(f.metadata()?.len())
         } else if let Some(ref remote_dat_file) = self.remote_dat_file {
@@ -2270,8 +2274,10 @@ impl Volume {
     /// sync and one .idx sync per run of distinct needle ids that holds a
     /// durable write, instead of two per durable needle. Nothing in such a
     /// run is published before its sync, so a failed sync takes the whole
-    /// run back off the .dat and fails every entry. A repeated id starts a
-    /// new run, so its dedup and cookie checks see the earlier write.
+    /// run back off the .dat and fails every entry. A durable entry that
+    /// fails to index stops the volume taking writes, and the entries after
+    /// it in the run are refused read only. A repeated id starts a new run,
+    /// so its dedup and cookie checks see the earlier write.
     pub fn write_needles_grouped(
         &mut self,
         writes: &mut [(Needle, bool)],
@@ -2334,11 +2340,21 @@ impl Volume {
         }
         self.last_append_at_ns = last_append_at_ns;
 
+        // A durable entry that fails to publish stops the volume taking
+        // writes, so the entries after it are refused the way a lone
+        // write would be.
+        let mut refused = false;
         for ((n, fsync), r) in run.iter().zip(staged.iter_mut()) {
-            if let Ok(Some(offset)) = *r
+            if refused {
+                *r = Err(self
+                    .check_writable()
+                    .err()
+                    .unwrap_or(VolumeError::ReadOnly(self.id)));
+            } else if let Ok(Some(offset)) = *r
                 && let Err(e) = self.publish_write(n, offset, *fsync)
             {
                 *r = Err(e);
+                refused = *fsync;
             }
         }
 
@@ -3635,9 +3651,12 @@ impl Volume {
             .unwrap_or(false);
         if needs_idx_writer {
             let idx_path = self.file_name(".idx");
+            // Positioned writes: an append-mode handle cannot set_len on
+            // Windows.
             let write_file = OpenOptions::new()
-                .append(true)
+                .write(true)
                 .create(true)
+                .truncate(false)
                 .open(&idx_path)?;
             let idx_size = trim_torn_idx_tail(&write_file, &idx_path)?;
             if let Some(ref mut nm) = self.nm {
@@ -3948,6 +3967,11 @@ impl Volume {
     /// Get the directory this volume is stored in.
     pub fn dir(&self) -> &str {
         &self.dir
+    }
+
+    /// Get the directory this volume's index is stored in.
+    pub fn dir_idx(&self) -> &str {
+        &self.dir_idx
     }
 
     /// Throttle IO during compaction to avoid saturating disk.
@@ -6485,6 +6509,215 @@ mod tests {
         let mut later = vec![(batch_needle(3, 0xcc, b"refused"), true)];
         let results = v.write_needles_grouped(&mut later);
         assert!(matches!(results[0], Err(VolumeError::Unavailable(_))));
+    }
+
+    /// An .idx writer that tears its `tear_at`-th row: half of the row
+    /// reaches the file, then the write fails.
+    struct TornIdxWriter {
+        file: File,
+        writes: usize,
+        tear_at: usize,
+        fail_truncates: bool,
+    }
+
+    impl Write for TornIdxWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if self.writes == self.tear_at {
+                self.file.write_all(&buf[..buf.len() / 2])?;
+                return Err(io::Error::other("injected torn .idx write"));
+            }
+            self.file.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.file.flush()
+        }
+    }
+
+    impl Seek for TornIdxWriter {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.file.seek(pos)
+        }
+    }
+
+    impl crate::storage::needle_map::IdxFileWriter for TornIdxWriter {
+        fn sync_all(&self) -> io::Result<()> {
+            self.file.sync_all()
+        }
+
+        fn truncate_to(&mut self, len: u64) -> io::Result<()> {
+            if self.fail_truncates {
+                return Err(io::Error::other("injected trim failure"));
+            }
+            self.file.set_len(len)
+        }
+    }
+
+    /// A durable entry whose index update fails stops the volume taking
+    /// writes, as it does when sent on its own, so the entries after it in
+    /// the run are refused instead of indexed behind a row that may be
+    /// torn. Entries before it stay acked.
+    #[test]
+    fn test_grouped_failed_durable_index_refuses_rest_of_run() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+        let mut kept = batch_needle(4, 0xdd, b"kept");
+        v.write_needle(&mut kept, true, true).unwrap();
+        let mut other = batch_needle(5, 0xee, b"other");
+        v.write_needle(&mut other, true, true).unwrap();
+
+        let nm = v.nm.as_mut().unwrap();
+        let idx_len = nm.index_file_size();
+        let file = OpenOptions::new()
+            .write(true)
+            .open(format!("{dir}/1.idx"))
+            .unwrap();
+        nm.set_idx_file(
+            Box::new(TornIdxWriter {
+                file,
+                writes: 0,
+                tear_at: 2,
+                fail_truncates: false,
+            }),
+            idx_len,
+        );
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"before"), true),
+            (batch_needle(2, 0xbb, b"torn"), true),
+            (batch_needle(3, 0xcc, b"after"), true),
+            (batch_needle(4, 0xdd, b"kept"), true),
+            (batch_needle(5, 0xef, b"wrong cookie"), true),
+        ];
+        let results = v.write_needles_grouped(&mut writes);
+        // Two setup writes, then the run's one sync of each file.
+        assert_eq!(v.sync_counts_for_test(), (3, 3));
+        assert!(v.is_read_only());
+        drop(v);
+
+        let reopened = match Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        ) {
+            Ok(v) => v,
+            Err(e) => panic!("the volume does not reload: {e}"),
+        };
+        for ((n, _), r) in writes.iter().zip(&results) {
+            if r.is_ok() {
+                let mut got = Needle {
+                    id: n.id,
+                    ..Needle::default()
+                };
+                let read = reopened.read_needle(&mut got);
+                assert!(
+                    read.is_ok() && got.data == n.data,
+                    "acked write {} lost on reload: {read:?}",
+                    n.id.0
+                );
+            }
+        }
+
+        assert!(matches!(results[0], Ok((_, _, false))), "{results:?}");
+        assert!(matches!(results[1], Err(VolumeError::Io(_))), "{results:?}");
+        for r in &results[2..] {
+            assert!(
+                matches!(r, Err(VolumeError::ReadOnly(VolumeId(1)))),
+                "refused as it would be sent on its own: {results:?}"
+            );
+        }
+    }
+
+    /// A torn .idx row is trimmed back, so the row a later write appends
+    /// still lands aligned and survives a reload.
+    #[test]
+    fn test_failed_index_write_is_trimmed() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let nm = v.nm.as_mut().unwrap();
+        let idx_len = nm.index_file_size();
+        let file = OpenOptions::new()
+            .write(true)
+            .open(format!("{dir}/1.idx"))
+            .unwrap();
+        nm.set_idx_file(
+            Box::new(TornIdxWriter {
+                file,
+                writes: 0,
+                tear_at: 1,
+                fail_truncates: false,
+            }),
+            idx_len,
+        );
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"torn"), false),
+            (batch_needle(2, 0xbb, b"after"), true),
+        ];
+        let results = v.write_needles_grouped(&mut writes);
+        assert!(matches!(results[0], Err(VolumeError::Io(_))), "{results:?}");
+        assert!(matches!(results[1], Ok((_, _, false))), "{results:?}");
+        drop(v);
+
+        let reopened = match Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        ) {
+            Ok(v) => v,
+            Err(e) => panic!("the volume does not reload: {e}"),
+        };
+        let mut got = Needle {
+            id: NeedleId(2),
+            ..Needle::default()
+        };
+        reopened.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"after");
+    }
+
+    /// When the trim of a torn .idx row itself fails, no later row is
+    /// appended after the torn bytes.
+    #[test]
+    fn test_untrimmed_torn_row_refuses_later_appends() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let nm = v.nm.as_mut().unwrap();
+        let idx_len = nm.index_file_size();
+        let file = OpenOptions::new()
+            .write(true)
+            .open(format!("{dir}/1.idx"))
+            .unwrap();
+        nm.set_idx_file(
+            Box::new(TornIdxWriter {
+                file,
+                writes: 0,
+                tear_at: 1,
+                fail_truncates: true,
+            }),
+            idx_len,
+        );
+
+        let mut writes = vec![
+            (batch_needle(1, 0xaa, b"torn"), false),
+            (batch_needle(2, 0xbb, b"after"), false),
+        ];
+        let results = v.write_needles_grouped(&mut writes);
+        assert!(matches!(results[0], Err(VolumeError::Io(_))), "{results:?}");
+        assert!(results[1].is_err(), "{results:?}");
+
+        // The second row was never appended behind the torn bytes.
+        let size = std::fs::metadata(format!("{dir}/1.idx")).unwrap().len();
+        assert_eq!(size, idx_len + 8);
     }
 
     /// The I/O error streak after writing four durable needles, the ones in

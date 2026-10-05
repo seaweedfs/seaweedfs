@@ -262,8 +262,9 @@ func TestClearReadOnly(t *testing.T) {
 type fakeFilerConfClient struct {
 	filer_pb.SeaweedFilerClient
 
-	mu      sync.Mutex
-	entries map[string]*filer_pb.Entry // key: dir+"/"+name
+	mu          sync.Mutex
+	entries     map[string]*filer_pb.Entry // key: dir+"/"+name
+	updateCalls int
 }
 
 func newFakeFilerConfClient() *fakeFilerConfClient {
@@ -310,6 +311,7 @@ func (c *fakeFilerConfClient) CreateEntry(_ context.Context, in *filer_pb.Create
 func (c *fakeFilerConfClient) UpdateEntry(_ context.Context, in *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.updateCalls++
 	key := c.key(in.Directory, in.Entry.Name)
 	if !conditionHoldsLocked(in.Condition, c.entries[key]) {
 		return nil, errors.New("precondition failed")

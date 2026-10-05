@@ -38,6 +38,20 @@ service SeaweedIdentityAccessManagement {
     rpc GetServiceAccount (GetServiceAccountRequest) returns (GetServiceAccountResponse);
     rpc ListServiceAccounts (ListServiceAccountsRequest) returns (ListServiceAccountsResponse);
     rpc GetServiceAccountByAccessKey (GetServiceAccountByAccessKeyRequest) returns (GetServiceAccountByAccessKeyResponse);
+
+    // OIDC Provider Management. Writes the records the S3 servers' STS trusts
+    // when they run with "oidcProviderStore": {"storeType": "filer"}.
+    rpc PutOIDCProvider (PutOIDCProviderRequest) returns (PutOIDCProviderResponse);
+    rpc GetOIDCProvider (GetOIDCProviderRequest) returns (GetOIDCProviderResponse);
+    rpc DeleteOIDCProvider (DeleteOIDCProviderRequest) returns (DeleteOIDCProviderResponse);
+    rpc ListOIDCProviders (ListOIDCProvidersRequest) returns (ListOIDCProvidersResponse);
+
+    // Role Management. Writes the roles the S3 servers' STS assumes when they
+    // run with "roleStore": {"storeType": "filer"}.
+    rpc PutRole (PutRoleRequest) returns (PutRoleResponse);
+    rpc GetRole (GetRoleRequest) returns (GetRoleResponse);
+    rpc DeleteRole (DeleteRoleRequest) returns (DeleteRoleResponse);
+    rpc ListRoles (ListRolesRequest) returns (ListRolesResponse);
 }
 
 //////////////////////////////////////////////////
@@ -305,6 +319,99 @@ message GetServiceAccountByAccessKeyResponse {
     ServiceAccount service_account = 1;
 }
 
+
+//////////////////////////////////////////////////
+// OIDC Provider Messages
+
+message OIDCProvider {
+    string issuer_url = 1;
+    repeated string client_ids = 2;
+    repeated string thumbprints = 3;
+    // account_id scopes the provider; empty means global. The ARN is derived
+    // from it and the issuer URL.
+    string account_id = 4;
+    string arn = 5; // output only
+}
+
+// PutOIDCProviderRequest creates the provider, or replaces the client IDs and
+// thumbprints of an existing one.
+message PutOIDCProviderRequest {
+    string issuer_url = 1;
+    repeated string client_ids = 2;
+    repeated string thumbprints = 3;
+    string account_id = 4;
+}
+
+message PutOIDCProviderResponse {
+    string arn = 1;
+}
+
+message GetOIDCProviderRequest {
+    string issuer_url = 1;
+    string account_id = 2;
+}
+
+message GetOIDCProviderResponse {
+    OIDCProvider provider = 1;
+}
+
+message DeleteOIDCProviderRequest {
+    string issuer_url = 1;
+    string account_id = 2;
+}
+
+message DeleteOIDCProviderResponse {
+}
+
+message ListOIDCProvidersRequest {
+}
+
+message ListOIDCProvidersResponse {
+    repeated OIDCProvider providers = 1;
+}
+
+//////////////////////////////////////////////////
+// Role Messages
+
+message Role {
+    string role_name = 1;
+    string role_arn = 2; // defaults to arn:aws:iam::role/<role_name>
+    string trust_policy = 3; // JSON trust policy document
+    repeated string attached_policies = 4; // managed policy names
+    string description = 5;
+    int64 max_session_duration = 6; // seconds; 0 uses the STS default
+}
+
+// PutRoleRequest creates the role or replaces it.
+message PutRoleRequest {
+    Role role = 1;
+}
+
+message PutRoleResponse {
+    string role_arn = 1;
+}
+
+message GetRoleRequest {
+    string role_name = 1;
+}
+
+message GetRoleResponse {
+    Role role = 1;
+}
+
+message DeleteRoleRequest {
+    string role_name = 1;
+}
+
+message DeleteRoleResponse {
+}
+
+message ListRolesRequest {
+}
+
+message ListRolesResponse {
+    repeated Role roles = 1;
+}
 
 //////////////////////////////////////////////////
 // S3 IAM Cache Management

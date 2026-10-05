@@ -380,15 +380,6 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 	})
 }
 
-func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64, refreshUrls util_http.RefreshUrlsFunc) (int, error) {
-	urlStrings, err := lookupFileIdFn(ctx, fileId)
-	if err != nil {
-		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
-		return 0, err
-	}
-	return util_http.RetriedFetchChunkData(ctx, buffer, urlStrings, cipherKey, isGzipped, false, offset, fileId, refreshUrls)
-}
-
 // retriedStreamFetchChunkData streams a chunk from the first location that
 // answers. refreshUrls may be nil; when a location failed and a later one
 // answered, it is called so the reads that follow start from a fresh list.
