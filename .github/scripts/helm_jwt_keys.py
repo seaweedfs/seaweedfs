@@ -59,6 +59,7 @@ def fixtures():
         + f'] # original table\nkey = "{value}"'
         for section, value in KEYS.items()
     )
+    yield "unrelated quoted header before JWT keys", '["custom section"]\nkey = "other"\n' + canonical
     yield "brackets in comments", canonical.replace("key =", "# consult [notes]\nkey =")
     yield "quoted values and quoted key names", "\n".join((
         '[jwt.signing]\n"key" = "brackets[inside]#value"',

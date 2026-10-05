@@ -460,7 +460,7 @@ true
   {{- $parts = append $parts (printf `(?:%s|"%s"|'%s')` $escaped $escaped $escaped) -}}
 {{- end -}}
 {{- $header := printf `^\[[ \t]*%s[ \t]*\][ \t]*(#.*)?$` (join `[ \t]*\.[ \t]*` $parts) -}}
-{{- $segment := `(?:[A-Za-z0-9_-]+|"[A-Za-z0-9_-]+"|'[A-Za-z0-9_-]+')` -}}
+{{- $segment := `(?:[A-Za-z0-9_-]+|"[^"\\]*"|'[^']*')` -}}
 {{- $simpleHeader := printf `^\[[ \t]*%s(?:[ \t]*\.[ \t]*%s)*[ \t]*\][ \t]*(#.*)?$` $segment $segment -}}
 {{- $assignment := `^(key|"key"|'key')[ \t]*=[ \t]*` -}}
 {{- $string := `"([^"\\]|\\.)*"|'[^']*'` -}}
