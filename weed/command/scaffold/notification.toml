@@ -20,6 +20,7 @@ hosts = [
     "localhost:9092"
 ]
 topic = "seaweedfs_filer"
+# event_types = ["create", "update", "delete", "rename"]  # optional: filter by event types (default: all)
 offsetFile = "./last.offset"
 offsetSaveIntervalSeconds = 10
 # SASL Authentication
