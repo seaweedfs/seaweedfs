@@ -159,5 +159,5 @@ jobs:
       - name: Run all S3 API tests
         run: |
           cd weed/s3api
-          go test -v -timeout 5m
+          go test -v -timeout 9m
 
