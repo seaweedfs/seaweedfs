@@ -1925,10 +1925,12 @@ jobs:
 
       - name: Verify JWT signing key persistence across upgrades
         run: |
-          python3 -m pip install tomli==2.2.1
+          # chart-testing puts its pip-less venv first on PATH; use setup-python.
+          PYTHON="$pythonLocation/bin/python3"
+          "$PYTHON" -m pip install tomli==2.2.1
           CONTEXT=$(kubectl config current-context)
-          python3 .github/scripts/helm_jwt_keys.py --context "$CONTEXT"
-          python3 .github/scripts/helm_jwt_keys.py --helm "$HELM_LEGACY" \
+          "$PYTHON" .github/scripts/helm_jwt_keys.py --context "$CONTEXT"
+          "$PYTHON" .github/scripts/helm_jwt_keys.py --helm "$HELM_LEGACY" \
             --reference-helm helm --context "$CONTEXT"
 
       - name: Verify install into a default-deny namespace
