@@ -58,13 +58,8 @@ func (w *responseWriter) beginWrite() {
 	}
 }
 
-// Write sets the deadline before the first body write.
-func (w *responseWriter) Write(data []byte) (int, error) {
-	w.beginWrite()
-	return w.ResponseWriter.Write(data)
-}
-
-// WriteHeader prevents downstream caching of protocol errors, including 412 and 416.
+// WriteHeader starts the write budget and prevents caching protocol errors, including 412 and 416.
+// Every response path commits its status before writing bytes through the embedded writer.
 func (w *responseWriter) WriteHeader(status int) {
 	w.beginWrite()
 	if status >= 400 {
@@ -251,9 +246,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Derive validators, lengths, and ranges from the output bytes. Serve on
-	// the inner writer so the content type is attached to the body writer.
-	rw := wrapped.ResponseWriter
+	// Keep the status hook for protocol errors; body writes use the embedded writer directly.
+	// Attach output metadata to that same writer before ServeContent sends the response.
+	rw := wrapped
 	rw.Header().Set("Content-Type", image.contentType)
 	rw.Header().Set("ETag", image.etag)
 	wrapped.beginWrite()
@@ -282,9 +277,9 @@ func safeObjectPath(value string) bool {
 	return false
 }
 
-// allowedSourceType permits only media types browsers cannot execute as documents.
+// allowedSourceType excludes XML documents, including custom image subtypes that can contain scripts.
 func allowedSourceType(mediaType string) bool {
-	if mediaType == "image/svg+xml" {
+	if strings.HasSuffix(mediaType, "+xml") {
 		return false
 	}
 	return strings.HasPrefix(mediaType, "image/") || mediaType == "application/octet-stream" || mediaType == "binary/octet-stream"
@@ -416,8 +411,10 @@ func (g *Gateway) serveOriginal(w *responseWriter, r *http.Request, source *url.
 		return
 	}
 	// Serving executable documents under this origin allows cross-site scripting.
-	mediaType, _, mediaErr := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if resp.StatusCode != 304 && (mediaErr != nil || !allowedSourceType(mediaType)) {
+	contentType := resp.Header.Get("Content-Type")
+	mediaType, _, mediaErr := mime.ParseMediaType(contentType)
+	// A 304 may omit this header, but must not replace cached metadata with an executable type.
+	if (resp.StatusCode != 304 || contentType != "") && (mediaErr != nil || !allowedSourceType(mediaType)) {
 		g.writeError(w, r, &failure{502, "source image has an unsupported media type"})
 		return
 	}
@@ -432,8 +429,8 @@ func (g *Gateway) serveOriginal(w *responseWriter, r *http.Request, source *url.
 	// Write through the inner ResponseWriter so the validated content type is
 	// visibly attached to the writer that receives the body.
 	rw := w.ResponseWriter
-	if value := resp.Header.Get("Content-Type"); value != "" {
-		rw.Header().Set("Content-Type", value)
+	if contentType != "" {
+		rw.Header().Set("Content-Type", contentType)
 	}
 	for _, key := range []string{"Content-Encoding", "Content-Length", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "x-amz-version-id"} {
 		if value := resp.Header.Get(key); value != "" {

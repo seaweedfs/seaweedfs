@@ -686,15 +686,18 @@ func TestRepeatedSlashesPreserveBucketPrefix(t *testing.T) {
 // TestOriginalMediaType checks executable documents cannot be served under this origin.
 func TestOriginalMediaType(t *testing.T) {
 	f := newFixture(t)
-	for _, mediaType := range []string{"text/html", "image/svg+xml", "image/svg+xml; bad", "application/xhtml+xml", "text/xml", ""} {
+	for _, mediaType := range []string{"text/html", "image/svg+xml", "image/svg+xml; bad", "image/x-example+xml", "image/x-example+xml; charset=utf-8", "IMAGE/X-EXAMPLE+XML", "application/xhtml+xml", "text/xml", ""} {
 		f.contentType = mediaType
-		for _, method := range []string{"GET", "HEAD"} {
-			if response := f.request(method, "/page", nil); response.Code != 502 {
-				t.Fatalf("executable source type %q was served for %s: %d", mediaType, method, response.Code)
+		for _, request := range []struct {
+			method  string
+			headers http.Header
+		}{{"GET", nil}, {"HEAD", nil}, {"GET", http.Header{"Range": {"bytes=0-0"}}}} {
+			if response := f.request(request.method, "/page", request.headers); response.Code != 502 {
+				t.Fatalf("executable source type %q was served for %s: %d", mediaType, request.method, response.Code)
 			}
 		}
 	}
-	for _, mediaType := range []string{"image/avif; codecs=\"av01.0.08M.08\"", "image/webp", "application/octet-stream"} {
+	for _, mediaType := range []string{"image/avif; codecs=\"av01.0.08M.08\"", "image/webp", "image/vnd.microsoft.icon", "application/octet-stream", "binary/octet-stream"} {
 		f.contentType = mediaType
 		response := f.request("GET", "/image.png", nil)
 		if response.Code != 200 || response.Body.String() != "original-image" {
@@ -702,6 +705,99 @@ func TestOriginalMediaType(t *testing.T) {
 		}
 		if got := response.Header().Get("Content-Type"); got != mediaType {
 			t.Fatalf("source content type %q forwarded as %q", mediaType, got)
+		}
+	}
+}
+
+// TestWriteBudgetsForOriginalAndErrors checks that status commits cover all non-encoding body paths.
+func TestWriteBudgetsForOriginalAndErrors(t *testing.T) {
+	f := newFixture(t)
+	for _, request := range []struct {
+		name, method string
+		headers      http.Header
+		status       int
+	}{
+		{"original", "GET", nil, 200},
+		{"head", "HEAD", nil, 200},
+		{"conditional", "GET", http.Header{"If-None-Match": {f.etag}}, 304},
+		{"range", "GET", http.Header{"Range": {"bytes=0-0"}}, 206},
+		{"invalid-range", "GET", http.Header{"Range": {"bytes=999-"}}, 416},
+		{"unsupported-method", "POST", nil, 405},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			w := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+			r := httptest.NewRequest(request.method, "http://untrusted-host/image.png", nil)
+			if request.headers != nil {
+				r.Header = request.headers.Clone()
+			}
+			started := time.Now()
+			f.gateway.ServeHTTP(w, r)
+			if w.Code != request.status || w.calls != 1 || w.deadline.Before(started.Add(f.gateway.config.Timeout)) {
+				t.Fatalf("response lost its full write budget: status=%d calls=%d deadline=%v", w.Code, w.calls, w.deadline)
+			}
+		})
+	}
+}
+
+// TestOriginalConditionalMediaType prevents 304 metadata from reclassifying cached bytes as executable.
+func TestOriginalConditionalMediaType(t *testing.T) {
+	f := newFixture(t)
+	var contentType atomic.Value
+	contentType.Store("")
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// net/http strips Content-Type from 304 server responses; preserve explicit backend metadata on the wire.
+		connection, buffer, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("could not write conditional backend response: %v", err)
+			return
+		}
+		defer connection.Close()
+		_, _ = fmt.Fprint(buffer, "HTTP/1.1 304 Not Modified\r\nETag: \"source-v1\"\r\nConnection: close\r\n")
+		if value := contentType.Load().(string); value != "" {
+			_, _ = fmt.Fprintf(buffer, "Content-Type: %s\r\n", value)
+		}
+		_, _ = fmt.Fprint(buffer, "\r\n")
+		if err := buffer.Flush(); err != nil {
+			t.Errorf("could not flush conditional backend response: %v", err)
+		}
+	}))
+	defer origin.Close()
+	f.gateway.source, _ = url.Parse(origin.URL)
+	for _, check := range []struct {
+		mediaType string
+		status    int
+	}{
+		{"", 304},
+		{"image/png", 304},
+		{"image/avif; codecs=\"av01.0.08M.08\"", 304},
+		{"text/html", 502},
+		{"image/x-example+xml", 502},
+		{"image/svg+xml; bad", 502},
+	} {
+		contentType.Store(check.mediaType)
+		response := f.request("GET", "/image.png", http.Header{"If-None-Match": {f.etag}})
+		if response.Code != check.status {
+			t.Fatalf("conditional type %q returned %d instead of %d", check.mediaType, response.Code, check.status)
+		}
+		if check.status == 304 && (response.Body.Len() != 0 || response.Header().Get("Content-Type") != check.mediaType) {
+			t.Fatal("safe conditional response changed its body or media type")
+		}
+	}
+}
+
+// TestProcessedErrorsDisableCaching checks standard-library precondition and range failures.
+func TestProcessedErrorsDisableCaching(t *testing.T) {
+	f := newFixture(t)
+	for _, check := range []struct {
+		headers http.Header
+		status  int
+	}{
+		{http.Header{"If-Match": {"\"other-output\""}}, 412},
+		{http.Header{"Range": {"bytes=999-"}}, 416},
+	} {
+		response := f.request("GET", imagePath(), check.headers)
+		if response.Code != check.status || response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("processed protocol error lost no-store: status=%d cache=%q", response.Code, response.Header().Get("Cache-Control"))
 		}
 	}
 }

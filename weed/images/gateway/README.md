@@ -44,6 +44,12 @@ flowchart LR
   responses use ETag validators rather than the source modification date, which
   cannot distinguish overwrites within the same second. Without a processing
   parameter the gateway reads the original image, including single byte ranges.
+- Original GET and HEAD responses reject unsupported or malformed media types,
+  including HTML and all `image/*+xml` subtypes. Non-XML image types and octet-stream
+  objects retain their original `Content-Type`, including parameters. This prevents
+  uploaded executable documents from being served under the gateway's origin.
+  A 304 may omit `Content-Type`; an explicit unsupported type is still rejected
+  so conditional responses cannot reclassify previously cached bytes.
 
 This implements a limited subset of OSS image processing parameters, rather than
 full Aliyun OSS compatibility. It runs on a separate port and does not change
