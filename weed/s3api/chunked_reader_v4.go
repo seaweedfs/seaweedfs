@@ -537,7 +537,7 @@ func parseChunkChecksum(b *bufio.Reader) (ChecksumAlgorithm, []byte, error) {
 					glog.V(3).Infof("multiple checksum headers found in trailer, using last: %s", key)
 				}
 				checksumAlgorithm = alg
-				checksum = value
+				checksum = bytes.Clone(value)
 			}
 			// Ignore other trailer headers like x-amz-trailer-signature
 		}

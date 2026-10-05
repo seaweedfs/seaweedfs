@@ -185,6 +185,15 @@ func (cv *ChunkView) IsFullChunk() bool {
 	return cv.OffsetInChunk == 0 && cv.ViewSize == cv.ChunkSize
 }
 
+// CanRangeFetch reports whether fetching just the view's byte range avoids
+// reading more than the view needs. Ciphered and compressed chunks are
+// stored and served whole — a range on either still costs a full read plus
+// decrypt or decompress on the volume server — so partial views of them
+// take the shared whole-chunk path instead.
+func (cv *ChunkView) CanRangeFetch() bool {
+	return cv.CipherKey == nil && !cv.IsGzipped
+}
+
 func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
 
 	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)

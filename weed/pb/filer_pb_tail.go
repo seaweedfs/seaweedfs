@@ -2,6 +2,7 @@ package pb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -44,7 +45,22 @@ type MetadataFollowOption struct {
 	// a freshness signal only and does not advance StartTsNs, so the resume
 	// checkpoint stays on the last real event.
 	OnIdleHeartbeat func(tsNs int64)
+	// GetResumeTsNs, when non-nil, supplies the reconnect position instead of
+	// StartTsNs. It is read on every subscribe, so a callback can return the
+	// durably processed watermark while StartTsNs keeps tracking positions the
+	// stream has merely seen.
+	GetResumeTsNs func() int64
+	// Resubscribe, when closed, drops the stream with ErrResubscribe so the
+	// caller's reconnect loop resubscribes from GetResumeTsNs and replays the
+	// events still pinning the processed watermark. Target-side job failures
+	// never surface on this stream, so without it a pinned event waits for an
+	// unrelated source-stream reconnect (or a restart) to be replayed.
+	Resubscribe <-chan struct{}
 }
+
+// ErrResubscribe ends a metadata follow when the consumer asked for the
+// stream to drop so the reconnect replays what the resume watermark pins.
+var ErrResubscribe = errors.New("resubscribe to replay events behind the failed offset")
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
@@ -71,12 +87,16 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		sinceNs := option.StartTsNs
+		if option.GetResumeTsNs != nil {
+			sinceNs = option.GetResumeTsNs()
+		}
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   option.ClientName,
 			PathPrefix:                   option.PathPrefix,
 			PathPrefixes:                 option.AdditionalPathPrefixes,
 			Directories:                  option.DirectoriesToWatch,
-			SinceNs:                      option.StartTsNs,
+			SinceNs:                      sinceNs,
 			Signature:                    option.SelfSignature,
 			ClientId:                     option.ClientId,
 			ClientEpoch:                  option.ClientEpoch,
@@ -89,6 +109,16 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			return fmt.Errorf("subscribe: %w", err)
 		}
 
+		if option.Resubscribe != nil {
+			go func() {
+				select {
+				case <-option.Resubscribe:
+					cancel()
+				case <-ctx.Done():
+				}
+			}()
+		}
+
 		handleErr := func(resp *filer_pb.SubscribeMetadataResponse, err error) {
 			switch option.EventErrorType {
 			case TrivialOnError:
@@ -96,12 +126,21 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			case FatalOnError:
 				glog.Fatalf("process %v: %v", resp, err)
 			case RetryForeverOnError:
-				util.RetryUntil("followMetaUpdates", func() error {
-					return processEventFn(resp)
-				}, func(err error) bool {
-					glog.Errorf("process %v: %v", resp, err)
-					return true
-				})
+				waitTime := time.Second
+				for ctx.Err() == nil {
+					if err := processEventFn(resp); err == nil {
+						break
+					} else {
+						glog.Errorf("process %v: %v", resp, err)
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(waitTime):
+					}
+					if waitTime < util.RetryWaitTime {
+						waitTime += waitTime / 2
+					}
+				}
 			case DontLogError:
 				// pass
 			default:
@@ -121,16 +160,31 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 					option.OnIdleHeartbeat(resp.TsNs)
 				}
 				// The marker advances the resume cursor past the filtered range; the
-				// heartbeat leaves StartTsNs put so a restart cannot outrun a straggler.
+				// heartbeat leaves it put so a restart cannot outrun a straggler. A
+				// consumer with a resume callback keeps its cursor in its processed
+				// watermark, so it sees the marker instead.
 				if resp.EventNotification != nil && resp.TsNs > 0 {
-					option.StartTsNs = resp.TsNs
+					if option.GetResumeTsNs != nil {
+						if err := processEventFn(resp); err != nil {
+							handleErr(resp, err)
+						}
+					} else {
+						option.StartTsNs = resp.TsNs
+					}
 				}
 				return
 			}
 			if err := processEventFn(resp); err != nil {
 				handleErr(resp, err)
+				// RetryForeverOnError only returns once the event was handled;
+				// other modes leave it failed and the cursor stays behind it.
+				if option.EventErrorType != RetryForeverOnError {
+					return
+				}
 			}
-			option.StartTsNs = resp.TsNs
+			if option.GetResumeTsNs == nil {
+				option.StartTsNs = resp.TsNs
+			}
 		}
 
 		var pendingRefs []*filer_pb.LogFileChunkRef
@@ -145,8 +199,15 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			if len(pendingRefs) == 0 || option.LogFileReaderFn == nil {
 				return nil
 			}
+			readFromNs := option.StartTsNs
+			if option.GetResumeTsNs != nil {
+				// The resume cursor lives in the processed watermark, so a
+				// resubscribed ref replay must not be filtered by positions the
+				// previous stream had only seen.
+				readFromNs = sinceNs
+			}
 			lastTs, readErr := ReadLogFileRefs(pendingRefs, option.LogFileReaderFn,
-				option.StartTsNs, option.StopTsNs,
+				readFromNs, option.StopTsNs,
 				PathFilter{
 					PathPrefix:             option.PathPrefix,
 					AdditionalPathPrefixes: option.AdditionalPathPrefixes,
@@ -156,7 +217,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			if readErr != nil {
 				return fmt.Errorf("%w: %w", ErrLogFileRead, readErr)
 			}
-			if lastTs > 0 {
+			if lastTs > 0 && option.GetResumeTsNs == nil {
 				option.StartTsNs = lastTs
 			}
 			pendingRefs = nil
@@ -169,6 +230,11 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				return drainPendingRefs()
 			}
 			if listenErr != nil {
+				select {
+				case <-option.Resubscribe:
+					return ErrResubscribe
+				default:
+				}
 				return listenErr
 			}
 

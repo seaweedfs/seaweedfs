@@ -83,6 +83,11 @@ fn merge_ec_journal_with(
             publish_to_journal_siblings(&store, primary, vid, &journal_path, ids);
             return Ok(added);
         }
+        // The path append registers as a writer so a mount compacting this
+        // journal cannot swap its inode underneath it (the write itself is
+        // already serialized with mounts by the store lock).
+        let _ecj_write =
+            crate::storage::erasure_coding::ecj_registry::begin_ecj_write(ecj_path);
         if let Some(added) = append_ecj_ids(ecj_path, &local, ids, size)? {
             return Ok(added);
         }

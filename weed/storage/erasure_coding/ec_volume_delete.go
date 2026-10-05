@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -107,6 +108,41 @@ func (ev *EcVolume) appendJournalLocked(b []byte) error {
 		return fmt.Errorf("sync ecj: %w", syncErr)
 	}
 	ev.ecjFileSize += int64(n)
+	return nil
+}
+
+// LockDeletionJournal serializes the caller against runtime .ecj appends
+// (DeleteNeedleFromEcx) until the returned func is called. Decode holds it
+// while consuming the journal into the rebuilt index so a committed delete
+// cannot slip past the publish.
+func (ev *EcVolume) LockDeletionJournal() func() {
+	ev.ecjFileAccessLock.Lock()
+	return ev.ecjFileAccessLock.Unlock
+}
+
+// ReopenDeletionJournal repoints ecjFile at the live .ecj path after
+// RebuildEcxFile unlinked it. Without this, later DeleteNeedleFromEcx
+// appends keep landing on the detached inode — synced, successful, and
+// invisible to every path-based reader. Caller must hold the journal lock
+// (see LockDeletionJournal).
+func (ev *EcVolume) ReopenDeletionJournal() error {
+	if ev.ecjFile != nil {
+		_ = ev.ecjFile.Close()
+		ev.ecjFile = nil
+	}
+	ecjFile, err := backend.OpenVolumeFile(ev.FileName(".ecj"), os.O_RDWR|os.O_CREATE)
+	if err != nil {
+		return fmt.Errorf("reopen ec volume journal %s: %w", ev.FileName(".ecj"), err)
+	}
+	ev.ecjFile = ecjFile
+	// A successful RebuildEcxFile leaves the path unlinked, so this is a
+	// fresh empty file — but track whatever is actually there so the
+	// rollback truncate in DeleteNeedleFromEcx can never wipe real records.
+	if fi, statErr := ecjFile.Stat(); statErr == nil {
+		ev.ecjFileSize = fi.Size()
+	} else {
+		ev.ecjFileSize = 0
+	}
 	return nil
 }
 

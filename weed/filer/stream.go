@@ -85,14 +85,16 @@ func isSameChunks(a, b []*filer_pb.FileChunk) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	slices.SortFunc(a, func(i, j *filer_pb.FileChunk) int {
+	sortedA := slices.Clone(a)
+	sortedB := slices.Clone(b)
+	slices.SortFunc(sortedA, func(i, j *filer_pb.FileChunk) int {
 		return strings.Compare(i.ETag, j.ETag)
 	})
-	slices.SortFunc(b, func(i, j *filer_pb.FileChunk) int {
+	slices.SortFunc(sortedB, func(i, j *filer_pb.FileChunk) int {
 		return strings.Compare(i.ETag, j.ETag)
 	})
-	for i := 0; i < len(a); i++ {
-		if a[i].ETag != b[i].ETag {
+	for i := 0; i < len(sortedA); i++ {
+		if sortedA[i].ETag != sortedB[i].ETag {
 			return false
 		}
 	}

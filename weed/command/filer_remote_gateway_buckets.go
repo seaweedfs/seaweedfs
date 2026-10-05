@@ -64,6 +64,10 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 		StartTsNs:              lastOffsetTs.UnixNano(),
 		StopTsNs:               0,
 		EventErrorType:         pb.RetryForeverOnError,
+		GetResumeTsNs: func() int64 {
+			return processor.processedTsWatermark.Load()
+		},
+		Resubscribe: processor.ResubscribeCh(),
 	}
 
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)

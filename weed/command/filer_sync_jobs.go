@@ -16,6 +16,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// maxFailedSyncEvents bounds the failedTs ledger. A destination rejecting
+// every event would otherwise add an entry per source event for the life of
+// the processor.
+var maxFailedSyncEvents = 1 << 16
+
 // tsMinHeap implements heap.Interface for int64 timestamps.
 type tsMinHeap []int64
 
@@ -60,6 +65,16 @@ type syncJobPaths struct {
 	dataSize int64
 }
 
+// failedEventKey identifies an event for the failure ledger. A timestamp alone
+// is not unique across events, so a success for one event must not clear an
+// unresolved failure recorded for a different event at the same TsNs.
+type failedEventKey struct {
+	tsNs    int64
+	path    util.FullPath
+	newPath util.FullPath
+	kind    jobKind
+}
+
 // syncStreamMetrics holds the metric children for one sync stream, curried
 // once so per-event updates skip the label lookup.
 type syncStreamMetrics struct {
@@ -74,12 +89,18 @@ type syncStreamMetrics struct {
 }
 
 type MetadataProcessor struct {
-	activeJobs           map[int64]*syncJobPaths
+	// activeJobCount is the number of in-flight jobs and activeJobTs counts
+	// them per event timestamp. Several events can share a TsNs — batched
+	// writes log together — so a single slot per TsNs would drain early and
+	// let the resubscribe or the watermark outrun a sibling still running.
+	activeJobCount       int
+	activeJobTs          map[int64]int
 	activeJobsLock       sync.Mutex
 	activeJobsCond       *sync.Cond
 	concurrencyLimit     int
 	fn                   pb.ProcessMetadataFunc
 	processedTsWatermark atomic.Int64
+	filteredTsNs         int64
 
 	// Indexes for O(depth) conflict detection, replacing O(n) linear scan.
 	// activeFilePaths counts active file jobs at each exact path.
@@ -105,11 +126,34 @@ type MetadataProcessor struct {
 	// used for O(log n) amortized watermark tracking.
 	tsHeap tsMinHeap
 
-	// oldestFailedTsNs is the timestamp of the oldest event whose job returned
-	// an error, or 0 when none has. The watermark is never advanced to it or
-	// past it, so the persisted sync offset stays behind the failure and a
-	// restart replays the event instead of skipping it forever.
+	// failedTs records every event whose job returned an error and has not
+	// since completed, and oldestFailedTsNs caches its minimum (0 when empty).
+	// The watermark is never advanced to it or past it, so the persisted sync
+	// offset stays behind the failure and a restart replays the event instead
+	// of skipping it forever. Past maxFailedSyncEvents the set collapses to a
+	// sticky pin at the smallest failure seen: replay from the oldest failure
+	// still works, but individual recoveries no longer unpin until a restart.
+	failedTs         map[failedEventKey]struct{}
+	failedSticky     bool
 	oldestFailedTsNs int64
+
+	// resubscribeCh closes once a failure has stopped the processor and all
+	// in-flight jobs have drained, asking the metadata follower to drop the
+	// stream so the caller's reconnect replays the pinned events in order —
+	// and never races the replay against work still running in this abandoned
+	// processor.
+	resubscribeCh   chan struct{}
+	resubscribeOnce sync.Once
+
+	// stopped latches when a job failure pins the watermark. Admission then
+	// drops new events instead of queueing them into a processor that is about
+	// to be abandoned: every skipped event replays from the pinned watermark
+	// after the reconnect, and on a stream that never goes quiet the drain —
+	// and with it the replay — would otherwise never come. The cond broadcast
+	// releases a blocked AddSyncJob. A redelivery of an event still in
+	// failedTs is the one exception: it may run so its success shrinks the
+	// replay.
+	stopped bool
 
 	// metrics is nil for callers that do not report per-event metrics.
 	metrics *syncStreamMetrics
@@ -118,12 +162,14 @@ type MetadataProcessor struct {
 func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs int64) *MetadataProcessor {
 	t := &MetadataProcessor{
 		fn:                       fn,
-		activeJobs:               make(map[int64]*syncJobPaths),
+		activeJobTs:              make(map[int64]int),
 		concurrencyLimit:         concurrency,
 		activeFilePaths:          make(map[util.FullPath]int),
 		activeBarrierDirPaths:    make(map[util.FullPath]int),
 		activeNonBarrierDirPaths: make(map[util.FullPath]int),
 		descendantCount:          make(map[util.FullPath]int),
+		failedTs:                 make(map[failedEventKey]struct{}),
+		resubscribeCh:            make(chan struct{}),
 	}
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
@@ -151,6 +197,13 @@ func (t *MetadataProcessor) OldestFailedTsNs() int64 {
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
 	return t.oldestFailedTsNs
+}
+
+// ResubscribeCh closes once a job failure has stopped the processor and its
+// in-flight jobs have drained, signaling the metadata follower to drop the
+// stream so a reconnect replays what the watermark still covers.
+func (t *MetadataProcessor) ResubscribeCh() <-chan struct{} {
+	return t.resubscribeCh
 }
 
 // pathAncestors returns all proper ancestor directories of p.
@@ -281,29 +334,65 @@ func (t *MetadataProcessor) conflictsWith(resp *filer_pb.SubscribeMetadataRespon
 
 func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse) {
 	if filer_pb.IsEmpty(resp) {
+		// A filtered-progress marker means the source skipped everything below
+		// it for us; once all earlier work has finished, the watermark can move
+		// to it so idle stretches still advance the resume point.
+		t.activeJobsLock.Lock()
+		defer t.activeJobsLock.Unlock()
+		if resp.TsNs > t.filteredTsNs {
+			t.filteredTsNs = resp.TsNs
+		}
+		if t.activeJobCount == 0 && resp.TsNs > t.processedTsWatermark.Load() &&
+			(t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs) {
+			t.processedTsWatermark.Store(resp.TsNs)
+		}
 		return
 	}
 
 	dataSize := eventDataSize(resp)
 
-	// counted before the admission wait: received-processed-failed is the
-	// number of events read off the stream but not yet done
+	t.activeJobsLock.Lock()
+	defer t.activeJobsLock.Unlock()
+
+	p, newPath, kind := extractJobInfo(resp)
+	eventKey := failedEventKey{tsNs: resp.TsNs, path: p, newPath: newPath, kind: kind}
+
+	for t.activeJobCount >= t.concurrencyLimit || t.conflictsWith(resp) {
+		// A stopped processor never queues: an event that cannot start drops
+		// and replays in order after the resubscribe.
+		if t.stopped {
+			return
+		}
+		t.activeJobsCond.Wait()
+	}
+	if t.stopped {
+		select {
+		case <-t.resubscribeCh:
+			// Already drained and signaled: nothing may start now, or it would
+			// race the replay the signal just asked for.
+			return
+		default:
+		}
+		// The one event still worth running is a failure still pinning the
+		// watermark, redelivered on this stream: its success clears the ledger
+		// entry and shrinks the replay. Everything else replays anyway.
+		if _, pinned := t.failedTs[eventKey]; !pinned {
+			return
+		}
+	}
+
+	// counted once admitted: received-processed-failed is the number of events
+	// this processor read but has not finished. A dropped event is not counted
+	// here — the replay's own admission counts it.
 	if t.metrics != nil {
 		t.metrics.received.Inc()
 		t.metrics.receivedBytes.Add(float64(dataSize))
 	}
 
-	t.activeJobsLock.Lock()
-	defer t.activeJobsLock.Unlock()
-
-	for len(t.activeJobs) >= t.concurrencyLimit || t.conflictsWith(resp) {
-		t.activeJobsCond.Wait()
-	}
-
-	p, newPath, kind := extractJobInfo(resp)
 	jobPaths := &syncJobPaths{path: p, newPath: newPath, kind: kind, dataSize: dataSize}
 
-	t.activeJobs[resp.TsNs] = jobPaths
+	t.activeJobCount++
+	t.activeJobTs[resp.TsNs]++
 	t.addPathToIndex(p, kind)
 	if newPath != "" {
 		t.addPathToIndex(newPath, kind)
@@ -327,16 +416,55 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
 
+		failedKey := failedEventKey{tsNs: resp.TsNs, path: jobPaths.path, newPath: jobPaths.newPath, kind: jobPaths.kind}
 		if jobErr != nil {
-			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
-				t.oldestFailedTsNs = resp.TsNs
-				glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
-			} else {
+			// Latch the stop the moment a failure lands: events behind the pin
+			// replay after the resubscribe anyway, and a stream that never goes
+			// quiet would otherwise keep the active count above zero so the
+			// failure stays pinned until an unrelated reconnect — the wait this
+			// whole mechanism exists to remove.
+			t.stopped = true
+			t.activeJobsCond.Broadcast()
+			if t.failedSticky {
+				if resp.TsNs < t.oldestFailedTsNs {
+					t.oldestFailedTsNs = resp.TsNs
+				}
 				glog.Errorf("process %v: %v", resp, jobErr)
+			} else if _, recorded := t.failedTs[failedKey]; !recorded {
+				if len(t.failedTs) >= maxFailedSyncEvents {
+					t.failedSticky = true
+					t.failedTs = nil
+					if resp.TsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = resp.TsNs
+					}
+					glog.Warningf("process %v: %v; over %d unresolved failures, pinning sync offset at %v until restart", resp, jobErr, maxFailedSyncEvents, time.Unix(0, t.oldestFailedTsNs))
+				} else {
+					t.failedTs[failedKey] = struct{}{}
+					if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = resp.TsNs
+						glog.Errorf("process %v: %v; holding sync offset at %v so this event is replayed on restart", resp, jobErr, time.Unix(0, resp.TsNs))
+					} else {
+						glog.Errorf("process %v: %v", resp, jobErr)
+					}
+				}
+			}
+		} else if _, recorded := t.failedTs[failedKey]; recorded {
+			delete(t.failedTs, failedKey)
+			if resp.TsNs == t.oldestFailedTsNs {
+				t.oldestFailedTsNs = 0
+				for k := range t.failedTs {
+					if t.oldestFailedTsNs == 0 || k.tsNs < t.oldestFailedTsNs {
+						t.oldestFailedTsNs = k.tsNs
+					}
+				}
 			}
 		}
 
-		delete(t.activeJobs, resp.TsNs)
+		t.activeJobCount--
+		t.activeJobTs[resp.TsNs]--
+		if t.activeJobTs[resp.TsNs] == 0 {
+			delete(t.activeJobTs, resp.TsNs)
+		}
 		t.removePathFromIndex(jobPaths.path, jobPaths.kind)
 		if jobPaths.newPath != "" {
 			t.removePathFromIndex(jobPaths.newPath, jobPaths.kind)
@@ -356,7 +484,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		// Lazy-clean stale entries from heap top (already-completed jobs).
 		// Each entry is pushed once and popped once: O(log n) amortized.
 		for t.tsHeap.Len() > 0 {
-			if _, active := t.activeJobs[t.tsHeap[0]]; active {
+			if t.activeJobTs[t.tsHeap[0]] > 0 {
 				break
 			}
 			heap.Pop(&t.tsHeap)
@@ -368,6 +496,15 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			if t.oldestFailedTsNs == 0 || resp.TsNs < t.oldestFailedTsNs {
 				t.processedTsWatermark.Store(resp.TsNs)
 			}
+		}
+		if t.activeJobCount == 0 && t.filteredTsNs > t.processedTsWatermark.Load() &&
+			(t.oldestFailedTsNs == 0 || t.filteredTsNs < t.oldestFailedTsNs) {
+			t.processedTsWatermark.Store(t.filteredTsNs)
+		}
+		// Signal once the stop has drained: even if a redelivery cleared the
+		// pin, events dropped while stopped still have to replay.
+		if t.stopped && t.activeJobCount == 0 {
+			t.resubscribeOnce.Do(func() { close(t.resubscribeCh) })
 		}
 		t.activeJobsCond.Signal()
 	}()

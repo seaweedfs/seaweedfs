@@ -39,6 +39,9 @@ var transientErrorMessages = []string{
 	"requesttimeout",
 	"slowdown",
 	"throttling",
+	"ratelimitexceeded",
+	"rate limit",
+	"too many requests",
 	"internalerror",
 	"resourceexhausted",
 	"unavailable",
@@ -92,6 +95,9 @@ func IsTransientError(err error) bool {
 		return true
 	}
 	if st, ok := ServerStatus(err); ok {
+		if st.Code() == codes.Canceled {
+			return strings.Contains(st.Message(), "the client connection is closing")
+		}
 		return st.Code() == codes.Unavailable || st.Code() == codes.ResourceExhausted ||
 			IsTransientErrorMessage(st.Message())
 	}

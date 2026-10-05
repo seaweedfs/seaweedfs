@@ -2,7 +2,10 @@ package pb
 
 import (
 	"context"
+	"errors"
 	"io"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -60,8 +63,9 @@ func TestFilerSyncOffsetStaysFreshOnFilteredMarker(t *testing.T) {
 	var timeline []gaugeWrite
 	var heartbeatCalls, markerToProcessFn int
 
-	// AddSyncJob drops empty events and does not advance the watermark; the real
-	// processor is checked in command.TestMetadataProcessorEmptyMarkerKeepsWatermarkStale.
+	// This consumer sets no resume callback, so markers keep moving StartTsNs
+	// and never reach processEventFn; the callback path is checked in
+	// TestFilerSyncMarkerReachesCallbackConsumer.
 	realProcessFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		if filer_pb.IsEmpty(resp) {
 			markerToProcessFn++
@@ -190,5 +194,296 @@ func TestFilerSyncBatchedFreshnessSignalDoesNotCrash(t *testing.T) {
 	// it is last and carries the largest timestamp. StartTsNs ends at the marker.
 	if option.StartTsNs != markerTs {
 		t.Errorf("expected StartTsNs %d (marker), got %d (heartbeat must not advance the cursor)", markerTs, option.StartTsNs)
+	}
+}
+
+// TestFilerSyncResumeFromProcessedWatermarkOnReconnect verifies that when GetResumeTsNs is
+// configured, reconnection uses the processed watermark instead of skipping ahead to the
+// latest received timestamp.
+func TestFilerSyncResumeFromProcessedWatermarkOnReconnect(t *testing.T) {
+	const initialTs = int64(100)
+	const watermarkTs = int64(200)
+	const latestStreamTs = int64(500)
+
+	var capturedSinceNs int64
+	recordingClient := &recordingFilerClient{
+		onSubscribe: func(req *filer_pb.SubscribeMetadataRequest) {
+			capturedSinceNs = req.SinceNs
+		},
+		stream: &fakeSubscribeStream{
+			responses: []*filer_pb.SubscribeMetadataResponse{
+				{
+					Directory:         "/watched",
+					TsNs:              latestStreamTs,
+					EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "file"}},
+				},
+			},
+		},
+	}
+
+	option := &MetadataFollowOption{
+		ClientName: "syncFrom_A_To_B",
+		StartTsNs:  initialTs,
+		GetResumeTsNs: func() int64 {
+			return watermarkTs
+		},
+	}
+
+	processFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	}
+
+	fn := makeSubscribeMetadataFunc(option, processFn)
+	if err := fn(recordingClient); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedSinceNs != watermarkTs {
+		t.Fatalf("expected subscribe SinceNs to be watermark %d, got %d", watermarkTs, capturedSinceNs)
+	}
+	// StartTsNs must not be mutated when GetResumeTsNs is set
+	if option.StartTsNs != initialTs {
+		t.Fatalf("expected option.StartTsNs to remain %d, got %d", initialTs, option.StartTsNs)
+	}
+}
+
+// TestFilerSyncDoesNotAdvanceStartTsNsOnProcessError verifies that a failing synchronous
+// processEventFn does not advance option.StartTsNs past the failed event.
+func TestFilerSyncDoesNotAdvanceStartTsNsOnProcessError(t *testing.T) {
+	const initialTs = int64(100)
+	const failedTs = int64(200)
+
+	option := &MetadataFollowOption{
+		ClientName:     "syncFrom_A_To_B",
+		StartTsNs:      initialTs,
+		EventErrorType: TrivialOnError,
+	}
+
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{
+				Directory:         "/watched",
+				TsNs:              failedTs,
+				EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "bad"}},
+			},
+		},
+	}
+
+	processFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return io.ErrUnexpectedEOF
+	}
+
+	fn := makeSubscribeMetadataFunc(option, processFn)
+	_ = fn(&fakeFilerClient{stream: stream})
+
+	if option.StartTsNs != initialTs {
+		t.Fatalf("expected StartTsNs to stay at %d on error, got %d", initialTs, option.StartTsNs)
+	}
+}
+
+type recordingFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	onSubscribe func(req *filer_pb.SubscribeMetadataRequest)
+	stream      *fakeSubscribeStream
+}
+
+func (c *recordingFilerClient) SubscribeMetadata(ctx context.Context, in *filer_pb.SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.SubscribeMetadataResponse], error) {
+	if c.onSubscribe != nil {
+		c.onSubscribe(in)
+	}
+	return c.stream, nil
+}
+
+// RetryForeverOnError resolves a failure inside handleErr, so the cursor must
+// still move past the recovered event instead of replaying it on reconnect.
+func TestFilerSyncRecoveredEventAdvancesCursor(t *testing.T) {
+	var calls int
+	processFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
+		calls++
+		if calls == 1 {
+			return io.ErrUnexpectedEOF
+		}
+		return nil
+	}
+	option := &MetadataFollowOption{
+		ClientName:     "syncFrom_A_To_B",
+		StartTsNs:      100,
+		EventErrorType: RetryForeverOnError,
+	}
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{Directory: "/watched", TsNs: 300, EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file"},
+			}},
+		},
+	}
+	if err := makeSubscribeMetadataFunc(option, processFn)(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected the event retried once (2 calls), got %d", calls)
+	}
+	if option.StartTsNs != 300 {
+		t.Fatalf("expected StartTsNs 300 after the retry succeeded, got %d", option.StartTsNs)
+	}
+}
+
+// A consumer with a resume callback keeps its cursor in its processed
+// watermark, so a filtered-progress marker is handed to processEventFn (which
+// can count it as processed) instead of mutating StartTsNs.
+func TestFilerSyncMarkerReachesCallbackConsumer(t *testing.T) {
+	var markers, events int
+	option := &MetadataFollowOption{
+		ClientName: "syncFrom_A_To_B",
+		StartTsNs:  100,
+		GetResumeTsNs: func() int64 {
+			return 100
+		},
+	}
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{Directory: "/watched", TsNs: 300, EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file"},
+			}},
+			{TsNs: 500, EventNotification: &filer_pb.EventNotification{}},
+		},
+	}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if filer_pb.IsEmpty(resp) {
+			markers++
+		} else {
+			events++
+		}
+		return nil
+	})
+	if err := fn(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if markers != 1 || events != 1 {
+		t.Fatalf("expected 1 marker and 1 event at processEventFn, got %d and %d", markers, events)
+	}
+	if option.StartTsNs != 100 {
+		t.Fatalf("callback consumer must not mutate StartTsNs, got %d", option.StartTsNs)
+	}
+}
+
+func TestFilerSyncMarkerCallbackRetries(t *testing.T) {
+	var calls int
+	option := &MetadataFollowOption{
+		StartTsNs:      100,
+		EventErrorType: RetryForeverOnError,
+		GetResumeTsNs:  func() int64 { return 100 },
+	}
+	stream := &fakeSubscribeStream{responses: []*filer_pb.SubscribeMetadataResponse{
+		{TsNs: 500, EventNotification: &filer_pb.EventNotification{}},
+	}}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		calls++
+		if calls == 1 {
+			return io.ErrUnexpectedEOF
+		}
+		return nil
+	})
+	if err := fn(&fakeFilerClient{stream: stream}); err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if calls != 2 || option.StartTsNs != 100 {
+		t.Fatalf("calls = %d, cursor = %d; want 2 calls and unchanged cursor 100", calls, option.StartTsNs)
+	}
+}
+
+// Each subscribe call re-reads the callback, so a reconnect after the consumer
+// made progress resumes from the newer watermark.
+func TestFilerSyncReconnectReadsWatermarkEachSubscribe(t *testing.T) {
+	var watermark atomic.Int64
+	watermark.Store(100)
+	var sinceNs []int64
+	var mu sync.Mutex
+	stream := &fakeSubscribeStream{
+		responses: []*filer_pb.SubscribeMetadataResponse{
+			{Directory: "/watched", TsNs: 300, EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{Name: "file"},
+			}},
+		},
+	}
+	client := &recordingFilerClient{
+		onSubscribe: func(req *filer_pb.SubscribeMetadataRequest) {
+			mu.Lock()
+			sinceNs = append(sinceNs, req.SinceNs)
+			mu.Unlock()
+		},
+		stream: stream,
+	}
+	option := &MetadataFollowOption{
+		ClientName: "syncFrom_A_To_B",
+		StartTsNs:  100,
+		GetResumeTsNs: func() int64 {
+			return watermark.Load()
+		},
+	}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		watermark.Store(resp.TsNs)
+		return nil
+	})
+	if err := fn(client); err != nil {
+		t.Fatalf("first subscribe: %v", err)
+	}
+	client.stream = &fakeSubscribeStream{}
+	if err := fn(client); err != nil {
+		t.Fatalf("resubscribe: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sinceNs) != 2 || sinceNs[0] != 100 || sinceNs[1] != 300 {
+		t.Fatalf("expected subscribes at 100 then 300, got %v", sinceNs)
+	}
+}
+
+// blockingFilerClient returns a stream whose Recv parks until the subscribe
+// context ends, standing in for a quiet source stream during a sink outage.
+type blockingFilerClient struct {
+	filer_pb.SeaweedFilerClient
+}
+
+func (c *blockingFilerClient) SubscribeMetadata(ctx context.Context, in *filer_pb.SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.SubscribeMetadataResponse], error) {
+	return &blockingSubscribeStream{ctx: ctx}, nil
+}
+
+type blockingSubscribeStream struct {
+	grpc.ClientStream
+	ctx context.Context
+}
+
+func (s *blockingSubscribeStream) Recv() (*filer_pb.SubscribeMetadataResponse, error) {
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+// A consumer that pins an event asks for the stream to drop so the reconnect
+// replays it; the follower must end with ErrResubscribe, not sit on Recv.
+func TestFilerSyncResubscribeSignalEndsStream(t *testing.T) {
+	resubscribe := make(chan struct{})
+	option := &MetadataFollowOption{
+		ClientName:     "syncFrom_A_To_B",
+		EventErrorType: DontLogError,
+		Resubscribe:    resubscribe,
+	}
+	fn := makeSubscribeMetadataFunc(option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- fn(&blockingFilerClient{})
+	}()
+
+	close(resubscribe)
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrResubscribe) {
+			t.Fatalf("expected ErrResubscribe, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("follower did not end after the resubscribe signal")
 	}
 }

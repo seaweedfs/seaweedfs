@@ -54,10 +54,13 @@ func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
 		if counter < ModeChangeLimit {
 			atomic.AddInt64(&rp.isSequentialCounter, 1)
 		}
+	} else if counter <= 0 {
+		// Entering random mode is a strong verdict: drop to the bottom of
+		// the window so the contiguous tail of one ranged request cannot
+		// flip it back on the next buffer read and pay a whole-chunk fetch.
+		atomic.StoreInt64(&rp.isSequentialCounter, -ModeChangeLimit)
 	} else {
-		if counter > -ModeChangeLimit {
-			atomic.AddInt64(&rp.isSequentialCounter, -1)
-		}
+		atomic.AddInt64(&rp.isSequentialCounter, -1)
 	}
 }
 

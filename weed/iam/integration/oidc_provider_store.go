@@ -17,7 +17,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Sentinel errors returned by the IAM manager and OIDCProviderStore. Callers
@@ -87,7 +90,26 @@ type OIDCProviderStore interface {
 	GetProviderByIssuerAndAccount(ctx context.Context, filerAddress string, issuer, accountID string) (*OIDCProviderRecord, error)
 	ListProviders(ctx context.Context, filerAddress string) ([]*OIDCProviderRecord, error)
 	DeleteProvider(ctx context.Context, filerAddress string, arn string) error
+	// UpdateProvider replaces a provider's record with update's result,
+	// atomically: the write or delete happens only against the record update
+	// saw, so a change in between applies update again to what the other
+	// writer left.
+	UpdateProvider(ctx context.Context, filerAddress string, arn string, update OIDCProviderUpdate) error
 }
+
+// OIDCProviderUpdate computes a provider's new record from its current one,
+// nil when the provider does not exist. It returns nil to delete the
+// provider, and an error to leave it unchanged. It may run more than once: it
+// is called again with the fresh record when another writer changed the
+// provider in between.
+type OIDCProviderUpdate func(current *OIDCProviderRecord) (*OIDCProviderRecord, error)
+
+// maxProviderUpdateAttempts bounds UpdateProvider's retries under contention.
+const maxProviderUpdateAttempts = 10
+
+// errProviderUpdateContended is returned when the provider kept changing
+// under UpdateProvider for maxProviderUpdateAttempts reads.
+var errProviderUpdateContended = errors.New("OIDC provider changed concurrently; retry")
 
 // MemoryOIDCProviderStore is a process-local store, suitable for tests and
 // single-node deployments. It also acts as the in-memory cache hydrated from
@@ -181,6 +203,27 @@ func (m *MemoryOIDCProviderStore) DeleteProvider(ctx context.Context, _ string, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.providers, arn)
+	return nil
+}
+
+// UpdateProvider applies update under the store's lock (filerAddress ignored
+// for the memory store).
+func (m *MemoryOIDCProviderStore) UpdateProvider(ctx context.Context, _ string, arn string, update OIDCProviderUpdate) error {
+	if arn == "" {
+		return fmt.Errorf("ARN is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next, err := update(copyOIDCProviderRecord(m.providers[arn]))
+	if err != nil {
+		return err
+	}
+	if next == nil {
+		delete(m.providers, arn)
+		return nil
+	}
+	next.ARN = arn
+	m.providers[arn] = copyOIDCProviderRecord(next)
 	return nil
 }
 
@@ -419,6 +462,129 @@ func (f *FilerOIDCProviderStore) DeleteProvider(ctx context.Context, filerAddres
 		}
 		return nil
 	})
+}
+
+// UpdateProvider reads the provider's entry, applies update, and writes the
+// result on the condition that the entry is unchanged since the read —
+// absent, when the provider did not exist — so the filer refuses a write
+// racing another writer's change or delete, and update is applied again to
+// what that writer left. A delete is made on the same condition, so it
+// removes the record update saw and not one written after it.
+func (f *FilerOIDCProviderStore) UpdateProvider(ctx context.Context, filerAddress string, arn string, update OIDCProviderUpdate) error {
+	filerAddress = f.resolveFilerAddress(filerAddress)
+	if filerAddress == "" {
+		return fmt.Errorf("filer address is required")
+	}
+	if arn == "" {
+		return fmt.Errorf("ARN is required")
+	}
+	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+		for attempt := 0; attempt < maxProviderUpdateAttempts; attempt++ {
+			var entry *filer_pb.Entry
+			var current *OIDCProviderRecord
+			resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: f.basePath,
+				Name:      f.fileName(arn),
+			})
+			switch {
+			case errors.Is(err, filer_pb.ErrNotFound):
+			case err != nil:
+				return fmt.Errorf("lookup OIDC provider %s: %w", arn, err)
+			case resp.Entry != nil:
+				entry = resp.Entry
+				current = &OIDCProviderRecord{}
+				if err := json.Unmarshal(entry.Content, current); err != nil {
+					return fmt.Errorf("failed to deserialize OIDC provider %s: %v", arn, err)
+				}
+			}
+
+			next, err := update(current)
+			if err != nil {
+				return err
+			}
+			if next == nil {
+				if entry == nil {
+					return nil
+				}
+				deleted, err := f.deleteProviderEntryIfUnchanged(ctx, client, entry)
+				if err != nil {
+					return fmt.Errorf("failed to delete OIDC provider %s: %w", arn, err)
+				}
+				if !deleted {
+					glog.V(3).Infof("OIDC provider %s changed before its delete; retrying", arn)
+					continue
+				}
+				return nil
+			}
+			next.ARN = arn
+			data, err := json.MarshalIndent(next, "", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to serialize OIDC provider %s: %v", arn, err)
+			}
+
+			clause := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
+			if entry != nil {
+				clause = &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: entry}
+			}
+			now := time.Now().Unix()
+			created, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+				Directory: f.basePath,
+				Entry: &filer_pb.Entry{
+					Name: f.fileName(arn),
+					Attributes: &filer_pb.FuseAttributes{
+						Mtime:    now,
+						Crtime:   now,
+						FileMode: uint32(0600),
+					},
+					Content: data,
+				},
+				Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{clause}},
+			})
+			if isEntryWriteConflict(created, err) {
+				glog.V(3).Infof("OIDC provider %s changed during update; retrying", arn)
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("failed to store OIDC provider %s: %v", arn, err)
+			}
+			if created.Error != "" {
+				return fmt.Errorf("failed to store OIDC provider %s: %s", arn, created.Error)
+			}
+			return nil
+		}
+		return fmt.Errorf("update OIDC provider %s: %w", arn, errProviderUpdateContended)
+	})
+}
+
+// deleteProviderEntryIfUnchanged deletes the provider's entry if it still
+// equals entry, reporting false when it changed. The delete is routed and
+// locked as the conditional CreateEntry of the same path is, so the two
+// serialize.
+func (f *FilerOIDCProviderStore) deleteProviderEntryIfUnchanged(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry) (bool, error) {
+	fullPath := f.basePath + "/" + entry.Name
+	resp, err := client.ObjectTransaction(ctx, &filer_pb.ObjectTransactionRequest{
+		LockKey:  fullPath,
+		RouteKey: s3_constants.ObjectWriteRouteKeyPrefix + fullPath,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: entry,
+		}}},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type: filer_pb.ObjectMutation_DELETE, Directory: f.basePath, Name: entry.Name, IsDeleteData: true,
+		}},
+	})
+	if err != nil {
+		if status.Code(err) == codes.FailedPrecondition {
+			return false, nil
+		}
+		return false, err
+	}
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		return false, nil
+	}
+	if resp.Error != "" {
+		return false, errors.New(resp.Error)
+	}
+	return true, nil
 }
 
 func (f *FilerOIDCProviderStore) withFilerClient(filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {

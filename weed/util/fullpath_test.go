@@ -1,6 +1,8 @@
 package util
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -171,5 +173,36 @@ func TestJoinPreservesBackslash(t *testing.T) {
 	want := "/parent/child\\name.txt"
 	if got != want {
 		t.Fatalf("Join: got %q want %q", got, want)
+	}
+}
+
+// TestAsInodeFitsSignedLong asserts the derived inode stays inside the positive
+// signed 64-bit range for a batch of paths and creation times. The filer stores
+// this value verbatim and the Elasticsearch store indexes it as a `long`, so an
+// inode above math.MaxInt64 is rejected and the entry is lost. HashStringToLong
+// is uniform over int64, so about half of the paths here would have exceeded
+// the limit before NormalizeInode was introduced.
+func TestAsInodeFitsSignedLong(t *testing.T) {
+	unixTimes := []int64{0, 1, 1700000000, 2000000000}
+
+	seen := make(map[uint64]FullPath)
+	for _, unixTime := range unixTimes {
+		for i := 0; i < 2000; i++ {
+			fp := FullPath(fmt.Sprintf("/topics/.system/log/2026-10-02/entry-%d", i))
+			inode := fp.AsInode(unixTime)
+
+			if inode > math.MaxInt64 {
+				t.Fatalf("AsInode(%q, %d) = %d, above math.MaxInt64", fp, unixTime, inode)
+			}
+			if inode == 0 {
+				t.Fatalf("AsInode(%q, %d) = 0, which reads as \"unset\" to the filer", fp, unixTime)
+			}
+			// Distinct paths must still get distinct inodes: masking one bit
+			// off the hash keeps that property.
+			if other, ok := seen[inode]; ok && other != fp {
+				t.Fatalf("AsInode(%q) collided with %q on inode %d", fp, other, inode)
+			}
+			seen[inode] = fp
+		}
 	}
 }
