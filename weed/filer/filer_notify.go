@@ -247,8 +247,9 @@ func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetad
 // in the rejection and volumeFileSizeLimit picks the real limit up from there.
 const metadataLogUploadLimit = log_buffer.BufferSize
 
-// shutdownMetadataLogFlushBudget bounds how long a flush may keep retrying once
-// the filer is shutting down.
+// shutdownMetadataLogFlushBudget bounds how long metadata-log flushes may keep
+// retrying once the filer is shutting down; Shutdown cancels the shared flush
+// context when it expires.
 const shutdownMetadataLogFlushBudget = 15 * time.Second
 
 var fileSizeLimitPattern = regexp.MustCompile(`file over the limited (\d+) bytes`)
@@ -283,12 +284,13 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 	// One piece at a time, each retried on its own so a partial success is not
 	// replayed, and the piece size follows the limit the volume servers report.
 	// While the filer keeps running the retry is unbounded so no metadata is
-	// dropped; once Shutdown starts the flush gets a bounded context or a dead
-	// cluster would keep loopFlush, WaitForShutdown, and process exit waiting.
+	// dropped; once Shutdown arms the flush deadline the shared context cancels
+	// and the flush drops what is left instead of holding shutdown open.
 	limit := metadataLogUploadLimit
-	ctx := context.Background()
-	shutdownCtx, cancel := context.WithTimeout(ctx, shutdownMetadataLogFlushBudget)
-	defer cancel()
+	ctx := f.flushCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	for len(buf) > 0 {
 		piece := nextLogPiece(buf, limit)
 		if err := f.appendToFile(ctx, targetFile, piece); err != nil {
@@ -298,11 +300,9 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 				limit = reported
 				continue
 			}
-			if f.isStopping() {
-				ctx = shutdownCtx
-			}
 			select {
 			case <-ctx.Done():
+				logBuffer.NoteFlushDropped(len(buf))
 				glog.V(0).Infof("metadata log flush abandoned during shutdown, %d bytes left for %s: %v", len(buf), targetFile, ctx.Err())
 				return
 			case <-time.After(737 * time.Millisecond):

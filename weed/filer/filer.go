@@ -110,6 +110,12 @@ type Filer struct {
 	// overwriting the unread ledger with a partial set.
 	deletionLedgerBlocked atomic.Bool
 	deletionLedgerFlush   chan struct{}
+	// flushCtx is the context metadata-log flushes append under. It stays
+	// live for the process lifetime and is cancelled once during Shutdown,
+	// bounding every retry - in-flight and queued alike - to one deadline.
+	// Nil for Filer literals built without NewFiler.
+	flushCtx    context.Context
+	flushCancel context.CancelFunc
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -128,6 +134,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
 		remoteTombstones:    newRemoteDeletionTombstones(),
 	}
+	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
 	}
@@ -803,19 +810,17 @@ func (f *Filer) IsDirectoryEmpty(ctx context.Context, dirPath util.FullPath) (bo
 	return isEmpty, err
 }
 
-func (f *Filer) isStopping() bool {
-	select {
-	case <-f.deletionQuit:
-		return true
-	default:
-		return false
-	}
-}
-
 func (f *Filer) Shutdown() {
 	close(f.deletionQuit)
 	if f.EmptyFolderCleaner != nil {
 		f.EmptyFolderCleaner.Stop()
+	}
+	// Bound the remaining flush retries: with the cluster already gone each
+	// append keeps failing, and an unbounded retry would hold the shutdown
+	// drain open indefinitely. One shared deadline covers every in-flight and
+	// queued window; the flush loop drops what it cannot write.
+	if f.flushCancel != nil {
+		time.AfterFunc(shutdownMetadataLogFlushBudget, f.flushCancel)
 	}
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	// The final metadata-log flush still needs the store to append its entry.
