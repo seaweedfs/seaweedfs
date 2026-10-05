@@ -152,6 +152,17 @@ func (r *LockRing) GetSnapshot() (servers []pb.ServerAddress) {
 	return r.snapshots[0].servers
 }
 
+// PriorOwnerWindowEnd is when the latest ring change stops routing moved keys
+// to their prior owner.
+func (r *LockRing) PriorOwnerWindowEnd() time.Time {
+	r.RLock()
+	defer r.RUnlock()
+	if len(r.snapshots) == 0 {
+		return time.Time{}
+	}
+	return r.snapshots[0].ts.Add(r.snapshotInterval)
+}
+
 // WaitForCleanup waits for all pending cleanup operations to complete
 func (r *LockRing) WaitForCleanup() {
 	r.cleanupWg.Wait()

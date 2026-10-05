@@ -422,7 +422,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
-	if req.ClientType == cluster.FilerType {
+	if req.ClientType == cluster.FilerType && !req.LeaveLockRing {
 		ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 	}
 	if req.ClientType == cluster.MasterType {
@@ -484,7 +484,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 
 	go func() {
 		for {
-			_, err := stream.Recv()
+			message, err := stream.Recv()
 			if err != nil {
 				glog.V(2).Infof("- client %v: %v", clientName, err)
 				go func() {
@@ -496,6 +496,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 				close(stopChan)
 				return
 			}
+			ms.onKeepConnectedMessage(req, peerAddress, message)
 		}
 	}()
 
@@ -530,6 +531,13 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+}
+
+func (ms *MasterServer) onKeepConnectedMessage(registered *master_pb.KeepConnectedRequest, peerAddress pb.ServerAddress, message *master_pb.KeepConnectedRequest) {
+	if registered.ClientType == cluster.FilerType && message.LeaveLockRing {
+		glog.V(0).Infof("LockRing: filer %s leaving group '%s'", peerAddress, registered.FilerGroup)
+		ms.LockRingManager.RemoveServer(cluster.FilerGroupName(registered.FilerGroup), peerAddress)
+	}
 }
 
 func (ms *MasterServer) initialLockRingUpdate(clientType string, filerGroup string) *master_pb.KeepConnectedResponse {
