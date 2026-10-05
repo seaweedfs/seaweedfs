@@ -621,8 +621,17 @@ func (vc *versionCollector) computeStartFrom(relativePath string) (startFrom str
 		return "", false
 	}
 
-	if idx := strings.Index(remainder, "/"); idx >= 0 {
-		return remainder[:idx], true
+	// A sibling directory that is a prefix of the marker up to a byte below '0'
+	// still holds keys that sort after it - "d" for marker "d.x" contains "d/*".
+	// Resuming at the marker's name would skip those keys, so the walk resumes
+	// at the earliest such prefix instead.
+	for i := 0; i < len(remainder); i++ {
+		if remainder[i] < '0' {
+			if i > 0 {
+				return remainder[:i], true
+			}
+			break
+		}
 	}
 	return remainder, true
 }
