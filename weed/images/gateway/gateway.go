@@ -251,11 +251,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Derive validators, lengths, and ranges from the output bytes.
-	w.Header().Set("Content-Type", image.contentType)
-	w.Header().Set("ETag", image.etag)
+	// Derive validators, lengths, and ranges from the output bytes. Serve on
+	// the inner writer so the content type is attached to the body writer.
+	rw := wrapped.ResponseWriter
+	rw.Header().Set("Content-Type", image.contentType)
+	rw.Header().Set("ETag", image.etag)
+	wrapped.beginWrite()
 	// A second-resolution source date cannot distinguish overwrites; use the output ETag only.
-	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(image.data))
+	http.ServeContent(rw, r, "", time.Time{}, bytes.NewReader(image.data))
 }
 
 // safeObjectPath rejects paths that a backend proxy could normalize outside the fixed bucket prefix.
