@@ -452,6 +452,7 @@ func (mm *MaintenanceManager) performCleanup() {
 
 	removedTasks := mm.queue.CleanupOldTasks(taskRetention)
 	removedWorkers := mm.queue.RemoveStaleWorkers(workerTimeout)
+	mm.queue.cleanupCompletedTasks()
 
 	// Clean up stale pending operations (operations running for more than 4 hours)
 	staleOperationTimeout := 4 * time.Hour
