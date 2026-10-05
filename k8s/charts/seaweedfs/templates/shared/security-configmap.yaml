@@ -29,7 +29,7 @@ data:
     # the jwt signing key is read by master and volume server
     # the jwt defaults to expire after 10 seconds
     [jwt.signing]
-    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.signing" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
     {{- if gt (int $expiresAfterSeconds.volumeWrite) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.volumeWrite }}
     {{- end }}
@@ -41,7 +41,7 @@ data:
     # - the Volume server validates the JWT on reading
     # the jwt defaults to expire after 60 seconds
     [jwt.signing.read]
-    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.signing\\.read" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing.read" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
     {{- if gt (int $expiresAfterSeconds.volumeRead) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.volumeRead }}
     {{- end }}
@@ -53,7 +53,7 @@ data:
     # - the Filer server validates the JWT on writing
     # the jwt defaults to expire after 10 seconds
     [jwt.filer_signing]
-    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.filer_signing" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
     {{- if gt (int $expiresAfterSeconds.filerWrite) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.filerWrite }}
     {{- end }}
@@ -65,7 +65,7 @@ data:
     # - the Filer server validates the JWT on reading
     # the jwt defaults to expire after 60 seconds
     [jwt.filer_signing.read]
-    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.filer_signing\\.read" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing.read" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
     {{- if gt (int $expiresAfterSeconds.filerRead) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.filerRead }}
     {{- end }}

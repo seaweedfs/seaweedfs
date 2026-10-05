@@ -444,23 +444,32 @@ true
 {{- end -}}
 {{- end -}}
 
-{{/* Reads a `key = "..."` value out of a previously-rendered security.toml
-     for one [section], so a JWT signing key stays stable across upgrades
-     instead of being regenerated every render. Replaces a `fromToml`-based
-     lookup: `fromToml` was only added to Helm in v3.17.0 (helm/helm#12026),
-     this chart declares no minimum Helm version, and the call was an
-     unconditional *parse*-time failure on any older Helm 3.x - see
-     https://github.com/seaweedfs/seaweedfs/issues/11611.
-     Args: a two-element list, (list "<toml section, regex-escaped>" $raw).
-     Returns "" if the section or its key line is absent, same as the old
-     `dig ... default` fallback expected. */}}
+{{/* Read a JWT key from the chart's existing security.toml without fromToml
+     (which requires Helm >=3.17). Args: (list "<section>" $raw).
+     Return the single-line TOML string token, including its quotes, so escapes
+     and explicitly empty values survive unchanged. No output means absent.
+     This reads the chart's section/key layout, not arbitrary TOML syntax. */}}
 {{- define "seaweedfs.existingTomlKey" -}}
 {{- $section := index . 0 -}}
 {{- $raw := index . 1 -}}
-{{- $block := regexFind (printf "(?s)\\[%s\\]\\r?\\n[^\\[]*" $section) $raw -}}
-{{- $line := regexFind "(?m)^key\\s*=\\s*\"[^\"]*\"" $block -}}
-{{- $quoted := regexFind "\"[^\"]*\"" $line -}}
-{{- trimAll "\"" $quoted -}}
+{{- $header := printf `^\[[ \t]*%s[ \t]*\][ \t]*(#.*)?$` (regexQuoteMeta $section) -}}
+{{- $assignment := `^(key|"key"|'key')[ \t]*=[ \t]*` -}}
+{{- $string := `"([^"\\]|\\.)*"|'[^']*'` -}}
+{{- $active := false -}}
+{{- $key := "" -}}
+{{- range $rawLine := splitList "\n" $raw -}}
+  {{- $line := trim $rawLine -}}
+  {{- if hasPrefix "[" $line -}}
+    {{- $active = regexMatch $header $line -}}
+  {{- else if and $active (eq $key "") (regexMatch $assignment $line) -}}
+    {{- $value := regexReplaceAll $assignment $line "" -}}
+    {{- if not (regexMatch (printf `^(%s)[ \t]*(#.*)?$` $string) $value) -}}
+      {{- fail (printf "security.toml [%s].key must be a single-line quoted TOML string; refusing to replace an existing key" $section) -}}
+    {{- end -}}
+    {{- $key = regexFind $string $value -}}
+  {{- end -}}
+{{- end -}}
+{{- $key -}}
 {{- end -}}
 
 {{/* True when the post-install bucket hook Job renders: an S3 endpoint, plus
