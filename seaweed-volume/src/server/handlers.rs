@@ -3703,7 +3703,7 @@ async fn try_expand_chunk_manifest(
                 continue;
             }
         }
-        let mut data = match read_chunk_needle(state, &chunk.fid).await {
+        let data = match read_chunk_needle(state, &chunk.fid).await {
             Ok(d) => d,
             Err(e) => {
                 return Some(ControlFlow::Break(
@@ -3723,9 +3723,17 @@ async fn try_expand_chunk_manifest(
         // into the next chunk's window; also drop bytes past the buffer end.
         let bound = (chunk.size as usize).min(size - offset);
         let copy_len = data.len().min(bound);
-        if wanted.is_some() {
-            data.truncate(copy_len);
-            parts.push((offset, data));
+        if let Some((_, ranges)) = &wanted {
+            // Keep only the bytes the requested ranges can read: holding whole
+            // chunks would pin memory far past the response size when chunk
+            // windows overlap.
+            for r in ranges {
+                let lo = (r.start as usize).clamp(offset, offset + copy_len);
+                let hi = ((r.start + r.length) as usize).clamp(offset, offset + copy_len);
+                if lo < hi {
+                    parts.push((lo, data[lo - offset..hi - offset].to_vec()));
+                }
+            }
         } else {
             result[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
         }
