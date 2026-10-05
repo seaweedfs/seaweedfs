@@ -641,7 +641,7 @@ func TestComputeStartFrom(t *testing.T) {
 	}{
 		{"empty marker", "", "", "", false},
 		{"empty marker with path", "", "dir", "", false},
-		{"root level file", "file1.txt", "", "file1.txt", true},
+		{"root level file", "file1.txt", "", "file1", true},
 		{"root level with subpath", "Mailboxes/5ac/file1", "", "Mailboxes", true},
 		{"matching subdir", "Mailboxes/5ac/file1", "Mailboxes", "5ac", true},
 		{"deeper subdir", "Mailboxes/5ac/ItemsData/file1", "Mailboxes/5ac", "ItemsData", true},
@@ -649,6 +649,11 @@ func TestComputeStartFrom(t *testing.T) {
 		{"unrelated directory", "other/path", "Mailboxes", "", false},
 		{"marker equals relativePath", "Mailboxes", "Mailboxes", "", false},
 		{"marker before directory", "aaa/file", "zzz", "", false},
+		{"dir prefix below slash", "d.x", "", "d", true},
+		{"dir prefix below slash nested", "a-b/file", "", "a", true},
+		{"dir prefix at marker end", "d-", "", "d", true},
+		{"no qualifying prefix", "zzz", "", "zzz", true},
+		{"leading below-slash byte", ".hidden", "", ".hidden", true},
 	}
 
 	for _, tt := range tests {
