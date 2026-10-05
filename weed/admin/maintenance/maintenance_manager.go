@@ -616,37 +616,40 @@ func (mm *MaintenanceManager) saveTaskConfigsFromPolicy(policy *worker_pb.Mainte
 // CancelTask cancels a pending task
 func (mm *MaintenanceManager) CancelTask(taskID string) error {
 	mm.queue.mutex.Lock()
-	defer mm.queue.mutex.Unlock()
 
 	task, exists := mm.queue.tasks[taskID]
 	if !exists {
+		mm.queue.mutex.Unlock()
 		return fmt.Errorf("task %s not found", taskID)
 	}
-
-	if task.Status == TaskStatusPending {
-		task.Status = TaskStatusCancelled
-		task.CompletedAt = &[]time.Time{time.Now()}[0]
-
-		// Remove from pending tasks
-		for i, pendingTask := range mm.queue.pendingTasks {
-			if pendingTask.ID == taskID {
-				mm.queue.pendingTasks = append(mm.queue.pendingTasks[:i], mm.queue.pendingTasks[i+1:]...)
-				break
-			}
-		}
-
-		// Notify ActiveTopology to release capacity
-		if mm.scanner != nil && mm.scanner.integration != nil {
-			if at := mm.scanner.integration.GetActiveTopology(); at != nil {
-				_ = at.CompleteTask(taskID)
-			}
-		}
-
-		glog.V(2).Infof("Cancelled task %s", taskID)
-		return nil
+	if task.Status != TaskStatusPending {
+		mm.queue.mutex.Unlock()
+		return fmt.Errorf("task %s cannot be cancelled (status: %s)", taskID, task.Status)
 	}
 
-	return fmt.Errorf("task %s cannot be cancelled (status: %s)", taskID, task.Status)
+	task.Status = TaskStatusCancelled
+	completedTime := time.Now()
+	task.CompletedAt = &completedTime
+
+	// Remove from pending tasks
+	for i, pendingTask := range mm.queue.pendingTasks {
+		if pendingTask.ID == taskID {
+			mm.queue.pendingTasks = append(mm.queue.pendingTasks[:i], mm.queue.pendingTasks[i+1:]...)
+			break
+		}
+	}
+
+	// Notify ActiveTopology to release capacity
+	if mm.scanner != nil && mm.scanner.integration != nil {
+		if at := mm.scanner.integration.GetActiveTopology(); at != nil {
+			_ = at.CompleteTask(taskID)
+		}
+	}
+	mm.queue.mutex.Unlock()
+
+	mm.queue.deleteTaskState(taskID)
+	glog.V(2).Infof("Cancelled task %s", taskID)
+	return nil
 }
 
 // RegisterWorker registers a new worker
