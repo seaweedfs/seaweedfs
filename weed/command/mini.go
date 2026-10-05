@@ -964,7 +964,7 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	if workerGrpcBindIP == "" {
 		workerGrpcBindIP = "127.0.0.1"
 	}
-	if listener, err := net.Listen("tcp", util.JoinHostPort(workerGrpcBindIP, *miniAdminOptions.grpcPort)); err != nil {
+	if listener, err := listenMiniAdminWorker(workerGrpcBindIP, *miniAdminOptions.grpcPort); err != nil {
 		glog.Warningf("Could not reserve Admin gRPC port %d: %v", *miniAdminOptions.grpcPort, err)
 	} else {
 		miniAdminOptions.workerGrpcListener = listener
@@ -989,6 +989,12 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 		*miniS3Options.portGrpc, *miniAdminOptions.grpcPort)
 
 	return nil
+}
+
+// listenMiniAdminWorker reserves the exact worker gRPC address that the Admin
+// server will later use, preventing another connection from taking the port.
+func listenMiniAdminWorker(bindIP string, port int) (net.Listener, error) {
+	return net.Listen("tcp", util.JoinHostPort(bindIP, port))
 }
 
 // initializeGrpcPortsOnIP initializes all gRPC ports based on their HTTP ports on a specific IP
@@ -1594,11 +1600,31 @@ func applyMiniAdminCredentialFallback(options *AdminOptions) {
 	applyViperFallback(cmdMini, options.readOnlyPassword, "admin.readOnlyPassword", "admin.readonly.password")
 }
 
+// miniAdminBindIP selects a loopback HTTP bind unless Admin authentication,
+// mTLS, or an explicit insecure opt-out permits the requested address.
 func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, allowInsecure bool) string {
 	if isLoopbackIp(requestedIP) || passwordConfigured || mtlsConfigured || allowInsecure {
 		return requestedIP
 	}
 	return "127.0.0.1"
+}
+
+// miniAdminWorkerAddress encodes the finalized HTTP and gRPC ports in the
+// server-address format understood by pb.ServerToGrpcAddress.
+func miniAdminWorkerAddress(bindIP string, httpPort, grpcPort int) string {
+	return fmt.Sprintf("%s:%d.%d", bindIP, httpPort, grpcPort)
+}
+
+// miniAdminAdvertisedIP returns a reachable address for URLs in the welcome
+// message while preserving a specifically selected Admin HTTP bind address.
+func miniAdminAdvertisedIP() string {
+	if miniAdminOptions.ip == nil || *miniAdminOptions.ip == "" {
+		return *miniIp
+	}
+	if *miniAdminOptions.ip == "0.0.0.0" || *miniAdminOptions.ip == "::" {
+		return *miniIp
+	}
+	return *miniAdminOptions.ip
 }
 
 // startMiniAdminWithWorker starts the admin server with one worker
@@ -1748,7 +1774,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	startMiniPluginWorker(ctx, workerDir)
 
 	// Wait for worker to be ready by polling its gRPC port
-	workerGrpcAddr := fmt.Sprintf("%s:%d", miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.grpcPort)
+	workerGrpcAddr := util.JoinHostPort(miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.grpcPort)
 	waitForWorkerReady(workerGrpcAddr)
 	if miniProgressBoard != nil {
 		miniProgressBoard.ready("Admin")
@@ -1826,7 +1852,11 @@ func waitForWorkerReady(workerGrpcAddr string) {
 func startMiniWorker(workerDir string) {
 	glog.V(1).Infof("Initializing standard worker runtime")
 
-	adminAddr := fmt.Sprintf("%s:%d", miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.port)
+	adminAddr := miniAdminWorkerAddress(
+		miniAdminOptions.workerGrpcBindIp,
+		*miniAdminOptions.port,
+		*miniAdminOptions.grpcPort,
+	)
 	capabilities := "vacuum,ec,balance"
 
 	// Use common worker directory
@@ -1901,11 +1931,11 @@ func startMiniWorker(workerDir string) {
 func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	glog.V(1).Infof("Starting plugin worker for admin server")
 
-	adminAddr := fmt.Sprintf("%s:%d", miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.port)
-	resolvedAdminAddr := resolvePluginWorkerAdminServer(adminAddr)
-	if resolvedAdminAddr != adminAddr {
-		glog.V(1).Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
-	}
+	adminAddr := miniAdminWorkerAddress(
+		miniAdminOptions.workerGrpcBindIp,
+		*miniAdminOptions.port,
+		*miniAdminOptions.grpcPort,
+	)
 
 	// Use common worker directory
 
@@ -1923,7 +1953,7 @@ func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	}
 
 	pluginRuntime, err := pluginworker.NewWorker(pluginworker.WorkerOptions{
-		AdminServer:             resolvedAdminAddr,
+		AdminServer:             adminAddr,
 		WorkerID:                workerID,
 		WorkerVersion:           version.Version(),
 		WorkerAddress:           *miniIp,
@@ -1962,13 +1992,15 @@ const credentialsInstructionTemplate = `
     Creates initial credentials for the 'mini' user and pre-creates the bucket.
 
   Option 2: Use the Admin UI
-    Open: http://%s:%d
+    Open: http://%s
     Add a new identity to create S3 credentials.
 `
 
 // printWelcomeMessage prints the welcome message after all services are running
 func printWelcomeMessage() {
 	var sb strings.Builder
+	adminIP := miniAdminAdvertisedIP()
+	adminHTTPAddress := util.JoinHostPort(adminIP, *miniAdminOptions.port)
 
 	sb.WriteString("╔═══════════════════════════════════════════════════════════════════════════════╗\n")
 	sb.WriteString("║                      SeaweedFS Mini - All-in-One Mode                         ║\n")
@@ -1990,7 +2022,7 @@ func printWelcomeMessage() {
 		}
 	}
 	if *miniEnableAdminUI {
-		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+		fmt.Fprintf(&sb, "    Admin UI:        http://%s\n", adminHTTPAddress)
 	}
 
 	fmt.Fprintf(&sb, "\n  Data Directory:   %s\n", *miniDataFolders)
@@ -2013,7 +2045,7 @@ func printWelcomeMessage() {
 		// run, configured via env vars, static config file, etc.) — no need
 		// to show setup hints.
 	case *miniEnableAdminUI:
-		fmt.Fprintf(&sb, credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
+		fmt.Fprintf(&sb, credentialsInstructionTemplate, adminHTTPAddress)
 	default:
 		sb.WriteString("\n  To create S3 credentials, use environment variables:\n\n")
 		sb.WriteString("    export AWS_ACCESS_KEY_ID=your-access-key\n")

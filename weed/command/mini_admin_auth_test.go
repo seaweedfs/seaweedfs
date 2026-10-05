@@ -1,12 +1,19 @@
 package command
 
-import "testing"
+import (
+	"net"
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+)
 
 // weed mini must resolve admin credentials from security.toml [admin] /
 // WEED_ADMIN_* env vars the same way the standalone `weed admin` command does.
 // This exercises the production fallback so the flag-name -> viper-key mapping
 // stays correct, in particular the read-only keys where the mini flag
 // (admin.readOnlyUser) and viper key (admin.readonly.user) differ.
+// TestApplyMiniAdminCredentialFallbackFromEnv verifies those environment
+// fallbacks without starting the full mini cluster.
 func TestApplyMiniAdminCredentialFallbackFromEnv(t *testing.T) {
 	adminUser, adminPassword, readOnlyUser, readOnlyPassword := "admin", "", "", ""
 	options := &AdminOptions{
@@ -40,6 +47,7 @@ func TestApplyMiniAdminCredentialFallbackFromEnv(t *testing.T) {
 	}
 }
 
+// TestMiniAdminBindIP covers the authentication-dependent HTTP bind policy.
 func TestMiniAdminBindIP(t *testing.T) {
 	tests := []struct {
 		name               string
@@ -99,11 +107,114 @@ func TestMiniAdminBindIP(t *testing.T) {
 	}
 }
 
+// TestMiniAdminWorkerBindDefaultsToLoopback protects the worker control-plane default.
 func TestMiniAdminWorkerBindDefaultsToLoopback(t *testing.T) {
 	if miniAdminWorkerBindIP == nil {
 		t.Fatal("mini Admin worker bind flag is not initialized")
 	}
 	if got, want := *miniAdminWorkerBindIP, "127.0.0.1"; got != want {
 		t.Fatalf("default mini Admin worker bind IP = %q, want %q", got, want)
+	}
+}
+
+// TestListenMiniAdminWorkerUsesRequestedAddress verifies the production
+// listener is actually restricted to the configured loopback address.
+func TestListenMiniAdminWorkerUsesRequestedAddress(t *testing.T) {
+	listener, err := listenMiniAdminWorker("127.0.0.1", 0)
+	if err != nil {
+		t.Fatalf("listen for mini Admin worker: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	address, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address type = %T, want *net.TCPAddr", listener.Addr())
+	}
+	if !address.IP.IsLoopback() {
+		t.Fatalf("listener IP = %s, want loopback", address.IP)
+	}
+}
+
+// TestMiniAdminWorkerAddressUsesFinalGrpcPort verifies that local workers do
+// not have to discover or infer a custom Admin worker gRPC port.
+func TestMiniAdminWorkerAddressUsesFinalGrpcPort(t *testing.T) {
+	tests := []struct {
+		name     string
+		ip       string
+		want     string
+		wantGrpc string
+	}{
+		{
+			name:     "IPv4",
+			ip:       "127.0.0.1",
+			want:     "127.0.0.1:23646.34567",
+			wantGrpc: "127.0.0.1:34567",
+		},
+		{
+			name:     "IPv6",
+			ip:       "::1",
+			want:     "::1:23646.34567",
+			wantGrpc: "[::1]:34567",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			address := miniAdminWorkerAddress(tt.ip, 23646, 34567)
+			if address != tt.want {
+				t.Fatalf("miniAdminWorkerAddress() = %q, want %q", address, tt.want)
+			}
+			if got := pb.ServerToGrpcAddress(address); got != tt.wantGrpc {
+				t.Fatalf("pb.ServerToGrpcAddress() = %q, want %q", got, tt.wantGrpc)
+			}
+		})
+	}
+}
+
+// TestMiniAdminAdvertisedIP verifies that the welcome message uses the
+// selected loopback address but replaces wildcard binds with a reachable host.
+func TestMiniAdminAdvertisedIP(t *testing.T) {
+	oldMiniIP := miniIp
+	oldAdminIP := miniAdminOptions.ip
+	t.Cleanup(func() {
+		miniIp = oldMiniIP
+		miniAdminOptions.ip = oldAdminIP
+	})
+
+	detectedIP := "192.0.2.10"
+	miniIp = &detectedIP
+
+	tests := []struct {
+		name     string
+		adminIP  string
+		expected string
+	}{
+		{
+			name:     "selected loopback",
+			adminIP:  "127.0.0.1",
+			expected: "127.0.0.1",
+		},
+		{
+			name:     "IPv4 wildcard",
+			adminIP:  "0.0.0.0",
+			expected: detectedIP,
+		},
+		{
+			name:     "IPv6 wildcard",
+			adminIP:  "::",
+			expected: detectedIP,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adminIP := tt.adminIP
+			miniAdminOptions.ip = &adminIP
+			if got := miniAdminAdvertisedIP(); got != tt.expected {
+				t.Fatalf("miniAdminAdvertisedIP() = %q, want %q", got, tt.expected)
+			}
+		})
 	}
 }
