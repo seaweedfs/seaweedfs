@@ -57,7 +57,25 @@ jobs:
           helm template test $CHART_DIR --set s3.enabled=true > /tmp/s3.yaml
           grep -q "kind: Deployment" /tmp/s3.yaml && grep -q "seaweedfs-s3" /tmp/s3.yaml
           echo "S3 deployment renders correctly"
-          
+
+          echo "=== Testing S3 rollout settings ==="
+          helm template test $CHART_DIR --show-only templates/s3/s3-deployment.yaml \
+            --set s3.enabled=true > /tmp/s3-rollout-defaults.yaml
+          grep -q "terminationGracePeriodSeconds: 10$" /tmp/s3-rollout-defaults.yaml
+          test "$(grep -cE '^  strategy:|^ +lifecycle:' /tmp/s3-rollout-defaults.yaml)" -eq 0
+          helm template test $CHART_DIR --show-only templates/s3/s3-deployment.yaml \
+            --set s3.enabled=true \
+            --set s3.terminationGracePeriodSeconds=30 \
+            --set s3.updateStrategy.type=RollingUpdate \
+            --set s3.updateStrategy.rollingUpdate.maxUnavailable=0 \
+            --set-string 's3.lifecycle.preStop.exec.command={sleep,5}' \
+            > /tmp/s3-rollout.yaml
+          grep -q "terminationGracePeriodSeconds: 30$" /tmp/s3-rollout.yaml
+          grep -A 4 "^  strategy:" /tmp/s3-rollout.yaml | grep -q "maxUnavailable: 0"
+          grep -A 4 "^  strategy:" /tmp/s3-rollout.yaml | grep -q "type: RollingUpdate"
+          grep -A 5 "^          lifecycle:" /tmp/s3-rollout.yaml | grep -q -- "- sleep"
+          echo "S3 rollout settings render correctly"
+
           echo "=== Testing S3 credentials from an existing secret ==="
           credential_args=(
             --set s3.credentials.admin.existingSecret=minio-root

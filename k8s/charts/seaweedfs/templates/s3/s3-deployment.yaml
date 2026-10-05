@@ -17,6 +17,10 @@ metadata:
 {{- end }}
 spec:
   replicas: {{ .Values.s3.replicas }}
+  {{- with .Values.s3.updateStrategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -59,7 +63,7 @@ spec:
         {{ tpl .Values.s3.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: {{ .Values.s3.terminationGracePeriodSeconds }}
       {{- if .Values.s3.priorityClassName }}
       priorityClassName: {{ .Values.s3.priorityClassName | quote }}
       {{- end }}
@@ -234,6 +238,10 @@ spec:
             successThreshold: {{ .Values.s3.livenessProbe.successThreshold }}
             failureThreshold: {{ .Values.s3.livenessProbe.failureThreshold }}
             timeoutSeconds: {{ .Values.s3.livenessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- with .Values.s3.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- with .Values.s3.resources }}
           resources:

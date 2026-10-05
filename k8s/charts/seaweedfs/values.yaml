@@ -1035,6 +1035,17 @@ s3:
   imageOverride: null
   restartPolicy: null
   replicas: 1
+  # Deployment update strategy, rendered as the Deployment's strategy
+  # ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy
+  # Example:
+  # updateStrategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxUnavailable: 0
+  #     maxSurge: 25%
+  updateStrategy: {}
+  # Time the s3 pod is given to shut down, including any preStop hook
+  terminationGracePeriodSeconds: 10
   bindAddress: 0.0.0.0
   port: 8333
   # add additional https port
@@ -1226,6 +1237,17 @@ s3:
     successThreshold: 1
     failureThreshold: 100
     timeoutSeconds: 10
+
+  # Lifecycle hooks for the s3 container. A preStop sleep lets the pod leave
+  # the Service endpoints before it receives SIGTERM; keep it shorter than
+  # terminationGracePeriodSeconds.
+  # ref: https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/
+  # Example:
+  # lifecycle:
+  #   preStop:
+  #     exec:
+  #       command: ["sleep", "5"]
+  lifecycle: {}
 
   createBucketsHook:
     resources: {}
