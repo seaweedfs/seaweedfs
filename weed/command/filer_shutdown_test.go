@@ -56,7 +56,7 @@ func TestFilerShutdownJoinsServeDuringParallelDrain(t *testing.T) {
 	grpcStopped := make(chan struct{})
 	filerClosed := make(chan struct{})
 	var closes atomic.Int32
-	shutdown := newFilerShutdown(func() {
+	shutdown := newGracefulShutdown(func() {
 		close(grpcStarted)
 		<-grpcRelease
 		close(grpcStopped)
@@ -138,7 +138,7 @@ func TestFilerShutdownWaitsForHTTPAfterGrpcStops(t *testing.T) {
 	server.Config.RegisterOnShutdown(func() { close(httpClosing) })
 	grpcStopped := make(chan struct{})
 	filerClosed := make(chan struct{})
-	shutdown := newFilerShutdown(func() { close(grpcStopped) }, func() { close(filerClosed) }, server.Config)
+	shutdown := newGracefulShutdown(func() { close(grpcStopped) }, func() { close(filerClosed) }, server.Config)
 	joined := make(chan struct{})
 	go func() { shutdown(); close(joined) }()
 	<-httpClosing
