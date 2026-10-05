@@ -346,14 +346,8 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// Pass keyMarker and versionIdMarker to enable efficient pagination (skip entries before marker)
 	bucketPath := s3a.bucketDir(bucket)
 
-	// Memory optimization: limit collection to maxKeys+1 versions.
-	// This works correctly for objects using the NEW inverted-timestamp format, where
-	// filesystem order (lexicographic) matches sorted order (newest-first).
-	// For OLD format objects (raw timestamps), filesystem order is oldest-first, so
-	// limiting collection may return older versions instead of newest. However:
-	// - New objects going forward use the new format
-	// - The alternative (collecting all) causes memory issues for buckets with many versions
-	// - Pagination continues correctly; users can page through to see all versions
+	// Memory optimization: limit collection to maxKeys+1 versions, extended past
+	// entry names that can still resolve to keys sorting into the page.
 	maxCollect := maxKeys + 1 // +1 to detect truncation
 	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, keyMarker, versionIdMarker, delimiter, commonPrefixes, maxCollect)
 	if err != nil {
@@ -534,6 +528,58 @@ func (vc *versionCollector) isFull() bool {
 	return currentCount >= vc.maxCollect
 }
 
+// recordKey tracks the largest key collected so far, so collectVersions can
+// tell when an entry name still pending can resolve to a key that sorts into
+// the collected page.
+func (vc *versionCollector) recordKey(key string) {
+	if key > vc.maxKey {
+		vc.maxKey = key
+	}
+}
+
+// nameCeiling returns the largest directory-entry name that can still resolve
+// to a key at or below key. Name order is not key order: "a.copy.versions"
+// sorts before "a.versions" while key "a.copy" sorts after "a", so the names
+// that map to keys <= key reach past key+".versions" - every prefix of key can
+// host a .versions directory whose name is the real ceiling.
+func nameCeiling(key string) string {
+	ceiling := key + s3_constants.VersionsFolder
+	for i := 0; i < len(key); i++ {
+		if n := key[:i] + s3_constants.VersionsFolder; n > ceiling {
+			ceiling = n
+		}
+	}
+	return ceiling
+}
+
+// collectBound returns the largest entry name under relativePath that can still
+// resolve to a key at or below maxKey, and whether the walk may stop past it.
+// The bound is absent when nothing was collected yet, or when every key under
+// relativePath already sorts below maxKey and the whole subtree must be read.
+func (vc *versionCollector) collectBound(relativePath string) (string, bool) {
+	if vc.maxKey == "" {
+		return "", false
+	}
+	if relativePath == "" {
+		return nameCeiling(vc.maxKey), true
+	}
+	if rel, ok := strings.CutPrefix(vc.maxKey, relativePath+"/"); ok {
+		return nameCeiling(rel), true
+	}
+	return "", vc.maxKey < relativePath+"/"
+}
+
+// mayCollect reports whether entry name under relativePath can still resolve
+// to a key that sorts into the collected page; once the collector is full and
+// the name is past the bound, every later name can only produce keys above it.
+func (vc *versionCollector) mayCollect(relativePath, name string) bool {
+	if !vc.isFull() {
+		return true
+	}
+	bound, bounded := vc.collectBound(relativePath)
+	return !bounded || name <= bound
+}
+
 // matchesPrefixFilter checks if an entry path matches the prefix filter
 func (vc *versionCollector) matchesPrefixFilter(entryPath string, isDirectory bool) bool {
 	if vc.prefix == "" {
@@ -644,6 +690,7 @@ func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId stri
 
 // addVersion adds a version or delete marker to results
 func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string) {
+	vc.recordKey(objectKey)
 	if version.IsDeleteMarker {
 		deleteMarker := &DeleteMarkerEntry{
 			Key:          objectKey,
@@ -693,10 +740,6 @@ func (vc *versionCollector) processVersionsDirectory(entryPath string, versionsE
 	}
 
 	for _, version := range versions {
-		if vc.isFull() {
-			return nil
-		}
-
 		versionKey := normalizedObjectKey + ":" + version.VersionId
 		if vc.seenVersionIds[versionKey] {
 			continue
@@ -735,6 +778,7 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 		return
 	}
 
+	vc.recordKey(directoryKey)
 	versionEntry := &VersionEntry{
 		Key:          directoryKey,
 		VersionId:    "null",
@@ -812,6 +856,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 		}
 	}
 
+	vc.recordKey(normalizedObjectKey)
 	versionEntry := &VersionEntry{
 		Key:          normalizedObjectKey,
 		VersionId:    "null",
@@ -862,7 +907,7 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 	}
 	listPrefix := vc.computeListPrefix(relativePath)
 	for {
-		if vc.isFull() {
+		if bound, bounded := vc.collectBound(relativePath); vc.isFull() && bounded && startFrom >= bound {
 			return nil
 		}
 
@@ -874,7 +919,7 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 		}
 
 		for _, entry := range entries {
-			if vc.isFull() {
+			if !vc.mayCollect(relativePath, entry.Name) {
 				return nil
 			}
 			startFrom = entry.Name
@@ -919,10 +964,8 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 							if vc.keyMarker != "" && commonPrefix <= vc.keyMarker {
 								continue
 							}
-							if vc.isFull() {
-								return nil
-							}
 							vc.commonPrefixes[commonPrefix] = true
+							vc.recordKey(commonPrefix)
 						}
 
 						// The prefix rolled up here belongs to the keys nested under this
@@ -988,6 +1031,12 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 	// doesn't descend into this directory and entryPath+"/" sorts before the marker,
 	// then every key in this subtree was already returned in a previous page.
 	if vc.keyMarker != "" && !strings.HasPrefix(vc.keyMarker, entryPath+"/") && entryPath+"/" < vc.keyMarker {
+		return nil
+	}
+
+	// Once the page is full, a subtree whose keys all sort above maxKey cannot
+	// contribute to it.
+	if bound, bounded := vc.collectBound(entryPath); vc.isFull() && bounded && bound == "" {
 		return nil
 	}
 
