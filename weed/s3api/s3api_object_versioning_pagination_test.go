@@ -102,13 +102,20 @@ func TestListObjectVersionsPagination(t *testing.T) {
 	client := &testFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
 			"/buckets/b": {
+				newDir(".hidden"),
 				versionedDir("a.copy", "c2"),
 				versionedDir("a", "a2"),
 				newDir("d"),
 				{Name: "d.x", Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix()}},
 			},
-			"/buckets/b/a.copy.versions": {versionFile("c1", false), versionFile("c2", true)},
-			"/buckets/b/a.versions":      {versionFile("a1", false), versionFile("a2", false)},
+			"/buckets/b/.hidden": {
+				versionedDir("file", "h1"),
+				versionedDir("z", "z1"),
+			},
+			"/buckets/b/.hidden/file.versions": {versionFile("h1", false)},
+			"/buckets/b/.hidden/z.versions":    {versionFile("z1", false)},
+			"/buckets/b/a.copy.versions":       {versionFile("c1", false), versionFile("c2", true)},
+			"/buckets/b/a.versions":            {versionFile("a1", false), versionFile("a2", false)},
 			"/buckets/b/d": {
 				versionedDir("f", "f1"),
 				versionedDir("g", "g1"),
@@ -125,7 +132,7 @@ func TestListObjectVersionsPagination(t *testing.T) {
 	for _, item := range want {
 		wantIds = append(wantIds, itemId(item))
 	}
-	require.Equal(t, []string{"a:a2", "a:a1", "a.copy:c2", "a.copy:c1", "d.x:null", "d/f:f1", "d/g:g1"}, wantIds)
+	require.Equal(t, []string{".hidden/file:h1", ".hidden/z:z1", "a:a2", "a:a1", "a.copy:c2", "a.copy:c1", "d.x:null", "d/f:f1", "d/g:g1"}, wantIds)
 
 	for maxKeys := 1; maxKeys <= len(wantIds)+1; maxKeys++ {
 		var got []string

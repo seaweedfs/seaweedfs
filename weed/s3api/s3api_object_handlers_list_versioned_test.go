@@ -654,6 +654,7 @@ func TestComputeStartFrom(t *testing.T) {
 		{"dir prefix at marker end", "d-", "", "d", true},
 		{"no qualifying prefix", "zzz", "", "zzz", true},
 		{"leading below-slash byte", ".hidden", "", ".hidden", true},
+		{"leading below-slash byte nested", ".hidden/file", "", ".hidden", true},
 	}
 
 	for _, tt := range tests {
