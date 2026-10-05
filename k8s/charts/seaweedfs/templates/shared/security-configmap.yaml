@@ -18,7 +18,7 @@ data:
   {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
   {{- $existing = lookup "v1" "ConfigMap" .Release.Namespace $legacyName }}
   {{- end }}
-  {{- $securityConfig := fromToml (dig "data" "security.toml" "" $existing) }}
+  {{- $existingToml := dig "data" "security.toml" "" $existing }}
   {{- $securityConfigValues := .Values.global.seaweedfs.securityConfig | default dict }}
   {{- $jwtSigning := $securityConfigValues.jwtSigning | default dict }}
   {{- $expiresAfterSeconds := $jwtSigning.expiresAfterSeconds | default dict }}
@@ -29,7 +29,7 @@ data:
     # the jwt signing key is read by master and volume server
     # the jwt defaults to expire after 10 seconds
     [jwt.signing]
-    key = "{{ dig "jwt" "signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.signing" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
     {{- if gt (int $expiresAfterSeconds.volumeWrite) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.volumeWrite }}
     {{- end }}
@@ -41,7 +41,7 @@ data:
     # - the Volume server validates the JWT on reading
     # the jwt defaults to expire after 60 seconds
     [jwt.signing.read]
-    key = "{{ dig "jwt" "signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.signing\\.read" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
     {{- if gt (int $expiresAfterSeconds.volumeRead) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.volumeRead }}
     {{- end }}
@@ -53,7 +53,7 @@ data:
     # - the Filer server validates the JWT on writing
     # the jwt defaults to expire after 10 seconds
     [jwt.filer_signing]
-    key = "{{ dig "jwt" "filer_signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.filer_signing" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
     {{- if gt (int $expiresAfterSeconds.filerWrite) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.filerWrite }}
     {{- end }}
@@ -65,7 +65,7 @@ data:
     # - the Filer server validates the JWT on reading
     # the jwt defaults to expire after 60 seconds
     [jwt.filer_signing.read]
-    key = "{{ dig "jwt" "filer_signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ include "seaweedfs.existingTomlKey" (list "jwt\\.filer_signing\\.read" $existingToml) | default (randAlphaNum 10 | b64enc) }}"
     {{- if gt (int $expiresAfterSeconds.filerRead) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.filerRead }}
     {{- end }}
