@@ -479,6 +479,7 @@ func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, 
 // versionCollector holds state for collecting object versions during recursive traversal
 type versionCollector struct {
 	s3a              *S3ApiServer
+	filerClient      filer_pb.SeaweedFilerClient
 	bucket           string
 	prefix           string
 	keyMarker        string
@@ -489,6 +490,36 @@ type versionCollector struct {
 	seenVersionIds   map[string]bool
 	delimiter        string
 	commonPrefixes   map[string]bool
+	maxKey           string
+}
+
+// list is s3a.list bound to the collector's filer client.
+func (vc *versionCollector) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error) {
+	return listWithRetry(parentDirectoryPath, func() (entries []*filer_pb.Entry, isLast bool, err error) {
+		err = filer_pb.SeaweedList(context.Background(), vc.filerClient, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
+			entries = append(entries, entry)
+			if isLastEntry {
+				isLast = true
+			}
+			return nil
+		}, startFrom, inclusive, limit)
+		if len(entries) == 0 {
+			isLast = true
+		}
+		return
+	})
+}
+
+// getEntry is s3a.getEntry bound to the collector's filer client.
+func (vc *versionCollector) getEntry(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
+	resp, err := filer_pb.LookupEntry(context.Background(), vc.filerClient, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: parentDirectoryPath,
+		Name:      entryName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Entry, nil
 }
 
 // isFull returns true if we've collected enough versions
@@ -655,7 +686,7 @@ func (vc *versionCollector) processVersionsDirectory(entryPath string, versionsE
 
 	glog.V(2).Infof("processVersionsDirectory: found object %s", normalizedObjectKey)
 
-	versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey, versionsEntry)
+	versions, err := vc.getObjectVersionList(normalizedObjectKey, versionsEntry)
 	if err != nil {
 		glog.Warningf("processVersionsDirectory: failed to get versions for %s: %v", normalizedObjectKey, err)
 		return nil // Continue with other entries
@@ -742,10 +773,10 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 
 	// Check if a .versions directory exists for this object
 	versionsEntryName := entry.Name + s3_constants.VersionsFolder
-	versionsDirEntry, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
+	versionsDirEntry, versionsErr := vc.getEntry(currentPath, versionsEntryName)
 	if versionsErr == nil && !hasVersionMeta {
 		// .versions exists but file has no version metadata - check for null version in .versions
-		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey, versionsDirEntry)
+		versions, err := vc.getObjectVersionList(normalizedObjectKey, versionsDirEntry)
 		if err == nil {
 			for _, v := range versions {
 				if v.VersionId == "null" {
@@ -775,7 +806,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 		if len(versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]) > 0 {
 			isLatest = false
 		} else if !nullVersionIsLatest(versionsDirEntry) {
-			if latestVersion, _, _, _, scanErr := vc.s3a.scanLatestVersionEntry(currentPath + "/" + versionsEntryName); scanErr == nil && latestVersion != nil && !nullObjectWins(entry, latestVersion) {
+			if latestVersion, _, _, _, scanErr := vc.scanLatestVersionEntry(currentPath + "/" + versionsEntryName); scanErr == nil && latestVersion != nil && !nullObjectWins(entry, latestVersion) {
 				isLatest = false
 			}
 		}
@@ -813,7 +844,10 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		commonPrefixes:   commonPrefixes,
 	}
 
-	return vc.collectVersions(currentPath, relativePath)
+	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		vc.filerClient = client
+		return vc.collectVersions(currentPath, relativePath)
+	})
 }
 
 // collectVersions recursively collects versions from the given path
@@ -832,7 +866,7 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 			return nil
 		}
 
-		entries, isLast, err := vc.s3a.list(currentPath, listPrefix, startFrom, inclusive, filer.PaginationSize)
+		entries, isLast, err := vc.list(currentPath, listPrefix, startFrom, inclusive, filer.PaginationSize)
 		// After the first batch, use exclusive mode for standard pagination
 		inclusive = false
 		if err != nil {
@@ -971,7 +1005,7 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 // already holds from listing the parent directory - re-fetching it here would
 // cost one extra filer round-trip per object listed.
 // Uses pagination to handle objects with more than 1000 versions
-func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntry *filer_pb.Entry) ([]*ObjectVersion, error) {
+func (vc *versionCollector) getObjectVersionList(object string, versionsEntry *filer_pb.Entry) ([]*ObjectVersion, error) {
 	var versions []*ObjectVersion
 
 	// A nil entry means the .versions directory is absent: no versions, the
@@ -981,9 +1015,9 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntr
 	}
 
 	// All versions are now stored in the .versions directory only
-	bucketDir := s3a.bucketDir(bucket)
+	bucketDir := vc.s3a.bucketDir(vc.bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
-	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in %s", bucket, object, versionsObjectPath)
+	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in %s", vc.bucket, object, versionsObjectPath)
 
 	// Get the latest version info from directory metadata
 	var latestVersionId string
@@ -1004,7 +1038,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntr
 	totalEntries := 0
 
 	for {
-		entries, isLast, err := s3a.list(versionsDir, "", startFrom, false, pageSize)
+		entries, isLast, err := vc.list(versionsDir, "", startFrom, false, pageSize)
 		if err != nil {
 			glog.Warningf("getObjectVersionList: failed to list version files in %s: %v", versionsDir, err)
 			return nil, err
@@ -1031,7 +1065,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntr
 
 			// Check for duplicate version IDs and skip if already seen
 			if seenVersionIds[versionId] {
-				glog.Warningf("getObjectVersionList: duplicate version ID %s detected for object %s/%s, skipping", versionId, bucket, object)
+				glog.Warningf("getObjectVersionList: duplicate version ID %s detected for object %s/%s, skipping", versionId, vc.bucket, object)
 				continue
 			}
 			seenVersionIds[versionId] = true
@@ -1056,7 +1090,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntr
 				IsDeleteMarker: isDeleteMarker,
 				LastModified:   time.Unix(entry.Attributes.Mtime, 0),
 				OwnerID:        ownerID,
-				StorageClass:   s3a.getStorageClassFromExtended(entry.Extended),
+				StorageClass:   vc.s3a.getStorageClassFromExtended(entry.Extended),
 			}
 
 			if !isDeleteMarker {
@@ -1068,7 +1102,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntr
 					}
 				} else {
 					// Fallback: calculate ETag from chunks
-					version.ETag = s3a.calculateETagFromChunks(entry.Chunks)
+					version.ETag = vc.s3a.calculateETagFromChunks(entry.Chunks)
 				}
 				version.Size = int64(entry.Attributes.FileSize)
 			}
@@ -1087,7 +1121,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string, versionsEntr
 
 	// Don't sort here - let the main listObjectVersions function handle sorting consistently
 
-	glog.V(2).Infof("getObjectVersionList: returning %d total versions for %s/%s (after deduplication from %d entries)", len(versions), bucket, object, totalEntries)
+	glog.V(2).Infof("getObjectVersionList: returning %d total versions for %s/%s (after deduplication from %d entries)", len(versions), vc.bucket, object, totalEntries)
 	for i, version := range versions {
 		glog.V(2).Infof("getObjectVersionList: version %d: %s (isLatest=%v, isDeleteMarker=%v)", i, version.VersionId, version.IsLatest, version.IsDeleteMarker)
 	}
@@ -2038,6 +2072,9 @@ func selectLatestVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry
 	return
 }
 
+// entryLister is the shared signature of s3a.list and versionCollector.list.
+type entryLister func(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error)
+
 // scanLatestVersionEntry paginates a .versions/ directory and returns the
 // chronologically newest version entry (including delete markers; see
 // selectLatestVersion). A single-shot list would miss the true latest when
@@ -2045,9 +2082,17 @@ func selectLatestVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry
 // order is lexicographic-ascending = oldest-first for that format. latestEntry
 // is nil when the directory holds no version entries.
 func (s3a *S3ApiServer) scanLatestVersionEntry(versionsDir string) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool, err error) {
+	return scanLatestVersionEntry(s3a.list, versionsDir)
+}
+
+func (vc *versionCollector) scanLatestVersionEntry(versionsDir string) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool, err error) {
+	return scanLatestVersionEntry(vc.list, versionsDir)
+}
+
+func scanLatestVersionEntry(list entryLister, versionsDir string) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool, err error) {
 	startFrom := ""
 	for {
-		entries, isLast, listErr := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
+		entries, isLast, listErr := list(versionsDir, "", startFrom, false, filer.PaginationSize)
 		if listErr != nil {
 			return nil, "", "", false, fmt.Errorf("list %s: %w", versionsDir, listErr)
 		}
