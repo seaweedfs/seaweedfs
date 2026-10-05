@@ -3670,7 +3670,7 @@ async fn try_expand_chunk_manifest(
             .unwrap_or_default();
         (range, ranges)
     });
-    let mut parts: Vec<(usize, Vec<u8>)> = Vec::new();
+    let mut parts: HashMap<(usize, usize), Vec<(usize, Vec<u8>)>> = HashMap::new();
 
     // Read and concatenate all chunks. Each chunk is resolved to wherever it
     // lives — a local regular volume, a local EC volume (reconstruct-on-read),
@@ -3724,14 +3724,17 @@ async fn try_expand_chunk_manifest(
         let bound = (chunk.size as usize).min(size - offset);
         let copy_len = data.len().min(bound);
         if let Some((_, ranges)) = &wanted {
-            // Keep only the bytes the requested ranges can read: holding whole
-            // chunks would pin memory far past the response size when chunk
-            // windows overlap.
+            // Keep only the bytes each requested range can read, bucketed by
+            // range so serving one range never scans another's parts.
+            let key = |r: &HttpRange| (r.start as usize, (r.start + r.length) as usize);
             for r in ranges {
                 let lo = (r.start as usize).clamp(offset, offset + copy_len);
                 let hi = ((r.start + r.length) as usize).clamp(offset, offset + copy_len);
                 if lo < hi {
-                    parts.push((lo, data[lo - offset..hi - offset].to_vec()));
+                    parts
+                        .entry(key(r))
+                        .or_default()
+                        .push((lo, data[lo - offset..hi - offset].to_vec()));
                 }
             }
         } else {
@@ -3850,11 +3853,13 @@ async fn try_expand_chunk_manifest(
         let read = |buf: &mut Vec<u8>, start: usize, end: usize| {
             let base = buf.len();
             buf.resize(base + end - start, 0);
-            for (offset, data) in &parts {
-                let (lo, hi) = (start.max(*offset), end.min(offset + data.len()));
-                if lo < hi {
-                    buf[base + lo - start..base + hi - start]
-                        .copy_from_slice(&data[lo - offset..hi - offset]);
+            if let Some(range_parts) = parts.get(&(start, end)) {
+                for (offset, data) in range_parts {
+                    let (lo, hi) = (start.max(*offset), end.min(offset + data.len()));
+                    if lo < hi {
+                        buf[base + lo - start..base + hi - start]
+                            .copy_from_slice(&data[lo - offset..hi - offset]);
+                    }
                 }
             }
         };
