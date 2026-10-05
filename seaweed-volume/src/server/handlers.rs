@@ -1105,10 +1105,18 @@ async fn get_or_head_handler_inner(
     // responses keep it (Go sets it before tryHandleChunkedFile runs).
     if n.is_chunk_manifest()
         && !request_kind.bypass_cm
-        && let Some(expanded) =
-            try_expand_chunk_manifest(&state, &n, &path, &query, &etag, &last_modified_str).await
+        && let Some(expanded) = try_expand_chunk_manifest(
+            &state,
+            &n,
+            &path,
+            &query,
+            &etag,
+            &last_modified_str,
+            range.as_deref().filter(|_| method == Method::GET),
+        )
+        .await
     {
-        // HEAD and Range apply to the assembled object.
+        // HEAD, and a Range the manifest path did not answer, apply to the assembled object.
         return match expanded {
             ControlFlow::Continue((data, response_headers)) => buffered_response(
                 &state,
@@ -1980,10 +1988,27 @@ fn range_error_response(mut headers: HeaderMap, msg: &str) -> Response {
 fn handle_range_request(
     range_str: &str,
     data: &[u8],
+    headers: HeaderMap,
+    state: Option<Arc<VolumeServerState>>,
+) -> Response {
+    handle_range_request_with(
+        range_str,
+        data.len() as i64,
+        |buf, start, end| buf.extend_from_slice(&data[start..end]),
+        headers,
+        state,
+    )
+}
+
+/// Range reply over an object of `total` bytes; `read` appends `[start, end)`
+/// of it and is called only for the ranges actually served.
+fn handle_range_request_with(
+    range_str: &str,
+    total: i64,
+    read: impl Fn(&mut Vec<u8>, usize, usize),
     mut headers: HeaderMap,
     state: Option<Arc<VolumeServerState>>,
 ) -> Response {
-    let total = data.len() as i64;
     let ranges = match parse_range_header(range_str, total) {
         Ok(r) => r,
         Err(msg) => {
@@ -2019,10 +2044,9 @@ fn handle_range_request(
         if r.length <= 0 {
             return (StatusCode::PARTIAL_CONTENT, headers).into_response();
         }
-        let start = r.start as usize;
-        let end = (r.start + r.length) as usize;
-        let slice = &data[start..end];
-        finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, slice.to_vec(), state)
+        let mut slice = Vec::with_capacity(r.length as usize);
+        read(&mut slice, r.start as usize, (r.start + r.length) as usize);
+        finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, slice, state)
     } else {
         // Multi-range: build multipart/byteranges response
         let boundary = "SeaweedFSBoundary";
@@ -2045,9 +2069,7 @@ fn handle_range_request(
                 format!("Content-Range: {}\r\n\r\n", range_content_range(*r, total)).as_bytes(),
             );
             if r.length > 0 {
-                let start = r.start as usize;
-                let end = (r.start + r.length) as usize;
-                body.extend_from_slice(&data[start..end]);
+                read(&mut body, r.start as usize, (r.start + r.length) as usize);
             }
         }
         body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
@@ -3581,7 +3603,8 @@ struct ChunkInfo {
 }
 
 /// Try to expand a chunk manifest needle into its assembled body and reply
-/// headers. Returns None if manifest can't be parsed.
+/// headers. The Range of a GET (`get_range`) is answered here from only the
+/// chunks it overlaps. Returns None if manifest can't be parsed.
 async fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
@@ -3589,6 +3612,7 @@ async fn try_expand_chunk_manifest(
     query: &ReadQueryParams,
     etag: &str,
     last_modified_str: &Option<String>,
+    get_range: Option<&str>,
 ) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
     let data = if n.is_compressed() {
         match maybe_decompress_gzip(&n.data) {
@@ -3620,11 +3644,47 @@ async fn try_expand_chunk_manifest(
         return None;
     }
 
+    // Determine filename: URL path filename, then manifest name
+    // (Go's tryHandleChunkedFile does NOT fall back to needle name)
+    let mut filename = extract_filename_from_path(path);
+    if filename.is_empty() && !manifest.name.is_empty() {
+        filename = manifest.name.clone();
+    }
+    let cm_ext = if !filename.is_empty() {
+        if let Some(dot_pos) = filename.rfind('.') {
+            filename[dot_pos..].to_lowercase()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    let transforms_image =
+        (is_image_crop_ext(&cm_ext) && query.crop_x2.is_some() && query.crop_y2.is_some())
+            || (is_image_resize_ext(&cm_ext)
+                && (query.width.unwrap_or(0) != 0 || query.height.unwrap_or(0) != 0));
+
+    let size = manifest.size as usize;
+    // A ranged GET needs only the chunks its ranges overlap; none for a
+    // range that gets no body.
+    let wanted = get_range.filter(|_| !transforms_image).map(|range| {
+        let ranges = parse_range_header(range, manifest.size)
+            .ok()
+            .filter(|ranges| sum_ranges_size(ranges) <= manifest.size)
+            .unwrap_or_default();
+        (range, ranges)
+    });
+    let mut parts: HashMap<(usize, usize), Vec<(usize, Vec<u8>)>> = HashMap::new();
+
     // Read and concatenate all chunks. Each chunk is resolved to wherever it
     // lives — a local regular volume, a local EC volume (reconstruct-on-read),
     // or a peer via master lookup — mirroring Go's ChunkedFileReader, which
     // never assumes chunks are local regular needles.
-    let mut result = vec![0u8; manifest.size as usize];
+    let mut result = if wanted.is_some() {
+        Vec::new()
+    } else {
+        vec![0u8; size]
+    };
     for chunk in &manifest.chunks {
         // Validate the attacker-controlled chunk offset before indexing: a
         // negative value would wrap to a huge usize, and an out-of-range one has
@@ -3637,6 +3697,15 @@ async fn try_expand_chunk_manifest(
                 )
                     .into_response(),
             ));
+        }
+        if let Some((_, ranges)) = &wanted {
+            let end = chunk.offset.saturating_add(chunk.size);
+            if !ranges
+                .iter()
+                .any(|r| r.length > 0 && chunk.offset < r.start + r.length && r.start < end)
+            {
+                continue;
+            }
         }
         let data = match read_chunk_needle(state, &chunk.fid).await {
             Ok(d) => d,
@@ -3651,21 +3720,30 @@ async fn try_expand_chunk_manifest(
             }
         };
         let offset = chunk.offset as usize;
-        if offset >= result.len() {
+        if offset >= size {
             continue;
         }
         // Clamp to the chunk's declared size so an over-long chunk can't bleed
         // into the next chunk's window; also drop bytes past the buffer end.
-        let bound = (chunk.size as usize).min(result.len() - offset);
+        let bound = (chunk.size as usize).min(size - offset);
         let copy_len = data.len().min(bound);
-        result[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
-    }
-
-    // Determine filename: URL path filename, then manifest name
-    // (Go's tryHandleChunkedFile does NOT fall back to needle name)
-    let mut filename = extract_filename_from_path(path);
-    if filename.is_empty() && !manifest.name.is_empty() {
-        filename = manifest.name.clone();
+        if let Some((_, ranges)) = &wanted {
+            // Keep only the bytes each requested range can read, bucketed by
+            // range so serving one range never scans another's parts.
+            let key = |r: &HttpRange| (r.start as usize, (r.start + r.length) as usize);
+            for r in ranges {
+                let lo = (r.start as usize).clamp(offset, offset + copy_len);
+                let hi = ((r.start + r.length) as usize).clamp(offset, offset + copy_len);
+                if lo < hi {
+                    parts
+                        .entry(key(r))
+                        .or_default()
+                        .push((lo, data[lo - offset..hi - offset].to_vec()));
+                }
+            }
+        } else {
+            result[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
+        }
     }
 
     // Determine MIME type: manifest mime, but fall back to extension detection
@@ -3773,17 +3851,33 @@ async fn try_expand_chunk_manifest(
         }
     }
 
+    if let Some((range, _)) = wanted {
+        response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+        // Later chunks overwrite earlier ones and gaps read as zeros, as in assembly.
+        let read = |buf: &mut Vec<u8>, start: usize, end: usize| {
+            let base = buf.len();
+            buf.resize(base + end - start, 0);
+            if let Some(range_parts) = parts.get(&(start, end)) {
+                for (offset, data) in range_parts {
+                    let (lo, hi) = (start.max(*offset), end.min(offset + data.len()));
+                    if lo < hi {
+                        buf[base + lo - start..base + hi - start]
+                            .copy_from_slice(&data[lo - offset..hi - offset]);
+                    }
+                }
+            }
+        };
+        return Some(ControlFlow::Break(handle_range_request_with(
+            range,
+            manifest.size,
+            read,
+            response_headers,
+            None,
+        )));
+    }
+
     // Go's tryHandleChunkedFile applies crop then resize to expanded chunk data
     // (L344-345: conditionallyCropImages, conditionallyResizeImages).
-    let cm_ext = if !filename.is_empty() {
-        if let Some(dot_pos) = filename.rfind('.') {
-            filename[dot_pos..].to_lowercase()
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
     if is_image_crop_ext(&cm_ext) {
         result = maybe_crop_image(&result, &cm_ext, query);
     }
@@ -5402,6 +5496,118 @@ mod tests {
             range_headers[header::CONTENT_LENGTH],
             headers[header::CONTENT_LENGTH]
         );
+    }
+
+    /// A ranged GET of a chunk manifest fetches only the chunks its ranges
+    /// overlap, as Go's ChunkedFileReader does.
+    #[tokio::test]
+    async fn test_chunk_manifest_range_fetches_only_overlapping_chunks() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        const IDS: [u64; 3] = [0x6e7a_0901, 0x6e7a_0902, 0x6e7a_0903];
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data = b"chunk-1:chunk-2:chunk-3:";
+        let fids: Vec<String> = IDS
+            .iter()
+            .zip(data.chunks(8))
+            .map(|(&id, part)| put_test_needle(&state, id, part)[1..].to_string())
+            .collect();
+        let manifest = format!(
+            r#"{{"name":"obj.txt","size":24,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}},{{"fid":"{}","offset":16,"size":8}}]}}"#,
+            fids[0], fids[1], fids[2]
+        );
+        let path = put_test_needle_with(&state, 0x6e7a_0904, manifest.as_bytes(), |n| {
+            n.set_is_chunk_manifest()
+        });
+
+        let reads: Arc<[AtomicUsize; 3]> = Arc::new(Default::default());
+        let _hooks: Vec<_> = IDS
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let reads = reads.clone();
+                needle_read_hook::register(NeedleId(id), move |_| {
+                    reads[i].fetch_add(1, Ordering::SeqCst);
+                })
+            })
+            .collect();
+        let fetched =
+            || -> [usize; 3] { std::array::from_fn(|i| reads[i].swap(0, Ordering::SeqCst)) };
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, data);
+        assert_eq!(fetched(), [1, 1, 1]);
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=10-13")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[10..14]);
+        assert_eq!(headers["Content-Range"], "bytes 10-13/24");
+        assert_eq!(headers[header::CONTENT_LENGTH], "4");
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert!(headers.contains_key(header::ETAG));
+        assert_eq!(fetched(), [0, 1, 0]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=4-11")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, &data[4..12]);
+        assert_eq!(fetched(), [1, 1, 0]);
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-1,20-23")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert!(
+            headers[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("multipart/byteranges")
+        );
+        let body = String::from_utf8(body).unwrap();
+        assert!(body.contains("Content-Range: bytes 0-1/24\r\n\r\nch"));
+        assert!(body.contains("Content-Range: bytes 20-23/24\r\n\r\nk-3:\r\n"));
+        assert_eq!(fetched(), [1, 0, 1]);
+
+        let (status, headers, _) = send_read(&state, Method::GET, &path, Some(b"bytes=24-")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers["Content-Range"], "bytes */24");
+        assert_eq!(fetched(), [0, 0, 0]);
+    }
+
+    /// Ranges served from fetched chunks read what assembly would: clamped
+    /// chunks, later ones overwriting earlier ones, and zero-filled gaps.
+    #[tokio::test]
+    async fn test_chunk_manifest_range_matches_assembly() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0905, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0906, b"BBBB");
+        let c = put_test_needle(&state, 0x6e7a_0907, b"CCCC");
+        let manifest = format!(
+            r#"{{"size":12,"chunks":[{{"fid":"{}","offset":0,"size":6}},{{"fid":"{}","offset":4,"size":4}},{{"fid":"{}","offset":10,"size":4}}]}}"#,
+            &a[1..],
+            &b[1..],
+            &c[1..]
+        );
+        let path = put_test_needle_with(&state, 0x6e7a_0908, manifest.as_bytes(), |n| {
+            n.set_is_chunk_manifest()
+        });
+
+        let (status, _, full) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(full, b"AAAABBBB\0\0CC");
+        for start in 0..12 {
+            for end in start..12 {
+                let range = format!("bytes={start}-{end}");
+                let (status, _, body) =
+                    send_read(&state, Method::GET, &path, Some(range.as_bytes())).await;
+                assert_eq!(status, StatusCode::PARTIAL_CONTENT, "{range}");
+                assert_eq!(body, &full[start..=end], "{range}");
+            }
+        }
     }
 
     /// A proxied read forwards request headers as raw bytes, as Go does: a
