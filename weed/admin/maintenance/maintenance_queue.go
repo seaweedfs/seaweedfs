@@ -271,7 +271,7 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 	mq.mutex.Lock()
 
 	var remaining []*MaintenanceTask
-	var cancelledSnapshots []*MaintenanceTask
+	var cancelledIDs []string
 	cancelled := 0
 	for _, task := range mq.pendingTasks {
 		if task.Type == taskType {
@@ -279,7 +279,7 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 			now := time.Now()
 			task.CompletedAt = &now
 			cancelled++
-			cancelledSnapshots = append(cancelledSnapshots, snapshotTask(task))
+			cancelledIDs = append(cancelledIDs, task.ID)
 			glog.V(1).Infof("Cancelled stale pending task %s (%s) for volume %d before re-detection",
 				task.ID, task.Type, task.VolumeID)
 
@@ -297,9 +297,10 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 	mq.pendingTasks = remaining
 	mq.mutex.Unlock()
 
-	// Persist cancelled state outside the lock to avoid blocking
-	for _, snapshot := range cancelledSnapshots {
-		mq.saveTaskState(snapshot)
+	// Cancelled is terminal: drop the file like CompleteTask does instead of
+	// leaving one orphaned .pb per cancelled task per scan cycle.
+	for _, id := range cancelledIDs {
+		mq.deleteTaskState(id)
 	}
 	return cancelled
 }
