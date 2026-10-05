@@ -272,12 +272,19 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// The routed PATCH only carries Extended keys. Content-Type and the ACL's
 		// file mode live on Attributes, so changes to either use the clone path:
 		// it still reuses the source chunks but can update those attributes.
+		// Eligibility is decided on the entry read inside the copy body: a
+		// concurrent write between the first read and the PATCH can change mode
+		// or MIME, which only the clone path can update.
 		owner := s3a.objectWriteOwner(dstBucket, dstObject)
-		sourceMime := entry.GetAttributes().GetMime()
-		mimeChanged := resolveDestinationMime(r.Header, sourceMime, replaceMeta) != sourceMime
 		fileMode := s3a.resolveFileMode(r)
-		routeInPlace := owner != "" && !mimeChanged && entry.GetAttributes().GetFileMode() == fileMode
-		selfCopyBody := func() s3err.ErrorCode {
+		canRouteInPlace := func(source *filer_pb.Entry) bool {
+			mime := source.GetAttributes().GetMime()
+			return owner != "" &&
+				resolveDestinationMime(r.Header, mime, replaceMeta) == mime &&
+				source.GetAttributes().GetFileMode() == fileMode
+		}
+		retryUnderLock := false
+		selfCopyBody := func(underLock bool) s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 			currentEntry = prefixObjectSource(currentEntry)
 			if errCode := classifyCopySourceError(currentEntry, currentErr); errCode != s3err.ErrNone {
@@ -294,11 +301,15 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			// Always send both ACL keys, even when the initial read matches: the
 			// routed owner may have newer grants when it applies this self-copy.
 			applyPutObjectACL(r, &filer_pb.Entry{Extended: updatedMetadata})
-			if routeInPlace {
+			if canRouteInPlace(currentEntry) {
 				if err := s3a.routedMetadataReplace(owner, dstBucket, dstObject, currentEntry, updatedMetadata); err != nil {
 					return filerErrorToS3Error(err)
 				}
 				etag = getEtagFromEntry(currentEntry)
+				return s3err.ErrNone
+			}
+			if !underLock {
+				retryUnderLock = true
 				return s3err.ErrNone
 			}
 			updatedEntry := cloneProtoEntry(currentEntry)
@@ -316,15 +327,20 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 			return s3err.ErrNone
 		}
-		var updateCode s3err.ErrorCode
-		if routeInPlace {
+		updateCode := s3err.ErrNone
+		attempted := false
+		if canRouteInPlace(entry) {
+			attempted = true
 			if updateCode = s3a.checkConditionalHeaders(r, dstBucket, dstObject); updateCode == s3err.ErrNone {
-				updateCode = selfCopyBody()
+				updateCode = selfCopyBody(false)
 			}
-		} else {
+		}
+		if updateCode == s3err.ErrNone && (!attempted || retryUnderLock) {
 			updateCode = s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
 				return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
-			}, selfCopyBody)
+			}, func() s3err.ErrorCode {
+				return selfCopyBody(true)
+			})
 		}
 		if updateCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, updateCode)
