@@ -884,10 +884,15 @@ func buildResourceARN(bucket, object string) string {
 	return fmt.Sprintf("arn:aws:s3:::%s/%s", bucket, object)
 }
 
-// AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
+// AuthWithPublicRead allows anonymous reads granted by bucket policies or ACLs,
+// deferring object ACL decisions until the GET/HEAD handler selects its entry.
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket, object := s3_constants.GetBucketAndObject(r)
+		if objectRequest, deferred := s3a.deferAnonymousObjectRead(r, action, bucket, object); deferred {
+			handler(w, objectRequest)
+			return
+		}
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
