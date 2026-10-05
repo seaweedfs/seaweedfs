@@ -293,7 +293,17 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 	}
 	for len(buf) > 0 {
 		piece := nextLogPiece(buf, limit)
-		if err := f.appendToFile(ctx, targetFile, piece); err != nil {
+		// Store operations drop request cancellation, so a stalled backend
+		// would outlive the deadline; bound each attempt instead.
+		done := make(chan error, 1)
+		go func() { done <- f.appendToFile(ctx, targetFile, piece) }()
+		var err error
+		select {
+		case err = <-done:
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
+		if err != nil {
 			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
 			if reported := volumeFileSizeLimit(err); reported > 0 && reported < limit {
 				glog.V(0).Infof("metadata log upload limit lowered to %d bytes", reported)

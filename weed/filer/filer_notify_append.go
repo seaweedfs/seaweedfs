@@ -18,6 +18,10 @@ func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte
 		return err2
 	}
 
+	// The piece is already uploaded; commit it on a detached context so an
+	// expired shutdown deadline does not strand the chunk.
+	ctx = context.WithoutCancel(ctx)
+
 	// find out existing entry
 	fullpath := util.FullPath(targetFile)
 	entry, err := f.FindEntry(ctx, fullpath)
