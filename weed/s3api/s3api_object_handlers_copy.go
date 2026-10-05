@@ -184,6 +184,15 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A copy creates destination ownership and grants independently of the
+	// source ACL. Validate explicit grants before caching or writing any data.
+	var aclCode s3err.ErrorCode
+	r, aclCode = s3a.preparePutObjectACL(r, dstBucket)
+	if aclCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, aclCode)
+		return
+	}
+
 	// Get detailed versioning state for source bucket
 	srcVersioningState, err := s3a.getVersioningState(srcBucket)
 	if err != nil {
@@ -260,14 +269,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// An in-place metadata replace routes to the owner as a serialized PATCH
 		// (off the distributed lock); the no-owner bootstrap keeps the lock.
 		//
-		// REPLACE can also change Content-Type, which lives on Attributes.Mime,
-		// not Extended. The routed PATCH only carries Extended keys, so when the
-		// Mime actually changes keep the lock and take the clone path below: it is
-		// still metadata-only (reuses the source chunks) but can set the Mime.
+		// The routed PATCH only carries Extended keys. Content-Type and the ACL's
+		// file mode live on Attributes, so changes to either use the clone path:
+		// it still reuses the source chunks but can update those attributes.
 		owner := s3a.objectWriteOwner(dstBucket, dstObject)
 		sourceMime := entry.GetAttributes().GetMime()
 		mimeChanged := resolveDestinationMime(r.Header, sourceMime, replaceMeta) != sourceMime
-		routeInPlace := owner != "" && !mimeChanged
+		fileMode := s3a.resolveFileMode(r)
+		routeInPlace := owner != "" && !mimeChanged && entry.GetAttributes().GetFileMode() == fileMode
 		selfCopyBody := func() s3err.ErrorCode {
 			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 			currentEntry = prefixObjectSource(currentEntry)
@@ -282,6 +291,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, metadataErr)
 				return s3err.ErrInvalidTag
 			}
+			// Always send both ACL keys, even when the initial read matches: the
+			// routed owner may have newer grants when it applies this self-copy.
+			applyPutObjectACL(r, &filer_pb.Entry{Extended: updatedMetadata})
 			if routeInPlace {
 				if err := s3a.routedMetadataReplace(owner, dstBucket, dstObject, currentEntry, updatedMetadata); err != nil {
 					return filerErrorToS3Error(err)
@@ -295,6 +307,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
 			updatedEntry.Attributes.Mime = resolveDestinationMime(r.Header, currentEntry.GetAttributes().GetMime(), replaceMeta)
+			updatedEntry.Attributes.FileMode = fileMode
 			updatedEntry.Attributes.Mtime = t.Unix()
 			var finErr error
 			dstVersionId, etag, finErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
@@ -367,6 +380,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	dstWantsSSES3 := IsSSES3RequestInternal(r)
 
 	for k, v := range entry.Extended {
+		// Object ACLs and ownership are not copied, regardless of the metadata directive.
+		if k == s3_constants.ExtAmzOwnerKey || k == s3_constants.ExtAmzAclKey {
+			continue
+		}
 		// Skip encryption-specific headers that might conflict with destination encryption type
 		skipHeader := false
 
@@ -468,6 +485,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	var dstVersionId string
 	var etag string
+	applyPutObjectACL(r, dstEntry)
 
 	finalizeCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
 		return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
