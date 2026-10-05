@@ -39,3 +39,71 @@ func TestApplyMiniAdminCredentialFallbackFromEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestMiniAdminBindIP(t *testing.T) {
+	tests := []struct {
+		name               string
+		requestedIP        string
+		passwordConfigured bool
+		mtlsConfigured     bool
+		allowInsecure      bool
+		want               string
+	}{
+		{
+			name:        "unauthenticated wildcard binds to loopback",
+			requestedIP: "0.0.0.0",
+			want:        "127.0.0.1",
+		},
+		{
+			name:        "unauthenticated IPv6 wildcard binds to loopback",
+			requestedIP: "::",
+			want:        "127.0.0.1",
+		},
+		{
+			name:        "existing loopback bind is preserved",
+			requestedIP: "127.0.0.1",
+			want:        "127.0.0.1",
+		},
+		{
+			name:               "password permits requested bind",
+			requestedIP:        "0.0.0.0",
+			passwordConfigured: true,
+			want:               "0.0.0.0",
+		},
+		{
+			name:           "mTLS permits requested bind",
+			requestedIP:    "0.0.0.0",
+			mtlsConfigured: true,
+			want:           "0.0.0.0",
+		},
+		{
+			name:          "explicit insecure opt-out permits requested bind",
+			requestedIP:   "0.0.0.0",
+			allowInsecure: true,
+			want:          "0.0.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := miniAdminBindIP(
+				tt.requestedIP,
+				tt.passwordConfigured,
+				tt.mtlsConfigured,
+				tt.allowInsecure,
+			)
+			if got != tt.want {
+				t.Fatalf("miniAdminBindIP() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMiniAdminWorkerBindDefaultsToLoopback(t *testing.T) {
+	if miniAdminWorkerBindIP == nil {
+		t.Fatal("mini Admin worker bind flag is not initialized")
+	}
+	if got, want := *miniAdminWorkerBindIP, "127.0.0.1"; got != want {
+		t.Fatalf("default mini Admin worker bind IP = %q, want %q", got, want)
+	}
+}

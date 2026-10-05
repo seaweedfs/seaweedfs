@@ -69,6 +69,7 @@ var (
 	miniEnableWebDAV              *bool
 	miniEnableS3                  *bool
 	miniEnableAdminUI             *bool
+	miniAdminWorkerBindIP         *string
 	miniS3IamReadOnly             *bool
 	miniVolumeMaxDataVolumeCounts *string
 	// MiniClusterCtx is the context for the mini cluster. If set, the mini cluster will stop when the context is cancelled.
@@ -567,6 +568,8 @@ func initMiniAdminFlags() {
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
 	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
+	miniAdminOptions.allowInsecureBind = cmdMini.Flag.Bool("admin.allowInsecureBind", false, "INSECURE: allow the unauthenticated admin interface to bind to -ip.bind instead of loopback")
+	miniAdminWorkerBindIP = cmdMini.Flag.String("admin.worker.ip", "127.0.0.1", "worker gRPC bind address; expose only with grpc.admin mTLS configured")
 	miniAdminOptions.urlPrefix = cmdMini.Flag.String("admin.urlPrefix", "", "URL path prefix when running the admin UI behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
 }
 
@@ -957,7 +960,11 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	// first: an in-process rerun would otherwise inherit the closed listener
 	// of the previous run and only find out inside Serve.
 	miniAdminOptions.workerGrpcListener = nil
-	if listener, err := net.Listen("tcp", util.JoinHostPort(bindIp, *miniAdminOptions.grpcPort)); err != nil {
+	workerGrpcBindIP := miniAdminOptions.workerGrpcBindIp
+	if workerGrpcBindIP == "" {
+		workerGrpcBindIP = "127.0.0.1"
+	}
+	if listener, err := net.Listen("tcp", util.JoinHostPort(workerGrpcBindIP, *miniAdminOptions.grpcPort)); err != nil {
 		glog.Warningf("Could not reserve Admin gRPC port %d: %v", *miniAdminOptions.grpcPort, err)
 	} else {
 		miniAdminOptions.workerGrpcListener = listener
@@ -1239,6 +1246,10 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Determine bind IP
 	bindIp := getBindIp()
+	miniAdminOptions.workerGrpcBindIp = *miniAdminWorkerBindIP
+	if miniAdminOptions.workerGrpcBindIp == "" {
+		miniAdminOptions.workerGrpcBindIp = "127.0.0.1"
+	}
 
 	// Ensure all ports are available, find alternatives if needed
 	if err := ensureAllPortsAvailableOnIP(bindIp); err != nil {
@@ -1583,15 +1594,19 @@ func applyMiniAdminCredentialFallback(options *AdminOptions) {
 	applyViperFallback(cmdMini, options.readOnlyPassword, "admin.readOnlyPassword", "admin.readonly.password")
 }
 
+func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, allowInsecure bool) string {
+	if isLoopbackIp(requestedIP) || passwordConfigured || mtlsConfigured || allowInsecure {
+		return requestedIP
+	}
+	return "127.0.0.1"
+}
+
 // startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
 	// Admin shuts down when mini clients shutdown is triggered.
 	ctx := miniClientsCtx()
-
-	// Determine bind IP for health checks
-	bindIp := getBindIp()
 
 	// Prepare master address with gRPC port
 	masterAddr := string(pb.NewServerAddress(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc))
@@ -1610,6 +1625,34 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Resolve admin credentials from security.toml [admin] / WEED_ADMIN_* env
 	// vars, matching the standalone `weed admin` command.
 	applyMiniAdminCredentialFallback(&miniAdminOptions)
+
+	requestedBindIP := getBindIp()
+	hasMTLS := util.GetViper().GetString("https.admin.key") != "" &&
+		util.GetViper().GetString("https.admin.ca") != ""
+	allowInsecure := miniAdminOptions.allowInsecureBind != nil &&
+		*miniAdminOptions.allowInsecureBind
+	bindIP := miniAdminBindIP(
+		requestedBindIP,
+		*miniAdminOptions.adminPassword != "",
+		hasMTLS,
+		allowInsecure,
+	)
+	miniAdminOptions.ip = &bindIP
+	if bindIP != requestedBindIP {
+		glog.Warningf(
+			"Admin authentication is disabled; binding the admin interface to %s instead of %s. "+
+				"Set -admin.password, configure https.admin mTLS, or use "+
+				"-admin.allowInsecureBind to retain the insecure network bind.",
+			bindIP,
+			requestedBindIP,
+		)
+	} else if allowInsecure && !isLoopbackIp(bindIP) &&
+		*miniAdminOptions.adminPassword == "" && !hasMTLS {
+		glog.Warningf(
+			"-admin.allowInsecureBind exposes the unauthenticated admin interface on %s.",
+			bindIP,
+		)
+	}
 
 	// Security validation: prevent empty username when password is set
 	if *miniAdminOptions.adminPassword != "" && *miniAdminOptions.adminUser == "" {
@@ -1681,7 +1724,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	}()
 
 	// Wait for admin server's HTTP port to be ready before launching worker
-	adminAddr := "http://" + util.JoinHostPort(bindIp, *miniAdminOptions.port)
+	adminAddr := "http://" + util.JoinHostPort(bindIP, *miniAdminOptions.port)
 	if err := waitForAdminServerReady(ctx, adminAddr); err != nil {
 		// If the parent context was cancelled (e.g. a previous in-process
 		// mini run is being torn down), bail out gracefully instead of
@@ -1705,7 +1748,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	startMiniPluginWorker(ctx, workerDir)
 
 	// Wait for worker to be ready by polling its gRPC port
-	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
+	workerGrpcAddr := fmt.Sprintf("%s:%d", miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.grpcPort)
 	waitForWorkerReady(workerGrpcAddr)
 	if miniProgressBoard != nil {
 		miniProgressBoard.ready("Admin")
@@ -1783,7 +1826,7 @@ func waitForWorkerReady(workerGrpcAddr string) {
 func startMiniWorker(workerDir string) {
 	glog.V(1).Infof("Initializing standard worker runtime")
 
-	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
+	adminAddr := fmt.Sprintf("%s:%d", miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.port)
 	capabilities := "vacuum,ec,balance"
 
 	// Use common worker directory
@@ -1858,7 +1901,7 @@ func startMiniWorker(workerDir string) {
 func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	glog.V(1).Infof("Starting plugin worker for admin server")
 
-	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
+	adminAddr := fmt.Sprintf("%s:%d", miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.port)
 	resolvedAdminAddr := resolvePluginWorkerAdminServer(adminAddr)
 	if resolvedAdminAddr != adminAddr {
 		glog.V(1).Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
