@@ -3,6 +3,7 @@ package kafka
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/protobuf/proto"
 )
@@ -128,9 +129,9 @@ func TestKafkaEventTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType := detectKafkaEventType(tt.key, tt.notification)
+			gotType := notification.DetectEventType(tt.key, tt.notification)
 			if gotType != tt.wantType {
-				t.Errorf("detectKafkaEventType() = %v, want %v", gotType, tt.wantType)
+				t.Errorf("DetectEventType() = %v, want %v", gotType, tt.wantType)
 			}
 
 			q := &KafkaQueue{}

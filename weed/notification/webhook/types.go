@@ -3,9 +3,9 @@ package webhook
 import (
 	"fmt"
 	"net/url"
-	"slices"
 	"strconv"
 
+	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
@@ -20,21 +20,14 @@ const (
 type eventType string
 
 const (
-	eventTypeCreate eventType = "create"
-	eventTypeDelete eventType = "delete"
-	eventTypeUpdate eventType = "update"
-	eventTypeRename eventType = "rename"
+	eventTypeCreate = eventType(notification.EventTypeCreate)
+	eventTypeDelete = eventType(notification.EventTypeDelete)
+	eventTypeUpdate = eventType(notification.EventTypeUpdate)
+	eventTypeRename = eventType(notification.EventTypeRename)
 )
 
 func (e eventType) valid() bool {
-	return slices.Contains([]eventType{
-		eventTypeCreate,
-		eventTypeDelete,
-		eventTypeUpdate,
-		eventTypeRename,
-	},
-		e,
-	)
+	return notification.ValidEventType(string(e))
 }
 
 var (
@@ -157,30 +150,6 @@ func (c *config) validate() error {
 	return nil
 }
 
-func detectEventType(key string, notification *filer_pb.EventNotification) eventType {
-	hasOldEntry := notification.OldEntry != nil
-	hasNewEntry := notification.NewEntry != nil
-
-	if !hasOldEntry && hasNewEntry {
-		return eventTypeCreate
-	}
-
-	if hasOldEntry && !hasNewEntry {
-		return eventTypeDelete
-	}
-
-	if hasOldEntry && hasNewEntry {
-		oldDir, _ := util.FullPath(key).DirAndName()
-		newDir := notification.NewParentPath
-		if newDir == "" {
-			newDir = oldDir
-		}
-		if oldDir != newDir || notification.OldEntry.Name != notification.NewEntry.Name {
-			return eventTypeRename
-		}
-
-		return eventTypeUpdate
-	}
-
-	return eventTypeUpdate
+func detectEventType(key string, n *filer_pb.EventNotification) eventType {
+	return eventType(notification.DetectEventType(key, n))
 }

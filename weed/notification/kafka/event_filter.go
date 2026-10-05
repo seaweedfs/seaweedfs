@@ -2,8 +2,8 @@ package kafka
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -17,7 +17,7 @@ func (k *KafkaQueue) setEventTypes(types []string) {
 
 	allowed := make(map[string]struct{}, len(types))
 	for _, et := range types {
-		if !validKafkaEventType(et) {
+		if !notification.ValidEventType(et) {
 			glog.Warningf("invalid event type: %v", et)
 			continue
 		}
@@ -31,47 +31,10 @@ func (k *KafkaQueue) allowsEvent(key string, message proto.Message) bool {
 		return true
 	}
 
-	notification, ok := message.(*filer_pb.EventNotification)
-	if !ok || notification == nil {
+	n, ok := message.(*filer_pb.EventNotification)
+	if !ok || n == nil {
 		return false
 	}
-	_, allowed := k.eventTypes[detectKafkaEventType(key, notification)]
+	_, allowed := k.eventTypes[notification.DetectEventType(key, n)]
 	return allowed
-}
-
-func validKafkaEventType(t string) bool {
-	switch t {
-	case "create", "delete", "update", "rename":
-		return true
-	default:
-		return false
-	}
-}
-
-func detectKafkaEventType(key string, notification *filer_pb.EventNotification) string {
-	hasOldEntry := notification.OldEntry != nil
-	hasNewEntry := notification.NewEntry != nil
-
-	if !hasOldEntry && hasNewEntry {
-		return "create"
-	}
-
-	if hasOldEntry && !hasNewEntry {
-		return "delete"
-	}
-
-	if hasOldEntry && hasNewEntry {
-		oldDir, _ := util.FullPath(key).DirAndName()
-		newDir := notification.NewParentPath
-		if newDir == "" {
-			newDir = oldDir
-		}
-		if oldDir != newDir || notification.OldEntry.Name != notification.NewEntry.Name {
-			return "rename"
-		}
-
-		return "update"
-	}
-
-	return "update"
 }
