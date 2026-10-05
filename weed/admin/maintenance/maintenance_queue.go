@@ -97,21 +97,53 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 	return nil
 }
 
-// saveTaskState saves a task to persistent storage
+// isTerminalStatus reports whether the status is a terminal task state.
+func isTerminalStatus(status MaintenanceTaskStatus) bool {
+	return status == TaskStatusCompleted || status == TaskStatusFailed || status == TaskStatusCancelled
+}
+
+// saveTaskState saves a task to persistent storage. persistMu orders the
+// status check and the write against the cancel paths' deletes, so a stale
+// non-terminal file cannot resurrect the task on the next restart.
 func (mq *MaintenanceQueue) saveTaskState(task *MaintenanceTask) {
-	if mq.persistence != nil {
-		if err := mq.persistence.SaveTaskState(task); err != nil {
-			glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
-		}
+	if mq.persistence == nil {
+		return
+	}
+	mq.persistMu.Lock()
+	defer mq.persistMu.Unlock()
+	mq.saveTaskStateLocked(task)
+}
+
+// saveTaskStateLocked must be called with persistMu held.
+func (mq *MaintenanceQueue) saveTaskStateLocked(task *MaintenanceTask) {
+	mq.mutex.RLock()
+	live, ok := mq.tasks[task.ID]
+	stale := !isTerminalStatus(task.Status) && (!ok || isTerminalStatus(live.Status))
+	mq.mutex.RUnlock()
+	if stale {
+		return
+	}
+	if err := mq.persistence.SaveTaskState(task); err != nil {
+		glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
 	}
 }
 
-func (mq *MaintenanceQueue) deleteTaskState(taskID string) {
-	if mq.persistence != nil {
-		if err := mq.persistence.DeleteTaskState(taskID); err != nil {
-			glog.V(2).Infof("Failed to delete task state for %s: %v", taskID, err)
-		}
+func (mq *MaintenanceQueue) deleteTaskState(taskID string) error {
+	if mq.persistence == nil {
+		return nil
 	}
+	mq.persistMu.Lock()
+	defer mq.persistMu.Unlock()
+	return mq.deleteTaskStateLocked(taskID)
+}
+
+// deleteTaskStateLocked must be called with persistMu held.
+func (mq *MaintenanceQueue) deleteTaskStateLocked(taskID string) error {
+	if err := mq.persistence.DeleteTaskState(taskID); err != nil {
+		glog.Warningf("Failed to delete task state for %s: %v", taskID, err)
+		return err
+	}
+	return nil
 }
 
 // cleanupCompletedTasks removes old completed tasks beyond the retention limit
@@ -297,9 +329,18 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 	mq.pendingTasks = remaining
 	mq.mutex.Unlock()
 
-	// Persist cancelled state outside the lock to avoid blocking
-	for _, snapshot := range cancelledSnapshots {
-		mq.saveTaskState(snapshot)
+	// Cancelled is terminal: drop the file like CompleteTask does instead of
+	// leaving one orphaned .pb per cancelled task per scan cycle. If removal
+	// fails, persist the cancelled state so a restart drops it instead of
+	// re-queueing it.
+	if mq.persistence != nil {
+		mq.persistMu.Lock()
+		for _, snapshot := range cancelledSnapshots {
+			if mq.deleteTaskStateLocked(snapshot.ID) != nil {
+				mq.saveTaskStateLocked(snapshot)
+			}
+		}
+		mq.persistMu.Unlock()
 	}
 	return cancelled
 }
@@ -922,7 +963,7 @@ func generateTaskID() string {
 	return fmt.Sprintf("%s-%04d", string(b), timestamp)
 }
 
-// CleanupOldTasks removes old completed and failed tasks
+// CleanupOldTasks removes old terminal tasks from memory
 func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()
@@ -931,7 +972,7 @@ func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	removed := 0
 
 	for id, task := range mq.tasks {
-		if (task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed) &&
+		if (task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed || task.Status == TaskStatusCancelled) &&
 			task.CompletedAt != nil &&
 			task.CompletedAt.Before(cutoff) {
 			delete(mq.tasks, id)
