@@ -88,7 +88,10 @@ Admin UI/API and its worker gRPC control plane to loopback. Set
 UI/API on `-ip.bind`. Remote workers must also opt in with
 `-admin.worker.ip=<address>` and should configure `grpc.admin` mTLS.
 `-admin.allowInsecureBind` preserves the legacy unauthenticated network bind,
-but should only be used on an otherwise isolated network.
+but should only be used on an otherwise isolated network. This hardening is
+tracked in [#11612](https://github.com/seaweedfs/seaweedfs/issues/11612) and
+implemented by
+[#11613](https://github.com/seaweedfs/seaweedfs/pull/11613).
 
 > macOS: if the binary is quarantined, run `xattr -d com.apple.quarantine ./weed` first.
 
