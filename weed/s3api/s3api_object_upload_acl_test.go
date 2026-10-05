@@ -663,7 +663,7 @@ func TestPutObjectUploadACL(t *testing.T) {
 }
 
 // TestPutObjectACLPolicyScope ensures query normalization cannot alter other
-// operations or the original signed request passed to the upload handler.
+// operations or the original signed request passed to the upload/copy handler.
 func TestPutObjectACLPolicyScope(t *testing.T) {
 	tests := []struct {
 		name, method, object, subresource string
@@ -676,8 +676,10 @@ func TestPutObjectACLPolicyScope(t *testing.T) {
 		{name: "upload acl authorization", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE_ACP, wantACL: "public-read"},
 		{name: "bucket", method: http.MethodPut, action: s3_constants.ACTION_WRITE},
 		{name: "post form", method: http.MethodPost, object: "key", action: s3_constants.ACTION_WRITE},
-		{name: "copy", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE, copy: true},
-		{name: "repeated copy source", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE, repeatedCopy: true},
+		{name: "copy", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE, copy: true, wantACL: "public-read"},
+		{name: "copy acl authorization", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE_ACP, copy: true, wantACL: "public-read"},
+		{name: "repeated copy source", method: http.MethodPut, object: "key", action: s3_constants.ACTION_WRITE, repeatedCopy: true, wantACL: "public-read"},
+		{name: "multipart part copy", method: http.MethodPut, object: "key", subresource: "uploadId=upload&partNumber=1", action: s3_constants.ACTION_WRITE, copy: true},
 		{name: "multipart part", method: http.MethodPut, object: "key", subresource: "uploadId=upload&partNumber=1", action: s3_constants.ACTION_WRITE},
 		{name: "multipart leading zero", method: http.MethodPut, object: "key", subresource: "uploadId=upload&partNumber=01", action: s3_constants.ACTION_WRITE},
 		{name: "upload id only", method: http.MethodPut, object: "key", subresource: "uploadId=upload", action: s3_constants.ACTION_WRITE, wantACL: "public-read"},
