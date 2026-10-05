@@ -266,60 +266,82 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	if replacesSource && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
 		var dstVersionId string
 		var etag string
-		// An in-place metadata replace routes to the owner as a serialized PATCH
-		// (off the distributed lock); the no-owner bootstrap keeps the lock.
-		//
-		// The routed PATCH only carries Extended keys. Content-Type and the ACL's
-		// file mode live on Attributes, so changes to either use the clone path:
-		// it still reuses the source chunks but can update those attributes.
-		// Eligibility is decided on the entry read inside the copy body: a
-		// concurrent write between the first read and the PATCH can change mode
-		// or MIME, which only the clone path can update.
+		// Bind the entire self-copy update to the snapshot read on each attempt.
+		// ACLs and their file mode must commit together, even when another writer
+		// changes the mode between the gateway's read and the owner's commit.
 		owner := s3a.objectWriteOwner(dstBucket, dstObject)
 		fileMode := s3a.resolveFileMode(r)
-		canRouteInPlace := func(source *filer_pb.Entry) bool {
-			mime := source.GetAttributes().GetMime()
-			return owner != "" &&
-				resolveDestinationMime(r.Header, mime, replaceMeta) == mime &&
-				source.GetAttributes().GetFileMode() == fileMode
-		}
-		retryUnderLock := false
-		selfCopyBody := func(underLock bool) s3err.ErrorCode {
-			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
-			currentEntry = prefixObjectSource(currentEntry)
+		selfCopyBody := func() s3err.ErrorCode {
+			var rawEntry *filer_pb.Entry
+			var currentErr error
+			if owner != "" {
+				// Read the same owner that will check the snapshot, so a lagging
+				// replica does not make every retry conflict with a completed PUT.
+				rawEntry, currentErr = s3a.getObjectEntryRoutedByKey(srcBucket, srcObject)
+			} else {
+				rawEntry, currentErr = s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
+			}
+			currentEntry := prefixObjectSource(rawEntry)
 			if errCode := classifyCopySourceError(currentEntry, currentErr); errCode != s3err.ErrNone {
 				return errCode
 			}
 			if errCode := s3a.validateConditionalCopyHeaders(r, currentEntry); errCode != s3err.ErrNone {
 				return errCode
 			}
+			// Source and destination name the same unversioned entry. Evaluate
+			// destination conditions against the exact snapshot guarded at commit.
+			headers, errCode := parseConditionalHeaders(r)
+			if errCode != s3err.ErrNone {
+				return errCode
+			}
+			if errCode = s3a.validateConditionalHeaders(r, headers, currentEntry, dstBucket, dstObject); errCode != s3err.ErrNone {
+				return errCode
+			}
+			if err := ValidateCopyEncryption(currentEntry.Extended, r.Header); err != nil {
+				return MapCopyValidationError(err)
+			}
+			if !s3a.canUseMetadataOnlySelfCopy(currentEntry, r, dstBucket, dstObject) {
+				// A new encryption/storage state needs the ordinary copy path on a
+				// fresh request; never reuse chunks from an incompatible snapshot.
+				return s3err.ErrConditionalRequestConflict
+			}
 			updatedMetadata, metadataErr := processMetadataBytes(r.Header, currentEntry.Extended, replaceMeta, replaceTagging)
 			if metadataErr != nil {
 				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, metadataErr)
 				return s3err.ErrInvalidTag
 			}
-			// Always send both ACL keys, even when the initial read matches: the
-			// routed owner may have newer grants when it applies this self-copy.
+			// Both ACL keys replace the source's grants on every fresh attempt.
 			applyPutObjectACL(r, &filer_pb.Entry{Extended: updatedMetadata})
-			if canRouteInPlace(currentEntry) {
-				if err := s3a.routedMetadataReplace(owner, dstBucket, dstObject, currentEntry, updatedMetadata); err != nil {
-					return filerErrorToS3Error(err)
-				}
-				etag = getEtagFromEntry(currentEntry)
-				return s3err.ErrNone
-			}
-			if !underLock {
-				retryUnderLock = true
-				return s3err.ErrNone
-			}
 			updatedEntry := cloneProtoEntry(currentEntry)
+			if owner != "" {
+				// Prefix objects remain directories containing child keys. Use
+				// their raw form both for the condition and for the update.
+				updatedEntry = cloneProtoEntry(rawEntry)
+			}
 			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
 			updatedEntry.Attributes.Mime = resolveDestinationMime(r.Header, currentEntry.GetAttributes().GetMime(), replaceMeta)
 			updatedEntry.Attributes.FileMode = fileMode
+			if updatedEntry.IsDirectory {
+				updatedEntry.Attributes.FileMode |= uint32(os.ModeDir)
+			}
 			updatedEntry.Attributes.Mtime = t.Unix()
+			if owner != "" {
+				if err := s3a.routedSelfCopy(r.Context(), owner, dstBucket, dstObject, rawEntry, updatedEntry); err != nil {
+					switch status.Code(err) {
+					case codes.FailedPrecondition:
+						return s3err.ErrConditionalRequestConflict
+					case codes.NotFound:
+						return s3err.ErrNoSuchKey
+					default:
+						return filerErrorToS3Error(err)
+					}
+				}
+				etag = getEtagFromEntry(currentEntry)
+				return s3err.ErrNone
+			}
 			var finErr error
 			dstVersionId, etag, finErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
 			if finErr != nil {
@@ -327,20 +349,20 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 			return s3err.ErrNone
 		}
-		updateCode := s3err.ErrNone
-		attempted := false
-		if canRouteInPlace(entry) {
-			attempted = true
-			if updateCode = s3a.checkConditionalHeaders(r, dstBucket, dstObject); updateCode == s3err.ErrNone {
-				updateCode = selfCopyBody(false)
+		var updateCode s3err.ErrorCode
+		if owner != "" {
+			// A rejected snapshot has not mutated the object. Re-read and
+			// revalidate on bounded conflicts, without an unconditional fallback.
+			for attempt := 0; attempt < 3; attempt++ {
+				updateCode = selfCopyBody()
+				if updateCode != s3err.ErrConditionalRequestConflict {
+					break
+				}
 			}
-		}
-		if updateCode == s3err.ErrNone && (!attempted || retryUnderLock) {
+		} else {
 			updateCode = s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
 				return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
-			}, func() s3err.ErrorCode {
-				return selfCopyBody(true)
-			})
+			}, selfCopyBody)
 		}
 		if updateCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, updateCode)
@@ -433,8 +455,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// mergeCopyMetadata drops stale managed keys before applying the new set,
-	// so REPLACE doesn't leak source values through the merge. Mirrors the
-	// self-copy path's routedMetadataReplace.
+	// so REPLACE doesn't leak source values through the merge, as on self-copies.
 	dstEntry.Extended = mergeCopyMetadata(dstEntry.Extended, processedMetadata)
 
 	// For zero-size files or files without chunks, handle inline content
