@@ -457,8 +457,8 @@ true
 {{- define "seaweedfs.existingTomlKey" -}}
 {{- $section := index . 0 -}}
 {{- $raw := index . 1 -}}
-{{- $block := regexFind (printf "(?s)\\[%s\\]\\n[^\\[]*" $section) $raw -}}
-{{- $line := regexFind "key\\s*=\\s*\"[^\"]*\"" $block -}}
+{{- $block := regexFind (printf "(?s)\\[%s\\]\\r?\\n[^\\[]*" $section) $raw -}}
+{{- $line := regexFind "(?m)^key\\s*=\\s*\"[^\"]*\"" $block -}}
 {{- $quoted := regexFind "\"[^\"]*\"" $line -}}
 {{- trimAll "\"" $quoted -}}
 {{- end -}}

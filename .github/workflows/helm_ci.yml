@@ -1904,6 +1904,62 @@ jobs:
           kubectl delete namespace "$NS"
           echo "SFTP host key lifecycle tests passed"
 
+      - name: Verify JWT signing key persistence across upgrades
+        # seaweedfs.existingTomlKey (_helpers.tpl) replaced a fromToml-based
+        # lookup (#11611): same idempotent-key behavior, without needing a
+        # Helm version (>=3.17.0) this chart never declared as a minimum.
+        # This exercises the regex extraction against a real previous
+        # release's ConfigMap, including the two edge cases a code review
+        # raised: a commented-out stale key line preceding the active one,
+        # and CRLF line endings on the section header.
+        run: |
+          set -e
+          CHART_DIR="k8s/charts/seaweedfs"
+          NS="jwt-key-persist"
+          CM="jk-seaweedfs-security-config"
+          ARGS="--set image.tag=$IMAGE_TAG --set global.seaweedfs.securityConfig.jwtSigning.volumeRead=true"
+          kubectl create namespace "$NS"
+
+          echo "=== install generates a signing key, upgrade keeps it ==="
+          helm install jk $CHART_DIR -n "$NS" $ARGS
+          KEY1=$(kubectl get configmap "$CM" -n "$NS" -o jsonpath='{.data.security\.toml}' \
+            | awk '/^\[jwt\.signing\]$/{f=1;next} /^\[/{f=0} f && /^key = /{print;exit}')
+          [ -n "$KEY1" ] || { echo "FAIL: install did not render a [jwt.signing] key"; exit 1; }
+          helm upgrade jk $CHART_DIR -n "$NS" $ARGS
+          KEY2=$(kubectl get configmap "$CM" -n "$NS" -o jsonpath='{.data.security\.toml}' \
+            | awk '/^\[jwt\.signing\]$/{f=1;next} /^\[/{f=0} f && /^key = /{print;exit}')
+          [ "$KEY1" = "$KEY2" ] || { echo "FAIL: signing key changed across a no-op upgrade"; exit 1; }
+          echo "signing key survives upgrade"
+
+          echo "=== a commented-out stale key line does not shadow the active key ==="
+          printf '# this file is read by master, volume server, and filer\n\n[jwt.signing]\n# key = "STALE_COMMENTED_KEY"\nkey = "ACTIVE_KEY_789"\n\n[jwt.signing.read]\nkey = "ACTIVE_READ_KEY_321"\n' > /tmp/edge.toml
+          kubectl create configmap x -n "$NS" --from-file=security.toml=/tmp/edge.toml --dry-run=client -o json \
+            | jq '{data}' > /tmp/edge-patch.json
+          kubectl patch configmap "$CM" -n "$NS" --type merge -p "$(cat /tmp/edge-patch.json)"
+          helm upgrade jk $CHART_DIR -n "$NS" $ARGS
+          TOML=$(kubectl get configmap "$CM" -n "$NS" -o jsonpath='{.data.security\.toml}')
+          echo "$TOML" | grep -q 'key = "ACTIVE_KEY_789"' \
+            || { echo "FAIL: the active [jwt.signing] key was not preserved"; exit 1; }
+          echo "$TOML" | grep -q 'STALE_COMMENTED_KEY' \
+            && { echo "FAIL: a commented-out key line was read as the active key"; exit 1; }
+          echo "$TOML" | grep -q 'key = "ACTIVE_READ_KEY_321"' \
+            || { echo "FAIL: the active [jwt.signing.read] key was not preserved"; exit 1; }
+          echo "commented stale key line correctly ignored; both signing keys preserved"
+
+          echo "=== CRLF line endings on the section header do not break extraction ==="
+          printf '# this file is read by master, volume server, and filer\r\n\r\n[jwt.signing]\r\nkey = "CRLF_KEY_456"\r\n' > /tmp/crlf.toml
+          kubectl create configmap x -n "$NS" --from-file=security.toml=/tmp/crlf.toml --dry-run=client -o json \
+            | jq '{data}' > /tmp/crlf-patch.json
+          kubectl patch configmap "$CM" -n "$NS" --type merge -p "$(cat /tmp/crlf-patch.json)"
+          helm upgrade jk $CHART_DIR -n "$NS" $ARGS
+          kubectl get configmap "$CM" -n "$NS" -o jsonpath='{.data.security\.toml}' \
+            | grep -q 'key = "CRLF_KEY_456"' \
+            || { echo "FAIL: a CRLF-terminated [jwt.signing] header was not matched"; exit 1; }
+          echo "CRLF section header matched correctly"
+
+          kubectl delete namespace "$NS"
+          echo "JWT signing key persistence tests passed"
+
       - name: Verify install into a default-deny namespace
         run: |
           set -e
