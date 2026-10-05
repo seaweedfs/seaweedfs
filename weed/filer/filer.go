@@ -803,6 +803,15 @@ func (f *Filer) IsDirectoryEmpty(ctx context.Context, dirPath util.FullPath) (bo
 	return isEmpty, err
 }
 
+func (f *Filer) isStopping() bool {
+	select {
+	case <-f.deletionQuit:
+		return true
+	default:
+		return false
+	}
+}
+
 func (f *Filer) Shutdown() {
 	close(f.deletionQuit)
 	if f.EmptyFolderCleaner != nil {
