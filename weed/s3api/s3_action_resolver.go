@@ -141,7 +141,9 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	if hasObject && query.Has("uploadId") {
 		switch method {
 		case http.MethodPut:
-			if query.Has("partNumber") {
+			// Match the multipart route's [0-9]+ pattern; invalid part parameters fall through to regular uploads.
+			partNumber := query.Get("partNumber")
+			if partNumber != "" && strings.Trim(partNumber, "0123456789") == "" {
 				return s3_constants.S3_ACTION_UPLOAD_PART
 			}
 		case http.MethodPost:

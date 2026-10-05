@@ -246,6 +246,10 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
 		}
 		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
+		// Preserve positive string denies on the original complete list; allows, negative conditions, and variables remain canonical.
+		if !match && stmt.Statement.Effect == PolicyEffectDeny && len(args.OriginalGrantConditions) != 0 {
+			match = evaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims, args.OriginalGrantConditions)
+		}
 		if !match {
 			return false
 		}

@@ -848,6 +848,16 @@ var presignedSigV4ProtocolHeaders = map[string]struct{}{
 	"x-amz-signature":     {},
 }
 
+// presignedUnsignedSSECHeaders exempts SSE-C key material that AWS requires to
+// be sent but not signed on presigned requests: only the algorithm header is
+// part of the signature calculation.
+var presignedUnsignedSSECHeaders = map[string]struct{}{
+	strings.ToLower(s3_constants.AmzServerSideEncryptionCustomerKey):              {},
+	strings.ToLower(s3_constants.AmzServerSideEncryptionCustomerKeyMD5):           {},
+	strings.ToLower(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey):    {},
+	strings.ToLower(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5): {},
+}
+
 // verifySignedHeadersCoverage rejects requests that carry x-amz-* headers
 // outside of the SignedHeaders list. AWS SigV4 requires every x-amz-* header
 // present in the request to be covered by the signature; without this check a
@@ -872,6 +882,9 @@ func verifySignedHeadersCoverage(r *http.Request, signedHeaders []string, isPres
 		}
 		if isPresigned {
 			if _, exempt := presignedSigV4ProtocolHeaders[lower]; exempt {
+				continue
+			}
+			if _, exempt := presignedUnsignedSSECHeaders[lower]; exempt {
 				continue
 			}
 		}

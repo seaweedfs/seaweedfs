@@ -3,6 +3,8 @@ package filer
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -51,8 +53,54 @@ func TestEnsureEntryInodeSharesAcrossHardLinks(t *testing.T) {
 
 	// Every link to the same target resolves to one inode, independent of path
 	// or creation time.
-	assert.Equal(t, uint64(util.HashStringToLong(string(hardLinkId))), a.Attr.Inode)
+	assert.Equal(t, util.NormalizeInode(uint64(util.HashStringToLong(string(hardLinkId)))), a.Attr.Inode)
 	assert.Equal(t, a.Attr.Inode, b.Attr.Inode)
+}
+
+// TestEnsureEntryInodeFitsSignedLong pins the invariant that every generated
+// inode is storable: the filer hands Attr.Inode to the backing store verbatim,
+// and the Elasticsearch store indexes it as a signed `long`. Roughly half of
+// the unsigned hash space sits above math.MaxInt64, so a store that rejects
+// those values used to fail the metadata write for half of all entries.
+func TestEnsureEntryInodeFitsSignedLong(t *testing.T) {
+	f := &Filer{}
+	crtime := time.Unix(1700000000, 0)
+
+	seen := make(map[uint64]string)
+	for i := 0; i < 5000; i++ {
+		fullPath := util.FullPath(fmt.Sprintf("/topics/.system/log/2026-10-02/entry-%d", i))
+		entry := &Entry{FullPath: fullPath, Attr: Attr{Crtime: crtime}}
+		f.ensureEntryInode(entry)
+
+		if entry.Attr.Inode > math.MaxInt64 {
+			t.Fatalf("ensureEntryInode(%q) = %d, above math.MaxInt64", fullPath, entry.Attr.Inode)
+		}
+		// Folding must not collapse distinct paths onto one inode.
+		if other, ok := seen[entry.Attr.Inode]; ok {
+			t.Fatalf("ensureEntryInode(%q) collided with %q on inode %d", fullPath, other, entry.Attr.Inode)
+		}
+		seen[entry.Attr.Inode] = string(fullPath)
+	}
+}
+
+// TestEnsureEntryInodeHardLinkFitsSignedLong covers the hard-link branch, which
+// hashes HardLinkId instead of the path and so has no path-derived crtime term.
+func TestEnsureEntryInodeHardLinkFitsSignedLong(t *testing.T) {
+	f := &Filer{}
+	crtime := time.Unix(1700000000, 0)
+
+	for i := 0; i < 5000; i++ {
+		entry := &Entry{
+			FullPath:   util.FullPath(fmt.Sprintf("/links/target-%d.txt", i)),
+			Attr:       Attr{Crtime: crtime},
+			HardLinkId: NewHardLinkId(),
+		}
+		f.ensureEntryInode(entry)
+
+		if entry.Attr.Inode > math.MaxInt64 {
+			t.Fatalf("ensureEntryInode(%q) = %d, above math.MaxInt64", entry.FullPath, entry.Attr.Inode)
+		}
+	}
 }
 
 func newTestFilerWithStubStore() (*Filer, *stubFilerStore) {

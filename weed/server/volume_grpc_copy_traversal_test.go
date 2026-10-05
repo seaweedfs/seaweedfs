@@ -30,15 +30,20 @@ func newTraversalTestStore(dir string) *storage.Store {
 }
 
 // fakeReceiveFileStream scripts a ReceiveFile request sequence and records the
-// final response returned via SendAndClose.
+// final response returned via SendAndClose. onRecv, when set, runs before
+// request i is handed over, i.e. after the handler processed requests 0..i-1.
 type fakeReceiveFileStream struct {
 	grpc.ServerStream
-	reqs  []*volume_server_pb.ReceiveFileRequest
-	index int
-	resp  *volume_server_pb.ReceiveFileResponse
+	reqs   []*volume_server_pb.ReceiveFileRequest
+	index  int
+	resp   *volume_server_pb.ReceiveFileResponse
+	onRecv func(i int)
 }
 
 func (s *fakeReceiveFileStream) Recv() (*volume_server_pb.ReceiveFileRequest, error) {
+	if s.onRecv != nil {
+		s.onRecv(s.index)
+	}
 	if s.index >= len(s.reqs) {
 		return nil, io.EOF
 	}

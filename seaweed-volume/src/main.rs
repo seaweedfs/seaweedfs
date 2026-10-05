@@ -371,6 +371,9 @@ async fn run(
                 .to_string_lossy()
                 .into_owned()
         },
+        ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+        ec_decode_tail_notify: tokio::sync::Notify::new(),
     });
 
     // Load persisted state from disk if it exists (matches Go's State.Load on startup)

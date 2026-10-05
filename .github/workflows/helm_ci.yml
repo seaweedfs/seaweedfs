@@ -116,6 +116,21 @@ jobs:
           grep -q "security-config" /tmp/security.yaml
           echo "Security configuration renders correctly"
 
+          echo "=== Testing secure bucket-creation hook certificate mounts ==="
+          helm template test $CHART_DIR \
+            --show-only templates/shared/post-install-bucket-hook.yaml \
+            --set s3.enabled=true \
+            --set 's3.createBuckets[0].name=data' \
+            --set global.seaweedfs.enableSecurity=true \
+            > /tmp/security-bucket-hook.yaml
+          test "$(grep -cE '^[[:space:]]*- name: ca-cert$' /tmp/security-bucket-hook.yaml)" -eq 2
+          test "$(grep -cE '^[[:space:]]*- name: client-cert$' /tmp/security-bucket-hook.yaml)" -eq 2
+          grep -q 'mountPath: /usr/local/share/ca-certificates/ca/' /tmp/security-bucket-hook.yaml
+          grep -q 'mountPath: /usr/local/share/ca-certificates/client/' /tmp/security-bucket-hook.yaml
+          grep -q 'secretName: test-seaweedfs-ca-cert' /tmp/security-bucket-hook.yaml
+          grep -q 'secretName: test-seaweedfs-client-cert' /tmp/security-bucket-hook.yaml
+          echo "Secure bucket-creation hook mounts its CA and client certificate"
+
           echo ""
           echo "=== Testing admin.allowInsecureBind satisfies the admin auth render guard ==="
           helm template test $CHART_DIR --set admin.enabled=true --set admin.allowInsecureBind=true \

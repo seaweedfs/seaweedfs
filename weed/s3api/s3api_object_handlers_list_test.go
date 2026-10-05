@@ -72,6 +72,15 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 	return &testListEntriesStream{entries: entries}, nil
 }
 
+func (c *testFilerClient) LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	for _, e := range c.entriesByDir[in.Directory] {
+		if e.Name == in.Name {
+			return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
+		}
+	}
+	return nil, filer_pb.ErrNotFound
+}
+
 type markerEchoFilerClient struct {
 	filer_pb.SeaweedFilerClient
 	entriesByDir    map[string][]*filer_pb.Entry

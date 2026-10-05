@@ -349,14 +349,23 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 
 func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunkView *ChunkView, nextChunkViews *Interval[*ChunkView], offset uint64) (n int, err error) {
 
-	if c.readerPattern.IsRandomMode() {
+	// A view clipped to part of its chunk (e.g. the edge of a ranged GET,
+	// whose views ViewFromVisibleIntervals clips to the request) only ever
+	// needs that part: fetch it as a range no matter the detected pattern.
+	// Fetching the chunk whole would multiply volume-server reads. Ciphered
+	// and compressed chunks are the exception: the volume server reads the
+	// whole blob to serve a range, so they take the shared whole-chunk path
+	// where one download serves every buffer — unless the whole chunk cannot
+	// even fit the reader budget, in which case a range fetch is the only
+	// way to serve the request.
+	rangeFetch := chunkView.CanRangeFetch() || !c.readerCache.budget.canFit(int(chunkView.ChunkSize))
+	if rangeFetch && (!chunkView.IsFullChunk() || c.readerPattern.IsRandomMode()) {
 		c.readerCache.releaseStream(&c.stream)
 		n, err := c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)
 		if n > 0 {
 			return n, err
 		}
-		return fetchChunkRange(ctx, buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset),
-			refreshUrls(ctx, c.readerCache.cacheInvalidator, c.readerCache.lookupFileIdFn, chunkView.FileId))
+		return c.readerCache.fetchChunkRange(ctx, buffer, chunkView, int64(offset))
 	}
 
 	shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= c.readerCache.chunkCache.GetMaxFilePartSizeInCache()
@@ -380,6 +389,13 @@ func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunk
 // readChunkSliceAtForParallel is a simplified version for parallel chunk fetching
 // It doesn't update lastChunkFid or trigger prefetch (handled by the caller)
 func (c *ChunkReadAt) readChunkSliceAtForParallel(ctx context.Context, buffer []byte, chunkView *ChunkView, offset uint64) (n int, err error) {
+	if (chunkView.CanRangeFetch() || !c.readerCache.budget.canFit(int(chunkView.ChunkSize))) && !chunkView.IsFullChunk() {
+		n, err = c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)
+		if n > 0 {
+			return n, err
+		}
+		return c.readerCache.fetchChunkRange(ctx, buffer, chunkView, int64(offset))
+	}
 	shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= c.readerCache.chunkCache.GetMaxFilePartSizeInCache()
 	return c.readerCache.ReadChunkAt(ctx, buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), shouldCache)
 }

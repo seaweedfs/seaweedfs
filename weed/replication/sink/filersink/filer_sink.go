@@ -172,7 +172,7 @@ func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bo
 	err := filer_pb.Remove(context.Background(), fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
 	if err != nil {
 		glog.V(0).Infof("delete entry %s: %v", key, err)
-		return fmt.Errorf("delete entry %s: %v", key, err)
+		return fmt.Errorf("delete entry %s: %w", key, err)
 	}
 	return nil
 }
@@ -292,7 +292,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		glog.V(3).Infof("create: %v", request)
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			glog.V(0).Infof("create entry %s: %v", key, err)
-			return fmt.Errorf("create entry %s: %v", key, err)
+			return fmt.Errorf("create entry %s: %w", key, err)
 		}
 
 		return nil
@@ -325,7 +325,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 	if err != nil {
-		return false, fmt.Errorf("lookup %s: %v", key, err)
+		return false, fmt.Errorf("lookup %s: %w", key, err)
 	}
 
 	glog.V(4).Infof("oldEntry %+v, newEntry %+v, existingEntry: %+v", oldEntry, newEntry, existingEntry)
@@ -360,7 +360,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// source-side chunks resolve via source filer; sink volume IDs may collide.
 		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), oldEntry, newEntry)
 		if err != nil {
-			return true, fmt.Errorf("replicate %s compare chunks error: %v", key, err)
+			return true, fmt.Errorf("replicate %s compare chunks error: %w", key, err)
 		}
 
 		// delete the chunks that are deleted from the source
@@ -397,7 +397,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		if _, err := client.UpdateEntry(context.Background(), request); err != nil {
-			return fmt.Errorf("update existingEntry %s: %v", key, err)
+			return fmt.Errorf("update existingEntry %s: %w", key, err)
 		}
 
 		return nil

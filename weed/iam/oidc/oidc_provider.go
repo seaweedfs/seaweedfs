@@ -318,8 +318,23 @@ type JWK struct {
 func NewOIDCProvider(name string) *OIDCProvider {
 	return &OIDCProvider{
 		name:       name,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseDowngradeRedirect},
 	}
+}
+
+// refuseDowngradeRedirect is the redirect policy of the client that fetches
+// discovery documents and signing keys: a request that began over https may
+// not be redirected to plain http, where anyone on the network path could
+// substitute the keys and mint tokens STS accepts. It otherwise keeps
+// net/http's default limit of 10 redirects.
+func refuseDowngradeRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect from %s to non-https %s", via[0].URL.Redacted(), req.URL.Redacted())
+	}
+	return nil
 }
 
 // Name returns the provider name
@@ -409,8 +424,9 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		TLSClientConfig: tlsConfig,
 	}
 	p.httpClient = &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
+		Timeout:       30 * time.Second,
+		Transport:     transport,
+		CheckRedirect: refuseDowngradeRedirect,
 	}
 
 	// For testing, we'll skip the actual OIDC client initialization
@@ -969,6 +985,13 @@ func (p *OIDCProvider) fetchDiscoveryJWKSUri(ctx context.Context, discoveryURL s
 	// has one.
 	if strings.TrimSuffix(doc.Issuer, "/") != strings.TrimSuffix(p.config.Issuer, "/") {
 		return "", fmt.Errorf("discovery issuer %q does not match configured issuer %q", doc.Issuer, p.config.Issuer)
+	}
+
+	// An https issuer's keys must come over https too; otherwise the issuer's
+	// TLS protects nothing. Refused here, discovery falls back to the
+	// issuer's own /.well-known/jwks.json.
+	if strings.HasPrefix(p.config.Issuer, "https://") && !strings.HasPrefix(doc.JWKSUri, "https://") {
+		return "", fmt.Errorf("discovery jwks_uri %q is not https for https issuer %q", doc.JWKSUri, p.config.Issuer)
 	}
 
 	return doc.JWKSUri, nil

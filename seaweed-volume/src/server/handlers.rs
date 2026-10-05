@@ -1060,9 +1060,7 @@ async fn get_or_head_handler_inner(
         None => return StatusCode::BAD_REQUEST.into_response(),
     };
 
-    // Check if volume exists locally; if not, proxy/redirect based on read_mode.
-    // This mirrors Go's hasVolume + hasEcVolume check in GetOrHeadHandler.
-    // NOTE: The RwLockReadGuard must be dropped before any .await to keep the future Send.
+    // The RwLockReadGuard must drop before any .await to keep the future Send.
     let has_volume = state.store.read().unwrap().has_volume(vid);
     let has_ec_volume = state.store.read().unwrap().has_ec_volume(vid);
 
@@ -1071,7 +1069,7 @@ async fn get_or_head_handler_inner(
     }
 
     let track_download =
-        match wait_for_download_slot(&state, request.uri(), request.headers(), &path, vid).await {
+        match check_download_limit(&state, request.uri(), request.headers(), &path, vid).await {
             ControlFlow::Continue(track_download) => track_download,
             ControlFlow::Break(resp) => return resp,
         };
@@ -1086,7 +1084,7 @@ async fn get_or_head_handler_inner(
 
     // EC volumes always do a full read (no streaming/meta-only).
     let plan = if has_ec_volume && !has_volume {
-        read_ec_needle(&state, vid, needle_id, cookie).await
+        read_ec_shard_needle(&state, vid, needle_id, cookie).await
     } else {
         read_volume_needle(&state, vid, needle_id, cookie, read_deleted, request_kind).await
     };
@@ -1098,16 +1096,13 @@ async fn get_or_head_handler_inner(
         ControlFlow::Break(resp) => return resp,
     };
 
-    // Built BEFORE conditional checks and chunk manifest expansion
-    // (matches Go order: conditional checks first, then chunk manifest)
     let (etag, last_modified_str) = etag_and_last_modified(&n);
     if let Some(resp) = not_modified_response(&n, &headers, &etag, &last_modified_str) {
         return resp;
     }
 
-    // Chunk manifest expansion (needs full data) — after conditional checks, before response
-    // Pass ETag so chunk manifest responses include it (matches Go: ETag is set on the
-    // response writer before tryHandleChunkedFile runs).
+    // Chunk manifest expansion needs the full data; ETag is passed so expanded
+    // responses keep it (Go sets it before tryHandleChunkedFile runs).
     if n.is_chunk_manifest()
         && !request_kind.bypass_cm
         && let Some(expanded) =
@@ -1190,8 +1185,8 @@ struct ReadPlan {
     strategy: ReadStrategy,
 }
 
-/// The 401 reply for a bad read JWT. Go's GetOrHeadHandler checks it before
-/// NewVolumeId, so an invalid path with JWT enabled is a 401, not a 400.
+/// The 401 reply for a bad read JWT; Go checks it before NewVolumeId, so a
+/// bad path with JWT enabled is a 401, not a 400.
 fn reject_read_jwt(
     state: &VolumeServerState,
     headers: &HeaderMap,
@@ -1227,11 +1222,11 @@ async fn proxy_missing_volume(
     path: &str,
     vid: VolumeId,
 ) -> Response {
-    // Check if already proxied (loop prevention)
     let query_string = uri.query().unwrap_or("").to_string();
-    let is_proxied = query_string.contains("proxied=true");
-
-    if is_proxied || state.read_mode == ReadMode::Local || state.master_url.is_empty() {
+    if is_proxied_query(&query_string)
+        || state.read_mode == ReadMode::Local
+        || state.master_url.is_empty()
+    {
         return StatusCode::NOT_FOUND.into_response();
     }
 
@@ -1244,9 +1239,14 @@ async fn proxy_missing_volume(
     proxy_or_redirect_to_target(state, info, vid, false).await
 }
 
-/// Download throttling — matches Go's checkDownloadLimit + waitForDownloadSlot.
+/// Go's `proxied` query param check (loop prevention).
+fn is_proxied_query(query_string: &str) -> bool {
+    query_string.split('&').any(|kv| kv == "proxied=true")
+}
+
+/// Download throttling — Go's checkDownloadLimit + waitForDownloadSlot.
 /// `Continue(true)` when the reply must count toward the inflight download bytes.
-async fn wait_for_download_slot(
+async fn check_download_limit(
     state: &Arc<VolumeServerState>,
     uri: &axum::http::Uri,
     request_headers: &HeaderMap,
@@ -1266,14 +1266,14 @@ async fn wait_for_download_slot(
             .with_label_values(&[metrics::DOWNLOAD_LIMIT_COND])
             .inc();
 
-        // Go tries proxy to replica ONCE before entering the blocking wait
-        // loop (checkDownloadLimit L65). It does NOT retry on each wakeup.
+        // Go tries proxy to replica once before the wait loop
+        // (checkDownloadLimit); it does not retry on each wakeup.
         let should_try_replica =
-            !query_string.contains("proxied=true") && !state.master_url.is_empty() && {
+            !is_proxied_query(&query_string) && !state.master_url.is_empty() && {
                 let store = state.store.read().unwrap();
                 store
                     .find_volume(vid)
-                    .is_some_and(|(_, vol)| vol.super_block.replica_placement.get_copy_count() > 1)
+                    .is_some_and(|(_, vol)| vol.super_block.replica_placement.has_replication())
             };
         if should_try_replica
             && let Some(info) = build_proxy_request_info(path, request_headers, &query_string)
@@ -1299,12 +1299,10 @@ async fn wait_for_download_slot(
             }
         }
     }
-    // We'll set the actual bytes after reading the needle (once we know the size)
     ControlFlow::Continue(true)
 }
 
-/// The URL extension, and how the reply may be served given the method, the
-/// Range header and the image operations the query asks for.
+/// The URL extension, and how the reply may be served.
 fn parse_read_request(
     path: &str,
     has_range: bool,
@@ -1315,8 +1313,7 @@ fn parse_read_request(
     // Go checks resize and crop extensions separately: resize supports .webp, crop does not.
     let has_resize_ops = is_image_resize_ext(&ext)
         && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
-    // Go's shouldCropImages (L410) requires x2 > x1 && y2 > y1 (x1/y1 default 0).
-    // Only disable streaming when a real crop will actually happen.
+    // shouldCropImages requires x2 > x1 && y2 > y1; only a real crop disables streaming.
     let has_crop_ops = is_image_crop_ext(&ext) && {
         let x1 = query.crop_x1.unwrap_or(0);
         let y1 = query.crop_y1.unwrap_or(0);
@@ -1335,18 +1332,15 @@ fn parse_read_request(
 }
 
 /// Full read from an EC volume; there is no streaming for EC.
-async fn read_ec_needle(
+async fn read_ec_shard_needle(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
     cookie: Cookie,
 ) -> ControlFlow<Response, ReadPlan> {
-    // The distributed read path already does a local-first pass
-    // in its Snapshot phase under the same store read lock the
-    // legacy code would have taken — so calling it directly
-    // serves both the "all shards local" fast case and the
-    // "some intervals need peer fetch + reconstruct" general
-    // case without paying for the local interval reads twice.
+    // The distributed read does a local-first pass in its Snapshot phase, so
+    // calling it directly covers both the all-local fast case and the
+    // peer-fetch + reconstruct case without reading local intervals twice.
     let n = match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, needle_id)
         .await
     {
@@ -1450,10 +1444,8 @@ async fn read_volume_needle(
     // Stream info is only returned for a reply served from the data file.
     let can_direct_source_read = stream_info.is_some() && request_kind.direct(&n);
 
-    // Determine if we can stream (large, direct-source eligible, no range)
     let can_stream =
         can_direct_source_read && n.data_size > STREAMING_THRESHOLD && !has_range && !is_head;
-
     // Go uses meta-only reads for all HEAD requests, regardless of compression/chunked files.
     let can_handle_head_from_meta = stream_info.is_some() && is_head;
     let can_handle_range_from_source = can_direct_source_read && has_range;
@@ -1491,7 +1483,7 @@ fn not_modified_response(
     etag: &str,
     last_modified_str: &Option<String>,
 ) -> Option<Response> {
-    // Check If-Modified-Since FIRST (Go checks this before If-None-Match)
+    // If-Modified-Since first (Go order), then If-None-Match.
     if n.last_modified > 0
         && let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE)
         && let Ok(ims_str) = ims_header.to_str()
@@ -1506,12 +1498,11 @@ fn not_modified_response(
                 resp.headers_mut()
                     .insert(header::LAST_MODIFIED, lm.parse().unwrap());
             }
-            // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
+            // Go sets ETag after the 304 paths, so a 304 has no ETag.
             return Some(resp);
         }
     }
 
-    // Check If-None-Match SECOND
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
         && let Ok(inm) = if_none_match.to_str()
         && inm == etag
@@ -1521,7 +1512,7 @@ fn not_modified_response(
             resp.headers_mut()
                 .insert(header::LAST_MODIFIED, lm.parse().unwrap());
         }
-        // Go sets ETag AFTER the 304 return paths (L235), so 304 does NOT include ETag
+        // Go sets ETag after the 304 paths, so a 304 has no ETag.
         return Some(resp);
     }
     None
@@ -1779,8 +1770,7 @@ async fn range_from_source_response(
     })
 }
 
-/// Buffered path: the needle data, decompressed and image-processed as the
-/// request needs.
+/// The needle data, decompressed and image-processed as the request needs.
 fn buffered_payload(
     n: Needle,
     headers: &HeaderMap,
@@ -1853,7 +1843,7 @@ fn buffered_payload(
     ControlFlow::Continue(data)
 }
 
-/// Buffered path: the reply over the payload, whole or a range.
+/// The buffered reply over the payload, whole or a range.
 fn buffered_response(
     state: &Arc<VolumeServerState>,
     range: Option<&str>,
@@ -1862,10 +1852,9 @@ fn buffered_response(
     mut response_headers: HeaderMap,
     track_download: bool,
 ) -> Response {
-    // Accept-Ranges
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
-    // Go answers HEAD before it looks at Range.
+    // HEAD before Range (Go's writeResponseContent order).
     if method == Method::HEAD {
         response_headers.insert(
             header::CONTENT_LENGTH,
@@ -4979,6 +4968,9 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
+            ec_decode_tail_notify: tokio::sync::Notify::new(),
         })
     }
 
