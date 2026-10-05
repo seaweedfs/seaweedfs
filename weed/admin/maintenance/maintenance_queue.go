@@ -923,7 +923,7 @@ func generateTaskID() string {
 	return fmt.Sprintf("%s-%04d", string(b), timestamp)
 }
 
-// CleanupOldTasks removes old completed and failed tasks
+// CleanupOldTasks removes old terminal tasks from memory
 func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	mq.mutex.Lock()
 	defer mq.mutex.Unlock()
@@ -932,7 +932,7 @@ func (mq *MaintenanceQueue) CleanupOldTasks(retention time.Duration) int {
 	removed := 0
 
 	for id, task := range mq.tasks {
-		if (task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed) &&
+		if (task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed || task.Status == TaskStatusCancelled) &&
 			task.CompletedAt != nil &&
 			task.CompletedAt.Before(cutoff) {
 			delete(mq.tasks, id)
