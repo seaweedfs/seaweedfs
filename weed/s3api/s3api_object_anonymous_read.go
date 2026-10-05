@@ -34,6 +34,14 @@ func (s3a *S3ApiServer) deferAnonymousObjectRead(r *http.Request, action Action,
 	if r.URL.Query().Has("uploads") || (resolved != s3_constants.S3_ACTION_GET_OBJECT && resolved != s3_constants.S3_ACTION_GET_OBJECT_VERSION) {
 		return r, false
 	}
+	// A session token without a signature names no session; drop it so it
+	// cannot influence identity or policy evaluation downstream.
+	r.Header.Del("X-Amz-Security-Token")
+	if q := r.URL.Query(); q.Has("X-Amz-Security-Token") {
+		q.Del("X-Amz-Security-Token")
+		r.URL.RawQuery = q.Encode()
+	}
+
 	// Reuse authentication's internal-header sanitization. A public ACL does
 	// not require an anonymous identity; a configured one still contributes
 	// its permissions and explicit identity-policy denies.
