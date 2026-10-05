@@ -14,6 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // objectWriteRouteKeyPrefix namespaces an object's full path into the ring key
@@ -303,41 +305,42 @@ func (s3a *S3ApiServer) routedDelete(owner pb.ServerAddress, bucket, object stri
 	})
 }
 
-// routedMetadataReplace applies a metadata-only self-copy (REPLACE directive) to
-// an existing object in place via a routed PATCH_EXTENDED. The owner merges the
-// new managed metadata onto a fresh read of the entry under its per-path lock —
-// so a concurrent change to non-managed keys (legal hold, retention, version id)
-// is preserved rather than clobbered by a whole-entry rewrite — and bumps mtime.
-// updatedMetadata is the full managed-metadata set (processMetadataBytes); the
-// delete list is the managed keys the replace dropped.
-func (s3a *S3ApiServer) routedMetadataReplace(owner pb.ServerAddress, bucket, object string, current *filer_pb.Entry, updatedMetadata map[string][]byte) error {
+// routedSelfCopy updates metadata and attributes together, guarded by the raw
+// source snapshot. UpdateEntry routes conditional writes to the owner and checks
+// the condition under its path lock, so concurrent content, ACL or retention
+// updates cannot be overwritten by a stale self-copy. Chunks are reused in place.
+func (s3a *S3ApiServer) routedSelfCopy(ctx context.Context, owner pb.ServerAddress, bucket, object string, current, updated *filer_pb.Entry) error {
 	fullpath := util.NewFullPath(s3a.bucketDir(bucket), object)
-	dir, name := fullpath.DirAndName()
-	var del []string
-	for k := range current.Extended {
-		if isManagedCopyMetadataKey(k) {
-			if _, keep := updatedMetadata[k]; !keep {
-				del = append(del, k)
-			}
+	dir, _ := fullpath.DirAndName()
+	req := &filer_pb.UpdateEntryRequest{
+		Directory: dir,
+		Entry:     updated,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+			ExpectedEntry: current,
+		}}},
+	}
+	var conditionErr error
+	update := func(client filer_pb.SeaweedFilerClient) error {
+		err := filer_pb.UpdateEntry(ctx, client, req)
+		switch status.Code(err) {
+		case codes.FailedPrecondition, codes.NotFound:
+			// These are authoritative replies from a healthy owner, not a
+			// transport failure. Do not replay them or mark the owner down.
+			conditionErr = err
+			return nil
+		default:
+			return err
 		}
 	}
-	resp, err := s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
-		LockKey:  string(fullpath),
-		RouteKey: s3a.objectRouteKey(bucket, object),
-		Mutations: []*filer_pb.ObjectMutation{{
-			Type:           filer_pb.ObjectMutation_PATCH_EXTENDED,
-			Directory:      dir,
-			Name:           name,
-			SetExtended:    updatedMetadata,
-			DeleteExtended: del,
-			TouchMtime:     true,
-		}},
-	})
+	var err error
+	if s3a.filerClient == nil {
+		err = pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, update)
+	} else {
+		err = s3a.withFilerClientFailover(ctx, owner, false, update)
+	}
 	if err != nil {
 		return err
 	}
-	if resp.Error != "" {
-		return fmt.Errorf("routed metadata replace %s/%s: %s", bucket, object, resp.Error)
-	}
-	return nil
+	return conditionErr
 }

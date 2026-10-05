@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// putObjectACLContextKey carries validated ACL metadata to every PutObject write
+// putObjectACLContextKey carries validated ACL metadata to each object creation
 // path without exposing an internal header that a client could forge.
 type putObjectACLContextKey struct{}
 
@@ -61,20 +61,11 @@ func putObjectACLValue(r *http.Request, query url.Values, header string) (string
 	return value, s3err.ErrNone
 }
 
-// putObjectACLPolicyRequest exposes effective PUT ACLs to policy conditions only
+// putObjectACLPolicyRequest exposes upload and copy ACLs to policy conditions only
 // after authentication. Other operations keep their original request semantics.
 func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object string) (*http.Request, s3err.ErrorCode) {
-	// Copy routes match any repeated header value, so checking only the first line can misclassify a copy as a regular upload.
-	copyRequest := false
-	for _, copySource := range r.Header.Values("X-Amz-Copy-Source") {
-		if strings.Contains(copySource, "/") || strings.Contains(strings.ToLower(copySource), "%2f") {
-			copyRequest = true
-			break
-		}
-	}
 	if (action != s3_constants.ACTION_WRITE && action != s3_constants.ACTION_WRITE_ACP) ||
 		r.Method != http.MethodPut || object == "" || object == "/" ||
-		copyRequest ||
 		ResolveS3Action(r, string(s3_constants.ACTION_WRITE), bucket, object) != s3_constants.S3_ACTION_PUT_OBJECT {
 		return r, s3err.ErrNone
 	}
@@ -128,8 +119,8 @@ func putObjectACLPolicyRequest(r *http.Request, action Action, bucket, object st
 	return policyRequest, s3err.ErrNone
 }
 
-// preparePutObjectACL validates and authorizes ACLs before the upload body is
-// consumed. The resulting metadata is committed in the same entry as the object.
+// preparePutObjectACL validates and authorizes ACLs before upload or copy data
+// is written. The metadata is committed in the same entry as the new object.
 func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*http.Request, s3err.ErrorCode) {
 	metadata, code := s3a.getBucketConfig(bucket)
 	if code != s3err.ErrNone {
@@ -164,7 +155,7 @@ func (s3a *S3ApiServer) preparePutObjectACL(r *http.Request, bucket string) (*ht
 	if !s3a.iam.isEnabled() {
 		accountID = AccountAdmin.Id
 	} else if explicit {
-		// Setting an ACL during PutObject also requires s3:PutObjectAcl. Use the
+		// Setting an ACL during upload or copy also requires s3:PutObjectAcl. Use the
 		// unified authorization path so bucket-policy allows and explicit denies
 		// retain the same semantics as standalone ACL requests.
 		identity, authCode := s3a.iam.authRequest(r.Clone(r.Context()), s3_constants.ACTION_WRITE_ACP)

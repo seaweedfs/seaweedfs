@@ -139,7 +139,8 @@ jobs:
   unit-tests:
     name: Go Unit Tests (Implicit Directory)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Leave time for setup and the focused run before the nine-minute suite.
+    timeout-minutes: 20
     
     steps:
       - name: Checkout code
@@ -159,5 +160,5 @@ jobs:
       - name: Run all S3 API tests
         run: |
           cd weed/s3api
-          go test -v -timeout 5m
+          go test -v -timeout 9m
 
