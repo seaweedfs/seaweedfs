@@ -131,7 +131,8 @@ func (g *Gateway) sourceURL(r *http.Request, query url.Values) *url.URL {
 
 // ServeHTTP checks anonymous source access before cached or conditional responses.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w = &responseWriter{ResponseWriter: w, timeout: g.config.Timeout}
+	wrapped := &responseWriter{ResponseWriter: w, timeout: g.config.Timeout}
+	w = wrapped
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -184,7 +185,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	source := g.sourceURL(r, query)
 	if !processing {
-		g.serveOriginal(w, r.WithContext(ctx), source)
+		g.serveOriginal(wrapped, r.WithContext(ctx), source)
 		return
 	}
 	metadata, err := g.head(ctx, source)
@@ -372,7 +373,7 @@ func (g *Gateway) process(ctx context.Context, source *url.URL, o options) (*res
 }
 
 // serveOriginal preserves public source conditions and ranges without forwarding credentials.
-func (g *Gateway) serveOriginal(w http.ResponseWriter, r *http.Request, source *url.URL) {
+func (g *Gateway) serveOriginal(w *responseWriter, r *http.Request, source *url.URL) {
 	headers := make(http.Header)
 	for _, key := range []string{"Range", "If-Range", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since"} {
 		if value := r.Header.Get(key); value != "" {
@@ -425,17 +426,21 @@ func (g *Gateway) serveOriginal(w http.ResponseWriter, r *http.Request, source *
 			return
 		}
 	}
+	// Write through the inner ResponseWriter so the validated content type is
+	// visibly attached to the writer that receives the body.
+	rw := w.ResponseWriter
 	if value := resp.Header.Get("Content-Type"); value != "" {
-		w.Header().Set("Content-Type", value)
+		rw.Header().Set("Content-Type", value)
 	}
 	for _, key := range []string{"Content-Encoding", "Content-Length", "ETag", "Last-Modified", "Accept-Ranges", "Content-Range", "x-amz-version-id"} {
 		if value := resp.Header.Get(key); value != "" {
-			w.Header().Set(key, value)
+			rw.Header().Set(key, value)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
+	w.beginWrite()
+	rw.WriteHeader(resp.StatusCode)
 	if len(data) != 0 {
-		_, _ = io.Copy(w, bytes.NewReader(data))
+		_, _ = io.Copy(rw, bytes.NewReader(data))
 	}
 }
 
