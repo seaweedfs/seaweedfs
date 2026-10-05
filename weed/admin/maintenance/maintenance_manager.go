@@ -650,8 +650,12 @@ func (mm *MaintenanceManager) CancelTask(taskID string) error {
 	}
 	mm.queue.mutex.Unlock()
 
-	if mm.queue.deleteTaskState(taskID) != nil {
-		mm.queue.saveTaskState(cancelledSnapshot)
+	if mm.queue.persistence != nil {
+		mm.queue.persistMu.Lock()
+		if mm.queue.deleteTaskStateLocked(taskID) != nil {
+			mm.queue.saveTaskStateLocked(cancelledSnapshot)
+		}
+		mm.queue.persistMu.Unlock()
 	}
 	glog.V(2).Infof("Cancelled task %s", taskID)
 	return nil

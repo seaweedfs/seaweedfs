@@ -102,13 +102,20 @@ func isTerminalStatus(status MaintenanceTaskStatus) bool {
 	return status == TaskStatusCompleted || status == TaskStatusFailed || status == TaskStatusCancelled
 }
 
-// saveTaskState saves a task to persistent storage. Saves run outside
-// mq.mutex, so the task may have gone terminal since the snapshot was taken;
-// writing a stale non-terminal file would resurrect it on the next restart.
+// saveTaskState saves a task to persistent storage. persistMu orders the
+// status check and the write against the cancel paths' deletes, so a stale
+// non-terminal file cannot resurrect the task on the next restart.
 func (mq *MaintenanceQueue) saveTaskState(task *MaintenanceTask) {
 	if mq.persistence == nil {
 		return
 	}
+	mq.persistMu.Lock()
+	defer mq.persistMu.Unlock()
+	mq.saveTaskStateLocked(task)
+}
+
+// saveTaskStateLocked must be called with persistMu held.
+func (mq *MaintenanceQueue) saveTaskStateLocked(task *MaintenanceTask) {
 	mq.mutex.RLock()
 	live, ok := mq.tasks[task.ID]
 	stale := !isTerminalStatus(task.Status) && (!ok || isTerminalStatus(live.Status))
@@ -125,6 +132,13 @@ func (mq *MaintenanceQueue) deleteTaskState(taskID string) error {
 	if mq.persistence == nil {
 		return nil
 	}
+	mq.persistMu.Lock()
+	defer mq.persistMu.Unlock()
+	return mq.deleteTaskStateLocked(taskID)
+}
+
+// deleteTaskStateLocked must be called with persistMu held.
+func (mq *MaintenanceQueue) deleteTaskStateLocked(taskID string) error {
 	if err := mq.persistence.DeleteTaskState(taskID); err != nil {
 		glog.Warningf("Failed to delete task state for %s: %v", taskID, err)
 		return err
@@ -319,10 +333,14 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 	// leaving one orphaned .pb per cancelled task per scan cycle. If removal
 	// fails, persist the cancelled state so a restart drops it instead of
 	// re-queueing it.
-	for _, snapshot := range cancelledSnapshots {
-		if mq.deleteTaskState(snapshot.ID) != nil {
-			mq.saveTaskState(snapshot)
+	if mq.persistence != nil {
+		mq.persistMu.Lock()
+		for _, snapshot := range cancelledSnapshots {
+			if mq.deleteTaskStateLocked(snapshot.ID) != nil {
+				mq.saveTaskStateLocked(snapshot)
+			}
 		}
+		mq.persistMu.Unlock()
 	}
 	return cancelled
 }
