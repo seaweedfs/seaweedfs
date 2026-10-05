@@ -448,11 +448,20 @@ true
      (which requires Helm >=3.17). Args: (list "<section>" $raw).
      Return the single-line TOML string token, including its quotes, so escapes
      and explicitly empty values survive unchanged. No output means absent.
+     Accept bare or simply quoted dotted header segments. Fail on other quoted
+     headers rather than risk rotating a key hidden by unsupported syntax.
      This reads the chart's section/key layout, not arbitrary TOML syntax. */}}
 {{- define "seaweedfs.existingTomlKey" -}}
 {{- $section := index . 0 -}}
 {{- $raw := index . 1 -}}
-{{- $header := printf `^\[[ \t]*%s[ \t]*\][ \t]*(#.*)?$` (regexQuoteMeta $section) -}}
+{{- $parts := list -}}
+{{- range $part := splitList "." $section -}}
+  {{- $escaped := regexQuoteMeta $part -}}
+  {{- $parts = append $parts (printf `(?:%s|"%s"|'%s')` $escaped $escaped $escaped) -}}
+{{- end -}}
+{{- $header := printf `^\[[ \t]*%s[ \t]*\][ \t]*(#.*)?$` (join `[ \t]*\.[ \t]*` $parts) -}}
+{{- $segment := `(?:[A-Za-z0-9_-]+|"[A-Za-z0-9_-]+"|'[A-Za-z0-9_-]+')` -}}
+{{- $simpleHeader := printf `^\[[ \t]*%s(?:[ \t]*\.[ \t]*%s)*[ \t]*\][ \t]*(#.*)?$` $segment $segment -}}
 {{- $assignment := `^(key|"key"|'key')[ \t]*=[ \t]*` -}}
 {{- $string := `"([^"\\]|\\.)*"|'[^']*'` -}}
 {{- $active := false -}}
@@ -460,6 +469,9 @@ true
 {{- range $rawLine := splitList "\n" $raw -}}
   {{- $line := trim $rawLine -}}
   {{- if hasPrefix "[" $line -}}
+    {{- if and (regexMatch `^\[[^]]*["']` $line) (not (regexMatch $simpleHeader $line)) (eq $key "") -}}
+      {{- fail (printf "security.toml has an unsupported quoted section header; refusing to replace [%s].key" $section) -}}
+    {{- end -}}
     {{- $active = regexMatch $header $line -}}
   {{- else if and $active (eq $key "") (regexMatch $assignment $line) -}}
     {{- $value := regexReplaceAll $assignment $line "" -}}

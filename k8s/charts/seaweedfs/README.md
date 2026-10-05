@@ -36,8 +36,9 @@ that ConfigMap is generated. Plain `helm template` does not read cluster state;
 use an install and upgrade against a cluster to check key persistence.
 
 The key reader supports single-line quoted TOML strings in JWT sections,
-including indented assignments and quoted key names. An unsupported value in
-a recognized section fails the upgrade rather than silently rotating its key.
+including indented assignments, quoted key names, and bare or simply quoted
+section-name segments. An unsupported value or quoted header fails the upgrade
+rather than silently rotating a key.
 
 ### Database
 

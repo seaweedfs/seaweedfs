@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CHART = ROOT / "k8s/charts/seaweedfs"
 SECTIONS = ("jwt.signing", "jwt.signing.read", "jwt.filer_signing", "jwt.filer_signing.read")
 KEYS = {section: f"active-{index}" for index, section in enumerate(SECTIONS)}
+ESCAPED_HEADER = '["jw\\u0074".signing]\nkey = "existing"'
 
 
 def run(*args):
@@ -52,6 +53,12 @@ def fixtures():
         for section, value in KEYS.items()
     )
     yield "CRLF", canonical.replace("\n", "\r\n")
+    yield "quoted and spaced section names", "\n".join(
+        f'["{section.split(".")[0]}" . \'{section.split(".")[1]}\''
+        + (f' . "{section.split(".")[2]}"' if section.count(".") == 2 else "")
+        + f'] # original table\nkey = "{value}"'
+        for section, value in KEYS.items()
+    )
     yield "brackets in comments", canonical.replace("key =", "# consult [notes]\nkey =")
     yield "quoted values and quoted key names", "\n".join((
         '[jwt.signing]\n"key" = "brackets[inside]#value"',
@@ -124,6 +131,14 @@ def check_helpers(helm, reference_helm):
             raise AssertionError("multiline existing key was silently accepted or replaced")
         print("PASS helper: unsupported existing value fails without rotation")
 
+        try:
+            render(helm, helper_template, ESCAPED_HEADER)
+        except subprocess.CalledProcessError as error:
+            assert "unsupported quoted section header" in error.stderr, error.stderr
+        else:
+            raise AssertionError("unsupported quoted header silently rotated its key")
+        print("PASS helper: unsupported quoted header fails without rotation")
+
 
 def check_upgrades(helm, context):
     namespace = "jwt-key-persist-" + uuid.uuid4().hex[:8]
@@ -189,6 +204,17 @@ def check_upgrades(helm, context):
         patch(current_raw)
         assert upgrade() == keys(current_raw), "legacy ConfigMap overrode current ConfigMap"
         print("PASS upgrade: current ConfigMap takes precedence")
+
+        patch(ESCAPED_HEADER)
+        try:
+            upgrade()
+        except subprocess.CalledProcessError as error:
+            assert "unsupported quoted section header" in error.stderr, error.stderr
+        else:
+            raise AssertionError("unsupported quoted header silently rotated its key")
+        assert keys(run(*kubectl, "get", "configmap", current, "-o",
+                        "jsonpath={.data.security\\.toml}"))["jwt.signing"] == "existing"
+        print("PASS upgrade: unsupported quoted header leaves stored key untouched")
     finally:
         run(*kubectl, "delete", "namespace", namespace, "--wait=false")
 
