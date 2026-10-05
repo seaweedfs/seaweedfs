@@ -624,13 +624,15 @@ func (mm *MaintenanceManager) CancelTask(taskID string) error {
 		return fmt.Errorf("task %s not found", taskID)
 	}
 	if task.Status != TaskStatusPending {
+		status := task.Status
 		mm.queue.mutex.Unlock()
-		return fmt.Errorf("task %s cannot be cancelled (status: %s)", taskID, task.Status)
+		return fmt.Errorf("task %s cannot be cancelled (status: %s)", taskID, status)
 	}
 
 	task.Status = TaskStatusCancelled
 	completedTime := time.Now()
 	task.CompletedAt = &completedTime
+	cancelledSnapshot := snapshotTask(task)
 
 	// Remove from pending tasks
 	for i, pendingTask := range mm.queue.pendingTasks {
@@ -648,7 +650,9 @@ func (mm *MaintenanceManager) CancelTask(taskID string) error {
 	}
 	mm.queue.mutex.Unlock()
 
-	mm.queue.deleteTaskState(taskID)
+	if mm.queue.deleteTaskState(taskID) != nil {
+		mm.queue.saveTaskState(cancelledSnapshot)
+	}
 	glog.V(2).Infof("Cancelled task %s", taskID)
 	return nil
 }

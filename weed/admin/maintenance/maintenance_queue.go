@@ -97,21 +97,39 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 	return nil
 }
 
-// saveTaskState saves a task to persistent storage
+// isTerminalStatus reports whether the status is a terminal task state.
+func isTerminalStatus(status MaintenanceTaskStatus) bool {
+	return status == TaskStatusCompleted || status == TaskStatusFailed || status == TaskStatusCancelled
+}
+
+// saveTaskState saves a task to persistent storage. Saves run outside
+// mq.mutex, so the task may have gone terminal since the snapshot was taken;
+// writing a stale non-terminal file would resurrect it on the next restart.
 func (mq *MaintenanceQueue) saveTaskState(task *MaintenanceTask) {
-	if mq.persistence != nil {
-		if err := mq.persistence.SaveTaskState(task); err != nil {
-			glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
-		}
+	if mq.persistence == nil {
+		return
+	}
+	mq.mutex.RLock()
+	live, ok := mq.tasks[task.ID]
+	stale := !isTerminalStatus(task.Status) && (!ok || isTerminalStatus(live.Status))
+	mq.mutex.RUnlock()
+	if stale {
+		return
+	}
+	if err := mq.persistence.SaveTaskState(task); err != nil {
+		glog.Errorf("Failed to save task state for %s: %v", task.ID, err)
 	}
 }
 
-func (mq *MaintenanceQueue) deleteTaskState(taskID string) {
-	if mq.persistence != nil {
-		if err := mq.persistence.DeleteTaskState(taskID); err != nil {
-			glog.V(2).Infof("Failed to delete task state for %s: %v", taskID, err)
-		}
+func (mq *MaintenanceQueue) deleteTaskState(taskID string) error {
+	if mq.persistence == nil {
+		return nil
 	}
+	if err := mq.persistence.DeleteTaskState(taskID); err != nil {
+		glog.Warningf("Failed to delete task state for %s: %v", taskID, err)
+		return err
+	}
+	return nil
 }
 
 // cleanupCompletedTasks removes old completed tasks beyond the retention limit
@@ -271,7 +289,7 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 	mq.mutex.Lock()
 
 	var remaining []*MaintenanceTask
-	var cancelledIDs []string
+	var cancelledSnapshots []*MaintenanceTask
 	cancelled := 0
 	for _, task := range mq.pendingTasks {
 		if task.Type == taskType {
@@ -279,7 +297,7 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 			now := time.Now()
 			task.CompletedAt = &now
 			cancelled++
-			cancelledIDs = append(cancelledIDs, task.ID)
+			cancelledSnapshots = append(cancelledSnapshots, snapshotTask(task))
 			glog.V(1).Infof("Cancelled stale pending task %s (%s) for volume %d before re-detection",
 				task.ID, task.Type, task.VolumeID)
 
@@ -298,9 +316,13 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 	mq.mutex.Unlock()
 
 	// Cancelled is terminal: drop the file like CompleteTask does instead of
-	// leaving one orphaned .pb per cancelled task per scan cycle.
-	for _, id := range cancelledIDs {
-		mq.deleteTaskState(id)
+	// leaving one orphaned .pb per cancelled task per scan cycle. If removal
+	// fails, persist the cancelled state so a restart drops it instead of
+	// re-queueing it.
+	for _, snapshot := range cancelledSnapshots {
+		if mq.deleteTaskState(snapshot.ID) != nil {
+			mq.saveTaskState(snapshot)
+		}
 	}
 	return cancelled
 }
