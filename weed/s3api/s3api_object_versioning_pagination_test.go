@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -43,7 +44,8 @@ func listVersionsPage(t *testing.T, s3a *S3ApiServer, client filer_pb.SeaweedFil
 	var allVersions []interface{}
 	vc := &versionCollector{
 		s3a:              s3a,
-		filerClient:      client,
+		list:             clientLister(client),
+		getEntry:         clientLookup(client),
 		bucket:           "b",
 		keyMarker:        keyMarker,
 		versionIdMarker:  versionIdMarker,
@@ -56,6 +58,34 @@ func listVersionsPage(t *testing.T, s3a *S3ApiServer, client filer_pb.SeaweedFil
 	require.NoError(t, vc.collectVersions(bucketDir, ""))
 	combined := s3a.buildSortedCombinedList(allVersions, vc.commonPrefixes)
 	return s3a.truncateAndSetMarkers(combined, maxKeys)
+}
+
+// clientLister adapts a stubbed filer client to the collector's list function.
+func clientLister(client filer_pb.SeaweedFilerClient) entryLister {
+	return func(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error) {
+		err = filer_pb.SeaweedList(context.Background(), client, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
+			entries = append(entries, entry)
+			if isLastEntry {
+				isLast = true
+			}
+			return nil
+		}, startFrom, inclusive, limit)
+		if len(entries) == 0 {
+			isLast = true
+		}
+		return
+	}
+}
+
+// clientLookup adapts a stubbed filer client to the collector's getEntry.
+func clientLookup(client filer_pb.SeaweedFilerClient) func(string, string) (*filer_pb.Entry, error) {
+	return func(dir, name string) (*filer_pb.Entry, error) {
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+		if err != nil {
+			return nil, err
+		}
+		return resp.Entry, nil
+	}
 }
 
 func itemId(item versionListItem) string {

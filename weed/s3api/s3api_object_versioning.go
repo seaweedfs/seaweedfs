@@ -473,7 +473,8 @@ func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, 
 // versionCollector holds state for collecting object versions during recursive traversal
 type versionCollector struct {
 	s3a              *S3ApiServer
-	filerClient      filer_pb.SeaweedFilerClient
+	list             entryLister
+	getEntry         func(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error)
 	bucket           string
 	prefix           string
 	keyMarker        string
@@ -485,35 +486,6 @@ type versionCollector struct {
 	delimiter        string
 	commonPrefixes   map[string]bool
 	maxKey           string
-}
-
-// list is s3a.list bound to the collector's filer client.
-func (vc *versionCollector) list(parentDirectoryPath, prefix, startFrom string, inclusive bool, limit uint32) (entries []*filer_pb.Entry, isLast bool, err error) {
-	return listWithRetry(parentDirectoryPath, func() (entries []*filer_pb.Entry, isLast bool, err error) {
-		err = filer_pb.SeaweedList(context.Background(), vc.filerClient, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
-			entries = append(entries, entry)
-			if isLastEntry {
-				isLast = true
-			}
-			return nil
-		}, startFrom, inclusive, limit)
-		if len(entries) == 0 {
-			isLast = true
-		}
-		return
-	})
-}
-
-// getEntry is s3a.getEntry bound to the collector's filer client.
-func (vc *versionCollector) getEntry(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
-	resp, err := filer_pb.LookupEntry(context.Background(), vc.filerClient, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: parentDirectoryPath,
-		Name:      entryName,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.Entry, nil
 }
 
 // isFull returns true if we've collected enough versions
@@ -859,7 +831,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 		if len(versionsDirEntry.Extended[s3_constants.ExtLatestVersionIdKey]) > 0 {
 			isLatest = false
 		} else if !nullVersionIsLatest(versionsDirEntry) {
-			if latestVersion, _, _, _, scanErr := vc.scanLatestVersionEntry(currentPath + "/" + versionsEntryName); scanErr == nil && latestVersion != nil && !nullObjectWins(entry, latestVersion) {
+			if latestVersion, _, _, _, scanErr := scanLatestVersionEntry(vc.list, currentPath+"/"+versionsEntryName); scanErr == nil && latestVersion != nil && !nullObjectWins(entry, latestVersion) {
 				isLatest = false
 			}
 		}
@@ -886,6 +858,8 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker, delimiter string, commonPrefixes map[string]bool, maxCollect int) error {
 	vc := &versionCollector{
 		s3a:              s3a,
+		list:             s3a.list,
+		getEntry:         s3a.getEntry,
 		bucket:           bucket,
 		prefix:           prefix,
 		keyMarker:        keyMarker,
@@ -898,10 +872,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		commonPrefixes:   commonPrefixes,
 	}
 
-	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		vc.filerClient = client
-		return vc.collectVersions(currentPath, relativePath)
-	})
+	return vc.collectVersions(currentPath, relativePath)
 }
 
 // collectVersions recursively collects versions from the given path
@@ -2141,10 +2112,6 @@ type entryLister func(parentDirectoryPath, prefix, startFrom string, inclusive b
 // is nil when the directory holds no version entries.
 func (s3a *S3ApiServer) scanLatestVersionEntry(versionsDir string) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool, err error) {
 	return scanLatestVersionEntry(s3a.list, versionsDir)
-}
-
-func (vc *versionCollector) scanLatestVersionEntry(versionsDir string) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool, err error) {
-	return scanLatestVersionEntry(vc.list, versionsDir)
 }
 
 func scanLatestVersionEntry(list entryLister, versionsDir string) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool, err error) {
