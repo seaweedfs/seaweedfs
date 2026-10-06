@@ -213,6 +213,9 @@ message KeepConnectedRequest {
   string filer_group = 5;
   string data_center = 6;
   string rack = 7;
+  // A draining filer leaves the lock ring but stays a cluster member, so peers
+  // keep following its metadata until the stream closes.
+  bool leave_lock_ring = 8;
 }
 
 message VolumeLocation {

@@ -998,6 +998,9 @@ type KeepConnectedRequest struct {
 	FilerGroup    string                 `protobuf:"bytes,5,opt,name=filer_group,json=filerGroup,proto3" json:"filer_group,omitempty"`
 	DataCenter    string                 `protobuf:"bytes,6,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
 	Rack          string                 `protobuf:"bytes,7,opt,name=rack,proto3" json:"rack,omitempty"`
+	// A draining filer leaves the lock ring but stays a cluster member, so peers
+	// keep following its metadata until the stream closes.
+	LeaveLockRing bool `protobuf:"varint,8,opt,name=leave_lock_ring,json=leaveLockRing,proto3" json:"leave_lock_ring,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1072,6 +1075,13 @@ func (x *KeepConnectedRequest) GetRack() string {
 		return x.Rack
 	}
 	return ""
+}
+
+func (x *KeepConnectedRequest) GetLeaveLockRing() bool {
+	if x != nil {
+		return x.LeaveLockRing
+	}
+	return false
 }
 
 type VolumeLocation struct {
@@ -5137,7 +5147,7 @@ const file_master_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\rR\x04data\x12\x16\n" +
 	"\x06parity\x18\x02 \x01(\rR\x06parity\x12\x1d\n" +
 	"\n" +
-	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\xce\x01\n" +
+	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\xf6\x01\n" +
 	"\x14KeepConnectedRequest\x12\x1f\n" +
 	"\vclient_type\x18\x01 \x01(\tR\n" +
 	"clientType\x12%\n" +
@@ -5147,7 +5157,8 @@ const file_master_proto_rawDesc = "" +
 	"filerGroup\x12\x1f\n" +
 	"\vdata_center\x18\x06 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
-	"\x04rack\x18\a \x01(\tR\x04rack\"\x9e\x03\n" +
+	"\x04rack\x18\a \x01(\tR\x04rack\x12&\n" +
+	"\x0fleave_lock_ring\x18\b \x01(\bR\rleaveLockRing\"\x9e\x03\n" +
 	"\x0eVolumeLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +

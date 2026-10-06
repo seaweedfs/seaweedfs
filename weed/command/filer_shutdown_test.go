@@ -56,7 +56,7 @@ func TestFilerShutdownJoinsServeDuringParallelDrain(t *testing.T) {
 	grpcStopped := make(chan struct{})
 	filerClosed := make(chan struct{})
 	var closes atomic.Int32
-	shutdown := newGracefulShutdown(func() {
+	shutdown := newFilerShutdown(func() {}, func() {
 		close(grpcStarted)
 		<-grpcRelease
 		close(grpcStopped)
@@ -138,7 +138,7 @@ func TestFilerShutdownWaitsForHTTPAfterGrpcStops(t *testing.T) {
 	server.Config.RegisterOnShutdown(func() { close(httpClosing) })
 	grpcStopped := make(chan struct{})
 	filerClosed := make(chan struct{})
-	shutdown := newGracefulShutdown(func() { close(grpcStopped) }, func() { close(filerClosed) }, server.Config)
+	shutdown := newFilerShutdown(func() {}, func() { close(grpcStopped) }, func() { close(filerClosed) }, server.Config)
 	joined := make(chan struct{})
 	go func() { shutdown(); close(joined) }()
 	<-httpClosing
@@ -155,5 +155,44 @@ func TestFilerShutdownWaitsForHTTPAfterGrpcStops(t *testing.T) {
 	case <-filerClosed:
 	default:
 		t.Error("filer was not closed after HTTP request completed")
+	}
+}
+
+func TestFilerShutdownLeavesLockRingBeforeDraining(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	t.Cleanup(server.Close)
+	httpClosing := make(chan struct{})
+	server.Config.RegisterOnShutdown(func() { close(httpClosing) })
+
+	leaving := make(chan struct{})
+	releaseLeave := make(chan struct{})
+	finishLeave := sync.OnceFunc(func() { close(releaseLeave) })
+	t.Cleanup(finishLeave)
+	grpcStopping := make(chan struct{})
+	shutdown := newFilerShutdown(func() {
+		close(leaving)
+		<-releaseLeave
+	}, func() { close(grpcStopping) }, func() {}, server.Config)
+	joined := make(chan struct{})
+	go func() { shutdown(); close(joined) }()
+
+	select {
+	case <-leaving:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not leave the lock ring")
+	}
+	select {
+	case <-grpcStopping:
+		t.Fatal("gRPC stopped accepting while the filer was still leaving the lock ring")
+	case <-httpClosing:
+		t.Fatal("HTTP stopped accepting while the filer was still leaving the lock ring")
+	case <-time.After(100 * time.Millisecond):
+	}
+	finishLeave()
+	<-joined
+	select {
+	case <-grpcStopping:
+	default:
+		t.Error("gRPC was not stopped after leaving the lock ring")
 	}
 }

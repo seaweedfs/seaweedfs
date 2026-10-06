@@ -1,6 +1,8 @@
 package filer
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -59,6 +61,47 @@ func TestShutdownKeepsStoreOpenUntilMetadataIsFlushed(t *testing.T) {
 		case <-store.closed:
 		default:
 			t.Error("metadata store was not closed after the log write finished")
+		}
+	})
+}
+
+func TestShutdownBoundsBlockedMetadataFlush(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := &shutdownStore{closed: make(chan struct{})}
+		f := &Filer{Store: store, deletionQuit: make(chan struct{})}
+		f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
+
+		var flushStarted atomic.Bool
+		lb := log_buffer.NewLogBuffer("blocked flush", time.Hour,
+			func(lb *log_buffer.LogBuffer, _, _ time.Time, buf []byte, _, _ int64) {
+				flushStarted.Store(true)
+				// A dead cluster makes append retries hang here; the shutdown
+				// deadline cancels the shared flush context to unblock it.
+				<-f.flushCtx.Done()
+				lb.NoteFlushDropped(len(buf))
+			}, nil, nil)
+		f.LocalMetaLogBuffer = lb
+		if err := lb.AddDataToBuffer(nil, []byte("last metadata event"), 0); err != nil {
+			t.Fatal(err)
+		}
+
+		done := make(chan struct{})
+		go func() {
+			f.Shutdown()
+			close(done)
+		}()
+
+		<-done
+		if !flushStarted.Load() {
+			t.Error("shutdown finished without running the pending flush")
+		}
+		if ts := lb.GetLastFlushTsNs(); ts != 0 {
+			t.Errorf("dropped flush advanced the flushed watermark to %d", ts)
+		}
+		select {
+		case <-store.closed:
+		default:
+			t.Error("metadata store was not closed after the bounded wait")
 		}
 	})
 }
