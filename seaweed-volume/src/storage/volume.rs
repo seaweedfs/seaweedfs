@@ -1182,6 +1182,7 @@ pub struct Volume {
 
     last_modified_ts_seconds: u64,
     last_append_at_ns: u64,
+    keep_last_modified_ts_on_load: bool,
     pub last_disk_check_ns: Arc<std::sync::atomic::AtomicI64>, // for phantom volume detection cache
 
     last_compact_index_offset: u64,
@@ -1281,6 +1282,7 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            keep_last_modified_ts_on_load: false,
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
@@ -1327,6 +1329,7 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            keep_last_modified_ts_on_load: false,
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
@@ -1442,12 +1445,14 @@ impl Volume {
                 Err(e) => return Err(e.into()),
             }
 
-            self.last_modified_ts_seconds = metadata
-                .modified()
-                .unwrap_or(SystemTime::UNIX_EPOCH)
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            if !self.keep_last_modified_ts_on_load {
+                self.last_modified_ts_seconds = metadata
+                    .modified()
+                    .unwrap_or(SystemTime::UNIX_EPOCH)
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+            }
 
             if metadata.len() >= SUPER_BLOCK_SIZE as u64 {
                 already_has_super_block = true;
@@ -1549,7 +1554,9 @@ impl Volume {
                         "volumeDataIntegrityChecking failed"
                     );
                 }
-                self.recover_last_modified_ts();
+                if !self.keep_last_modified_ts_on_load {
+                    self.recover_last_modified_ts();
+                }
 
                 // Structural check: no .idx entry may reference bytes past the
                 // end of .dat. The needle map's load walk above already
@@ -4493,8 +4500,18 @@ impl Volume {
         self.write_compact_commit_marker()?;
         self.apply_compact_swap()?;
 
-        // Reload
-        self.load(true, false, 0, self.version())?;
+        // The TTL clock is already current: every write since the volume
+        // loaded advanced the append watermark, and makeup_diff only replays
+        // those writes. Re-deriving it from the rewritten .dat scans every
+        // live needle under the write lock, and an over-budget scan would
+        // restart the clock at the swap's mtime.
+        if self.last_append_at_ns != 0 {
+            self.last_modified_ts_seconds = self.last_append_at_ns / 1_000_000_000;
+        }
+        self.keep_last_modified_ts_on_load = self.last_modified_ts_seconds != 0;
+        let load_result = self.load(true, false, 0, self.version());
+        self.keep_last_modified_ts_on_load = false;
+        load_result?;
 
         Ok(())
     }
@@ -7035,6 +7052,96 @@ mod tests {
             !v.is_expired(content_size, 1024 * 1024),
             "a volume overwritten a minute ago must not be expired after a vacuum and reload"
         );
+    }
+
+    // Covers the reload that ends a vacuum commit. The clock is already current
+    // when the swap happens, so the commit must keep it rather than re-derive
+    // it: re-deriving scans every live needle while the write lock blocks
+    // reads, and a scan over its budget falls back to the rewritten .dat's
+    // mtime, handing an expiring volume a fresh TTL.
+    #[test]
+    fn test_ttl_clock_carried_across_vacuum_commit() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let last_write_ns = (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 2 * 60 * 60)
+            * 1_000_000_000;
+
+        let mut v = make_ttl_volume(dir, ttl);
+        let mut written = Vec::new();
+        for i in 1..=3u64 {
+            let data = format!("data {}", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
+            written.push((offset, n.size));
+        }
+        v.delete_needle(&mut Needle {
+            id: NeedleId(2),
+            cookie: Cookie(2),
+            ..Needle::default()
+        })
+        .unwrap();
+        v.sync_to_disk().unwrap();
+        for (offset, size) in written {
+            backdate_append_at_ns(&v.dat_path(), offset, size, last_write_ns);
+        }
+        // Where a restart's recovery would have left the clock.
+        v.set_last_modified_ts_for_test(last_write_ns / 1_000_000_000);
+        v.last_append_at_ns = last_write_ns;
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        assert_eq!(v.last_modified_ts(), last_write_ns / 1_000_000_000);
+        assert!(
+            v.is_expired(v.content_size(), 1024 * 1024),
+            "a TTL volume whose last write is 2h old must stay expired across a vacuum commit"
+        );
+    }
+
+    // A write's client supplied modified time can lie ahead of or behind when
+    // it was appended; the commit keeps the append watermark -- the clock the
+    // recovery scan would recompute -- so it cannot shift expiry through a
+    // vacuum.
+    #[test]
+    fn test_ttl_clock_at_commit_uses_append_time() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let future = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 24 * 60 * 60;
+
+        let mut v = make_ttl_volume(dir, ttl);
+        let data = b"data".to_vec();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data,
+            data_size: 4,
+            last_modified: future,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        assert!(v.last_modified_ts() >= future);
+        let append_watermark_sec = v.last_append_at_ns / 1_000_000_000;
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        assert_eq!(v.last_modified_ts(), append_watermark_sec);
     }
 
     // Guard the destroy time an EC volume is reclaimed on: it was recomputed as
