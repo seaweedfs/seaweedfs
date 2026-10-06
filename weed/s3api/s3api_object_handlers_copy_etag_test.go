@@ -86,6 +86,19 @@ func TestBuildCopyPartResultQuotesETag(t *testing.T) {
 	if result.ETag != `"b1946ac92492d2347c6235b4d2611184"` {
 		t.Fatalf("buildCopyPartResult().ETag = %q, want quoted", result.ETag)
 	}
+	if encoded := string(s3err.EncodeXMLResponse(result)); !strings.Contains(encoded, `<ETag>&#34;b1946ac92492d2347c6235b4d2611184&#34;</ETag>`) {
+		t.Fatalf("response %q does not contain a quoted ETag", encoded)
+	}
+}
+
+func TestCopyObjectResultXMLQuotesETag(t *testing.T) {
+	encoded := string(s3err.EncodeXMLResponse(CopyObjectResult{
+		ETag:         quoteETag("b1946ac92492d2347c6235b4d2611184"),
+		LastModified: time.Now(),
+	}))
+	if !strings.Contains(encoded, `<ETag>&#34;b1946ac92492d2347c6235b4d2611184&#34;</ETag>`) {
+		t.Fatalf("response %q does not contain a quoted ETag", encoded)
+	}
 }
 
 // A part copy has no way to report a short part, so an unsatisfiable
