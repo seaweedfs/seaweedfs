@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -62,6 +63,29 @@ func newCopyETagTestEntry(t *testing.T, storedETag, computedETag string) *filer_
 		}
 	}
 	return entry
+}
+
+func TestQuoteETag(t *testing.T) {
+	testCases := []struct {
+		etag string
+		want string
+	}{
+		{etag: "b1946ac92492d2347c6235b4d2611184", want: `"b1946ac92492d2347c6235b4d2611184"`},
+		{etag: `"b1946ac92492d2347c6235b4d2611184"`, want: `"b1946ac92492d2347c6235b4d2611184"`},
+		{etag: "", want: ""},
+	}
+	for _, tc := range testCases {
+		if got := quoteETag(tc.etag); got != tc.want {
+			t.Errorf("quoteETag(%q) = %q, want %q", tc.etag, got, tc.want)
+		}
+	}
+}
+
+func TestBuildCopyPartResultQuotesETag(t *testing.T) {
+	result := buildCopyPartResult("b1946ac92492d2347c6235b4d2611184", time.Now(), SSEResponseMetadata{})
+	if result.ETag != `"b1946ac92492d2347c6235b4d2611184"` {
+		t.Fatalf("buildCopyPartResult().ETag = %q, want quoted", result.ETag)
+	}
 }
 
 // A part copy has no way to report a short part, so an unsatisfiable
