@@ -680,6 +680,15 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			bucket, object, totalTime, conditionalHeadersTime, versioningCheckTime, entryFetchTime, streamTime)
 	}()
 
+	// A non-null versionId only has meaning once versioning has been
+	// configured; reject it before directory or conditional handling can
+	// answer the request as a plain object.
+	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Handle directory objects with shared logic
 	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "GetObjectHandler") {
 		return // Directory object request was handled
@@ -692,9 +701,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	if handled {
 		return
 	}
-
-	// Check for specific version ID in query parameters
-	versionId := r.URL.Query().Get("versionId")
 
 	var (
 		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
@@ -2359,6 +2365,14 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		return // SOSAPI request was handled
 	}
 
+	// Reject named versions before directory or conditional handling can
+	// answer the request as a plain object.
+	versionId := r.URL.Query().Get("versionId")
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Handle directory objects with shared logic
 	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "HeadObjectHandler") {
 		return // Directory object request was handled
@@ -2369,9 +2383,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	if handled {
 		return
 	}
-
-	// Check for specific version ID in query parameters
-	versionId := r.URL.Query().Get("versionId")
 
 	var (
 		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
