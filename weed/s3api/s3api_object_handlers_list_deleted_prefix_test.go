@@ -250,3 +250,47 @@ func TestDeletedPrefixesDoNotConsumeMaxKeys(t *testing.T) {
 	assert.False(t, cursor.isTruncated, "stepping over deleted prefixes must not truncate the page")
 	assert.Zero(t, cursor.maxKeys, "only the live prefixes may spend the page budget")
 }
+
+// TestPerPrefixBudgetNotShared is a regression test for the bug reported in issue #10847:
+// one large all-deleted prefix exhausts the shared probe budget, causing every later
+// prefix to be reported as visible even when all its objects are delete-marked.
+//
+// The fix gives each candidate prefix its own probe budget (hiddenProbePerPrefixBudget),
+// so budget exhaustion in one prefix does not bleed into the next. The test lowers that
+// budget to 3 to stay fast; the real default is 1000.
+func TestPerPrefixBudgetNotShared(t *testing.T) {
+	// Lower the per-prefix budget so we can trigger exhaustion with a small dataset.
+	orig := hiddenProbePerPrefixBudget
+	hiddenProbePerPrefixBudget = 3
+	defer func() { hiddenProbePerPrefixBudget = orig }()
+
+	// Build 5 delete-marked objects under "bigdeleted/" – more than the budget of 3.
+	bigDeletedEntries := make([]*filer_pb.Entry, 0, 5)
+	for i := 0; i < 5; i++ {
+		bigDeletedEntries = append(bigDeletedEntries, deleteMarkedVersionsDir(
+			"obj"+strconv.Itoa(i),
+		))
+	}
+
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test": {
+				newDir("bigdeleted"),
+				newDir("emptydeleted"),
+				newDir("live"),
+			},
+			"/buckets/test/bigdeleted":   bigDeletedEntries,
+			"/buckets/test/emptydeleted": {deleteMarkedVersionsDir("obj")},
+			"/buckets/test/live":         {liveVersionsDir("obj")},
+		},
+	}
+
+	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"}, &ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true})
+
+	// "emptydeleted" must be hidden: all its objects are delete-marked and its probe
+	// budget was not exhausted by "bigdeleted".
+	assert.NotContains(t, seen, "emptydeleted", "all-deleted prefix after a budget-exhausting prefix must still be hidden")
+
+	// "live" must always appear.
+	assert.Contains(t, seen, "live", "prefix with a live current version must be listed")
+}
