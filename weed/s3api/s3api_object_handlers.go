@@ -502,6 +502,18 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 // handleDirectoryObjectRequest is a helper function that handles directory object requests
 // for both GET and HEAD operations, eliminating code duplication
 func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) bool {
+	if isAnonymousObjectRead(r) && strings.HasSuffix(object, "/") {
+		// Versioned directory keys must authorize and serve the selected version,
+		// rather than an unrelated directory marker at the regular filer path.
+		versioned, err := s3a.isVersioningConfigured(bucket)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return true
+		}
+		if versioned {
+			return false
+		}
+	}
 	// Check if this is a directory object and handle it directly
 	if dirEntry, isDirectoryObject, err := s3a.checkDirectoryObject(bucket, object); err != nil {
 		glog.Errorf("%s: error checking directory object %s/%s: %v", handlerName, bucket, object, err)
@@ -604,6 +616,14 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 	}
 
 	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
+	if isAnonymousObjectRead(r) && result.Entry != nil {
+		// 304/412 are responses too: authorize before exposing the ETag or the
+		// outcome of a condition on an entry the caller cannot read.
+		if code := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), result.Entry.Extended, handlerName); code != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, code)
+			return result, true
+		}
+	}
 	if result.ErrorCode != s3err.ErrNone {
 		glog.V(3).Infof("%s: Conditional header check failed for %s/%s with error %v", handlerName, bucket, object, result.ErrorCode)
 
@@ -665,6 +685,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	var (
 		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
+		targetVersionId      string
 		versioningConfigured bool
 		err                  error
 	)
@@ -687,7 +708,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	if versioningConfigured {
 		// Handle versioned GET - check if specific version requested
-		var targetVersionId string
 
 		if versionId != "" {
 			// Request for specific version - must look in .versions directory
@@ -777,11 +797,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			glog.V(2).Infof("GetObject: version %s for %s/%s", targetVersionId, bucket, object)
 		}
 
-		// Set version ID in response header
-		w.Header().Set("x-amz-version-id", targetVersionId)
-
-		// Add object lock metadata to response headers if present
-		s3a.addObjectLockHeadersToResponse(w, entry)
 	}
 
 	versioningCheckTime = time.Since(tVersioning)
@@ -840,6 +855,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "GetObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	// Return version and lock metadata only after authorizing this entry.
+	if versioningConfigured {
+		w.Header().Set("x-amz-version-id", targetVersionId)
+		s3a.addObjectLockHeadersToResponse(w, objectEntryForSSE)
 	}
 
 	// Handle remote storage objects: initiate background caching without blocking
@@ -992,6 +1013,14 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			cacheVersionId := resolvedSourceVersionId(versionId, entry)
 			cachedEntry, cacheErr := s3a.cacheRemoteObjectForStreamingWithShortTimeout(r, entry, bucket, object, cacheVersionId)
 			if cacheErr == nil && cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+				// Caching can return newer metadata. Reauthorize it before replacing
+				// the entry whose ACL and tags were checked by the read handler.
+				if isAnonymousObjectRead(r) {
+					if code := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), cachedEntry.Extended, "streamFromVolumeServers"); code != s3err.ErrNone {
+						s3err.WriteErrorResponse(w, r, code)
+						return newStreamErrorWithResponse(fmt.Errorf("cached entry authorization failed: %v", code))
+					}
+				}
 				// Cache completed, use cached chunks
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
@@ -2329,6 +2358,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	var (
 		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
+		targetVersionId      string
 		versioningConfigured bool
 		err                  error
 	)
@@ -2349,7 +2379,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	if versioningConfigured {
 		// Handle versioned HEAD - all versions are stored in .versions directory
-		var targetVersionId string
 
 		if versionId != "" {
 			// Request for specific version
@@ -2439,11 +2468,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			glog.V(2).Infof("HeadObject: version %s for %s/%s", targetVersionId, bucket, object)
 		}
 
-		// Set version ID in response header
-		w.Header().Set("x-amz-version-id", targetVersionId)
-
-		// Add object lock metadata to response headers if present
-		s3a.addObjectLockHeadersToResponse(w, entry)
 	}
 
 	// Fetch the correct entry for SSE processing (respects versionId)
@@ -2487,6 +2511,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "HeadObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+
+	// Return version and lock metadata only after authorizing this entry.
+	if versioningConfigured {
+		w.Header().Set("x-amz-version-id", targetVersionId)
+		s3a.addObjectLockHeadersToResponse(w, objectEntryForSSE)
 	}
 
 	// Implicit Directory Handling for s3fs Compatibility
