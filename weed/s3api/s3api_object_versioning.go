@@ -2144,11 +2144,12 @@ func scanLatestVersionEntry(list entryLister, versionsDir string) (latestEntry *
 // healStaleLatestVersionPointer is invoked when the .versions directory metadata
 // points to a version file that no longer exists. It paginates the directory,
 // picks the chronologically newest remaining entry (content version or delete
-// marker), updates the directory pointer metadata best-effort, and returns the
-// rescanned entry. Downstream handlers detect ExtDeleteMarkerKey on the
-// returned entry and render NoSuchKey, so promoting a delete marker preserves
-// correct S3 semantics. If no version-tagged entry remains an error is
-// returned and the caller surfaces it as not found.
+// marker), updates the directory pointer metadata best-effort — CAS-style, so a
+// pointer a concurrent writer advanced in the meantime is left alone — and
+// returns the rescanned entry. Downstream handlers detect ExtDeleteMarkerKey on
+// the returned entry and render NoSuchKey, so promoting a delete marker
+// preserves correct S3 semantics. If no version-tagged entry remains an error
+// is returned and the caller surfaces it as not found.
 func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject string, versionsEntry *filer_pb.Entry, stalePointerFile string) (*filer_pb.Entry, error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
@@ -2194,17 +2195,45 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
 	}
 
-	if versionsEntry.Extended == nil {
-		versionsEntry.Extended = make(map[string][]byte)
+	// The persist is CAS-style (mirroring clearStaleLatestVersionPointer) so a
+	// stale repair cannot supersede a concurrent writer: the rescan takes time,
+	// during which a PUT or delete may have atomically advanced the pointer on
+	// the owner filer. Re-fetch the live .versions entry and require its pointer
+	// fields to still match the ones this heal observed when it decided the
+	// pointer was unusable. If they moved, abandon the persist — this read
+	// still returns the scanned entry, and the winner's pointer needs no
+	// repair. Write the live Extended map so fields a concurrent writer
+	// updated between the re-fetch and the persist are preserved.
+	liveEntry, liveErr := s3a.getEntry(bucketDir, versionsObjectPath)
+	if liveErr != nil {
+		// The directory is gone (e.g. a concurrent delete's teardown); nothing
+		// to repair, and this read still returns the scanned entry.
+		versioningHealInfof("abandoned", "bucket=%s key=%s mode=versions_dir_gone err=%v", bucket, normalizedObject, liveErr)
+		return latestEntry, nil
 	}
-	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestVersionId)
-	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
-	setCachedListMetadata(versionsEntry, latestEntry)
+	if liveEntry.Extended == nil {
+		liveEntry.Extended = make(map[string][]byte)
+	}
+	observedId := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	observedFile := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+	liveId := string(liveEntry.Extended[s3_constants.ExtLatestVersionIdKey])
+	liveFile := string(liveEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+	if liveId != observedId || liveFile != observedFile {
+		// A concurrent writer promoted the pointer between the heal's snapshot
+		// and this check; rolling it back to the scanned version would make
+		// older content or ACLs current again.
+		versioningHealInfof("abandoned", "bucket=%s key=%s mode=pointer_moved observed_id=%s live_id=%s", bucket, normalizedObject, observedId, liveId)
+		return latestEntry, nil
+	}
 
-	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = versionsEntry.Extended
-		updatedEntry.Attributes = versionsEntry.Attributes
-		updatedEntry.Chunks = versionsEntry.Chunks
+	liveEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestVersionId)
+	liveEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
+	setCachedListMetadata(liveEntry, latestEntry)
+
+	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, liveEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = liveEntry.Extended
+		updatedEntry.Attributes = liveEntry.Attributes
+		updatedEntry.Chunks = liveEntry.Chunks
 	}); mkErr != nil {
 		// Persisting the repair is best-effort. Surface a warning but still
 		// return the rescanned entry so the read succeeds; a subsequent write
