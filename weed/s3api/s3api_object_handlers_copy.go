@@ -863,7 +863,7 @@ func (r CopyPartResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error
 
 func buildCopyPartResult(etag string, lastModified time.Time, metadata SSEResponseMetadata) CopyPartResult {
 	result := CopyPartResult{
-		ETag:         etag,
+		ETag:         quoteETag(etag),
 		LastModified: lastModified,
 	}
 	result.SetChecksum(metadata.ChecksumHeaderName, metadata.ChecksumValue)

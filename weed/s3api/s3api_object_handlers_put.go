@@ -1402,7 +1402,7 @@ func setEtag(w http.ResponseWriter, etag string) {
 }
 
 func quoteETag(etag string) string {
-	if strings.HasPrefix(etag, "\"") {
+	if etag == "" || strings.HasPrefix(etag, "\"") {
 		return etag
 	}
 	return "\"" + etag + "\""

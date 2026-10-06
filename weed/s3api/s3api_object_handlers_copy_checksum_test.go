@@ -75,7 +75,7 @@ func TestBuildCopyPartResult(t *testing.T) {
 			header:  s3_constants.AmzChecksumCRC32,
 			element: "<ChecksumCRC32>value</ChecksumCRC32>",
 			expected: CopyPartResult{
-				ETag: "etag", LastModified: modified, ChecksumResult: ChecksumResult{ChecksumCRC32: "value"},
+				ETag: `"etag"`, LastModified: modified, ChecksumResult: ChecksumResult{ChecksumCRC32: "value"},
 			},
 		},
 		{
@@ -83,7 +83,7 @@ func TestBuildCopyPartResult(t *testing.T) {
 			header:  s3_constants.AmzChecksumCRC32C,
 			element: "<ChecksumCRC32C>value</ChecksumCRC32C>",
 			expected: CopyPartResult{
-				ETag: "etag", LastModified: modified, ChecksumResult: ChecksumResult{ChecksumCRC32C: "value"},
+				ETag: `"etag"`, LastModified: modified, ChecksumResult: ChecksumResult{ChecksumCRC32C: "value"},
 			},
 		},
 		{
@@ -91,7 +91,7 @@ func TestBuildCopyPartResult(t *testing.T) {
 			header:  s3_constants.AmzChecksumCRC64NVME,
 			element: "<ChecksumCRC64NVME>value</ChecksumCRC64NVME>",
 			expected: CopyPartResult{
-				ETag: "etag", LastModified: modified, ChecksumResult: ChecksumResult{ChecksumCRC64NVME: "value"},
+				ETag: `"etag"`, LastModified: modified, ChecksumResult: ChecksumResult{ChecksumCRC64NVME: "value"},
 			},
 		},
 		{
@@ -99,7 +99,7 @@ func TestBuildCopyPartResult(t *testing.T) {
 			header:  s3_constants.AmzChecksumSHA1,
 			element: "<ChecksumSHA1>value</ChecksumSHA1>",
 			expected: CopyPartResult{
-				ETag: "etag", LastModified: modified, ChecksumResult: ChecksumResult{ChecksumSHA1: "value"},
+				ETag: `"etag"`, LastModified: modified, ChecksumResult: ChecksumResult{ChecksumSHA1: "value"},
 			},
 		},
 		{
@@ -107,14 +107,14 @@ func TestBuildCopyPartResult(t *testing.T) {
 			header:  s3_constants.AmzChecksumSHA256,
 			element: "<ChecksumSHA256>value</ChecksumSHA256>",
 			expected: CopyPartResult{
-				ETag: "etag", LastModified: modified, ChecksumResult: ChecksumResult{ChecksumSHA256: "value"},
+				ETag: `"etag"`, LastModified: modified, ChecksumResult: ChecksumResult{ChecksumSHA256: "value"},
 			},
 		},
 		{
 			name:     "Unknown",
 			header:   "x-amz-checksum-unknown",
 			element:  "",
-			expected: CopyPartResult{ETag: "etag", LastModified: modified},
+			expected: CopyPartResult{ETag: `"etag"`, LastModified: modified},
 		},
 	}
 
