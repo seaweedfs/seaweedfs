@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"golang.org/x/sync/singleflight"
@@ -381,6 +383,63 @@ func (fs *FilerServer) Shutdown() {
 		fs.remoteCacheEvictCancel()
 	}
 	fs.filer.Shutdown()
+}
+
+// priorOwnerWindowSkew covers peers and gateways that start their prior-owner
+// window after this filer, since each times it from its own ring update.
+const priorOwnerWindowSkew = time.Second
+
+// leaveLockRingBudget bounds the leave: installing the ring update runs lock
+// transfers under the ring lock, which can outlast the removal timeout.
+const leaveLockRingBudget = 10 * time.Second
+
+// LeaveLockRing hands this filer's lock-ring keys to its peers while its own
+// servers still accept the lock transfers and prior-owner writes that follow.
+func (fs *FilerServer) LeaveLockRing() {
+	fs.leaveLockRingWithin(3*cluster.LockRingStabilizationInterval, leaveLockRingBudget)
+}
+
+func (fs *FilerServer) leaveLockRingWithin(removalTimeout, budget time.Duration) {
+	left := make(chan struct{})
+	go func() {
+		defer close(left)
+		fs.leaveLockRing(removalTimeout)
+	}()
+	select {
+	case <-left:
+	case <-time.After(budget):
+		glog.Warningf("LockRing: %s did not finish leaving within %v, shutting down anyway", fs.option.Host, budget)
+	}
+}
+
+func (fs *FilerServer) leaveLockRing(removalTimeout time.Duration) {
+	if fs.filer.Dlm == nil {
+		return
+	}
+	ring := fs.filer.Dlm.LockRing
+	self := fs.option.Host
+	members := ring.GetSnapshot()
+	// A lone filer has no peer to take its keys: leaving would strand lock
+	// requests arriving during the drain without an owner.
+	if len(members) < 2 || !slices.Contains(members, self) {
+		return
+	}
+	// A failed send still leaves: the broken stream's close drops this filer
+	// from the ring and the reconnect registers without it.
+	if err := fs.filer.MasterClient.LeaveLockRing(); err != nil {
+		glog.Warningf("LockRing: %s leave request failed, waiting for reconnect: %v", self, err)
+	}
+	deadline := time.Now().Add(removalTimeout)
+	for slices.Contains(ring.GetSnapshot(), self) {
+		if time.Now().After(deadline) {
+			glog.Warningf("LockRing: %s still in the ring after %v, shutting down anyway", self, removalTimeout)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	until := ring.PriorOwnerWindowEnd().Add(priorOwnerWindowSkew)
+	glog.V(0).Infof("LockRing: %s left, serving prior-owner requests until %v", self, until)
+	time.Sleep(time.Until(until))
 }
 
 func (fs *FilerServer) Reload() {

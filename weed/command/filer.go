@@ -588,7 +588,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, tlsConfig)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -617,7 +617,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, nil)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -637,8 +637,11 @@ func (fo *FilerOptions) startFiler() {
 }
 
 // newFilerShutdown joins shutdown callers while gRPC and HTTP drain concurrently.
-func newFilerShutdown(stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
+// The filer leaves the lock ring first: peers and S3 gateways route keys to it
+// until the ring changes, and would hit refused connections once gRPC stops.
+func newFilerShutdown(leaveLockRing, stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
 	return sync.OnceFunc(func() {
+		leaveLockRing()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		var drained sync.WaitGroup
