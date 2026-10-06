@@ -1405,7 +1405,7 @@ func quoteETag(etag string) string {
 	if etag == "" || strings.HasPrefix(etag, "\"") {
 		return etag
 	}
-	return "\"" + etag + "\""
+	return strconv.Quote(etag)
 }
 
 // setSSEResponseHeaders sets appropriate SSE response headers based on encryption type
