@@ -247,6 +247,11 @@ func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetad
 // in the rejection and volumeFileSizeLimit picks the real limit up from there.
 const metadataLogUploadLimit = log_buffer.BufferSize
 
+// shutdownMetadataLogFlushBudget bounds how long metadata-log flushes may keep
+// retrying once the filer is shutting down; Shutdown cancels the shared flush
+// context when it expires.
+const shutdownMetadataLogFlushBudget = 15 * time.Second
+
 var fileSizeLimitPattern = regexp.MustCompile(`file over the limited (\d+) bytes`)
 
 // volumeFileSizeLimit reads the byte limit back out of a volume server's size
@@ -278,17 +283,30 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 
 	// One piece at a time, each retried on its own so a partial success is not
 	// replayed, and the piece size follows the limit the volume servers report.
+	// While the filer keeps running the retry is unbounded so no metadata is
+	// dropped; once Shutdown arms the flush deadline the shared context cancels
+	// and the flush drops what is left instead of holding shutdown open.
 	limit := metadataLogUploadLimit
+	ctx := f.flushCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	for len(buf) > 0 {
 		piece := nextLogPiece(buf, limit)
-		if err := f.appendToFile(targetFile, piece); err != nil {
+		if err := f.appendToFile(ctx, targetFile, piece); err != nil {
 			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
 			if reported := volumeFileSizeLimit(err); reported > 0 && reported < limit {
 				glog.V(0).Infof("metadata log upload limit lowered to %d bytes", reported)
 				limit = reported
 				continue
 			}
-			time.Sleep(737 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				logBuffer.NoteFlushDropped(len(buf))
+				glog.V(0).Infof("metadata log flush abandoned during shutdown, %d bytes left for %s: %v", len(buf), targetFile, ctx.Err())
+				return
+			case <-time.After(737 * time.Millisecond):
+			}
 			continue
 		}
 		buf = buf[len(piece):]
