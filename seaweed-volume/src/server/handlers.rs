@@ -3670,6 +3670,10 @@ fn sum_chunk_sizes(chunks: &[ChunkInfo]) -> Option<i64> {
     Some(sum as i64)
 }
 
+fn exceeds_expansion_limit(buffered: u64) -> bool {
+    buffered > MAX_EXPANSION_BYTES
+}
+
 fn manifest_too_large() -> ControlFlow<Response, (Vec<u8>, HeaderMap)> {
     ControlFlow::Break(
         (
@@ -3816,6 +3820,10 @@ async fn try_expand_chunk_manifest(
         Err(_) => return None,
     };
 
+    if let Some(flow) = reject_bad_chunks(&manifest.chunks) {
+        return Some(flow);
+    }
+
     let filename = manifest_filename(path, &manifest.name);
     let cm_ext = extension_of(&filename);
     let transforms_image = manifest_transforms_image(&cm_ext, query);
@@ -3828,9 +3836,6 @@ async fn try_expand_chunk_manifest(
         &manifest.mime,
     );
     if *method == Method::HEAD && !transforms_image {
-        if let Some(flow) = reject_bad_chunks(&manifest.chunks) {
-            return Some(flow);
-        }
         let Some(sum) = sum_chunk_sizes(&manifest.chunks) else {
             return Some(manifest_too_large());
         };
@@ -3844,49 +3849,56 @@ async fn try_expand_chunk_manifest(
         ));
     }
 
-    // Guard the attacker-controlled manifest size before allocating: a negative
-    // value would wrap to a huge usize (capacity-overflow panic) and an oversized
-    // one would OOM-kill the server.
-    if manifest.size < 0 || manifest.size as u64 > MAX_EXPANSION_BYTES {
-        return None;
+    let Some(sum) = sum_chunk_sizes(&manifest.chunks) else {
+        return Some(manifest_too_large());
+    };
+
+    let mut wanted: Option<(&str, Vec<HttpRange>)> = None;
+    if transforms_image {
+        if exceeds_expansion_limit(sum as u64) {
+            return Some(manifest_too_large());
+        }
+    } else if let Some(range) = get_range {
+        let parsed = parse_range_header(range, sum);
+        let fetch = match &parsed {
+            Err(_) => false,
+            Ok(ranges) if ranges.is_empty() || sum_ranges_size(ranges) > sum => false,
+            Ok(ranges) => {
+                let covered = sum_ranges_size(ranges);
+                if covered > 0 && exceeds_expansion_limit(covered as u64) {
+                    return Some(manifest_too_large());
+                }
+                true
+            }
+        };
+        if !fetch {
+            return Some(ControlFlow::Break(handle_range_request_with(
+                range,
+                sum,
+                |_buf: &mut Vec<u8>, _, _| {},
+                response_headers,
+                None,
+            )));
+        }
+        wanted = Some((range, parsed.unwrap()));
+    } else if exceeds_expansion_limit(sum as u64) {
+        return Some(manifest_too_large());
     }
 
-    let size = manifest.size as usize;
-    // A ranged GET needs only the chunks its ranges overlap; none for a
-    // range that gets no body.
-    let wanted = get_range.filter(|_| !transforms_image).map(|range| {
-        let ranges = parse_range_header(range, manifest.size)
-            .ok()
-            .filter(|ranges| sum_ranges_size(ranges) <= manifest.size)
-            .unwrap_or_default();
-        (range, ranges)
-    });
+    let size = sum as usize;
     let mut parts: HashMap<(usize, usize), Vec<(usize, Vec<u8>)>> = HashMap::new();
-
-    // Read and concatenate all chunks. Each chunk is resolved to wherever it
-    // lives — a local regular volume, a local EC volume (reconstruct-on-read),
-    // or a peer via master lookup — mirroring Go's ChunkedFileReader, which
-    // never assumes chunks are local regular needles.
     let mut result = if wanted.is_some() {
         Vec::new()
     } else {
         vec![0u8; size]
     };
     for chunk in &manifest.chunks {
-        // Validate the attacker-controlled chunk offset before indexing: a
-        // negative value would wrap to a huge usize, and an out-of-range one has
-        // nowhere to land.
-        if chunk.offset < 0 || chunk.size < 0 {
-            return Some(ControlFlow::Break(
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("invalid negative chunk offset/size in {}", chunk.fid),
-                )
-                    .into_response(),
-            ));
+        if chunk.size == 0 || chunk.offset >= sum {
+            continue;
         }
+        let window = chunk.size.min(sum - chunk.offset);
         if let Some((_, ranges)) = &wanted {
-            let end = chunk.offset.saturating_add(chunk.size);
+            let end = chunk.offset + window;
             if !ranges
                 .iter()
                 .any(|r| r.length > 0 && chunk.offset < r.start + r.length && r.start < end)
@@ -3910,13 +3922,9 @@ async fn try_expand_chunk_manifest(
         if offset >= size {
             continue;
         }
-        // Clamp to the chunk's declared size so an over-long chunk can't bleed
-        // into the next chunk's window; also drop bytes past the buffer end.
-        let bound = (chunk.size as usize).min(size - offset);
+        let bound = (window as usize).min(size - offset);
         let copy_len = data.len().min(bound);
         if let Some((_, ranges)) = &wanted {
-            // Keep only the bytes each requested range can read, bucketed by
-            // range so serving one range never scans another's parts.
             let key = |r: &HttpRange| (r.start as usize, (r.start + r.length) as usize);
             for r in ranges {
                 let lo = (r.start as usize).clamp(offset, offset + copy_len);
@@ -3935,7 +3943,6 @@ async fn try_expand_chunk_manifest(
 
     if let Some((range, _)) = wanted {
         response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-        // Later chunks overwrite earlier ones and gaps read as zeros, as in assembly.
         let read = |buf: &mut Vec<u8>, start: usize, end: usize| {
             let base = buf.len();
             buf.resize(base + end - start, 0);
@@ -3951,22 +3958,19 @@ async fn try_expand_chunk_manifest(
         };
         return Some(ControlFlow::Break(handle_range_request_with(
             range,
-            manifest.size,
+            sum,
             read,
             response_headers,
             None,
         )));
     }
 
-    // Go's tryHandleChunkedFile applies crop then resize to expanded chunk data
-    // (L344-345: conditionallyCropImages, conditionallyResizeImages).
     if is_image_crop_ext(&cm_ext) {
         result = maybe_crop_image(&result, &cm_ext, query);
     }
     if is_image_resize_ext(&cm_ext) {
         result = maybe_resize_image(&result, &cm_ext, query);
     }
-
     Some(ControlFlow::Continue((result, response_headers)))
 }
 
@@ -5780,9 +5784,9 @@ mod tests {
 
         let (status, _, full) = send_read(&state, Method::GET, &path, None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(full, b"AAAABBBB\0\0CC");
-        for start in 0..12 {
-            for end in start..12 {
+        assert_eq!(full, b"AAAABBBB\0\0CCCC");
+        for start in 0..14 {
+            for end in start..14 {
                 let range = format!("bytes={start}-{end}");
                 let (status, _, body) =
                     send_read(&state, Method::GET, &path, Some(range.as_bytes())).await;
@@ -5961,6 +5965,165 @@ mod tests {
         let (status, _, _) = send_read(&state, Method::GET, &crop, Some(past.as_bytes())).await;
         assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(taken(&reads), vec![1]);
+    }
+
+    #[test]
+    fn test_expansion_limit_allows_exactly_two_gib() {
+        assert!(!exceeds_expansion_limit(MAX_EXPANSION_BYTES));
+        assert!(exceeds_expansion_limit(MAX_EXPANSION_BYTES + 1));
+        assert!(!exceeds_expansion_limit(0));
+    }
+
+    /// `"size"` is not the object length. Holes stay zero. Chunks at or past
+    /// the sum are not read.
+    #[tokio::test]
+    async fn test_chunk_manifest_length_is_sum() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+
+        let a = put_test_needle(&state, 0x6e7a_0c01, b"AAAA");
+        let b = put_test_needle(&state, 0x6e7a_0c02, b"BBBB");
+        let omitted = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":4,"size":4}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c03, &omitted);
+        let (status, headers, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAABBBB");
+        assert_eq!(headers[header::CONTENT_LENGTH], "8");
+
+        let padded = format!(
+            r#"{{"size":100,"chunks":[{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &a[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c04, &padded);
+        let (status, headers, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA");
+        assert_eq!(headers[header::CONTENT_LENGTH], "4");
+
+        let gap_b = put_test_needle(&state, 0x6e7a_0c05, b"BBBB");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c01, 0x6e7a_0c05]);
+        let gap = format!(
+            r#"{{"size":100,"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":8,"size":4}}]}}"#,
+            &a[1..],
+            &gap_b[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c06, &gap);
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA\0\0\0\0");
+        assert_eq!(taken(&reads), vec![1, 0]);
+
+        let zero = format!(
+            r#"{{"chunks":[{{"fid":"9,0000000a12345678","offset":0,"size":0}},{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &a[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c07, &zero);
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA");
+
+        let empty = put_manifest(&state, 0x6e7a_0c08, r#"{"size":5,"chunks":[]}"#);
+        let (status, headers, body) = send_read(&state, Method::HEAD, &empty, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], "0");
+        assert!(body.is_empty());
+        let (status, headers, body) = send_read(&state, Method::GET, &empty, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], "0");
+        assert!(body.is_empty());
+        let (status, headers, _) = send_read(&state, Method::GET, &empty, Some(b"bytes=0-0")).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers["Content-Range"], "bytes */0");
+
+        let ten = put_test_needle(&state, 0x6e7a_0c09, b"0123456789");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c09]);
+        let dup = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":10}}]}}"#,
+            &ten[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c0a, &dup);
+        let (status, _, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-7,0-7")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(taken(&reads), vec![0]);
+    }
+
+    /// A negative field is rejected before any read, including a chunk the
+    /// range does not overlap.
+    #[tokio::test]
+    async fn test_chunk_manifest_negative_reads_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let inside = put_test_needle(&state, 0x6e7a_0c11, b"AAAA");
+        let outside = put_test_needle(&state, 0x6e7a_0c12, b"BBBB");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c11, 0x6e7a_0c12]);
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":100,"size":4}},{{"fid":"9,0000000b12345678","offset":0,"size":-1}}]}}"#,
+            &inside[1..],
+            &outside[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c13, &json);
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-1")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let body = String::from_utf8(body).unwrap();
+        assert!(body.contains("invalid negative chunk offset/size"), "{body}");
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        let (status, _, _) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(taken(&reads), vec![0, 0]);
+    }
+
+    /// The cap is the bytes that would be buffered. Exactly 2 GiB is allowed
+    /// by the predicate. This test does not allocate that buffer.
+    #[tokio::test]
+    async fn test_chunk_manifest_cap_is_buffered_bytes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let one = put_test_needle(&state, 0x6e7a_0c21, b"Z");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c21]);
+        let big = MAX_EXPANSION_BYTES + 1;
+        let json = format!(
+            r#"{{"size":1,"chunks":[{{"fid":"{}","offset":0,"size":{big}}}]}}"#,
+            &one[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c22, &json);
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], big.to_string());
+        assert!(body.is_empty());
+        assert_eq!(taken(&reads), vec![0]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"Z\0\0\0");
+        assert_eq!(taken(&reads), vec![1]);
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-")).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
+
+        let overflow = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":1}},{{"fid":"9,0000000c12345678","offset":0,"size":9223372036854775807}},{{"fid":"9,0000000d12345678","offset":0,"size":9223372036854775807}},{{"fid":"9,0000000e12345678","offset":0,"size":9223372036854775807}}]}}"#,
+            &one[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c23, &overflow);
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
     }
 
     /// A proxied read forwards request headers as raw bytes, as Go does: a
