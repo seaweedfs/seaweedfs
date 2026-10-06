@@ -883,6 +883,9 @@ func (ecb *ecBalancer) balance(collections []string) error {
 		// nodes fill proportionally (matching the worker). This is identical to raw
 		// shard count when capacities are uniform.
 		GlobalUtilizationBased: true,
+		RackTotalCapRaised: func(collection string, vid uint32, rackCap, evenCap int) {
+			fmt.Printf("ec volume %d (collection %q): rack-total-cap raised to %d shards per rack, above the even %d: the racks lack room for an even spread\n", vid, collection, rackCap, evenCap)
+		},
 	})
 	if len(ecb.volumeIds) > 0 {
 		var deletions int

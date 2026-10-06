@@ -87,6 +87,9 @@ func Detection(
 		GlobalMaxMovesPerRack: 10,
 		// Balance heterogeneous-capacity racks by fractional fullness.
 		GlobalUtilizationBased: true,
+		RackTotalCapRaised: func(collection string, vid uint32, rackCap, evenCap int) {
+			glog.Warningf("EC volume %d (collection %q): rack-total-cap raised to %d shards per rack, above the even %d: the racks lack room for an even spread", vid, collection, rackCap, evenCap)
+		},
 	})
 	if len(moves) == 0 {
 		return nil, false, nil
