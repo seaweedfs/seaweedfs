@@ -1,7 +1,13 @@
 package s3api
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -181,5 +187,122 @@ func TestAuthTypeDetection(t *testing.T) {
 				t.Errorf("Expected auth type %v, got %v", tt.expectedType, authType)
 			}
 		})
+	}
+}
+
+func sha256Hex(t *testing.T, b []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestExpectedContentSha256(t *testing.T) {
+	good := sha256Hex(t, []byte("payload"))
+
+	tests := []struct {
+		name      string
+		header    string
+		wantValid bool
+		wantNil   bool
+	}{
+		{"absent", "", true, true},
+		{"unsigned", unsignedPayload, true, true},
+		{"streaming signed", streamingContentSHA256, true, true},
+		{"streaming trailer", streamingContentSHA256Trailer, true, true},
+		{"streaming unsigned", streamingUnsignedPayload, true, true},
+		{"hex", good, true, false},
+		{"not hex", "nothex", false, true},
+		{"short hex", "deadbeef", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("PUT", "/b/o", nil)
+			if tt.header != "" {
+				r.Header.Set("X-Amz-Content-Sha256", tt.header)
+			}
+			got, valid := expectedContentSha256(r)
+			if valid != tt.wantValid {
+				t.Fatalf("valid=%v want %v", valid, tt.wantValid)
+			}
+			if (got == nil) != tt.wantNil {
+				t.Fatalf("expected nil=%v, got %x", tt.wantNil, got)
+			}
+		})
+	}
+
+	t.Run("base64 decodes to sha256", func(t *testing.T) {
+		sum := sha256.Sum256([]byte("payload"))
+		r := httptest.NewRequest("PUT", "/b/o", nil)
+		r.Header.Set("X-Amz-Content-Sha256", base64.StdEncoding.EncodeToString(sum[:]))
+		got, valid := expectedContentSha256(r)
+		if !valid || !bytes.Equal(got, sum[:]) {
+			t.Fatalf("valid=%v got=%x", valid, got)
+		}
+	})
+}
+
+func newVerifier(body string, expectedHex string) *contentSha256Verifier {
+	expected, _ := hex.DecodeString(expectedHex)
+	return &contentSha256Verifier{
+		reader:   io.NopCloser(strings.NewReader(body)),
+		hasher:   sha256.New(),
+		expected: expected,
+	}
+}
+
+func TestContentSha256VerifierMatch(t *testing.T) {
+	v := newVerifier("hello", sha256Hex(t, []byte("hello")))
+	got, err := io.ReadAll(v)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestContentSha256VerifierMismatch(t *testing.T) {
+	v := newVerifier("hello", sha256Hex(t, []byte("other")))
+	_, err := io.ReadAll(v)
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected mismatch error, got %v", err)
+	}
+	if _, err := v.Read(make([]byte, 8)); err == nil {
+		t.Fatal("expected error to persist")
+	}
+}
+
+// mimeDetect performs a single Read and ignores its error; the verifier must
+// defer the mismatch so a dropped (n>0, err) result still surfaces later.
+func TestContentSha256VerifierSurvivesDroppedError(t *testing.T) {
+	v := newVerifier("hello", sha256Hex(t, []byte("other")))
+	buf := make([]byte, 512)
+	n, _ := v.Read(buf)
+	rest := io.MultiReader(bytes.NewReader(buf[:n]), v)
+	_, err := io.ReadAll(rest)
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected deferred mismatch error, got %v", err)
+	}
+}
+
+// A zero-length body never reaches the verifier, so the declared hash is
+// compared against the empty-payload digest up front.
+func TestGetRequestDataReaderEmptyBodyHash(t *testing.T) {
+	s3a := &S3ApiServer{
+		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, string(credential.StoreTypeMemory)),
+	}
+	s3a.iam.isAuthEnabled = false
+
+	mismatch := httptest.NewRequest("PUT", "/b/dir/", http.NoBody)
+	mismatch.Header.Set("X-Amz-Content-Sha256", sha256Hex(t, []byte("other")))
+	if _, code := getRequestDataReader(s3a, mismatch); code != s3err.ErrContentSHA256Mismatch {
+		t.Fatalf("empty body with wrong hash: code=%v", code)
+	}
+
+	emptySum := sha256.Sum256(nil)
+	match := httptest.NewRequest("PUT", "/b/dir/", http.NoBody)
+	match.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(emptySum[:]))
+	if _, code := getRequestDataReader(s3a, match); code != s3err.ErrNone {
+		t.Fatalf("empty body with empty hash: code=%v", code)
 	}
 }

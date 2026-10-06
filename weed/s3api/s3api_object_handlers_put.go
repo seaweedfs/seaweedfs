@@ -202,7 +202,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			dirContent, readErr = io.ReadAll(dataReader)
 			if readErr != nil {
 				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				if strings.Contains(readErr.Error(), s3err.ErrMsgContentSha256Mismatch) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
+				} else {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				}
 				return
 			}
 		}
@@ -1536,6 +1540,8 @@ func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.Err
 	switch {
 	case errors.Is(err, weed_server.ErrReadOnly):
 		return s3err.ErrAccessDenied
+	case strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch):
+		return s3err.ErrContentSHA256Mismatch
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):

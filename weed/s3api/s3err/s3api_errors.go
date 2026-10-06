@@ -180,6 +180,7 @@ const (
 
 // Error message constants for checksum validation
 const (
+	ErrMsgContentSha256Mismatch     = "the provided 'x-amz-content-sha256' header does not match what was computed"
 	ErrMsgPayloadChecksumMismatch   = "payload checksum does not match"
 	ErrMsgChunkSignatureMismatch    = "chunk signature does not match"
 	ErrMsgChecksumAlgorithmMismatch = "checksum algorithm mismatch"
