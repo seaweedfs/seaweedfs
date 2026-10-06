@@ -486,7 +486,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrMissingSignTag: {
-		Code:           "AccessDenied",
+		Code:           "AuthorizationHeaderMalformed",
 		Description:    "Signature header missing Signature field.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
