@@ -201,7 +201,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if err != nil {
 			return datFileLoadError(v.FileName(".dat"), err)
 		}
-		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
+		if !v.keepLastModifiedTsOnLoad {
+			v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
+		}
 		if fileSize >= super_block.SuperBlockSize {
 			alreadyHasSuperBlock = true
 		}
@@ -292,7 +294,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				v.noWriteOrDelete = true
 				glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
 			}
-			v.recoverLastModifiedTs(indexFile)
+			if !v.keepLastModifiedTsOnLoad {
+				v.recoverLastModifiedTs(indexFile)
+			}
 		}
 
 		// The post-load structural check below uses the in-memory needle map

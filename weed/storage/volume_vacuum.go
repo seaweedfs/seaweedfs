@@ -222,7 +222,14 @@ func (v *Volume) CommitCompact() error {
 	//time.Sleep(20 * time.Second)
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-	if e := v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
+	// The TTL clock is already current: every write since the volume loaded
+	// moved it, and makeupDiff only replays those writes. Re-deriving it from
+	// the rewritten .dat scans every live needle under the write lock, and an
+	// over-budget scan would restart the clock at the swap's mtime.
+	v.keepLastModifiedTsOnLoad = v.lastModifiedTsSeconds != 0
+	e := v.load(true, false, v.needleMapKind, 0, v.Version())
+	v.keepLastModifiedTsOnLoad = false
+	if e != nil {
 		return e
 	}
 	glog.V(3).Infof("Finish committing volume %d", v.Id)

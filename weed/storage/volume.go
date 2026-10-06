@@ -54,8 +54,9 @@ type Volume struct {
 	asyncRequestsChan chan *needle.AsyncRequest
 	asyncWorkerClosed bool
 
-	lastModifiedTsSeconds uint64 // unix time in seconds
-	lastAppendAtNs        uint64 // unix time in nanoseconds
+	lastModifiedTsSeconds    uint64 // unix time in seconds
+	lastAppendAtNs           uint64 // unix time in nanoseconds
+	keepLastModifiedTsOnLoad bool
 
 	lastCompactIndexOffset uint64
 	lastCompactRevision    uint16

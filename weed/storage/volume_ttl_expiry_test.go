@@ -262,6 +262,60 @@ func TestVolumeTtlClockSkipsUnaffordableScanWithoutDatReads(t *testing.T) {
 	}
 }
 
+// TestVolumeTtlClockCarriedAcrossVacuumCommit covers the reload that ends a
+// vacuum commit. The clock is already current when the swap happens, so the
+// commit must keep it rather than re-derive it: re-deriving scans every live
+// needle while the write lock blocks reads, and a scan over its budget falls
+// back to the rewritten .dat's mtime, handing an expiring volume a fresh TTL.
+func TestVolumeTtlClockCarriedAcrossVacuumCommit(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	lastWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	for i := 1; i <= 3; i++ {
+		n := newRandomNeedle(uint64(i))
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, lastWriteNs)
+	}
+	if _, err := v.doDeleteRequest(newEmptyNeedle(2)); err != nil {
+		t.Fatalf("delete needle 2: %v", err)
+	}
+	// Where a restart's recovery would have left the clock.
+	v.lastModifiedTsSeconds = lastWriteNs / uint64(time.Second)
+
+	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
+	vacuumedLastWriteScanEntries = 1
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+	if v.SuperBlock.CompactionRevision == 0 {
+		t.Fatal("vacuum must bump CompactionRevision for this test to exercise the vacuumed path")
+	}
+
+	if got, want := v.lastModifiedTsSeconds, lastWriteNs/uint64(time.Second); got != want {
+		t.Errorf("TTL clock after commit is %d, want the last write at %d", got, want)
+	}
+	if !v.expired(v.ContentSize(), 1024*1024) {
+		t.Error("a TTL volume whose last write is 2h old must stay expired across a vacuum commit")
+	}
+}
+
 // TestVolumeExpireAtSecCountsFromLastWrite guards the destroy time an EC volume
 // is reclaimed on (erasure_coding.EcVolume.IsTimeToDestroy). It was recomputed
 // as now+TTL on every .vif write, so a read-only mark, a tier upload or an EC
