@@ -1968,9 +1968,13 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
 }
 
 fn sum_ranges_size(ranges: &[HttpRange]) -> i64 {
-    ranges
-        .iter()
-        .fold(0i64, |acc, r| acc.saturating_add(r.length))
+    ranges.iter().fold(0i64, |acc, r| {
+        if r.length > 0 {
+            acc.saturating_add(r.length)
+        } else {
+            acc
+        }
+    })
 }
 
 fn range_content_range(r: HttpRange, total: i64) -> String {
@@ -3866,6 +3870,7 @@ async fn try_expand_chunk_manifest(
             }
         };
         if !fetch {
+            response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
             return Some(ControlFlow::Break(handle_range_request_with(
                 range,
                 sum,
@@ -4020,7 +4025,7 @@ fn overlap_span(offset: i64, window: i64, ranges: &[HttpRange]) -> Option<(i64, 
 
 fn remote_read_for(
     offset: i64,
-    size: i64,
+    _size: i64,
     window: i64,
     ranges: Option<&[HttpRange]>,
 ) -> Option<RemoteRead> {
@@ -4029,7 +4034,7 @@ fn remote_read_for(
         Some(ranges) => overlap_span(offset, window, ranges)?,
     };
     if lo == 0 && hi == window {
-        Some(RemoteRead::Whole { cap: size as u64 })
+        Some(RemoteRead::Whole { cap: window as u64 })
     } else {
         Some(RemoteRead::Range {
             lo: lo as u64,
@@ -6106,6 +6111,60 @@ mod tests {
         assert!(!exceeds_expansion_limit(0));
     }
 
+    #[test]
+    fn test_remote_whole_window_caps_at_visible_window() {
+        let ranges = [HttpRange {
+            start: 100,
+            length: 4,
+        }];
+        let how = remote_read_for(100, 3 << 30, 4, Some(&ranges)).unwrap();
+        assert!(matches!(how, RemoteRead::Whole { cap: 4 }));
+        let full = remote_read_for(0, 8, 8, None).unwrap();
+        assert!(matches!(full, RemoteRead::Whole { cap: 8 }));
+        let prefix = remote_read_for(
+            0,
+            8,
+            8,
+            Some(&[HttpRange {
+                start: 0,
+                length: 4,
+            }]),
+        )
+        .unwrap();
+        assert!(matches!(prefix, RemoteRead::Range { lo: 0, hi: 4 }));
+    }
+
+    #[test]
+    fn test_sum_ranges_size_ignores_non_positive() {
+        let ranges = [
+            HttpRange {
+                start: 0,
+                length: 8,
+            },
+            HttpRange {
+                start: 0,
+                length: 8,
+            },
+            HttpRange {
+                start: 0,
+                length: -1_073_741_824,
+            },
+        ];
+        assert_eq!(sum_ranges_size(&ranges), 16);
+        let over = [
+            HttpRange {
+                start: 0,
+                length: MAX_EXPANSION_BYTES as i64 + 1,
+            },
+            HttpRange {
+                start: 0,
+                length: -1,
+            },
+        ];
+        assert_eq!(sum_ranges_size(&over), MAX_EXPANSION_BYTES as i64 + 1);
+        assert!(exceeds_expansion_limit(sum_ranges_size(&over) as u64));
+    }
+
     /// `"size"` is not the object length. Holes stay zero. Chunks at or past
     /// the sum are not read.
     #[tokio::test]
@@ -6178,9 +6237,37 @@ mod tests {
             &ten[1..]
         );
         let path = put_manifest(&state, 0x6e7a_0c0a, &dup);
-        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-7,0-7")).await;
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-7,0-7")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.is_empty());
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(taken(&reads), vec![0]);
+    }
+
+    /// A negative suffix must not shrink the covered length under the sum.
+    /// Duplicate ranges stay an empty 200 and read nothing.
+    #[tokio::test]
+    async fn test_chunk_manifest_negative_suffix_stays_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let ten = put_test_needle(&state, 0x6e7a_0c41, b"0123456789");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c41]);
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":10}}]}}"#,
+            &ten[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0c42, &json);
+        let (status, headers, body) = send_read(
+            &state,
+            Method::GET,
+            &path,
+            Some(b"bytes=0-7,0-7,--1073741824"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
         assert_eq!(taken(&reads), vec![0]);
     }
 
