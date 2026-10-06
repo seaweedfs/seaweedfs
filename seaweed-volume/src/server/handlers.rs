@@ -1984,10 +1984,7 @@ fn range_error_response(mut headers: HeaderMap, msg: &str) -> Response {
         header::CONTENT_TYPE,
         "text/plain; charset=utf-8".parse().unwrap(),
     );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        "nosniff".parse().unwrap(),
-    );
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
     let mut response = Response::new(Body::from(msg.to_string()));
     *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
     *response.headers_mut() = headers;
@@ -3628,8 +3625,8 @@ fn extension_of(filename: &str) -> String {
 
 /// Same predicate as `parse_read_request`: a real crop or a positive resize.
 fn manifest_transforms_image(ext: &str, query: &ReadQueryParams) -> bool {
-    let resize = is_image_resize_ext(ext)
-        && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
+    let resize =
+        is_image_resize_ext(ext) && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
     let crop = is_image_crop_ext(ext) && {
         let x1 = query.crop_x1.unwrap_or(0);
         let y1 = query.crop_y1.unwrap_or(0);
@@ -3640,9 +3637,7 @@ fn manifest_transforms_image(ext: &str, query: &ReadQueryParams) -> bool {
     resize || crop
 }
 
-fn reject_bad_chunks(
-    chunks: &[ChunkInfo],
-) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
+fn reject_bad_chunks(chunks: &[ChunkInfo]) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
     for chunk in chunks {
         if chunk.offset < 0 || chunk.size < 0 {
             return Some(ControlFlow::Break(
@@ -3842,10 +3837,7 @@ async fn try_expand_chunk_manifest(
             return Some(manifest_too_large());
         };
         response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-        response_headers.insert(
-            header::CONTENT_LENGTH,
-            sum.to_string().parse().unwrap(),
-        );
+        response_headers.insert(header::CONTENT_LENGTH, sum.to_string().parse().unwrap());
         return Some(ControlFlow::Break(
             (StatusCode::OK, response_headers).into_response(),
         ));
@@ -3938,15 +3930,14 @@ async fn try_expand_chunk_manifest(
                 let lo = rs.max(file_lo);
                 let hi = re.min(file_hi);
                 if lo < hi {
-                    parts.entry(key(r)).or_default().push((
-                        lo,
-                        fetched.data[lo - file_lo..hi - file_lo].to_vec(),
-                    ));
+                    parts
+                        .entry(key(r))
+                        .or_default()
+                        .push((lo, fetched.data[lo - file_lo..hi - file_lo].to_vec()));
                 }
             }
         } else {
-            result[file_lo..file_lo + copy_len]
-                .copy_from_slice(&fetched.data[..copy_len]);
+            result[file_lo..file_lo + copy_len].copy_from_slice(&fetched.data[..copy_len]);
         }
     }
 
@@ -6071,8 +6062,7 @@ mod tests {
             assert_eq!(taken(&reads), vec![0, 0], "{query}");
         }
         let partial = format!("{}?crop_x2=0&crop_y2=0", slash_name(&stored, "obj.jpg"));
-        let (status, _, body) =
-            send_read(&state, Method::GET, &partial, Some(b"bytes=0-3")).await;
+        let (status, _, body) = send_read(&state, Method::GET, &partial, Some(b"bytes=0-3")).await;
         assert_eq!(status, StatusCode::PARTIAL_CONTENT);
         assert_eq!(body, b"AAAA");
         assert_eq!(taken(&reads), vec![1, 0]);
@@ -6188,8 +6178,7 @@ mod tests {
             &ten[1..]
         );
         let path = put_manifest(&state, 0x6e7a_0c0a, &dup);
-        let (status, _, body) =
-            send_read(&state, Method::GET, &path, Some(b"bytes=0-7,0-7")).await;
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-7,0-7")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.is_empty());
         assert_eq!(taken(&reads), vec![0]);
@@ -6213,7 +6202,10 @@ mod tests {
         let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-1")).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         let body = String::from_utf8(body).unwrap();
-        assert!(body.contains("invalid negative chunk offset/size"), "{body}");
+        assert!(
+            body.contains("invalid negative chunk offset/size"),
+            "{body}"
+        );
         assert_eq!(taken(&reads), vec![0, 0]);
 
         let (status, _, _) = send_read(&state, Method::HEAD, &path, None).await;
@@ -6283,8 +6275,7 @@ mod tests {
             i64::MAX
         );
         let path = put_manifest(&state, 0x6e7a_0c32, &json);
-        let (status, _, body) =
-            send_read(&state, Method::GET, &path, Some(b"bytes=0-,0-")).await;
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-,0-")).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(body, b"chunk manifest exceeds expansion limit");
         assert_eq!(taken(&reads), vec![0]);
@@ -6293,17 +6284,29 @@ mod tests {
     #[derive(Clone)]
     enum PeerMode {
         /// Honor a single `bytes=lo-hi` range. No Range header returns `chunk`.
-        Honor { chunk: Vec<u8> },
-        Always200 { body: Vec<u8> },
+        Honor {
+            chunk: Vec<u8>,
+        },
+        Always200 {
+            body: Vec<u8>,
+        },
         Status(u16),
         /// 206 whose Content-Range starts at 0, whatever Range was asked.
-        WrongStart { body: Vec<u8> },
+        WrongStart {
+            body: Vec<u8>,
+        },
         /// 206, correct start, body shorter than the asked span.
-        Short { body: Vec<u8> },
+        Short {
+            body: Vec<u8>,
+        },
         /// 206, correct start, body longer than the asked span.
-        Long { body: Vec<u8> },
+        Long {
+            body: Vec<u8>,
+        },
         /// 206 with no Content-Range header.
-        NoContentRange { body: Vec<u8> },
+        NoContentRange {
+            body: Vec<u8>,
+        },
     }
 
     struct PeerHit {
@@ -6325,7 +6328,9 @@ mod tests {
                         .get(header::RANGE)
                         .and_then(|v| v.to_str().ok())
                         .map(|s| s.to_string());
-                    hits.lock().unwrap().push(PeerHit { range: range.clone() });
+                    hits.lock().unwrap().push(PeerHit {
+                        range: range.clone(),
+                    });
                     let mode = mode.lock().unwrap().clone();
                     match mode {
                         PeerMode::Honor { chunk } => match range {
@@ -6351,7 +6356,10 @@ mod tests {
                         }
                         PeerMode::WrongStart { body } => (
                             StatusCode::PARTIAL_CONTENT,
-                            [(header::CONTENT_RANGE, format!("bytes 0-{}/8", body.len().saturating_sub(1)))],
+                            [(
+                                header::CONTENT_RANGE,
+                                format!("bytes 0-{}/8", body.len().saturating_sub(1)),
+                            )],
                             body,
                         )
                             .into_response(),
@@ -6361,10 +6369,7 @@ mod tests {
                             let (lo, hi) = nums.split_once('-').unwrap();
                             (
                                 StatusCode::PARTIAL_CONTENT,
-                                [(
-                                    header::CONTENT_RANGE,
-                                    format!("bytes {lo}-{hi}/8"),
-                                )],
+                                [(header::CONTENT_RANGE, format!("bytes {lo}-{hi}/8"))],
                                 body,
                             )
                                 .into_response()
@@ -6375,10 +6380,7 @@ mod tests {
                             let (lo, hi) = nums.split_once('-').unwrap();
                             (
                                 StatusCode::PARTIAL_CONTENT,
-                                [(
-                                    header::CONTENT_RANGE,
-                                    format!("bytes {lo}-{hi}/8"),
-                                )],
+                                [(header::CONTENT_RANGE, format!("bytes {lo}-{hi}/8"))],
                                 body,
                             )
                                 .into_response()
@@ -6413,7 +6415,10 @@ mod tests {
         format!("127.0.0.1:{}", addr.port())
     }
 
-    fn remote_manifest_state(tmp: &tempfile::TempDir, master_url: String) -> Arc<VolumeServerState> {
+    fn remote_manifest_state(
+        tmp: &tempfile::TempDir,
+        master_url: String,
+    ) -> Arc<VolumeServerState> {
         let mut state = volume_test_state(tmp);
         let s = Arc::get_mut(&mut state).unwrap();
         // Empty self_url makes `url.contains(self_url)` true for every peer.
@@ -6457,8 +6462,14 @@ mod tests {
             send_read(&state, Method::GET, &path, Some(b"bytes=11-12,15-16")).await;
         assert_eq!(status, StatusCode::PARTIAL_CONTENT);
         let text = String::from_utf8(body).unwrap();
-        assert!(text.contains("Content-Range: bytes 11-12/18\r\n\r\nBC"), "{text}");
-        assert!(text.contains("Content-Range: bytes 15-16/18\r\n\r\nFG"), "{text}");
+        assert!(
+            text.contains("Content-Range: bytes 11-12/18\r\n\r\nBC"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Content-Range: bytes 15-16/18\r\n\r\nFG"),
+            "{text}"
+        );
         let seen = hits.lock().unwrap().drain(..).collect::<Vec<_>>();
         assert_eq!(seen.len(), 1, "disjoint ranges share one span");
         assert_eq!(seen[0].range.as_deref(), Some("bytes=1-6"));
@@ -6476,7 +6487,9 @@ mod tests {
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].range, None);
 
-        *mode.lock().unwrap() = PeerMode::Short { body: b"AB".to_vec() };
+        *mode.lock().unwrap() = PeerMode::Short {
+            body: b"AB".to_vec(),
+        };
         hits.lock().unwrap().clear();
         let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=0-3")).await;
         assert_eq!(status, StatusCode::PARTIAL_CONTENT);
@@ -6489,12 +6502,16 @@ mod tests {
         assert_eq!(status, StatusCode::PARTIAL_CONTENT);
         assert_eq!(body, b"ABCD");
 
-        *mode.lock().unwrap() = PeerMode::WrongStart { body: b"ABCD".to_vec() };
+        *mode.lock().unwrap() = PeerMode::WrongStart {
+            body: b"ABCD".to_vec(),
+        };
         let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert!(String::from_utf8_lossy(&body).contains("read chunk"));
 
-        *mode.lock().unwrap() = PeerMode::NoContentRange { body: b"CDEF".to_vec() };
+        *mode.lock().unwrap() = PeerMode::NoContentRange {
+            body: b"CDEF".to_vec(),
+        };
         let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert!(String::from_utf8_lossy(&body).contains("read chunk"));
