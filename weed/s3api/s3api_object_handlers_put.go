@@ -1397,12 +1397,15 @@ func (s3a *S3ApiServer) resolveFileMode(r *http.Request) uint32 {
 
 func setEtag(w http.ResponseWriter, etag string) {
 	if etag != "" {
-		if strings.HasPrefix(etag, "\"") {
-			w.Header()["ETag"] = []string{etag}
-		} else {
-			w.Header()["ETag"] = []string{"\"" + etag + "\""}
-		}
+		w.Header()["ETag"] = []string{quoteETag(etag)}
 	}
+}
+
+func quoteETag(etag string) string {
+	if etag == "" || strings.HasPrefix(etag, "\"") {
+		return etag
+	}
+	return strconv.Quote(etag)
 }
 
 // setSSEResponseHeaders sets appropriate SSE response headers based on encryption type
