@@ -1124,7 +1124,7 @@ async fn get_or_head_handler_inner(
                 &method,
                 data,
                 response_headers,
-                false,
+                track_download,
             ),
             ControlFlow::Break(resp) => resp,
         };
