@@ -3715,9 +3715,13 @@ fn chunk_manifest_response_headers(
     if let Ok(etag_val) = etag.parse() {
         response_headers.insert(header::ETAG, etag_val);
     }
-    // A manifest mime that is not a legal header value still panics here.
-    // That panic is pre-existing and is not this PR.
-    response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    // `mime` is stored JSON. A newline is not a legal header value, and HEAD
+    // now builds these headers, so an illegal value falls back instead of
+    // panicking the connection task.
+    let content_type_value = content_type
+        .parse()
+        .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream"));
+    response_headers.insert(header::CONTENT_TYPE, content_type_value);
     response_headers.insert("X-File-Store", "chunked".parse().unwrap());
 
     if let Some(lm) = last_modified_str
@@ -3864,6 +3868,9 @@ async fn try_expand_chunk_manifest(
             Ok(ranges) => {
                 let covered = sum_ranges_size(ranges);
                 if covered > 0 && exceeds_expansion_limit(covered as u64) {
+                    return Some(manifest_too_large());
+                }
+                if buffered_span_exceeds_limit(&manifest.chunks, sum, ranges) {
                     return Some(manifest_too_large());
                 }
                 true
@@ -4021,6 +4028,20 @@ fn overlap_span(offset: i64, window: i64, ranges: &[HttpRange]) -> Option<(i64, 
     } else {
         None
     }
+}
+
+/// One fetched span over `MAX_EXPANSION_BYTES`. The covered-length check does
+/// not see the gap between two ranges on the same chunk.
+fn buffered_span_exceeds_limit(chunks: &[ChunkInfo], sum: i64, ranges: &[HttpRange]) -> bool {
+    chunks.iter().any(|chunk| {
+        let Some(window) = chunk_window(chunk.offset, chunk.size, sum) else {
+            return false;
+        };
+        let Some((lo, hi)) = overlap_span(chunk.offset, window, ranges) else {
+            return false;
+        };
+        exceeds_expansion_limit((hi - lo) as u64)
+    })
 }
 
 fn remote_read_for(
@@ -6636,6 +6657,69 @@ mod tests {
         let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, b"AB\0\0");
+    }
+
+    /// A short range of a huge remote chunk is fetched. The span between two
+    /// distant ranges is not, once it would buffer more than 2 GiB.
+    #[tokio::test]
+    async fn test_chunk_manifest_remote_span_over_cap_is_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mode = std::sync::Arc::new(std::sync::Mutex::new(PeerMode::Honor {
+            chunk: b"ABCDEFGH".to_vec(),
+        }));
+        let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (peer, peer_handle) = spawn_chunk_peer(mode, hits.clone()).await;
+        let master = spawn_lookup(peer).await;
+        let state = remote_manifest_state(&tmp, master);
+        let big = MAX_EXPANSION_BYTES + 1;
+        let path = put_manifest(
+            &state,
+            0x6e7a_0e01,
+            &format!(r#"{{"chunks":[{{"fid":"9,0000000a12345678","offset":0,"size":{big}}}]}}"#),
+        );
+
+        hits.lock().unwrap().clear();
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"ABCD");
+        assert_eq!(hits.lock().unwrap().len(), 1);
+
+        hits.lock().unwrap().clear();
+        let last = big - 1;
+        let wide = format!("bytes=0-0,{last}-{last}");
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(wide.as_bytes())).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert!(hits.lock().unwrap().is_empty());
+        peer_handle.abort();
+    }
+
+    /// An illegal manifest MIME is not a legal header value. HEAD reaches the
+    /// header builder, so both HEAD and GET fall back instead of panicking.
+    #[tokio::test]
+    async fn test_chunk_manifest_illegal_mime_falls_back() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let chunk = put_test_needle(&state, 0x6e7a_0e11, b"AAAA");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0e11]);
+        let json = format!(
+            r#"{{"name":"obj.txt","mime":"text/plain\n","size":4,"chunks":[{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &chunk[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0e12, &json);
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_TYPE], "application/octet-stream");
+        assert_eq!(headers[header::CONTENT_LENGTH], "4");
+        assert_eq!(taken(&reads), vec![0]);
+
+        let (status, headers, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AAAA");
+        assert_eq!(headers[header::CONTENT_TYPE], "application/octet-stream");
+        assert_eq!(taken(&reads), vec![1]);
     }
 
     /// A proxied read forwards request headers as raw bytes, as Go does: a
