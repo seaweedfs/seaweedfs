@@ -285,10 +285,47 @@ func TestPerPrefixBudgetNotShared(t *testing.T) {
 	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"},
 		&ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true, probeBudget: 3})
 
+	// "bigdeleted" exhausted its own probe budget, so it is reported rather than
+	// proven all-deleted.
+	assert.Contains(t, seen, "bigdeleted", "a prefix whose probe budget ran out must be reported")
+
 	// "emptydeleted" must be hidden: all its objects are delete-marked and its probe
 	// budget was not exhausted by "bigdeleted".
 	assert.NotContains(t, seen, "emptydeleted", "all-deleted prefix after a budget-exhausting prefix must still be hidden")
 
 	// "live" must always appear.
 	assert.Contains(t, seen, "live", "prefix with a live current version must be listed")
+}
+
+// TestPerRequestProbeBudgetStillBoundsWork covers the request-wide ceiling:
+// deleted prefixes do not spend maxKeys, so a page can walk an unbounded
+// number of them. Once probedEntries exceeds the request total, a later
+// all-deleted prefix is reported rather than proven.
+func TestPerRequestProbeBudgetStillBoundsWork(t *testing.T) {
+	deleted := func(n int) []*filer_pb.Entry {
+		entries := make([]*filer_pb.Entry, 0, n)
+		for i := 0; i < n; i++ {
+			entries = append(entries, deleteMarkedVersionsDir("obj"+strconv.Itoa(i)))
+		}
+		return entries
+	}
+
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test": {
+				newDir("d1"),
+				newDir("d2"),
+			},
+			"/buckets/test/d1": deleted(4),
+			"/buckets/test/d2": deleted(4),
+		},
+	}
+
+	// Per-prefix budget (10) can cover either prefix alone, but the request
+	// total (5) is spent probing "d1", so "d2" is reported without a full scan.
+	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"},
+		&ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true, probeBudget: 10, probeTotalBudget: 5})
+
+	assert.NotContains(t, seen, "d1", "a fully probed all-deleted prefix stays hidden")
+	assert.Contains(t, seen, "d2", "a prefix probed past the request total is reported")
 }
