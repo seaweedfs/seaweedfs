@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 // Total-shards-per-rack cap for Plan.
@@ -253,9 +254,61 @@ func TestPlanRackTotalCap(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			racks, held := build(tc.free, tc.held)
-			if got := planRackTotalCap(racks, held, erasure_coding.TotalShardsCount); got != tc.want {
+			if got := planRackTotalCap(capTestVk, racks, held, erasure_coding.TotalShardsCount, nil); got != tc.want {
 				t.Errorf("planRackTotalCap = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestPlanTotalCapDataRackWaitsForParitySlot: the data pass runs out of
+// destinations, and the only slots left for rack5's surplus data open up when
+// the parity pass moves parity off rack3 and rack4. One Plan must still bring
+// every rack within the cap (3), using those freed slots, without moving any
+// shard twice.
+func TestPlanTotalCapDataRackWaitsForParitySlot(t *testing.T) {
+	forEachThreshold(t, func(t *testing.T, th float64) {
+		topo := NewTopology()
+		layout := [][]int{{0, 1, 2}, {3, 4}, {10, 11}, {12}, {5, 6, 7, 8, 9, 13}}
+		free := []int{0, 4, 1, 1, 4}
+		for r, ids := range layout {
+			n := addCapNode(topo, fmt.Sprintf("n%d", r+1), fmt.Sprintf("dc1:rack%d", r+1), free[r]+len(ids))
+			putShards(n, ids...)
+		}
+		moves := Plan(topo, Options{ImbalanceThreshold: th, Ratio: ratio(10, 4)})
+		seen := map[int]bool{}
+		for _, m := range moves {
+			if seen[m.ShardID] {
+				t.Errorf("shard %d moved twice in one plan: %+v", m.ShardID, moves)
+			}
+			seen[m.ShardID] = true
+		}
+		totals := shardTotalsPerRack(topo)
+		t.Logf("total shards per rack: %v", totals)
+		for rk, n := range totals {
+			if n > 3 {
+				t.Errorf("rack %s holds %d shards, want at most 3", rk, n)
+			}
+		}
+	})
+}
+
+// TestPlanTotalCapCountsSameRackCount: with SameRackCount=1 a node takes at
+// most one shard of the volume, so racks of one node that already hold a shard
+// have no room however many free slots they report. Rack A's seven shards can't
+// spread, the cap is 7, and Plan reports it as raised.
+func TestPlanTotalCapCountsSameRackCount(t *testing.T) {
+	topo := NewTopology()
+	for i := 0; i < 7; i++ {
+		putShards(addCapNode(topo, fmt.Sprintf("a%d", i), "dc1:rackA", 100), i)
+	}
+	for i, rk := range []string{"B", "C", "D", "E", "F", "G", "H"} {
+		putShards(addCapNode(topo, "n"+rk, "dc1:rack"+rk, 100), 7+i)
+	}
+	var raised raisedCaps
+	rp := &super_block.ReplicaPlacement{SameRackCount: 1}
+	Plan(topo, Options{ReplicaPlacement: rp, Ratio: ratio(10, 4), RackTotalCapRaised: raised.record})
+	if want := "c1/1 cap=7 even=2"; len(raised) != 1 || raised[0] != want {
+		t.Errorf("raised-cap reports = %v, want [%s]", raised, want)
 	}
 }
