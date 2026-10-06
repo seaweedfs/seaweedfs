@@ -83,10 +83,9 @@ type S3Options struct {
 	readerCacheSizeMB         *int64
 
 	allowUntrustedRemoteEndpoints *bool
-	// shutdownCtx, when non-nil, tells startS3Server/startIcebergServer to
-	// gracefully shut down their HTTP/gRPC servers once the ctx is cancelled.
-	// Used by weed mini to orchestrate an ordered shutdown; nil for standalone
-	// weed s3.
+	// shutdownCtx, when non-nil, tells startS3Server to gracefully shut down
+	// its HTTP/gRPC servers once the ctx is cancelled, in addition to on
+	// interrupt. Used by weed mini to orchestrate an ordered shutdown.
 	shutdownCtx context.Context
 }
 
@@ -395,16 +394,17 @@ func (s3opt *S3Options) startS3Server() bool {
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
-	defer s3ApiServer.Shutdown()
+
+	var httpServers []*http.Server
 
 	// Start Iceberg REST Catalog server if enabled
 	if *s3opt.portIceberg > 0 {
-		go s3opt.startIcebergServer(s3ApiServer)
+		httpServers = append(httpServers, s3opt.startIcebergServer(s3ApiServer))
 	}
 
 	// Start Lance Namespace server if enabled
 	if s3opt.portLance != nil && *s3opt.portLance > 0 {
-		go s3opt.startLanceServer(s3ApiServer)
+		httpServers = append(httpServers, s3opt.startLanceServer(s3ApiServer))
 	}
 
 	if runtime.GOOS != "windows" {
@@ -415,13 +415,14 @@ func (s3opt *S3Options) startS3Server() bool {
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
 			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
+		s3SocketListener, err := net.Listen("unix", localSocket)
+		if err != nil {
+			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+		}
+		socketServer := newHttpServer(router, nil)
+		httpServers = append(httpServers, socketServer)
 		go func() {
-			// start on local unix socket
-			s3SocketListener, err := net.Listen("unix", localSocket)
-			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-			}
-			if err := newHttpServer(router, nil).Serve(s3SocketListener); err != nil && err != http.ErrServerClosed {
+			if err := socketServer.Serve(s3SocketListener); err != nil && err != http.ErrServerClosed {
 				glog.Fatalf("Failed to start S3 http server: %v", err)
 			}
 		}()
@@ -456,6 +457,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
+	stopGrpcServer := func() { gracefulStopGrpc(grpcS, 15*time.Second) }
 
 	if *s3opt.tlsPrivateKey != "" {
 		// Check for port conflict when both HTTP and HTTPS are enabled on the same port
@@ -496,23 +498,22 @@ func (s3opt *S3Options) startS3Server() bool {
 		if *s3opt.portHttps == 0 {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.port)
 			if s3ApiLocalListener != nil {
+				localServer := newHttpServer(router, tlsConfig)
+				httpServers = append(httpServers, localServer)
 				go func() {
-					if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiLocalListener, "", ""); err != nil {
+					if err := localServer.ServeTLS(s3ApiLocalListener, "", ""); err != nil && err != http.ErrServerClosed {
 						glog.Fatalf("S3 API Server Fail to serve: %v", err)
 					}
 				}()
 			}
 			httpS := newHttpServer(router, tlsConfig)
-			if s3opt.shutdownCtx != nil {
-				go func() {
-					<-s3opt.shutdownCtx.Done()
-					httpS.Shutdown(context.Background())
-					grpcS.Stop()
-				}()
-			}
+			httpServers = append(httpServers, httpS)
+			shutdown := s3opt.newShutdown(stopGrpcServer, s3ApiServer, httpServers)
 			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil && err != http.ErrServerClosed {
 				glog.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
+			// Serve returns when listeners close, before active requests finish.
+			shutdown()
 		} else {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.portHttps)
 			s3ApiListenerHttps, s3ApiLocalListenerHttps, err := util.NewIpAndLocalListeners(
@@ -521,14 +522,18 @@ func (s3opt *S3Options) startS3Server() bool {
 				glog.Fatalf("S3 API HTTPS listener on %s:%d error: %v", *s3opt.bindIp, *s3opt.portHttps, err)
 			}
 			if s3ApiLocalListenerHttps != nil {
+				localHttpsServer := newHttpServer(router, tlsConfig)
+				httpServers = append(httpServers, localHttpsServer)
 				go func() {
-					if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {
+					if err := localHttpsServer.ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil && err != http.ErrServerClosed {
 						glog.Fatalf("S3 API Server Fail to serve: %v", err)
 					}
 				}()
 			}
+			httpsServer := newHttpServer(router, tlsConfig)
+			httpServers = append(httpServers, httpsServer)
 			go func() {
-				if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiListenerHttps, "", ""); err != nil {
+				if err := httpsServer.ServeTLS(s3ApiListenerHttps, "", ""); err != nil && err != http.ErrServerClosed {
 					glog.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
@@ -537,31 +542,42 @@ func (s3opt *S3Options) startS3Server() bool {
 	if *s3opt.tlsPrivateKey == "" || *s3opt.portHttps > 0 {
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", version.Version(), *s3opt.port)
 		if s3ApiLocalListener != nil {
+			localServer := newHttpServer(router, nil)
+			httpServers = append(httpServers, localServer)
 			go func() {
-				if err = newHttpServer(router, nil).Serve(s3ApiLocalListener); err != nil {
+				if err := localServer.Serve(s3ApiLocalListener); err != nil && err != http.ErrServerClosed {
 					glog.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
 		}
 		httpS := newHttpServer(router, nil)
-		if s3opt.shutdownCtx != nil {
-			go func() {
-				<-s3opt.shutdownCtx.Done()
-				httpS.Shutdown(context.Background())
-				grpcS.Stop()
-			}()
-		}
+		httpServers = append(httpServers, httpS)
+		shutdown := s3opt.newShutdown(stopGrpcServer, s3ApiServer, httpServers)
 		if err = httpS.Serve(s3ApiListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
+		// Serve returns when listeners close, before active requests finish.
+		shutdown()
 	}
 
 	return true
 
 }
 
+func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiServer, httpServers []*http.Server) func() {
+	shutdown := newGracefulShutdown(stopGrpc, s3ApiServer.Shutdown, httpServers...)
+	grace.OnInterrupt(shutdown)
+	if s3opt.shutdownCtx != nil {
+		go func() {
+			<-s3opt.shutdownCtx.Done()
+			shutdown()
+		}()
+	}
+	return shutdown
+}
+
 // startIcebergServer starts the Iceberg REST Catalog server on a separate port.
-func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
+func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) *http.Server {
 	icebergRouter := mux.NewRouter().SkipClean(true)
 	// warehouse/parent query values may legally contain ';', which Go's
 	// url.ParseQuery would otherwise drop
@@ -591,12 +607,6 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(icebergRouter, nil)
-	if s3opt.shutdownCtx != nil {
-		go func() {
-			<-s3opt.shutdownCtx.Done()
-			httpS.Shutdown(context.Background())
-		}()
-	}
 	// Serve on localhost as well if we're bound to a different interface
 	if icebergLocalListener != nil {
 		go func() {
@@ -605,15 +615,18 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 			}
 		}()
 	}
-	if err = httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
-		glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
-	}
+	go func() {
+		if err := httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
+			glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
+		}
+	}()
+	return httpS
 }
 
 // startLanceServer starts the Lance Namespace server on a separate port. It
 // shares the Iceberg catalog's credential role: one deployment vends table
 // credentials one way, whichever catalog the client speaks to.
-func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) {
+func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) *http.Server {
 	lanceRouter := mux.NewRouter().SkipClean(true)
 	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
 
@@ -636,12 +649,6 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) {
 	glog.V(0).Infof("Start Lance Namespace Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(lanceRouter, nil)
-	if s3opt.shutdownCtx != nil {
-		go func() {
-			<-s3opt.shutdownCtx.Done()
-			httpS.Shutdown(context.Background())
-		}()
-	}
 	if lanceLocalListener != nil {
 		go func() {
 			if err := httpS.Serve(lanceLocalListener); err != nil && err != http.ErrServerClosed {
@@ -649,9 +656,12 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) {
 			}
 		}()
 	}
-	if err = httpS.Serve(lanceListener); err != nil && err != http.ErrServerClosed {
-		glog.Fatalf("Lance Namespace Server Fail to serve: %v", err)
-	}
+	go func() {
+		if err := httpS.Serve(lanceListener); err != nil && err != http.ErrServerClosed {
+			glog.Fatalf("Lance Namespace Server Fail to serve: %v", err)
+		}
+	}()
+	return httpS
 }
 
 // deriveLanceStorageEndpoint picks the endpoint the Lance namespace puts in
