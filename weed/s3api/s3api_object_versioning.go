@@ -1856,15 +1856,24 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 		return false
 	}
 
-	delete(liveEntry.Extended, s3_constants.ExtLatestVersionIdKey)
-	delete(liveEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
-	clearCachedVersionMetadata(liveEntry.Extended)
-	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, liveEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = liveEntry.Extended
-		updatedEntry.Attributes = liveEntry.Attributes
-		updatedEntry.Chunks = liveEntry.Chunks
-	}); mkErr != nil {
-		versioningHealWarningf("clear_failed", "bucket=%s key=%s caller=%s err=%v", bucket, object, caller, mkErr)
+	expected := proto.Clone(liveEntry).(*filer_pb.Entry)
+	updated := proto.Clone(liveEntry).(*filer_pb.Entry)
+	delete(updated.Extended, s3_constants.ExtLatestVersionIdKey)
+	delete(updated.Extended, s3_constants.ExtLatestVersionFileNameKey)
+	clearCachedVersionMetadata(updated.Extended)
+	updated.Name = versionsObjectPath
+	if err := s3a.conditionalUpdateEntry(bucketDir, updated, expected); err != nil {
+		switch status.Code(err) {
+		case codes.FailedPrecondition:
+			// A writer moved the pointer after this heal's snapshot; its
+			// pointer stands.
+			glog.V(1).Infof("%s: skipping pointer clear for %s/%s, live entry changed", caller, bucket, object)
+		case codes.NotFound:
+			// The .versions entry vanished; nothing left to clear.
+			return true
+		default:
+			versioningHealWarningf("clear_failed", "bucket=%s key=%s caller=%s err=%v", bucket, object, caller, err)
+		}
 		return false
 	}
 	versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_cleared caller=%s (orphan entries remain in .versions directory)", bucket, object, caller)
@@ -2213,9 +2222,6 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		versioningHealInfof("abandoned", "bucket=%s key=%s mode=versions_dir_gone err=%v", bucket, normalizedObject, liveErr)
 		return latestEntry, nil
 	}
-	if liveEntry.Extended == nil {
-		liveEntry.Extended = make(map[string][]byte)
-	}
 	observedId := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	observedFile := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
 	liveId := string(liveEntry.Extended[s3_constants.ExtLatestVersionIdKey])
@@ -2241,15 +2247,34 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	updated.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
 	setCachedListMetadata(updated, latestEntry)
 
-	// Bind the persist to the live image the heal just re-read: the filer
-	// evaluates IF_ENTRY_EQUAL under the entry's path lock, and conditional
-	// writes route to the owner filer, so a writer committing between the
-	// re-fetch above and this update fails the precondition instead of being
-	// rolled back — the check-then-act window left on the gateway side is
-	// closed atomically on the filer side.
+	updateErr := s3a.conditionalUpdateEntry(bucketDir, updated, expected)
+	switch {
+	case updateErr == nil:
+		versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_repaired new_version=%s file=%s delete_marker=%v", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
+	case status.Code(updateErr) == codes.FailedPrecondition, status.Code(updateErr) == codes.NotFound:
+		// The filer refused the stale repair: the live entry changed between
+		// the re-fetch and the persist, so the winner's pointer stands.
+		versioningHealInfof("abandoned", "bucket=%s key=%s mode=entry_changed err=%v", bucket, normalizedObject, updateErr)
+	default:
+		// Persisting the repair is best-effort. Surface a warning but still
+		// return the rescanned entry so the read succeeds; a subsequent write
+		// on the object will persist a fresh pointer.
+		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, updateErr)
+	}
+	return latestEntry, nil
+}
+
+// conditionalUpdateEntry persists entry only while the stored image still
+// equals expected: the filer evaluates IF_ENTRY_EQUAL under the entry's path
+// lock, and conditional writes route to the owner filer, so a writer
+// committing between the caller's snapshot and this update fails the
+// precondition instead of being rolled back. FailedPrecondition and NotFound
+// are authoritative replies, not transport failures — they return without
+// retrying or marking the filer down.
+func (s3a *S3ApiServer) conditionalUpdateEntry(directory string, entry, expected *filer_pb.Entry) error {
 	req := &filer_pb.UpdateEntryRequest{
-		Directory: bucketDir,
-		Entry:     updated,
+		Directory: directory,
+		Entry:     entry,
 		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
 			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
 			ExpectedEntry: expected,
@@ -2265,32 +2290,16 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		}
 		switch status.Code(err) {
 		case codes.FailedPrecondition, codes.NotFound:
-			// These are authoritative replies from a healthy filer, not
-			// transport failures. Do not replay them or mark the filer down.
 			conditionErr = err
 			return nil
 		default:
 			return err
 		}
 	}
-	updateErr := s3a.WithFilerClient(false, update)
-	if updateErr == nil {
-		updateErr = conditionErr
+	if err := s3a.WithFilerClient(false, update); err != nil {
+		return err
 	}
-	switch {
-	case updateErr == nil:
-		versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_repaired new_version=%s file=%s delete_marker=%v", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
-	case status.Code(updateErr) == codes.FailedPrecondition, status.Code(updateErr) == codes.NotFound:
-		// The filer refused the stale repair: the live entry changed between
-		// the re-fetch and the persist, so the winner's pointer stands.
-		versioningHealInfof("abandoned", "bucket=%s key=%s mode=entry_changed err=%v", bucket, normalizedObject, updateErr)
-	default:
-		// Persisting the repair is best-effort. Surface a warning but still
-		// return the rescanned entry so the read succeeds; a subsequent write
-		// on the object will persist a fresh pointer.
-		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, updateErr)
-	}
-	return latestEntry, nil
+	return conditionErr
 }
 
 // getLatestVersionEntryFromDirectoryEntry creates a logical entry for list operations using cached metadata
