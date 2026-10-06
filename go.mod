@@ -500,7 +500,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	golang.org/x/term v0.46.0
-	golang.org/x/time v0.15.0
+	golang.org/x/time v0.16.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
