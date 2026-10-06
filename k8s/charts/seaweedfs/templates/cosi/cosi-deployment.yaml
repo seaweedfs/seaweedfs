@@ -61,7 +61,7 @@ spec:
       schedulerName: {{ .Values.cosi.schedulerName | quote }}
       {{- end }}
       enableServiceLinks: false
-      serviceAccountName: {{ include "seaweedfs.componentName" (list . "objectstorage-provisioner") }}
+      serviceAccountName: {{ include "seaweedfs.serviceAccountName" . }}-objectstorage-provisioner
       {{- if .Values.cosi.initContainers }}
       initContainers:
         {{ tpl .Values.cosi.initContainers . | nindent 8 | trim }}
