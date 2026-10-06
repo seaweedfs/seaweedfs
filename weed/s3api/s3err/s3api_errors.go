@@ -627,12 +627,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusConflict,
 	},
 	ErrTooManyRequest: {
-		Code:           "ErrTooManyRequest",
+		Code:           "SlowDown",
 		Description:    "Too many simultaneous request count",
 		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
 	ErrRequestBytesExceed: {
-		Code:           "ErrRequestBytesExceed",
+		Code:           "SlowDown",
 		Description:    "Simultaneous request bytes exceed limitations",
 		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
