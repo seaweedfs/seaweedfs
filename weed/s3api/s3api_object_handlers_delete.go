@@ -426,7 +426,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	}
 
 	if len(deleteObjects.Objects) > deleteMultipleObjectsLimit {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxDeleteObjects)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
 
