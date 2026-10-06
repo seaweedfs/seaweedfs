@@ -294,6 +294,7 @@ func TestVolumeTtlClockCarriedAcrossVacuumCommit(t *testing.T) {
 	}
 	// Where a restart's recovery would have left the clock.
 	v.lastModifiedTsSeconds = lastWriteNs / uint64(time.Second)
+	v.lastAppendAtNs = lastWriteNs
 
 	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
 	vacuumedLastWriteScanEntries = 1
