@@ -1612,7 +1612,20 @@ func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, all
 // miniAdminWorkerAddress encodes the finalized HTTP and gRPC ports in the
 // server-address format understood by pb.ServerToGrpcAddress.
 func miniAdminWorkerAddress(bindIP string, httpPort, grpcPort int) string {
-	return fmt.Sprintf("%s:%d.%d", bindIP, httpPort, grpcPort)
+	return fmt.Sprintf("%s:%d.%d", miniAdminWorkerDialIP(bindIP), httpPort, grpcPort)
+}
+
+// miniAdminWorkerDialIP maps unspecified listener addresses to same-family
+// loopback destinations while preserving specific addresses for local dials.
+func miniAdminWorkerDialIP(bindIP string) string {
+	ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(bindIP, "["), "]"))
+	if ip == nil || !ip.IsUnspecified() {
+		return bindIP
+	}
+	if ip.To4() != nil {
+		return "127.0.0.1"
+	}
+	return "::1"
 }
 
 // miniAdminAdvertisedIP returns a reachable address for URLs in the welcome
@@ -1774,7 +1787,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	startMiniPluginWorker(ctx, workerDir)
 
 	// Wait for worker to be ready by polling its gRPC port
-	workerGrpcAddr := util.JoinHostPort(miniAdminOptions.workerGrpcBindIp, *miniAdminOptions.grpcPort)
+	workerGrpcAddr := util.JoinHostPort(
+		miniAdminWorkerDialIP(miniAdminOptions.workerGrpcBindIp),
+		*miniAdminOptions.grpcPort,
+	)
 	waitForWorkerReady(workerGrpcAddr)
 	if miniProgressBoard != nil {
 		miniProgressBoard.ready("Admin")

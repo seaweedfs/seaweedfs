@@ -158,6 +158,18 @@ func TestMiniAdminWorkerAddressUsesFinalGrpcPort(t *testing.T) {
 			want:     "::1:23646.34567",
 			wantGrpc: "[::1]:34567",
 		},
+		{
+			name:     "IPv4 wildcard dials loopback",
+			ip:       "0.0.0.0",
+			want:     "127.0.0.1:23646.34567",
+			wantGrpc: "127.0.0.1:34567",
+		},
+		{
+			name:     "IPv6 wildcard dials loopback",
+			ip:       "::",
+			want:     "::1:23646.34567",
+			wantGrpc: "[::1]:34567",
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,6 +180,30 @@ func TestMiniAdminWorkerAddressUsesFinalGrpcPort(t *testing.T) {
 			}
 			if got := pb.ServerToGrpcAddress(address); got != tt.wantGrpc {
 				t.Fatalf("pb.ServerToGrpcAddress() = %q, want %q", got, tt.wantGrpc)
+			}
+		})
+	}
+}
+
+// TestMiniAdminWorkerDialIP verifies wildcard listener addresses are converted
+// into valid same-family destinations without rewriting specific addresses.
+func TestMiniAdminWorkerDialIP(t *testing.T) {
+	tests := []struct {
+		bindIP string
+		want   string
+	}{
+		{bindIP: "0.0.0.0", want: "127.0.0.1"},
+		{bindIP: "::", want: "::1"},
+		{bindIP: "[::]", want: "::1"},
+		{bindIP: "192.0.2.10", want: "192.0.2.10"},
+		{bindIP: "2001:db8::10", want: "2001:db8::10"},
+		{bindIP: "worker.internal", want: "worker.internal"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.bindIP, func(t *testing.T) {
+			if got := miniAdminWorkerDialIP(tt.bindIP); got != tt.want {
+				t.Fatalf("miniAdminWorkerDialIP(%q) = %q, want %q", tt.bindIP, got, tt.want)
 			}
 		})
 	}
