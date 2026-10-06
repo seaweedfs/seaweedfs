@@ -99,6 +99,7 @@ const (
 	ErrPolicyTooLarge
 	ErrMissingSignHeadersTag
 	ErrMissingSignTag
+	ErrAuthorizationHeaderMalformed
 	ErrUnsignedHeaders
 	ErrInvalidQueryParams
 	ErrInvalidQuerySignatureAlgo
@@ -114,6 +115,7 @@ const (
 	ErrRequestTimeTooSkewed
 	ErrMissingDateHeader
 	ErrInvalidRequest
+	ErrInvalidArgument
 	ErrAuthNotSetup
 	ErrNotImplemented
 	ErrPreconditionFailed
@@ -487,6 +489,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Signature header missing Signature field.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrAuthorizationHeaderMalformed: {
+		Code:           "AuthorizationHeaderMalformed",
+		Description:    "The authorization header is malformed.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 
 	ErrUnsignedHeaders: {
 		Code:           "AccessDenied",
@@ -566,6 +573,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidRequest: {
 		Code:           "InvalidRequest",
 		Description:    "Invalid Request",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidArgument: {
+		Code:           "InvalidArgument",
+		Description:    "Invalid Argument",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrAccessControlListNotSupported: {
