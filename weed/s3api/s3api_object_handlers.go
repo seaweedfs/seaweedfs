@@ -391,6 +391,19 @@ func isBareDirectory(entry *filer_pb.Entry) bool {
 	return entry != nil && entry.IsDirectory && filer.FileSize(entry) == 0 && !entry.IsPrefixObject()
 }
 
+// isNullVersionObject distinguishes logical S3 keys that share a regular filer path.
+// A slash key requires an explicit directory marker; a prefix object belongs to the bare key.
+// Actual version files are selected separately and must not be filtered by this predicate.
+func isNullVersionObject(entry *filer_pb.Entry, object string) bool {
+	if entry == nil {
+		return false
+	}
+	if strings.HasSuffix(object, "/") {
+		return entry.IsDirectoryKeyObject() && !entry.IsPrefixObject()
+	}
+	return !isBareDirectory(entry)
+}
+
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
 // Returns: (entry, isDirectoryObject, error)
 // - entry: the directory entry if found and is a directory
@@ -748,7 +761,8 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
 				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
-				if regularErr == nil && regularEntry != nil && !isBareDirectory(regularEntry) {
+				// A physical parent or bare-key object is not a trailing-slash null marker.
+				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version
 					entry = regularEntry
 					targetVersionId = "null"
@@ -1012,15 +1026,18 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting stream-through cache")
 			cacheVersionId := resolvedSourceVersionId(versionId, entry)
 			cachedEntry, cacheErr := s3a.cacheRemoteObjectForStreamingWithShortTimeout(r, entry, bucket, object, cacheVersionId)
-			if cacheErr == nil && cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
-				// Caching can return newer metadata. Reauthorize it before replacing
-				// the entry whose ACL and tags were checked by the read handler.
-				if isAnonymousObjectRead(r) {
-					if code := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), cachedEntry.Extended, "streamFromVolumeServers"); code != s3err.ErrNone {
-						s3err.WriteErrorResponse(w, r, code)
-						return newStreamErrorWithResponse(fmt.Errorf("cached entry authorization failed: %v", code))
+			// A superseded cache fill can return metadata without chunks; authorize it before any origin fallback.
+			if cacheErr == nil && cachedEntry != nil && isAnonymousObjectRead(r) {
+				if code := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), cachedEntry.Extended, "streamFromVolumeServers"); code != s3err.ErrNone {
+					// A denied replacement must not expose metadata headers GET already prepared.
+					for _, name := range []string{"x-amz-version-id", s3_constants.AmzObjectLockMode, s3_constants.AmzObjectLockRetainUntilDate, s3_constants.AmzObjectLockLegalHold, s3_constants.AmzMpPartsCount} {
+						w.Header().Del(name)
 					}
+					s3err.WriteErrorResponse(w, r, code)
+					return newStreamErrorWithResponse(fmt.Errorf("cached entry authorization failed: %v", code))
 				}
+			}
+			if cacheErr == nil && cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
 				// Cache completed, use cached chunks
 				chunks = cachedEntry.GetChunks()
 				entry = cachedEntry
@@ -2419,7 +2436,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
 				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
-				if regularErr == nil && regularEntry != nil && !isBareDirectory(regularEntry) {
+				// A physical parent or bare-key object is not a trailing-slash null marker.
+				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version
 					entry = regularEntry
 					targetVersionId = "null"
@@ -3472,10 +3490,10 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreamingWithShortTimeout(r *http.Re
 
 	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
 		glog.V(1).Infof("cacheRemoteObjectForStreamingWithShortTimeout: successfully cached %s/%s (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
-		return cachedEntry, nil
 	}
 
-	return nil, nil
+	// Even an uncached response can carry newer ACLs or tags that must be checked.
+	return cachedEntry, nil
 }
 
 // cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.

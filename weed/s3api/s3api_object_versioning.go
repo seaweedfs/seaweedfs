@@ -1190,6 +1190,9 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 		if err != nil {
 			return nil, fmt.Errorf("null version object %s not found: %w", normalizedObject, err)
 		}
+		if !isNullVersionObject(entry, normalizedObject) {
+			return nil, fmt.Errorf("null version object %s not found: %w", normalizedObject, filer_pb.ErrNotFound)
+		}
 		return entry, nil
 	}
 
@@ -1937,6 +1940,7 @@ func lookupVersionsEntryWithRetry(lookup func() (*filer_pb.Entry, error), maxRet
 	return entry, err
 }
 
+// doGetLatestObjectVersion resolves the latest real version or a matching regular-path null object.
 func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetries int) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
@@ -1961,6 +1965,9 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 		if regularErr != nil {
 			glog.V(1).Infof("getLatestObjectVersion: no pre-versioning object found for %s/%s (error: %v)", bucket, normalizedObject, regularErr)
 			return nil, fmt.Errorf("failed to get %s/%s .versions directory and no regular object found: %w", bucket, normalizedObject, err)
+		}
+		if !isNullVersionObject(regularEntry, normalizedObject) {
+			return nil, fmt.Errorf("no regular object found for %s/%s: %w", bucket, normalizedObject, filer_pb.ErrNotFound)
 		}
 
 		glog.V(1).Infof("getLatestObjectVersion: found pre-versioning object for %s/%s", bucket, normalizedObject)
@@ -2035,7 +2042,7 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 func (s3a *S3ApiServer) recoverLatestVersionWithoutPointer(bucket, normalizedObject string, versionsEntry *filer_pb.Entry) (*filer_pb.Entry, error) {
 	bucketDir := s3a.bucketDir(bucket)
 
-	if regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject); regularErr == nil {
+	if regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject); regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 		return regularEntry, nil
 	}
 
