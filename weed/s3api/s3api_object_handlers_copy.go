@@ -374,7 +374,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 		setEtag(w, etag)
 		writeSuccessResponseXML(w, r, CopyObjectResult{
-			ETag:         etag,
+			ETag:         quoteETag(etag),
 			LastModified: t,
 		})
 		return
@@ -546,7 +546,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	setEtag(w, etag)
 
 	response := CopyObjectResult{
-		ETag:         etag,
+		ETag:         quoteETag(etag),
 		LastModified: t,
 	}
 
