@@ -86,6 +86,20 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
+
+	// A copy-source header that did not satisfy the CopyObject route is
+	// malformed (it needs a '/' separating source bucket from key), and a
+	// partNumber/uploadId pair that did not satisfy the UploadPart route is
+	// malformed too; neither should be silently written as a plain object.
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
+	if r.URL.Query().Has("partNumber") || r.URL.Query().Has("uploadId") {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidArgument)
+		return
+	}
+
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)

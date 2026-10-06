@@ -328,6 +328,12 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 // PutObjectPartHandler - Put an object part in a multipart upload.
 func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := s3_constants.GetBucketAndObject(r)
+	if src := r.Header.Get("X-Amz-Copy-Source"); src != "" {
+		// Well-formed copy sources are claimed by the CopyObjectPart route; what
+		// is left here has no "bucket/key" form and is not a plain PutObjectPart.
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidArgument)
+		return
+	}
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
