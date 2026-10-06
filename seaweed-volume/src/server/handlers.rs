@@ -1968,7 +1968,9 @@ fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str
 }
 
 fn sum_ranges_size(ranges: &[HttpRange]) -> i64 {
-    ranges.iter().map(|r| r.length).sum()
+    ranges
+        .iter()
+        .fold(0i64, |acc, r| acc.saturating_add(r.length))
 }
 
 fn range_content_range(r: HttpRange, total: i64) -> String {
@@ -6121,6 +6123,28 @@ mod tests {
         );
         let path = put_manifest(&state, 0x6e7a_0c23, &overflow);
         let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, b"chunk manifest exceeds expansion limit");
+        assert_eq!(taken(&reads), vec![0]);
+    }
+
+    /// Two open ranges on an `i64::MAX` object must not wrap the covered
+    /// length. The saturated sum equals the total, which is over the buffer
+    /// cap, so this is 413 and reads nothing.
+    #[tokio::test]
+    async fn test_chunk_manifest_open_ranges_do_not_wrap() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let one = put_test_needle(&state, 0x6e7a_0c31, b"Z");
+        let (_regs, reads) = watch_reads(&[0x6e7a_0c31]);
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+            &one[1..],
+            i64::MAX
+        );
+        let path = put_manifest(&state, 0x6e7a_0c32, &json);
+        let (status, _, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=0-,0-")).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(body, b"chunk manifest exceeds expansion limit");
         assert_eq!(taken(&reads), vec![0]);
