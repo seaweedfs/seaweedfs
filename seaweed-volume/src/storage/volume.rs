@@ -9687,6 +9687,31 @@ mod tests {
         }
     }
 
+    // A directory occupying the .dat path fails open even as root; load must
+    // return the error. Mirrors Go's TestLoad_DatOpenFail_NoNilPanic.
+    #[test]
+    fn test_load_dat_open_fail_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let _v = make_test_volume(dir);
+        }
+
+        let dat_path = format!("{dir}/1.dat");
+        std::fs::remove_file(&dat_path).unwrap();
+        std::fs::create_dir(&dat_path).unwrap();
+
+        let result = Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        );
+        assert!(result.is_err(), "unopenable .dat must fail load");
+    }
+
     #[test]
     fn test_remote_only_volume_load_reads_from_tier_backend() {
         let tmp = TempDir::new().unwrap();

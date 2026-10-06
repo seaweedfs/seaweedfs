@@ -198,6 +198,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDONLY)
 			v.noWriteOrDelete = true
 		}
+		if err != nil {
+			return datFileLoadError(v.FileName(".dat"), err)
+		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		if fileSize >= super_block.SuperBlockSize {
 			alreadyHasSuperBlock = true
@@ -212,11 +215,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}
 
 	if err != nil {
-		if !os.IsPermission(err) {
-			return fmt.Errorf("cannot load volume data %s: %v", v.FileName(".dat"), err)
-		} else {
-			return fmt.Errorf("load data file %s: %v", v.FileName(".dat"), err)
-		}
+		return datFileLoadError(v.FileName(".dat"), err)
 	}
 
 	if alreadyHasSuperBlock {
@@ -416,4 +415,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}
 
 	return err
+}
+
+func datFileLoadError(fileName string, err error) error {
+	if os.IsPermission(err) {
+		return fmt.Errorf("load data file %s: %v", fileName, err)
+	}
+	return fmt.Errorf("cannot load volume data %s: %v", fileName, err)
 }
