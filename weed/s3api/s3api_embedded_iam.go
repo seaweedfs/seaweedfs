@@ -232,20 +232,25 @@ func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, reqID string,
 
 	errorResp := newIamErrorResponse(errCode, errMsg, reqID)
 	internalErrorResponse := newIamErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
+	internalErrorResponse.Error.Type = "Receiver"
 
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:
 		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResp)
 	case iam.ErrCodeEntityAlreadyExistsException:
 		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
-	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException, "ValidationError":
+	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException, "ValidationError", "IncompleteSignature", "ExpiredToken":
 		s3err.WriteXMLResponse(w, r, http.StatusBadRequest, errorResp)
-	case "AccessDenied", iam.ErrCodeLimitExceededException:
+	case "AccessDenied", "InvalidClientTokenId", "SignatureDoesNotMatch", "RequestTimeTooSkewed":
 		s3err.WriteXMLResponse(w, r, http.StatusForbidden, errorResp)
+	case iam.ErrCodeLimitExceededException:
+		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
 	case iam.ErrCodeServiceFailureException:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	case "NotImplemented":
 		s3err.WriteXMLResponse(w, r, http.StatusNotImplemented, errorResp)
+	case "InvalidAction":
+		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResp)
 	case iam.ErrCodeDeleteConflictException:
 		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
 	case iam.ErrCodeUnmodifiableEntityException:
@@ -3003,7 +3008,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		}
 		changed = false
 	default:
-		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
+		return nil, &iamError{Code: "InvalidAction", Error: fmt.Errorf("The action %s is not valid for this endpoint", values.Get("Action"))}
 	}
 	if changed {
 		if !skipPersist {

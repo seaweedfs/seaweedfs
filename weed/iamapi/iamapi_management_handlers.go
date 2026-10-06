@@ -1618,9 +1618,8 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		}
 		changed = false
 	default:
-		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
-		errorResponse := newErrorResponse(errNotImplemented.Code, errNotImplemented.Description, reqID)
-		s3err.WriteXMLResponse(w, r, errNotImplemented.HTTPStatusCode, errorResponse)
+		errorResponse := newErrorResponse("InvalidAction", fmt.Sprintf("The action %s is not valid for this endpoint", values.Get("Action")), reqID)
+		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResponse)
 		return
 	}
 	if changed {
