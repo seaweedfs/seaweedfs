@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // ErrDeleteMarker is returned when the latest version is a delete marker (expected condition)
@@ -2144,12 +2145,13 @@ func scanLatestVersionEntry(list entryLister, versionsDir string) (latestEntry *
 // healStaleLatestVersionPointer is invoked when the .versions directory metadata
 // points to a version file that no longer exists. It paginates the directory,
 // picks the chronologically newest remaining entry (content version or delete
-// marker), updates the directory pointer metadata best-effort — CAS-style, so a
-// pointer a concurrent writer advanced in the meantime is left alone — and
-// returns the rescanned entry. Downstream handlers detect ExtDeleteMarkerKey on
-// the returned entry and render NoSuchKey, so promoting a delete marker
-// preserves correct S3 semantics. If no version-tagged entry remains an error
-// is returned and the caller surfaces it as not found.
+// marker), updates the directory pointer metadata best-effort — atomically
+// guarded by an IF_ENTRY_EQUAL precondition, so a pointer a concurrent writer
+// advanced in the meantime is left alone — and returns the rescanned entry.
+// Downstream handlers detect ExtDeleteMarkerKey on the returned entry and
+// render NoSuchKey, so promoting a delete marker preserves correct S3
+// semantics. If no version-tagged entry remains an error is returned and the
+// caller surfaces it as not found.
 func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject string, versionsEntry *filer_pb.Entry, stalePointerFile string) (*filer_pb.Entry, error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
@@ -2226,21 +2228,67 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		return latestEntry, nil
 	}
 
-	liveEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestVersionId)
-	liveEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
-	setCachedListMetadata(liveEntry, latestEntry)
+	// Clone the live image before any mutation so the precondition compares
+	// against exactly what the filer stores (nil and empty Extended maps are
+	// not proto-equal).
+	expected := proto.Clone(liveEntry).(*filer_pb.Entry)
+	updated := proto.Clone(liveEntry).(*filer_pb.Entry)
+	if updated.Extended == nil {
+		updated.Extended = make(map[string][]byte)
+	}
+	updated.Name = versionsObjectPath
+	updated.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestVersionId)
+	updated.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
+	setCachedListMetadata(updated, latestEntry)
 
-	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, liveEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = liveEntry.Extended
-		updatedEntry.Attributes = liveEntry.Attributes
-		updatedEntry.Chunks = liveEntry.Chunks
-	}); mkErr != nil {
+	// Bind the persist to the live image the heal just re-read: the filer
+	// evaluates IF_ENTRY_EQUAL under the entry's path lock, and conditional
+	// writes route to the owner filer, so a writer committing between the
+	// re-fetch above and this update fails the precondition instead of being
+	// rolled back — the check-then-act window left on the gateway side is
+	// closed atomically on the filer side.
+	req := &filer_pb.UpdateEntryRequest{
+		Directory: bucketDir,
+		Entry:     updated,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+			ExpectedEntry: expected,
+		}}},
+	}
+	var conditionErr error
+	update := func(client filer_pb.SeaweedFilerClient) error {
+		err := filer_pb.UpdateEntry(context.Background(), client, req)
+		if wrapped := errors.Unwrap(err); wrapped != nil {
+			// The helper wraps the RPC error ("UpdateEntry: %w"); unwrap so
+			// the status code below survives the wrapping.
+			err = wrapped
+		}
+		switch status.Code(err) {
+		case codes.FailedPrecondition, codes.NotFound:
+			// These are authoritative replies from a healthy filer, not
+			// transport failures. Do not replay them or mark the filer down.
+			conditionErr = err
+			return nil
+		default:
+			return err
+		}
+	}
+	updateErr := s3a.WithFilerClient(false, update)
+	if updateErr == nil {
+		updateErr = conditionErr
+	}
+	switch {
+	case updateErr == nil:
+		versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_repaired new_version=%s file=%s delete_marker=%v", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
+	case status.Code(updateErr) == codes.FailedPrecondition, status.Code(updateErr) == codes.NotFound:
+		// The filer refused the stale repair: the live entry changed between
+		// the re-fetch and the persist, so the winner's pointer stands.
+		versioningHealInfof("abandoned", "bucket=%s key=%s mode=entry_changed err=%v", bucket, normalizedObject, updateErr)
+	default:
 		// Persisting the repair is best-effort. Surface a warning but still
 		// return the rescanned entry so the read succeeds; a subsequent write
 		// on the object will persist a fresh pointer.
-		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, mkErr)
-	} else {
-		versioningHealInfof("healed", "bucket=%s key=%s mode=pointer_repaired new_version=%s file=%s delete_marker=%v", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
+		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, updateErr)
 	}
 	return latestEntry, nil
 }
