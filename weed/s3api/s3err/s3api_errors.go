@@ -569,7 +569,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrMissingDateHeader: {
 		Code:           "AccessDenied",
 		Description:    "AWS authentication requires a valid Date or x-amz-date header",
-		HTTPStatusCode: http.StatusBadRequest,
+		HTTPStatusCode: http.StatusForbidden,
 	},
 	ErrInvalidRequest: {
 		Code:           "InvalidRequest",
