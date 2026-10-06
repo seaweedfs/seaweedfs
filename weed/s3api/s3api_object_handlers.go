@@ -651,7 +651,6 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 	return result, false // request not handled
 }
 
-// GetObjectHandler selects and authorizes the requested S3 object before streaming its data.
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
@@ -1027,12 +1026,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting stream-through cache")
 			cacheVersionId := resolvedSourceVersionId(versionId, entry)
 			cachedEntry, cacheErr := s3a.cacheRemoteObjectForStreamingWithShortTimeout(r, entry, bucket, object, cacheVersionId)
-			// A concurrent writer can supersede a cache fill with metadata that still
-			// has no chunks. Authorize that snapshot before any origin fallback too.
+			// A superseded cache fill can return metadata without chunks; authorize it before any origin fallback.
 			if cacheErr == nil && cachedEntry != nil && isAnonymousObjectRead(r) {
 				if code := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), cachedEntry.Extended, "streamFromVolumeServers"); code != s3err.ErrNone {
-					// GET may have prepared these headers before the cache RPC. A denied
-					// replacement must not expose object metadata on its error response.
+					// A denied replacement must not expose metadata headers GET already prepared.
 					for _, name := range []string{"x-amz-version-id", s3_constants.AmzObjectLockMode, s3_constants.AmzObjectLockRetainUntilDate, s3_constants.AmzObjectLockLegalHold, s3_constants.AmzMpPartsCount} {
 						w.Header().Del(name)
 					}

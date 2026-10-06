@@ -25,7 +25,6 @@ type anonymousReadCacheFiler struct {
 	cached *filer_pb.Entry
 }
 
-// CacheRemoteObjectToLocalCluster returns the independent post-cache metadata snapshot.
 func (f *anonymousReadCacheFiler) CacheRemoteObjectToLocalCluster(context.Context, *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
 	return &filer_pb.CacheRemoteObjectToLocalClusterResponse{Entry: proto.Clone(f.cached).(*filer_pb.Entry)}, nil
 }
@@ -48,7 +47,6 @@ func (f *anonymousReadDirectoryFiler) DeleteEntry(_ context.Context, req *filer_
 	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
-// TestAnonymousObjectACLCacheMetadata checks cache reauthorization and permitted origin reads.
 func TestAnonymousObjectACLCacheMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name, change                    string
