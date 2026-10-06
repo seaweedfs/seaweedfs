@@ -317,6 +317,47 @@ func TestVolumeTtlClockCarriedAcrossVacuumCommit(t *testing.T) {
 	}
 }
 
+// TestVolumeTtlClockAtCommitUsesAppendTime covers a write whose client
+// supplied modified time does not match when it was appended. The in-memory
+// clock follows the needle's modified time, but a commit keeps the append
+// watermark -- the clock the recovery scan would recompute -- so a backdated
+// or future-dated write cannot shift expiry through a vacuum.
+func TestVolumeTtlClockAtCommitUsesAppendTime(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	future := uint64(time.Now().Add(24 * time.Hour).Unix())
+	n := newRandomNeedle(1)
+	n.LastModified = future
+	if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	if v.lastModifiedTsSeconds < future {
+		t.Fatalf("clock %d did not follow the needle's modified time %d", v.lastModifiedTsSeconds, future)
+	}
+	appendWatermarkSec := v.lastAppendAtNs / uint64(time.Second)
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	if got := v.lastModifiedTsSeconds; got != appendWatermarkSec {
+		t.Errorf("TTL clock after commit is %d, want the append watermark %d", got, appendWatermarkSec)
+	}
+}
+
 // TestVolumeExpireAtSecCountsFromLastWrite guards the destroy time an EC volume
 // is reclaimed on (erasure_coding.EcVolume.IsTimeToDestroy). It was recomputed
 // as now+TTL on every .vif write, so a read-only mark, a tier upload or an EC
