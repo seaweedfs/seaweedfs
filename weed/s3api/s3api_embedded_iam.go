@@ -196,10 +196,32 @@ func newIamErrorResponse(errCode string, errMsg string, requestID string) iamErr
 	return errorResp
 }
 
-func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Request, reqID string, iamErr *iamError) {
+// iamAuthErrorCode maps an S3-side signature failure onto the IAM
+// query-protocol code IAM clients expect for the same request.
+func iamAuthErrorCode(errCode s3err.ErrorCode) string {
+	switch errCode {
+	case s3err.ErrInvalidAccessKeyID:
+		return "InvalidClientTokenId"
+	case s3err.ErrSignatureDoesNotMatch:
+		return "SignatureDoesNotMatch"
+	case s3err.ErrAccessDenied:
+		return "AccessDenied"
+	case s3err.ErrExpiredToken:
+		return "ExpiredToken"
+	case s3err.ErrRequestTimeTooSkewed:
+		return "RequestTimeTooSkewed"
+	case s3err.ErrInternalError:
+		return iam.ErrCodeServiceFailureException
+	default:
+		return "IncompleteSignature"
+	}
+}
+
+func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, reqID string, iamErr *iamError) {
 	if iamErr == nil {
 		glog.Errorf("writeIamErrorResponse called with nil error")
 		internalResp := newIamErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
+		internalResp.Error.Type = "Receiver"
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalResp)
 		return
 	}
@@ -2562,15 +2584,19 @@ func (iam *IdentityAccessManagement) AuthIamManagement(f http.HandlerFunc) http.
 		// needs to hash the body for IAM requests (service != "s3").
 		// The streamHashRequestBody function in auth_signature_v4.go preserves the body
 		// after reading it, so ParseForm() will work correctly after authentication.
+		r, reqID := request_id.Ensure(r)
 		identity, errCode := iam.AuthSignatureOnly(r)
 		if errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
+			writeIamErrorResponse(w, r, reqID, &iamError{
+				Code:  iamAuthErrorCode(errCode),
+				Error: errors.New(s3err.GetAPIError(errCode).Description),
+			})
 			return
 		}
 
 		// Now parse form to get Action and UserName (body was preserved by auth)
 		if err := r.ParseForm(); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			writeIamErrorResponse(w, r, reqID, &iamError{Code: "InvalidInput", Error: err})
 			return
 		}
 
@@ -2578,7 +2604,10 @@ func (iam *IdentityAccessManagement) AuthIamManagement(f http.HandlerFunc) http.
 		// from, so the authorized target and the acted-on target cannot differ.
 		action := r.Form.Get("Action")
 		if errCode := iam.AuthorizeIamAction(r, identity, action, iamTargetUserName(action, r)); errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
+			writeIamErrorResponse(w, r, reqID, &iamError{
+				Code:  iamAuthErrorCode(errCode),
+				Error: errors.New(s3err.GetAPIError(errCode).Description),
+			})
 			return
 		}
 
@@ -3003,7 +3032,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 	r, reqID := request_id.Ensure(r)
 	if err := r.ParseForm(); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		writeIamErrorResponse(w, r, reqID, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err})
 		return
 	}
 	values := r.PostForm
@@ -3019,7 +3048,7 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 
 	response, iamErr := e.ExecuteAction(r.Context(), values, false, reqID)
 	if iamErr != nil {
-		e.writeIamErrorResponse(w, r, reqID, iamErr)
+		writeIamErrorResponse(w, r, reqID, iamErr)
 		return
 	}
 

@@ -126,6 +126,27 @@ func normalizePayloadHash(payloadHashValue string) string {
 	return payloadHashValue
 }
 
+// requestSigningService extracts the service name from the SigV4 credential
+// scope (…/region/service/aws4_request) so a failed request can be answered in
+// that service's error envelope.
+func requestSigningService(r *http.Request) string {
+	credential := r.URL.Query().Get("X-Amz-Credential")
+	if credential == "" {
+		v4Auth := strings.Replace(r.Header.Get("Authorization"), " ", "", -1)
+		v4Auth = strings.TrimPrefix(v4Auth, signV4Algorithm)
+		for _, field := range strings.Split(v4Auth, ",") {
+			if cred, ok := strings.CutPrefix(field, "Credential="); ok {
+				credential = cred
+				break
+			}
+		}
+	}
+	if parts := strings.Split(credential, "/"); len(parts) == 5 {
+		return parts[3]
+	}
+	return ""
+}
+
 // signValues data type represents structured form of AWS Signature V4 header.
 type signValues struct {
 	Credential    credentialHeader

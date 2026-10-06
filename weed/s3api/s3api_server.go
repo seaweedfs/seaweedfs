@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -730,10 +731,21 @@ func (s3a *S3ApiServer) handleCORSOriginValidation(w http.ResponseWriter, r *htt
 // UnifiedPostHandler handles authenticated POST requests to the root path
 // It inspects the Action parameter to dispatch to either STS or IAM handlers
 func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Request) {
+	// Failures on this route answer in the IAM/STS query-protocol envelope
+	// unless the request was actually signed for s3.
+	r, reqID := request_id.Ensure(r)
+	writeQueryError := func(iamCode string, s3Code s3err.ErrorCode) {
+		if requestSigningService(r) == "s3" {
+			s3err.WriteErrorResponse(w, r, s3Code)
+			return
+		}
+		writeIamErrorResponse(w, r, reqID, &iamError{Code: iamCode, Error: errors.New(s3err.GetAPIError(s3Code).Description)})
+	}
+
 	// 1. Authenticate (preserves body)
 	identity, errCode := s3a.iam.AuthSignatureOnly(r)
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+		writeQueryError(iamAuthErrorCode(errCode), errCode)
 		return
 	}
 
@@ -745,7 +757,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		bodyBytes, err = readRequestBody(r, iamRequestBodyLimit)
 		if err != nil {
 			glog.Errorf("failed to read request body: %v", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			writeQueryError("InvalidInput", s3err.ErrInvalidRequest)
 			return
 		}
 		r.Body.Close()
@@ -754,7 +766,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := r.ParseForm(); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		writeQueryError("InvalidInput", s3err.ErrInvalidRequest)
 		return
 	}
 
@@ -781,7 +793,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		// IAM
 		// IAM API requests must be authenticated - reject nil identity
 		if identity == nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			writeQueryError("AccessDenied", s3err.ErrAccessDenied)
 			return
 		}
 
@@ -792,7 +804,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		// UserName comes from the body only, the same place DoActions reads it
 		// from, so the authorized target and the acted-on target cannot differ.
 		if s3a.iam.AuthorizeIamAction(r, identity, action, iamTargetUserName(action, r)) != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			writeQueryError("AccessDenied", s3err.ErrAccessDenied)
 			return
 		}
 
