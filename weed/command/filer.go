@@ -505,21 +505,7 @@ func (fo *FilerOptions) startFiler() {
 	if gracefulTimeout <= 0 {
 		gracefulTimeout = 15 * time.Second
 	}
-	stopGrpcServer := func() {
-		glog.V(0).Infof("Gracefully stopping gRPC server")
-		stopped := make(chan struct{})
-		go func() {
-			grpcS.GracefulStop()
-			close(stopped)
-		}()
-		select {
-		case <-stopped:
-			glog.V(0).Infof("gRPC server stopped gracefully")
-		case <-time.After(gracefulTimeout):
-			glog.V(0).Infof("gRPC server graceful stop timed out after %s, forcing stop", gracefulTimeout)
-			grpcS.Stop()
-		}
-	}
+	stopGrpcServer := func() { gracefulStopGrpc(grpcS, gracefulTimeout) }
 
 	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
@@ -588,7 +574,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, tlsConfig)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -617,7 +603,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, nil)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -637,26 +623,12 @@ func (fo *FilerOptions) startFiler() {
 }
 
 // newFilerShutdown joins shutdown callers while gRPC and HTTP drain concurrently.
-func newFilerShutdown(stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
+// The filer leaves the lock ring first: peers and S3 gateways route keys to it
+// until the ring changes, and would hit refused connections once gRPC stops.
+func newFilerShutdown(leaveLockRing, stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
+	drain := newGracefulShutdown(stopGrpc, shutdownFiler, httpServers...)
 	return sync.OnceFunc(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		var drained sync.WaitGroup
-		drained.Add(1)
-		go func() {
-			defer drained.Done()
-			stopGrpc()
-		}()
-		for _, server := range httpServers {
-			drained.Add(1)
-			go func() {
-				defer drained.Done()
-				if err := server.Shutdown(shutdownCtx); err != nil {
-					glog.Warningf("filer HTTP shutdown: %v", err)
-				}
-			}()
-		}
-		drained.Wait()
-		shutdownFiler()
+		leaveLockRing()
+		drain()
 	})
 }

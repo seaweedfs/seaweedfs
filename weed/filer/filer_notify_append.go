@@ -11,16 +11,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func (f *Filer) appendToFile(targetFile string, data []byte) error {
+func (f *Filer) appendToFile(ctx context.Context, targetFile string, data []byte) error {
 
-	assignResult, uploadResult, err2 := f.assignAndUpload(targetFile, data)
+	assignResult, uploadResult, err2 := f.assignAndUpload(ctx, targetFile, data)
 	if err2 != nil {
 		return err2
 	}
 
+	// The piece is already uploaded; commit it on a detached context so an
+	// expired shutdown deadline does not strand the chunk.
+	ctx = context.WithoutCancel(ctx)
+
 	// find out existing entry
 	fullpath := util.FullPath(targetFile)
-	entry, err := f.FindEntry(context.Background(), fullpath)
+	entry, err := f.FindEntry(ctx, fullpath)
 	var offset int64 = 0
 	if err == filer_pb.ErrNotFound {
 		entry = &Entry{
@@ -43,7 +47,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	entry.Chunks = append(entry.GetChunks(), uploadResult.ToPbFileChunk(assignResult.Fid, offset, time.Now().UnixNano()))
 
 	// update the entry
-	err = f.CreateEntry(context.Background(), entry, nil, false, false, nil, false, f.MaxFilenameLength)
+	err = f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
 
 	return err
 }
@@ -70,7 +74,7 @@ func (f *Filer) metaLogReplicationFor(ruleReplication string) string {
 	return util.Nvl(f.metaLogTargetReplication, f.metaLogReplication, ruleReplication)
 }
 
-func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
+func (f *Filer) assignAndUpload(ctx context.Context, targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 	// assign a volume location
 	diskType, rule := f.resolveMetadataLogAssignDiskType(targetFile)
 	assignRequest := &operation.VolumeAssignRequest{
@@ -82,7 +86,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		ExpectedDataSize:    uint64(len(data)),
 	}
 
-	assignResult, err := operation.Assign(context.Background(), f.GetMaster, f.GrpcDialOption, assignRequest)
+	assignResult, err := operation.Assign(ctx, f.GetMaster, f.GrpcDialOption, assignRequest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("AssignVolume: %w", err)
 	}
@@ -107,7 +111,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}
 
-	uploadResult, err := uploader.UploadData(context.Background(), data, uploadOption)
+	uploadResult, err := uploader.UploadData(ctx, data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

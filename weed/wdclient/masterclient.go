@@ -161,6 +161,12 @@ type MasterClient struct {
 	OnLockRingUpdateLock sync.RWMutex
 	OnMasterChange       func(previous, current pb.ServerAddress)
 	OnMasterChangeLock   sync.RWMutex
+
+	// streamLock publishes the stream only after its registration send, so a
+	// leave sent afterwards never races that send.
+	streamLock      sync.Mutex
+	stream          master_pb.Seaweed_KeepConnectedClient
+	leavingLockRing bool
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
@@ -248,18 +254,32 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		}
 		glog.V(1).Infof("%s.%s masterClient gRPC stream established to %s in %v", mc.FilerGroup, mc.clientType, master, time.Since(connectStartTime))
 
-		if err = stream.Send(&master_pb.KeepConnectedRequest{
+		mc.streamLock.Lock()
+		err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
 			DataCenter:    mc.GetDataCenter(),
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
 			Version:       version.Version(),
-		}); err != nil {
+			LeaveLockRing: mc.leavingLockRing,
+		})
+		if err == nil {
+			mc.stream = stream
+		}
+		mc.streamLock.Unlock()
+		if err != nil {
 			glog.V(0).Infof("%s.%s masterClient failed to send to %s: %v", mc.FilerGroup, mc.clientType, master, err)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToSend).Inc()
 			return err
 		}
+		defer func() {
+			mc.streamLock.Lock()
+			if mc.stream == stream {
+				mc.stream = nil
+			}
+			mc.streamLock.Unlock()
+		}()
 		glog.V(1).Infof("%s.%s masterClient Connected to %v", mc.FilerGroup, mc.clientType, master)
 
 		resp, err := stream.Recv()
@@ -368,6 +388,19 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		glog.V(1).Infof("%s.%s masterClient failed to connect with master %v: %v", mc.FilerGroup, mc.clientType, master, gprcErr)
 	}
 	return nextHintedLeader
+}
+
+// LeaveLockRing asks the master to drop this client from the lock ring while it
+// stays connected, and keeps it out of the ring on any later reconnect.
+func (mc *MasterClient) LeaveLockRing() error {
+	mc.streamLock.Lock()
+	mc.leavingLockRing = true
+	stream := mc.stream
+	mc.streamLock.Unlock()
+	if stream == nil {
+		return nil
+	}
+	return stream.Send(&master_pb.KeepConnectedRequest{LeaveLockRing: true})
 }
 
 // addedVids indexes added ids that are also being removed. A volume moved
