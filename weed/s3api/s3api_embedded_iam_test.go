@@ -1692,7 +1692,34 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
 
-	// 5. Delete user
+	var accessKeyId string
+	for _, ident := range api.mockConfig.Identities {
+		if ident.Name == "WorkflowUser" && len(ident.Credentials) > 0 {
+			accessKeyId = ident.Credentials[0].AccessKey
+		}
+	}
+	assert.NotEmpty(t, accessKeyId)
+
+	// 5. Deleting a user that still has an access key is refused
+	t.Run("DeleteUserConflict", func(t *testing.T) {
+		params := &iam.DeleteUserInput{UserName: aws.String("WorkflowUser")}
+		req, _ := iam.New(session.New()).DeleteUserRequest(params)
+		_ = req.Build()
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusConflict, response.Code)
+	})
+
+	// 6. Delete the access key, then the user
+	t.Run("DeleteAccessKey", func(t *testing.T) {
+		params := &iam.DeleteAccessKeyInput{UserName: aws.String("WorkflowUser"), AccessKeyId: aws.String(accessKeyId)}
+		req, _ := iam.New(session.New()).DeleteAccessKeyRequest(params)
+		_ = req.Build()
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, response.Code)
+	})
+
 	t.Run("DeleteUser", func(t *testing.T) {
 		params := &iam.DeleteUserInput{UserName: aws.String("WorkflowUser")}
 		req, _ := iam.New(session.New()).DeleteUserRequest(params)
