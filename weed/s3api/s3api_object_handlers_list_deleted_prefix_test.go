@@ -255,15 +255,10 @@ func TestDeletedPrefixesDoNotConsumeMaxKeys(t *testing.T) {
 // one large all-deleted prefix exhausts the shared probe budget, causing every later
 // prefix to be reported as visible even when all its objects are delete-marked.
 //
-// The fix gives each candidate prefix its own probe budget (hiddenProbePerPrefixBudget),
-// so budget exhaustion in one prefix does not bleed into the next. The test lowers that
-// budget to 3 to stay fast; the real default is 1000.
+// The fix gives each candidate prefix its own probe budget (hiddenProbeBudget, 10000 by
+// default). The test sets cursor.probeBudget = 3 to stay fast without touching the
+// package-level constant.
 func TestPerPrefixBudgetNotShared(t *testing.T) {
-	// Lower the per-prefix budget so we can trigger exhaustion with a small dataset.
-	orig := hiddenProbePerPrefixBudget
-	hiddenProbePerPrefixBudget = 3
-	defer func() { hiddenProbePerPrefixBudget = orig }()
-
 	// Build 5 delete-marked objects under "bigdeleted/" – more than the budget of 3.
 	bigDeletedEntries := make([]*filer_pb.Entry, 0, 5)
 	for i := 0; i < 5; i++ {
@@ -285,7 +280,10 @@ func TestPerPrefixBudgetNotShared(t *testing.T) {
 		},
 	}
 
-	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"}, &ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true})
+	// probeBudget: 3 simulates the bug scenario with a tiny dataset; real default is
+	// hiddenProbeBudget (10000).
+	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"},
+		&ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true, probeBudget: 3})
 
 	// "emptydeleted" must be hidden: all its objects are delete-marked and its probe
 	// budget was not exhausted by "bigdeleted".

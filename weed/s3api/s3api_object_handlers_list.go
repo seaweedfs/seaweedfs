@@ -779,6 +779,9 @@ type ListingCursor struct {
 	// hideDeletedPrefixes turns on the dirHoldsOnlyHiddenEntries probe, which only has
 	// something to find once a bucket has version history to leave behind.
 	hideDeletedPrefixes bool
+	// probeBudget overrides hiddenProbeBudget for the per-prefix probe; 0 means use
+	// the package default. Tests set this to a small value to stay fast.
+	probeBudget int
 	// retractEntry undoes the listing of a base-path null object once its .versions
 	// sibling reveals that the current version is a delete marker.
 	retractEntry func(dir, name string)
@@ -1160,13 +1163,14 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	}
 }
 
-// hiddenProbePageSize is the window one probe request asks the filer for.
-// hiddenProbePerPrefixBudget caps how many entries a single prefix probe may scan;
-// the budget resets for every candidate prefix so one large all-deleted subtree
+// hiddenProbePageSize is the window one probe request asks the filer for, and
+// hiddenProbeBudget caps how many entries a single prefix probe may scan.
+// The budget resets for every candidate prefix so one large all-deleted subtree
 // cannot exhaust the allowance for later prefixes in the same listing request.
-const hiddenProbePageSize = 64
-
-var hiddenProbePerPrefixBudget = 1000
+const (
+	hiddenProbePageSize = 64
+	hiddenProbeBudget   = 10000
+)
 
 // dirHoldsOnlyHiddenEntries reports whether dir holds entries but none that a
 // current-version listing returns. Deleting the last object under a prefix in a
@@ -1178,14 +1182,17 @@ var hiddenProbePerPrefixBudget = 1000
 //
 // The scan stops at the first key it finds, so a populated prefix costs one ListEntries
 // answered by its first entry. A subtree that is entirely delete-marked costs a walk of
-// that subtree, bounded by hiddenProbePerPrefixBudget entries. The budget resets for
+// that subtree, bounded by hiddenProbeBudget entries per prefix. The budget resets for
 // each candidate prefix, so a large all-deleted subtree cannot exhaust the allowance
-// for subsequent prefixes in the same request.
+// for later prefixes in the same request.
 func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, cursor *ListingCursor) bool {
 	if !cursor.hideDeletedPrefixes {
 		return false
 	}
-	budget := hiddenProbePerPrefixBudget
+	budget := hiddenProbeBudget
+	if cursor.probeBudget > 0 {
+		budget = cursor.probeBudget
+	}
 	return s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir, &budget)
 }
 
@@ -1206,7 +1213,7 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, clie
 		request := &filer_pb.ListEntriesRequest{
 			Directory:         dir,
 			StartFromFileName: startFrom,
-			Limit:             uint32(hiddenProbePageSize),
+			Limit:             hiddenProbePageSize,
 		}
 		stream, listErr := client.ListEntries(ctx, request)
 		if listErr != nil {
