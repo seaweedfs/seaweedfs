@@ -391,6 +391,19 @@ func isBareDirectory(entry *filer_pb.Entry) bool {
 	return entry != nil && entry.IsDirectory && filer.FileSize(entry) == 0 && !entry.IsPrefixObject()
 }
 
+// isNullVersionObject distinguishes logical S3 keys that share a regular filer path.
+// A slash key requires an explicit directory marker; a prefix object belongs to the bare key.
+// Actual version files are selected separately and must not be filtered by this predicate.
+func isNullVersionObject(entry *filer_pb.Entry, object string) bool {
+	if entry == nil {
+		return false
+	}
+	if strings.HasSuffix(object, "/") {
+		return entry.IsDirectoryKeyObject() && !entry.IsPrefixObject()
+	}
+	return !isBareDirectory(entry)
+}
+
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
 // Returns: (entry, isDirectoryObject, error)
 // - entry: the directory entry if found and is a directory
@@ -638,6 +651,7 @@ func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http
 	return result, false // request not handled
 }
 
+// GetObjectHandler selects and authorizes the requested S3 object before streaming its data.
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
@@ -748,8 +762,8 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
 				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
-				// A trailing slash names the null directory marker; a bare prefix is not an object.
-				if regularErr == nil && regularEntry != nil && (!isBareDirectory(regularEntry) || strings.HasSuffix(object, "/")) {
+				// A physical parent or bare-key object is not a trailing-slash null marker.
+				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version
 					entry = regularEntry
 					targetVersionId = "null"
@@ -2425,8 +2439,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
 				// .versions/ doesn't exist (confirmed not found), check regular path for null version
 				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
-				// A trailing slash names the null directory marker; a bare prefix is not an object.
-				if regularErr == nil && regularEntry != nil && (!isBareDirectory(regularEntry) || strings.HasSuffix(object, "/")) {
+				// A physical parent or bare-key object is not a trailing-slash null marker.
+				if regularErr == nil && isNullVersionObject(regularEntry, normalizedObject) {
 					// Found object at regular path - this is the null version
 					entry = regularEntry
 					targetVersionId = "null"
