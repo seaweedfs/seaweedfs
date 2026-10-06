@@ -161,7 +161,12 @@ impl SourceReadRequest {
 
     /// HEAD, a range, or a stream.
     fn served_from_source(&self, n: &Needle) -> bool {
-        self.is_head || (self.direct(n) && (self.has_range || n.data_size > STREAMING_THRESHOLD))
+        // HEAD is meta-only, except a chunk manifest this request will expand.
+        // cm=false keeps the raw needle. EC never uses this path.
+        if self.is_head {
+            return !(n.is_chunk_manifest() && !self.bypass_cm);
+        }
+        self.direct(n) && (self.has_range || n.data_size > STREAMING_THRESHOLD)
     }
 
     /// Meta first only if the needle could be served from source; its data
@@ -1113,6 +1118,7 @@ async fn get_or_head_handler_inner(
             &etag,
             &last_modified_str,
             range.as_deref().filter(|_| method == Method::GET),
+            &method,
         )
         .await
     {
@@ -1454,7 +1460,8 @@ async fn read_volume_needle(
 
     let can_stream =
         can_direct_source_read && n.data_size > STREAMING_THRESHOLD && !has_range && !is_head;
-    // Go uses meta-only reads for all HEAD requests, regardless of compression/chunked files.
+    // HEAD is meta-only when served_from_source loaded no payload. A chunk
+    // manifest without cm=false is read in full so expansion can run.
     let can_handle_head_from_meta = stream_info.is_some() && is_head;
     let can_handle_range_from_source = can_direct_source_read && has_range;
 
@@ -3602,6 +3609,177 @@ struct ChunkInfo {
     size: i64,
 }
 
+fn manifest_filename(path: &str, manifest_name: &str) -> String {
+    let mut filename = extract_filename_from_path(path);
+    if filename.is_empty() && !manifest_name.is_empty() {
+        filename = manifest_name.to_string();
+    }
+    filename
+}
+
+fn extension_of(filename: &str) -> String {
+    filename
+        .rfind('.')
+        .map(|dot| filename[dot..].to_lowercase())
+        .unwrap_or_default()
+}
+
+/// Same predicate as `parse_read_request`: a real crop or a positive resize.
+fn manifest_transforms_image(ext: &str, query: &ReadQueryParams) -> bool {
+    let resize = is_image_resize_ext(ext)
+        && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
+    let crop = is_image_crop_ext(ext) && {
+        let x1 = query.crop_x1.unwrap_or(0);
+        let y1 = query.crop_y1.unwrap_or(0);
+        let x2 = query.crop_x2.unwrap_or(0);
+        let y2 = query.crop_y2.unwrap_or(0);
+        x2 > x1 && y2 > y1
+    };
+    resize || crop
+}
+
+fn reject_bad_chunks(
+    chunks: &[ChunkInfo],
+) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
+    for chunk in chunks {
+        if chunk.offset < 0 || chunk.size < 0 {
+            return Some(ControlFlow::Break(
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("invalid negative chunk offset/size in {}", chunk.fid),
+                )
+                    .into_response(),
+            ));
+        }
+    }
+    None
+}
+
+/// `None` is a u64 overflow or a sum that does not fit in i64.
+fn sum_chunk_sizes(chunks: &[ChunkInfo]) -> Option<i64> {
+    let mut sum: u64 = 0;
+    for chunk in chunks {
+        if chunk.size < 0 {
+            return None;
+        }
+        sum = sum.checked_add(chunk.size as u64)?;
+    }
+    if sum > i64::MAX as u64 {
+        return None;
+    }
+    Some(sum as i64)
+}
+
+fn manifest_too_large() -> ControlFlow<Response, (Vec<u8>, HeaderMap)> {
+    ControlFlow::Break(
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "chunk manifest exceeds expansion limit",
+        )
+            .into_response(),
+    )
+}
+
+fn chunk_manifest_response_headers(
+    n: &Needle,
+    query: &ReadQueryParams,
+    etag: &str,
+    last_modified_str: &Option<String>,
+    filename: &str,
+    manifest_mime: &str,
+) -> HeaderMap {
+    let content_type = {
+        if !manifest_mime.is_empty() && !manifest_mime.starts_with("application/octet-stream") {
+            manifest_mime.to_string()
+        } else {
+            let ext = extension_of(filename);
+            if !ext.is_empty() {
+                mime_guess::from_ext(ext.trim_start_matches('.'))
+                    .first()
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "application/octet-stream".to_string())
+            } else if !manifest_mime.is_empty() {
+                manifest_mime.to_string()
+            } else {
+                "application/octet-stream".to_string()
+            }
+        }
+    };
+
+    let mut response_headers = HeaderMap::new();
+    if let Ok(etag_val) = etag.parse() {
+        response_headers.insert(header::ETAG, etag_val);
+    }
+    // A manifest mime that is not a legal header value still panics here.
+    // That panic is pre-existing and is not this PR.
+    response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    response_headers.insert("X-File-Store", "chunked".parse().unwrap());
+
+    if let Some(lm) = last_modified_str
+        && let Ok(hval) = lm.parse()
+    {
+        response_headers.insert(header::LAST_MODIFIED, hval);
+    }
+
+    if n.has_pairs()
+        && !n.pairs.is_empty()
+        && let Ok(pair_map) =
+            serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
+    {
+        for (k, v) in &pair_map {
+            if let (Ok(hname), Ok(hval)) = (
+                axum::http::HeaderName::from_bytes(k.as_bytes()),
+                axum::http::HeaderValue::from_str(v),
+            ) {
+                response_headers.insert(hname, hval);
+            }
+        }
+    }
+
+    if let Some(ref cc) = query.response_cache_control
+        && let Ok(hval) = cc.parse()
+    {
+        response_headers.insert(header::CACHE_CONTROL, hval);
+    }
+    if let Some(ref ce) = query.response_content_encoding
+        && let Ok(hval) = ce.parse()
+    {
+        response_headers.insert(header::CONTENT_ENCODING, hval);
+    }
+    if let Some(ref exp) = query.response_expires
+        && let Ok(hval) = exp.parse()
+    {
+        response_headers.insert(header::EXPIRES, hval);
+    }
+    if let Some(ref cl) = query.response_content_language
+        && let Ok(hval) = cl.parse()
+    {
+        response_headers.insert("Content-Language", hval);
+    }
+    if let Some(ref cd) = query.response_content_disposition
+        && let Ok(hval) = cd.parse()
+    {
+        response_headers.insert(header::CONTENT_DISPOSITION, hval);
+    }
+
+    if !filename.is_empty() {
+        let disposition_type = if let Some(ref dl_val) = query.dl {
+            if parse_go_bool(dl_val).unwrap_or(false) {
+                "attachment"
+            } else {
+                "inline"
+            }
+        } else {
+            "inline"
+        };
+        let disposition = format_content_disposition(disposition_type, filename);
+        if let Ok(hval) = disposition.parse() {
+            response_headers.insert(header::CONTENT_DISPOSITION, hval);
+        }
+    }
+    response_headers
+}
+
 /// Try to expand a chunk manifest needle into its assembled body and reply
 /// headers. The Range of a GET (`get_range`) is answered here from only the
 /// chunks it overlaps. Returns None if manifest can't be parsed.
@@ -3613,6 +3791,7 @@ async fn try_expand_chunk_manifest(
     etag: &str,
     last_modified_str: &Option<String>,
     get_range: Option<&str>,
+    method: &Method,
 ) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
     let data = if n.is_compressed() {
         match maybe_decompress_gzip(&n.data) {
@@ -3637,32 +3816,40 @@ async fn try_expand_chunk_manifest(
         Err(_) => return None,
     };
 
+    let filename = manifest_filename(path, &manifest.name);
+    let cm_ext = extension_of(&filename);
+    let transforms_image = manifest_transforms_image(&cm_ext, query);
+    let mut response_headers = chunk_manifest_response_headers(
+        n,
+        query,
+        etag,
+        last_modified_str,
+        &filename,
+        &manifest.mime,
+    );
+    if *method == Method::HEAD && !transforms_image {
+        if let Some(flow) = reject_bad_chunks(&manifest.chunks) {
+            return Some(flow);
+        }
+        let Some(sum) = sum_chunk_sizes(&manifest.chunks) else {
+            return Some(manifest_too_large());
+        };
+        response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            sum.to_string().parse().unwrap(),
+        );
+        return Some(ControlFlow::Break(
+            (StatusCode::OK, response_headers).into_response(),
+        ));
+    }
+
     // Guard the attacker-controlled manifest size before allocating: a negative
     // value would wrap to a huge usize (capacity-overflow panic) and an oversized
     // one would OOM-kill the server.
     if manifest.size < 0 || manifest.size as u64 > MAX_EXPANSION_BYTES {
         return None;
     }
-
-    // Determine filename: URL path filename, then manifest name
-    // (Go's tryHandleChunkedFile does NOT fall back to needle name)
-    let mut filename = extract_filename_from_path(path);
-    if filename.is_empty() && !manifest.name.is_empty() {
-        filename = manifest.name.clone();
-    }
-    let cm_ext = if !filename.is_empty() {
-        if let Some(dot_pos) = filename.rfind('.') {
-            filename[dot_pos..].to_lowercase()
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-    let transforms_image =
-        (is_image_crop_ext(&cm_ext) && query.crop_x2.is_some() && query.crop_y2.is_some())
-            || (is_image_resize_ext(&cm_ext)
-                && (query.width.unwrap_or(0) != 0 || query.height.unwrap_or(0) != 0));
 
     let size = manifest.size as usize;
     // A ranged GET needs only the chunks its ranges overlap; none for a
@@ -3743,111 +3930,6 @@ async fn try_expand_chunk_manifest(
             }
         } else {
             result[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
-        }
-    }
-
-    // Determine MIME type: manifest mime, but fall back to extension detection
-    // if empty or application/octet-stream (matching Go behavior)
-    let content_type = {
-        let mime_str = &manifest.mime;
-        if !mime_str.is_empty() && !mime_str.starts_with("application/octet-stream") {
-            mime_str.clone()
-        } else {
-            // Try to detect from filename extension
-            let ext = if !filename.is_empty() {
-                if let Some(dot_pos) = filename.rfind('.') {
-                    filename[dot_pos..].to_lowercase()
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            };
-            if !ext.is_empty() {
-                mime_guess::from_ext(ext.trim_start_matches('.'))
-                    .first()
-                    .map(|m| m.to_string())
-                    .unwrap_or_else(|| "application/octet-stream".to_string())
-            } else if !mime_str.is_empty() {
-                mime_str.clone()
-            } else {
-                "application/octet-stream".to_string()
-            }
-        }
-    };
-
-    let mut response_headers = HeaderMap::new();
-    // Preserve ETag from the needle (matches Go: ETag is set before tryHandleChunkedFile)
-    if let Ok(etag_val) = etag.parse() {
-        response_headers.insert(header::ETAG, etag_val);
-    }
-    response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
-    response_headers.insert("X-File-Store", "chunked".parse().unwrap());
-
-    // Last-Modified — Go sets this on the response writer before tryHandleChunkedFile
-    if let Some(lm) = last_modified_str
-        && let Ok(hval) = lm.parse()
-    {
-        response_headers.insert(header::LAST_MODIFIED, hval);
-    }
-
-    // Pairs — Go sets needle pairs on the response writer before tryHandleChunkedFile
-    if n.has_pairs()
-        && !n.pairs.is_empty()
-        && let Ok(pair_map) =
-            serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
-    {
-        for (k, v) in &pair_map {
-            if let (Ok(hname), Ok(hval)) = (
-                axum::http::HeaderName::from_bytes(k.as_bytes()),
-                axum::http::HeaderValue::from_str(v),
-            ) {
-                response_headers.insert(hname, hval);
-            }
-        }
-    }
-
-    // S3 response passthrough headers — Go sets these via AdjustPassthroughHeaders
-    if let Some(ref cc) = query.response_cache_control
-        && let Ok(hval) = cc.parse()
-    {
-        response_headers.insert(header::CACHE_CONTROL, hval);
-    }
-    if let Some(ref ce) = query.response_content_encoding
-        && let Ok(hval) = ce.parse()
-    {
-        response_headers.insert(header::CONTENT_ENCODING, hval);
-    }
-    if let Some(ref exp) = query.response_expires
-        && let Ok(hval) = exp.parse()
-    {
-        response_headers.insert(header::EXPIRES, hval);
-    }
-    if let Some(ref cl) = query.response_content_language
-        && let Ok(hval) = cl.parse()
-    {
-        response_headers.insert("Content-Language", hval);
-    }
-    if let Some(ref cd) = query.response_content_disposition
-        && let Ok(hval) = cd.parse()
-    {
-        response_headers.insert(header::CONTENT_DISPOSITION, hval);
-    }
-
-    // Content-Disposition
-    if !filename.is_empty() {
-        let disposition_type = if let Some(ref dl_val) = query.dl {
-            if parse_go_bool(dl_val).unwrap_or(false) {
-                "attachment"
-            } else {
-                "inline"
-            }
-        } else {
-            "inline"
-        };
-        let disposition = format_content_disposition(disposition_type, &filename);
-        if let Ok(hval) = disposition.parse() {
-            response_headers.insert(header::CONTENT_DISPOSITION, hval);
         }
     }
 
@@ -5174,6 +5256,103 @@ mod tests {
         format!("/1,{:x}{:08x}", id, TEST_COOKIE)
     }
 
+    fn watch_reads(
+        ids: &[u64],
+    ) -> (
+        Vec<crate::storage::volume::needle_read_hook::Registration>,
+        std::sync::Arc<[std::sync::atomic::AtomicUsize]>,
+    ) {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::atomic::AtomicUsize;
+        let reads: std::sync::Arc<[AtomicUsize]> = std::sync::Arc::from(
+            std::iter::repeat_with(|| AtomicUsize::new(0))
+                .take(ids.len())
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let regs = ids
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let reads = reads.clone();
+                needle_read_hook::register(NeedleId(id), move |_| {
+                    reads[i].fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                })
+            })
+            .collect();
+        (regs, reads)
+    }
+
+    fn taken(reads: &std::sync::Arc<[std::sync::atomic::AtomicUsize]>) -> Vec<usize> {
+        use std::sync::atomic::Ordering;
+        reads.iter().map(|c| c.swap(0, Ordering::SeqCst)).collect()
+    }
+
+    fn put_manifest(state: &VolumeServerState, id: u64, json: &str) -> String {
+        put_test_needle_with(state, id, json.as_bytes(), |n| n.set_is_chunk_manifest())
+    }
+
+    fn put_gzip_manifest(state: &VolumeServerState, id: u64, json: &str) -> String {
+        let gz = try_gzip_data(json.as_bytes()).unwrap();
+        put_test_needle_with(state, id, &gz, |n| {
+            n.set_is_chunk_manifest();
+            n.set_is_compressed();
+        })
+    }
+
+    /// Write `data` as a chunk manifest on a fresh EC volume 2. Chunks stay on volume 1.
+    fn put_ec_manifest(
+        state: &VolumeServerState,
+        tmp: &tempfile::TempDir,
+        id: u64,
+        data: &[u8],
+        compressed: bool,
+    ) -> String {
+        use crate::storage::erasure_coding::ec_encoder::write_ec_files;
+        use crate::storage::erasure_coding::ec_shard::ShardId;
+        use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::volume::{Volume, VolumeSpec};
+
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = Volume::new(
+            dir,
+            dir,
+            VolumeId(2),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        )
+        .unwrap();
+        let mut n = Needle {
+            id: NeedleId(id),
+            cookie: Cookie(TEST_COOKIE),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        n.set_is_chunk_manifest();
+        if compressed {
+            n.set_is_compressed();
+        }
+        v.write_needle(&mut n, true, false).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+        write_ec_files(dir, dir, "", VolumeId(2), 10, 4).unwrap();
+        let shard_ids: Vec<ShardId> = (0..14).collect();
+        state
+            .store
+            .write()
+            .unwrap()
+            .mount_ec_shards(VolumeId(2), "", &shard_ids)
+            .unwrap();
+        format!("/2,{:x}{:08x}", id, TEST_COOKIE)
+    }
+
+    fn slash_name(stored: &str, name: &str) -> String {
+        let fid = stored.trim_start_matches('/');
+        let (vid, needle) = fid.split_once(',').unwrap();
+        format!("/{vid}/{needle}/{name}")
+    }
+
     async fn send_read(
         state: &Arc<VolumeServerState>,
         method: Method,
@@ -5436,8 +5615,8 @@ mod tests {
         }
     }
 
-    /// A chunk manifest applies Range to the assembled object, as Go's
-    /// writeResponseContent does; its HEAD is still read from the meta.
+    /// A chunk manifest applies Range to the assembled object. HEAD reports the
+    /// sum of chunk sizes, including when a Range header is present.
     #[tokio::test]
     async fn test_chunk_manifest_range() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -5487,15 +5666,18 @@ mod tests {
         assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(body, b"invalid range");
 
-        let (status, headers, _) = send_read(&state, Method::HEAD, &path, None).await;
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
         assert_eq!(status, StatusCode::OK);
-        let (range_status, range_headers, _) =
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        let (range_status, range_headers, range_body) =
             send_read(&state, Method::HEAD, &path, Some(b"bytes=0-9")).await;
-        assert_eq!(range_status, status);
-        assert_eq!(
-            range_headers[header::CONTENT_LENGTH],
-            headers[header::CONTENT_LENGTH]
-        );
+        assert_eq!(range_status, StatusCode::OK);
+        assert!(range_body.is_empty());
+        assert_eq!(range_headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(range_headers["X-File-Store"], "chunked");
     }
 
     /// A ranged GET of a chunk manifest fetches only the chunks its ranges
@@ -5608,6 +5790,177 @@ mod tests {
                 assert_eq!(body, &full[start..=end], "{range}");
             }
         }
+    }
+
+    /// Regular and EC HEAD of a chunk manifest, plain or gzipped, report the
+    /// sum and do not read chunks. The sum is not the stored needle length.
+    #[tokio::test]
+    async fn test_chunk_manifest_head_sum() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0a01, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0a02, b"BBBBBBBB");
+        let json = format!(
+            r#"{{"name":"obj.txt","size":100,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        assert_ne!(json.len(), 16);
+        let path = put_manifest(&state, 0x6e7a_0a03, &json);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a01, 0x6e7a_0a02]);
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(headers[header::ACCEPT_RANGES], "bytes");
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        let gz_path = put_gzip_manifest(&state, 0x6e7a_0a04, &json);
+        let (status, headers, _) = send_read(&state, Method::HEAD, &gz_path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        let cached = format!("{path}?response-cache-control=max-age%3D9");
+        let (status, headers, _) = send_read(&state, Method::HEAD, &cached, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CACHE_CONTROL], "max-age=9");
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(taken(&reads), vec![0, 0]);
+
+        // Regression pins: expansion does not claim these.
+        let raw = put_manifest(&state, 0x6e7a_0a05, "not-json");
+        let (status, headers, body) = send_read(&state, Method::HEAD, &raw, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "8");
+        assert!(!headers.contains_key("X-File-Store"));
+
+        let bypass = format!("{path}?cm=false");
+        let (status, headers, _) = send_read(&state, Method::HEAD, &bypass, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_LENGTH], json.len().to_string());
+        assert!(!headers.contains_key("X-File-Store"));
+    }
+
+    /// An EC manifest used to fetch every chunk on HEAD. It now reports the sum.
+    #[tokio::test]
+    async fn test_chunk_manifest_head_ec() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0a11, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0a12, b"BBBBBBBB");
+        let json = format!(
+            r#"{{"name":"obj.txt","size":100,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let path = put_ec_manifest(&state, &tmp, 0x6e7a_0a13, json.as_bytes(), false);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a11, 0x6e7a_0a12]);
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(taken(&reads), vec![0, 0]);
+        drop(_regs);
+
+        // A second mount of volume 2 on the same store fails. Gzip gets its own.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let a = put_test_needle(&state, 0x6e7a_0a15, b"AAAAAAAA");
+        let b = put_test_needle(&state, 0x6e7a_0a16, b"BBBBBBBB");
+        let json = format!(
+            r#"{{"name":"obj.txt","size":100,"chunks":[{{"fid":"{}","offset":0,"size":8}},{{"fid":"{}","offset":8,"size":8}}]}}"#,
+            &a[1..],
+            &b[1..]
+        );
+        let gz = try_gzip_data(json.as_bytes()).unwrap();
+        assert_ne!(gz.len(), 16);
+        let path = put_ec_manifest(&state, &tmp, 0x6e7a_0a17, &gz, true);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a15, 0x6e7a_0a16]);
+        let (status, headers, body) = send_read(&state, Method::HEAD, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], "16");
+        assert_eq!(headers["X-File-Store"], "chunked");
+        assert_eq!(taken(&reads), vec![0, 0]);
+    }
+
+    fn solid_png(width: u32, height: u32) -> Vec<u8> {
+        let mut img = image::RgbImage::new(width, height);
+        for px in img.pixels_mut() {
+            *px = image::Rgb([10, 20, 30]);
+        }
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        buf
+    }
+
+    /// A zero crop is not a transform. A real crop of one PNG still fetches,
+    /// and Range applies to the transformed bytes.
+    #[tokio::test]
+    async fn test_chunk_manifest_head_image() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let first = put_test_needle(&state, 0x6e7a_0a21, b"AAAA");
+        let second = put_test_needle(&state, 0x6e7a_0a22, b"BBBB");
+        let raw = format!(
+            r#"{{"name":"obj.txt","size":8,"chunks":[{{"fid":"{}","offset":0,"size":4}},{{"fid":"{}","offset":4,"size":4}}]}}"#,
+            &first[1..],
+            &second[1..]
+        );
+        let stored = put_manifest(&state, 0x6e7a_0a23, &raw);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a21, 0x6e7a_0a22]);
+        for query in ["crop_x2=0&crop_y2=0", "width=0&height=0"] {
+            let url = format!("{}?{query}", slash_name(&stored, "obj.jpg"));
+            let (status, headers, _) = send_read(&state, Method::HEAD, &url, None).await;
+            assert_eq!(status, StatusCode::OK, "{query}");
+            assert_eq!(headers[header::CONTENT_LENGTH], "8", "{query}");
+            assert_eq!(headers["X-File-Store"], "chunked", "{query}");
+            assert_eq!(taken(&reads), vec![0, 0], "{query}");
+        }
+        let partial = format!("{}?crop_x2=0&crop_y2=0", slash_name(&stored, "obj.jpg"));
+        let (status, _, body) =
+            send_read(&state, Method::GET, &partial, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"AAAA");
+        assert_eq!(taken(&reads), vec![1, 0]);
+
+        let png = solid_png(8, 8);
+        let chunk = put_test_needle(&state, 0x6e7a_0a24, &png);
+        let image = format!(
+            r#"{{"name":"obj.txt","size":{},"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+            png.len(),
+            &chunk[1..],
+            png.len()
+        );
+        let stored = put_manifest(&state, 0x6e7a_0a25, &image);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0a24]);
+        let crop = format!(
+            "{}?crop_x1=0&crop_y1=0&crop_x2=2&crop_y2=2",
+            slash_name(&stored, "obj.jpg")
+        );
+        let (get_status, _, cropped) = send_read(&state, Method::GET, &crop, None).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_ne!(cropped.len(), png.len(), "the crop must change the length");
+        assert_eq!(taken(&reads), vec![1]);
+
+        let (status, headers, body) =
+            send_read(&state, Method::HEAD, &crop, Some(b"bytes=0-1")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], cropped.len().to_string());
+        assert_eq!(taken(&reads), vec![1]);
+
+        let past = format!("bytes={}-", cropped.len());
+        let (status, _, _) = send_read(&state, Method::GET, &crop, Some(past.as_bytes())).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(taken(&reads), vec![1]);
     }
 
     /// A proxied read forwards request headers as raw bytes, as Go does: a
