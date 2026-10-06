@@ -2529,37 +2529,55 @@ func cloneEntryForTest(t *testing.T, entry *filer_pb.Entry) *filer_pb.Entry {
 }
 
 // ---------------------------------------------------------------------------
-// Avro manifest content patching for tests
+// Delete manifest writing for tests
 // ---------------------------------------------------------------------------
 
-// patchManifestContentToDeletes performs a binary patch on an Avro manifest
-// file to change the "content" metadata value from "data" to "deletes".
-// This workaround is needed because iceberg-go's WriteManifest API always
-// sets content="data" and provides no way to create delete manifests.
-// The function validates the pattern was found (bytes.Equal check) and fails
-// fast if not, so breakage from encoding changes is caught immediately.
-//
-// In Avro OCF encoding, strings are stored as zigzag-encoded length + bytes.
-// "content" (7 chars) = \x0e + "content", "data" (4 chars) = \x08 + "data",
-// "deletes" (7 chars) = \x0e + "deletes".
-func patchManifestContentToDeletes(t *testing.T, manifestBytes []byte) []byte {
+// writeDeleteManifestForTest writes a delete-content manifest for the given
+// entries and returns its ManifestFile along with the serialized bytes.
+// iceberg-go validates that delete entries only land in delete manifests, so
+// the manifest must be written with NewManifestWriter configured with
+// ManifestContentDeletes rather than WriteManifest.
+func writeDeleteManifestForTest(
+	t *testing.T,
+	manifestPath string,
+	version int,
+	spec iceberg.PartitionSpec,
+	schema *iceberg.Schema,
+	snapshotID int64,
+	entries []iceberg.ManifestEntry,
+) (iceberg.ManifestFile, []byte) {
 	t.Helper()
 
-	// Pattern: zigzag(7)="content" zigzag(4)="data"
-	old := append([]byte{0x0e}, []byte("content")...)
-	old = append(old, 0x08)
-	old = append(old, []byte("data")...)
-
-	// Replacement: zigzag(7)="content" zigzag(7)="deletes"
-	new := append([]byte{0x0e}, []byte("content")...)
-	new = append(new, 0x0e)
-	new = append(new, []byte("deletes")...)
-
-	result := bytes.Replace(manifestBytes, old, new, 1)
-	if bytes.Equal(result, manifestBytes) {
-		t.Fatal("patchManifestContentToDeletes: pattern not found in manifest bytes")
+	var buf bytes.Buffer
+	w, err := iceberg.NewManifestWriter(version, &buf, spec, schema, snapshotID,
+		iceberg.WithManifestWriterContent(iceberg.ManifestContentDeletes))
+	if err != nil {
+		t.Fatalf("create delete manifest writer: %v", err)
 	}
-	return result
+	for _, entry := range entries {
+		var addErr error
+		switch entry.Status() {
+		case iceberg.EntryStatusADDED:
+			addErr = w.Add(entry)
+		case iceberg.EntryStatusEXISTING:
+			addErr = w.Existing(entry)
+		case iceberg.EntryStatusDELETED:
+			addErr = w.Delete(entry)
+		default:
+			addErr = fmt.Errorf("unexpected manifest entry status: %v", entry.Status())
+		}
+		if addErr != nil {
+			t.Fatalf("add delete manifest entry: %v", addErr)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close delete manifest writer: %v", err)
+	}
+	mf, err := w.ToManifestFile(manifestPath, int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("finalize delete manifest: %v", err)
+	}
+	return mf, buf.Bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -2730,25 +2748,13 @@ func populateTableWithDeleteFilesAndSortOrder(
 			posDeleteEntries = append(posDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
 		}
 
-		// WriteManifest always sets content="data", so we patch the Avro
-		// metadata to "deletes" and build a ManifestFile with the right content type.
-		var posManifestBuf bytes.Buffer
 		posManifestName := "pos-delete-manifest-1.avro"
-		posManifestPath := setup.fileRef("metadata", posManifestName)
-		_, err := iceberg.WriteManifest(posManifestPath, &posManifestBuf, version, spec, schema, 1, posDeleteEntries)
-		if err != nil {
-			t.Fatalf("write pos delete manifest: %v", err)
-		}
-		patchedBytes := patchManifestContentToDeletes(t, posManifestBuf.Bytes())
+		posMf, posManifestBytes := writeDeleteManifestForTest(
+			t, setup.fileRef("metadata", posManifestName), version, spec, schema, 1, posDeleteEntries)
 		fs.putEntry(metaDir, posManifestName, &filer_pb.Entry{
-			Name: posManifestName, Content: patchedBytes,
-			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(patchedBytes))},
+			Name: posManifestName, Content: posManifestBytes,
+			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(posManifestBytes))},
 		})
-		posMf := iceberg.NewManifestFile(version, posManifestPath, int64(len(patchedBytes)), int32(spec.ID()), 1).
-			Content(iceberg.ManifestContentDeletes).
-			AddedFiles(int32(len(posDeleteEntries))).
-			AddedRows(int64(len(posDeleteFiles[0].Rows))).
-			Build()
 		allManifests = append(allManifests, posMf)
 	}
 
@@ -2783,23 +2789,13 @@ func populateTableWithDeleteFilesAndSortOrder(
 			eqDeleteEntries = append(eqDeleteEntries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
 		}
 
-		var eqManifestBuf bytes.Buffer
 		eqManifestName := "eq-delete-manifest-1.avro"
-		eqManifestPath := setup.fileRef("metadata", eqManifestName)
-		_, err := iceberg.WriteManifest(eqManifestPath, &eqManifestBuf, version, spec, schema, 1, eqDeleteEntries)
-		if err != nil {
-			t.Fatalf("write eq delete manifest: %v", err)
-		}
-		patchedBytes := patchManifestContentToDeletes(t, eqManifestBuf.Bytes())
+		eqMf, eqManifestBytes := writeDeleteManifestForTest(
+			t, setup.fileRef("metadata", eqManifestName), version, spec, schema, 1, eqDeleteEntries)
 		fs.putEntry(metaDir, eqManifestName, &filer_pb.Entry{
-			Name: eqManifestName, Content: patchedBytes,
-			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(patchedBytes))},
+			Name: eqManifestName, Content: eqManifestBytes,
+			Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(eqManifestBytes))},
 		})
-		eqMf := iceberg.NewManifestFile(version, eqManifestPath, int64(len(patchedBytes)), int32(spec.ID()), 1).
-			Content(iceberg.ManifestContentDeletes).
-			AddedFiles(int32(len(eqDeleteEntries))).
-			AddedRows(int64(len(eqDeleteFiles[0].Rows))).
-			Build()
 		allManifests = append(allManifests, eqMf)
 	}
 
@@ -2943,21 +2939,12 @@ func rewriteDeleteManifestsAsMixed(
 	manifestName := "mixed-delete-manifest-1.avro"
 	manifestPath := path.Join("metadata", manifestName)
 
-	var manifestBuf bytes.Buffer
-	_, err = iceberg.WriteManifest(manifestPath, &manifestBuf, version, spec, state.Metadata.CurrentSchema(), 1, deleteEntries)
-	if err != nil {
-		t.Fatalf("write mixed delete manifest: %v", err)
-	}
-	mixedBytes := patchManifestContentToDeletes(t, manifestBuf.Bytes())
+	mixedManifest, mixedBytes := writeDeleteManifestForTest(
+		t, manifestPath, version, spec, state.Metadata.CurrentSchema(), 1, deleteEntries)
 	fs.putEntry(metaDir, manifestName, &filer_pb.Entry{
 		Name: manifestName, Content: mixedBytes,
 		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(mixedBytes))},
 	})
-
-	mixedManifest := iceberg.NewManifestFile(version, manifestPath, int64(len(mixedBytes)), int32(spec.ID()), 1).
-		Content(iceberg.ManifestContentDeletes).
-		AddedFiles(int32(len(deleteEntries))).
-		Build()
 
 	var manifestListBuf bytes.Buffer
 	seqNum := int64(1)

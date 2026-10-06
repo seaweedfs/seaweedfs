@@ -208,46 +208,35 @@ func writeManifestWithContent(
 	content iceberg.ManifestContent,
 ) (iceberg.ManifestFile, []byte, error) {
 	var manifestBuf bytes.Buffer
-	mf, err := iceberg.WriteManifest(filename, &manifestBuf, version, spec, schema, snapshotID, entries)
+	w, err := iceberg.NewManifestWriter(version, &manifestBuf, spec, schema, snapshotID,
+		iceberg.WithManifestWriterContent(content))
 	if err != nil {
 		return nil, nil, err
 	}
-
-	manifestBytes := manifestBuf.Bytes()
-	if content == iceberg.ManifestContentDeletes {
-		manifestBytes, err = patchManifestContentBytesToDeletes(manifestBytes)
-		if err != nil {
-			return nil, nil, err
+	for _, entry := range entries {
+		var addErr error
+		switch entry.Status() {
+		case iceberg.EntryStatusADDED:
+			addErr = w.Add(entry)
+		case iceberg.EntryStatusEXISTING:
+			addErr = w.Existing(entry)
+		case iceberg.EntryStatusDELETED:
+			addErr = w.Delete(entry)
+		default:
+			addErr = fmt.Errorf("unexpected manifest entry status: %v", entry.Status())
+		}
+		if addErr != nil {
+			return nil, nil, addErr
 		}
 	}
-
-	rebuilt := iceberg.NewManifestFile(version, filename, int64(len(manifestBytes)), int32(spec.ID()), snapshotID).
-		Content(content).
-		AddedFiles(mf.AddedDataFiles()).
-		ExistingFiles(mf.ExistingDataFiles()).
-		DeletedFiles(mf.DeletedDataFiles()).
-		AddedRows(mf.AddedRows()).
-		ExistingRows(mf.ExistingRows()).
-		DeletedRows(mf.DeletedRows()).
-		Partitions(mf.Partitions()).
-		Build()
-	return rebuilt, manifestBytes, nil
-}
-
-func patchManifestContentBytesToDeletes(manifestBytes []byte) ([]byte, error) {
-	old := append([]byte{0x0e}, []byte("content")...)
-	old = append(old, 0x08)
-	old = append(old, []byte("data")...)
-
-	new := append([]byte{0x0e}, []byte("content")...)
-	new = append(new, 0x0e)
-	new = append(new, []byte("deletes")...)
-
-	result := bytes.Replace(manifestBytes, old, new, 1)
-	if bytes.Equal(result, manifestBytes) {
-		return nil, fmt.Errorf("delete manifest content patch failed")
+	if err := w.Close(); err != nil {
+		return nil, nil, err
 	}
-	return result, nil
+	mf, err := w.ToManifestFile(filename, int64(manifestBuf.Len()))
+	if err != nil {
+		return nil, nil, err
+	}
+	return mf, manifestBuf.Bytes(), nil
 }
 
 func writePositionDeleteFile(rows []positionDeleteRow) ([]byte, error) {
