@@ -1124,7 +1124,7 @@ async fn get_or_head_handler_inner(
                 &method,
                 data,
                 response_headers,
-                false,
+                track_download,
             ),
             ControlFlow::Break(resp) => resp,
         };
@@ -1969,12 +1969,16 @@ fn range_content_range(r: HttpRange, total: i64) -> String {
 }
 
 fn range_error_response(mut headers: HeaderMap, msg: &str) -> Response {
-    if !headers.contains_key(header::CONTENT_TYPE) {
-        headers.insert(
-            header::CONTENT_TYPE,
-            "text/plain; charset=utf-8".parse().unwrap(),
-        );
-    }
+    // net/http.Error resets Content-Type and sets nosniff even when a
+    // caller already set the object's MIME type.
+    headers.insert(
+        header::CONTENT_TYPE,
+        "text/plain; charset=utf-8".parse().unwrap(),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().unwrap(),
+    );
     let mut response = Response::new(Body::from(msg.to_string()));
     *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
     *response.headers_mut() = headers;
