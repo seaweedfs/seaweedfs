@@ -256,3 +256,30 @@ func TestEcVolumeDestroySweepsBothDirs(t *testing.T) {
 		}
 	}
 }
+
+func TestLocateEcShardNeedleMatchesInterval(t *testing.T) {
+	ecxFile, err := os.OpenFile("./test_files/389.ecx", os.O_RDONLY, 0)
+	assert.NoError(t, err)
+	defer ecxFile.Close()
+
+	stat, err := ecxFile.Stat()
+	assert.NoError(t, err)
+	fileSize := stat.Size()
+
+	ev := &EcVolume{
+		VolumeId:    needle.VolumeId(389),
+		ecxFile:     ecxFile,
+		ecxFileSize: fileSize,
+		Shards: []*EcVolumeShard{
+			{ecdFileSize: 1118830592},
+		},
+		ECContext: NewDefaultECContext("", 389),
+	}
+
+	needleId, _ := types.ParseNeedleId("0f0edb92")
+	offset, size, intervals, err := ev.LocateEcShardNeedle(needleId, needle.GetCurrentVersion())
+	assert.NoError(t, err)
+
+	expectedIntervals := ev.LocateEcShardNeedleInterval(needle.GetCurrentVersion(), offset.ToActualOffset(), size)
+	assert.Equal(t, expectedIntervals, intervals)
+}
