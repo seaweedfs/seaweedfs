@@ -356,16 +356,8 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	partIDString := r.URL.Query().Get("partNumber")
 	partID, err := strconv.Atoi(partIDString)
-	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
-		return
-	}
-	if partID > s3_constants.MaxS3MultipartParts {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
-		return
-	}
-	if partID < 1 {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+	if err != nil || partID < 1 || partID > s3_constants.MaxS3MultipartParts {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidArgument)
 		return
 	}
 
