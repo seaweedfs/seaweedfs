@@ -198,6 +198,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			dataFile, err = backend.OpenVolumeFile(v.FileName(".dat"), os.O_RDONLY)
 			v.noWriteOrDelete = true
 		}
+		if err != nil {
+			if !os.IsPermission(err) {
+				return fmt.Errorf("cannot load volume data %s: %v", v.FileName(".dat"), err)
+			} else {
+				return fmt.Errorf("load data file %s: %v", v.FileName(".dat"), err)
+			}
+		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		if fileSize >= super_block.SuperBlockSize {
 			alreadyHasSuperBlock = true
