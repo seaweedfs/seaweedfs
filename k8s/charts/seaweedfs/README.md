@@ -27,6 +27,19 @@ so your deployment will be spread/HA.
 * cert config exists and can be enabled, but not been tested, requires cert-manager to be installed.
 
 ## Prerequisites
+
+The chart's templates render with Helm 3.16.3 and newer versions tested in CI.
+Earlier Helm versions are not covered by this chart's compatibility checks.
+When JWT signing is enabled, a live upgrade reuses keys from the existing
+security ConfigMap (including the legacy ConfigMap name); a key absent from
+that ConfigMap is generated. Plain `helm template` does not read cluster state;
+use an install and upgrade against a cluster to check key persistence.
+
+The key reader supports single-line quoted TOML strings in JWT sections,
+including indented assignments, quoted key names, and bare or simply quoted
+section-name segments. An unsupported value or quoted header fails the upgrade
+rather than silently rotating a key.
+
 ### Database
 
 leveldb is the default database, this supports multiple filer replicas that will [sync automatically](https://github.com/seaweedfs/seaweedfs/wiki/Filer-Store-Replication), with some [limitations](https://github.com/seaweedfs/seaweedfs/wiki/Filer-Store-Replication#limitation).
