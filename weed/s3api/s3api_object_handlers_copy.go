@@ -374,7 +374,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 		setEtag(w, etag)
 		writeSuccessResponseXML(w, r, CopyObjectResult{
-			ETag:         etag,
+			ETag:         quoteETag(etag),
 			LastModified: t,
 		})
 		return
@@ -546,7 +546,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	setEtag(w, etag)
 
 	response := CopyObjectResult{
-		ETag:         etag,
+		ETag:         quoteETag(etag),
 		LastModified: t,
 	}
 
@@ -863,7 +863,7 @@ func (r CopyPartResult) MarshalXML(e *xml.Encoder, start xml.StartElement) error
 
 func buildCopyPartResult(etag string, lastModified time.Time, metadata SSEResponseMetadata) CopyPartResult {
 	result := CopyPartResult{
-		ETag:         etag,
+		ETag:         quoteETag(etag),
 		LastModified: lastModified,
 	}
 	result.SetChecksum(metadata.ChecksumHeaderName, metadata.ChecksumValue)
@@ -1086,7 +1086,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		if !s3a.checkUploadStillOpen(w, r, dstBucket, dstObject, uploadID) {
 			return
 		}
-		setEtag(w, "\""+strings.Trim(etag, "\"")+"\"")
+		setEtag(w, etag)
 		// Mirror PutObjectPartHandler: write x-amz-server-side-encryption /
 		// x-amz-server-side-encryption-aws-kms-key-id headers on the response
 		// so clients can see the destination's encryption state.
