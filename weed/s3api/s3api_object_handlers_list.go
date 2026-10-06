@@ -779,9 +779,13 @@ type ListingCursor struct {
 	// hideDeletedPrefixes turns on the dirHoldsOnlyHiddenEntries probe, which only has
 	// something to find once a bucket has version history to leave behind.
 	hideDeletedPrefixes bool
+	probedEntries       int
 	// probeBudget overrides hiddenProbeBudget for the per-prefix probe; 0 means use
 	// the package default. Tests set this to a small value to stay fast.
 	probeBudget int
+	// probeTotalBudget overrides hiddenProbeTotalBudget for the request-wide probe
+	// ceiling; 0 means use the package default.
+	probeTotalBudget int
 	// retractEntry undoes the listing of a base-path null object once its .versions
 	// sibling reveals that the current version is a delete marker.
 	retractEntry func(dir, name string)
@@ -1163,13 +1167,16 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	}
 }
 
-// hiddenProbePageSize is the window one probe request asks the filer for, and
-// hiddenProbeBudget caps how many entries a single prefix probe may scan.
-// The budget resets for every candidate prefix so one large all-deleted subtree
-// cannot exhaust the allowance for later prefixes in the same listing request.
+// hiddenProbePageSize is the window one probe request asks the filer for.
+// hiddenProbeBudget caps how many entries one prefix's probe may scan; it
+// resets for every candidate prefix so one large all-deleted subtree cannot
+// exhaust the allowance for later prefixes. hiddenProbeTotalBudget caps the
+// scanned entries a single listing request spends on probing overall, since a
+// page may still walk an unbounded number of all-deleted prefixes.
 const (
-	hiddenProbePageSize = 64
-	hiddenProbeBudget   = 10000
+	hiddenProbePageSize    = 64
+	hiddenProbeBudget      = 10000
+	hiddenProbeTotalBudget = 100000
 )
 
 // dirHoldsOnlyHiddenEntries reports whether dir holds entries but none that a
@@ -1193,13 +1200,18 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 	if cursor.probeBudget > 0 {
 		budget = cursor.probeBudget
 	}
-	return s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir, &budget)
+	totalBudget := hiddenProbeTotalBudget
+	if cursor.probeTotalBudget > 0 {
+		totalBudget = cursor.probeTotalBudget
+	}
+	return s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir, &budget, totalBudget, cursor)
 }
 
 // dirHoldsOnlyHiddenEntriesInner is the recursive body of dirHoldsOnlyHiddenEntries.
 // budget is shared across the recursive descent for one prefix but reset by the
 // caller for each top-level prefix, preventing cross-prefix budget exhaustion.
-func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, budget *int) bool {
+// cursor.probedEntries bounds the total work one listing request spends probing.
+func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, budget *int, totalBudget int, cursor *ListingCursor) bool {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1242,7 +1254,8 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, clie
 			sawEntry = true
 
 			*budget--
-			if *budget < 0 {
+			cursor.probedEntries++
+			if *budget < 0 || cursor.probedEntries > totalBudget {
 				return false
 			}
 
@@ -1283,7 +1296,7 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, clie
 			if entry.IsDirectoryKeyObject() {
 				return false
 			}
-			if !s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir+"/"+entry.Name, budget) {
+			if !s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir+"/"+entry.Name, budget, totalBudget, cursor) {
 				return false
 			}
 		}
