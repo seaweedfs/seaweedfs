@@ -4,7 +4,7 @@
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ include "seaweedfs.fullname" . }}-filer
+  name: {{ include "seaweedfs.componentName" (list . "filer") }}
   namespace: {{ .Release.Namespace }}
   {{- with .Values.filer.httpRoute.annotations }}
   annotations:

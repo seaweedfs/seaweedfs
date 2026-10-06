@@ -1,11 +1,17 @@
 {{- $s3Enabled := or .Values.s3.enabled (and .Values.filer.s3.enabled (not .Values.allInOne.enabled)) (and .Values.allInOne.enabled .Values.allInOne.s3.enabled) }}
 {{- if and $s3Enabled .Values.s3.httpRoute.enabled }}
-{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "s3")) .Values.allInOne.enabled }}
-{{- $s3Port := .Values.allInOne.s3.port | default .Values.s3.port }}
+{{- $serviceName := include "seaweedfs.componentName" (list . "s3") }}
+{{- $s3Port := .Values.filer.s3.port }}
+{{- if and .Values.allInOne.enabled .Values.allInOne.s3.enabled }}
+{{- $serviceName = include "seaweedfs.componentName" (list . "all-in-one") }}
+{{- $s3Port = .Values.allInOne.s3.port | default .Values.s3.port }}
+{{- else if .Values.s3.enabled }}
+{{- $s3Port = .Values.s3.port }}
+{{- end }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ include "seaweedfs.fullname" . }}-s3
+  name: {{ include "seaweedfs.componentName" (list . "s3") }}
   namespace: {{ .Release.Namespace }}
   {{- with .Values.s3.httpRoute.annotations }}
   annotations:
