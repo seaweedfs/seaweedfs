@@ -147,3 +147,47 @@ func TestAnonymousObjectACLHealPointerConcurrentWriter(t *testing.T) {
 		})
 	}
 }
+
+// TestClearStaleLatestVersionPointerConcurrentWriter pins the same CAS
+// contract on the pointer clear: a writer that promotes the pointer between
+// the clear's re-fetch and its persist must not be rolled back to a cleared
+// pointer.
+func TestClearStaleLatestVersionPointerConcurrentWriter(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		writerDuringWrite bool
+		wantCleared       bool
+		wantPointer       string
+	}{
+		{name: "idle key clears the stale pointer", wantCleared: true, wantPointer: ""},
+		{name: "concurrent writer during persist keeps its promotion", writerDuringWrite: true, wantCleared: false, wantPointer: "v2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &anonymousReadHealFiler{anonymousReadFiler: &anonymousReadFiler{entries: make(map[string]*filer_pb.Entry)}}
+			f.entries["/buckets/b/folder/.versions"] = &filer_pb.Entry{
+				Name:        ".versions",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{Mtime: 1700000000},
+				Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionIdKey:       []byte("v1"),
+					s3_constants.ExtLatestVersionFileNameKey: []byte("v_v1"),
+				},
+			}
+			if tc.writerDuringWrite {
+				f.onWrite = func(f *anonymousReadHealFiler) {
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					f.entries["/buckets/b/folder/.versions"].Extended[s3_constants.ExtLatestVersionIdKey] = []byte("v2")
+					f.entries["/buckets/b/folder/.versions"].Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte("v_v2")
+				}
+			}
+			s3a := newPutTestServer(t, startFakeFiler(t, f))
+			versionsEntry := proto.Clone(f.entries["/buckets/b/folder/.versions"]).(*filer_pb.Entry)
+
+			cleared := s3a.clearStaleLatestVersionPointer("b", "folder", "/buckets/b", "folder/.versions", versionsEntry, "test")
+			require.Equal(t, tc.wantCleared, cleared)
+			pointer := f.entries["/buckets/b/folder/.versions"].Extended[s3_constants.ExtLatestVersionIdKey]
+			require.Equal(t, tc.wantPointer, string(pointer))
+		})
+	}
+}
