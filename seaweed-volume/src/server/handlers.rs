@@ -3898,17 +3898,12 @@ async fn try_expand_chunk_manifest(
         if chunk.size == 0 || chunk.offset >= sum {
             continue;
         }
-        let window = chunk.size.min(sum - chunk.offset);
-        if let Some((_, ranges)) = &wanted {
-            let end = chunk.offset + window;
-            if !ranges
-                .iter()
-                .any(|r| r.length > 0 && chunk.offset < r.start + r.length && r.start < end)
-            {
-                continue;
-            }
-        }
-        let data = match read_chunk_needle(state, &chunk.fid).await {
+        let window = chunk_window(chunk.offset, chunk.size, sum).unwrap();
+        let ranges = wanted.as_ref().map(|(_, ranges)| ranges.as_slice());
+        let Some(how) = remote_read_for(chunk.offset, chunk.size, window, ranges) else {
+            continue;
+        };
+        let fetched = match read_chunk_needle(state, &chunk.fid, how).await {
             Ok(d) => d,
             Err(e) => {
                 return Some(ControlFlow::Break(
@@ -3921,25 +3916,37 @@ async fn try_expand_chunk_manifest(
             }
         };
         let offset = chunk.offset as usize;
-        if offset >= size {
+        let file_lo = offset + fetched.origin;
+        if file_lo >= size {
             continue;
         }
-        let bound = (window as usize).min(size - offset);
-        let copy_len = data.len().min(bound);
+        let window_end = offset + window as usize;
+        let copy_len = fetched
+            .data
+            .len()
+            .min(window_end.saturating_sub(file_lo))
+            .min(size - file_lo);
         if let Some((_, ranges)) = &wanted {
+            let file_hi = file_lo + copy_len;
             let key = |r: &HttpRange| (r.start as usize, (r.start + r.length) as usize);
             for r in ranges {
-                let lo = (r.start as usize).clamp(offset, offset + copy_len);
-                let hi = ((r.start + r.length) as usize).clamp(offset, offset + copy_len);
+                if r.length <= 0 {
+                    continue;
+                }
+                let rs = r.start as usize;
+                let re = rs + r.length as usize;
+                let lo = rs.max(file_lo);
+                let hi = re.min(file_hi);
                 if lo < hi {
-                    parts
-                        .entry(key(r))
-                        .or_default()
-                        .push((lo, data[lo - offset..hi - offset].to_vec()));
+                    parts.entry(key(r)).or_default().push((
+                        lo,
+                        fetched.data[lo - file_lo..hi - file_lo].to_vec(),
+                    ));
                 }
             }
         } else {
-            result[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
+            result[file_lo..file_lo + copy_len]
+                .copy_from_slice(&fetched.data[..copy_len]);
         }
     }
 
@@ -3976,12 +3983,115 @@ async fn try_expand_chunk_manifest(
     Some(ControlFlow::Continue((result, response_headers)))
 }
 
+#[derive(Clone, Copy)]
+enum RemoteRead {
+    /// GET with no Range. Keep at most `cap` bytes. Origin 0.
+    Whole { cap: u64 },
+    /// `Range: bytes={lo}-{hi-1}`. The returned bytes start at chunk offset `lo`.
+    Range { lo: u64, hi: u64 },
+}
+
+struct ChunkBytes {
+    /// Chunk offset of `data[0]`.
+    origin: usize,
+    data: Vec<u8>,
+}
+
+fn chunk_window(offset: i64, size: i64, sum: i64) -> Option<i64> {
+    if size <= 0 || offset >= sum {
+        return None;
+    }
+    Some(size.min(sum - offset))
+}
+
+/// Overlap of `[offset, offset+window)` with `ranges`, as chunk-relative `[lo, hi)`.
+fn overlap_span(offset: i64, window: i64, ranges: &[HttpRange]) -> Option<(i64, i64)> {
+    let file_hi = offset + window;
+    let mut lo = i64::MAX;
+    let mut hi = i64::MIN;
+    for r in ranges {
+        if r.length <= 0 {
+            continue;
+        }
+        let start = r.start.max(offset);
+        let end = (r.start + r.length).min(file_hi);
+        if start < end {
+            lo = lo.min(start);
+            hi = hi.max(end);
+        }
+    }
+    if lo < hi {
+        Some((lo - offset, hi - offset))
+    } else {
+        None
+    }
+}
+
+fn remote_read_for(
+    offset: i64,
+    size: i64,
+    window: i64,
+    ranges: Option<&[HttpRange]>,
+) -> Option<RemoteRead> {
+    let (lo, hi) = match ranges {
+        None => (0, window),
+        Some(ranges) => overlap_span(offset, window, ranges)?,
+    };
+    if lo == 0 && hi == window {
+        Some(RemoteRead::Whole { cap: size as u64 })
+    } else {
+        Some(RemoteRead::Range {
+            lo: lo as u64,
+            hi: hi as u64,
+        })
+    }
+}
+
+fn content_range_first_byte(headers: &HeaderMap) -> Option<u64> {
+    let values: Vec<_> = headers.get_all(header::CONTENT_RANGE).iter().collect();
+    if values.len() != 1 {
+        return None;
+    }
+    let value = values[0].to_str().ok()?;
+    let rest = value.trim().strip_prefix("bytes ")?;
+    let (start_end, _) = rest.split_once('/')?;
+    let (start, end) = start_end.split_once('-')?;
+    if start.trim().is_empty() || start.trim() == "*" || end.trim().is_empty() {
+        return None;
+    }
+    start.trim().parse().ok()
+}
+
+async fn read_limited_body(resp: &mut reqwest::Response, cap: usize) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    while out.len() < cap {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = cap - out.len();
+                if chunk.len() <= room {
+                    out.extend_from_slice(&chunk);
+                } else {
+                    out.extend_from_slice(&chunk[..room]);
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(e) => return Err(format!("read body: {e}")),
+        }
+    }
+    Ok(out)
+}
+
 /// Read one chunk-manifest chunk's final (decompressed) content bytes from
 /// wherever it lives: a local regular volume, a local EC volume
 /// (reconstruct-on-read from surviving shards), or a peer resolved via the
 /// master. Mirrors Go's ChunkedFileReader, which looks every chunk up through
 /// the master instead of assuming a local regular needle.
-async fn read_chunk_needle(state: &Arc<VolumeServerState>, fid: &str) -> Result<Vec<u8>, String> {
+async fn read_chunk_needle(
+    state: &Arc<VolumeServerState>,
+    fid: &str,
+    how: RemoteRead,
+) -> Result<ChunkBytes, String> {
     let (vid, nid, cookie) =
         parse_url_path(fid).ok_or_else(|| format!("invalid chunk fid: {}", fid))?;
 
@@ -4002,7 +4112,8 @@ async fn read_chunk_needle(state: &Arc<VolumeServerState>, fid: &str) -> Result<
             return store
                 .read_volume_needle(vid, &mut n)
                 .map_err(|e| format!("{}", e))
-                .and_then(|_| cookie_checked_chunk(n, cookie));
+                .and_then(|_| cookie_checked_chunk(n, cookie))
+                .map(|data| ChunkBytes { origin: 0, data });
         } else if store.find_ec_volume(vid).is_some() {
             Placement::Ec
         } else {
@@ -4013,13 +4124,15 @@ async fn read_chunk_needle(state: &Arc<VolumeServerState>, fid: &str) -> Result<
     match placement {
         Placement::Ec => {
             match crate::server::store_ec::read_ec_shard_needle_distributed(state, vid, nid).await {
-                Ok(Some(n)) => cookie_checked_chunk(n, cookie),
+                Ok(Some(n)) => {
+                    cookie_checked_chunk(n, cookie).map(|data| ChunkBytes { origin: 0, data })
+                }
                 Ok(None) => Err("not found".to_string()),
                 Err(e) => Err(format!("{}", e)),
             }
         }
         // The peer serves through its own GET handler, which validates the cookie.
-        Placement::Remote => read_remote_chunk_needle(state, vid, fid).await,
+        Placement::Remote => read_remote_chunk_needle(state, vid, fid, how).await,
     }
 }
 
@@ -4058,7 +4171,8 @@ async fn read_remote_chunk_needle(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     fid: &str,
-) -> Result<Vec<u8>, String> {
+    how: RemoteRead,
+) -> Result<ChunkBytes, String> {
     let locations = lookup_volume(
         &state.http_client,
         &state.outgoing_http_scheme,
@@ -4087,13 +4201,39 @@ async fn read_remote_chunk_needle(
                 continue;
             }
         };
-        match state.http_client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                Ok(b) => return Ok(b.to_vec()),
-                Err(e) => last_err = format!("read body from {}: {}", url, e),
-            },
-            Ok(resp) => last_err = format!("{} returned {}", url, resp.status()),
-            Err(e) => last_err = format!("request to {} failed: {}", url, e),
+        let mut req = state.http_client.get(&url);
+        let (origin, cap) = match how {
+            RemoteRead::Whole { cap } => (0usize, cap as usize),
+            RemoteRead::Range { lo, hi } => {
+                req = req.header(header::RANGE, format!("bytes={lo}-{}", hi - 1));
+                (lo as usize, (hi - lo) as usize)
+            }
+        };
+        match req.send().await {
+            Ok(mut resp) => {
+                let status = resp.status();
+                let err = match how {
+                    RemoteRead::Whole { .. } if status.is_success() => None,
+                    RemoteRead::Range { lo, .. }
+                        if status.as_u16() == StatusCode::PARTIAL_CONTENT.as_u16() =>
+                    {
+                        match content_range_first_byte(resp.headers()) {
+                            Some(start) if start == lo => None,
+                            _ => Some(format!("{url} Content-Range does not start at {lo}")),
+                        }
+                    }
+                    _ => Some(format!("{url} returned {status}")),
+                };
+                if let Some(err) = err {
+                    last_err = err;
+                    continue;
+                }
+                match read_limited_body(&mut resp, cap).await {
+                    Ok(data) => return Ok(ChunkBytes { origin, data }),
+                    Err(e) => last_err = format!("read body from {url}: {e}"),
+                }
+            }
+            Err(e) => last_err = format!("request to {url} failed: {e}"),
         }
     }
     Err(if last_err.is_empty() {
@@ -6148,6 +6288,250 @@ mod tests {
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(body, b"chunk manifest exceeds expansion limit");
         assert_eq!(taken(&reads), vec![0]);
+    }
+
+    #[derive(Clone)]
+    enum PeerMode {
+        /// Honor a single `bytes=lo-hi` range. No Range header returns `chunk`.
+        Honor { chunk: Vec<u8> },
+        Always200 { body: Vec<u8> },
+        Status(u16),
+        /// 206 whose Content-Range starts at 0, whatever Range was asked.
+        WrongStart { body: Vec<u8> },
+        /// 206, correct start, body shorter than the asked span.
+        Short { body: Vec<u8> },
+        /// 206, correct start, body longer than the asked span.
+        Long { body: Vec<u8> },
+        /// 206 with no Content-Range header.
+        NoContentRange { body: Vec<u8> },
+    }
+
+    struct PeerHit {
+        range: Option<String>,
+    }
+
+    async fn spawn_chunk_peer(
+        mode: std::sync::Arc<std::sync::Mutex<PeerMode>>,
+        hits: std::sync::Arc<std::sync::Mutex<Vec<PeerHit>>>,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        use axum::routing::get;
+        let app = axum::Router::new().route(
+            "/{*rest}",
+            get(move |headers: HeaderMap| {
+                let mode = mode.clone();
+                let hits = hits.clone();
+                async move {
+                    let range = headers
+                        .get(header::RANGE)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.to_string());
+                    hits.lock().unwrap().push(PeerHit { range: range.clone() });
+                    let mode = mode.lock().unwrap().clone();
+                    match mode {
+                        PeerMode::Honor { chunk } => match range {
+                            None => (StatusCode::OK, chunk).into_response(),
+                            Some(spec) => {
+                                let nums = spec.trim_start_matches("bytes=");
+                                let (lo, hi) = nums.split_once('-').unwrap();
+                                let lo: usize = lo.parse().unwrap();
+                                let hi: usize = hi.parse().unwrap();
+                                let body = chunk[lo..=hi].to_vec();
+                                let cr = format!("bytes {lo}-{hi}/{}", chunk.len());
+                                (
+                                    StatusCode::PARTIAL_CONTENT,
+                                    [(header::CONTENT_RANGE, cr)],
+                                    body,
+                                )
+                                    .into_response()
+                            }
+                        },
+                        PeerMode::Always200 { body } => (StatusCode::OK, body).into_response(),
+                        PeerMode::Status(code) => {
+                            StatusCode::from_u16(code).unwrap().into_response()
+                        }
+                        PeerMode::WrongStart { body } => (
+                            StatusCode::PARTIAL_CONTENT,
+                            [(header::CONTENT_RANGE, format!("bytes 0-{}/8", body.len().saturating_sub(1)))],
+                            body,
+                        )
+                            .into_response(),
+                        PeerMode::Short { body } => {
+                            let spec = range.unwrap();
+                            let nums = spec.trim_start_matches("bytes=");
+                            let (lo, hi) = nums.split_once('-').unwrap();
+                            (
+                                StatusCode::PARTIAL_CONTENT,
+                                [(
+                                    header::CONTENT_RANGE,
+                                    format!("bytes {lo}-{hi}/8"),
+                                )],
+                                body,
+                            )
+                                .into_response()
+                        }
+                        PeerMode::Long { body } => {
+                            let spec = range.unwrap();
+                            let nums = spec.trim_start_matches("bytes=");
+                            let (lo, hi) = nums.split_once('-').unwrap();
+                            (
+                                StatusCode::PARTIAL_CONTENT,
+                                [(
+                                    header::CONTENT_RANGE,
+                                    format!("bytes {lo}-{hi}/8"),
+                                )],
+                                body,
+                            )
+                                .into_response()
+                        }
+                        PeerMode::NoContentRange { body } => {
+                            (StatusCode::PARTIAL_CONTENT, body).into_response()
+                        }
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (addr, handle)
+    }
+
+    async fn spawn_lookup(peer: std::net::SocketAddr) -> String {
+        use axum::routing::get;
+        let app = axum::Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                axum::Json(serde_json::json!({
+                    "volumeOrFileId": "9",
+                    "locations": [{ "url": peer.to_string() }]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("127.0.0.1:{}", addr.port())
+    }
+
+    fn remote_manifest_state(tmp: &tempfile::TempDir, master_url: String) -> Arc<VolumeServerState> {
+        let mut state = volume_test_state(tmp);
+        let s = Arc::get_mut(&mut state).unwrap();
+        // Empty self_url makes `url.contains(self_url)` true for every peer.
+        s.self_url = "198.51.100.8:8080".to_string();
+        s.master_url = master_url;
+        state
+    }
+
+    /// Remote overlap is one bounded Range, indexed from `lo`. Local short
+    /// needles still zero-fill.
+    #[tokio::test]
+    async fn test_chunk_manifest_remote_range() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mode = std::sync::Arc::new(std::sync::Mutex::new(PeerMode::Honor {
+            chunk: b"ABCDEFGH".to_vec(),
+        }));
+        let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (peer, peer_handle) = spawn_chunk_peer(mode.clone(), hits.clone()).await;
+        let master = spawn_lookup(peer).await;
+        let state = remote_manifest_state(&tmp, master);
+        let local = put_test_needle(&state, 0x6e7a_0d01, b"0123456789");
+        let remote_fid = "9,0000000a12345678";
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":10}},{{"fid":"{remote_fid}","offset":10,"size":8}}]}}"#,
+            &local[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0d02, &json);
+
+        hits.lock().unwrap().clear();
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=12-15")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"CDEF");
+        assert_eq!(headers["Content-Range"], "bytes 12-15/18");
+        let seen = hits.lock().unwrap().drain(..).collect::<Vec<_>>();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].range.as_deref(), Some("bytes=2-5"));
+
+        hits.lock().unwrap().clear();
+        let (status, _, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=11-12,15-16")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        let text = String::from_utf8(body).unwrap();
+        assert!(text.contains("Content-Range: bytes 11-12/18\r\n\r\nBC"), "{text}");
+        assert!(text.contains("Content-Range: bytes 15-16/18\r\n\r\nFG"), "{text}");
+        let seen = hits.lock().unwrap().drain(..).collect::<Vec<_>>();
+        assert_eq!(seen.len(), 1, "disjoint ranges share one span");
+        assert_eq!(seen[0].range.as_deref(), Some("bytes=1-6"));
+
+        hits.lock().unwrap().clear();
+        let whole = put_manifest(
+            &state,
+            0x6e7a_0d03,
+            &format!(r#"{{"chunks":[{{"fid":"{remote_fid}","offset":0,"size":8}}]}}"#),
+        );
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=0-7")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"ABCDEFGH");
+        let seen = hits.lock().unwrap().drain(..).collect::<Vec<_>>();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].range, None);
+
+        *mode.lock().unwrap() = PeerMode::Short { body: b"AB".to_vec() };
+        hits.lock().unwrap().clear();
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"AB\0\0");
+
+        *mode.lock().unwrap() = PeerMode::Long {
+            body: b"ABCDEFGH".to_vec(),
+        };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=0-3")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"ABCD");
+
+        *mode.lock().unwrap() = PeerMode::WrongStart { body: b"ABCD".to_vec() };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        *mode.lock().unwrap() = PeerMode::NoContentRange { body: b"CDEF".to_vec() };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        *mode.lock().unwrap() = PeerMode::Always200 {
+            body: b"ABCDEFGH".to_vec(),
+        };
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=2-5")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        *mode.lock().unwrap() = PeerMode::Status(416);
+        let (status, _, body) = send_read(&state, Method::GET, &whole, Some(b"bytes=1-2")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(String::from_utf8_lossy(&body).contains("read chunk"));
+
+        peer_handle.abort();
+    }
+
+    /// A local needle shorter than declared zero-fills. The remote 416 above
+    /// is the intentional divergence.
+    #[tokio::test]
+    async fn test_chunk_manifest_local_short_needle_zero_fills() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let short = put_test_needle(&state, 0x6e7a_0d11, b"AB");
+        let json = format!(
+            r#"{{"chunks":[{{"fid":"{}","offset":0,"size":4}}]}}"#,
+            &short[1..]
+        );
+        let path = put_manifest(&state, 0x6e7a_0d12, &json);
+        let (status, _, body) = send_read(&state, Method::GET, &path, Some(b"bytes=1-2")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"B\0");
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"AB\0\0");
     }
 
     /// A proxied read forwards request headers as raw bytes, as Go does: a
