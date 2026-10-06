@@ -444,6 +444,46 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* Read a JWT key from the chart's existing security.toml without fromToml
+     (which requires Helm >=3.17). Args: (list "<section>" $raw).
+     Return the single-line TOML string token, including its quotes, so escapes
+     and explicitly empty values survive unchanged. No output means absent.
+     Accept bare or simply quoted dotted header segments. Fail on other quoted
+     headers rather than risk rotating a key hidden by unsupported syntax.
+     This reads the chart's section/key layout, not arbitrary TOML syntax. */}}
+{{- define "seaweedfs.existingTomlKey" -}}
+{{- $section := index . 0 -}}
+{{- $raw := index . 1 -}}
+{{- $parts := list -}}
+{{- range $part := splitList "." $section -}}
+  {{- $escaped := regexQuoteMeta $part -}}
+  {{- $parts = append $parts (printf `(?:%s|"%s"|'%s')` $escaped $escaped $escaped) -}}
+{{- end -}}
+{{- $header := printf `^\[[ \t]*%s[ \t]*\][ \t]*(#.*)?$` (join `[ \t]*\.[ \t]*` $parts) -}}
+{{- $segment := `(?:[A-Za-z0-9_-]+|"[^"\\]*"|'[^']*')` -}}
+{{- $simpleHeader := printf `^\[[ \t]*%s(?:[ \t]*\.[ \t]*%s)*[ \t]*\][ \t]*(#.*)?$` $segment $segment -}}
+{{- $assignment := `^(key|"key"|'key')[ \t]*=[ \t]*` -}}
+{{- $string := `"([^"\\]|\\.)*"|'[^']*'` -}}
+{{- $active := false -}}
+{{- $key := "" -}}
+{{- range $rawLine := splitList "\n" $raw -}}
+  {{- $line := trim $rawLine -}}
+  {{- if hasPrefix "[" $line -}}
+    {{- if and (regexMatch `^\[[^]]*["']` $line) (not (regexMatch $simpleHeader $line)) (eq $key "") -}}
+      {{- fail (printf "security.toml has an unsupported quoted section header; refusing to replace [%s].key" $section) -}}
+    {{- end -}}
+    {{- $active = regexMatch $header $line -}}
+  {{- else if and $active (eq $key "") (regexMatch $assignment $line) -}}
+    {{- $value := regexReplaceAll $assignment $line "" -}}
+    {{- if not (regexMatch (printf `^(%s)[ \t]*(#.*)?$` $string) $value) -}}
+      {{- fail (printf "security.toml [%s].key must be a single-line quoted TOML string; refusing to replace an existing key" $section) -}}
+    {{- end -}}
+    {{- $key = regexFind $string $value -}}
+  {{- end -}}
+{{- end -}}
+{{- $key -}}
+{{- end -}}
+
 {{/* True when the post-install bucket hook Job renders: an S3 endpoint, plus
      buckets to create on it. Read by the Job itself and by its NetworkPolicy,
      which has to appear exactly when the Job does - a Job without its policy
