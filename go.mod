@@ -60,7 +60,7 @@ require (
 	github.com/pquerna/cachecontrol v0.2.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
-	github.com/prometheus/common v0.70.1 // indirect
+	github.com/prometheus/common v0.71.0 // indirect
 	github.com/prometheus/procfs v0.22.0
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -134,8 +134,8 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/hashicorp/raft v1.7.3
-	github.com/hashicorp/raft-boltdb/v2 v2.3.1
+	github.com/hashicorp/raft v1.8.0
+	github.com/hashicorp/raft-boltdb/v2 v2.4.2
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jhump/protoreflect v1.18.0
 	github.com/linkedin/goavro/v2 v2.15.0
@@ -365,7 +365,7 @@ require (
 	github.com/emersion/go-vcard v0.0.0-20260618161152-d854b7e0e2d3 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.39.1-0.20260819172001-e6e3fd93e4be // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
-	github.com/fatih/color v1.18.0 // indirect
+	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
@@ -397,10 +397,10 @@ require (
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
-	github.com/hashicorp/go-metrics v0.5.4 // indirect
-	github.com/hashicorp/go-msgpack/v2 v2.1.2 // indirect
+	github.com/hashicorp/go-metrics v0.7.0 // indirect
+	github.com/hashicorp/go-msgpack/v2 v2.1.5 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
-	github.com/hashicorp/golang-lru v0.6.0 // indirect
+	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
