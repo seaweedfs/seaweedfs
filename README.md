@@ -82,16 +82,7 @@ AWS_ACCESS_KEY_ID=admin AWS_SECRET_ACCESS_KEY=secret \
 
 The same process also runs the master, a volume server, the filer, WebDAV, the Iceberg REST catalog, and the Admin UI. Add `S3_TABLE_BUCKET=warehouse` to also create an Iceberg table bucket, or `warehouse:LANCE` for a Lance one. Drop the AWS keys to run without authentication for development.
 
-When Admin authentication and mTLS are not configured, `weed mini` binds the
-Admin UI/API and its worker gRPC control plane to loopback. Set
-`WEED_ADMIN_PASSWORD` or configure `https.admin` mTLS to expose the Admin
-UI/API on `-ip.bind`. Remote workers must also opt in with
-`-admin.worker.ip=<address>` and should configure `grpc.admin` mTLS.
-`-admin.allowInsecureBind` preserves the legacy unauthenticated network bind,
-but should only be used on an otherwise isolated network. This hardening is
-tracked in [#11612](https://github.com/seaweedfs/seaweedfs/issues/11612) and
-implemented by
-[#11613](https://github.com/seaweedfs/seaweedfs/pull/11613).
+Without Admin authentication or mTLS, `weed mini` binds the Admin UI/API and its worker gRPC control plane to loopback rather than `-ip.bind`. Set `WEED_ADMIN_PASSWORD` or configure `https.admin` mTLS to keep the network bind. Remote workers must opt in with `-admin.worker.ip=<address>` and should configure `grpc.admin` mTLS. `-admin.allowInsecureBind` restores the legacy unauthenticated network bind and should only be used on an isolated network.
 
 > macOS: if the binary is quarantined, run `xattr -d com.apple.quarantine ./weed` first.
 
