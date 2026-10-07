@@ -32,11 +32,23 @@ func resolveCompactionOrder(meta table.Metadata, entries []iceberg.ManifestEntry
 			if _, ok := sortField.Transform.(iceberg.IdentityTransform); !ok {
 				continue
 			}
-			if field, ok := schema.FindFieldByID(sortField.SourceID()); ok {
-				if typ, ok := field.Type.(iceberg.PrimitiveType); ok {
-					return &compactionOrder{fieldID: field.ID, typ: typ, descending: sortField.Direction == table.SortDESC}
-				}
+			field, ok := schema.FindFieldByID(sortField.SourceID())
+			if !ok {
+				continue
 			}
+			typ, ok := field.Type.(iceberg.PrimitiveType)
+			if !ok {
+				continue
+			}
+			candidate := &compactionOrder{fieldID: field.ID, typ: typ, descending: sortField.Direction == table.SortDESC}
+			// The declared order only holds when every entry carries a bound
+			// for it; otherwise merging would claim sortedness it cannot
+			// verify. Fall back to inference instead of ordering by a later
+			// sort field alone.
+			if candidate.coversEntries(entries) {
+				return candidate
+			}
+			break
 		}
 	}
 	// A column only orders the merge when every entry in the group carries a
@@ -49,18 +61,20 @@ func resolveCompactionOrder(meta table.Metadata, entries []iceberg.ManifestEntry
 			continue
 		}
 		candidate := &compactionOrder{fieldID: field.ID, typ: typ, bestEffort: true}
-		complete := true
-		for _, entry := range entries {
-			if _, ok := candidate.key(entry); !ok {
-				complete = false
-				break
-			}
-		}
-		if complete {
+		if candidate.coversEntries(entries) {
 			return candidate
 		}
 	}
 	return nil
+}
+
+func (o *compactionOrder) coversEntries(entries []iceberg.ManifestEntry) bool {
+	for _, entry := range entries {
+		if _, ok := o.key(entry); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // key is the bound a file is ordered by: its lower bound on the column for an

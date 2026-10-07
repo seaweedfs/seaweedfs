@@ -317,3 +317,49 @@ func TestCompactDataFilesKeepsStrandedRunForSortedTable(t *testing.T) {
 		t.Fatalf("expected underfilled ordered runs to be kept, got %q", result)
 	}
 }
+
+// A declared sort order only applies when every file carries a bound for its
+// column; a file without one falls back to inference or unordered packing.
+func TestResolveCompactionOrderSkipsUncoveredSortField(t *testing.T) {
+	schema := newTestSchema()
+	spec := *iceberg.UnpartitionedSpec
+	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
+		SourceIDs: []int{1},
+		Transform: iceberg.IdentityTransform{},
+		Direction: table.SortASC,
+		NullOrder: table.NullsFirst,
+	}})
+	if err != nil {
+		t.Fatalf("new sort order: %v", err)
+	}
+	meta, err := table.NewMetadata(schema, &spec, sortOrder, "s3://b/p", nil)
+	if err != nil {
+		t.Fatalf("create metadata: %v", err)
+	}
+
+	entry := func(name string, bounded bool) iceberg.ManifestEntry {
+		dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData,
+			"s3://b/data/"+name, iceberg.ParquetFile, map[int]any{}, nil, nil, 2, 16)
+		if err != nil {
+			t.Fatalf("build data file: %v", err)
+		}
+		if bounded {
+			lo, _ := iceberg.Int64Literal(1).MarshalBinary()
+			hi, _ := iceberg.Int64Literal(2).MarshalBinary()
+			dfb.LowerBoundValues(map[int][]byte{1: lo}).UpperBoundValues(map[int][]byte{1: hi})
+		}
+		snapID := int64(1)
+		return iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build())
+	}
+
+	if order := resolveCompactionOrder(meta, []iceberg.ManifestEntry{
+		entry("a.parquet", true), entry("b.parquet", true),
+	}); order == nil || order.bestEffort {
+		t.Fatalf("covered sort field: got %+v, want strict order", order)
+	}
+	if order := resolveCompactionOrder(meta, []iceberg.ManifestEntry{
+		entry("a.parquet", true), entry("b.parquet", false),
+	}); order != nil {
+		t.Fatalf("uncovered sort field: got %+v, want nil", order)
+	}
+}
