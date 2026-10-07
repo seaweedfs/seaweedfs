@@ -477,6 +477,18 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	// mime and without data of its own answers application/x-directory, the marker type
 	// Hadoop-style clients (e.g. flink-s3-fs-presto) require to classify the path as a
 	// directory; defaulting to octet-stream makes them treat it as a 0-byte file.
+	// Marker content may be stored encrypted; decrypt before serving
+	content := entry.Content
+	sseType := s3a.detectPrimarySSEType(entry)
+	if sseType != "" && sseType != "None" {
+		var errCode s3err.ErrorCode
+		content, errCode = s3a.decryptDirectoryContent(r, entry, sseType)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+	}
+
 	contentType := entry.Attributes.Mime
 	if contentType == "" {
 		if entry.IsDirectoryKeyObject() {
@@ -487,15 +499,15 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", contentType)
 
-	// Set content length - use FileSize for accuracy, especially for large files
-	contentLength := int64(entry.Attributes.FileSize)
-	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 
 	// Set last modified
 	w.Header().Set("Last-Modified", time.Unix(entry.Attributes.Mtime, 0).UTC().Format(http.TimeFormat))
 
 	// Set ETag
 	w.Header().Set("ETag", "\""+filer.ETag(entry)+"\"")
+
+	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
 
 	// For HEAD requests, don't write body
 	if r.Method == http.MethodHead {
@@ -505,11 +517,65 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 
 	// Write content
 	w.WriteHeader(http.StatusOK)
-	if len(entry.Content) > 0 {
-		if _, err := w.Write(entry.Content); err != nil {
+	if len(content) > 0 {
+		if _, err := w.Write(content); err != nil {
 			glog.Errorf("serveDirectoryContent: failed to write response: %v", err)
 		}
 	}
+}
+
+// decryptDirectoryContent returns the plaintext of a directory marker's inline
+// entry.Content, which PutObjectHandler stores through the shared SSE path.
+func (s3a *S3ApiServer) decryptDirectoryContent(r *http.Request, entry *filer_pb.Entry, sseType string) ([]byte, s3err.ErrorCode) {
+	var reader io.Reader
+	var err error
+	switch sseType {
+	case s3_constants.SSETypeC:
+		customerKey, parseErr := ParseSSECHeaders(r)
+		if parseErr != nil {
+			return nil, MapSSECErrorToS3Error(parseErr)
+		}
+		if customerKey == nil {
+			return nil, s3err.ErrSSECustomerKeyMissing
+		}
+		if storedKeyMD5 := string(entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]); storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+			return nil, s3err.ErrAccessDenied
+		}
+		iv, ivErr := GetSSECIVFromMetadata(entry.Extended)
+		if ivErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		reader, err = CreateSSECDecryptedReader(bytes.NewReader(entry.Content), customerKey, iv)
+	case s3_constants.SSETypeKMS:
+		sseKMSKey, deserErr := DeserializeSSEKMSMetadata(entry.Extended[s3_constants.SeaweedFSSSEKMSKey])
+		if deserErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		reader, err = CreateSSEKMSDecryptedReader(bytes.NewReader(entry.Content), sseKMSKey)
+	case s3_constants.SSETypeS3:
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, deserErr := DeserializeSSES3Metadata(entry.Extended[s3_constants.SeaweedFSSSES3Key], keyManager)
+		if deserErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		iv, ivErr := GetSSES3IV(entry, sseS3Key, keyManager)
+		if ivErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		reader, err = CreateSSES3DecryptedReader(bytes.NewReader(entry.Content), sseS3Key, iv)
+	default:
+		return entry.Content, s3err.ErrNone
+	}
+	if err != nil {
+		glog.Errorf("decryptDirectoryContent: %v", err)
+		return nil, s3err.ErrInternalError
+	}
+	content, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		glog.Errorf("decryptDirectoryContent: %v", readErr)
+		return nil, s3err.ErrInternalError
+	}
+	return content, s3err.ErrNone
 }
 
 // handleDirectoryObjectRequest is a helper function that handles directory object requests

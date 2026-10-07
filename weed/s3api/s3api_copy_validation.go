@@ -119,10 +119,20 @@ func validateEncryptionCompatibility(headers http.Header) error {
 	// A repeated header is rejected rather than deduped: the encryption paths
 	// apply only the first value, so extra values could hide the method the
 	// client actually asked for.
-	if len(headers.Values(s3_constants.AmzServerSideEncryption)) > 1 {
-		return &CopyValidationError{
-			Code:    s3err.ErrInvalidRequest,
-			Message: "Multiple server-side encryption headers specified - only one is allowed",
+	for _, name := range []string{
+		s3_constants.AmzServerSideEncryption,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKey,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.AmzServerSideEncryptionContext,
+		s3_constants.AmzServerSideEncryptionBucketKeyEnabled,
+	} {
+		if len(headers.Values(name)) > 1 {
+			return &CopyValidationError{
+				Code:    s3err.ErrInvalidRequest,
+				Message: fmt.Sprintf("Multiple %s headers specified - only one is allowed", name),
+			}
 		}
 	}
 
@@ -130,6 +140,15 @@ func validateEncryptionCompatibility(headers http.Header) error {
 	hasSSEC := hasSSECHeaders(headers)
 	hasSSEKMS := sseAlgorithm == s3_constants.SSEAlgorithmKMS
 	hasSSES3 := sseAlgorithm == s3_constants.SSEAlgorithmAES256
+
+	// Reject unsupported algorithms so they are never persisted as a bogus
+	// destination header advertising encryption that was never applied.
+	if sseAlgorithm != "" && !hasSSEKMS && !hasSSES3 {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidEncryptionAlgorithm,
+			Message: fmt.Sprintf("Unsupported server-side encryption algorithm: %s", sseAlgorithm),
+		}
+	}
 
 	// KMS options only apply to aws:kms; with another method or none they name
 	// no method at all.
@@ -140,15 +159,6 @@ func validateEncryptionCompatibility(headers http.Header) error {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidRequest,
 			Message: "KMS encryption options require the aws:kms encryption method",
-		}
-	}
-
-	// Reject unsupported algorithms so they are never persisted as a bogus
-	// destination header advertising encryption that was never applied.
-	if sseAlgorithm != "" && !hasSSEKMS && !hasSSES3 {
-		return &CopyValidationError{
-			Code:    s3err.ErrInvalidEncryptionAlgorithm,
-			Message: fmt.Sprintf("Unsupported server-side encryption algorithm: %s", sseAlgorithm),
 		}
 	}
 
