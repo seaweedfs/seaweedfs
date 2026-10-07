@@ -974,7 +974,11 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		if h.canReadEntry("GetTable", principal, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespaceName, tableName, bucketTags, tableTags, identityActions, r) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
+		} else {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		}
 		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
 	}
 	if req.VersionToken != "" && metadata.VersionToken != req.VersionToken {
@@ -1047,6 +1051,7 @@ type catalogEntryKind struct {
 	noun         string
 	renameOp     string
 	createOp     string
+	readOp       string
 	notFoundCode string
 	existsCode   string
 	// resourceARN builds the ARN a policy scoped to this entry would name, so a
@@ -1060,6 +1065,7 @@ var (
 		noun:         "table",
 		renameOp:     "RenameTable",
 		createOp:     "CreateTable",
+		readOp:       "GetTable",
 		notFoundCode: ErrCodeNoSuchTable,
 		existsCode:   ErrCodeTableAlreadyExists,
 		resourceARN: func(h *S3TablesHandler, ownerAccountID, bucketName, id string) string {
@@ -1071,6 +1077,7 @@ var (
 		noun:         "view",
 		renameOp:     "RenameView",
 		createOp:     "CreateView",
+		readOp:       "GetView",
 		notFoundCode: ErrCodeNoSuchView,
 		existsCode:   ErrCodeViewAlreadyExists,
 		resourceARN: func(h *S3TablesHandler, ownerAccountID, bucketName, id string) string {
@@ -1078,6 +1085,24 @@ var (
 		},
 	}
 )
+
+// canReadEntry reports whether the principal may read the catalog entry a
+// denied write would touch. A denied write is then answered with 403 — the
+// refusal leaks nothing a reader could not load anyway — while a caller that
+// cannot see the entry keeps the not-found veil.
+func (h *S3TablesHandler) canReadEntry(readOp, principal, tableOwner, bucketOwner, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespace, name string, bucketTags, tableTags map[string]string, identityActions []string, r *http.Request) bool {
+	ctx := &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespace,
+		TableName:       name,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllowFor(r),
+	}
+	return CheckPermissionWithContext(readOp, principal, tableOwner, tablePolicy, tableARN, ctx) ||
+		CheckPermissionWithContext(readOp, principal, bucketOwner, bucketPolicy, bucketARN, ctx)
+}
 
 // handleRenameTable moves a table's catalog entry to a new namespace/name within
 // the same bucket. It is catalog-only: the metadata.json and data files stay put,
@@ -1266,7 +1291,11 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
+		if h.canReadEntry(kind.readOp, principal, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, srcNamespace, srcName, bucketTags, tableTags, identityActions, r) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to rename "+kind.noun)
+		} else {
+			h.writeError(w, http.StatusNotFound, kind.notFoundCode, fmt.Sprintf("%s %s not found", kind.noun, srcName))
+		}
 		return NewAuthError(kind.renameOp, principal, "not authorized to rename "+kind.noun)
 	}
 
@@ -1543,7 +1572,11 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	})
 
 	if !tableAllowed && !bucketAllowed {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
+		if h.canReadEntry("GetTable", principal, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespaceName, tableName, bucketTags, tableTags, identityActions, r) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update table")
+		} else {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
+		}
 		return NewAuthError("UpdateTable", principal, "not authorized to update table")
 	}
 
