@@ -35,3 +35,16 @@ func TestPlanECDestinationsStrictPlacement(t *testing.T) {
 	_, _, err = planECDestinations(snap, nodeAddresses, metric, cfg, rp, erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount)
 	require.Error(t, err, "strict placement must refuse rather than weaken the rack cap")
 }
+
+func TestStrictPlacementRoundTripsThroughTaskPolicy(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.StrictPlacement = true
+
+	restored := NewDefaultConfig()
+	require.NoError(t, restored.FromTaskPolicy(cfg.ToTaskPolicy()))
+	require.True(t, restored.StrictPlacement, "strict placement must survive the persisted policy round trip")
+
+	restored.StrictPlacement = false
+	require.NoError(t, restored.FromTaskPolicy(restored.ToTaskPolicy()))
+	require.False(t, restored.StrictPlacement)
+}

@@ -205,6 +205,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				CollectionFilter: c.CollectionFilter,
 				PreferredTags:    preferredTagsCopy,
 				ReplicaPlacement: c.ReplicaPlacement,
+				StrictPlacement:  c.StrictPlacement,
 			},
 		},
 	}
@@ -229,6 +230,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.CollectionFilter = ecConfig.CollectionFilter
 		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
 		c.ReplicaPlacement = ecConfig.ReplicaPlacement
+		c.StrictPlacement = ecConfig.StrictPlacement
 	}
 
 	return nil

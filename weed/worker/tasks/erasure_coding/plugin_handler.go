@@ -146,6 +146,13 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
+						{
+							Name:        "strict_placement",
+							Label:       "Strict Placement",
+							Description: "Fail EC planning when the placement constraints cannot be met instead of relaxing them.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
+						},
 					},
 				},
 			},
@@ -164,6 +171,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"replica_placement": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"strict_placement": {
+					Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false},
 				},
 			},
 		},
