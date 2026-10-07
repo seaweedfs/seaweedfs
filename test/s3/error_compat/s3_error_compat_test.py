@@ -81,7 +81,7 @@ def case(group, name, expect, ref, req, check=None):
     st, data = send(**req)
     root, code = shape(data)
     note = check() if check else ''
-    ok = st == expect[0] and expect[1] in (None, root) and expect[2] in (None, code)
+    ok = st == expect[0] and expect[1] in (None, root) and expect[2] in (None, code) and not note
     rows.append((group, name, '%s %s %s' % (st, root, code), '%s %s %s' % (expect[0], expect[1] or '', expect[2] or ''), note, ok, ref))
 
 
@@ -138,7 +138,7 @@ for sub in ('logging', 'notification', 'accelerate', 'website', 'replication',
          S3('PUT', '/%s?%s' % (B, sub), body=b'<X/>'))
 case(1, 'DELETE ?logging', (501, 'Error', 'NotImplemented'), S3DOC + 'API_Error.html#:~:text=Code%3A%20NotImplemented',
      S3('DELETE', '/%s?logging' % B),
-     lambda: 'bucket still exists' if send('HEAD', '/' + B)[0] == 200 else 'BUCKET DELETED')
+     lambda: '' if send('HEAD', '/' + B)[0] == 200 else 'BUCKET DELETED')
 case(1, 'CopyObject, x-amz-copy-source without "/"', (400, 'Error', 'InvalidArgument'),
      S3DOC + 'API_CopyObject.html#AmazonS3-CopyObject-request-header-CopySource',
      S3('PUT', '/%s/copy-dst' % B, headers={'x-amz-copy-source': 'nobucketonly'}), exists('copy-dst'))
