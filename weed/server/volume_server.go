@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -55,6 +56,8 @@ type VolumeServer struct {
 	AllowUntrustedRemoteEndpoints bool
 	compactionBytePerSecond       int64
 	maintenanceBytePerSecond      int64
+	vacuumCommitSlots             chan struct{}
+	vacuumCommitsWaiting          atomic.Int32
 	metricsAddress                string
 	metricsIntervalSec            int
 	fileSizeLimitBytes            int64
@@ -79,6 +82,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readMode string,
 	compactionMBPerSecond int,
 	maintenanceMBPerSecond int,
+	maxParallelVacuumCommits int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
@@ -125,6 +129,9 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		ldbTimout:                     ldbTimeout,
 		whiteList:                     whiteList,
 		AllowUntrustedRemoteEndpoints: allowUntrustedRemoteEndpoints,
+	}
+	if maxParallelVacuumCommits > 0 {
+		vs.vacuumCommitSlots = make(chan struct{}, maxParallelVacuumCommits)
 	}
 
 	whiteList = append(whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...)

@@ -64,6 +64,7 @@ seaweed-volume --port 8080 --master localhost:9333 --dir /data/vol1 --max 7 \
 | `--whiteList` | | Comma-separated IPs with write permission |
 | `--preStopSeconds` | `10` | Graceful drain period before shutdown |
 | `--compactionMBps` | `0` (unlimited) | Compaction I/O rate limit |
+| `--compactionMaxParallelCommits` | `0` (unlimited) | Max concurrent vacuum commits |
 | `--pprof` | `false` | Enable pprof HTTP handlers |
 
 Set `RUST_LOG=debug` (or `trace`, `info`, `warn`) for log level control.
