@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/apache/iceberg-go"
 	"github.com/parquet-go/parquet-go"
 
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 type lineageDataRow struct {
@@ -272,5 +274,111 @@ func TestLineageLayoutRejectsReservedNameUnderOtherID(t *testing.T) {
 	schema := parquet.SchemaOf(new(badRow))
 	if _, err := newLineageLayout(schema); err == nil {
 		t.Fatal("reserved name under a non-reserved field id must fail the layout")
+	}
+}
+
+// Compaction on a v3 table reads row lineage the way a reader does: the
+// entries in the stored manifest carry no first_row_id, so the ones
+// compactDataFiles merges are the inherited values (the manifest-list
+// first_row_id plus the preceding files' record counts). The merged file
+// materializes those IDs and its new entry names its own first row's.
+func TestCompactDataFilesV3RowLineageManifestRead(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	ctx := context.Background()
+
+	setup := tableSetup{BucketName: "test-bucket", Namespace: "ns", TableName: "tbl"}
+	spec := *iceberg.UnpartitionedSpec
+	snapID := int64(1)
+
+	putDataFileRows(t, fs, "f1.parquet", []lineageDataRow{{1, "a"}, {2, "b"}, {3, "c"}})
+	putDataFileRows(t, fs, "f2.parquet", []lineageDataRow{{4, "d"}, {5, "e"}})
+
+	entries := []iceberg.ManifestEntry{
+		iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil,
+			mustDataFile(t, spec, "data/f1.parquet", 3)),
+		iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil,
+			mustDataFile(t, spec, "data/f2.parquet", 2)),
+	}
+	writeV3Table(t, fs, setup, entries, nil, 0, 5)
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		ApplyDeletes:        true,
+	}
+	result, _, err := handler.compactDataFiles(ctx, client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "compacted 2 files into 1") {
+		t.Fatalf("unexpected result: %q", result)
+	}
+
+	state, err := loadCurrentMetadata(ctx, client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	newSnap := state.Metadata.CurrentSnapshot()
+	if newSnap == nil || newSnap.SnapshotID == snapID {
+		t.Fatalf("no new snapshot committed: %+v", newSnap)
+	}
+	if newSnap.FirstRowID == nil || *newSnap.FirstRowID != 5 {
+		t.Fatalf("new snapshot first-row-id = %v, want 5", *newSnap.FirstRowID)
+	}
+
+	manifestListData, err := loadFileByIcebergPath(ctx, client, setup.BucketName, state.DataPath, newSnap.ManifestList)
+	if err != nil {
+		t.Fatalf("read new manifest list: %v", err)
+	}
+	manifests, err := s3tables.ReadManifestList(manifestListData)
+	if err != nil {
+		t.Fatalf("parse new manifest list: %v", err)
+	}
+	if len(manifests) != 1 {
+		t.Fatalf("new snapshot has %d manifests, want 1", len(manifests))
+	}
+	manifestData, err := loadFileByIcebergPath(ctx, client, setup.BucketName, state.DataPath, manifests[0].FilePath())
+	if err != nil {
+		t.Fatalf("read new manifest: %v", err)
+	}
+	newEntries, err := s3tables.ReadManifest(manifests[0], manifestData, false, specByID(state.Metadata), state.Metadata.CurrentSchema())
+	if err != nil {
+		t.Fatalf("parse new manifest: %v", err)
+	}
+
+	var merged iceberg.DataFile
+	var deletedPaths int
+	for _, e := range newEntries {
+		switch e.Status() {
+		case iceberg.EntryStatusADDED:
+			merged = e.DataFile()
+		case iceberg.EntryStatusDELETED:
+			deletedPaths++
+		}
+	}
+	if deletedPaths != 2 {
+		t.Fatalf("new manifest has %d deleted entries, want 2", deletedPaths)
+	}
+	if merged == nil {
+		t.Fatal("new manifest has no added entry")
+	}
+	if merged.FirstRowID() == nil || *merged.FirstRowID() != 0 {
+		t.Fatalf("merged entry first_row_id = %v, want 0", merged.FirstRowID())
+	}
+
+	mergedData, err := loadFileByIcebergPath(ctx, client, setup.BucketName, state.DataPath, merged.FilePath())
+	if err != nil {
+		t.Fatalf("read merged file: %v", err)
+	}
+	_, _, rowIDs, seqs := mergedColumns(t, mergedData)
+	wantRowIDs := []any{int64(0), int64(1), int64(2), int64(3), int64(4)}
+	for i, want := range wantRowIDs {
+		if rowIDs[i] != want {
+			t.Fatalf("row %d _row_id = %v, want %v", i, rowIDs[i], want)
+		}
+		if seqs[i] != int64(1) {
+			t.Fatalf("row %d _last_updated_sequence_number = %v, want 1", i, seqs[i])
+		}
 	}
 }

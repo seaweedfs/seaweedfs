@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -355,4 +356,32 @@ func copyFileRows(ctx context.Context, reader *parquet.Reader, entry iceberg.Man
 		}
 		return write(filtered)
 	})
+}
+
+// mergedFileFirstRowID is the _row_id of the merged output's first row, or nil when it carries none: the value the
+// manifest entry's first_row_id must name, since rewritten rows keep their IDs rather than taking fresh ones.
+func mergedFileFirstRowID(data []byte) (*int64, error) {
+	reader := parquet.NewReader(bytes.NewReader(data))
+	defer reader.Close()
+	schema := reader.Schema()
+	if schema == nil {
+		return nil, nil
+	}
+	leaf, ok := schema.Lookup(iceberg.RowIDColumnName)
+	if !ok {
+		return nil, nil
+	}
+	rows := make([]parquet.Row, 1)
+	if _, err := reader.ReadRows(rows); err != nil {
+		if err == io.EOF {
+			return nil, nil
+		}
+		return nil, err
+	}
+	v := rows[0][leaf.ColumnIndex]
+	if v.IsNull() {
+		return nil, nil
+	}
+	id := v.Int64()
+	return &id, nil
 }

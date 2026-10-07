@@ -333,6 +333,20 @@ func (h *Handler) compactDataFiles(
 			}
 			writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
 
+			// A merged file keeps its rows' row IDs, so its entry names the first
+			// materialized one instead of inheriting a fresh range at commit.
+			if lineage {
+				firstID, err := mergedFileFirstRowID(mergedData)
+				if err != nil {
+					glog.Warningf("iceberg compact: failed to read merged file lineage for bin %d: %v", binIdx, err)
+					_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
+					goto binDone
+				}
+				if firstID != nil {
+					dfBuilder.FirstRowID(*firstID)
+				}
+			}
+
 			mergedDataFile := dfBuilder.Build()
 			summary.addFile(mergedDataFile)
 			newEntry := iceberg.NewManifestEntry(
