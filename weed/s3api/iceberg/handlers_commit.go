@@ -398,7 +398,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			glog.V(1).Infof("Iceberg: failed to cleanup metadata file %s after update failure: %v", newMetadataLocation, cleanupErr)
 		}
 		glog.Errorf("Iceberg: CommitTable UpdateTable error: %v", err)
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to commit table update: "+err.Error())
+		writeManagerError(w, err)
 		return
 	}
 }
