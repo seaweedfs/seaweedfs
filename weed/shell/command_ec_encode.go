@@ -47,6 +47,14 @@ func (c *commandEcEncode) Help() string {
 	If you only have less than 4 volume servers, with erasure coding, at least you can afford to
 	have 4 corrupted shard files.
 
+	The guarantee follows from where shards land: a volume survives the loss of any
+	nodes (or racks) that hold at most parityShards (4) shards between them. Spread
+	is best-effort by default; -shardReplicaPlacement caps it: its rack digit
+	bounds the shards one rack may hold, its node digit the shards one node may
+	hold (the data-center digit is not used for EC). For example
+	-shardReplicaPlacement=021 limits each node to 1 shard and each rack to 2, so
+	the loss of one rack costs at most 2 shards.
+
 	The -collection parameter is a comma-separated list of collection names, with
 	"*" and "?" wildcards, and regex patterns:
 	  - One collection: ec.encode -collection="mybucket"

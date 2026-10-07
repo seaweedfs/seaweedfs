@@ -18,6 +18,7 @@ type Config struct {
 	MinSizeMB        int      `json:"min_size_mb"`
 	PreferredTags    []string `json:"preferred_tags"`
 	ReplicaPlacement string   `json:"replica_placement"` // e.g. "020"; empty falls back to the master default replication
+	StrictPlacement  bool     `json:"strict_placement"`  // fail planning instead of relaxing placement constraints
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -170,6 +171,18 @@ func GetConfigSpec() base.ConfigSpec {
 				Placeholder:  "020",
 				InputType:    "text",
 				CSSClasses:   "form-control",
+			},
+			{
+				Name:         "strict_placement",
+				JSONName:     "strict_placement",
+				Type:         config.FieldTypeBool,
+				DefaultValue: false,
+				Required:     false,
+				DisplayName:  "Strict Placement",
+				Description:  "Refuse to encode a volume when the placement constraints can't be satisfied",
+				HelpText:     "When enabled, a volume is only encoded if every shard can be placed within the per-disk, anti-affinity, replica-placement and per-rack caps, so the configured resilience is preserved. When disabled (default), unsatisfiable constraints are relaxed and noted in the log",
+				InputType:    "checkbox",
+				CSSClasses:   "form-check-input",
 			},
 		},
 	}
