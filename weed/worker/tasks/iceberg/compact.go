@@ -189,9 +189,11 @@ func (h *Handler) compactDataFiles(
 		return "", nil, err
 	}
 
-	// Build compaction bins: group small data files by partition.
+	// Build compaction bins: group small data files by partition, each bin's
+	// files in the order of their bounds so the merged file keeps the
+	// ordering its inputs had.
 	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
-	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles, resolveCompactionOrder(meta, candidateEntries))
 	initialBinCount := len(bins)
 	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	if len(bins) == 0 {
@@ -536,7 +538,12 @@ func (h *Handler) compactDataFiles(
 // A file is "small" if it's below targetSize. A bin must have at least
 // minFiles entries to be worth compacting.
 //
-func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minFiles int) []compactionBin {
+// With an order, every bin lists its files by their bounds on the ordering
+// column and an oversized partition is split into runs of consecutive files,
+// so each merged file covers one contiguous range of that column. Without one
+// the files keep manifest order and an oversized partition is packed
+// largest-first.
+func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minFiles int, order *compactionOrder) []compactionBin {
 	if minFiles < 2 {
 		minFiles = 2
 	}
@@ -575,8 +582,11 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 		if len(bin.Entries) < minFiles {
 			continue
 		}
+		order.sortEntries(bin.Entries)
 		if bin.TotalSize <= targetSize {
 			result = append(result, *bin)
+		} else if order != nil {
+			result = append(result, splitOrderedBin(*bin, targetSize, minFiles)...)
 		} else {
 			result = append(result, splitOversizedBin(*bin, targetSize, minFiles)...)
 		}

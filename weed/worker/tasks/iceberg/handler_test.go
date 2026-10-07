@@ -701,7 +701,7 @@ func TestBuildCompactionBins(t *testing.T) {
 		{path: "data/f3.parquet", size: 4096, partition: map[int]any{}},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 1 {
 		t.Fatalf("expected 1 bin, got %d", len(bins))
 	}
@@ -720,7 +720,7 @@ func TestBuildCompactionBinsFiltersLargeFiles(t *testing.T) {
 		{path: "data/large.parquet", size: 5000, partition: map[int]any{}},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 1 {
 		t.Fatalf("expected 1 bin, got %d", len(bins))
 	}
@@ -756,7 +756,7 @@ func TestBuildCompactionBinsLowercaseParquetFormat(t *testing.T) {
 	entries[0] = lowercaseFormatEntry{entries[0]}
 	entries[1] = lowercaseFormatEntry{entries[1]}
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 1 {
 		t.Fatalf("expected 1 bin, got %d", len(bins))
 	}
@@ -774,7 +774,7 @@ func TestBuildCompactionBinsMinFilesThreshold(t *testing.T) {
 		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 0 {
 		t.Errorf("expected 0 bins (below min threshold), got %d", len(bins))
 	}
@@ -801,7 +801,7 @@ func TestBuildCompactionBinsMultiplePartitions(t *testing.T) {
 		{path: "data/b3.parquet", size: 4096, partition: partB, partitionSpec: &partitionSpec},
 	})
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 2 {
 		t.Fatalf("expected 2 bins (one per partition), got %d", len(bins))
 	}
@@ -977,7 +977,7 @@ func TestBuildCompactionBinsMultipleSpecs(t *testing.T) {
 		{path: "data/s1-f2.parquet", size: 2048, partition: map[int]any{}, specID: 1},
 	}, partSpecs)
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 2 {
 		t.Fatalf("expected 2 bins (one per spec), got %d", len(bins))
 	}
@@ -1011,7 +1011,7 @@ func TestBuildCompactionBinsSingleSpec(t *testing.T) {
 		{path: "data/f3.parquet", size: 4096, partition: map[int]any{}, specID: 0},
 	}, partSpecs)
 
-	bins := buildCompactionBins(entries, targetSize, minFiles)
+	bins := buildCompactionBins(entries, targetSize, minFiles, nil)
 	if len(bins) != 1 {
 		t.Fatalf("expected 1 bin, got %d", len(bins))
 	}
