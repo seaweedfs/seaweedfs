@@ -536,8 +536,10 @@ func (h *Handler) rewritePositionDeleteFiles(
 		allManifests = append(allManifests, mf)
 	}
 
+	firstRowID := rowLineageFirstRowID(meta)
 	var manifestListBuf bytes.Buffer
-	if err := iceberg.WriteManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, 0, allManifests); err != nil {
+	addedRows, err := writeManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, firstRowID, allManifests)
+	if err != nil {
 		return "", nil, fmt.Errorf("write delete manifest list: %w", err)
 	}
 	manifestListName := fmt.Sprintf("snap-%d-%s.avro", newSnapID, artifactSuffix)
@@ -548,9 +550,9 @@ func (h *Handler) rewritePositionDeleteFiles(
 
 	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListName)
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
-		cs := currentMeta.CurrentSnapshot()
-		if cs == nil || cs.SnapshotID != snapshotID {
-			return errStalePlan
+		cs, err := checkCommitPlan(currentMeta, snapshotID, version, firstRowID)
+		if err != nil {
+			return err
 		}
 		newSnapshot := &table.Snapshot{
 			SnapshotID:       newSnapID,
@@ -569,6 +571,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 				return &id
 			}(),
 		}
+		setRowLineage(newSnapshot, version, firstRowID, addedRows)
 		if err := builder.AddSnapshot(newSnapshot); err != nil {
 			return err
 		}

@@ -203,6 +203,8 @@ func (h *Handler) compactDataFiles(
 
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
+	// v3 row lineage: the snapshot starts at the table's next-row-id (row_lineage.go).
+	firstRowID := rowLineageFirstRowID(meta)
 
 	// Compute the snapshot ID for the commit up front so all manifest entries
 	// reference the same snapshot that will actually be committed.
@@ -460,7 +462,7 @@ func (h *Handler) compactDataFiles(
 	// Write new manifest list
 	var manifestListBuf bytes.Buffer
 	seqNum := currentSnap.SequenceNumber + 1
-	err = iceberg.WriteManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, 0, allManifests)
+	addedRows, err := writeManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, firstRowID, allManifests)
 	if err != nil {
 		return "", nil, fmt.Errorf("write compact manifest list: %w", err)
 	}
@@ -475,9 +477,9 @@ func (h *Handler) compactDataFiles(
 	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListFileName)
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't advanced since we planned.
-		cs := currentMeta.CurrentSnapshot()
-		if cs == nil || cs.SnapshotID != snapshotID {
-			return errStalePlan
+		cs, err := checkCommitPlan(currentMeta, snapshotID, version, firstRowID)
+		if err != nil {
+			return err
 		}
 
 		newSnapshot := &table.Snapshot{
@@ -501,6 +503,7 @@ func (h *Handler) compactDataFiles(
 		if rewritePlan != nil && rewritePlan.strategy == "sort" {
 			newSnapshot.Summary.Properties["sort-fields"] = rewritePlan.summaryLabel()
 		}
+		setRowLineage(newSnapshot, version, firstRowID, addedRows)
 		if err := builder.AddSnapshot(newSnapshot); err != nil {
 			return err
 		}
