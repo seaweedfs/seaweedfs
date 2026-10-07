@@ -433,6 +433,14 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
+
+	// Same as PutBucketHandler: a query key no DELETE route claimed is an
+	// unimplemented subresource, not a bare DeleteBucket.
+	if subresource, found := unroutedSubresource(r, nil); found {
+		glog.V(1).Infof("unimplemented bucket DELETE subresource ?%s", subresource)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+		return
+	}
 	// The teardown below retries, and a failover walk repeats it once per
 	// filer, so the backoff comes out of one allowance held here.
 	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))
