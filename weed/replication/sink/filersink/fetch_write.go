@@ -315,6 +315,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtimeNs int64, sourc
 		}
 		if fs.writeChunkByFiler {
 			uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(fs.address)
+			uploadOption.FilerJwt = fs.jwtForFiler
 		}
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
 			fs,
@@ -435,6 +436,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		}
 		if fs.writeChunkByFiler {
 			uploadOption.GenUploadUrl = operation.GenUploadUrlProxy(fs.address)
+			uploadOption.FilerJwt = fs.jwtForFiler
 		}
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
 			fs,

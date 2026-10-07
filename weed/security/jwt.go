@@ -8,6 +8,7 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/spf13/viper"
 )
 
 type EncodedJwt string
@@ -150,4 +151,39 @@ func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims)
 		}
 		return []byte(signingKey), nil
 	})
+}
+
+// FilerJwtProvider signs the credential a filer's HTTP API expects. A nil
+// provider means the process-wide jwt.filer_signing configuration applies.
+type FilerJwtProvider func(isWrite bool) EncodedJwt
+
+// LoadFilerJwtFromFile reads jwt.filer_signing from a security file the way
+// LoadClientTLSFromFile reads the TLS section. A nil provider means the file
+// configures no filer signing keys and the process-wide configuration applies.
+func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
+	v := viper.New()
+	v.SetConfigFile(configFile)
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
+	}
+
+	signingKey := SigningKey(v.GetString("jwt.filer_signing.key"))
+	readSigningKey := SigningKey(v.GetString("jwt.filer_signing.read.key"))
+	if len(signingKey) == 0 && len(readSigningKey) == 0 {
+		return nil, nil
+	}
+	signingKeyExpires := v.GetInt("jwt.filer_signing.expires_after_seconds")
+	if signingKeyExpires == 0 {
+		signingKeyExpires = 10
+	}
+	readSigningKeyExpires := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+	if readSigningKeyExpires == 0 {
+		readSigningKeyExpires = 60
+	}
+	return func(isWrite bool) EncodedJwt {
+		if isWrite {
+			return GenJwtForFilerServer(signingKey, signingKeyExpires)
+		}
+		return GenJwtForFilerServer(readSigningKey, readSigningKeyExpires)
+	}, nil
 }

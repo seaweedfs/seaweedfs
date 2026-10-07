@@ -62,6 +62,7 @@ type FilerSink struct {
 	signature         int32
 	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 	uploader          *operation.Uploader
+	jwtForFiler       security.FilerJwtProvider
 	// lastServedFileId is the most recent chunk the source did serve, the probe
 	// sourceStillServesChunks re-checks before writing an entry off.
 	lastServedFileId atomic.Pointer[string]
@@ -114,6 +115,12 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 // start, since it writes fs.uploader without synchronization.
 func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
 	fs.uploader = uploader
+}
+
+// SetFilerJwtProvider sets the filer API credential for proxied chunk writes.
+// Must be called during initialization, before any replication goroutines start.
+func (fs *FilerSink) SetFilerJwtProvider(provider security.FilerJwtProvider) {
+	fs.jwtForFiler = provider
 }
 
 func (fs *FilerSink) getUploader() (*operation.Uploader, error) {
