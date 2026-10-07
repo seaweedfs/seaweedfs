@@ -345,6 +345,12 @@ func collectOrphanCandidates(
 	for mle := range meta.PreviousFiles() {
 		referencedFiles[mle.MetadataFile] = struct{}{}
 	}
+	for sf := range meta.Statistics() {
+		referencedFiles[sf.StatisticsPath] = struct{}{}
+	}
+	for psf := range meta.PartitionStatistics() {
+		referencedFiles[psf.StatisticsPath] = struct{}{}
+	}
 
 	referencedFilerPaths := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
