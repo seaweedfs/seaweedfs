@@ -176,3 +176,38 @@ func TestDeniedWritesReportForbiddenToReaders(t *testing.T) {
 		})
 	}
 }
+
+// A view stored at a table name is hidden from table operations: a principal
+// with only s3tables:GetTable must get the same not-found it would see for a
+// genuinely missing name, never a 403 that reveals the entry exists.
+func TestDeniedTableWritesDoNotRevealViews(t *testing.T) {
+	fs, manager := startRenameManager(t)
+	manager.SetTrusted(false)
+	manager.SetDefaultAllow(false)
+
+	viewMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:           "v",
+		Namespace:      "ns",
+		OwnerAccountID: DefaultAccountID,
+	})
+	fs.Put(GetNamespacePath(renameTestBucket, "ns"), "v", map[string][]byte{
+		ExtendedKeyMetadata:  viewMeta,
+		ExtendedKeyEntryType: []byte(EntryTypeView),
+	})
+
+	readActions := []string{"s3tables:GetTable"}
+	for _, tc := range []struct {
+		operation string
+		request   interface{}
+	}{
+		{"GetTable", &GetTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "v"}},
+		{"UpdateTable", &UpdateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "v", VersionToken: "any"}},
+		{"DeleteTable", &DeleteTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "v"}},
+	} {
+		t.Run(tc.operation, func(t *testing.T) {
+			got := runRequestAs(t, manager, fs, tc.operation, tc.request, readActions)
+			assert.Equal(t, 404, got.status)
+			assert.Equal(t, ErrCodeNoSuchTable, got.body.Type)
+		})
+	}
+}
