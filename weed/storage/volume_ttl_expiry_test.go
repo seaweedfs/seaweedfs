@@ -250,7 +250,7 @@ func TestVolumeTtlClockSkipsUnaffordableScanWithoutDatReads(t *testing.T) {
 	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
 	vacuumedLastWriteScanEntries = 2
 
-	appendAtNs, err := findLastWriteAppendAtNs(v, indexFile, indexStat.Size())
+	appendAtNs, _, err := findLastWriteAppendAtNs(v, indexFile, indexStat.Size())
 	if err != nil {
 		t.Fatalf("recover last write: %v", err)
 	}
@@ -352,6 +352,58 @@ func TestVolumeTtlClockAtCommitUsesAppendTime(t *testing.T) {
 
 	if got := v.lastModifiedTsSeconds; got != appendWatermarkSec {
 		t.Errorf("TTL clock after commit is %d, want the append watermark %d", got, appendWatermarkSec)
+	}
+}
+
+// TestVolumeTtlClockAtCommitSkipsDeletedWrite covers a vacuum commit whose
+// newest write was deleted first: the carried watermark belonged to that
+// write, so the commit has to let the reload rescan and land on the newest
+// surviving write rather than keep the volume alive on a deleted write's time.
+func TestVolumeTtlClockAtCommitSkipsDeletedWrite(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	oldWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	newWriteNs := uint64(time.Now().Add(-time.Hour).UnixNano())
+	for _, w := range []struct {
+		id uint64
+		ns uint64
+	}{{1, oldWriteNs}, {2, newWriteNs}} {
+		n := newRandomNeedle(w.id)
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", w.id, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, w.ns)
+	}
+	if _, err := v.doDeleteRequest(newEmptyNeedle(2)); err != nil {
+		t.Fatalf("delete needle 2: %v", err)
+	}
+	if !v.lastWriteDeleted {
+		t.Fatal("deleting the newest write must mark the watermark dead")
+	}
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	if got, want := v.lastModifiedTsSeconds, oldWriteNs/uint64(time.Second); got != want {
+		t.Errorf("TTL clock after commit is %d, want the surviving write at %d", got, want)
+	}
+	if v.lastWriteDeleted {
+		t.Error("the reload's rescan must reseed the watermark off the surviving write")
 	}
 }
 

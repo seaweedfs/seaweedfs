@@ -54,9 +54,11 @@ type Volume struct {
 	asyncRequestsChan chan *needle.AsyncRequest
 	asyncWorkerClosed bool
 
-	lastModifiedTsSeconds    uint64 // unix time in seconds
-	lastAppendAtNs           uint64 // unix time in nanoseconds
-	lastWriteAppendAtNs      uint64 // AppendAtNs of the newest write; tombstones don't move it
+	lastModifiedTsSeconds    uint64         // unix time in seconds
+	lastAppendAtNs           uint64         // unix time in nanoseconds
+	lastWriteAppendAtNs      uint64         // AppendAtNs of the newest write; tombstones don't move it
+	lastWriteNeedleKey       types.NeedleId // the write behind the watermark
+	lastWriteDeleted         bool           // that write was deleted, so recovery has to rescan
 	keepLastModifiedTsOnLoad bool
 
 	lastCompactIndexOffset uint64

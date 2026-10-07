@@ -224,10 +224,12 @@ func (v *Volume) CommitCompact() error {
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
 	// The write watermark already equals what recoverLastModifiedTs would
 	// rescan, so keep the clock instead of paying for the scan under the lock.
+	// If its write was itself deleted, the reload recovers the newest
+	// surviving write instead.
 	if v.lastWriteAppendAtNs != 0 {
 		v.lastModifiedTsSeconds = v.lastWriteAppendAtNs / uint64(time.Second)
 	}
-	v.keepLastModifiedTsOnLoad = v.lastModifiedTsSeconds != 0
+	v.keepLastModifiedTsOnLoad = v.lastModifiedTsSeconds != 0 && !v.lastWriteDeleted
 	e := v.load(true, false, v.needleMapKind, 0, v.Version())
 	v.keepLastModifiedTsOnLoad = false
 	if e != nil {

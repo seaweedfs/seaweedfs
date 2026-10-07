@@ -329,6 +329,10 @@ func (v *Volume) rollbackUnflushedWrite(n *needle.Needle, offset uint64, end int
 				}
 			}
 		}
+		if err == nil && n.Id == v.lastWriteNeedleKey {
+			v.lastWriteAppendAtNs, v.lastWriteNeedleKey = 0, 0
+			v.lastWriteDeleted = true
+		}
 		if err != nil {
 			recoveryErr = errors.Join(recoveryErr,
 				fmt.Errorf("roll back the index of needle %d in volume %d: %w", n.Id, v.Id, err))
@@ -410,6 +414,8 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) 
 	}
 	v.lastAppendAtNs = n.AppendAtNs
 	v.lastWriteAppendAtNs = n.AppendAtNs
+	v.lastWriteNeedleKey = n.Id
+	v.lastWriteDeleted = false
 
 	// add to needle map
 	if !ok || uint64(nv.Offset.ToActualOffset()) < offset {
@@ -491,6 +497,10 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
 			return size, err
 		}
+		if n.Id == v.lastWriteNeedleKey {
+			v.lastWriteAppendAtNs, v.lastWriteNeedleKey = 0, 0
+			v.lastWriteDeleted = true
+		}
 		return size, err
 	}
 	return 0, nil
@@ -526,6 +536,8 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 	indexEnd := int64(v.nm.IndexFileSize())
 	batchLastAppendAtNs := v.lastAppendAtNs
 	batchLastWriteAppendAtNs := v.lastWriteAppendAtNs
+	batchLastWriteNeedleKey := v.lastWriteNeedleKey
+	batchLastWriteDeleted := v.lastWriteDeleted
 	batchLastModifiedTsSeconds := v.lastModifiedTsSeconds
 	for i := 0; i < len(currentRequests); i++ {
 		needleID := currentRequests[i].N.Id
@@ -566,6 +578,8 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 		v.checkReadWriteError(syncErr)
 		v.lastAppendAtNs = batchLastAppendAtNs
 		v.lastWriteAppendAtNs = batchLastWriteAppendAtNs
+		v.lastWriteNeedleKey = batchLastWriteNeedleKey
+		v.lastWriteDeleted = batchLastWriteDeleted
 		v.lastModifiedTsSeconds = batchLastModifiedTsSeconds
 		batchErr := syncErr
 		if recoveryErr := v.rollbackBatch(end, indexEnd, orderedSnapshots, metricRollbacker, batchMetrics); recoveryErr != nil {
@@ -706,6 +720,8 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	}
 	v.lastAppendAtNs = appendAtNs
 	v.lastWriteAppendAtNs = appendAtNs
+	v.lastWriteNeedleKey = needleId
+	v.lastWriteDeleted = false
 
 	// add to needle map
 	if err = v.nm.Put(needleId, ToOffset(int64(offset)), size); err != nil {
