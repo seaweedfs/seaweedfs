@@ -40,6 +40,12 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Reject before the auto-create check so a refused upload cannot leave a bucket behind
+	if errCode := ValidateRequestEncryption(r.Header); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Check if bucket exists, and create it if it doesn't (auto-create bucket)
 	if err := s3a.checkBucket(r, bucket); err == s3err.ErrNoSuchBucket {
 		// Auto-create bucket if it doesn't exist (requires Admin permission)
@@ -72,11 +78,6 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	if err := s3a.validateObjectLockHeaders(r, bucket, object, versioningEnabled); err != nil {
 		glog.V(2).Infof("NewMultipartUploadHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
 		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
-		return
-	}
-
-	if errCode := ValidateRequestEncryption(r.Header); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 

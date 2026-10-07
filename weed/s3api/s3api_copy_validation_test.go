@@ -19,10 +19,11 @@ func TestValidateRequestEncryption(t *testing.T) {
 		s3_constants.AmzServerSideEncryptionCustomerKeyMD5:    "f6OQvGsmFBq4WOqaVcuO5w==",
 	}
 	testCases := []struct {
-		name    string
-		headers map[string]string
-		sse     string
-		want    s3err.ErrorCode
+		name      string
+		headers   map[string]string
+		sse       string
+		sseValues []string
+		want      s3err.ErrorCode
 	}{
 		{name: "no encryption", want: s3err.ErrNone},
 		{name: "SSE-S3", sse: s3_constants.SSEAlgorithmAES256, want: s3err.ErrNone},
@@ -32,6 +33,10 @@ func TestValidateRequestEncryption(t *testing.T) {
 		{name: "misspelled AES256", sse: "AES-256", want: s3err.ErrInvalidEncryptionMethod},
 		{name: "SSE-C and SSE-S3", headers: ssec, sse: s3_constants.SSEAlgorithmAES256, want: s3err.ErrIncompatibleEncryptionMethod},
 		{name: "SSE-C and SSE-KMS", headers: ssec, sse: s3_constants.SSEAlgorithmKMS, want: s3err.ErrIncompatibleEncryptionMethod},
+		{name: "repeated algorithm header", sseValues: []string{"AES256", "aws:kms"}, want: s3err.ErrIncompatibleEncryptionMethod},
+		{name: "repeated identical algorithm", sseValues: []string{"AES256", "AES256"}, want: s3err.ErrIncompatibleEncryptionMethod},
+		{name: "empty value before KMS", sseValues: []string{"", "aws:kms"}, want: s3err.ErrIncompatibleEncryptionMethod},
+		{name: "SSE-S3 hidden behind empty value", sseValues: []string{"", "AES256"}, headers: ssec, want: s3err.ErrIncompatibleEncryptionMethod},
 	}
 
 	for _, tc := range testCases {
@@ -42,6 +47,9 @@ func TestValidateRequestEncryption(t *testing.T) {
 			}
 			if tc.sse != "" {
 				h.Set(s3_constants.AmzServerSideEncryption, tc.sse)
+			}
+			for _, v := range tc.sseValues {
+				h.Add(s3_constants.AmzServerSideEncryption, v)
 			}
 			assert.Equal(t, tc.want, ValidateRequestEncryption(h))
 		})

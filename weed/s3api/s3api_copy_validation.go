@@ -116,10 +116,32 @@ func validateSSEKMSCopyRequirements(srcMetadata map[string][]byte, headers http.
 
 // validateEncryptionCompatibility validates that encryption methods are not conflicting
 func validateEncryptionCompatibility(headers http.Header) error {
+	// A repeated header is rejected rather than deduped: the encryption paths
+	// apply only the first value, so extra values could hide the method the
+	// client actually asked for.
+	if len(headers.Values(s3_constants.AmzServerSideEncryption)) > 1 {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidRequest,
+			Message: "Multiple server-side encryption headers specified - only one is allowed",
+		}
+	}
+
 	sseAlgorithm := headers.Get(s3_constants.AmzServerSideEncryption)
 	hasSSEC := hasSSECHeaders(headers)
 	hasSSEKMS := sseAlgorithm == s3_constants.SSEAlgorithmKMS
 	hasSSES3 := sseAlgorithm == s3_constants.SSEAlgorithmAES256
+
+	// KMS options only apply to aws:kms; with another method or none they name
+	// no method at all.
+	if !hasSSEKMS && hasHeaderValue(headers,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.AmzServerSideEncryptionContext,
+		s3_constants.AmzServerSideEncryptionBucketKeyEnabled) {
+		return &CopyValidationError{
+			Code:    s3err.ErrInvalidRequest,
+			Message: "KMS encryption options require the aws:kms encryption method",
+		}
+	}
 
 	// Reject unsupported algorithms so they are never persisted as a bogus
 	// destination header advertising encryption that was never applied.
@@ -130,19 +152,13 @@ func validateEncryptionCompatibility(headers http.Header) error {
 		}
 	}
 
-	// Count how many encryption methods are specified
-	encryptionCount := 0
-	if hasSSEC {
-		encryptionCount++
-	}
-	if hasSSEKMS {
-		encryptionCount++
-	}
-	if hasSSES3 {
-		encryptionCount++
-	}
-
 	// Only one encryption method should be specified
+	encryptionCount := 0
+	for _, specified := range []bool{hasSSEC, hasSSEKMS, hasSSES3} {
+		if specified {
+			encryptionCount++
+		}
+	}
 	if encryptionCount > 1 {
 		return &CopyValidationError{
 			Code:    s3err.ErrInvalidRequest,
@@ -153,12 +169,9 @@ func validateEncryptionCompatibility(headers http.Header) error {
 	return nil
 }
 
-// ValidateRequestEncryption rejects the server-side encryption headers of a
-// PutObject or CreateMultipartUpload request that no single method can honor,
-// as CopyObject does for its destination: an algorithm that names no method,
-// or SSE-C together with another method. Otherwise the object was stored
-// without the encryption the client asked for. The codes are the ones S3
-// returns for these requests, InvalidArgument for both.
+// ValidateRequestEncryption rejects PutObject or CreateMultipartUpload
+// encryption headers that no single method can honor, with the InvalidArgument
+// codes S3 returns for them.
 func ValidateRequestEncryption(headers http.Header) s3err.ErrorCode {
 	err := validateEncryptionCompatibility(headers)
 	if err == nil {
@@ -248,16 +261,29 @@ func validateSSECHeaderCompleteness(headers http.Header) error {
 }
 
 // Helper functions for header detection
+func hasHeaderValue(headers http.Header, names ...string) bool {
+	for _, name := range names {
+		for _, value := range headers.Values(name) {
+			if value != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func hasSSECCopyHeaders(headers http.Header) bool {
-	return headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm) != "" ||
-		headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey) != "" ||
-		headers.Get(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5) != ""
+	return hasHeaderValue(headers,
+		s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzCopySourceServerSideEncryptionCustomerKey,
+		s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5)
 }
 
 func hasSSECHeaders(headers http.Header) bool {
-	return headers.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" ||
-		headers.Get(s3_constants.AmzServerSideEncryptionCustomerKey) != "" ||
-		headers.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5) != ""
+	return hasHeaderValue(headers,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKey,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
 }
 
 // validateEncryptionContext validates the encryption context header format

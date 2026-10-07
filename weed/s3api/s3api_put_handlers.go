@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -223,6 +224,28 @@ func (s3a *S3ApiServer) handleSSES3Encryption(r *http.Request, dataReader io.Rea
 
 	glog.V(3).Infof("handleSSES3Encryption: prepared SSE-S3 metadata for object")
 	return encryptedReader, sseS3Key, sseS3Metadata, s3err.ErrNone
+}
+
+// storeSSEMetadata records the encryption result on the entry, in the same
+// extended attributes the GET and HEAD handlers read back.
+func storeSSEMetadata(entry *filer_pb.Entry, sseResult *PutToFilerEncryptionResult) {
+	if sseResult == nil {
+		return
+	}
+	if sseResult.CustomerKey != nil && len(sseResult.SSEIV) > 0 {
+		entry.Extended[s3_constants.SeaweedFSSSEIV] = sseResult.SSEIV
+		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte(s3_constants.SSEAlgorithmAES256)
+		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(sseResult.CustomerKey.KeyMD5)
+	}
+	if sseResult.SSEKMSKey != nil {
+		entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = sseResult.SSEKMSMetadata
+		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte(s3_constants.SSEAlgorithmKMS)
+		entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(sseResult.SSEKMSKey.KeyID)
+	}
+	if sseResult.SSES3Key != nil && len(sseResult.SSES3Metadata) > 0 {
+		entry.Extended[s3_constants.SeaweedFSSSES3Key] = sseResult.SSES3Metadata
+		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte(s3_constants.SSEAlgorithmAES256)
+	}
 }
 
 // handleAllSSEEncryption processes all SSE types in sequence and returns the final encrypted reader
