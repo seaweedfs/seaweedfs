@@ -378,10 +378,15 @@ func mergedFileFirstRowID(data []byte) (*int64, error) {
 		}
 		return nil, err
 	}
-	v := rows[0][leaf.ColumnIndex]
-	if v.IsNull() {
-		return nil, nil
+	for _, v := range rows[0] {
+		if v.Column() != leaf.ColumnIndex {
+			continue
+		}
+		if v.IsNull() {
+			return nil, nil
+		}
+		id := v.Int64()
+		return &id, nil
 	}
-	id := v.Int64()
-	return &id, nil
+	return nil, nil
 }
