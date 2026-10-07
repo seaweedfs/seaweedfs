@@ -191,6 +191,9 @@ func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 			readSigningKeyExpires = gv.GetInt("jwt.filer_signing.read.expires_after_seconds")
 		}
 	}
+	if signingKeyExpires < 0 || readSigningKeyExpires < 0 {
+		return nil, fmt.Errorf("jwt.filer_signing lifetimes must not be negative")
+	}
 	if signingKeyExpires == 0 {
 		signingKeyExpires = 10
 	}

@@ -96,8 +96,9 @@ key = "side-read-key"
 	}
 
 	gv := util.GetViper()
+	priorKey := gv.GetString("jwt.filer_signing.key")
 	gv.Set("jwt.filer_signing.key", "global-write-key")
-	t.Cleanup(func() { gv.Set("jwt.filer_signing.key", "") })
+	t.Cleanup(func() { gv.Set("jwt.filer_signing.key", priorKey) })
 
 	provider, err := LoadFilerJwtFromFile(configFile)
 	if err != nil {

@@ -742,9 +742,9 @@ func TestFetchWholeChunkUsesProvidedFilerJwt(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	var gotAuth string
+	gotAuth := make(chan string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+		gotAuth <- r.Header.Get("Authorization")
 		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)))
 		w.Write(manifestBytes)
 	}))
@@ -759,7 +759,7 @@ func TestFetchWholeChunkUsesProvidedFilerJwt(t *testing.T) {
 	}
 	bytesBuffer := fetchManifestBuffer(t)
 	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup, "5,abc", nil, false, nil, jwtFn))
-	assert.Equal(t, security.BearerPrefix+"side-read-jwt", gotAuth)
+	assert.Equal(t, security.BearerPrefix+"side-read-jwt", <-gotAuth)
 
 	// non-proxy URLs keep the volume-server credential and never call the provider
 	volumeURL := manifestServer(t, manifestBytes).URL + "/5,abc"
