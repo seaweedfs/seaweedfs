@@ -299,6 +299,12 @@ func TestGetRequestDataReaderEmptyBodyHash(t *testing.T) {
 		t.Fatalf("empty body with wrong hash: code=%v", code)
 	}
 
+	malformed := httptest.NewRequest("PUT", "/b/o", strings.NewReader("x"))
+	malformed.Header.Set("X-Amz-Content-Sha256", "nothex")
+	if _, code := getRequestDataReader(s3a, malformed); code != s3err.ErrInvalidArgument {
+		t.Fatalf("malformed sha256 header: code=%v", code)
+	}
+
 	emptySum := sha256.Sum256(nil)
 	match := httptest.NewRequest("PUT", "/b/dir/", http.NoBody)
 	match.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(emptySum[:]))

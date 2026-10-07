@@ -42,7 +42,7 @@ func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3e
 
 	expected, valid := expectedContentSha256(r)
 	if !valid {
-		return nil, s3err.ErrContentSHA256Mismatch
+		return nil, s3err.ErrInvalidArgument
 	}
 	if expected != nil && dataReader != nil {
 		if r.ContentLength == 0 {
