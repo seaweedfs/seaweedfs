@@ -94,11 +94,17 @@ def S3(method, path, **kw):
 
 
 # ---------------- cleanup (atexit so failed runs still clean up) ----------------
+user = USER = upload_id = None
+
+
 def cleanup():
     try:
-        send(**iam({'Action': 'DeleteAccessKey', 'UserName': user, 'AccessKeyId': USER.access_key}))
-        send(**iam({'Action': 'DeleteUser', 'UserName': user}))
-        send('DELETE', '/%s/mp?uploadId=%s' % (B, upload_id))
+        if user and USER:
+            send(**iam({'Action': 'DeleteAccessKey', 'UserName': user, 'AccessKeyId': USER.access_key}))
+        if user:
+            send(**iam({'Action': 'DeleteUser', 'UserName': user}))
+        if upload_id:
+            send('DELETE', '/%s/mp?uploadId=%s' % (B, upload_id))
         st, d = send('GET', '/%s?list-type=2' % B)
         for k in re.findall(r'<Key>([^<]+)</Key>', d):
             send('DELETE', '/%s/%s' % (B, urllib.parse.quote(k)))
@@ -130,6 +136,9 @@ for sub in ('logging', 'notification', 'accelerate', 'website', 'replication',
             'analytics&id=a', 'inventory&id=a', 'metrics&id=a', 'intelligent-tiering&id=a'):
     case(1, 'PUT ?%s' % sub, (501, 'Error', 'NotImplemented'), S3DOC + 'API_Error.html#:~:text=Code%3A%20NotImplemented',
          S3('PUT', '/%s?%s' % (B, sub), body=b'<X/>'))
+case(1, 'DELETE ?logging', (501, 'Error', 'NotImplemented'), S3DOC + 'API_Error.html#:~:text=Code%3A%20NotImplemented',
+     S3('DELETE', '/%s?logging' % B),
+     lambda: 'bucket still exists' if send('HEAD', '/' + B)[0] == 200 else 'BUCKET DELETED')
 case(1, 'CopyObject, x-amz-copy-source without "/"', (400, 'Error', 'InvalidArgument'),
      S3DOC + 'API_CopyObject.html#AmazonS3-CopyObject-request-header-CopySource',
      S3('PUT', '/%s/copy-dst' % B, headers={'x-amz-copy-source': 'nobucketonly'}), exists('copy-dst'))
