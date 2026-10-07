@@ -250,3 +250,82 @@ func TestDeletedPrefixesDoNotConsumeMaxKeys(t *testing.T) {
 	assert.False(t, cursor.isTruncated, "stepping over deleted prefixes must not truncate the page")
 	assert.Zero(t, cursor.maxKeys, "only the live prefixes may spend the page budget")
 }
+
+// TestPerPrefixBudgetNotShared is a regression test for the bug reported in issue #10847:
+// one large all-deleted prefix exhausts the shared probe budget, causing every later
+// prefix to be reported as visible even when all its objects are delete-marked.
+//
+// The fix gives each candidate prefix its own probe budget (hiddenProbeBudget, 10000 by
+// default). The test sets cursor.probeBudget = 3 to stay fast without touching the
+// package-level constant.
+func TestPerPrefixBudgetNotShared(t *testing.T) {
+	// Build 5 delete-marked objects under "bigdeleted/" – more than the budget of 3.
+	bigDeletedEntries := make([]*filer_pb.Entry, 0, 5)
+	for i := 0; i < 5; i++ {
+		bigDeletedEntries = append(bigDeletedEntries, deleteMarkedVersionsDir(
+			"obj"+strconv.Itoa(i),
+		))
+	}
+
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test": {
+				newDir("bigdeleted"),
+				newDir("emptydeleted"),
+				newDir("live"),
+			},
+			"/buckets/test/bigdeleted":   bigDeletedEntries,
+			"/buckets/test/emptydeleted": {deleteMarkedVersionsDir("obj")},
+			"/buckets/test/live":         {liveVersionsDir("obj")},
+		},
+	}
+
+	// probeBudget: 3 simulates the bug scenario with a tiny dataset; real default is
+	// hiddenProbeBudget (10000).
+	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"},
+		&ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true, probeBudget: 3})
+
+	// "bigdeleted" exhausted its own probe budget, so it is reported rather than
+	// proven all-deleted.
+	assert.Contains(t, seen, "bigdeleted", "a prefix whose probe budget ran out must be reported")
+
+	// "emptydeleted" must be hidden: all its objects are delete-marked and its probe
+	// budget was not exhausted by "bigdeleted".
+	assert.NotContains(t, seen, "emptydeleted", "all-deleted prefix after a budget-exhausting prefix must still be hidden")
+
+	// "live" must always appear.
+	assert.Contains(t, seen, "live", "prefix with a live current version must be listed")
+}
+
+// TestPerRequestProbeBudgetStillBoundsWork covers the request-wide ceiling:
+// deleted prefixes do not spend maxKeys, so a page can walk an unbounded
+// number of them. Once probedEntries exceeds the request total, a later
+// all-deleted prefix is reported rather than proven.
+func TestPerRequestProbeBudgetStillBoundsWork(t *testing.T) {
+	deleted := func(n int) []*filer_pb.Entry {
+		entries := make([]*filer_pb.Entry, 0, n)
+		for i := 0; i < n; i++ {
+			entries = append(entries, deleteMarkedVersionsDir("obj"+strconv.Itoa(i)))
+		}
+		return entries
+	}
+
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test": {
+				newDir("d1"),
+				newDir("d2"),
+			},
+			"/buckets/test/d1": deleted(4),
+			"/buckets/test/d2": deleted(4),
+		},
+	}
+
+	// Per-prefix budget (10) can cover either prefix alone, but the request
+	// total (5) is spent probing "d1", so "d2" is reported without a full scan.
+	seen := listedNames(t, client, listDirectoryRequest{dir: "/buckets/test", delimiter: "/", bucket: "test"},
+		&ListingCursor{maxKeys: 1000, hideDeletedPrefixes: true, probeBudget: 10, probeTotalBudget: 5})
+
+	assert.NotContains(t, seen, "d1", "a fully probed all-deleted prefix stays hidden")
+	assert.Contains(t, seen, "d2", "a prefix probed past the request total is reported")
+}

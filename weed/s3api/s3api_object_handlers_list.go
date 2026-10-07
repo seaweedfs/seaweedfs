@@ -780,6 +780,12 @@ type ListingCursor struct {
 	// something to find once a bucket has version history to leave behind.
 	hideDeletedPrefixes bool
 	probedEntries       int
+	// probeBudget overrides hiddenProbeBudget for the per-prefix probe; 0 means use
+	// the package default. Tests set this to a small value to stay fast.
+	probeBudget int
+	// probeTotalBudget overrides hiddenProbeTotalBudget for the request-wide probe
+	// ceiling; 0 means use the package default.
+	probeTotalBudget int
 	// retractEntry undoes the listing of a base-path null object once its .versions
 	// sibling reveals that the current version is a delete marker.
 	retractEntry func(dir, name string)
@@ -1161,12 +1167,16 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 	}
 }
 
-// hiddenProbePageSize is the window one probe request asks the filer for, and
-// hiddenProbeBudget caps how many entries a single list request may look at while
-// deciding which directories still stand for a prefix.
+// hiddenProbePageSize is the window one probe request asks the filer for.
+// hiddenProbeBudget caps how many entries one prefix's probe may scan; it
+// resets for every candidate prefix so one large all-deleted subtree cannot
+// exhaust the allowance for later prefixes. hiddenProbeTotalBudget caps the
+// scanned entries a single listing request spends on probing overall, since a
+// page may still walk an unbounded number of all-deleted prefixes.
 const (
-	hiddenProbePageSize = 64
-	hiddenProbeBudget   = 10000
+	hiddenProbePageSize    = 64
+	hiddenProbeBudget      = 10000
+	hiddenProbeTotalBudget = 100000
 )
 
 // dirHoldsOnlyHiddenEntries reports whether dir holds entries but none that a
@@ -1179,13 +1189,29 @@ const (
 //
 // The scan stops at the first key it finds, so a populated prefix costs one ListEntries
 // answered by its first entry. A subtree that is entirely delete-marked costs a walk of
-// that subtree, bounded by the request's probe budget; once the budget is spent the
-// prefix is reported, as it was before this check existed.
+// that subtree, bounded by hiddenProbeBudget entries per prefix. The budget resets for
+// each candidate prefix, so a large all-deleted subtree cannot exhaust the allowance
+// for later prefixes in the same request.
 func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, cursor *ListingCursor) bool {
 	if !cursor.hideDeletedPrefixes {
 		return false
 	}
+	budget := hiddenProbeBudget
+	if cursor.probeBudget > 0 {
+		budget = cursor.probeBudget
+	}
+	totalBudget := hiddenProbeTotalBudget
+	if cursor.probeTotalBudget > 0 {
+		totalBudget = cursor.probeTotalBudget
+	}
+	return s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir, &budget, totalBudget, cursor)
+}
 
+// dirHoldsOnlyHiddenEntriesInner is the recursive body of dirHoldsOnlyHiddenEntries.
+// budget is shared across the recursive descent for one prefix but reset by the
+// caller for each top-level prefix, preventing cross-prefix budget exhaustion.
+// cursor.probedEntries bounds the total work one listing request spends probing.
+func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, client filer_pb.SeaweedFilerClient, bucket, dir string, budget *int, totalBudget int, cursor *ListingCursor) bool {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1227,8 +1253,9 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 			startFrom = entry.Name
 			sawEntry = true
 
+			*budget--
 			cursor.probedEntries++
-			if cursor.probedEntries > hiddenProbeBudget {
+			if *budget < 0 || cursor.probedEntries > totalBudget {
 				return false
 			}
 
@@ -1269,7 +1296,7 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntries(ctx context.Context, client fi
 			if entry.IsDirectoryKeyObject() {
 				return false
 			}
-			if !s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
+			if !s3a.dirHoldsOnlyHiddenEntriesInner(ctx, client, bucket, dir+"/"+entry.Name, budget, totalBudget, cursor) {
 				return false
 			}
 		}
