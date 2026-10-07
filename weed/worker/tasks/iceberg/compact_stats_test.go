@@ -15,6 +15,15 @@ import (
 // manifest references after a compaction run.
 func compactedDataFile(t *testing.T, client filer_pb.SeaweedFilerClient, setup tableSetup) iceberg.DataFile {
 	t.Helper()
+	found := liveDataFiles(t, client, setup)
+	if len(found) != 1 {
+		t.Fatalf("expected 1 live data file after compaction, got %d", len(found))
+	}
+	return found[0]
+}
+
+func liveDataFiles(t *testing.T, client filer_pb.SeaweedFilerClient, setup tableSetup) []iceberg.DataFile {
+	t.Helper()
 	state, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
 	if err != nil {
 		t.Fatalf("loadCurrentMetadata: %v", err)
@@ -42,10 +51,7 @@ func compactedDataFile(t *testing.T, client filer_pb.SeaweedFilerClient, setup t
 			}
 		}
 	}
-	if len(found) != 1 {
-		t.Fatalf("expected 1 live data file after compaction, got %d", len(found))
-	}
-	return found[0]
+	return found
 }
 
 func compactedFileBytes(t *testing.T, client filer_pb.SeaweedFilerClient, setup tableSetup, filePath string) []byte {

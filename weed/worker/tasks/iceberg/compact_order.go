@@ -16,6 +16,10 @@ type compactionOrder struct {
 	fieldID    int
 	typ        iceberg.PrimitiveType
 	descending bool
+	// bestEffort marks an order inferred from column bounds rather than the
+	// table's declared sort order; runs it cannot form may still merge by
+	// size since contiguous ranges are a preference, not a requirement.
+	bestEffort bool
 }
 
 func resolveCompactionOrder(meta table.Metadata, entries []iceberg.ManifestEntry) *compactionOrder {
@@ -35,12 +39,16 @@ func resolveCompactionOrder(meta table.Metadata, entries []iceberg.ManifestEntry
 			}
 		}
 	}
+	// A column only orders the merge when every entry in the group carries a
+	// bound for it. The check is scoped to the entries handed in — a bin's
+	// eligible files — so an unrelated file without bounds (oversized, a
+	// different format, or another partition) cannot disable ordering here.
 	for _, field := range schema.Fields() {
 		typ, ok := field.Type.(iceberg.PrimitiveType)
 		if !ok {
 			continue
 		}
-		candidate := &compactionOrder{fieldID: field.ID, typ: typ}
+		candidate := &compactionOrder{fieldID: field.ID, typ: typ, bestEffort: true}
 		complete := true
 		for _, entry := range entries {
 			if _, ok := candidate.key(entry); !ok {
@@ -109,17 +117,20 @@ func (o *compactionOrder) sortEntries(entries []iceberg.ManifestEntry) {
 
 // splitOrderedBin splits a bin whose files are in bound order into runs of
 // consecutive files that stay under targetSize, so every output covers one
-// contiguous range of the ordering column. A run too short to reach minFiles
-// is left for a later pass, as splitOversizedBin leaves its underfilled bins.
-func splitOrderedBin(bin compactionBin, targetSize int64, minFiles int) []compactionBin {
+// contiguous range of the ordering column. The returned entries are the runs
+// too short to reach minFiles: the caller can still merge them by size when
+// contiguous ranges are only a preference, or leave them for a later pass
+// when order must hold.
+func splitOrderedBin(bin compactionBin, targetSize int64, minFiles int) (valid []compactionBin, leftover []iceberg.ManifestEntry) {
 	newBin := func() compactionBin {
 		return compactionBin{PartitionKey: bin.PartitionKey, Partition: bin.Partition, SpecID: bin.SpecID}
 	}
-	var valid []compactionBin
 	current := newBin()
 	flush := func() {
 		if len(current.Entries) >= minFiles {
 			valid = append(valid, current)
+		} else {
+			leftover = append(leftover, current.Entries...)
 		}
 		current = newBin()
 	}
@@ -132,7 +143,7 @@ func splitOrderedBin(bin compactionBin, targetSize int64, minFiles int) []compac
 		current.TotalSize += size
 	}
 	flush()
-	return valid
+	return valid, leftover
 }
 
 // compareLiterals orders two literals of the same type; false when they are

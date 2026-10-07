@@ -18,20 +18,26 @@ import (
 )
 
 type boundedFile struct {
-	Name       string
-	IDs        []int64
+	Name         string
+	IDs          []int64
 	Lower, Upper int64
-	SizeBytes  int64
+	SizeBytes    int64
+	NoBounds     bool
 }
 
 // populateBoundedTable is populateTableWithDeleteFiles narrowed to data
 // files whose manifest entries carry bounds on the id column.
 func populateBoundedTable(t *testing.T, fs *fakeFilerServer, setup tableSetup, files []boundedFile) {
 	t.Helper()
+	populateBoundedTableSorted(t, fs, setup, files, table.UnsortedSortOrder)
+}
+
+func populateBoundedTableSorted(t *testing.T, fs *fakeFilerServer, setup tableSetup, files []boundedFile, sortOrder table.SortOrder) {
+	t.Helper()
 	schema := newTestSchema()
 	spec := *iceberg.UnpartitionedSpec
 
-	meta, err := table.NewMetadata(schema, &spec, table.UnsortedSortOrder, "s3://"+setup.BucketName+"/"+setup.dataPath(), nil)
+	meta, err := table.NewMetadata(schema, &spec, sortOrder, "s3://"+setup.BucketName+"/"+setup.dataPath(), nil)
 	if err != nil {
 		t.Fatalf("create metadata: %v", err)
 	}
@@ -60,14 +66,16 @@ func populateBoundedTable(t *testing.T, fs *fakeFilerServer, setup tableSetup, f
 		if f.SizeBytes > 0 {
 			size = f.SizeBytes
 		}
-		lo, _ := iceberg.Int64Literal(f.Lower).MarshalBinary()
-		hi, _ := iceberg.Int64Literal(f.Upper).MarshalBinary()
 		dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData, setup.fileRef("data", f.Name),
 			iceberg.ParquetFile, map[int]any{}, nil, nil, int64(len(f.IDs)), size)
 		if err != nil {
 			t.Fatalf("build data file %s: %v", f.Name, err)
 		}
-		dfb.LowerBoundValues(map[int][]byte{1: lo}).UpperBoundValues(map[int][]byte{1: hi})
+		if !f.NoBounds {
+			lo, _ := iceberg.Int64Literal(f.Lower).MarshalBinary()
+			hi, _ := iceberg.Int64Literal(f.Upper).MarshalBinary()
+			dfb.LowerBoundValues(map[int][]byte{1: lo}).UpperBoundValues(map[int][]byte{1: hi})
+		}
 		snapID := int64(1)
 		entries = append(entries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
 	}
@@ -218,3 +226,94 @@ func TestCompactDataFilesSplitsOrderedRuns(t *testing.T) {
 	}
 }
 
+// An oversized file without bounds can never join a merge, so it must not
+// disable bounds ordering for the files that can.
+func TestCompactDataFilesOrdersPastIneligibleFile(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateBoundedTable(t, fs, setup, []boundedFile{
+		{Name: "hi.parquet", IDs: []int64{3, 4}, Lower: 3, Upper: 4},
+		{Name: "lo.parquet", IDs: []int64{1, 2}, Lower: 1, Upper: 2},
+		{Name: "huge.parquet", IDs: []int64{9}, SizeBytes: 512 << 20, NoBounds: true},
+	})
+
+	handler := NewHandler(nil)
+	config := Config{TargetFileSizeBytes: 256 << 20, MinInputFiles: 2, MaxCommitRetries: 3}
+	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "compacted 2 files into 1") {
+		t.Fatalf("expected only the two eligible files to merge, got %q", result)
+	}
+
+	var merged iceberg.DataFile
+	for _, df := range liveDataFiles(t, client, setup) {
+		if !strings.HasSuffix(df.FilePath(), "huge.parquet") {
+			merged = df
+		}
+	}
+	ids := compactedIDs(t, client, setup, merged.FilePath())
+	want := []int64{1, 2, 3, 4}
+	if fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Errorf("merged rows = %v, want %v", ids, want)
+	}
+}
+
+// Runs too short to merge in bound order still merge by size, so files that
+// cannot form a contiguous run are not stranded for every later pass.
+func TestCompactDataFilesMergesStrandedRun(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateBoundedTable(t, fs, setup, []boundedFile{
+		{Name: "r1.parquet", IDs: []int64{1}, Lower: 1, Upper: 2, SizeBytes: 4 << 20},
+		{Name: "r2.parquet", IDs: []int64{3}, Lower: 3, Upper: 4, SizeBytes: 4 << 20},
+		{Name: "r3.parquet", IDs: []int64{5}, Lower: 5, Upper: 6, SizeBytes: 6 << 20},
+		{Name: "r4.parquet", IDs: []int64{7}, Lower: 7, Upper: 8, SizeBytes: 3 << 20},
+		{Name: "r5.parquet", IDs: []int64{9}, Lower: 9, Upper: 10, SizeBytes: 3 << 20},
+	})
+
+	handler := NewHandler(nil)
+	config := Config{TargetFileSizeBytes: 10 << 20, MinInputFiles: 3, MaxCommitRetries: 3}
+	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "compacted 3 files into 1") {
+		t.Fatalf("expected stranded files to merge by size, got %q", result)
+	}
+}
+
+// A declared sort order is preserved at the cost of compaction progress:
+// runs too short to merge are left for later passes instead of being
+// repacked out of order.
+func TestCompactDataFilesKeepsStrandedRunForSortedTable(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
+		SourceIDs: []int{1},
+		Transform: iceberg.IdentityTransform{},
+		Direction: table.SortASC,
+		NullOrder: table.NullsFirst,
+	}})
+	if err != nil {
+		t.Fatalf("new sort order: %v", err)
+	}
+	populateBoundedTableSorted(t, fs, setup, []boundedFile{
+		{Name: "r1.parquet", IDs: []int64{1}, Lower: 1, Upper: 2, SizeBytes: 4 << 20},
+		{Name: "r2.parquet", IDs: []int64{3}, Lower: 3, Upper: 4, SizeBytes: 4 << 20},
+		{Name: "r3.parquet", IDs: []int64{5}, Lower: 5, Upper: 6, SizeBytes: 6 << 20},
+		{Name: "r4.parquet", IDs: []int64{7}, Lower: 7, Upper: 8, SizeBytes: 3 << 20},
+		{Name: "r5.parquet", IDs: []int64{9}, Lower: 9, Upper: 10, SizeBytes: 3 << 20},
+	}, sortOrder)
+
+	handler := NewHandler(nil)
+	config := Config{TargetFileSizeBytes: 10 << 20, MinInputFiles: 3, MaxCommitRetries: 3}
+	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "no files eligible for compaction") {
+		t.Fatalf("expected underfilled ordered runs to be kept, got %q", result)
+	}
+}

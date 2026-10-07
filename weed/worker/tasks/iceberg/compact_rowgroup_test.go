@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/apache/iceberg-go"
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -63,5 +64,34 @@ func TestCompactDataFilesWritesSeveralRowGroups(t *testing.T) {
 	}
 	if got := len(f.Metadata().RowGroups); got != 2 {
 		t.Errorf("row groups = %d, want 2 (3000 rows at row-group-limit 2000)", got)
+	}
+}
+
+// A configured row-group limit is a cap, not a floor: small explicit limits
+// are honored instead of being raised to the estimate floor.
+func TestRowsPerRowGroupHonorsConfiguredLimit(t *testing.T) {
+	entries := make([]iceberg.ManifestEntry, 0, 2)
+	spec := *iceberg.UnpartitionedSpec
+	for _, name := range []string{"a.parquet", "b.parquet"} {
+		dfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentData,
+			"s3://b/data/"+name, iceberg.ParquetFile, map[int]any{}, nil, nil, 300, 9000)
+		if err != nil {
+			t.Fatalf("build data file: %v", err)
+		}
+		snapID := int64(1)
+		entries = append(entries, iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()))
+	}
+	bin := compactionBin{Entries: entries, TotalSize: 18000}
+
+	if got := rowsPerRowGroup(bin, Config{RowGroupRowLimit: 128}); got != 128 {
+		t.Errorf("explicit limit: rowsPerRowGroup = %d, want 128", got)
+	}
+	// 30 bytes/row, byte cap 128MB: the estimate of ~4.4M rows exceeds the 2M
+	// default, so the default holds; the floor lifts a degenerate estimate.
+	if got := rowsPerRowGroup(bin, Config{RowGroupSizeBytes: 1024}); got != minRowGroupRows {
+		t.Errorf("floored estimate: rowsPerRowGroup = %d, want %d", got, minRowGroupRows)
+	}
+	if got := rowsPerRowGroup(bin, Config{}); got != defaultRowGroupRowLimit {
+		t.Errorf("default: rowsPerRowGroup = %d, want %d", got, defaultRowGroupRowLimit)
 	}
 }
