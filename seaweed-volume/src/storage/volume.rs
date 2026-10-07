@@ -3179,6 +3179,7 @@ impl Volume {
         let mut entry_budget = Self::VACUUMED_LAST_WRITE_SCAN_ENTRIES;
         let mut last_write_append_at_ns = 0u64;
         let mut last_write_key = NeedleId(0);
+        let mut dead = HashSet::new();
         let mut idx_file = File::open(&idx_path)?;
         let mut block = vec![0u8; NEEDLE_MAP_ENTRY_SIZE * idx::ROWS_TO_READ];
         let mut end = idx_size;
@@ -3189,7 +3190,13 @@ impl Volume {
             idx_file.read_exact(entries)?;
             for entry in entries.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>().0.iter().rev() {
                 let (key, offset, size) = idx_entry_from_bytes(entry);
+                // The first row a key presents is its latest state: a tombstone
+                // there retires the write rows beneath it.
+                if dead.contains(&key) {
+                    continue;
+                }
                 if offset.is_zero() || size.is_deleted() {
+                    dead.insert(key);
                     continue;
                 }
                 let Some(needle_offset) =
@@ -7213,6 +7220,9 @@ mod tests {
             v.sync_to_disk().unwrap();
             backdate_append_at_ns(&v.dat_path(), offset, n.size, append_at_ns);
         }
+        // The delete lands inside the commit window: makeup_diff replays its
+        // tombstone into the new .idx behind the write row the copy carried.
+        v.compact_by_index(0, 0, |_| true).unwrap();
         v.delete_needle(&mut Needle {
             id: NeedleId(2),
             cookie: Cookie(2),
@@ -7223,8 +7233,6 @@ mod tests {
             v.last_write_deleted,
             "deleting the newest write must mark the watermark dead"
         );
-
-        v.compact_by_index(0, 0, |_| true).unwrap();
         v.commit_compact().unwrap();
 
         assert_eq!(v.last_modified_ts(), old_write_ns / 1_000_000_000);

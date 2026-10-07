@@ -310,6 +310,7 @@ func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (ui
 	}
 	var lastWriteAppendAtNs uint64
 	var lastWriteKey types.NeedleId
+	dead := make(map[types.NeedleId]struct{})
 	block := make([]byte, types.NeedleMapEntrySize*idx.RowsToRead)
 	for end := indexSize; end > 0; {
 		start := max(end-int64(len(block)), 0)
@@ -323,7 +324,13 @@ func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (ui
 		}
 		for i := len(entries) - types.NeedleMapEntrySize; i >= 0; i -= types.NeedleMapEntrySize {
 			key, offset, size := idx.IdxFileEntry(entries[i : i+types.NeedleMapEntrySize])
+			// The first row a key presents is its latest state: a tombstone
+			// there retires the write rows beneath it.
+			if _, gone := dead[key]; gone {
+				continue
+			}
 			if offset.IsZero() || size.IsDeleted() {
+				dead[key] = struct{}{}
 				continue
 			}
 			needleOffset := findNeedleOffset(v.DataBackend, version, offset.ToActualOffset(), key, size)

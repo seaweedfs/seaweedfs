@@ -385,15 +385,16 @@ func TestVolumeTtlClockAtCommitSkipsDeletedWrite(t *testing.T) {
 		}
 		backdateAppendAtNs(t, v, int64(offset), n.Size, w.ns)
 	}
+	// The delete lands inside the commit window: makeupDiff replays its
+	// tombstone into the new .idx behind the write row the copy carried.
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
 	if _, err := v.doDeleteRequest(newEmptyNeedle(2)); err != nil {
 		t.Fatalf("delete needle 2: %v", err)
 	}
 	if !v.lastWriteDeleted {
 		t.Fatal("deleting the newest write must mark the watermark dead")
-	}
-
-	if err := v.CompactByIndex(nil); err != nil {
-		t.Fatalf("compact: %v", err)
 	}
 	if err := v.CommitCompact(); err != nil {
 		t.Fatalf("commit compact: %v", err)
