@@ -2,10 +2,15 @@ package s3api
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"path"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
@@ -118,4 +123,65 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 			t.Fatalf("recovered entry was not rolled back: deleted=%v", f.deleted)
 		}
 	})
+}
+
+type fakeVersionedDirFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	entries map[string]*filer_pb.Entry
+	updates map[string]*filer_pb.Entry
+}
+
+func (f *fakeVersionedDirFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if e, ok := f.entries[path.Join(req.Directory, req.Name)]; ok {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: e}, nil
+	}
+	return nil, filer_pb.ErrNotFound
+}
+
+func (f *fakeVersionedDirFiler) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	f.updates[path.Join(req.Directory, req.Entry.Name)] = req.Entry
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+// A late versioned write keeps the newer latest pointer, but the version it
+// just stored is born noncurrent — without a NoncurrentSinceNs stamp the
+// lifecycle engine never ages it out.
+func TestUpdateLatestVersionInDirectoryBornNoncurrent(t *testing.T) {
+	now := time.Now().UnixNano()
+	newerId := fmt.Sprintf("%016x%s", math.MaxInt64-now, "1111111111111111")
+	olderId := fmt.Sprintf("%016x%s", math.MaxInt64-(now-int64(time.Hour)), "2222222222222222")
+
+	bucketDir := "/buckets/b"
+	versionsPath := path.Join(bucketDir, "o"+s3_constants.VersionsFolder)
+	f := &fakeVersionedDirFiler{
+		entries: map[string]*filer_pb.Entry{
+			versionsPath: {
+				Name:        "o" + s3_constants.VersionsFolder,
+				IsDirectory: true,
+				Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionIdKey:       []byte(newerId),
+					s3_constants.ExtLatestVersionFileNameKey: []byte("newer.v"),
+				},
+			},
+			path.Join(versionsPath, "late.v"): {Name: "late.v"},
+		},
+		updates: map[string]*filer_pb.Entry{},
+	}
+	s3a := ambiguousRouteServer(t, startFakeFiler(t, f))
+	s3a.option.BucketsPath = "/buckets"
+
+	err := s3a.updateLatestVersionInDirectory("b", "o", olderId, "late.v", &filer_pb.Entry{})
+	if err != nil {
+		t.Fatalf("updateLatestVersionInDirectory: %v", err)
+	}
+	stamped := f.updates[path.Join(versionsPath, "late.v")]
+	if stamped == nil {
+		t.Fatal("late version never got its noncurrent stamp")
+	}
+	if stamped.Extended[s3_constants.ExtNoncurrentSinceNsKey] == nil {
+		t.Fatal("stamp did not set ExtNoncurrentSinceNsKey")
+	}
+	if _, pointerTouched := f.updates[versionsPath]; pointerTouched {
+		t.Fatal("the newer latest pointer must not move")
+	}
 }

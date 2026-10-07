@@ -2052,6 +2052,9 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	// keep latest where it belongs instead of pointing back.
 	prevLatestVersionId := string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 	if prevLatestVersionId != "" && versionId != "null" && compareVersionIds(prevLatestVersionId, versionId) < 0 {
+		// This version is born noncurrent: stamp it so the lifecycle engine
+		// can compute NoncurrentDays, but leave latest where it belongs.
+		s3a.markVersionNoncurrent(bucketDir, versionsObjectPath, versionFileName, time.Now().UnixNano())
 		glog.V(2).Infof("updateLatestVersionInDirectory: %s/%s already points at newer version %s; keeping it", bucket, object, prevLatestVersionId)
 		return nil
 	}
