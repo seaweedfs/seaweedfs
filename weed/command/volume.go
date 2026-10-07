@@ -61,6 +61,7 @@ type VolumeServerOptions struct {
 	memProfile                *string
 	compactionMBPerSecond     *int
 	maintenanceMBPerSecond    *int
+	maxParallelVacuumCommits  *int
 	fileSizeLimitMB           *int
 	concurrentUploadLimitMB   *int
 	concurrentDownloadLimitMB *int
@@ -215,6 +216,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.maintenanceMBPerSecond = cmdVolume.Flag.Int("maintenanceMBps", 0, "limit maintenance (replication / balance) IO rate in MB/s. Unset is 0, no limitation.")
+	v.maxParallelVacuumCommits = cmdVolume.Flag.Int("compactionMaxParallelCommits", 0, "limit how many vacuum commits run at once on this server; queued commits hold no volume lock. 0 means unlimited")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	v.ldbTimeout = cmdVolume.Flag.Int64("index.leveldbTimeout", 0, "alive time for leveldb (default to 0). If leveldb of volume is not accessed in ldbTimeout hours, it will be off loaded to reduce opened files and memory consumption.")
 	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
@@ -447,6 +449,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.fixJpgOrientation, *v.readMode,
 		*v.compactionMBPerSecond,
 		*v.maintenanceMBPerSecond,
+		*v.maxParallelVacuumCommits,
 		*v.fileSizeLimitMB,
 		int64(*v.concurrentUploadLimitMB)*1024*1024,
 		int64(*v.concurrentDownloadLimitMB)*1024*1024,
