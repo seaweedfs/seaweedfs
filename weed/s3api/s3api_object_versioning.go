@@ -1851,7 +1851,12 @@ func (s3a *S3ApiServer) clearStaleLatestVersionPointer(bucket, object, bucketDir
 		// Already cleared by another path.
 		return true
 	}
-	if observedStaleId != "" && string(currentIdBytes) != observedStaleId {
+	// The live pointer must still be the stale one this clear observed. With an
+	// empty observed id, any pointer the re-fetch sees was promoted by a
+	// concurrent writer between the rescan and here — a pointer this clear
+	// never set out to remove, so leave it alone (the rescan's no-tagged-
+	// versions result only covered the pre-promotion directory).
+	if string(currentIdBytes) != observedStaleId {
 		glog.V(1).Infof("%s: skipping pointer clear for %s/%s, live pointer changed (observed=%s, current=%s)", caller, bucket, object, observedStaleId, string(currentIdBytes))
 		return false
 	}

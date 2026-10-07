@@ -151,38 +151,59 @@ func TestAnonymousObjectACLHealPointerConcurrentWriter(t *testing.T) {
 // TestClearStaleLatestVersionPointerConcurrentWriter pins the same CAS
 // contract on the pointer clear: a writer that promotes the pointer between
 // the clear's re-fetch and its persist must not be rolled back to a cleared
-// pointer.
+// pointer. A pointerless caller snapshot must not clear a pointer a writer
+// promoted after the clear's rescan either — the only live pointer such a
+// clear can observe is one that appeared concurrently, never the stale one
+// the clear set out to remove.
 func TestClearStaleLatestVersionPointerConcurrentWriter(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
+		observedEmpty     bool
+		writerDuringScan  bool
 		writerDuringWrite bool
 		wantCleared       bool
 		wantPointer       string
 	}{
 		{name: "idle key clears the stale pointer", wantCleared: true, wantPointer: ""},
 		{name: "concurrent writer during persist keeps its promotion", writerDuringWrite: true, wantCleared: false, wantPointer: "v2"},
+		{name: "pointerless snapshot keeps a post-rescan promotion", observedEmpty: true, writerDuringScan: true, wantCleared: false, wantPointer: "v2"},
+		{name: "pointerless snapshot on an idle key is already clear", observedEmpty: true, wantCleared: true, wantPointer: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &anonymousReadHealFiler{anonymousReadFiler: &anonymousReadFiler{entries: make(map[string]*filer_pb.Entry)}}
+			extended := map[string][]byte{
+				s3_constants.ExtLatestVersionIdKey:       []byte("v1"),
+				s3_constants.ExtLatestVersionFileNameKey: []byte("v_v1"),
+			}
+			if tc.observedEmpty {
+				extended = map[string][]byte{}
+			}
 			f.entries["/buckets/b/folder/.versions"] = &filer_pb.Entry{
 				Name:        ".versions",
 				IsDirectory: true,
 				Attributes:  &filer_pb.FuseAttributes{Mtime: 1700000000},
-				Extended: map[string][]byte{
-					s3_constants.ExtLatestVersionIdKey:       []byte("v1"),
-					s3_constants.ExtLatestVersionFileNameKey: []byte("v_v1"),
-				},
+				Extended:    extended,
+			}
+			promotePointer := func(f *anonymousReadHealFiler) {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				f.entries["/buckets/b/folder/.versions"].Extended[s3_constants.ExtLatestVersionIdKey] = []byte("v2")
+				f.entries["/buckets/b/folder/.versions"].Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte("v_v2")
+			}
+			if tc.writerDuringScan {
+				f.onScan = promotePointer
 			}
 			if tc.writerDuringWrite {
-				f.onWrite = func(f *anonymousReadHealFiler) {
-					f.mu.Lock()
-					defer f.mu.Unlock()
-					f.entries["/buckets/b/folder/.versions"].Extended[s3_constants.ExtLatestVersionIdKey] = []byte("v2")
-					f.entries["/buckets/b/folder/.versions"].Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte("v_v2")
-				}
+				f.onWrite = promotePointer
 			}
 			s3a := newPutTestServer(t, startFakeFiler(t, f))
 			versionsEntry := proto.Clone(f.entries["/buckets/b/folder/.versions"]).(*filer_pb.Entry)
+			if versionsEntry.Extended == nil {
+				// proto.Clone turns an empty Extended map into nil; real callers
+				// (updateLatestVersionAfterDeletion) hand the clear a non-nil
+				// snapshot, so mirror that here.
+				versionsEntry.Extended = map[string][]byte{}
+			}
 
 			cleared := s3a.clearStaleLatestVersionPointer("b", "folder", "/buckets/b", "folder/.versions", versionsEntry, "test")
 			require.Equal(t, tc.wantCleared, cleared)
