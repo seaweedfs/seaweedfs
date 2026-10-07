@@ -253,6 +253,8 @@ func writePositionDeleteFile(rows []positionDeleteRow) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+const skipDeleteRewriteV3 = "rewrite_position_delete_files skipped: position-delete files must not be added to a format-version 3 table"
+
 func (h *Handler) rewritePositionDeleteFiles(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
@@ -269,6 +271,13 @@ func (h *Handler) rewritePositionDeleteFiles(
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
 		return "no current snapshot", nil, nil
+	}
+	// The spec forbids adding position-delete files to a v3 table ("Position
+	// delete files must not be added to v3 tables"; v3 writes deletion
+	// vectors), and this rewrite adds new ones. Compaction still applies and
+	// removes existing position deletes.
+	if hasRowLineage(meta.Version()) {
+		return skipDeleteRewriteV3, nil, nil
 	}
 
 	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, currentSnap.ManifestList)

@@ -308,6 +308,9 @@ func (h *Handler) tableNeedsMaintenance(
 				return true, nil
 			}
 		case "rewrite_position_delete_files":
+			if hasRowLineage(meta.Version()) {
+				continue // the rewrite would add position-delete files, which a v3 table must not get (skipDeleteRewriteV3)
+			}
 			manifests, err := getCurrentManifests()
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
