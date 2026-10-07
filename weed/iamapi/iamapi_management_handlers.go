@@ -228,6 +228,19 @@ func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName 
 	resp = &DeleteUserResponse{}
 	for i, ident := range s3cfg.Identities {
 		if userName == ident.Name {
+			// AWS IAM behavior: prevent deletion if user has dependent resources.
+			if len(ident.ServiceAccountIds) > 0 {
+				return resp, &IamError{
+					Code:  iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("cannot delete user %s: user has %d service account(s). Delete service accounts first", userName, len(ident.ServiceAccountIds)),
+				}
+			}
+			if len(ident.Credentials) > 0 {
+				return resp, &IamError{
+					Code:  iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("cannot delete user %s: user has %d access key(s). Delete access keys first", userName, len(ident.Credentials)),
+				}
+			}
 			// Clean up any inline policies stored for this user
 			policies := Policies{}
 			if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
@@ -1618,9 +1631,8 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		}
 		changed = false
 	default:
-		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
-		errorResponse := newErrorResponse(errNotImplemented.Code, errNotImplemented.Description, reqID)
-		s3err.WriteXMLResponse(w, r, errNotImplemented.HTTPStatusCode, errorResponse)
+		errorResponse := newErrorResponse("InvalidAction", fmt.Sprintf("The action %s is not valid for this endpoint", values.Get("Action")), reqID)
+		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResponse)
 		return
 	}
 	if changed {

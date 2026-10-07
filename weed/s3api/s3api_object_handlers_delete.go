@@ -232,6 +232,11 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	versioningConfigured := (versioningState != "")
 
+	if errCode := s3a.checkVersionIdConfigured(bucket, versionId); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	var auditLog *s3err.AccessLog
 	if s3err.Logger != nil {
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
@@ -421,7 +426,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	}
 
 	if len(deleteObjects.Objects) > deleteMultipleObjectsLimit {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxDeleteObjects)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
 

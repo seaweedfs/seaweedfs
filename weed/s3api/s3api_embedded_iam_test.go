@@ -1043,7 +1043,7 @@ func TestEmbeddedIamAttachPolicyLimitExceeded(t *testing.T) {
 
 	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusForbidden, response.Code)
+	assert.Equal(t, http.StatusConflict, response.Code)
 	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
 	assert.Equal(t, iam.ErrCodeLimitExceededException, code)
 	assert.Len(t, api.mockConfig.Identities[0].PolicyNames, MaxManagedPoliciesPerUser)
@@ -1692,7 +1692,34 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
 
-	// 5. Delete user
+	var accessKeyId string
+	for _, ident := range api.mockConfig.Identities {
+		if ident.Name == "WorkflowUser" && len(ident.Credentials) > 0 {
+			accessKeyId = ident.Credentials[0].AccessKey
+		}
+	}
+	assert.NotEmpty(t, accessKeyId)
+
+	// 5. Deleting a user that still has an access key is refused
+	t.Run("DeleteUserConflict", func(t *testing.T) {
+		params := &iam.DeleteUserInput{UserName: aws.String("WorkflowUser")}
+		req, _ := iam.New(session.New()).DeleteUserRequest(params)
+		_ = req.Build()
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusConflict, response.Code)
+	})
+
+	// 6. Delete the access key, then the user
+	t.Run("DeleteAccessKey", func(t *testing.T) {
+		params := &iam.DeleteAccessKeyInput{UserName: aws.String("WorkflowUser"), AccessKeyId: aws.String(accessKeyId)}
+		req, _ := iam.New(session.New()).DeleteAccessKeyRequest(params)
+		_ = req.Build()
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, response.Code)
+	})
+
 	t.Run("DeleteUser", func(t *testing.T) {
 		params := &iam.DeleteUserInput{UserName: aws.String("WorkflowUser")}
 		req, _ := iam.New(session.New()).DeleteUserRequest(params)
@@ -2039,7 +2066,8 @@ func TestEmbeddedIamNotImplementedAction(t *testing.T) {
 	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
 	apiRouter.ServeHTTP(rr, req)
 
-	assert.Equal(t, http.StatusNotImplemented, rr.Code)
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.Contains(t, rr.Body.String(), "InvalidAction")
 	assert.Contains(t, rr.Body.String(), "<RequestId>")
 	assert.NotContains(t, rr.Body.String(), "<ResponseMetadata>")
 	assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractEmbeddedIamRequestID(rr))
@@ -2830,4 +2858,44 @@ func TestEmbeddedIamReadOnly(t *testing.T) {
 	responseList, err := executeEmbeddedIamRequest(api, reqList.HTTPRequest, &outList)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, responseList.Code)
+}
+
+func TestWriteIamErrorResponseMapping(t *testing.T) {
+	tests := []struct {
+		name       string
+		code       string
+		wantStatus int
+	}{
+		{"NoSuchEntity", iam.ErrCodeNoSuchEntityException, http.StatusNotFound},
+		{"EntityAlreadyExists", iam.ErrCodeEntityAlreadyExistsException, http.StatusConflict},
+		{"InvalidInput", iam.ErrCodeInvalidInputException, http.StatusBadRequest},
+		{"LimitExceeded", iam.ErrCodeLimitExceededException, http.StatusConflict},
+		{"DeleteConflict", iam.ErrCodeDeleteConflictException, http.StatusConflict},
+		{"InvalidAction", "InvalidAction", http.StatusNotFound},
+		{"AccessDenied", "AccessDenied", http.StatusForbidden},
+		{"InvalidClientTokenId", "InvalidClientTokenId", http.StatusForbidden},
+		{"SignatureDoesNotMatch", "SignatureDoesNotMatch", http.StatusForbidden},
+		{"IncompleteSignature", "IncompleteSignature", http.StatusBadRequest},
+		{"ServiceFailure", iam.ErrCodeServiceFailureException, http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/", nil)
+			writeIamErrorResponse(rec, r, "req-1", &iamError{Code: tt.code, Error: fmt.Errorf("boom")})
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			body := rec.Body.String()
+			assert.True(t, strings.HasPrefix(strings.TrimSpace(body), "<ErrorResponse") ||
+				strings.Contains(body, "<ErrorResponse"), "expected IAM ErrorResponse envelope, got %s", body)
+			assert.Contains(t, body, "<Code>"+tt.code+"</Code>")
+		})
+	}
+}
+
+func TestIamAuthErrorCode(t *testing.T) {
+	assert.Equal(t, "InvalidClientTokenId", iamAuthErrorCode(s3err.ErrInvalidAccessKeyID))
+	assert.Equal(t, "SignatureDoesNotMatch", iamAuthErrorCode(s3err.ErrSignatureDoesNotMatch))
+	assert.Equal(t, "AccessDenied", iamAuthErrorCode(s3err.ErrAccessDenied))
+	assert.Equal(t, "RequestTimeTooSkewed", iamAuthErrorCode(s3err.ErrRequestTimeTooSkewed))
+	assert.Equal(t, "IncompleteSignature", iamAuthErrorCode(s3err.ErrMissingFields))
 }
