@@ -56,6 +56,7 @@ type Volume struct {
 
 	lastModifiedTsSeconds    uint64 // unix time in seconds
 	lastAppendAtNs           uint64 // unix time in nanoseconds
+	lastWriteAppendAtNs      uint64 // AppendAtNs of the newest write; tombstones don't move it
 	keepLastModifiedTsOnLoad bool
 
 	lastCompactIndexOffset uint64

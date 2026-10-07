@@ -273,6 +273,7 @@ func (v *Volume) recoverLastModifiedTs(indexFile *os.File) {
 		return
 	}
 	v.lastModifiedTsSeconds = appendAtNs / uint64(time.Second)
+	v.lastWriteAppendAtNs = max(v.lastWriteAppendAtNs, appendAtNs)
 }
 
 // vacuumedLastWriteScanEntries bounds the work a vacuumed volume's recovery

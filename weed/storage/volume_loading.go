@@ -172,7 +172,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			return fmt.Errorf("load remote file %v: %w", v.volumeInfo, err)
 		}
 		// Set lastModifiedTsSeconds from remote file to prevent premature expiry on startup
-		if len(v.volumeInfo.GetFiles()) > 0 {
+		if len(v.volumeInfo.GetFiles()) > 0 && !v.keepLastModifiedTsOnLoad {
 			remoteFileModifiedTime := v.volumeInfo.GetFiles()[0].GetModifiedTime()
 			if remoteFileModifiedTime > 0 {
 				v.lastModifiedTsSeconds = remoteFileModifiedTime

@@ -222,13 +222,10 @@ func (v *Volume) CommitCompact() error {
 	//time.Sleep(20 * time.Second)
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-	// The TTL clock is already current: every write since the volume loaded
-	// advanced the append watermark, and makeupDiff only replays those writes.
-	// Re-deriving it from the rewritten .dat scans every live needle under the
-	// write lock, and an over-budget scan would restart the clock at the
-	// swap's mtime.
-	if v.lastAppendAtNs != 0 {
-		v.lastModifiedTsSeconds = v.lastAppendAtNs / uint64(time.Second)
+	// The write watermark already equals what recoverLastModifiedTs would
+	// rescan, so keep the clock instead of paying for the scan under the lock.
+	if v.lastWriteAppendAtNs != 0 {
+		v.lastModifiedTsSeconds = v.lastWriteAppendAtNs / uint64(time.Second)
 	}
 	v.keepLastModifiedTsOnLoad = v.lastModifiedTsSeconds != 0
 	e := v.load(true, false, v.needleMapKind, 0, v.Version())

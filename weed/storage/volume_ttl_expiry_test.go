@@ -263,10 +263,8 @@ func TestVolumeTtlClockSkipsUnaffordableScanWithoutDatReads(t *testing.T) {
 }
 
 // TestVolumeTtlClockCarriedAcrossVacuumCommit covers the reload that ends a
-// vacuum commit. The clock is already current when the swap happens, so the
-// commit must keep it rather than re-derive it: re-deriving scans every live
-// needle while the write lock blocks reads, and a scan over its budget falls
-// back to the rewritten .dat's mtime, handing an expiring volume a fresh TTL.
+// vacuum commit: the clock must keep the last write's append time rather than
+// be re-derived, and the intervening delete's tombstone must not freshen it.
 func TestVolumeTtlClockCarriedAcrossVacuumCommit(t *testing.T) {
 	dir := t.TempDir()
 	ttl, err := needle.ReadTTL("5m")
@@ -292,9 +290,10 @@ func TestVolumeTtlClockCarriedAcrossVacuumCommit(t *testing.T) {
 	if _, err := v.doDeleteRequest(newEmptyNeedle(2)); err != nil {
 		t.Fatalf("delete needle 2: %v", err)
 	}
-	// Where a restart's recovery would have left the clock.
+	// Where a restart's recovery would have left the clock. The delete above
+	// pushed lastAppendAtNs to ~now; the commit must not consult it.
 	v.lastModifiedTsSeconds = lastWriteNs / uint64(time.Second)
-	v.lastAppendAtNs = lastWriteNs
+	v.lastWriteAppendAtNs = lastWriteNs
 
 	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
 	vacuumedLastWriteScanEntries = 1
@@ -318,10 +317,8 @@ func TestVolumeTtlClockCarriedAcrossVacuumCommit(t *testing.T) {
 }
 
 // TestVolumeTtlClockAtCommitUsesAppendTime covers a write whose client
-// supplied modified time does not match when it was appended. The in-memory
-// clock follows the needle's modified time, but a commit keeps the append
-// watermark -- the clock the recovery scan would recompute -- so a backdated
-// or future-dated write cannot shift expiry through a vacuum.
+// supplied modified time does not match when it was appended: the commit
+// keeps the server-side append watermark the recovery scan would recompute.
 func TestVolumeTtlClockAtCommitUsesAppendTime(t *testing.T) {
 	dir := t.TempDir()
 	ttl, err := needle.ReadTTL("5m")
@@ -344,7 +341,7 @@ func TestVolumeTtlClockAtCommitUsesAppendTime(t *testing.T) {
 	if v.lastModifiedTsSeconds < future {
 		t.Fatalf("clock %d did not follow the needle's modified time %d", v.lastModifiedTsSeconds, future)
 	}
-	appendWatermarkSec := v.lastAppendAtNs / uint64(time.Second)
+	appendWatermarkSec := v.lastWriteAppendAtNs / uint64(time.Second)
 
 	if err := v.CompactByIndex(nil); err != nil {
 		t.Fatalf("compact: %v", err)

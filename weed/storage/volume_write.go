@@ -409,6 +409,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) 
 		return
 	}
 	v.lastAppendAtNs = n.AppendAtNs
+	v.lastWriteAppendAtNs = n.AppendAtNs
 
 	// add to needle map
 	if !ok || uint64(nv.Offset.ToActualOffset()) < offset {
@@ -524,6 +525,7 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 	}
 	indexEnd := int64(v.nm.IndexFileSize())
 	batchLastAppendAtNs := v.lastAppendAtNs
+	batchLastWriteAppendAtNs := v.lastWriteAppendAtNs
 	batchLastModifiedTsSeconds := v.lastModifiedTsSeconds
 	for i := 0; i < len(currentRequests); i++ {
 		needleID := currentRequests[i].N.Id
@@ -563,6 +565,7 @@ func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {
 	if syncErr := v.DataBackend.Sync(); syncErr != nil {
 		v.checkReadWriteError(syncErr)
 		v.lastAppendAtNs = batchLastAppendAtNs
+		v.lastWriteAppendAtNs = batchLastWriteAppendAtNs
 		v.lastModifiedTsSeconds = batchLastModifiedTsSeconds
 		batchErr := syncErr
 		if recoveryErr := v.rollbackBatch(end, indexEnd, orderedSnapshots, metricRollbacker, batchMetrics); recoveryErr != nil {
@@ -702,6 +705,7 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 		return err
 	}
 	v.lastAppendAtNs = appendAtNs
+	v.lastWriteAppendAtNs = appendAtNs
 
 	// add to needle map
 	if err = v.nm.Put(needleId, ToOffset(int64(offset)), size); err != nil {

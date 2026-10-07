@@ -1182,6 +1182,7 @@ pub struct Volume {
 
     last_modified_ts_seconds: u64,
     last_append_at_ns: u64,
+    last_write_append_at_ns: u64, // AppendAtNs of the newest write; tombstones don't move it
     keep_last_modified_ts_on_load: bool,
     pub last_disk_check_ns: Arc<std::sync::atomic::AtomicI64>, // for phantom volume detection cache
 
@@ -1282,6 +1283,7 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            last_write_append_at_ns: 0,
             keep_last_modified_ts_on_load: false,
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
@@ -1329,6 +1331,7 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            last_write_append_at_ns: 0,
             keep_last_modified_ts_on_load: false,
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
@@ -2346,6 +2349,12 @@ impl Volume {
                 .collect();
         }
         self.last_append_at_ns = last_append_at_ns;
+        self.last_write_append_at_ns = run
+            .iter()
+            .zip(&staged)
+            .filter(|(_, r)| matches!(r, Ok(Some(_))))
+            .map(|((n, _), _)| n.append_at_ns)
+            .fold(self.last_write_append_at_ns, u64::max);
 
         // A durable entry that fails to publish stops the volume taking
         // writes, so the entries after it are refused the way a lone
@@ -2528,6 +2537,7 @@ impl Volume {
         }
 
         self.last_append_at_ns = n.append_at_ns;
+        self.last_write_append_at_ns = n.append_at_ns;
 
         self.publish_write(n, offset, fsync)?;
 
@@ -3114,7 +3124,10 @@ impl Volume {
         }
         match self.find_last_write_append_at_ns() {
             Ok(0) => {}
-            Ok(append_at_ns) => self.last_modified_ts_seconds = append_at_ns / 1_000_000_000,
+            Ok(append_at_ns) => {
+                self.last_modified_ts_seconds = append_at_ns / 1_000_000_000;
+                self.last_write_append_at_ns = self.last_write_append_at_ns.max(append_at_ns);
+            }
             Err(e) => warn!(
                 volume_id = self.id.0,
                 error = %e,
@@ -4301,6 +4314,7 @@ impl Volume {
 
         // Update lastAppendAtNs (matches Go L352: v.lastAppendAtNs = appendAtNs)
         self.last_append_at_ns = append_at_ns;
+        self.last_write_append_at_ns = append_at_ns;
 
         // Update needle map index
         let offset = Offset::from_actual_offset(dat_size);
@@ -4500,13 +4514,11 @@ impl Volume {
         self.write_compact_commit_marker()?;
         self.apply_compact_swap()?;
 
-        // The TTL clock is already current: every write since the volume
-        // loaded advanced the append watermark, and makeup_diff only replays
-        // those writes. Re-deriving it from the rewritten .dat scans every
-        // live needle under the write lock, and an over-budget scan would
-        // restart the clock at the swap's mtime.
-        if self.last_append_at_ns != 0 {
-            self.last_modified_ts_seconds = self.last_append_at_ns / 1_000_000_000;
+        // The write watermark already equals what recover_last_modified_ts
+        // would rescan, so keep the clock instead of paying for the scan
+        // under the lock.
+        if self.last_write_append_at_ns != 0 {
+            self.last_modified_ts_seconds = self.last_write_append_at_ns / 1_000_000_000;
         }
         self.keep_last_modified_ts_on_load = self.last_modified_ts_seconds != 0;
         let load_result = self.load(true, false, 0, self.version());
@@ -6398,6 +6410,7 @@ mod tests {
         let prior = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
         let dat_len_before = dat_len(&v);
         let last_append_before = v.last_append_at_ns;
+        let last_write_append_before = v.last_write_append_at_ns;
         let last_modified_before = v.last_modified_ts_seconds;
         let file_count_before = v.file_count();
 
@@ -6419,6 +6432,7 @@ mod tests {
         );
         assert_eq!(dat_len(&v), dat_len_before, "the run is off the .dat");
         assert_eq!(v.last_append_at_ns, last_append_before);
+        assert_eq!(v.last_write_append_at_ns, last_write_append_before);
         assert_eq!(v.last_modified_ts_seconds, last_modified_before);
         let now = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
         assert_eq!((now.offset, now.size), (prior.offset, prior.size));
@@ -7054,11 +7068,9 @@ mod tests {
         );
     }
 
-    // Covers the reload that ends a vacuum commit. The clock is already current
-    // when the swap happens, so the commit must keep it rather than re-derive
-    // it: re-deriving scans every live needle while the write lock blocks
-    // reads, and a scan over its budget falls back to the rewritten .dat's
-    // mtime, handing an expiring volume a fresh TTL.
+    // Covers the reload that ends a vacuum commit: the clock must keep the
+    // last write's append time rather than be re-derived, and the intervening
+    // delete's tombstone must not freshen it.
     #[test]
     fn test_ttl_clock_carried_across_vacuum_commit() {
         let tmp = TempDir::new().unwrap();
@@ -7095,9 +7107,10 @@ mod tests {
         for (offset, size) in written {
             backdate_append_at_ns(&v.dat_path(), offset, size, last_write_ns);
         }
-        // Where a restart's recovery would have left the clock.
+        // Where a restart's recovery would have left the clock. The delete
+        // above pushed last_append_at_ns to ~now; the commit must not use it.
         v.set_last_modified_ts_for_test(last_write_ns / 1_000_000_000);
-        v.last_append_at_ns = last_write_ns;
+        v.last_write_append_at_ns = last_write_ns;
 
         v.compact_by_index(0, 0, |_| true).unwrap();
         v.commit_compact().unwrap();
@@ -7110,9 +7123,8 @@ mod tests {
     }
 
     // A write's client supplied modified time can lie ahead of or behind when
-    // it was appended; the commit keeps the append watermark -- the clock the
-    // recovery scan would recompute -- so it cannot shift expiry through a
-    // vacuum.
+    // it was appended; the commit keeps the server-side write watermark the
+    // recovery scan would recompute.
     #[test]
     fn test_ttl_clock_at_commit_uses_append_time() {
         let tmp = TempDir::new().unwrap();
@@ -7136,7 +7148,7 @@ mod tests {
         };
         v.write_needle(&mut n, true, false).unwrap();
         assert!(v.last_modified_ts() >= future);
-        let append_watermark_sec = v.last_append_at_ns / 1_000_000_000;
+        let append_watermark_sec = v.last_write_append_at_ns / 1_000_000_000;
 
         v.compact_by_index(0, 0, |_| true).unwrap();
         v.commit_compact().unwrap();
