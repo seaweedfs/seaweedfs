@@ -314,6 +314,14 @@ func (h *Handler) compactDataFiles(
 			}
 			writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
 
+			// Record the column statistics readers prune files by; without
+			// them every scan has to read every compacted file.
+			if stats, statsErr := collectColumnStats(mergedData, schema); statsErr != nil {
+				glog.Warningf("iceberg compact: no column statistics for %s: %v", mergedFileName, statsErr)
+			} else {
+				stats.applyTo(dfBuilder)
+			}
+
 			mergedDataFile := dfBuilder.Build()
 			summary.addFile(mergedDataFile)
 			newEntry := iceberg.NewManifestEntry(
@@ -527,6 +535,7 @@ func (h *Handler) compactDataFiles(
 // buildCompactionBins groups small data files by partition for bin-packing.
 // A file is "small" if it's below targetSize. A bin must have at least
 // minFiles entries to be worth compacting.
+//
 func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minFiles int) []compactionBin {
 	if minFiles < 2 {
 		minFiles = 2
