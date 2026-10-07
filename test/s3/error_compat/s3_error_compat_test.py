@@ -93,6 +93,22 @@ def S3(method, path, **kw):
     return dict(method=method, path=path, **kw)
 
 
+# ---------------- cleanup (atexit so failed runs still clean up) ----------------
+def cleanup():
+    try:
+        send(**iam({'Action': 'DeleteAccessKey', 'UserName': user, 'AccessKeyId': USER.access_key}))
+        send(**iam({'Action': 'DeleteUser', 'UserName': user}))
+        send('DELETE', '/%s/mp?uploadId=%s' % (B, upload_id))
+        st, d = send('GET', '/%s?list-type=2' % B)
+        for k in re.findall(r'<Key>([^<]+)</Key>', d):
+            send('DELETE', '/%s/%s' % (B, urllib.parse.quote(k)))
+        send('DELETE', '/' + B)
+    except Exception as e:
+        print('cleanup failed: %s' % e)
+
+
+atexit.register(cleanup)
+
 # ---------------- setup ----------------
 st, d = send('PUT', '/' + B)
 if st != 200:
@@ -177,22 +193,6 @@ case(3, 'DeleteObjects with 1001 keys', (400, 'Error', 'MalformedXML'), S3DOC + 
 # last: this one deletes the user when it should be refused
 case(3, 'IAM DeleteUser while it has an access key', (409, 'ErrorResponse', 'DeleteConflict'),
      IAMDOC + 'API_DeleteUser.html#API_DeleteUser_Errors', iam({'Action': 'DeleteUser', 'UserName': user}))
-
-# ---------------- cleanup (atexit so failed runs still clean up) ----------------
-def cleanup():
-    try:
-        send(**iam({'Action': 'DeleteAccessKey', 'UserName': user, 'AccessKeyId': USER.access_key}))
-        send(**iam({'Action': 'DeleteUser', 'UserName': user}))
-        send('DELETE', '/%s/mp?uploadId=%s' % (B, upload_id))
-        st, d = send('GET', '/%s?list-type=2' % B)
-        for k in re.findall(r'<Key>([^<]+)</Key>', d):
-            send('DELETE', '/%s/%s' % (B, urllib.parse.quote(k)))
-        send('DELETE', '/' + B)
-    except Exception as e:
-        print('cleanup failed: %s' % e)
-
-
-atexit.register(cleanup)
 
 # ---------------- report ----------------
 w = max(len(r[1]) for r in rows)
