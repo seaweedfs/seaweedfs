@@ -8,6 +8,7 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
 
@@ -158,11 +159,16 @@ func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims)
 type FilerJwtProvider func(isWrite bool) EncodedJwt
 
 // LoadFilerJwtFromFile reads jwt.filer_signing from a security file the way
-// LoadClientTLSFromFile reads the TLS section. A nil provider means the file
-// configures no filer signing keys and the process-wide configuration applies.
+// LoadClientTLSFromFile reads the TLS section, honoring the same WEED_
+// environment precedence. A nil provider means the file configures no filer
+// signing keys and the process-wide configuration applies. A file that sets
+// only one access level falls back to the process-wide key for the other.
 func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 	v := viper.New()
 	v.SetConfigFile(configFile)
+	v.AutomaticEnv()
+	v.SetEnvPrefix("weed")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
 	}
@@ -173,10 +179,21 @@ func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 		return nil, nil
 	}
 	signingKeyExpires := v.GetInt("jwt.filer_signing.expires_after_seconds")
+	readSigningKeyExpires := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+	if len(signingKey) == 0 || len(readSigningKey) == 0 {
+		gv := util.GetViper()
+		if len(signingKey) == 0 {
+			signingKey = SigningKey(gv.GetString("jwt.filer_signing.key"))
+			signingKeyExpires = gv.GetInt("jwt.filer_signing.expires_after_seconds")
+		}
+		if len(readSigningKey) == 0 {
+			readSigningKey = SigningKey(gv.GetString("jwt.filer_signing.read.key"))
+			readSigningKeyExpires = gv.GetInt("jwt.filer_signing.read.expires_after_seconds")
+		}
+	}
 	if signingKeyExpires == 0 {
 		signingKeyExpires = 10
 	}
-	readSigningKeyExpires := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
 	if readSigningKeyExpires == 0 {
 		readSigningKeyExpires = 60
 	}

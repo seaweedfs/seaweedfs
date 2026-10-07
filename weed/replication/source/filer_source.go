@@ -72,6 +72,12 @@ func (fs *FilerSource) SetFilerJwtProvider(provider security.FilerJwtProvider) {
 	fs.jwtForFiler = provider
 }
 
+// FilerJwt returns the side-specific filer API credential, or nil when the
+// process-wide jwt.filer_signing configuration applies.
+func (fs *FilerSource) FilerJwt() security.FilerJwtProvider {
+	return fs.jwtForFiler
+}
+
 func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)

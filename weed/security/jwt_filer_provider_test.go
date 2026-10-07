@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestLoadFilerJwtFromFile(t *testing.T) {
@@ -73,5 +75,64 @@ func TestLoadFilerJwtFromFileWithoutKeys(t *testing.T) {
 func TestLoadFilerJwtFromFileMissing(t *testing.T) {
 	if _, err := LoadFilerJwtFromFile(filepath.Join(t.TempDir(), "none.toml")); err == nil {
 		t.Fatal("missing config file loaded without error")
+	}
+}
+
+func TestLoadFilerJwtFromFilePartialKeys(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "security.toml")
+	config := `
+[jwt.filer_signing.read]
+key = "side-read-key"
+`
+	if err := os.WriteFile(configFile, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	gv := util.GetViper()
+	gv.Set("jwt.filer_signing.key", "global-write-key")
+	t.Cleanup(func() { gv.Set("jwt.filer_signing.key", "") })
+
+	provider, err := LoadFilerJwtFromFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider == nil {
+		t.Fatal("config with a filer signing key gave a nil provider")
+	}
+
+	if _, err := DecodeJwt(SigningKey("global-write-key"), provider(true), &SeaweedFilerClaims{}); err != nil {
+		t.Fatalf("write token does not validate against the global write key: %v", err)
+	}
+	if _, err := DecodeJwt(SigningKey("side-read-key"), provider(false), &SeaweedFilerClaims{}); err != nil {
+		t.Fatalf("read token does not validate against the side read key: %v", err)
+	}
+}
+
+func TestLoadFilerJwtFromFileEnvOverride(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "security.toml")
+	config := `
+[jwt.filer_signing]
+key = "side-write-key"
+[jwt.filer_signing.read]
+key = "side-read-key"
+`
+	if err := os.WriteFile(configFile, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WEED_JWT_FILER_SIGNING_READ_KEY", "env-read-key")
+
+	provider, err := LoadFilerJwtFromFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider == nil {
+		t.Fatal("config with filer signing keys gave a nil provider")
+	}
+
+	if _, err := DecodeJwt(SigningKey("env-read-key"), provider(false), &SeaweedFilerClaims{}); err != nil {
+		t.Fatalf("read token does not validate against the env override key: %v", err)
+	}
+	if _, err := DecodeJwt(SigningKey("side-write-key"), provider(true), &SeaweedFilerClaims{}); err != nil {
+		t.Fatalf("write token does not validate against the side write key: %v", err)
 	}
 }
