@@ -477,12 +477,18 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	// mime and without data of its own answers application/x-directory, the marker type
 	// Hadoop-style clients (e.g. flink-s3-fs-presto) require to classify the path as a
 	// directory; defaulting to octet-stream makes them treat it as a 0-byte file.
-	// Marker content may be stored encrypted; decrypt before serving
+	// Marker content may be stored encrypted; decrypt before serving. HEAD
+	// returns no body, so it only checks access and skips decryption — and
+	// any KMS call — entirely.
 	content := entry.Content
 	sseType := s3a.detectPrimarySSEType(entry)
 	if sseType != "" && sseType != "None" {
 		var errCode s3err.ErrorCode
-		content, errCode = s3a.decryptDirectoryContent(r, entry, sseType)
+		if r.Method == http.MethodHead {
+			errCode = s3a.checkDirectorySSEAccess(r, entry, sseType)
+		} else {
+			content, errCode = s3a.decryptDirectoryContent(r, entry, sseType)
+		}
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
@@ -499,7 +505,11 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", contentType)
 
-	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	contentLength := int64(len(content))
+	if len(entry.Chunks) > 0 {
+		contentLength = int64(entry.Attributes.FileSize)
+	}
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 
 	// Set last modified
 	w.Header().Set("Last-Modified", time.Unix(entry.Attributes.Mtime, 0).UTC().Format(http.TimeFormat))
@@ -576,6 +586,26 @@ func (s3a *S3ApiServer) decryptDirectoryContent(r *http.Request, entry *filer_pb
 		return nil, s3err.ErrInternalError
 	}
 	return content, s3err.ErrNone
+}
+
+// checkDirectorySSEAccess runs the request-level checks a HEAD of an encrypted
+// marker needs: SSE-C requires the customer key to parse and to match the key
+// the marker was written with; SSE-KMS and SSE-S3 need nothing from the caller.
+func (s3a *S3ApiServer) checkDirectorySSEAccess(r *http.Request, entry *filer_pb.Entry, sseType string) s3err.ErrorCode {
+	if sseType != s3_constants.SSETypeC {
+		return s3err.ErrNone
+	}
+	customerKey, parseErr := ParseSSECHeaders(r)
+	if parseErr != nil {
+		return MapSSECErrorToS3Error(parseErr)
+	}
+	if customerKey == nil {
+		return s3err.ErrSSECustomerKeyMissing
+	}
+	if storedKeyMD5 := string(entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]); storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
 }
 
 // handleDirectoryObjectRequest is a helper function that handles directory object requests
