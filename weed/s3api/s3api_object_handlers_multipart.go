@@ -75,6 +75,11 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	if errCode := ValidateRequestEncryption(r.Header); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Validate Cache-Control header format if present
 	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
 		if _, err := cacheobject.ParseRequestCacheControl(cacheControl); err != nil {
