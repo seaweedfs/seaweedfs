@@ -71,6 +71,7 @@ start-server: check-deps
 	echo "SeaweedFS S3 server failed to start"; \
 	echo "=== Server logs ==="; \
 	test -f weed-test.log && cat weed-test.log || true; \
+	$(MAKE) --no-print-directory stop-server; \
 	exit 1
 
 stop-server:
