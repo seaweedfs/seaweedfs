@@ -49,11 +49,12 @@ func (c *commandEcEncode) Help() string {
 
 	The guarantee follows from where shards land: a volume survives the loss of any
 	nodes (or racks) that hold at most parityShards (4) shards between them. Spread
-	is best-effort by default; -shardReplicaPlacement caps it: its rack digit
-	bounds the shards one rack may hold, its node digit the shards one node may
-	hold (the data-center digit is not used for EC). For example
-	-shardReplicaPlacement=021 limits each node to 1 shard and each rack to 2, so
-	the loss of one rack costs at most 2 shards.
+	is best-effort; -shardReplicaPlacement requests limits: its rack digit
+	sets the requested shards per rack, and its node digit the requested shards
+	per node (the data-center digit is not used for EC). For example
+	-shardReplicaPlacement=021 requests at most 1 shard per node and 2 per rack.
+	Only when the final placement meets these limits does losing one rack cost
+	at most 2 shards; the command does not guarantee that the limits are met.
 
 	The -collection parameter is a comma-separated list of collection names, with
 	"*" and "?" wildcards, and regex patterns:
