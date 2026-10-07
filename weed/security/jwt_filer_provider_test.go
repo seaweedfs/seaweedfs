@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -42,13 +43,19 @@ expires_after_seconds = 90
 		{"write", true, "side-write-key", "side-read-key", 30},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			before := time.Now()
 			token := provider(tc.isWrite)
+			after := time.Now()
 			claims := &SeaweedFilerClaims{}
 			if _, err := DecodeJwt(SigningKey(tc.signedBy), token, claims); err != nil {
 				t.Fatalf("token does not validate against the %s key: %v", tc.name, err)
 			}
 			if claims.ExpiresAt == nil {
 				t.Fatal("token never expires")
+			}
+			expiresIn := claims.ExpiresAt.Time
+			if expiresIn.Before(before.Add(time.Duration(tc.expires-1)*time.Second)) || expiresIn.After(after.Add(time.Duration(tc.expires+1)*time.Second)) {
+				t.Fatalf("token expires at %v, want %ds after %v", expiresIn, tc.expires, before)
 			}
 			if _, err := DecodeJwt(SigningKey(tc.otherKey), token, &SeaweedFilerClaims{}); err == nil {
 				t.Fatal("token also validates against the other access level's key")
