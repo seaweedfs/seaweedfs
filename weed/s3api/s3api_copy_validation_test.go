@@ -28,10 +28,10 @@ func TestValidateRequestEncryption(t *testing.T) {
 		{name: "SSE-S3", sse: s3_constants.SSEAlgorithmAES256, want: s3err.ErrNone},
 		{name: "SSE-KMS", sse: s3_constants.SSEAlgorithmKMS, want: s3err.ErrNone},
 		{name: "SSE-C", headers: ssec, want: s3err.ErrNone},
-		{name: "unknown algorithm", sse: "aes:kms", want: s3err.ErrInvalidEncryptionAlgorithm},
-		{name: "misspelled AES256", sse: "AES-256", want: s3err.ErrInvalidEncryptionAlgorithm},
-		{name: "SSE-C and SSE-S3", headers: ssec, sse: s3_constants.SSEAlgorithmAES256, want: s3err.ErrInvalidRequest},
-		{name: "SSE-C and SSE-KMS", headers: ssec, sse: s3_constants.SSEAlgorithmKMS, want: s3err.ErrInvalidRequest},
+		{name: "unknown algorithm", sse: "aes:kms", want: s3err.ErrInvalidEncryptionMethod},
+		{name: "misspelled AES256", sse: "AES-256", want: s3err.ErrInvalidEncryptionMethod},
+		{name: "SSE-C and SSE-S3", headers: ssec, sse: s3_constants.SSEAlgorithmAES256, want: s3err.ErrIncompatibleEncryptionMethod},
+		{name: "SSE-C and SSE-KMS", headers: ssec, sse: s3_constants.SSEAlgorithmKMS, want: s3err.ErrIncompatibleEncryptionMethod},
 	}
 
 	for _, tc := range testCases {

@@ -156,18 +156,19 @@ func validateEncryptionCompatibility(headers http.Header) error {
 // ValidateRequestEncryption rejects the server-side encryption headers of a
 // PutObject or CreateMultipartUpload request that no single method can honor,
 // as CopyObject does for its destination: an algorithm that names no method,
-// or more than one method. Otherwise the object was stored without the
-// encryption the client asked for.
+// or SSE-C together with another method. Otherwise the object was stored
+// without the encryption the client asked for. The codes are the ones S3
+// returns for these requests, InvalidArgument for both.
 func ValidateRequestEncryption(headers http.Header) s3err.ErrorCode {
 	err := validateEncryptionCompatibility(headers)
 	if err == nil {
 		return s3err.ErrNone
 	}
 	var validationErr *CopyValidationError
-	if errors.As(err, &validationErr) {
-		return validationErr.Code
+	if errors.As(err, &validationErr) && validationErr.Code == s3err.ErrInvalidEncryptionAlgorithm {
+		return s3err.ErrInvalidEncryptionMethod
 	}
-	return s3err.ErrInvalidRequest
+	return s3err.ErrIncompatibleEncryptionMethod
 }
 
 // validateSSECCopyHeaderCompleteness validates that all required SSE-C copy headers are present
