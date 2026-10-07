@@ -363,3 +363,26 @@ func TestResolveCompactionOrderSkipsUncoveredSortField(t *testing.T) {
 		t.Fatalf("uncovered sort field: got %+v, want nil", order)
 	}
 }
+// A full-bin repack that produces nothing must not discard the ordered runs
+// it was meant to replace — they are still valid compaction work.
+func TestCompactDataFilesKeepsRunsWhenRepackFails(t *testing.T) {
+	fs, client := startFakeFiler(t)
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateBoundedTable(t, fs, setup, []boundedFile{
+		{Name: "r1.parquet", IDs: []int64{1}, Lower: 1, Upper: 2, SizeBytes: 4 << 20},
+		{Name: "r2.parquet", IDs: []int64{3}, Lower: 3, Upper: 4, SizeBytes: 3 << 20},
+		{Name: "r3.parquet", IDs: []int64{5}, Lower: 5, Upper: 6, SizeBytes: 3 << 20},
+		{Name: "r4.parquet", IDs: []int64{7}, Lower: 7, Upper: 8, SizeBytes: 6 << 20},
+		{Name: "r5.parquet", IDs: []int64{9}, Lower: 9, Upper: 10, SizeBytes: 6 << 20},
+	})
+
+	handler := NewHandler(nil)
+	config := Config{TargetFileSizeBytes: 10 << 20, MinInputFiles: 3, MaxCommitRetries: 3}
+	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "compacted 3 files into 1") {
+		t.Fatalf("expected the ordered run to survive the failed repack, got %q", result)
+	}
+}

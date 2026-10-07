@@ -598,10 +598,13 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 				packed := splitOversizedBin(runtBin, targetSize, minFiles)
 				if len(packed) == 0 {
 					// Stragglers cannot merge even with each other; repacking
-					// the whole bin lets them pair across the ordered runs
-					// instead of stranding them for every later pass.
-					result = result[:len(result)-len(runs)]
-					packed = splitOversizedBin(*bin, targetSize, minFiles)
+					// the whole bin lets them pair across the ordered runs.
+					// Only replace the runs when the repack yields bins —
+					// otherwise the runs stay valid compaction work.
+					if full := splitOversizedBin(*bin, targetSize, minFiles); len(full) > 0 {
+						result = result[:len(result)-len(runs)]
+						packed = full
+					}
 				}
 				result = append(result, packed...)
 			}
