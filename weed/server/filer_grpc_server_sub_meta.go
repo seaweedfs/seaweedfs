@@ -27,6 +27,11 @@ var (
 	// (possibly-unflushed) gap, in case the flush notification is missed.
 	unflushedGapRetryInterval = 2 * time.Second
 
+	// aggDiskReprobeInterval paces the aggregated persisted-log re-listing for
+	// files no watermark signals: a peer past the flush low-watermark can land
+	// a file without moving the minimum.
+	aggDiskReprobeInterval = 2 * time.Second
+
 	// gapStallWarnInterval paces the warning for a subscriber that stays parked.
 	gapStallWarnInterval = time.Minute
 
@@ -741,9 +746,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var readPersistedLogErr error
 	var readInMemoryLogErr error
 	var isDone bool
-	var lastCheckedFlushTsNs int64 = -1    // Track the last local flush we read the disk under
-	var lastCheckedFlushLowTsNs int64 = -1 // Track the last peer flush low-watermark we read the disk under
-	var lastDiskReadTsNs int64 = -1        // Track the last read position we used for disk read
+	var lastCheckedFlushTsNs int64 = -1      // Track the last local flush we read the disk under
+	var lastCheckedFlushLowTsNs int64 = -1   // Track the last peer flush low-watermark we read the disk under
+	var lastDiskReadTsNs int64 = -1          // Track the last read position we used for disk read
+	var lastDiskRefsStopTsNs int64 = -1      // Track the last chunk listing bound we read the disk under
+	var lastDiskPassAt time.Time             // Paces re-probes for files no watermark signals
 	sentRefs := make(map[string]sentRefState)
 
 	aggBuffer := fs.filer.MetaAggregator.MetaLogBuffer
@@ -778,29 +785,39 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		diskPassHoldTsNs = resolveAggReadHoldTsNs(diskPassFlushLowTsNs, time.Now().UnixNano(), metadataGapSettledHorizon)
 
 		// Re-read the disk only when something changed it cannot miss: a local
-		// flush landed, the peers' flush low-watermark admitted more (new files
-		// in a shared store, or the hold boundary itself rising), or the cursor
-		// moved. A pending disk hold re-reads every pass too: the ring read
-		// that follows an empty pass parks internally, so skipping here would
-		// strand the held entry until unrelated data happens to arrive.
+		// flush landed, the peers' flush low-watermark moved in either
+		// direction (a joining peer invalidates what an earlier pass proved),
+		// the cursor moved, or a disk hold is pending (the ring read after an
+		// empty pass parks internally, so skipping would strand the held
+		// entry). A peer past the low-watermark can still land a file without
+		// moving it, so the listing is also re-probed at a slow cadence;
+		// chunk listings re-arm as soon as their read bound admits more files.
 		currentFlushTsNs := fs.filer.LocalMetaLogBuffer.GetLastFlushTsNs()
 		currentReadTsNs := lastReadTime.Time.UnixNano()
+		var currentRefsStopTsNs int64
+		if req.ClientSupportsMetadataChunks {
+			currentRefsStopTsNs = chunkRefsStopTsNs(diskPassHoldTsNs, req.UntilNs)
+		}
 		shouldReadFromDisk := lastCheckedFlushTsNs == -1 ||
 			currentFlushTsNs > lastCheckedFlushTsNs ||
-			diskPassFlushLowTsNs > lastCheckedFlushLowTsNs ||
+			diskPassFlushLowTsNs != lastCheckedFlushLowTsNs ||
 			currentReadTsNs > lastDiskReadTsNs ||
-			diskHeldAtTsNs != 0
+			currentRefsStopTsNs > lastDiskRefsStopTsNs ||
+			diskHeldAtTsNs != 0 ||
+			time.Since(lastDiskPassAt) >= aggDiskReprobeInterval
 
 		diskAdvanced := false
 		if shouldReadFromDisk {
 			lastCheckedFlushTsNs = currentFlushTsNs
 			lastCheckedFlushLowTsNs = diskPassFlushLowTsNs
 			lastDiskReadTsNs = currentReadTsNs
+			lastDiskRefsStopTsNs = currentRefsStopTsNs
+			lastDiskPassAt = time.Now()
 			diskHeldAtTsNs = 0
 			diskPassProvenTsNs = diskPassFlushLowTsNs
 
 			if req.ClientSupportsMetadataChunks {
-				refsStopTsNs := chunkRefsStopTsNs(diskPassHoldTsNs, req.UntilNs)
+				refsStopTsNs := currentRefsStopTsNs
 				// Nothing above the listing bound is proven by this pass.
 				if refsStopTsNs < diskPassProvenTsNs {
 					diskPassProvenTsNs = refsStopTsNs
