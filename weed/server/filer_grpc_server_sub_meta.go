@@ -801,7 +801,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		shouldReadFromDisk := lastCheckedFlushTsNs == -1 ||
 			currentFlushTsNs > lastCheckedFlushTsNs ||
 			diskPassFlushLowTsNs != lastCheckedFlushLowTsNs ||
-			currentReadTsNs > lastDiskReadTsNs ||
+			currentReadTsNs != lastDiskReadTsNs ||
 			currentRefsStopTsNs > lastDiskRefsStopTsNs ||
 			diskHeldAtTsNs != 0 ||
 			time.Since(lastDiskPassAt) >= aggDiskReprobeInterval
@@ -917,6 +917,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		// every event whose original timestamp is at or below this.
 		preMemDeliveryLowTsNs := fs.filer.MetaAggregator.PeerLowWatermarkTsNs()
 
+		diskReprobeDue := false
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(aggReaderName, lastReadTime, req.UntilNs, func() bool {
 			select {
 			case <-ctx.Done():
@@ -924,6 +925,13 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			default:
 			}
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
+				return false
+			}
+			// Caught-up readers park in the inner wait loop; the outer disk
+			// gate never runs again unless this read returns, so unwind to
+			// re-probe the persisted logs on the slow cadence.
+			if time.Since(lastDiskPassAt) >= aggDiskReprobeInterval {
+				diskReprobeDue = true
 				return false
 			}
 			// Contiguous and caught up: advance the anchor to the delivery
@@ -969,6 +977,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 		}
 		if isDone {
+			if diskReprobeDue {
+				continue
+			}
 			return nil
 		}
 		if !fs.hasClient(req.ClientId, req.ClientEpoch) {
