@@ -113,6 +113,7 @@ func (h *Handler) compactDataFiles(
 	var positionDeletes map[string][]int64
 	var eqDeleteGroups []equalityDeleteGroup
 	var allDeleteEntries []iceberg.ManifestEntry
+	var dvPaths map[string]bool
 	if config.ApplyDeletes && len(deleteManifests) > 0 {
 		for _, mf := range deleteManifests {
 			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
@@ -126,10 +127,19 @@ func (h *Handler) compactDataFiles(
 			allDeleteEntries = append(allDeleteEntries, entries...)
 		}
 
+		var err error
+		dvPaths, err = deletionVectorPaths(allDeleteEntries, bucketName, dataPath)
+		if err != nil {
+			return "", nil, err
+		}
+
 		// Separate position and equality deletes, filtering by partition
 		// predicate so out-of-scope deletes don't affect the merge.
 		var posDeleteEntries, eqDeleteEntries []iceberg.ManifestEntry
 		for _, entry := range allDeleteEntries {
+			if entry.DataFile().FileFormat() == iceberg.PuffinFile {
+				continue
+			}
 			if predicate != nil {
 				spec, ok := specsByID[int(entry.DataFile().SpecID())]
 				if !ok {
@@ -166,10 +176,13 @@ func (h *Handler) compactDataFiles(
 		}
 	}
 
-	candidateEntries := allEntries
+	candidateEntries, err := excludeDeletionVectorFiles(allEntries, dvPaths, bucketName, dataPath)
+	if err != nil {
+		return "", nil, err
+	}
 	if predicate != nil {
-		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
-		for _, entry := range allEntries {
+		filtered := make([]iceberg.ManifestEntry, 0, len(candidateEntries))
+		for _, entry := range candidateEntries {
 			spec, ok := specsByID[int(entry.DataFile().SpecID())]
 			if !ok {
 				continue
@@ -179,9 +192,10 @@ func (h *Handler) compactDataFiles(
 				return "", nil, err
 			}
 			if match {
-				candidateEntries = append(candidateEntries, entry)
+				filtered = append(filtered, entry)
 			}
 		}
+		candidateEntries = filtered
 	}
 
 	minInputFiles, err := compactionMinInputFiles(config.MinInputFiles)
@@ -688,6 +702,48 @@ func partitionKey(partition map[int]any) string {
 	return strings.Join(parts, "\x00")
 }
 
+// deletionVectorPaths names the data files a Puffin deletion-vector entry
+// covers, normalized to merge-time keys. Merging a covered file needs a
+// Puffin reader to apply the vector; without one the merge would resurrect
+// deleted rows, so the file must stay out of compaction bins.
+func deletionVectorPaths(entries []iceberg.ManifestEntry, bucketName, dataPath string) (map[string]bool, error) {
+	paths := make(map[string]bool)
+	for _, entry := range entries {
+		df := entry.DataFile()
+		if df.ContentType() != iceberg.EntryContentPosDeletes || df.FileFormat() != iceberg.PuffinFile {
+			continue
+		}
+		ref := df.ReferencedDataFile()
+		if ref == nil || *ref == "" {
+			return nil, fmt.Errorf("deletion vector %s has no referenced data file", df.FilePath())
+		}
+		normalized, err := normalizeIcebergPath(*ref, bucketName, dataPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve deletion vector source %s: %w", *ref, err)
+		}
+		paths[normalized] = true
+	}
+	return paths, nil
+}
+
+// excludeDeletionVectorFiles drops entries a deletion vector covers.
+func excludeDeletionVectorFiles(entries []iceberg.ManifestEntry, dvPaths map[string]bool, bucketName, dataPath string) ([]iceberg.ManifestEntry, error) {
+	if len(dvPaths) == 0 {
+		return entries, nil
+	}
+	kept := make([]iceberg.ManifestEntry, 0, len(entries))
+	for _, entry := range entries {
+		normalized, err := normalizeIcebergPath(entry.DataFile().FilePath(), bucketName, dataPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve data file %s: %w", entry.DataFile().FilePath(), err)
+		}
+		if !dvPaths[normalized] {
+			kept = append(kept, entry)
+		}
+	}
+	return kept, nil
+}
+
 // collectPositionDeletes reads position delete Parquet files and returns a map
 // from normalized data file path to sorted row positions that should be deleted.
 // Paths are normalized so that absolute S3 URLs and relative paths match.
@@ -699,8 +755,9 @@ func collectPositionDeletes(
 ) (map[string][]int64, error) {
 	result := make(map[string][]int64)
 	for _, entry := range deleteEntries {
-		if entry.DataFile().ContentType() != iceberg.EntryContentPosDeletes {
-			continue
+		df := entry.DataFile()
+		if df.ContentType() != iceberg.EntryContentPosDeletes || df.FileFormat() == iceberg.PuffinFile {
+			continue // Puffin is a deletion vector, not a row-level delete file
 		}
 		fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 		if err != nil {

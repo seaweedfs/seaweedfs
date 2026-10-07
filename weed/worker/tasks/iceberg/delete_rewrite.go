@@ -102,6 +102,9 @@ func collectDeleteRewriteGroups(
 			}
 
 			allPositionEntries = append(allPositionEntries, entry)
+			if entry.DataFile().FileFormat() == iceberg.PuffinFile {
+				continue
+			}
 
 			fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 			if err != nil {
