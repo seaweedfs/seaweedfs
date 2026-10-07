@@ -1303,7 +1303,7 @@ func TestMergeParquetFilesWithPositionDeletes(t *testing.T) {
 
 	merged, count, err := mergeParquetFiles(
 		context.Background(), client, "test-bucket", "ns/tbl",
-		entries, posDeletes, nil, nil,
+		entries, posDeletes, nil, nil, 0,
 	)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
@@ -1419,7 +1419,7 @@ func TestMergeParquetFilesWithEqualityDeletes(t *testing.T) {
 
 	merged, count, err := mergeParquetFiles(
 		context.Background(), client, "test-bucket", "ns/tbl",
-		entries, nil, eqGroups, schema,
+		entries, nil, eqGroups, schema, 0,
 	)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
@@ -1479,7 +1479,7 @@ func TestMergeParquetFilesDictionaryEncodedInput(t *testing.T) {
 
 	merged, count, err := mergeParquetFiles(
 		context.Background(), client, "test-bucket", "ns/tbl",
-		entries, nil, nil, nil,
+		entries, nil, nil, nil, 0,
 	)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)

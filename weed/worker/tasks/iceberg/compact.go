@@ -271,10 +271,11 @@ func (h *Handler) compactDataFiles(
 
 		var mergedData []byte
 		var recordCount int64
+		rowGroupRows := rowsPerRowGroup(bin, config)
 		if rewritePlan != nil && rewritePlan.strategy == "sort" {
-			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan)
+			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan, rowGroupRows)
 		} else {
-			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
+			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rowGroupRows)
 		}
 		if err != nil {
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
@@ -937,6 +938,37 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 	return indices, nil
 }
 
+const (
+	// Iceberg's write.parquet.row-group-size-bytes default and PyIceberg's
+	// write.parquet.row-group-limit default.
+	defaultRowGroupSizeBytes = 128 * 1024 * 1024
+	defaultRowGroupRowLimit  = 1048576
+	minRowGroupRows          = 1024
+)
+
+// rowsPerRowGroup is the most rows one row group of a compacted file holds:
+// the row limit, lowered so a row group stays near the byte size, estimated
+// from the bin's inputs' bytes per row. parquet-go's writers have no limit of
+// their own, so without one every compacted file is a single row group.
+func rowsPerRowGroup(bin compactionBin, config Config) int64 {
+	rows, sizeBytes := config.RowGroupRowLimit, config.RowGroupSizeBytes
+	if rows <= 0 {
+		rows = defaultRowGroupRowLimit
+	}
+	if sizeBytes <= 0 {
+		sizeBytes = defaultRowGroupSizeBytes
+	}
+	var totalRows int64
+	for _, entry := range bin.Entries {
+		totalRows += entry.DataFile().Count()
+	}
+	if totalRows > 0 && bin.TotalSize > 0 {
+		bytesPerRow := max(bin.TotalSize/totalRows, 1)
+		rows = min(rows, sizeBytes/bytesPerRow)
+	}
+	return max(rows, minRowGroupRows)
+}
+
 // mergeParquetFiles reads multiple small Parquet files and merges them into
 // a single Parquet file, optionally filtering out rows matching position or
 // equality deletes. Files are processed one at a time to keep memory usage
@@ -949,6 +981,7 @@ func mergeParquetFiles(
 	positionDeletes map[string][]int64,
 	eqDeleteGroups []equalityDeleteGroup,
 	icebergSchema *iceberg.Schema,
+	rowGroupRows int64,
 ) ([]byte, int64, error) {
 	if len(entries) == 0 {
 		return nil, 0, fmt.Errorf("no entries to merge")
@@ -973,7 +1006,7 @@ func mergeParquetFiles(
 	}
 
 	var outputBuf bytes.Buffer
-	writer := parquet.NewWriter(&outputBuf, parquetSchema)
+	writer := parquet.NewWriter(&outputBuf, parquetSchema, parquet.MaxRowsPerRowGroup(rowGroupRows))
 
 	drainReader := func(reader *parquet.Reader, source string) (int64, error) {
 		return visitFilteredParquetRows(ctx, reader, source, bucketName, dataPath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
@@ -1138,6 +1171,7 @@ func mergeParquetFilesSorted(
 	eqDeleteGroups []equalityDeleteGroup,
 	icebergSchema *iceberg.Schema,
 	rewritePlan *compactionRewritePlan,
+	rowGroupRows int64,
 ) ([]byte, int64, error) {
 	if len(entries) == 0 {
 		return nil, 0, fmt.Errorf("no entries to merge")
@@ -1187,6 +1221,7 @@ func mergeParquetFilesSorted(
 
 	var outputBuf bytes.Buffer
 	writer := parquet.NewSortingWriter[any](&outputBuf, sortBufferRows, parquetSchema,
+		parquet.MaxRowsPerRowGroup(rowGroupRows),
 		parquet.SortingWriterConfig(
 			parquet.SortingColumns(sortingColumns...),
 			parquet.SortingBuffers(parquet.NewFileBufferPool(spillDir, "seaweedfs-iceberg-sort-*")),
