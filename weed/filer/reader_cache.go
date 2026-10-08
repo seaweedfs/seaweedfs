@@ -85,8 +85,10 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 		return
 	}
 
-	cached := 0
-	for x := chunkViews; x != nil && cached < count; x = x.Next {
+	// The window is the next count chunks, whether or not a download for them
+	// is already running: counting only newly started downloads would push the
+	// window count chunks further on every call.
+	for x, i := chunkViews, 0; x != nil && i < count; x, i = x.Next, i+1 {
 		chunkView := x.Value
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
@@ -116,7 +118,6 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 		go cacher.startCaching()
 		<-cacher.cacheStartedCh
 		rc.downloaders[chunkView.FileId] = cacher
-		cached++
 	}
 
 	return
