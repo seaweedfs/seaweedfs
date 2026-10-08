@@ -11,6 +11,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -597,7 +599,7 @@ func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, 
 	return gapContinue
 }
 
-func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
+func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) (err error) {
 	// A filer that has not learned remote peers yet serves the local log and
 	// upgrades when the first one appears. RemotePeerArrivedChan takes the
 	// arrival channel under the same lock as the peer check, so a peer
@@ -613,6 +615,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 	ctx, cancelSubscription := fs.subscriptionContext(stream.Context())
 	defer cancelSubscription()
+	defer func() { err = fs.endOfSubscription(stream.Context(), err) }()
 	peerAddress := findClientAddress(ctx, 0)
 
 	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
@@ -950,8 +953,13 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 // process - the filer's own MetaAggregator and, under `weed server -s3` or
 // `weed filer -s3`, the S3 gateway - and only let go once the filer itself is
 // shut down, which happens after GracefulStop. Without this, every shutdown
-// sat out the full graceful-stop timeout. Subscribers see the stream end
-// and reconnect with their usual retry.
+// sat out the full graceful-stop timeout. Subscribers get codes.Unavailable
+// (see endOfSubscription) and reconnect with their usual retry.
+//
+// A subscriber that has stopped reading is not covered: its handler sits in
+// stream.Send, which only the end of the stream releases, and grpc-go does
+// not allow Send after the handler has returned. GracefulStop's timeout
+// still ends that one, as before.
 func (fs *FilerServer) StopSubscriptions() {
 	if fs.stopSubscriptions != nil {
 		fs.stopSubscriptions()
@@ -972,6 +980,24 @@ func (fs *FilerServer) subscriptionContext(stream context.Context) (context.Cont
 	}
 }
 
+// endOfSubscription turns the clean end of a subscription that
+// StopSubscriptions cut short into codes.Unavailable. Followers read a clean
+// end as "caught up, done": the client returns nil on io.EOF, and
+// util.RetryUntil - which the S3 gateway and mount follow with - stops on
+// nil. Without this, a separate S3 gateway or mount would stop following
+// for good when its filer restarts. Unavailable is what a dropped connection
+// looks like, so they reconnect, to this filer once it is back or another.
+// Errors pass through, and so does the end of a stream the client closed.
+func (fs *FilerServer) endOfSubscription(stream context.Context, err error) error {
+	if err != nil || stream.Err() != nil {
+		return err
+	}
+	if fs.subscriptionsStopped == nil || fs.subscriptionsStopped.Err() == nil {
+		return nil
+	}
+	return status.Error(codes.Unavailable, "filer is shutting down")
+}
+
 func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
 	return fs.subscribeLocalMetadata(req, stream, nil)
 }
@@ -980,10 +1006,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 // aggregation streams pass upgradeOnRemotePeer == nil; the SubscribeMetadata
 // delegation passes the aggregator's arrival channel so the stream ends
 // when a remote peer appears and the client reconnects to the aggregated path.
-func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream metadataLocalStream, upgradeOnRemotePeer <-chan struct{}) error {
+func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream metadataLocalStream, upgradeOnRemotePeer <-chan struct{}) (err error) {
 
 	ctx, cancelSubscription := fs.subscriptionContext(stream.Context())
 	defer cancelSubscription()
+	defer func() { err = fs.endOfSubscription(stream.Context(), err) }()
 	peerAddress := findClientAddress(ctx, 0)
 
 	// use negative client id to differentiate from addClient()/deleteClient() used in SubscribeMetadata()
