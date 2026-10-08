@@ -38,7 +38,7 @@ func TestServeDirectoryContentContentType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodHead, "/bucket/dir/", nil)
 			rec := httptest.NewRecorder()
-			s3a.serveDirectoryContent(rec, req, tt.entry)
+			s3a.serveDirectoryContent(rec, req, tt.entry, "bucket", "dir/")
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
 			}
