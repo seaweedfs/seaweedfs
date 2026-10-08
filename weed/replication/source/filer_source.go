@@ -34,6 +34,7 @@ type FilerSource struct {
 	dataCenter     string
 	signature      int32
 	httpClient     *util_http_client.HTTPClient
+	jwtForFiler    security.FilerJwtProvider
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
@@ -65,6 +66,16 @@ func (fs *FilerSource) SetGrpcDialOption(option grpc.DialOption) {
 
 func (fs *FilerSource) SetHttpClient(client *util_http_client.HTTPClient) {
 	fs.httpClient = client
+}
+
+func (fs *FilerSource) SetFilerJwtProvider(provider security.FilerJwtProvider) {
+	fs.jwtForFiler = provider
+}
+
+// FilerJwt returns the side-specific filer API credential, or nil when the
+// process-wide jwt.filer_signing configuration applies.
+func (fs *FilerSource) FilerJwt() security.FilerJwtProvider {
+	return fs.jwtForFiler
 }
 
 func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {
@@ -126,7 +137,11 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 
 	if fs.proxyByFiler {
 		fileUrl := util_http.ProxyChunkUrl(fs.address, fileId)
-		filename, header, resp, err = downloadFn(fileUrl, util_http.JwtForFilerServer(false), offset)
+		jwt := util_http.JwtForFilerServer(false)
+		if fs.jwtForFiler != nil {
+			jwt = string(fs.jwtForFiler(false))
+		}
+		filename, header, resp, err = downloadFn(fileUrl, jwt, offset)
 		if err == nil {
 			err = readPartStatusError(fileUrl, resp)
 		}

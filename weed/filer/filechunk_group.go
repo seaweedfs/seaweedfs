@@ -240,7 +240,7 @@ func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
 			continue
 		}
 
-		resolvedChunks, err := resolveOneChunkManifest(context.Background(), group.lookupFn, chunk, group.cacheInvalidator, group.manifestCache)
+		resolvedChunks, err := resolveOneChunkManifest(context.Background(), group.lookupFn, chunk, group.cacheInvalidator, group.manifestCache, nil)
 		if err != nil {
 			group.resolveErr = err
 			return err

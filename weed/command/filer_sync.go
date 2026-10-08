@@ -174,16 +174,23 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 
 	// per-cluster HTTPS clients for volume server connections
 	var httpClientA, httpClientB *util_http_client.HTTPClient
+	var jwtForFilerA, jwtForFilerB security.FilerJwtProvider
 	if *syncOptions.aSecurity != "" {
 		var err error
 		if httpClientA, err = security.LoadHTTPClientFromFile(*syncOptions.aSecurity); err != nil {
 			glog.Fatalf("load HTTPS client config for filer A: %v", err)
+		}
+		if jwtForFilerA, err = security.LoadFilerJwtFromFile(*syncOptions.aSecurity); err != nil {
+			glog.Fatalf("load filer JWT config for filer A: %v", err)
 		}
 	}
 	if *syncOptions.bSecurity != "" {
 		var err error
 		if httpClientB, err = security.LoadHTTPClientFromFile(*syncOptions.bSecurity); err != nil {
 			glog.Fatalf("load HTTPS client config for filer B: %v", err)
+		}
+		if jwtForFilerB, err = security.LoadFilerJwtFromFile(*syncOptions.bSecurity); err != nil {
+			glog.Fatalf("load filer JWT config for filer B: %v", err)
 		}
 	}
 
@@ -263,7 +270,9 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				bFilerSignature,
 				&syncStateA2B,
 				httpClientA,
-				httpClientB)
+				httpClientB,
+				jwtForFilerA,
+				jwtForFilerB)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
@@ -306,7 +315,9 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 					aFilerSignature,
 					&syncStateB2A,
 					httpClientB,
-					httpClientA)
+					httpClientA,
+					jwtForFilerB,
+					jwtForFilerA)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
@@ -336,7 +347,8 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 
 func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceExcludePaths []string, sourceReadChunkFromFiler bool, targetGrpcDialOption grpc.DialOption, targetFiler pb.ServerAddress, targetPath string,
 	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, concurrency int, chunkConcurrency int, doDeleteFiles bool, sourceFilerSignature int32, targetFilerSignature int32, statePtr *atomic.Pointer[syncState],
-	sourceHttpClient *util_http_client.HTTPClient, sinkHttpClient *util_http_client.HTTPClient) error {
+	sourceHttpClient *util_http_client.HTTPClient, sinkHttpClient *util_http_client.HTTPClient,
+	sourceJwtProvider security.FilerJwtProvider, sinkJwtProvider security.FilerJwtProvider) error {
 
 	// if first time, start from now
 	// if has previously synced, resume from that point of time
@@ -357,11 +369,17 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 	if sourceHttpClient != nil {
 		filerSource.SetHttpClient(sourceHttpClient)
 	}
+	if sourceJwtProvider != nil {
+		filerSource.SetFilerJwtProvider(sourceJwtProvider)
+	}
 	filerSink := &filersink.FilerSink{}
 	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, targetGrpcDialOption, sinkWriteChunkByFiler)
 	filerSink.SetChunkConcurrency(chunkConcurrency)
 	if sinkHttpClient != nil {
 		filerSink.SetUploader(operation.NewUploaderWithHttpClient(sinkHttpClient))
+	}
+	if sinkJwtProvider != nil {
+		filerSink.SetFilerJwtProvider(sinkJwtProvider)
 	}
 	filerSink.SetSourceFiler(filerSource)
 

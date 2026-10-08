@@ -16,6 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func TestDoMaybeManifestize(t *testing.T) {
@@ -621,7 +623,7 @@ func TestFetchWholeChunkRetriesFreshLocations(t *testing.T) {
 	inv := &countingInvalidator{}
 	bytesBuffer := fetchManifestBuffer(t)
 
-	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,stale", nil, false, inv))
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,stale", nil, false, inv, nil))
 	assert.Equal(t, int32(1), inv.invalidations.Load())
 	assert.Equal(t, int32(2), lookup.calls.Load())
 
@@ -655,7 +657,7 @@ func TestFetchWholeChunkRefreshesLocationsAfterPartialFailure(t *testing.T) {
 	inv := &countingInvalidator{}
 	bytesBuffer := fetchManifestBuffer(t)
 
-	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,abc", nil, false, inv))
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup.lookup, "5,abc", nil, false, inv, nil))
 	assert.Equal(t, int32(1), inv.invalidations.Load())
 	assert.Equal(t, int32(2), lookup.calls.Load())
 	decoded := &filer_pb.FileChunkManifest{}
@@ -676,7 +678,7 @@ func TestFetchWholeChunkWithoutInvalidator(t *testing.T) {
 		freshUrls: []string{"http://unused:8080/5,abc"},
 	}
 
-	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, nil))
+	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, nil, nil))
 	assert.Equal(t, int32(1), lookup.calls.Load())
 }
 
@@ -694,7 +696,7 @@ func TestFetchWholeChunkUnchangedLocations(t *testing.T) {
 	}
 	inv := &countingInvalidator{}
 
-	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv))
+	assert.Error(t, fetchWholeChunk(context.Background(), fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv, nil))
 	assert.Equal(t, int32(2), lookup.calls.Load())
 	assert.Equal(t, int32(1), inv.invalidations.Load())
 }
@@ -711,7 +713,7 @@ func TestFetchWholeChunkCancelledKeepsLocations(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := fetchWholeChunk(ctx, fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv)
+	err := fetchWholeChunk(ctx, fetchManifestBuffer(t), lookup.lookup, "5,abc", nil, false, inv, nil)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, int32(0), inv.invalidations.Load())
 	assert.Equal(t, int32(1), lookup.calls.Load())
@@ -729,4 +731,44 @@ func TestFetchWholeChunkCancelledKeepsLocations(t *testing.T) {
 		return nil
 	})
 	assert.ErrorIs(t, noInvalidator, context.Canceled)
+}
+
+// TestFetchWholeChunkUsesProvidedFilerJwt covers a replicating reader whose
+// source filer authenticates proxied downloads with its own read key: the
+// supplied provider's token must reach the server, not the process-wide one.
+func TestFetchWholeChunkUsesProvidedFilerJwt(t *testing.T) {
+	manifestBytes, err := proto.Marshal(&filer_pb.FileChunkManifest{
+		Chunks: []*filer_pb.FileChunk{{FileId: "100,abc", Offset: 0, Size: 8}},
+	})
+	assert.NoError(t, err)
+
+	gotAuth := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth <- r.Header.Get("Authorization")
+		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)))
+		w.Write(manifestBytes)
+	}))
+	t.Cleanup(srv.Close)
+
+	lookup := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{srv.URL + "/?" + util_http.ProxyChunkIdParam + "=" + fileId}, nil
+	}
+	jwtFn := func(isWrite bool) security.EncodedJwt {
+		assert.False(t, isWrite)
+		return "side-read-jwt"
+	}
+	bytesBuffer := fetchManifestBuffer(t)
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup, "5,abc", nil, false, nil, jwtFn))
+	assert.Equal(t, security.BearerPrefix+"side-read-jwt", <-gotAuth)
+
+	// non-proxy URLs keep the volume-server credential and never call the provider
+	volumeURL := manifestServer(t, manifestBytes).URL + "/5,abc"
+	volumeLookup := func(ctx context.Context, fileId string) ([]string, error) {
+		return []string{volumeURL}, nil
+	}
+	bytesBuffer.Reset()
+	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, volumeLookup, "5,abc", nil, false, nil, func(bool) security.EncodedJwt {
+		t.Fatal("provider must not be consulted for a volume url")
+		return ""
+	}))
 }

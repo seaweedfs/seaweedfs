@@ -62,6 +62,7 @@ type UploadOption struct {
 	SourceUrl         string                           // optional: for logging when reading from a remote source
 	MaxAttempts       int                              // <=0 uses the default
 	GenUploadUrl      func(host, fileId string) string // if nil → fallback "http://{host}/{fileId}"
+	FilerJwt          security.FilerJwtProvider        // credential for proxy chunk URLs; nil → process-wide jwt.filer_signing
 }
 
 type UploadResult struct {
@@ -217,7 +218,11 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			// The request addresses the filer, which authorizes it and mints the
 			// volume credential itself. The AssignVolume token is not a filer
 			// credential and gets the caller nowhere here.
-			uploadOption.Jwt = security.EncodedJwt(util_http.JwtForFilerServer(true))
+			if uploadOption.FilerJwt != nil {
+				uploadOption.Jwt = uploadOption.FilerJwt(true)
+			} else {
+				uploadOption.Jwt = security.EncodedJwt(util_http.JwtForFilerServer(true))
+			}
 		}
 
 		uploadResult, err = uploader.retriedUploadData(context.Background(), data, uploadOption)
