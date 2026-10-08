@@ -1041,11 +1041,11 @@ var renamedTableAttributes = []string{
 // catalogEntryKind describes the entry a rename operates on, so tables and
 // views share one implementation of the catalog-only move.
 type catalogEntryKind struct {
-	entryType    string
-	noun         string
-	renameOp     string
-	createOp     string
-	readOp       string
+	entryType string
+	noun      string
+	renameOp  string
+	createOp  string
+	readOp    string
 	// tagsForRead mirrors whether the read handler supplies resource tags to
 	// the policy check, so the denied-write visibility test cannot accept a
 	// tag-conditioned allow the real read would not evaluate.
