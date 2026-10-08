@@ -402,9 +402,8 @@ func TestUpdateThumbprintAndTags(t *testing.T) {
 // A refusal to change a config-file provider reaches the client as AWS sends
 // it (400 UnmodifiableEntity), not as an internal error clients retry.
 func TestUnmodifiableEntityIsAClientError(t *testing.T) {
-	api := NewEmbeddedIamApiForTest()
 	rec := httptest.NewRecorder()
-	api.writeIamErrorResponse(rec, httptest.NewRequest(http.MethodPost, "/", nil), "req-1",
+	writeIamErrorResponse(rec, httptest.NewRequest(http.MethodPost, "/", nil), "req-1",
 		oidcMutationError(fmt.Errorf("%w: arn:aws:iam:::oidc-provider/static.example", integration.ErrOIDCProviderStatic)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)

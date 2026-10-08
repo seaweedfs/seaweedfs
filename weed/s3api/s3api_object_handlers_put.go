@@ -86,6 +86,20 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
+
+	// A copy-source header that did not satisfy the CopyObject route is
+	// malformed (it needs a '/' separating source bucket from key), and a
+	// partNumber/uploadId pair that did not satisfy the UploadPart route is
+	// malformed too; neither should be silently written as a plain object.
+	if r.Header.Get("X-Amz-Copy-Source") != "" {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
+	if r.URL.Query().Has("partNumber") || r.URL.Query().Has("uploadId") {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidArgument)
+		return
+	}
+
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
@@ -188,7 +202,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			dirContent, readErr = io.ReadAll(dataReader)
 			if readErr != nil {
 				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				if strings.Contains(readErr.Error(), s3err.ErrMsgContentSha256Mismatch) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
+				} else {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				}
 				return
 			}
 		}
@@ -1522,6 +1540,8 @@ func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.Err
 	switch {
 	case errors.Is(err, weed_server.ErrReadOnly):
 		return s3err.ErrAccessDenied
+	case strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch):
+		return s3err.ErrContentSHA256Mismatch
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):

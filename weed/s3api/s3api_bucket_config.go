@@ -646,6 +646,24 @@ func (s3a *S3ApiServer) isVersioningConfigured(bucket string) (bool, error) {
 	return config.Versioning != "" || config.ObjectLockConfig != nil, nil
 }
 
+// checkVersionIdConfigured reports ErrInvalidArgument when versionId names a
+// specific version on a bucket that has never had versioning configured. The
+// implicit "null" version of pre-versioning objects stays addressable.
+func (s3a *S3ApiServer) checkVersionIdConfigured(bucket, versionId string) s3err.ErrorCode {
+	if versionId == "" || versionId == "null" {
+		return s3err.ErrNone
+	}
+	configured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil {
+		// Missing buckets and lookup failures are answered by the handler path.
+		return s3err.ErrNone
+	}
+	if !configured {
+		return s3err.ErrInvalidArgument
+	}
+	return s3err.ErrNone
+}
+
 // isObjectLockEnabled checks if Object Lock is enabled for a bucket (with caching)
 func (s3a *S3ApiServer) isObjectLockEnabled(bucket string) (bool, error) {
 	config, errCode := s3a.getBucketConfig(bucket)

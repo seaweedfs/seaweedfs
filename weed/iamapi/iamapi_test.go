@@ -488,6 +488,29 @@ func TestDeleteUser(t *testing.T) {
 	out := DeleteUserResponse{}
 	response, err := executeRequest(req.HTTPRequest, out)
 	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusConflict, response.Code)
+
+	listReq, _ := iam.New(session.New()).ListAccessKeysRequest(&iam.ListAccessKeysInput{UserName: userName})
+	_ = listReq.Build()
+	listOut := ListAccessKeysResponse{}
+	listResp, err := executeRequest(listReq.HTTPRequest, listOut)
+	assert.Equal(t, nil, err)
+	var listResult ListAccessKeysResponse
+	assert.Equal(t, nil, xml.Unmarshal(listResp.Body.Bytes(), &listResult))
+	for _, key := range listResult.ListAccessKeysResult.AccessKeyMetadata {
+		delKeyReq, _ := iam.New(session.New()).DeleteAccessKeyRequest(&iam.DeleteAccessKeyInput{
+			UserName:    userName,
+			AccessKeyId: key.AccessKeyId,
+		})
+		_ = delKeyReq.Build()
+		_, err := executeRequest(delKeyReq.HTTPRequest, out)
+		assert.Equal(t, nil, err)
+	}
+
+	req, _ = iam.New(session.New()).DeleteUserRequest(params)
+	_ = req.Build()
+	response, err = executeRequest(req.HTTPRequest, out)
+	assert.Equal(t, nil, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 

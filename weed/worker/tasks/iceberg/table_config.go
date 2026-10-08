@@ -19,6 +19,8 @@ import (
 const (
 	propTargetFileSize       = "write.target-file-size-bytes"
 	propDeleteTargetFileSize = "write.delete.target-file-size-bytes"
+	propRowGroupSize         = "write.parquet.row-group-size-bytes"
+	propRowGroupRowLimit     = "write.parquet.row-group-limit"
 	propMaxSnapshotAgeMs     = "history.expire.max-snapshot-age-ms"
 	propMinSnapshotsToKeep   = "history.expire.min-snapshots-to-keep"
 )
@@ -49,6 +51,12 @@ func applyTableProperties(cfg Config, props iceberg.Properties) Config {
 	}
 	if v, ok := propInt64(props, propDeleteTargetFileSize); ok {
 		cfg.DeleteTargetFileSizeBytes = v
+	}
+	if v, ok := propInt64(props, propRowGroupSize); ok {
+		cfg.RowGroupSizeBytes = v
+	}
+	if v, ok := propInt64(props, propRowGroupRowLimit); ok {
+		cfg.RowGroupRowLimit = v
 	}
 	if v, ok := propInt64(props, propMaxSnapshotAgeMs); ok {
 		cfg.SnapshotRetentionMs = v

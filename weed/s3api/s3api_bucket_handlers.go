@@ -224,6 +224,15 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// collect parameters
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
+	// Only bucket-level PUTs with a registered sub-resource route land in a
+	// dedicated handler; anything else that reaches here is an operation we do
+	// not implement, not a bare CreateBucket.
+	if subresource, found := unroutedSubresource(r, nil); found {
+		glog.V(1).Infof("unimplemented bucket PUT subresource ?%s", subresource)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+		return
+	}
+
 	// validate the bucket name
 	err := s3bucket.VerifyS3BucketName(bucket)
 	if err != nil {
@@ -424,6 +433,14 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
+
+	// Same as PutBucketHandler: a query key no DELETE route claimed is an
+	// unimplemented subresource, not a bare DeleteBucket.
+	if subresource, found := unroutedSubresource(r, nil); found {
+		glog.V(1).Infof("unimplemented bucket DELETE subresource ?%s", subresource)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+		return
+	}
 	// The teardown below retries, and a failover walk repeats it once per
 	// filer, so the backoff comes out of one allowance held here.
 	r = r.WithContext(withFilerRetryBudget(r.Context(), filerRetryRequestBudget))

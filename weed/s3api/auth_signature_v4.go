@@ -126,6 +126,27 @@ func normalizePayloadHash(payloadHashValue string) string {
 	return payloadHashValue
 }
 
+// requestSigningService extracts the service name from the SigV4 credential
+// scope (…/region/service/aws4_request) so a failed request can be answered in
+// that service's error envelope.
+func requestSigningService(r *http.Request) string {
+	credential := r.URL.Query().Get("X-Amz-Credential")
+	if credential == "" {
+		v4Auth := strings.Replace(r.Header.Get("Authorization"), " ", "", -1)
+		v4Auth = strings.TrimPrefix(v4Auth, signV4Algorithm)
+		for _, field := range strings.Split(v4Auth, ",") {
+			if cred, ok := strings.CutPrefix(field, "Credential="); ok {
+				credential = cred
+				break
+			}
+		}
+	}
+	if parts := strings.Split(credential, "/"); len(parts) == 5 {
+		return parts[3]
+	}
+	return ""
+}
+
 // signValues data type represents structured form of AWS Signature V4 header.
 type signValues struct {
 	Credential    credentialHeader
@@ -151,8 +172,20 @@ func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 	// Strip off the Algorithm prefix.
 	v4Auth = strings.TrimPrefix(v4Auth, signV4Algorithm)
 	authFields := strings.Split(strings.TrimSpace(v4Auth), ",")
-	if len(authFields) != 3 {
-		return sv, s3err.ErrMissingFields
+	malformed := len(authFields) != 3
+	var hasCredential, hasSignature bool
+	for _, field := range authFields {
+		field = strings.TrimSpace(field)
+		malformed = malformed || field == ""
+		hasCredential = hasCredential || strings.HasPrefix(field, "Credential=")
+		hasSignature = hasSignature || strings.HasPrefix(field, "Signature=")
+	}
+	if malformed {
+		// AWS distinguishes which required field is absent.
+		if !hasCredential {
+			return sv, s3err.ErrInvalidArgument
+		}
+		return sv, s3err.ErrAuthorizationHeaderMalformed
 	}
 
 	// Initialize signature version '4' structured header.
@@ -744,13 +777,13 @@ func parseCredentialHeader(credElement string) (ch credentialHeader, aec s3err.E
 func parseSignature(signElement string) (string, s3err.ErrorCode) {
 	signFields := strings.Split(strings.TrimSpace(signElement), "=")
 	if len(signFields) != 2 {
-		return "", s3err.ErrMissingFields
+		return "", s3err.ErrAuthorizationHeaderMalformed
 	}
 	if signFields[0] != "Signature" {
 		return "", s3err.ErrMissingSignTag
 	}
 	if signFields[1] == "" {
-		return "", s3err.ErrMissingFields
+		return "", s3err.ErrAuthorizationHeaderMalformed
 	}
 	signature := signFields[1]
 	return signature, s3err.ErrNone

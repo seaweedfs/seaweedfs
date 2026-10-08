@@ -487,8 +487,11 @@ func buildNodeAddressMap(at *topology.ActiveTopology) map[string]string {
 //
 // Encode is lenient (PlaceDurabilityFirst): it relaxes caps/anti-affinity/RP and,
 // last, the total-shards-per-rack cap as needed, failing only when no eligible
-// disk has room. It prefers the source disk type but spills if that type can't
-// hold every shard. rp is the resolved replica placement (may be nil).
+// disk has room. ecConfig.StrictPlacement instead fails the volume's planning
+// when the constraints cannot be satisfied (PlaceStrict), so a volume is only
+// encoded while its configured resilience is preserved. The task prefers the
+// source disk type but spills if that type can't hold every shard. rp is the
+// resolved replica placement (may be nil).
 func planECDestinations(snap *ecbalancer.Topology, nodeAddresses map[string]string, metric *types.VolumeHealthMetrics, ecConfig *Config, rp *super_block.ReplicaPlacement, dataShards, parityShards int) (*topology.MultiDestinationPlan, [][]uint32, error) {
 	if snap == nil {
 		return nil, nil, fmt.Errorf("EC placement snapshot not available")
@@ -511,13 +514,17 @@ func planECDestinations(snap *ecbalancer.Topology, nodeAddresses map[string]stri
 	for i := range need {
 		need[i] = i
 	}
+	mode := ecbalancer.PlaceDurabilityFirst
+	if ecConfig.StrictPlacement {
+		mode = ecbalancer.PlaceStrict
+	}
 	res, err := snap.Place(metric.VolumeID, metric.Collection, need, ecbalancer.Constraints{
 		DiskType:         metric.DiskType,
 		DiskTypePolicy:   ecbalancer.DiskTypePrefer,
 		PreferredTags:    ecConfig.PreferredTags,
 		ReplicaPlacement: rp,
 		Ratio:            func(string) (int, int) { return dataShards, parityShards },
-	}, ecbalancer.PlaceDurabilityFirst)
+	}, mode)
 	if err != nil {
 		return nil, nil, err
 	}

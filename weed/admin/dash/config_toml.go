@@ -98,6 +98,10 @@ func (cp *ConfigPersistence) ApplyMaintenanceConfigFromToml(v TomlConfig) error 
 		ecConf.ReplicaPlacement = v.GetString(k)
 		ecChanged = true
 	}
+	if k := "maintenance.erasure_coding.strict_placement"; v.IsSet(k) {
+		ecConf.StrictPlacement = v.GetBool(k)
+		ecChanged = true
+	}
 
 	if !maintenanceChanged && !vacuumChanged && !balanceChanged && !ecChanged {
 		return nil
@@ -224,6 +228,7 @@ var pluginConfigSections = []pluginConfigSection{
 			"min_size_mb":       int64Value,
 			"preferred_tags":    stringListValue,
 			"replica_placement": stringValue,
+			"strict_placement":  boolValue,
 		},
 		// workers read collection_filter from the admin values, not the worker values
 		adminKeys: map[string]func(v TomlConfig, key string) *plugin_pb.ConfigValue{
@@ -238,6 +243,10 @@ func doubleValue(v TomlConfig, key string) *plugin_pb.ConfigValue {
 
 func int64Value(v TomlConfig, key string) *plugin_pb.ConfigValue {
 	return &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(v.GetInt(key))}}
+}
+
+func boolValue(v TomlConfig, key string) *plugin_pb.ConfigValue {
+	return &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: v.GetBool(key)}}
 }
 
 func stringValue(v TomlConfig, key string) *plugin_pb.ConfigValue {

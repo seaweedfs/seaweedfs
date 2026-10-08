@@ -200,7 +200,7 @@ func TestEmbeddedIamTagUserLimitExceeded(t *testing.T) {
 	form.Set("Tags.member.1.Value", "v")
 	rr := postTagAction(t, api, form)
 
-	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, http.StatusConflict, rr.Code)
 	code, _ := extractEmbeddedIamErrorCodeAndMessage(rr)
 	assert.Equal(t, iam.ErrCodeLimitExceededException, code)
 

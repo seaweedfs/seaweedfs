@@ -62,6 +62,7 @@ type FilerSink struct {
 	signature         int32
 	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 	uploader          *operation.Uploader
+	jwtForFiler       security.FilerJwtProvider
 	// lastServedFileId is the most recent chunk the source did serve, the probe
 	// sourceStillServesChunks re-checks before writing an entry off.
 	lastServedFileId atomic.Pointer[string]
@@ -114,6 +115,12 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 // start, since it writes fs.uploader without synchronization.
 func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
 	fs.uploader = uploader
+}
+
+// SetFilerJwtProvider sets the filer API credential for proxied chunk writes.
+// Must be called during initialization, before any replication goroutines start.
+func (fs *FilerSink) SetFilerJwtProvider(provider security.FilerJwtProvider) {
+	fs.jwtForFiler = provider
 }
 
 func (fs *FilerSink) getUploader() (*operation.Uploader, error) {
@@ -358,7 +365,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		existingEntry.RemoteEntry = newEntry.RemoteEntry
 	default:
 		// source-side chunks resolve via source filer; sink volume IDs may collide.
-		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), oldEntry, newEntry)
+		deletedChunks, newChunks, err := compareChunks(context.Background(), filer.LookupFn(fs.filerSource), fs.filerSource.FilerJwt(), oldEntry, newEntry)
 		if err != nil {
 			return true, fmt.Errorf("replicate %s compare chunks error: %w", key, err)
 		}
@@ -404,12 +411,12 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 }
-func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
-	aData, aMeta, aErr := filer.ResolveChunkManifest(ctx, lookupFileIdFn, oldEntry.GetChunks(), 0, math.MaxInt64, nil)
+func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, filerJwtFn security.FilerJwtProvider, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
+	aData, aMeta, aErr := filer.ResolveChunkManifestWithFilerJwt(ctx, lookupFileIdFn, filerJwtFn, oldEntry.GetChunks(), 0, math.MaxInt64, nil)
 	if aErr != nil {
 		return nil, nil, aErr
 	}
-	bData, bMeta, bErr := filer.ResolveChunkManifest(ctx, lookupFileIdFn, newEntry.GetChunks(), 0, math.MaxInt64, nil)
+	bData, bMeta, bErr := filer.ResolveChunkManifestWithFilerJwt(ctx, lookupFileIdFn, filerJwtFn, newEntry.GetChunks(), 0, math.MaxInt64, nil)
 	if bErr != nil {
 		return nil, nil, bErr
 	}

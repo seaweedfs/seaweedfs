@@ -360,3 +360,29 @@ func TestPresignedPutRejectsUnsignedMetadataHeaders(t *testing.T) {
 		})
 	}
 }
+
+// TestParseSignV4MissingFields exercises how a truncated Authorization header
+// maps to the AWS error code for the absent field.
+func TestParseSignV4MissingFields(t *testing.T) {
+	valid := "AWS4-HMAC-SHA256 Credential=AKIA/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=0123456789abcdef"
+
+	tests := []struct {
+		name string
+		auth string
+		want s3err.ErrorCode
+	}{
+		{"valid", valid, s3err.ErrNone},
+		{"no signature field", "AWS4-HMAC-SHA256 Credential=AKIA/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date", s3err.ErrAuthorizationHeaderMalformed},
+		{"empty signature field", "AWS4-HMAC-SHA256 Credential=AKIA/20260101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, ", s3err.ErrAuthorizationHeaderMalformed},
+		{"no credential field", "AWS4-HMAC-SHA256 SignedHeaders=host;x-amz-date, Signature=0123456789abcdef", s3err.ErrInvalidArgument},
+		{"leading comma after dropping credential", "AWS4-HMAC-SHA256 , SignedHeaders=host;x-amz-date, Signature=0123456789abcdef", s3err.ErrInvalidArgument},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, got := parseSignV4(tt.auth)
+			if got != tt.want {
+				t.Fatalf("parseSignV4() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

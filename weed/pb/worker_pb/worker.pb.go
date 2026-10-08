@@ -2980,6 +2980,7 @@ type ErasureCodingTaskConfig struct {
 	CollectionFilter string                 `protobuf:"bytes,4,opt,name=collection_filter,json=collectionFilter,proto3" json:"collection_filter,omitempty"`   // Only process volumes from specific collections
 	PreferredTags    []string               `protobuf:"bytes,5,rep,name=preferred_tags,json=preferredTags,proto3" json:"preferred_tags,omitempty"`            // Disk tags to prioritize for EC shard placement
 	ReplicaPlacement string                 `protobuf:"bytes,6,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`   // EC shard replica placement (e.g. "020"); empty falls back to master default replication
+	StrictPlacement  bool                   `protobuf:"varint,7,opt,name=strict_placement,json=strictPlacement,proto3" json:"strict_placement,omitempty"`     // fail planning instead of relaxing placement constraints
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -3054,6 +3055,13 @@ func (x *ErasureCodingTaskConfig) GetReplicaPlacement() string {
 		return x.ReplicaPlacement
 	}
 	return ""
+}
+
+func (x *ErasureCodingTaskConfig) GetStrictPlacement() bool {
+	if x != nil {
+		return x.StrictPlacement
+	}
+	return false
 }
 
 // BalanceTaskConfig contains balance-specific configuration
@@ -4285,14 +4293,15 @@ const file_worker_proto_rawDesc = "" +
 	"\x10VacuumTaskConfig\x12+\n" +
 	"\x11garbage_threshold\x18\x01 \x01(\x01R\x10garbageThreshold\x12/\n" +
 	"\x14min_volume_age_hours\x18\x02 \x01(\x05R\x11minVolumeAgeHours\x120\n" +
-	"\x14min_interval_seconds\x18\x03 \x01(\x05R\x12minIntervalSeconds\"\x9a\x02\n" +
+	"\x14min_interval_seconds\x18\x03 \x01(\x05R\x12minIntervalSeconds\"\xc5\x02\n" +
 	"\x17ErasureCodingTaskConfig\x12%\n" +
 	"\x0efullness_ratio\x18\x01 \x01(\x01R\rfullnessRatio\x12*\n" +
 	"\x11quiet_for_seconds\x18\x02 \x01(\x05R\x0fquietForSeconds\x12+\n" +
 	"\x12min_volume_size_mb\x18\x03 \x01(\x05R\x0fminVolumeSizeMb\x12+\n" +
 	"\x11collection_filter\x18\x04 \x01(\tR\x10collectionFilter\x12%\n" +
 	"\x0epreferred_tags\x18\x05 \x03(\tR\rpreferredTags\x12+\n" +
-	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\"\x9b\x01\n" +
+	"\x11replica_placement\x18\x06 \x01(\tR\x10replicaPlacement\x12)\n" +
+	"\x10strict_placement\x18\a \x01(\bR\x0fstrictPlacement\"\x9b\x01\n" +
 	"\x11BalanceTaskConfig\x12/\n" +
 	"\x13imbalance_threshold\x18\x01 \x01(\x01R\x12imbalanceThreshold\x12(\n" +
 	"\x10min_server_count\x18\x02 \x01(\x05R\x0eminServerCount\x12+\n" +

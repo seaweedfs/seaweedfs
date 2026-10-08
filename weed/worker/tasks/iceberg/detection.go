@@ -477,7 +477,7 @@ func hasEligibleCompaction(
 	}
 
 	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
-	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles, meta)
 	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	return len(bins) > 0, nil
 }
