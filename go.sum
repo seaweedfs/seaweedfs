@@ -1373,8 +1373,8 @@ github.com/jcmturner/gokrb5/v8 v8.4.4 h1:x1Sv4HaTpepFkXbt2IkL29DXRf8sOfZXo8eRKh6
 github.com/jcmturner/gokrb5/v8 v8.4.4/go.mod h1:1btQEpgT6k+unzCwX1KdWMEwPPkkgBtP+F6aCACiMrs=
 github.com/jcmturner/rpc/v2 v2.0.3 h1:7FXXj8Ti1IaVFpSAziCZWNzbNuZmnvw/i6CqLNdWfZY=
 github.com/jcmturner/rpc/v2 v2.0.3/go.mod h1:VUJYCIDm3PVOEHw8sgt091/20OJjskO/YJki3ELg/Hc=
-github.com/jhump/protoreflect v1.18.0 h1:TOz0MSR/0JOZ5kECB/0ufGnC2jdsgZ123Rd/k4Z5/2w=
-github.com/jhump/protoreflect v1.18.0/go.mod h1:ezWcltJIVF4zYdIFM+D/sHV4Oh5LNU08ORzCGfwvTz8=
+github.com/jhump/protoreflect v1.18.1 h1:h4odAaLg9wyn7yHxMF7sSkJ7JfLwK1oy37/1Pi212GE=
+github.com/jhump/protoreflect v1.18.1/go.mod h1:I2yar2oJEMf0k4EMryPzfV0tvGwN/SejJziYBOpETQo=
 github.com/jhump/protoreflect/v2 v2.0.0-beta.1 h1:Dw1rslK/VotaUGYsv53XVWITr+5RCPXfvvlGrM/+B6w=
 github.com/jhump/protoreflect/v2 v2.0.0-beta.1/go.mod h1:D9LBEowZyv8/iSu97FU2zmXG3JxVTmNw21mu63niFzU=
 github.com/jinzhu/copier v0.4.0 h1:w3ciUoD19shMCRargcpm0cm91ytaBhDvuRpz1ODO/U8=
