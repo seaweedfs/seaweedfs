@@ -488,7 +488,9 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 				return
 			}
 			glog.Errorf("serveDirectoryContent: failed to stream %s/%s: %v", bucket, object, err)
-			if shouldWriteStreamingErrorResponse(err) {
+			if errors.Is(err, util_http.ErrTooManyRequests) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
+			} else if shouldWriteStreamingErrorResponse(err) {
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			}
 		}
