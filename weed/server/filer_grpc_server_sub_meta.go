@@ -611,7 +611,8 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		return fs.subscribeLocalMetadata(req, stream, nil)
 	}
 
-	ctx := stream.Context()
+	ctx, cancelSubscription := fs.subscriptionContext(stream.Context())
+	defer cancelSubscription()
 	peerAddress := findClientAddress(ctx, 0)
 
 	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
@@ -943,6 +944,34 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 }
 
+// StopSubscriptions ends every metadata subscription and every one that
+// starts afterwards. The shutdown calls it before gRPC GracefulStop:
+// GracefulStop waits for open streams, and some subscribers live in the same
+// process - the filer's own MetaAggregator and, under `weed server -s3` or
+// `weed filer -s3`, the S3 gateway - and only let go once the filer itself is
+// shut down, which happens after GracefulStop. Without this, every shutdown
+// sat out the full graceful-stop timeout. Subscribers see the stream end
+// and reconnect with their usual retry.
+func (fs *FilerServer) StopSubscriptions() {
+	if fs.stopSubscriptions != nil {
+		fs.stopSubscriptions()
+	}
+}
+
+// subscriptionContext ends with the stream or with StopSubscriptions,
+// whichever comes first. It keeps the stream's values (peer address).
+func (fs *FilerServer) subscriptionContext(stream context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(stream)
+	if fs.subscriptionsStopped == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(fs.subscriptionsStopped, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
 func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
 	return fs.subscribeLocalMetadata(req, stream, nil)
 }
@@ -953,7 +982,8 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 // when a remote peer appears and the client reconnects to the aggregated path.
 func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream metadataLocalStream, upgradeOnRemotePeer <-chan struct{}) error {
 
-	ctx := stream.Context()
+	ctx, cancelSubscription := fs.subscriptionContext(stream.Context())
+	defer cancelSubscription()
 	peerAddress := findClientAddress(ctx, 0)
 
 	// use negative client id to differentiate from addClient()/deleteClient() used in SubscribeMetadata()
