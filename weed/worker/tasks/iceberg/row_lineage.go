@@ -372,11 +372,12 @@ func mergedFileFirstRowID(data []byte) (*int64, error) {
 		return nil, nil
 	}
 	rows := make([]parquet.Row, 1)
-	if _, err := reader.ReadRows(rows); err != nil {
-		if err == io.EOF {
-			return nil, nil
-		}
+	n, err := reader.ReadRows(rows)
+	if err != nil && err != io.EOF {
 		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
 	}
 	for _, v := range rows[0] {
 		if v.Column() != leaf.ColumnIndex {
