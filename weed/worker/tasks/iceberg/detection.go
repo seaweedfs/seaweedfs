@@ -308,6 +308,9 @@ func (h *Handler) tableNeedsMaintenance(
 				return true, nil
 			}
 		case "rewrite_position_delete_files":
+			if hasRowLineage(meta.Version()) {
+				continue // the rewrite would add position-delete files, which a v3 table must not get (skipDeleteRewriteV3)
+			}
 			manifests, err := getCurrentManifests()
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
@@ -441,6 +444,7 @@ func hasEligibleCompaction(
 	schema := meta.CurrentSchema()
 
 	var allEntries []iceberg.ManifestEntry
+	var dvPaths map[string]bool
 	for _, mf := range dataManifests {
 		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
 		if err != nil {
@@ -453,10 +457,35 @@ func hasEligibleCompaction(
 		allEntries = append(allEntries, entries...)
 	}
 
-	candidateEntries := allEntries
+	// Deletion vectors exist only from format version 3.
+	if hasRowLineage(meta.Version()) {
+		var deleteEntries []iceberg.ManifestEntry
+		for _, mf := range manifests {
+			if mf.ManifestContent() != iceberg.ManifestContentDeletes {
+				continue
+			}
+			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, mf.FilePath())
+			if err != nil {
+				return false, fmt.Errorf("read delete manifest %s: %w", mf.FilePath(), err)
+			}
+			entries, err := s3tables.ReadManifest(mf, manifestData, true, specsByID, schema)
+			if err != nil {
+				return false, fmt.Errorf("parse delete manifest %s: %w", mf.FilePath(), err)
+			}
+			deleteEntries = append(deleteEntries, entries...)
+		}
+		if dvPaths, err = deletionVectorPaths(deleteEntries, bucketName, dataPath); err != nil {
+			return false, err
+		}
+	}
+
+	candidateEntries, err := excludeDeletionVectorFiles(allEntries, dvPaths, bucketName, dataPath)
+	if err != nil {
+		return false, err
+	}
 	if predicate != nil {
-		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
-		for _, entry := range allEntries {
+		filtered := make([]iceberg.ManifestEntry, 0, len(candidateEntries))
+		for _, entry := range candidateEntries {
 			spec, ok := specsByID[int(entry.DataFile().SpecID())]
 			if !ok {
 				continue
@@ -466,9 +495,10 @@ func hasEligibleCompaction(
 				return false, err
 			}
 			if match {
-				candidateEntries = append(candidateEntries, entry)
+				filtered = append(filtered, entry)
 			}
 		}
+		candidateEntries = filtered
 	}
 
 	rewritePlan, err := resolveCompactionRewritePlan(config, meta)

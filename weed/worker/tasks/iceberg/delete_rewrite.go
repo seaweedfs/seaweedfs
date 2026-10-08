@@ -102,6 +102,9 @@ func collectDeleteRewriteGroups(
 			}
 
 			allPositionEntries = append(allPositionEntries, entry)
+			if entry.DataFile().FileFormat() == iceberg.PuffinFile {
+				continue
+			}
 
 			fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, dataPath, entry.DataFile().FilePath())
 			if err != nil {
@@ -253,6 +256,8 @@ func writePositionDeleteFile(rows []positionDeleteRow) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+const skipDeleteRewriteV3 = "rewrite_position_delete_files skipped: position-delete files must not be added to a format-version 3 table"
+
 func (h *Handler) rewritePositionDeleteFiles(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
@@ -269,6 +274,13 @@ func (h *Handler) rewritePositionDeleteFiles(
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
 		return "no current snapshot", nil, nil
+	}
+	// The spec forbids adding position-delete files to a v3 table ("Position
+	// delete files must not be added to v3 tables"; v3 writes deletion
+	// vectors), and this rewrite adds new ones. Compaction still applies and
+	// removes existing position deletes.
+	if hasRowLineage(meta.Version()) {
+		return skipDeleteRewriteV3, nil, nil
 	}
 
 	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, dataPath, currentSnap.ManifestList)
@@ -536,8 +548,10 @@ func (h *Handler) rewritePositionDeleteFiles(
 		allManifests = append(allManifests, mf)
 	}
 
+	firstRowID := rowLineageFirstRowID(meta)
 	var manifestListBuf bytes.Buffer
-	if err := iceberg.WriteManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, 0, allManifests); err != nil {
+	addedRows, err := writeManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, firstRowID, allManifests)
+	if err != nil {
 		return "", nil, fmt.Errorf("write delete manifest list: %w", err)
 	}
 	manifestListName := fmt.Sprintf("snap-%d-%s.avro", newSnapID, artifactSuffix)
@@ -548,9 +562,9 @@ func (h *Handler) rewritePositionDeleteFiles(
 
 	manifestListLocation := absoluteIcebergPath(bucketName, dataPath, "metadata", manifestListName)
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, state.MetadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
-		cs := currentMeta.CurrentSnapshot()
-		if cs == nil || cs.SnapshotID != snapshotID {
-			return errStalePlan
+		cs, err := checkCommitPlan(currentMeta, snapshotID, version, firstRowID)
+		if err != nil {
+			return err
 		}
 		newSnapshot := &table.Snapshot{
 			SnapshotID:       newSnapID,
@@ -569,6 +583,7 @@ func (h *Handler) rewritePositionDeleteFiles(
 				return &id
 			}(),
 		}
+		setRowLineage(newSnapshot, version, firstRowID, addedRows)
 		if err := builder.AddSnapshot(newSnapshot); err != nil {
 			return err
 		}
