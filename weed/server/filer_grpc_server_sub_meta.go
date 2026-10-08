@@ -27,6 +27,11 @@ var (
 	// (possibly-unflushed) gap, in case the flush notification is missed.
 	unflushedGapRetryInterval = 2 * time.Second
 
+	// aggDiskReprobeInterval paces the aggregated persisted-log re-listing for
+	// files no watermark signals: a peer past the flush low-watermark can land
+	// a file without moving the minimum.
+	aggDiskReprobeInterval = 2 * time.Second
+
 	// gapStallWarnInterval paces the warning for a subscriber that stays parked.
 	gapStallWarnInterval = time.Minute
 
@@ -666,8 +671,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var lastHeartbeatNs int64
 	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
 	// heldAtTsNs remembers the entry a read was held at (for the log line);
-	// the rewind target is the last entry actually delivered.
-	var heldAtTsNs int64
+	// diskHeldAtTsNs is the same marker for the disk pass alone: a pending
+	// disk hold keeps the pass re-reading until the entry is served.
+	var heldAtTsNs, diskHeldAtTsNs int64
 	// Each read path holds at its own watermark: persisted logs are complete
 	// only up to every peer's flush watermark, the ring only up to every
 	// peer's delivery watermark.
@@ -698,7 +704,14 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// What the last disk pass proved covered: flushed on every peer AND inside
 	// the pass's listing, so an empty pass proves (cursor, proven] empty.
 	var diskPassProvenTsNs int64
-	diskEachLogEntryFn := guardedEachLogEntryFn(func() int64 { return diskPassHoldTsNs })
+	diskBaseEachLogEntryFn := guardedEachLogEntryFn(func() int64 { return diskPassHoldTsNs })
+	diskEachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		isDone, err := diskBaseEachLogEntryFn(logEntry)
+		if errors.Is(err, errHeldByPeerWatermark) {
+			diskHeldAtTsNs = logEntry.TsNs
+		}
+		return isDone, err
+	}
 	memEachLogEntryFn := guardedEachLogEntryFn(holdMemTsNs)
 	// waitHeld pauses a held read until a peer reports further progress, or
 	// the retry interval elapses (a peer dropped past its grace, or a log file
@@ -733,6 +746,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var readPersistedLogErr error
 	var readInMemoryLogErr error
 	var isDone bool
+	var lastCheckedFlushTsNs int64 = -1      // Track the last local flush we read the disk under
+	var lastCheckedFlushLowTsNs int64 = -1   // Track the last peer flush low-watermark we read the disk under
+	var lastDiskReadTsNs int64 = -1          // Track the last read position we used for disk read
+	var lastDiskRefsStopTsNs int64 = -1      // Track the last chunk listing bound we read the disk under
+	var lastDiskPassAt time.Time             // Paces re-probes for files no watermark signals
 	sentRefs := make(map[string]sentRefState)
 
 	aggBuffer := fs.filer.MetaAggregator.MetaLogBuffer
@@ -765,78 +783,110 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		// diskPassHoldTsNs above).
 		diskPassFlushLowTsNs = fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()
 		diskPassHoldTsNs = resolveAggReadHoldTsNs(diskPassFlushLowTsNs, time.Now().UnixNano(), metadataGapSettledHorizon)
-		diskPassProvenTsNs = diskPassFlushLowTsNs
 
+		// Re-read the disk only when something changed it cannot miss: a local
+		// flush landed, the peers' flush low-watermark moved in either
+		// direction (a joining peer invalidates what an earlier pass proved),
+		// the cursor moved, or a disk hold is pending (the ring read after an
+		// empty pass parks internally, so skipping would strand the held
+		// entry). A peer past the low-watermark can still land a file without
+		// moving it, so the listing is also re-probed at a slow cadence;
+		// chunk listings re-arm as soon as their read bound admits more files.
+		currentFlushTsNs := fs.filer.LocalMetaLogBuffer.GetLastFlushTsNs()
+		currentReadTsNs := lastReadTime.Time.UnixNano()
+		var currentRefsStopTsNs int64
 		if req.ClientSupportsMetadataChunks {
-			refsStopTsNs := chunkRefsStopTsNs(diskPassHoldTsNs, req.UntilNs)
-			// Nothing above the listing bound is proven by this pass.
-			if refsStopTsNs < diskPassProvenTsNs {
-				diskPassProvenTsNs = refsStopTsNs
-			}
-			if refsStopTsNs > lastReadTime.Time.UnixNano() {
-				processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs, nil)
-			} else {
-				processedTsNs, isDone, readPersistedLogErr = 0, false, nil
-			}
-		} else {
-			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, diskEachLogEntryFn)
+			currentRefsStopTsNs = chunkRefsStopTsNs(diskPassHoldTsNs, req.UntilNs)
 		}
-		if errors.Is(readPersistedLogErr, errHeldByPeerWatermark) {
-			// Stay at the last delivered entry; the held entry is re-read (and
-			// re-checked) by the next pass.
-			if processedTsNs > 0 {
+		shouldReadFromDisk := lastCheckedFlushTsNs == -1 ||
+			currentFlushTsNs > lastCheckedFlushTsNs ||
+			diskPassFlushLowTsNs != lastCheckedFlushLowTsNs ||
+			currentReadTsNs != lastDiskReadTsNs ||
+			currentRefsStopTsNs > lastDiskRefsStopTsNs ||
+			diskHeldAtTsNs != 0 ||
+			time.Since(lastDiskPassAt) >= aggDiskReprobeInterval
+
+		diskAdvanced := false
+		if shouldReadFromDisk {
+			lastCheckedFlushTsNs = currentFlushTsNs
+			lastCheckedFlushLowTsNs = diskPassFlushLowTsNs
+			lastDiskReadTsNs = currentReadTsNs
+			lastDiskRefsStopTsNs = currentRefsStopTsNs
+			lastDiskPassAt = time.Now()
+			diskHeldAtTsNs = 0
+			diskPassProvenTsNs = diskPassFlushLowTsNs
+
+			if req.ClientSupportsMetadataChunks {
+				refsStopTsNs := currentRefsStopTsNs
+				// Nothing above the listing bound is proven by this pass.
+				if refsStopTsNs < diskPassProvenTsNs {
+					diskPassProvenTsNs = refsStopTsNs
+				}
+				if refsStopTsNs > lastReadTime.Time.UnixNano() {
+					processedTsNs, isDone, readPersistedLogErr = fs.chunkDiskPass(ctx, sender, lastReadTime, refsStopTsNs, sentRefs, nil)
+				} else {
+					processedTsNs, isDone, readPersistedLogErr = 0, false, nil
+				}
+			} else {
+				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(ctx, lastReadTime, req.UntilNs, diskEachLogEntryFn)
+			}
+			if errors.Is(readPersistedLogErr, errHeldByPeerWatermark) {
+				// Stay at the last delivered entry; the held entry is re-read (and
+				// re-checked) by the next pass.
+				if processedTsNs > 0 {
+					lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
+					if processedTsNs > diskAnchorTsNs {
+						diskAnchorTsNs = processedTsNs
+					}
+				}
+				// A hold is not a gap: clear any stale ResumeFromDiskError so the
+				// next pass's disk-miss handling cannot skip past the held entry.
+				readInMemoryLogErr = nil
+				if !waitHeld("disk", flushChan) {
+					return nil
+				}
+				continue
+			}
+			if readPersistedLogErr != nil {
+				return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
+			}
+			if isDone {
+				return nil
+			}
+
+			glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
+			diskAdvanced = diskReadAdvanced(processedTsNs, lastReadTime)
+			// Read after the disk read (an eviction landing mid-read must count) and
+			// in received-ts space: the ring's bumped stopTimes exceed anything on
+			// any peer's disk, and gating disk cursors on them parks subscribers
+			// that drained every peer's log.
+			lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs()
+			if diskAdvanced {
+				gapStall.resumed()
+				reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
 				lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
 				if processedTsNs > diskAnchorTsNs {
 					diskAnchorTsNs = processedTsNs
 				}
-			}
-			// A hold is not a gap: clear any stale ResumeFromDiskError so the
-			// next pass's disk-miss handling cannot skip past the held entry.
-			readInMemoryLogErr = nil
-			if !waitHeld("disk", flushChan) {
-				return nil
-			}
-			continue
-		}
-		if readPersistedLogErr != nil {
-			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
-		}
-		if isDone {
-			return nil
-		}
-
-		glog.V(4).Infof("processed to %v: %v", clientName, processedTsNs)
-		diskAdvanced := diskReadAdvanced(processedTsNs, lastReadTime)
-		// Read after the disk read (an eviction landing mid-read must count) and
-		// in received-ts space: the ring's bumped stopTimes exceed anything on
-		// any peer's disk, and gating disk cursors on them parks subscribers
-		// that drained every peer's log.
-		lastEvictedTsNs := fs.filer.MetaAggregator.MetaLogBuffer.GetLastEvictedOriginalTsNs()
-		if diskAdvanced {
-			gapStall.resumed()
-			reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, processedTsNs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
-			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, gapResumeCursorOffset)
-			if processedTsNs > diskAnchorTsNs {
-				diskAnchorTsNs = processedTsNs
-			}
-		} else if readInMemoryLogErr == nil {
-			// Nothing on disk and memory never spoke: scan forward for the next
-			// day that has logs.
-			nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
-			// The day jump delivers nothing; stay put until the hold point
-			// covers the skipped range.
-			if nextDayTs <= diskPassHoldTsNs {
-				position := log_buffer.NewMessagePosition(nextDayTs, gapResumeCursorOffset)
-				found, err := fs.filer.HasPersistedLogFiles(position)
-				if err != nil {
-					return fmt.Errorf("checking persisted log files: %w", err)
-				}
-				if found {
-					gapStall.resumed()
-					reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, nextDayTs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
-					lastReadTime = position
-					if nextDayTs > diskAnchorTsNs {
-						diskAnchorTsNs = nextDayTs
+			} else if readInMemoryLogErr == nil {
+				// Nothing on disk and memory never spoke: scan forward for the next
+				// day that has logs.
+				nextDayTs := util.GetNextDayTsNano(lastReadTime.Time.UnixNano())
+				// The day jump delivers nothing; stay put until the hold point
+				// covers the skipped range.
+				if nextDayTs <= diskPassHoldTsNs {
+					position := log_buffer.NewMessagePosition(nextDayTs, gapResumeCursorOffset)
+					found, err := fs.filer.HasPersistedLogFiles(position)
+					if err != nil {
+						return fmt.Errorf("checking persisted log files: %w", err)
+					}
+					if found {
+						gapStall.resumed()
+						reportUnprovenAggregatedCrossing(cursorBeforeDiskTsNs, nextDayTs, lastEvictedTsNs, diskPassFlushLowTsNs, clientName, req.PathPrefix)
+						lastReadTime = position
+						if nextDayTs > diskAnchorTsNs {
+							diskAnchorTsNs = nextDayTs
+						}
 					}
 				}
 			}
@@ -867,6 +917,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		// every event whose original timestamp is at or below this.
 		preMemDeliveryLowTsNs := fs.filer.MetaAggregator.PeerLowWatermarkTsNs()
 
+		diskReprobeDue := false
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(aggReaderName, lastReadTime, req.UntilNs, func() bool {
 			select {
 			case <-ctx.Done():
@@ -874,6 +925,13 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			default:
 			}
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
+				return false
+			}
+			// Caught-up readers park in the inner wait loop; the outer disk
+			// gate never runs again unless this read returns, so unwind to
+			// re-probe the persisted logs on the slow cadence.
+			if time.Since(lastDiskPassAt) >= aggDiskReprobeInterval {
+				diskReprobeDue = true
 				return false
 			}
 			// Contiguous and caught up: advance the anchor to the delivery
@@ -919,6 +977,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 		}
 		if isDone {
+			if diskReprobeDue {
+				continue
+			}
 			return nil
 		}
 		if !fs.hasClient(req.ClientId, req.ClientEpoch) {
