@@ -76,9 +76,12 @@ start-server: check-deps
 
 stop-server:
 	@if [ -f weed-server.pid ]; then \
-		echo "Stopping SeaweedFS server..."; \
-		kill $$(cat weed-server.pid) 2>/dev/null || true; \
-		sleep 2; \
+		pid=$$(cat weed-server.pid); \
+		if ps -p $$pid -o comm= 2>/dev/null | grep -q weed; then \
+			echo "Stopping SeaweedFS server..."; \
+			kill $$pid 2>/dev/null || true; \
+			sleep 2; \
+		fi; \
 		rm -f weed-server.pid; \
 	fi
 
