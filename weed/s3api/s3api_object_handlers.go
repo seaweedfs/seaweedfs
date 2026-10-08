@@ -506,7 +506,7 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", contentType)
 
 	contentLength := int64(len(content))
-	if len(entry.Chunks) > 0 {
+	if r.Method == http.MethodHead && len(entry.Chunks) > 0 {
 		contentLength = int64(entry.Attributes.FileSize)
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
