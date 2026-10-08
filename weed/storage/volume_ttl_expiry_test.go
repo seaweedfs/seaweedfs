@@ -250,7 +250,7 @@ func TestVolumeTtlClockSkipsUnaffordableScanWithoutDatReads(t *testing.T) {
 	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
 	vacuumedLastWriteScanEntries = 2
 
-	appendAtNs, err := findLastWriteAppendAtNs(v, indexFile, indexStat.Size())
+	appendAtNs, _, err := findLastWriteAppendAtNs(v, indexFile, indexStat.Size())
 	if err != nil {
 		t.Fatalf("recover last write: %v", err)
 	}
@@ -259,6 +259,152 @@ func TestVolumeTtlClockSkipsUnaffordableScanWithoutDatReads(t *testing.T) {
 	}
 	if got := reads.readCount; got != 0 {
 		t.Errorf("over-budget scan did %d .dat reads before declining, want 0", got)
+	}
+}
+
+// TestVolumeTtlClockCarriedAcrossVacuumCommit covers the reload that ends a
+// vacuum commit: the clock must keep the last write's append time rather than
+// be re-derived, and the intervening delete's tombstone must not freshen it.
+func TestVolumeTtlClockCarriedAcrossVacuumCommit(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	lastWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	for i := 1; i <= 3; i++ {
+		n := newRandomNeedle(uint64(i))
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, lastWriteNs)
+	}
+	if _, err := v.doDeleteRequest(newEmptyNeedle(2)); err != nil {
+		t.Fatalf("delete needle 2: %v", err)
+	}
+	// Where a restart's recovery would have left the clock. The delete above
+	// pushed lastAppendAtNs to ~now; the commit must not consult it.
+	v.lastModifiedTsSeconds = lastWriteNs / uint64(time.Second)
+	v.lastWriteAppendAtNs = lastWriteNs
+
+	defer func(budget int) { vacuumedLastWriteScanEntries = budget }(vacuumedLastWriteScanEntries)
+	vacuumedLastWriteScanEntries = 1
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+	if v.SuperBlock.CompactionRevision == 0 {
+		t.Fatal("vacuum must bump CompactionRevision for this test to exercise the vacuumed path")
+	}
+
+	if got, want := v.lastModifiedTsSeconds, lastWriteNs/uint64(time.Second); got != want {
+		t.Errorf("TTL clock after commit is %d, want the last write at %d", got, want)
+	}
+	if !v.expired(v.ContentSize(), 1024*1024) {
+		t.Error("a TTL volume whose last write is 2h old must stay expired across a vacuum commit")
+	}
+}
+
+// TestVolumeTtlClockAtCommitUsesAppendTime covers a write whose client
+// supplied modified time does not match when it was appended: the commit
+// keeps the server-side append watermark the recovery scan would recompute.
+func TestVolumeTtlClockAtCommitUsesAppendTime(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	future := uint64(time.Now().Add(24 * time.Hour).Unix())
+	n := newRandomNeedle(1)
+	n.LastModified = future
+	if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	if v.lastModifiedTsSeconds < future {
+		t.Fatalf("clock %d did not follow the needle's modified time %d", v.lastModifiedTsSeconds, future)
+	}
+	appendWatermarkSec := v.lastWriteAppendAtNs / uint64(time.Second)
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	if got := v.lastModifiedTsSeconds; got != appendWatermarkSec {
+		t.Errorf("TTL clock after commit is %d, want the append watermark %d", got, appendWatermarkSec)
+	}
+}
+
+// TestVolumeTtlClockAtCommitSkipsDeletedWrite covers a vacuum commit whose
+// newest write was deleted first: the carried watermark belonged to that
+// write, so the commit has to let the reload rescan and land on the newest
+// surviving write rather than keep the volume alive on a deleted write's time.
+func TestVolumeTtlClockAtCommitSkipsDeletedWrite(t *testing.T) {
+	dir := t.TempDir()
+	ttl, err := needle.ReadTTL("5m")
+	if err != nil {
+		t.Fatalf("read ttl: %v", err)
+	}
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	oldWriteNs := uint64(time.Now().Add(-2 * time.Hour).UnixNano())
+	newWriteNs := uint64(time.Now().Add(-time.Hour).UnixNano())
+	for _, w := range []struct {
+		id uint64
+		ns uint64
+	}{{1, oldWriteNs}, {2, newWriteNs}} {
+		n := newRandomNeedle(w.id)
+		offset, _, _, err := v.writeNeedle2(n, true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", w.id, err)
+		}
+		backdateAppendAtNs(t, v, int64(offset), n.Size, w.ns)
+	}
+	// The delete lands inside the commit window: makeupDiff replays its
+	// tombstone into the new .idx behind the write row the copy carried.
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if _, err := v.doDeleteRequest(newEmptyNeedle(2)); err != nil {
+		t.Fatalf("delete needle 2: %v", err)
+	}
+	if !v.lastWriteDeleted {
+		t.Fatal("deleting the newest write must mark the watermark dead")
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	if got, want := v.lastModifiedTsSeconds, oldWriteNs/uint64(time.Second); got != want {
+		t.Errorf("TTL clock after commit is %d, want the surviving write at %d", got, want)
+	}
+	if v.lastWriteDeleted {
+		t.Error("the reload's rescan must reseed the watermark off the surviving write")
 	}
 }
 
