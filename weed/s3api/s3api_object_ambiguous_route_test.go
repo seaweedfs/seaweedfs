@@ -64,6 +64,17 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		}
 	})
 
+	t.Run("stored entry is a directory — certain conflict, lock path answers", func(t *testing.T) {
+		f := &fakeLookupFiler{entry: &filer_pb.Entry{Name: "o", IsDirectory: true}}
+		s3a, owner := newS3a(t, f)
+		entryCreated := false
+		ran := false
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksDead, func() s3err.ErrorCode { ran = true; return s3err.ErrExistingObjectIsDirectory })
+		if code != s3err.ErrExistingObjectIsDirectory || !ran {
+			t.Fatalf("code=%v ran=%v — a directory conflict must reach createUnderLock, which maps it", code, ran)
+		}
+	})
+
 	t.Run("match behind an unanswered filer — refuse", func(t *testing.T) {
 		deadAddr := startFakeFiler(t, &fakeLookupFiler{lookupErr: context.DeadlineExceeded})
 		matchAddr := startFakeFiler(t, &fakeLookupFiler{entry: &filer_pb.Entry{Name: "o", Chunks: []*filer_pb.FileChunk{{FileId: "5,01637037d6", Size: 55}}}})

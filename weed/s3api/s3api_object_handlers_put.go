@@ -1021,12 +1021,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
 				createCode, routed = s3err.ErrPreconditionFailed, true
 			case resp.Error != "":
-				// A failure at mutation 0 — the PUT itself — applied nothing, so
-				// the outcome is certain. Only a later failure is ambiguous: the
-				// entry may have committed while a bundled mutation did not.
-				if strings.HasPrefix(resp.Error, "mutation ") && !strings.HasPrefix(resp.Error, "mutation 0:") {
-					routedAmbiguous = true
-				}
+				// A mutation can store the entry before a later step of the
+				// same mutation fails, so even an error from the first mutation
+				// does not prove nothing committed — every transaction error is
+				// ambiguous until the recovery lookup decides.
+				routedAmbiguous = true
 				glog.Warningf("putToFiler: routed PUT to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
 			default:
 				entryCreated, routed, createCode = true, true, s3err.ErrNone
@@ -1127,6 +1126,12 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 			// newer entry; this match is not authoritative.
 			glog.Warningf("putToFiler: ambiguous routed PUT for %s matches an entry but a filer could not be checked; not recovering", filePath)
 			return s3err.ErrServiceUnavailable
+		}
+		if existing.IsDirectory {
+			// A PUT only ever stores a file entry, so a directory at the same
+			// name predates this write and is a certain conflict; the lock
+			// path maps it to the proper precondition error.
+			return createUnderLock()
 		}
 		resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
 		if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
