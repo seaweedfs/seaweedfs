@@ -2630,13 +2630,7 @@ func (iam *IdentityAccessManagement) isActionExplicitlyDeniedByIAM(r *http.Reque
 
 	// A chained caller authenticates with an STS session token whose inline
 	// session policy can also carry an explicit deny.
-	sessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
-	if sessionToken == "" {
-		sessionToken = r.Header.Get("X-Amz-Security-Token")
-		if sessionToken == "" {
-			sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
-		}
-	}
+	sessionToken := extractSessionToken(r)
 
 	if len(policyNames) == 0 && sessionToken == "" {
 		return false
@@ -2704,12 +2698,23 @@ func (iam *IdentityAccessManagement) attachedPolicyNames(identity *Identity) []s
 	return names
 }
 
+// extractSessionToken returns the request's session token, whichever transport
+// carried it: the internal header set after JWT authentication, the
+// X-Amz-Security-Token header, or the presigned-URL query parameter.
+func extractSessionToken(r *http.Request) string {
+	if token := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader); token != "" {
+		return token
+	}
+	if token := r.Header.Get("X-Amz-Security-Token"); token != "" {
+		return token
+	}
+	return r.URL.Query().Get("X-Amz-Security-Token")
+}
+
 // hasSessionToken reports whether the request carries an STS session token,
 // whose session policies are known only to the IAM integration.
 func hasSessionToken(r *http.Request) bool {
-	return r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader) != "" ||
-		r.Header.Get("X-Amz-Security-Token") != "" ||
-		r.URL.Query().Get("X-Amz-Security-Token") != ""
+	return extractSessionToken(r) != ""
 }
 
 // authorizationRoute picks the mechanism, so every caller routes identically.
@@ -2977,21 +2982,10 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		iam.primeBucketForIAM(bucket)
 	}
 
-	// Get session info from request headers
-	// First check for JWT-based authentication headers (SeaweedFSSessionTokenHeader)
-	sessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
+	// JWT authentication records its token in SeaweedFSSessionTokenHeader;
+	// SigV4 requests carry it as X-Amz-Security-Token.
+	sessionToken := extractSessionToken(r)
 	principal := r.Header.Get(s3_constants.SeaweedFSPrincipalHeader)
-
-	// Fallback to AWS Signature V4 STS token if JWT token not present
-	// This handles the case where STS AssumeRoleWithWebIdentity generates temporary credentials
-	// that include an X-Amz-Security-Token header (in addition to the access key and secret)
-	if sessionToken == "" {
-		sessionToken = r.Header.Get("X-Amz-Security-Token")
-		if sessionToken == "" {
-			// Also check query parameters for presigned URLs with STS tokens
-			sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
-		}
-	}
 
 	policyNames := iam.attachedPolicyNames(identity)
 
