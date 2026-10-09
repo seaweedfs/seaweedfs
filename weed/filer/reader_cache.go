@@ -341,24 +341,39 @@ func (rc *ReaderCache) removeUnpinned(downloader *SingleChunkCacher) (removed bo
 	return
 }
 
+// consumable reports whether the cacher could be dropped: its buffer was
+// fully read or every stream positioned in it has left, and no reader is
+// attached or pinned. All fields are atomics, so callers can skip the
+// ReaderCache lock whenever removal is impossible.
+func (s *SingleChunkCacher) consumable() bool {
+	return atomic.LoadInt32(&s.readers) == 0 &&
+		atomic.LoadInt32(&s.pins) == 0 &&
+		(atomic.LoadInt32(&s.consumed) != 0 || atomic.LoadInt32(&s.left) != 0)
+}
+
 // removeConsumed drops a cacher once its buffer was fully read, or the
 // streams positioned in it have left, and no readers remain attached or
 // pinned. The checks run under the ReaderCache lock so a reader attaching
 // at the same time either wins (the cacher stays and that reader's detach
 // retries the removal) or misses the map and refetches.
 func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
-	rc.Lock()
-	removed := rc.downloaders[downloader.chunkFileId] == downloader &&
-		atomic.LoadInt32(&downloader.readers) == 0 &&
-		atomic.LoadInt32(&downloader.pins) == 0 &&
-		(atomic.LoadInt32(&downloader.consumed) != 0 || atomic.LoadInt32(&downloader.left) != 0)
-	if removed {
-		delete(rc.downloaders, downloader.chunkFileId)
+	if !downloader.consumable() {
+		return
 	}
+	rc.Lock()
+	removed := rc.removeConsumedLocked(downloader)
 	rc.Unlock()
 	if removed {
 		downloader.destroy()
 	}
+}
+
+func (rc *ReaderCache) removeConsumedLocked(downloader *SingleChunkCacher) (removed bool) {
+	if rc.downloaders[downloader.chunkFileId] == downloader && downloader.consumable() {
+		delete(rc.downloaders, downloader.chunkFileId)
+		return true
+	}
+	return false
 }
 
 func (rc *ReaderCache) destroy() {
