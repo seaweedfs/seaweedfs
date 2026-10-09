@@ -354,6 +354,7 @@ message ObjectMutation {
     bytes content = 11;                    // PATCH_EXTENDED: new Entry.content when set_content
     bool touch_mtime = 12;                 // PATCH_EXTENDED: set the entry's Mtime to now (e.g. a metadata-replace copy)
     bool remove_empty_parent = 13;         // DELETE: also remove the parent directory when the delete leaves it empty (best-effort)
+    bool keep_remote_object = 14;          // DELETE: leave the object on the mounted remote storage
 }
 
 // Recompute re-derives a pointer entry (directory/name on the mutation) from the
@@ -518,6 +519,7 @@ message DeleteEntryRequest {
     bool is_from_other_cluster = 7;
     repeated int32 signatures = 8;
     int64 if_not_modified_after = 9;
+    bool keep_remote_object = 10;
 }
 
 message DeleteEntryResponse {

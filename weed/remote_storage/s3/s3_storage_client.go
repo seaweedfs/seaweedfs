@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -414,6 +415,9 @@ func (s *s3RemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteSto
 		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+size-1)),
 	})
 	if err != nil {
+		if isNoSuchKey(err) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
 		return nil, fmt.Errorf("failed to download file %s%s: %v", loc.Bucket, loc.Path, err)
 	}
 	// The buffer is pre-sized to size, so a short read leaves the tail
@@ -433,12 +437,19 @@ func (s *s3RemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *remot
 		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+size-1)),
 	})
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == s3.ErrCodeNoSuchKey {
+		if isNoSuchKey(err) {
 			return nil, remote_storage.ErrRemoteObjectNotFound
 		}
 		return nil, fmt.Errorf("failed to open stream for %s%s: %v", loc.Bucket, loc.Path, err)
 	}
 	return output.Body, nil
+}
+
+// isNoSuchKey matches only a missing key: a missing bucket is also a 404 but
+// says nothing about the object.
+func isNoSuchKey(err error) bool {
+	var aerr awserr.Error
+	return errors.As(err, &aerr) && aerr.Code() == s3.ErrCodeNoSuchKey
 }
 
 func (s *s3RemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {

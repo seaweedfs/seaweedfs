@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -610,6 +611,7 @@ type fakeStreamRemoteClient struct {
 	remote_storage.RemoteStorageClient
 	data      []byte
 	stat      *filer_pb.RemoteEntry // what the remote reports now; defaults to matching data
+	openErr   error
 	gotLoc    *remote_pb.RemoteStorageLocation
 	gotOffset int64
 	gotSize   int64
@@ -624,6 +626,9 @@ func (c *fakeStreamRemoteClient) StatFile(loc *remote_pb.RemoteStorageLocation) 
 
 func (c *fakeStreamRemoteClient) ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (io.ReadCloser, error) {
 	c.gotLoc, c.gotOffset, c.gotSize = loc, offset, size
+	if c.openErr != nil {
+		return nil, c.openErr
+	}
 	end := min(offset+size, int64(len(c.data)))
 	return io.NopCloser(bytes.NewReader(c.data[offset:end])), nil
 }
@@ -826,4 +831,41 @@ func TestS3ColdReadStreamsFromOrigin(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestS3ReadOfObjectGoneFromRemote pins NoSuchKey for a remote-only entry whose
+// remote object was deleted outside the filer, whether the filer's cache or the
+// gateway's origin fallback learns it.
+func TestS3ReadOfObjectGoneFromRemote(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name:        "obj.bin",
+		Attributes:  &filer_pb.FuseAttributes{FileSize: 10},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 10},
+	}
+	noWait := func(loc *remote_pb.RemoteStorageLocation) { loc.CacheWaitMs = proto.Int32(0) }
+	tests := []struct {
+		name       string
+		cacheErr   error
+		originErr  error
+		mountOpts  []func(*remote_pb.RemoteStorageLocation)
+		wantStatus int
+	}{
+		{"cache reports it gone", status.Error(codes.NotFound, "remote object not found"), remote_storage.ErrRemoteObjectNotFound, nil, http.StatusNotFound},
+		{"cache still filling, origin reports it gone", stillCachingErr, remote_storage.ErrRemoteObjectNotFound, nil, http.StatusNotFound},
+		{"zero cache wait, origin reports it gone", nil, remote_storage.ErrRemoteObjectNotFound, []func(*remote_pb.RemoteStorageLocation){noWait}, http.StatusNotFound},
+		{"origin denied", status.Error(codes.Internal, "assign: no free volumes"), errors.New("googleapi: Error 403: forbidden"), nil, http.StatusInternalServerError},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev := remote_storage.RemoteStorageClientMakers["faketest"]
+			remote_storage.RemoteStorageClientMakers["faketest"] = &fakeStreamRemoteMaker{client: &fakeStreamRemoteClient{openErr: tt.originErr}}
+			t.Cleanup(func() { remote_storage.RemoteStorageClientMakers["faketest"] = prev })
+			s3a := newRemoteCacheTestServer(startStreamThroughFiler(t, fmt.Sprintf("faketest-gone-%d", i), tt.cacheErr, tt.mountOpts...))
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/mybucket/dir/obj.bin", nil)
+
+			require.Error(t, s3a.streamFromVolumeServers(w, r, entry, "", "mybucket", "dir/obj.bin", ""))
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
 }

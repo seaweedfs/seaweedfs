@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -407,5 +408,39 @@ func TestReplicateRenameFromExcludedDirBecomesCreate(t *testing.T) {
 	}
 	if len(s.deleteCalls) != 0 || len(s.updateCalls) != 0 {
 		t.Fatalf("unexpected delete/update calls: deletes=%+v updates=%+v", s.deleteCalls, s.updateCalls)
+	}
+}
+
+type keepingSink struct {
+	*recordingSink
+	keepCalls []deleteCall
+}
+
+var _ sink.MetadataOnlyDeleter = (*keepingSink)(nil)
+
+func (s *keepingSink) DeleteEntryKeepingRemoteObject(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+	s.keepCalls = append(s.keepCalls, deleteCall{key: key, isDirectory: isDirectory})
+	return nil
+}
+
+func TestReplicateMetadataOnlyDeleteKeepsTheRemoteObject(t *testing.T) {
+	s := &keepingSink{recordingSink: &recordingSink{name: "filer", sinkToDirectory: "/dest"}}
+	r := &Replicator{sink: s, source: &source.FilerSource{Dir: "/source"}}
+	deleteOf := func(name string, extended map[string][]byte) *filer_pb.EventNotification {
+		return &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}, Extended: extended}}
+	}
+
+	if err := r.Replicate(context.Background(), "/source/dir/kept.bin", deleteOf("kept.bin", map[string][]byte{filer.ExtKeepRemoteObjectKey: []byte("true")})); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Replicate(context.Background(), "/source/dir/gone.bin", deleteOf("gone.bin", nil)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(s.keepCalls) != 1 || s.keepCalls[0].key != "/dest/dir/kept.bin" {
+		t.Fatalf("metadata-only deletes = %+v, want /dest/dir/kept.bin", s.keepCalls)
+	}
+	if len(s.deleteCalls) != 1 || s.deleteCalls[0].key != "/dest/dir/gone.bin" {
+		t.Fatalf("ordinary deletes = %+v, want /dest/dir/gone.bin", s.deleteCalls)
 	}
 }

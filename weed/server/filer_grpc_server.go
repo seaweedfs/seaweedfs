@@ -468,6 +468,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 
 	case filer_pb.ObjectMutation_DELETE:
 		fullpath := util.NewFullPath(m.Directory, m.Name)
+		if m.KeepRemoteObject {
+			ctx = filer.WithKeepRemoteObject(ctx)
+		}
 		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, 0)
 		if err != nil && err != filer_pb.ErrNotFound {
 			return err
@@ -896,6 +899,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
+	if req.KeepRemoteObject {
+		ctx = filer.WithKeepRemoteObject(ctx)
+	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}
