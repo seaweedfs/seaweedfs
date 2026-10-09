@@ -544,7 +544,7 @@ helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balan
 
 ## Gateway API
 
-Every component with an `ingress` block (master, volume, filer, s3 and admin) can also be exposed through a Gateway API `HTTPRoute`, for clusters that route through a Gateway instead of an Ingress controller. `<component>.httpRoute` sits next to `<component>.ingress` and is disabled by default. The chart does not create the Gateway, so point `parentRefs` at one that already exists, and the `gateway.networking.k8s.io/v1` CRDs must be installed.
+Every component with an `ingress` block (master, volume, filer, s3 and admin) can also be exposed through a [Gateway API](https://gateway-api.sigs.k8s.io/) `HTTPRoute`, for clusters that route through a Gateway instead of an Ingress controller. `<component>.httpRoute` sits next to `<component>.ingress` and is disabled by default. The chart does not create the Gateway, so point `parentRefs` at one that already exists, and the `gateway.networking.k8s.io/v1` CRDs must be installed.
 
 ```yaml
 s3:
