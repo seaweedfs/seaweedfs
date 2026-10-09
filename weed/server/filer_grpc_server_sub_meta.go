@@ -668,7 +668,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// written from this single goroutine, so no synchronization is needed.
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
-	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
+	baseEachLogEntryFn := eachLogEntryFn(ctx, req, sender, eachEventNotificationFn, &unsyncedEvents)
 	// heldAtTsNs remembers the entry a read was held at (for the log line);
 	// the rewind target is the last entry actually delivered.
 	var heldAtTsNs int64
@@ -947,19 +947,17 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 }
 
-// StopSubscriptions ends every metadata subscription and every one that
-// starts afterwards. The shutdown calls it before gRPC GracefulStop:
-// GracefulStop waits for open streams, and some subscribers live in the same
-// process - the filer's own MetaAggregator and, under `weed server -s3` or
-// `weed filer -s3`, the S3 gateway - and only let go once the filer itself is
-// shut down, which happens after GracefulStop. Without this, every shutdown
-// sat out the full graceful-stop timeout. Subscribers get codes.Unavailable
-// (see endOfSubscription) and reconnect with their usual retry.
+// StopSubscriptions ends every metadata subscription and any started later.
+// Shutdown calls it before gRPC GracefulStop, which waits on open streams;
+// subscribers living in this process - the filer's own MetaAggregator and an
+// in-process S3 gateway - are otherwise torn down only by the later
+// fs.Shutdown, so every stop waited out the graceful-stop timeout. Ended
+// subscribers get codes.Unavailable (see endOfSubscription) and reconnect
+// with their usual retry.
 //
-// A subscriber that has stopped reading is not covered: its handler sits in
-// stream.Send, which only the end of the stream releases, and grpc-go does
-// not allow Send after the handler has returned. GracefulStop's timeout
-// still ends that one, as before.
+// A subscriber blocked in stream.Send is not covered: only the stream's end
+// releases Send, and grpc-go forbids Send after the handler returns. The
+// graceful-stop timeout still ends that one.
 func (fs *FilerServer) StopSubscriptions() {
 	if fs.stopSubscriptions != nil {
 		fs.stopSubscriptions()
@@ -980,22 +978,26 @@ func (fs *FilerServer) subscriptionContext(stream context.Context) (context.Cont
 	}
 }
 
-// endOfSubscription turns the clean end of a subscription that
-// StopSubscriptions cut short into codes.Unavailable. Followers read a clean
-// end as "caught up, done": the client returns nil on io.EOF, and
-// util.RetryUntil - which the S3 gateway and mount follow with - stops on
-// nil. Without this, a separate S3 gateway or mount would stop following
-// for good when its filer restarts. Unavailable is what a dropped connection
-// looks like, so they reconnect, to this filer once it is back or another.
-// Errors pass through, and so does the end of a stream the client closed.
+// endOfSubscription turns the end of a subscription that StopSubscriptions
+// cut short into codes.Unavailable. Followers read a clean end as "caught up,
+// done": the client returns nil on io.EOF, and util.RetryUntil - which the S3
+// gateway and mount follow with - stops on nil. A context.Canceled from the
+// subscription context is the stop signal surfacing, not a real error, and
+// reads as non-retryable to transient-error classifiers. Unavailable is what
+// a dropped connection looks like, so followers reconnect with their usual
+// retry. Handler errors pass through, and so does the end of a stream the
+// client closed.
 func (fs *FilerServer) endOfSubscription(stream context.Context, err error) error {
-	if err != nil || stream.Err() != nil {
+	if stream.Err() != nil {
 		return err
 	}
 	if fs.subscriptionsStopped == nil || fs.subscriptionsStopped.Err() == nil {
-		return nil
+		return err
 	}
-	return status.Error(codes.Unavailable, "filer is shutting down")
+	if err == nil || errors.Is(err, context.Canceled) {
+		return status.Error(codes.Unavailable, "filer is shutting down")
+	}
+	return err
 }
 
 func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
@@ -1055,7 +1057,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
 	var lastFlushReportNs int64
-	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
+	baseEachLogEntryFn := eachLogEntryFn(ctx, req, sender, eachEventNotificationFn, &unsyncedEvents)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 		if upgradeOnRemotePeer != nil {
 			select {
@@ -1220,12 +1222,17 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
-func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
+func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
 	// A shallow scan of the path fields skips unmarshaling chunk-heavy events
 	// this subscriber would filter out anyway; scan surprises fall back to the
 	// full decode. Only a delivery resets the shared unsynced-events counter.
 	prefilter := req.PathPrefix != "" || len(req.PathPrefixes) > 0 || len(req.Directories) > 0
 	return func(logEntry *filer_pb.LogEntry) (bool, error) {
+		// A cancelled context ends the pass here: neither loop checks it
+		// per entry, and the send path alone cannot cover filtered entries.
+		if ctx.Err() != nil {
+			return true, nil
+		}
 		if prefilter {
 			if skeleton, ok := filer_pb.ScanMetadataEventSkeleton(logEntry.Data); ok &&
 				!filer_pb.MetadataEventMatchesSubscription(skeleton, req.PathPrefix, req.PathPrefixes, req.Directories) {
@@ -1366,7 +1373,7 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	if len(refs) == 0 {
 		return startPos.Time.UnixNano(), false, nil
 	}
-	if err := fs.sendRefsBatched(sender, refs, upgradeOnRemotePeer); err != nil {
+	if err := fs.sendRefsBatched(ctx, sender, refs, upgradeOnRemotePeer); err != nil {
 		return 0, false, err
 	}
 	if upgradeOnRemotePeer != nil {
@@ -1426,9 +1433,12 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 // sendRefsBatched sends refs through the pipelined sender, which keeps them
 // out of Events batches; gRPC allows one sending goroutine per stream and the
 // sender's goroutine is it.
-func (fs *FilerServer) sendRefsBatched(sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef, upgradeOnRemotePeer <-chan struct{}) error {
+func (fs *FilerServer) sendRefsBatched(ctx context.Context, sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef, upgradeOnRemotePeer <-chan struct{}) error {
 	const maxRefsPerMessage = 64
 	for i := 0; i < len(refs); i += maxRefsPerMessage {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if upgradeOnRemotePeer != nil {
 			select {
 			case <-upgradeOnRemotePeer:

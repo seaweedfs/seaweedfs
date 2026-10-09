@@ -3,9 +3,11 @@ package weed_server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -113,5 +115,36 @@ func TestClosedStreamEndsCleanlyDuringStop(t *testing.T) {
 	closeStream()
 	if err := fs.endOfSubscription(stream, nil); err != nil {
 		t.Fatalf("stream the client closed ended with %v, want nil", err)
+	}
+}
+
+// A read pass surfaces StopSubscriptions as a wrapped context.Canceled; on the
+// wire that must still read as Unavailable so followers retry.
+func TestCanceledReadEndsUnavailableDuringStop(t *testing.T) {
+	fs := newStoppableFilerServer()
+	fs.StopSubscriptions()
+	canceled := fmt.Errorf("reading from persisted logs: %w", context.Canceled)
+	if err := fs.endOfSubscription(context.Background(), canceled); status.Code(err) != codes.Unavailable {
+		t.Fatalf("stopped read ended with %v, want Unavailable", err)
+	}
+}
+
+func TestCanceledReadPassesThroughWithoutStop(t *testing.T) {
+	fs := newStoppableFilerServer()
+	canceled := fmt.Errorf("reading from persisted logs: %w", context.Canceled)
+	if err := fs.endOfSubscription(context.Background(), canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want the handler's own error", err)
+	}
+}
+
+// Neither read loop checks ctx per entry; the entry callback does.
+func TestEachLogEntryFnEndsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var filtered int64
+	fn := eachLogEntryFn(ctx, &filer_pb.SubscribeMetadataRequest{}, nil, nil, &filtered)
+	done, err := fn(&filer_pb.LogEntry{})
+	if !done || err != nil {
+		t.Fatalf("cancelled subscription returned done=%v err=%v, want a clean end", done, err)
 	}
 }
