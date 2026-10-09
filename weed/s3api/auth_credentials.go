@@ -2702,6 +2702,9 @@ func (iam *IdentityAccessManagement) attachedPolicyNames(identity *Identity) []s
 // carried it: the internal header set after JWT authentication, the
 // X-Amz-Security-Token header, or the presigned-URL query parameter.
 func extractSessionToken(r *http.Request) string {
+	if s3_constants.IsSessionTokenIgnored(r.Context()) {
+		return ""
+	}
 	if token := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader); token != "" {
 		return token
 	}

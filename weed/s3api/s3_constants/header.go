@@ -322,11 +322,12 @@ func IsSeaweedFSInternalHeader(headerKey string) bool {
 type contextKey string
 
 const (
-	contextKeyIdentityName   contextKey = "s3-identity-name"
-	contextKeyIdentityObject contextKey = "s3-identity-object"
-	contextKeyIdentityHolder contextKey = "s3-identity-holder"
-	contextKeyPrincipalArn   contextKey = "s3-principal-arn"
-	contextKeyIdentityClaim  contextKey = "s3-identity-claim"
+	contextKeyIdentityName        contextKey = "s3-identity-name"
+	contextKeyIdentityObject      contextKey = "s3-identity-object"
+	contextKeyIdentityHolder      contextKey = "s3-identity-holder"
+	contextKeyPrincipalArn        contextKey = "s3-principal-arn"
+	contextKeyIdentityClaim       contextKey = "s3-identity-claim"
+	contextKeyIgnoredSessionToken contextKey = "s3-ignored-session-token"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -447,6 +448,22 @@ func GetIdentityClaimFromContext(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+// IgnoreSessionTokenInContext marks the request's session token as tolerated
+// rather than authenticated: a statically configured access key signed the
+// request, so the token (which credential vendors like Unity Catalog emit on
+// static credentials too) must not steer authorization into the STS session
+// path. A context value because headers can be spoofed; this cannot.
+func IgnoreSessionTokenInContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, contextKeyIgnoredSessionToken, true)
+}
+
+// IsSessionTokenIgnored reports whether the request carries a session token
+// that was tolerated for a statically configured access key.
+func IsSessionTokenIgnored(ctx context.Context) bool {
+	ignored, _ := ctx.Value(contextKeyIgnoredSessionToken).(bool)
+	return ignored
 }
 
 // SetIdentityInContext stores the full authenticated identity object in the request context

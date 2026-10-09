@@ -97,6 +97,9 @@ func hasSessionToken(r *http.Request) bool {
 }
 
 func extractSessionToken(r *http.Request) string {
+	if s3_constants.IsSessionTokenIgnored(r.Context()) {
+		return ""
+	}
 	if token := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader); token != "" {
 		return token
 	}
