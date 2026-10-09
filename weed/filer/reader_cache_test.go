@@ -724,3 +724,34 @@ func TestSingleChunkCacherOneReaderCancelsOthersContinue(t *testing.T) {
 		t.Error("Other reader did not complete")
 	}
 }
+
+// TestReaderCacheBookkeepingOffCacheLock guards the contention fix: pin
+// lifecycle calls that cannot remove a cacher must not block on the
+// ReaderCache lock.
+func TestReaderCacheBookkeepingOffCacheLock(t *testing.T) {
+	cache := newMockChunkCacheForReaderCache()
+	rc := NewReaderCache(10, cache, nil, nil)
+	defer rc.destroy()
+
+	cacher := &SingleChunkCacher{parent: rc, chunkFileId: "pinned-chunk"}
+	atomic.StoreInt32(&cacher.readers, 1) // a read in flight: not consumable
+
+	rc.Lock()
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		close(started)
+		defer close(done)
+		var stream chunkStream
+		stream.pin(cacher)
+		rc.releaseStream(&stream)
+	}()
+	<-started
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		rc.Unlock()
+		t.Fatal("stream pin lifecycle blocked on the cache lock")
+	}
+	rc.Unlock()
+}
