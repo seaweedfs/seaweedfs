@@ -161,8 +161,7 @@ impl SourceReadRequest {
 
     /// HEAD, a range, or a stream.
     fn served_from_source(&self, n: &Needle) -> bool {
-        // HEAD is meta-only, except a chunk manifest this request will expand.
-        // cm=false keeps the raw needle. EC never uses this path.
+        // HEAD is meta-only unless the payload is needed to expand a manifest.
         if self.is_head {
             return !(n.is_chunk_manifest() && !self.bypass_cm);
         }
@@ -1106,8 +1105,7 @@ async fn get_or_head_handler_inner(
         return resp;
     }
 
-    // Chunk manifest expansion needs the full data; ETag is passed so expanded
-    // responses keep it (Go sets it before tryHandleChunkedFile runs).
+    // Chunk manifest expansion needs the full data.
     if n.is_chunk_manifest()
         && !request_kind.bypass_cm
         && let Some(expanded) = try_expand_chunk_manifest(
@@ -1115,8 +1113,6 @@ async fn get_or_head_handler_inner(
             &n,
             &path,
             &query,
-            &etag,
-            &last_modified_str,
             range.as_deref().filter(|_| method == Method::GET),
             &method,
         )
@@ -1325,21 +1321,10 @@ fn parse_read_request(
 ) -> (String, SourceReadRequest) {
     let ext = extract_extension_from_path(path);
     // Go checks resize and crop extensions separately: resize supports .webp, crop does not.
-    let has_resize_ops = is_image_resize_ext(&ext)
-        && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
-    // shouldCropImages requires x2 > x1 && y2 > y1; only a real crop disables streaming.
-    let has_crop_ops = is_image_crop_ext(&ext) && {
-        let x1 = query.crop_x1.unwrap_or(0);
-        let y1 = query.crop_y1.unwrap_or(0);
-        let x2 = query.crop_x2.unwrap_or(0);
-        let y2 = query.crop_y2.unwrap_or(0);
-        x2 > x1 && y2 > y1
-    };
-    let has_image_ops = has_resize_ops || has_crop_ops;
     let request_kind = SourceReadRequest {
         is_head: method == Method::HEAD,
         has_range,
-        has_image_ops,
+        has_image_ops: has_image_ops(&ext, query),
         bypass_cm: query.cm.as_deref() == Some("false"),
     };
     (ext, request_kind)
@@ -2216,6 +2201,19 @@ fn extract_filename_from_path(path: &str) -> String {
     } else {
         String::new()
     }
+}
+
+fn has_image_ops(ext: &str, query: &ReadQueryParams) -> bool {
+    let resize =
+        is_image_resize_ext(ext) && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
+    let crop = is_image_crop_ext(ext) && {
+        let x1 = query.crop_x1.unwrap_or(0);
+        let y1 = query.crop_y1.unwrap_or(0);
+        let x2 = query.crop_x2.unwrap_or(0);
+        let y2 = query.crop_y2.unwrap_or(0);
+        x2 > x1 && y2 > y1
+    };
+    resize || crop
 }
 
 fn path_base(path: &str) -> String {
@@ -3627,20 +3625,6 @@ fn extension_of(filename: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Same predicate as `parse_read_request`: a real crop or a positive resize.
-fn manifest_transforms_image(ext: &str, query: &ReadQueryParams) -> bool {
-    let resize =
-        is_image_resize_ext(ext) && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
-    let crop = is_image_crop_ext(ext) && {
-        let x1 = query.crop_x1.unwrap_or(0);
-        let y1 = query.crop_y1.unwrap_or(0);
-        let x2 = query.crop_x2.unwrap_or(0);
-        let y2 = query.crop_y2.unwrap_or(0);
-        x2 > x1 && y2 > y1
-    };
-    resize || crop
-}
-
 fn reject_bad_chunks(chunks: &[ChunkInfo]) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
     for chunk in chunks {
         if chunk.offset < 0 || chunk.size < 0 {
@@ -3715,9 +3699,7 @@ fn chunk_manifest_response_headers(
     if let Ok(etag_val) = etag.parse() {
         response_headers.insert(header::ETAG, etag_val);
     }
-    // `mime` is stored JSON. A newline is not a legal header value, and HEAD
-    // now builds these headers, so an illegal value falls back instead of
-    // panicking the connection task.
+    // `mime` is stored JSON; fall back when it is not a legal header value.
     let content_type_value = content_type
         .parse()
         .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream"));
@@ -3797,8 +3779,6 @@ async fn try_expand_chunk_manifest(
     n: &Needle,
     path: &str,
     query: &ReadQueryParams,
-    etag: &str,
-    last_modified_str: &Option<String>,
     get_range: Option<&str>,
     method: &Method,
 ) -> Option<ControlFlow<Response, (Vec<u8>, HeaderMap)>> {
@@ -3829,31 +3809,36 @@ async fn try_expand_chunk_manifest(
         return Some(flow);
     }
 
+    let Some(sum) = sum_chunk_sizes(&manifest.chunks) else {
+        return Some(manifest_too_large());
+    };
+
+    // Go's tryHandleChunkedFile: ext comes from the URL (including a fid
+    // suffix like /vid,fid.png) and falls back to the resolved filename's.
     let filename = manifest_filename(path, &manifest.name);
-    let cm_ext = extension_of(&filename);
-    let transforms_image = manifest_transforms_image(&cm_ext, query);
+    let url_ext = extract_extension_from_path(path);
+    let cm_ext = if url_ext.is_empty() {
+        extension_of(&filename)
+    } else {
+        url_ext
+    };
+    let transforms_image = has_image_ops(&cm_ext, query);
+    let (etag, last_modified_str) = etag_and_last_modified(n);
     let mut response_headers = chunk_manifest_response_headers(
         n,
         query,
-        etag,
-        last_modified_str,
+        &etag,
+        &last_modified_str,
         &filename,
         &manifest.mime,
     );
     if *method == Method::HEAD && !transforms_image {
-        let Some(sum) = sum_chunk_sizes(&manifest.chunks) else {
-            return Some(manifest_too_large());
-        };
         response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
         response_headers.insert(header::CONTENT_LENGTH, sum.to_string().parse().unwrap());
         return Some(ControlFlow::Break(
             (StatusCode::OK, response_headers).into_response(),
         ));
     }
-
-    let Some(sum) = sum_chunk_sizes(&manifest.chunks) else {
-        return Some(manifest_too_large());
-    };
 
     let mut wanted: Option<(&str, Vec<HttpRange>)> = None;
     if transforms_image {
@@ -3892,19 +3877,19 @@ async fn try_expand_chunk_manifest(
     }
 
     let size = sum as usize;
-    let mut parts: HashMap<(usize, usize), Vec<(usize, Vec<u8>)>> = HashMap::new();
+    type Parts = HashMap<(usize, usize), Vec<(usize, Vec<u8>)>>;
+    let mut parts: Parts = HashMap::new();
     let mut result = if wanted.is_some() {
         Vec::new()
     } else {
         vec![0u8; size]
     };
     for chunk in &manifest.chunks {
-        if chunk.size == 0 || chunk.offset >= sum {
+        let Some(window) = chunk_window(chunk.offset, chunk.size, sum) else {
             continue;
-        }
-        let window = chunk_window(chunk.offset, chunk.size, sum).unwrap();
+        };
         let ranges = wanted.as_ref().map(|(_, ranges)| ranges.as_slice());
-        let Some(how) = remote_read_for(chunk.offset, chunk.size, window, ranges) else {
+        let Some(how) = remote_read_for(chunk.offset, window, ranges) else {
             continue;
         };
         let fetched = match read_chunk_needle(state, &chunk.fid, how).await {
@@ -4044,12 +4029,7 @@ fn buffered_span_exceeds_limit(chunks: &[ChunkInfo], sum: i64, ranges: &[HttpRan
     })
 }
 
-fn remote_read_for(
-    offset: i64,
-    _size: i64,
-    window: i64,
-    ranges: Option<&[HttpRange]>,
-) -> Option<RemoteRead> {
+fn remote_read_for(offset: i64, window: i64, ranges: Option<&[HttpRange]>) -> Option<RemoteRead> {
     let (lo, hi) = match ranges {
         None => (0, window),
         Some(ranges) => overlap_span(offset, window, ranges)?,
@@ -6125,6 +6105,35 @@ mod tests {
         assert_eq!(taken(&reads), vec![1]);
     }
 
+    /// Go takes the transform extension from the URL first — including a fid
+    /// suffix like /vid,fid.png — before the resolved filename's.
+    #[tokio::test]
+    async fn test_chunk_manifest_fid_extension_drives_transform() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let png = solid_png(8, 8);
+        let chunk = put_test_needle(&state, 0x6e7a_0f01, &png);
+        let (_regs, reads) = watch_reads(&[0x6e7a_0f01]);
+        let json = format!(
+            r#"{{"name":"obj","size":{},"chunks":[{{"fid":"{}","offset":0,"size":{}}}]}}"#,
+            png.len(),
+            &chunk[1..],
+            png.len()
+        );
+        let stored = put_manifest(&state, 0x6e7a_0f02, &json);
+        let url = format!("{stored}.png?width=2&height=2");
+        let (status, _, body) = send_read(&state, Method::GET, &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_ne!(body.len(), png.len(), "resize must run on the fid suffix");
+        assert_eq!(taken(&reads), vec![1]);
+
+        let (status, headers, head_body) = send_read(&state, Method::HEAD, &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(head_body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], body.len().to_string());
+        assert_eq!(taken(&reads), vec![1]);
+    }
+
     #[test]
     fn test_expansion_limit_allows_exactly_two_gib() {
         assert!(!exceeds_expansion_limit(MAX_EXPANSION_BYTES));
@@ -6138,13 +6147,12 @@ mod tests {
             start: 100,
             length: 4,
         }];
-        let how = remote_read_for(100, 3 << 30, 4, Some(&ranges)).unwrap();
+        let how = remote_read_for(100, 4, Some(&ranges)).unwrap();
         assert!(matches!(how, RemoteRead::Whole { cap: 4 }));
-        let full = remote_read_for(0, 8, 8, None).unwrap();
+        let full = remote_read_for(0, 8, None).unwrap();
         assert!(matches!(full, RemoteRead::Whole { cap: 8 }));
         let prefix = remote_read_for(
             0,
-            8,
             8,
             Some(&[HttpRange {
                 start: 0,
