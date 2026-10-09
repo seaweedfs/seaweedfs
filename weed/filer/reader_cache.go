@@ -141,6 +141,7 @@ func (rc *ReaderCache) fetchChunkRange(ctx context.Context, buffer []byte, chunk
 // moves elsewhere, so another stream finishing or leaving the same chunk does
 // not drop the buffer from under it.
 type chunkStream struct {
+	mu     sync.Mutex // guards cacher; concurrent ReadAt calls on one ChunkReadAt share the stream
 	cacher *SingleChunkCacher
 }
 
@@ -166,9 +167,8 @@ retry:
 			// start wg.Wait() on a zero counter while this read is about to register.
 			cacher.wg.Add(1)
 			atomic.AddInt32(&cacher.readers, 1)
-			previous := stream.pin(cacher)
 			rc.Unlock()
-			rc.unpin(previous)
+			rc.unpin(stream.pin(cacher))
 			n, err := cacher.readChunkAt(ctx, buffer, offset)
 			rc.releaseIfFinished(stream, cacher, offset, n, err, chunkSize)
 			if n > 0 || err != nil {
@@ -184,9 +184,8 @@ retry:
 		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
 		if n > 0 {
 			// Served from the chunk cache: the stream has left its pinned chunk.
-			previous := stream.unpinLocked()
 			rc.Unlock()
-			rc.unpin(previous)
+			rc.unpin(stream.detach(nil))
 			return n, err
 		}
 	}
@@ -229,9 +228,8 @@ retry:
 	rc.downloaders[fileId] = cacher
 	cacher.wg.Add(1)
 	atomic.AddInt32(&cacher.readers, 1)
-	previous := stream.pin(cacher)
 	rc.Unlock()
-	rc.unpin(previous)
+	rc.unpin(stream.pin(cacher))
 
 	n, err := cacher.readChunkAt(ctx, buffer, offset)
 	rc.releaseIfFinished(stream, cacher, offset, n, err, chunkSize)
@@ -239,23 +237,32 @@ retry:
 }
 
 // pin makes cacher the stream's current chunk and returns the chunk it was
-// pinned to before, which the caller unpins once the ReaderCache lock is
-// released. The stream is only touched under the ReaderCache lock, since
-// concurrent ReadAt calls on one ChunkReadAt share it.
+// pinned to before, which the caller unpins.
 func (stream *chunkStream) pin(cacher *SingleChunkCacher) (previous *SingleChunkCacher) {
-	if stream == nil || stream.cacher == cacher {
+	if stream == nil {
 		return nil
 	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.cacher == cacher {
+		return nil
+	}
+	atomic.AddInt32(&cacher.pins, 1)
 	previous = stream.cacher
 	stream.cacher = cacher
-	atomic.AddInt32(&cacher.pins, 1)
 	return previous
 }
 
-// unpinLocked detaches the stream from its chunk and returns that chunk for
-// the caller to unpin once the ReaderCache lock is released.
-func (stream *chunkStream) unpinLocked() (previous *SingleChunkCacher) {
+// detach unpins the stream from its chunk and returns that chunk for the
+// caller to unpin. A non-nil expected cacher makes the detach conditional on
+// the stream still being positioned in it.
+func (stream *chunkStream) detach(expected *SingleChunkCacher) (previous *SingleChunkCacher) {
 	if stream == nil {
+		return nil
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if expected != nil && stream.cacher != expected {
 		return nil
 	}
 	previous = stream.cacher
@@ -269,24 +276,12 @@ func (rc *ReaderCache) releaseIfFinished(stream *chunkStream, cacher *SingleChun
 	if stream == nil || err != nil || offset+int64(n) < int64(chunkSize) {
 		return
 	}
-	var previous *SingleChunkCacher
-	rc.Lock()
-	if stream.cacher == cacher {
-		previous = stream.unpinLocked()
-	}
-	rc.Unlock()
-	rc.unpin(previous)
+	rc.unpin(stream.detach(cacher))
 }
 
 // releaseStream unpins whatever chunk the stream is positioned in.
 func (rc *ReaderCache) releaseStream(stream *chunkStream) {
-	if stream == nil {
-		return
-	}
-	rc.Lock()
-	previous := stream.unpinLocked()
-	rc.Unlock()
-	rc.unpin(previous)
+	rc.unpin(stream.detach(nil))
 }
 
 // unpin drops one stream's pin. Once no stream is positioned in the chunk it
