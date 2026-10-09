@@ -64,14 +64,28 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		}
 	})
 
-	t.Run("stored entry is a directory — certain conflict, lock path answers", func(t *testing.T) {
+	t.Run("stored entry is a directory, chunks alive — lock path answers", func(t *testing.T) {
 		f := &fakeLookupFiler{entry: &filer_pb.Entry{Name: "o", IsDirectory: true}}
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksDead, func() s3err.ErrorCode { ran = true; return s3err.ErrExistingObjectIsDirectory })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrExistingObjectIsDirectory })
 		if code != s3err.ErrExistingObjectIsDirectory || !ran {
-			t.Fatalf("code=%v ran=%v — a directory conflict must reach createUnderLock, which maps it", code, ran)
+			t.Fatalf("code=%v ran=%v — a directory conflict with live chunks must reach createUnderLock, which maps it", code, ran)
+		}
+	})
+
+	// The routed PUT may have committed before a delete removed the entry and
+	// its chunks and a nested write recreated the name as a directory; dead
+	// chunks mean re-committing would store an entry pointing at them.
+	t.Run("stored entry is a directory, chunks unverifiable — refuse", func(t *testing.T) {
+		f := &fakeLookupFiler{entry: &filer_pb.Entry{Name: "o", IsDirectory: true}}
+		s3a, owner := newS3a(t, f)
+		entryCreated := false
+		ran := false
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksDead, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		if code != s3err.ErrServiceUnavailable || ran {
+			t.Fatalf("code=%v ran=%v — re-committed over a directory with possibly-deleted chunks", code, ran)
 		}
 	})
 

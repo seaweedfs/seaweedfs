@@ -1113,8 +1113,9 @@ const createLookupTimeout = 10 * time.Second
 // superseded the commit, and its old-chunk cleanup may have deleted this
 // entry's chunks — committing would write back a stale entry pointing at dead
 // needles, so the request fails for the client to retry with a fresh upload.
-// Unresolvable lookups fail the same way; only a proven-absent entry with
-// verifiably-live chunks falls through to the normal create.
+// Unresolvable lookups fail the same way; only a proven-absent entry or a
+// directory conflict with verifiably-live chunks falls through to the normal
+// create.
 func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object string, owner pb.ServerAddress, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize, entryCreated *bool, chunksExist func(ctx context.Context, chunks []*filer_pb.FileChunk) bool, createUnderLock func() s3err.ErrorCode) s3err.ErrorCode {
 	dir, name := path.Dir(filePath), path.Base(filePath)
 	lookupCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
@@ -1128,9 +1129,17 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 			return s3err.ErrServiceUnavailable
 		}
 		if existing.IsDirectory {
-			// A PUT only ever stores a file entry, so a directory at the same
-			// name predates this write and is a certain conflict; the lock
-			// path maps it to the proper precondition error.
+			// The directory can postdate this PUT's commit: the route may
+			// have stored the file entry, a delete removed it, and a nested
+			// write recreated the directory before recovery took the lock.
+			// Re-committing is only safe while the uploaded chunks verifiably
+			// survive — that delete may already have reclaimed the needles,
+			// and a create retrying over the directory would store an entry
+			// pointing at dead chunks.
+			if !chunksExist(lookupCtx, uploaded) {
+				glog.Warningf("putToFiler: ambiguous routed PUT for %s resolved to a directory and its chunks cannot be verified; not re-applying entry", filePath)
+				return s3err.ErrServiceUnavailable
+			}
 			return createUnderLock()
 		}
 		resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
