@@ -560,7 +560,7 @@ s3:
       - s3.example.com
 ```
 
-With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service, and with `filer.s3.enabled` the s3 route uses `filer.s3.port`.
+With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service. When S3 runs only on the filer (`filer.s3.enabled` without `s3.enabled`), the s3 route uses `filer.s3.port`.
 
 ## Network Policies
 
