@@ -671,19 +671,6 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Reject calls from temporary credentials (session tokens) early,
-	// before SigV4 verification — no need to authenticate first.
-	// GetFederationToken can only be called by long-term IAM users.
-	securityToken := r.Header.Get("X-Amz-Security-Token")
-	if securityToken == "" {
-		securityToken = r.URL.Query().Get("X-Amz-Security-Token")
-	}
-	if securityToken != "" {
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-			fmt.Errorf("GetFederationToken cannot be called with temporary credentials"))
-		return
-	}
-
 	// Check if STS service is initialized
 	if h.stsService == nil || !h.stsService.IsInitialized() {
 		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
@@ -710,6 +697,13 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 	if identity == nil {
 		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 			fmt.Errorf("unable to identify caller"))
+		return
+	}
+
+	// GetFederationToken can only be called by long-term IAM users.
+	if extractSessionToken(r) != "" {
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("GetFederationToken cannot be called with temporary credentials"))
 		return
 	}
 
