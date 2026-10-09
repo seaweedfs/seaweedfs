@@ -124,6 +124,37 @@ func TestSplitKeyIDRejectsForeignVault(t *testing.T) {
 	}
 }
 
+// A trailing DNS dot names the same vault, so both sides of the comparison are
+// normalized the same way.
+func TestSplitKeyIDTrailingDot(t *testing.T) {
+	tests := []struct {
+		name     string
+		vaultURL string
+		keyID    string
+	}{
+		{
+			name:     "trailing dot on the key url",
+			vaultURL: "https://myvault.vault.azure.net",
+			keyID:    "https://myvault.vault.azure.net./keys/my-key/abc123",
+		},
+		{
+			name:     "trailing dot on the configured vault",
+			vaultURL: "https://myvault.vault.azure.net./",
+			keyID:    "https://myvault.vault.azure.net/keys/my-key/abc123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &AzureKMSProvider{vaultURL: tt.vaultURL}
+			name, version, err := provider.splitKeyID(tt.keyID)
+			if err != nil || name != "my-key" || version != "abc123" {
+				t.Fatalf("splitKeyID = %q, %q, %v; want my-key, abc123, nil", name, version, err)
+			}
+		})
+	}
+}
+
 // The envelope is JSON, so a raw binary wrapped key would be replaced by
 // U+FFFD on the way in and could never be decrypted.
 func TestCiphertextEnvelopeRoundTrip(t *testing.T) {

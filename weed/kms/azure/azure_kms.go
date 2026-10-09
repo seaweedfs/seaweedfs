@@ -54,7 +54,7 @@ func (p *AzureKMSProvider) splitKeyID(keyID string) (string, string, error) {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return keyID, "", nil
 	}
-	if host := vaultHost(p.vaultURL); host != "" && !strings.EqualFold(strings.TrimSuffix(strings.ToLower(parsed.Host), ":443"), host) {
+	if host := vaultHost(p.vaultURL); host != "" && vaultHost(keyID) != host {
 		return "", "", fmt.Errorf("key ID %q names vault %q, but this provider is configured for %q", keyID, parsed.Host, host)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
