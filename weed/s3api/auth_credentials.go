@@ -32,7 +32,6 @@ import (
 
 	// Import KMS providers to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
-	// _ "github.com/seaweedfs/seaweedfs/weed/kms/azure"  // TODO: Fix Azure SDK compatibility issues
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/gcp"
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/local"
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/openbao"
