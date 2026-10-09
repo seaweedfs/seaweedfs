@@ -800,7 +800,10 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(newEntry.GetChunks())
 
-	chunks, coveredChunks := filer.CompactFileChunks(ctx, fs.lookupFileId, nonManifestChunks)
+	chunks, coveredChunks, err := filer.CompactFileChunks(ctx, fs.lookupFileId, nonManifestChunks)
+	if err != nil {
+		return newEntry.GetChunks(), nil, fmt.Errorf("CompactFileChunks: %w", err)
+	}
 	garbage = append(garbage, coveredChunks...)
 
 	if newEntry.Attributes != nil {

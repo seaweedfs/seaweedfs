@@ -1798,7 +1798,10 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 	if err != nil {
 		return 0, err
 	}
-	chunkViews := filer.ViewFromChunks(ctx, nil, resolvedChunks, offset, size)
+	chunkViews, err := filer.ViewFromChunks(ctx, nil, resolvedChunks, offset, size)
+	if err != nil {
+		return 0, err
+	}
 
 	totalWritten := int64(0)
 	targetOffset := offset
