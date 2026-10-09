@@ -465,7 +465,7 @@ func (s3a *S3ApiServer) resolveObjectEntry(bucket, object, versionId string) (*f
 }
 
 // serveDirectoryContent serves the content of a directory object directly
-func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry) {
+func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object string) {
 	// Defensive nil checks - entry and attributes should never be nil, but guard against it
 	if entry == nil || entry.Attributes == nil {
 		glog.Errorf("serveDirectoryContent: entry or attributes is nil")
@@ -473,10 +473,52 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// A directory promoted over an uploaded object still holds that object's
+	// chunks while entry.Content stays empty; GET streams them like a regular
+	// object so it delivers the bytes HEAD reports for this entry.
+	if r.Method != http.MethodHead && len(entry.Content) == 0 && len(entry.Chunks) > 0 {
+		sseType := s3a.detectPrimarySSEType(entry)
+		if err := s3a.streamFromVolumeServersWithSSE(w, r, entry, sseType, bucket, object, ""); err != nil {
+			var streamErr *StreamError
+			if errors.As(err, &streamErr) && streamErr.ResponseWritten {
+				return
+			}
+			if isCanceledStreamingError(err) {
+				glog.V(3).Infof("serveDirectoryContent: client disconnected while streaming %s/%s: %v", bucket, object, err)
+				return
+			}
+			glog.Errorf("serveDirectoryContent: failed to stream %s/%s: %v", bucket, object, err)
+			if errors.Is(err, util_http.ErrTooManyRequests) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
+			} else if shouldWriteStreamingErrorResponse(err) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			}
+		}
+		return
+	}
+
 	// Set content type - use stored MIME type or default. A directory without a stored
 	// mime and without data of its own answers application/x-directory, the marker type
 	// Hadoop-style clients (e.g. flink-s3-fs-presto) require to classify the path as a
 	// directory; defaulting to octet-stream makes them treat it as a 0-byte file.
+	// Marker content may be stored encrypted; decrypt before serving. HEAD
+	// returns no body, so it only checks access and skips decryption — and
+	// any KMS call — entirely.
+	content := entry.Content
+	sseType := s3a.detectPrimarySSEType(entry)
+	if sseType != "" && sseType != "None" {
+		var errCode s3err.ErrorCode
+		if r.Method == http.MethodHead {
+			errCode = s3a.checkDirectorySSEAccess(r, entry, sseType)
+		} else {
+			content, errCode = s3a.decryptDirectoryContent(r, entry, sseType)
+		}
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+	}
+
 	contentType := entry.Attributes.Mime
 	if contentType == "" {
 		if entry.IsDirectoryKeyObject() {
@@ -487,8 +529,10 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", contentType)
 
-	// Set content length - use FileSize for accuracy, especially for large files
-	contentLength := int64(entry.Attributes.FileSize)
+	contentLength := int64(len(content))
+	if r.Method == http.MethodHead && len(entry.Chunks) > 0 {
+		contentLength = int64(entry.Attributes.FileSize)
+	}
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 
 	// Set last modified
@@ -496,6 +540,8 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 
 	// Set ETag
 	w.Header().Set("ETag", "\""+filer.ETag(entry)+"\"")
+
+	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
 
 	// For HEAD requests, don't write body
 	if r.Method == http.MethodHead {
@@ -505,11 +551,85 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 
 	// Write content
 	w.WriteHeader(http.StatusOK)
-	if len(entry.Content) > 0 {
-		if _, err := w.Write(entry.Content); err != nil {
+	if len(content) > 0 {
+		if _, err := w.Write(content); err != nil {
 			glog.Errorf("serveDirectoryContent: failed to write response: %v", err)
 		}
 	}
+}
+
+// decryptDirectoryContent returns the plaintext of a directory marker's inline
+// entry.Content, which PutObjectHandler stores through the shared SSE path.
+func (s3a *S3ApiServer) decryptDirectoryContent(r *http.Request, entry *filer_pb.Entry, sseType string) ([]byte, s3err.ErrorCode) {
+	var reader io.Reader
+	var err error
+	switch sseType {
+	case s3_constants.SSETypeC:
+		customerKey, parseErr := ParseSSECHeaders(r)
+		if parseErr != nil {
+			return nil, MapSSECErrorToS3Error(parseErr)
+		}
+		if customerKey == nil {
+			return nil, s3err.ErrSSECustomerKeyMissing
+		}
+		if storedKeyMD5 := string(entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]); storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+			return nil, s3err.ErrAccessDenied
+		}
+		iv, ivErr := GetSSECIVFromMetadata(entry.Extended)
+		if ivErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		reader, err = CreateSSECDecryptedReader(bytes.NewReader(entry.Content), customerKey, iv)
+	case s3_constants.SSETypeKMS:
+		sseKMSKey, deserErr := DeserializeSSEKMSMetadata(entry.Extended[s3_constants.SeaweedFSSSEKMSKey])
+		if deserErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		reader, err = CreateSSEKMSDecryptedReader(bytes.NewReader(entry.Content), sseKMSKey)
+	case s3_constants.SSETypeS3:
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, deserErr := DeserializeSSES3Metadata(entry.Extended[s3_constants.SeaweedFSSSES3Key], keyManager)
+		if deserErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		iv, ivErr := GetSSES3IV(entry, sseS3Key, keyManager)
+		if ivErr != nil {
+			return nil, s3err.ErrInternalError
+		}
+		reader, err = CreateSSES3DecryptedReader(bytes.NewReader(entry.Content), sseS3Key, iv)
+	default:
+		return entry.Content, s3err.ErrNone
+	}
+	if err != nil {
+		glog.Errorf("decryptDirectoryContent: %v", err)
+		return nil, s3err.ErrInternalError
+	}
+	content, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		glog.Errorf("decryptDirectoryContent: %v", readErr)
+		return nil, s3err.ErrInternalError
+	}
+	return content, s3err.ErrNone
+}
+
+// checkDirectorySSEAccess runs the request-level checks a HEAD of an encrypted
+// marker needs: SSE-C requires the customer key to parse and to match the key
+// the marker was written with; SSE-KMS and SSE-S3 need nothing from the caller.
+func (s3a *S3ApiServer) checkDirectorySSEAccess(r *http.Request, entry *filer_pb.Entry, sseType string) s3err.ErrorCode {
+	if sseType != s3_constants.SSETypeC {
+		return s3err.ErrNone
+	}
+	customerKey, parseErr := ParseSSECHeaders(r)
+	if parseErr != nil {
+		return MapSSECErrorToS3Error(parseErr)
+	}
+	if customerKey == nil {
+		return s3err.ErrSSECustomerKeyMissing
+	}
+	if storedKeyMD5 := string(entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]); storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
 }
 
 // handleDirectoryObjectRequest is a helper function that handles directory object requests
@@ -538,7 +658,7 @@ func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *h
 			return true // Request was handled (denied)
 		}
 		glog.V(2).Infof("%s: directory object %s/%s found, serving content", handlerName, bucket, object)
-		s3a.serveDirectoryContent(w, r, dirEntry)
+		s3a.serveDirectoryContent(w, r, dirEntry, bucket, object)
 		return true // Request was handled successfully
 	} else if isDirectoryObject {
 		// Directory object but doesn't exist

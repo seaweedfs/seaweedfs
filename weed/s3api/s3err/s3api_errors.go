@@ -143,6 +143,8 @@ const (
 	ErrSSECustomerKeyMissing
 	ErrSSECustomerKeyNotNeeded
 	ErrSSEEncryptionTypeMismatch
+	ErrInvalidEncryptionMethod
+	ErrIncompatibleEncryptionMethod
 
 	// SSE-KMS related errors
 	ErrKMSKeyNotFound
@@ -687,6 +689,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrSSEEncryptionTypeMismatch: {
 		Code:           "InvalidRequest",
 		Description:    "The encryption method specified in the request does not match the encryption method used to encrypt the object.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidEncryptionMethod: {
+		Code:           "InvalidArgument",
+		Description:    "The encryption method specified is not supported",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrIncompatibleEncryptionMethod: {
+		Code:           "InvalidArgument",
+		Description:    "Server Side Encryption with Customer provided key is incompatible with the encryption method specified",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 

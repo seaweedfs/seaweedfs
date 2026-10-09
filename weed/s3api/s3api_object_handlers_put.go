@@ -127,6 +127,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if errCode := ValidateRequestEncryption(r.Header); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	if r.Header.Get("Cache-Control") != "" {
 		if _, err = cacheobject.ParseRequestCacheControl(r.Header.Get("Cache-Control")); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
@@ -215,6 +220,18 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		dirMd5 := md5.Sum(dirContent)
 		dirEtag := fmt.Sprintf("%x", dirMd5)
 
+		// SSE applies to marker content too — it is stored in entry.Content
+		sseResult, sseErrCode := s3a.handleAllSSEEncryption(r, bytes.NewReader(dirContent), 0)
+		if sseErrCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, sseErrCode)
+			return
+		}
+		if dirContent, err = io.ReadAll(sseResult.DataReader); err != nil {
+			glog.Errorf("PutObjectHandler: failed to encrypt directory marker content %s/%s: %v", bucket, object, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+
 		glog.Infof("PutObjectHandler: explicit directory marker %s/%s (contentType=%q, len=%d)",
 			bucket, object, objectContentType, r.ContentLength)
 		// mkdir replaces this entry outright, so a lock recorded on the entry itself
@@ -253,6 +270,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 					}
 					entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
 
+					storeSSEMetadata(entry, sseResult)
+
 					// Set object owner for directory objects (same as regular objects)
 					s3a.setObjectOwnerFromRequest(r, bucket, entry)
 					applyPutObjectACL(r, entry)
@@ -269,6 +288,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3err.WriteErrorResponse(w, r, markerCode)
 			return
 		}
+		sseRespMetadata := SSEResponseMetadata{SSEType: sseResult.SSEType}
+		if sseResult.SSEKMSKey != nil {
+			sseRespMetadata.KMSKeyID = sseResult.SSEKMSKey.KeyID
+			sseRespMetadata.BucketKeyEnabled = sseResult.SSEKMSKey.BucketKeyEnabled
+		}
+		s3a.setSSEResponseHeaders(w, r, sseRespMetadata)
 		setEtag(w, dirEtag)
 	} else {
 		// Get detailed versioning state for the bucket
@@ -577,6 +602,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				return "", s3err.ErrInternalError, SSEResponseMetadata{}
 			}
 		}
+
+		sseResult.SSEKMSKey = sseKMSKey
+		sseResult.SSEKMSMetadata = sseKMSMetadata
+		sseResult.SSES3Key = sseS3Key
+		sseResult.SSES3Metadata = sseS3Metadata
+		sseResult.SSEType = sseType
 	} else {
 		glog.V(4).Infof("putToFiler: explicit encryption already applied, skipping bucket default encryption")
 	}
@@ -912,33 +943,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		glog.V(3).Infof("putToFiler: stored %d tags from X-Amz-Tagging header", len(parsedTags))
 	}
 
-	// Set SSE-C metadata
-	if customerKey != nil && len(sseIV) > 0 {
-		// Store IV as RAW bytes (matches filer behavior - filer decodes base64 headers and stores raw bytes)
-		entry.Extended[s3_constants.SeaweedFSSSEIV] = sseIV
-		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
-		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(customerKey.KeyMD5)
-		glog.V(3).Infof("putToFiler: storing SSE-C metadata - IV len=%d", len(sseIV))
-	}
-
-	// Set SSE-KMS metadata
-	if sseKMSKey != nil {
-		// Store metadata as RAW bytes (matches filer behavior - filer decodes base64 headers and stores raw bytes)
-		entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = sseKMSMetadata
-		// Set standard SSE headers for detection
-		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("aws:kms")
-		entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(sseKMSKey.KeyID)
-		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata - keyID=%s, raw len=%d", sseKMSKey.KeyID, len(sseKMSMetadata))
-	}
-
-	// Set SSE-S3 metadata
-	if sseS3Key != nil && len(sseS3Metadata) > 0 {
-		// Store metadata as RAW bytes (matches filer behavior - filer decodes base64 headers and stores raw bytes)
-		entry.Extended[s3_constants.SeaweedFSSSES3Key] = sseS3Metadata
-		// Set standard SSE header for detection
-		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("AES256")
-		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata - keyID=%s, raw len=%d", sseS3Key.KeyID, len(sseS3Metadata))
-	}
+	storeSSEMetadata(entry, sseResult)
 
 	// Parts (object == "") stay flat: completion rebases chunk offsets, which
 	// manifest chunks cannot express.
