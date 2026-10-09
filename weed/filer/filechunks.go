@@ -200,11 +200,14 @@ func (cv *ChunkView) CanRangeFetch() bool {
 	return cv.CipherKey == nil && !cv.IsGzipped
 }
 
-func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
+func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView], err error) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	if err != nil {
+		return nil, err
+	}
 
-	return ViewFromVisibleIntervals(visibles, offset, size)
+	return ViewFromVisibleIntervals(visibles, offset, size), nil
 
 }
 

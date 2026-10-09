@@ -406,9 +406,9 @@ func TestVisibleContentPreservedAfterCompact(t *testing.T) {
 			})
 		}
 
-		origViews := filer.ViewFromChunks(context.Background(), nil, chunks, 0, math.MaxInt64)
+		origViews, _ := filer.ViewFromChunks(context.Background(), nil, chunks, 0, math.MaxInt64)
 		compacted, _, _ := filer.CompactFileChunks(context.Background(), nil, chunks)
-		compViews := filer.ViewFromChunks(context.Background(), nil, compacted, 0, math.MaxInt64)
+		compViews, _ := filer.ViewFromChunks(context.Background(), nil, compacted, 0, math.MaxInt64)
 
 		// Collect all (offset, size) pairs from views.
 		type viewKey struct {

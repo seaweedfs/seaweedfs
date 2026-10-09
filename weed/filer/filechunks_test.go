@@ -427,7 +427,7 @@ func TestChunksReading(t *testing.T) {
 			// continue
 		}
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
-		chunks := ViewFromChunks(context.Background(), nil, testcase.Chunks, testcase.Offset, testcase.Size)
+		chunks, _ := ViewFromChunks(context.Background(), nil, testcase.Chunks, testcase.Offset, testcase.Size)
 		x := -1
 		for c := chunks.Front(); c != nil; c = c.Next {
 			x++
@@ -604,5 +604,21 @@ func TestViewFromVisibleIntervalsNilVisibles(t *testing.T) {
 	views := ViewFromVisibleIntervals(nil, 0, 100)
 	if views == nil || views.Front() != nil {
 		t.Fatalf("expected empty interval list")
+	}
+}
+
+func TestViewFromChunksPropagatesError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	chunks := []*filer_pb.FileChunk{
+		{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 50, IsChunkManifest: true},
+	}
+	views, err := ViewFromChunks(ctx, nil, chunks, 0, math.MaxInt64)
+	if err == nil {
+		t.Fatal("expected error on cancelled context")
+	}
+	if views != nil {
+		t.Fatalf("expected nil views on error, got %v", views)
 	}
 }
