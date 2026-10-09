@@ -800,7 +800,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationWithSource(config *ia
 	hasStaticConfig := iam.useStaticConfig && len(iam.staticIdentityNames) > 0
 	iam.m.RUnlock()
 
-	if hasStaticConfig {
+	// A static config file always merges. It is authoritative for the identities it
+	// declares and never for the dynamic store, so a file that no longer declares
+	// any identity must not fall back to replacing that store on the next reload.
+	if hasStaticConfig || fromStaticFile {
 		// Merge mode: a dynamic load is the full store state, so it also reconciles deletions
 		return iam.MergeS3ApiConfiguration(config, fromStaticFile, !fromStaticFile)
 	}

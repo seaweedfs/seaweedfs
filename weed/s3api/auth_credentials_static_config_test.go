@@ -490,6 +490,9 @@ func TestReloadStaticConfigRevokesRemovedIdentity(t *testing.T) {
 	if _, _, found := s3a.iam.lookupByAccessKey("AKREVOKE"); !found {
 		t.Fatalf("expected the identity to authenticate before the reload")
 	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKSA0001"); !found {
+		t.Fatalf("expected the service account key to be loaded before the reload")
+	}
 
 	// A dynamic identity arrives from the filer and must survive the reload.
 	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "dynamic", Credentials: []*iam_pb.Credential{{AccessKey: "AKDYN000", SecretKey: "c2VjcmV0"}}}); err != nil {
@@ -537,5 +540,42 @@ func TestReloadStaticConfigRevokesRemovedIdentity(t *testing.T) {
 	}
 	if !hasIdentity(s3a.iam, "admin-AKIAENV1") {
 		t.Fatalf("the AWS environment identity must survive a static-file reload")
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKIAENV1"); !found {
+		t.Fatalf("the AWS environment identity's access key must keep working")
+	}
+}
+
+// A file reload always merges, so emptying the file must not flip the next reload
+// into replacing the store and dropping the filer-managed identities.
+func TestReloadStaticConfigWithoutIdentitiesKeepsDynamic(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p1); err != nil {
+		t.Fatalf("failed to load initial config: %v", err)
+	}
+
+	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "alice", Credentials: []*iam_pb.Credential{{AccessKey: "AKALICE0", SecretKey: "c2VjcmV0"}}}); err != nil {
+		t.Fatalf("failed to create alice: %v", err)
+	}
+	if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		t.Fatalf("failed to load from credential manager: %v", err)
+	}
+
+	empty := writeTempIamConfig(t, `{"identities":[]}`)
+	for i := 1; i <= 2; i++ {
+		if err := s3a.iam.loadS3ApiConfigurationFromFile(empty); err != nil {
+			t.Fatalf("reload %d failed: %v", i, err)
+		}
+		if hasIdentity(s3a.iam, "static-admin") {
+			t.Fatalf("reload %d: an identity removed from the file must stay removed", i)
+		}
+		if !hasIdentity(s3a.iam, "alice") {
+			t.Fatalf("reload %d: a filer-managed identity must survive a reload of an emptied file", i)
+		}
+		if _, _, found := s3a.iam.lookupByAccessKey("AKALICE0"); !found {
+			t.Fatalf("reload %d: the filer-managed identity's access key must keep working", i)
+		}
 	}
 }
