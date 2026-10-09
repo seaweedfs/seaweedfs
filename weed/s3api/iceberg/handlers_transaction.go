@@ -110,7 +110,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			glog.Errorf("Iceberg: CommitTransaction UpdateTable error: %v", err)
-			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to commit table update: "+err.Error())
+			writeManagerError(w, err)
 			return
 		}
 	}
