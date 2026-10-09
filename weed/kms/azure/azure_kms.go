@@ -5,7 +5,9 @@ package azure
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -68,6 +70,25 @@ func (p *AzureKMSProvider) splitKeyID(keyID string) (string, string, error) {
 // The envelope is JSON, so raw binary would be replaced by U+FFFD on the way in.
 func encodeCiphertext(ciphertext []byte) string {
 	return base64.StdEncoding.EncodeToString(ciphertext)
+}
+
+// contextDigest digests the encryption context for storage in the envelope.
+// RSA-OAEP takes no AAD, so the context is bound to the wrapped key by
+// recording its hash and checking it on decrypt instead.
+func contextDigest(context map[string]string) string {
+	encoded, _ := json.Marshal(context) // map keys marshal in sorted order
+	sum := sha256.Sum256(encoded)
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// checkContext verifies the request's encryption context matches the context
+// recorded when the key was wrapped.
+func checkContext(envelope *seaweedkms.CiphertextEnvelope, context map[string]string) error {
+	recorded, _ := envelope.ProviderSpecific["encryption_context_sha256"].(string)
+	if recorded != contextDigest(context) {
+		return fmt.Errorf("encryption context does not match the wrapped key")
+	}
+	return nil
 }
 
 // decodeCiphertext reads back what encodeCiphertext wrote.
@@ -212,9 +233,12 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 	}
 
 	// RSA-OAEP takes no additional authenticated data: Key Vault rejects the
-	// request with BadParameter when AAD is set on an RSA-OAEP key.
+	// request with BadParameter when AAD is set on an RSA-OAEP key. The
+	// context is bound to the wrapped key via a digest in the envelope
+	// instead, which Decrypt verifies.
+	providerSpecific := map[string]interface{}{}
 	if len(req.EncryptionContext) > 0 {
-		glog.V(2).Infof("Azure KMS: ignoring encryption context for key %s, RSA-OAEP does not support AAD", req.KeyID)
+		providerSpecific["encryption_context_sha256"] = contextDigest(req.EncryptionContext)
 	}
 
 	// Call Azure Key Vault to encrypt the data key
@@ -234,7 +258,7 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 	}
 
 	// Create standardized envelope format for consistent API behavior
-	envelopeBlob, err := seaweedkms.CreateEnvelope("azure", actualKeyID, encodeCiphertext(encryptResult.Result), nil)
+	envelopeBlob, err := seaweedkms.CreateEnvelope("azure", actualKeyID, encodeCiphertext(encryptResult.Result), providerSpecific)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ciphertext envelope: %w", err)
 	}
@@ -283,10 +307,10 @@ func (p *AzureKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptR
 		Value:     ciphertext,
 	}
 
-	// RSA-OAEP takes no additional authenticated data: Key Vault rejects the
-	// request with BadParameter when AAD is set on an RSA-OAEP key.
-	if len(req.EncryptionContext) > 0 {
-		glog.V(2).Infof("Azure KMS: ignoring encryption context for key %s, RSA-OAEP does not support AAD", keyID)
+	// RSA-OAEP takes no AAD, so the encryption context is bound via a digest
+	// recorded in the envelope rather than authenticated by the vault.
+	if err := checkContext(envelope, req.EncryptionContext); err != nil {
+		return nil, err
 	}
 
 	// Call Azure Key Vault to decrypt the data key

@@ -133,3 +133,29 @@ func TestDecodeCiphertextRejectsInvalidInput(t *testing.T) {
 		}
 	}
 }
+
+// RSA-OAEP cannot authenticate the encryption context, so the context is
+// bound to the wrapped key via a digest in the envelope.
+func TestEncryptionContextBinding(t *testing.T) {
+	context := map[string]string{"aws:s3:bucket": "bucket", "aws:s3:object": "key"}
+	envelopeBlob, err := seaweedkms.CreateEnvelope("azure", "my-key", "d3JhcHBlZA==", map[string]interface{}{
+		"encryption_context_sha256": contextDigest(context),
+	})
+	if err != nil {
+		t.Fatalf("create envelope: %v", err)
+	}
+	envelope, err := seaweedkms.ParseEnvelope(envelopeBlob)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+
+	if err := checkContext(envelope, context); err != nil {
+		t.Fatalf("matching context rejected: %v", err)
+	}
+	if err := checkContext(envelope, map[string]string{"aws:s3:object": "other"}); err == nil {
+		t.Fatal("mismatched context accepted")
+	}
+	if err := checkContext(envelope, nil); err == nil {
+		t.Fatal("missing context accepted for a context-bound key")
+	}
+}
