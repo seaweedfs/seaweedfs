@@ -4030,7 +4030,10 @@ func (e *SQLEngine) eachLogEntryInFile(filerClient filer_pb.FilerClient, filePat
 
 	// Read file chunks and process them (pattern from countRowsInLogFile)
 	fileSize := filer.FileSize(fileEntry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, fileEntry.Chunks, 0, int64(fileSize))
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, fileEntry.Chunks, 0, int64(fileSize))
+	if err != nil {
+		return err
+	}
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 
 	for x := chunkViews.Front(); x != nil; x = x.Next {
@@ -4354,7 +4357,10 @@ func (e *SQLEngine) countRowsInLogFile(filerClient filer_pb.FilerClient, partiti
 
 	// Read file chunks and process them (pattern from read_log_from_disk.go)
 	fileSize := filer.FileSize(entry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	if err != nil {
+		return 0, err
+	}
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 
 	for x := chunkViews.Front(); x != nil; x = x.Next {

@@ -1164,7 +1164,10 @@ func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lo
 	}
 	// Create reader for the parquet file
 	fileSize := filer.FileSize(entry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	if err != nil {
+		return nil, fmt.Errorf("resolve chunks of %s: %w", entry.Name, err)
+	}
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 	readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn, nil)
 	readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize), filer.DefaultPrefetchCount)
