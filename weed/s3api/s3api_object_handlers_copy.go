@@ -159,6 +159,26 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A copy request without SSE headers takes the destination bucket's
+	// default encryption, including its configured KMS key and bucket-key
+	// setting. Surface them as headers so every downstream parse sees them.
+	if !IsSSECRequest(r) && r.Header.Get(s3_constants.AmzServerSideEncryption) == "" {
+		if encryptionConfig, err := s3a.GetBucketEncryptionConfig(dstBucket); err == nil && encryptionConfig != nil {
+			switch encryptionConfig.SseAlgorithm {
+			case EncryptionTypeKMS:
+				r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
+				if encryptionConfig.KmsKeyId != "" {
+					r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, encryptionConfig.KmsKeyId)
+				}
+				if encryptionConfig.BucketKeyEnabled {
+					r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
+				}
+			case EncryptionTypeAES256:
+				r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
+			}
+		}
+	}
+
 	if !isValidDirective(r.Header.Get(s3_constants.AmzUserMetaDirective)) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMetadataDirective)
 		return
@@ -416,17 +436,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	dstWantsSSEC := IsSSECRequest(r)
 	dstWantsSSEKMS := IsSSEKMSRequest(r)
 	dstWantsSSES3 := IsSSES3RequestInternal(r)
-	if !dstWantsSSEC && !dstWantsSSEKMS && !dstWantsSSES3 {
-		bucketMetadata, err := s3a.getBucketMetadata(dstBucket)
-		if err == nil && bucketMetadata != nil && bucketMetadata.Encryption != nil {
-			switch bucketMetadata.Encryption.SseAlgorithm {
-			case "aws:kms":
-				dstWantsSSEKMS = true
-			case "AES256":
-				dstWantsSSES3 = true
-			}
-		}
-	}
 
 	for k, v := range entry.Extended {
 		// Object ACLs and ownership are not copied, regardless of the metadata directive.
@@ -1794,7 +1803,7 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 	return nil
 }
 
-func (s3a *S3ApiServer) uploadTransformedChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse) ([]byte, error) {
+func (s3a *S3ApiServer) uploadTransformedChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse) (*operation.UploadResult, error) {
 	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
 	if assignResult.Fsync {
 		dstUrl += "?fsync=true"
@@ -1806,7 +1815,7 @@ func (s3a *S3ApiServer) uploadTransformedChunkData(chunkData []byte, assignResul
 		MimeType:          "",
 		PairMap:           nil,
 		Jwt:               security.EncodedJwt(assignResult.Auth),
-		BytesBuffer:       bytes.NewBuffer(make([]byte, 0, len(chunkData)+multipartFramingOverhead)),
+		BytesBuffer:       bytes.NewBuffer(make([]byte, 0, len(chunkData))),
 	}
 	uploader, err := operation.NewUploader()
 	if err != nil {
@@ -1816,10 +1825,7 @@ func (s3a *S3ApiServer) uploadTransformedChunkData(chunkData []byte, assignResul
 	if err != nil {
 		return nil, fmt.Errorf("upload transformed chunk: %w", err)
 	}
-	if uploadResult != nil {
-		return uploadResult.CipherKey, nil
-	}
-	return nil, nil
+	return uploadResult, nil
 }
 
 func (s3a *S3ApiServer) decryptChunkVolumeCipher(data []byte, chunk *filer_pb.FileChunk) ([]byte, error) {
@@ -1831,9 +1837,8 @@ func (s3a *S3ApiServer) decryptChunkVolumeCipher(data []byte, chunk *filer_pb.Fi
 		return nil, fmt.Errorf("decrypt volume cipher: %w", err)
 	}
 	if chunk.IsCompressed {
-		decompressed, decompErr := util.DecompressData(decrypted)
-		if decompErr == nil {
-			decrypted = decompressed
+		if decrypted, err = util.DecompressData(decrypted); err != nil {
+			return nil, fmt.Errorf("decompress chunk: %w", err)
 		}
 	}
 	return decrypted, nil
@@ -2134,12 +2139,14 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, sour
 	}
 
 	// Upload the final data
-	cipherKey, err := s3a.uploadTransformedChunkData(finalData, assignResult)
+	uploadResult, err := s3a.uploadTransformedChunkData(finalData, assignResult)
 	if err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
-	dstChunk.CipherKey = cipherKey
-	dstChunk.IsCompressed = false
+	if uploadResult != nil {
+		dstChunk.CipherKey = uploadResult.CipherKey
+		dstChunk.IsCompressed = uploadResult.Gzip > 0
+	}
 
 	// Update chunk size
 	dstChunk.Size = uint64(len(finalData))
@@ -2171,6 +2178,10 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("download encrypted chunk data: %w", err)
+	}
+	encryptedData, err = s3a.decryptChunkVolumeCipher(encryptedData, chunk)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	var finalData []byte
@@ -2267,8 +2278,13 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	}
 
 	// Upload the final data
-	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
+	uploadResult, err := s3a.uploadTransformedChunkData(finalData, assignResult)
+	if err != nil {
 		return nil, nil, fmt.Errorf("upload chunk data: %w", err)
+	}
+	if uploadResult != nil {
+		dstChunk.CipherKey = uploadResult.CipherKey
+		dstChunk.IsCompressed = uploadResult.Gzip > 0
 	}
 
 	// Update chunk size
@@ -2660,12 +2676,14 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	// For unencrypted destination, finalData remains as decrypted plaintext
 
 	// Upload the final data
-	cipherKey, err := s3a.uploadTransformedChunkData(finalData, assignResult)
+	uploadResult, err := s3a.uploadTransformedChunkData(finalData, assignResult)
 	if err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
-	dstChunk.CipherKey = cipherKey
-	dstChunk.IsCompressed = false
+	if uploadResult != nil {
+		dstChunk.CipherKey = uploadResult.CipherKey
+		dstChunk.IsCompressed = uploadResult.Gzip > 0
+	}
 
 	// Update chunk size
 	dstChunk.Size = uint64(len(finalData))
@@ -2880,12 +2898,14 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	}
 
 	// Upload the processed data
-	cipherKey, err := s3a.uploadTransformedChunkData(finalData, assignResult)
+	uploadResult, err := s3a.uploadTransformedChunkData(finalData, assignResult)
 	if err != nil {
 		return nil, fmt.Errorf("upload processed chunk data: %w", err)
 	}
-	dstChunk.CipherKey = cipherKey
-	dstChunk.IsCompressed = false
+	if uploadResult != nil {
+		dstChunk.CipherKey = uploadResult.CipherKey
+		dstChunk.IsCompressed = uploadResult.Gzip > 0
+	}
 
 	return dstChunk, nil
 }
@@ -3243,12 +3263,14 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	}
 
 	// Upload the processed data
-	cipherKey, err := s3a.uploadTransformedChunkData(finalData, assignResult)
+	uploadResult, err := s3a.uploadTransformedChunkData(finalData, assignResult)
 	if err != nil {
 		return nil, fmt.Errorf("upload processed chunk data: %w", err)
 	}
-	dstChunk.CipherKey = cipherKey
-	dstChunk.IsCompressed = false
+	if uploadResult != nil {
+		dstChunk.CipherKey = uploadResult.CipherKey
+		dstChunk.IsCompressed = uploadResult.Gzip > 0
+	}
 
 	glog.V(3).Infof("Successfully processed SSE-KMS chunk re-encryption: src_key=%s, dst_key=%s, size=%d→%d",
 		getKeyIDString(sourceSSEKey), destKeyID, len(chunkData), len(finalData))
