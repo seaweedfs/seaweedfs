@@ -1,6 +1,8 @@
 package weed_server
 
 import (
+	"context"
+
 	"errors"
 	"sync"
 	"testing"
@@ -55,7 +57,7 @@ func (s *gatedRecordingStream) Send(msg *filer_pb.SubscribeMetadataResponse) err
 // reads past it.
 func TestPipelinedSenderControlMessagesNeverNested(t *testing.T) {
 	stream := &gatedRecordingStream{gate: make(chan struct{})}
-	sender := newPipelinedSender(stream, 16, true)
+	sender := newPipelinedSender(context.Background(), stream, 16, true)
 
 	oldTs := time.Now().Add(-time.Hour).UnixNano()
 	if err := sender.Send(makeEvent("/d", "e1", oldTs)); err != nil {

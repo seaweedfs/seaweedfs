@@ -106,14 +106,16 @@ const (
 // current time (backlog catch-up), multiple events are packed into a single
 // stream.Send() using the Events field. Otherwise events are sent one-by-one.
 type pipelinedSender struct {
+	ctx      context.Context
 	sendCh   chan *filer_pb.SubscribeMetadataResponse
 	errCh    chan error
 	done     chan struct{}
 	canBatch bool // true only if client set ClientSupportsBatching
 }
 
-func newPipelinedSender(stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
+func newPipelinedSender(ctx context.Context, stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
 	s := &pipelinedSender{
+		ctx:      ctx,
 		sendCh:   make(chan *filer_pb.SubscribeMetadataResponse, bufSize),
 		errCh:    make(chan error, 1),
 		done:     make(chan struct{}),
@@ -209,6 +211,8 @@ func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 		return nil
 	case err := <-s.errCh:
 		return err
+	case <-s.ctx.Done():
+		return s.ctx.Err()
 	case <-s.done:
 		// Sender goroutine exited (stream error or shutdown).
 		select {
@@ -222,7 +226,12 @@ func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 
 func (s *pipelinedSender) Close() error {
 	close(s.sendCh)
-	<-s.done
+	// A sendLoop stuck in stream.Send only unblocks once the handler's return
+	// ends the stream, so stop waiting when the subscription ends.
+	select {
+	case <-s.done:
+	case <-s.ctx.Done():
+	}
 	select {
 	case err := <-s.errCh:
 		return err
@@ -642,7 +651,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// had already arrived and been delivered).
 	diskAnchorTsNs := req.SinceNs
 
-	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
+	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
 	// Register for instant notification when new data arrives in the aggregated log buffer.
@@ -955,9 +964,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 // subscribers get codes.Unavailable (see endOfSubscription) and reconnect
 // with their usual retry.
 //
-// A subscriber blocked in stream.Send is not covered: only the stream's end
-// releases Send, and grpc-go forbids Send after the handler returns. The
-// graceful-stop timeout still ends that one.
+// A subscriber blocked in stream.Send is released once its handler returns:
+// the sender's Send and Close honor the subscription context, so the handler
+// exits and gRPC tears the stream down.
 func (fs *FilerServer) StopSubscriptions() {
 	if fs.stopSubscriptions != nil {
 		fs.stopSubscriptions()
@@ -1031,7 +1040,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, gapResumeCursorOffset)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
-	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
+	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
 	// Bounded gap waits use the buffer's subscriber notification plus a retry
