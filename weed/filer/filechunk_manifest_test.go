@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -744,7 +745,10 @@ func TestFetchWholeChunkUsesProvidedFilerJwt(t *testing.T) {
 
 	gotAuth := make(chan string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth <- r.Header.Get("Authorization")
+		select {
+		case gotAuth <- r.Header.Get("Authorization"):
+		default:
+		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(manifestBytes)))
 		w.Write(manifestBytes)
 	}))
@@ -758,8 +762,13 @@ func TestFetchWholeChunkUsesProvidedFilerJwt(t *testing.T) {
 		return "side-read-jwt"
 	}
 	bytesBuffer := fetchManifestBuffer(t)
-	assert.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup, "5,abc", nil, false, nil, jwtFn))
-	assert.Equal(t, security.BearerPrefix+"side-read-jwt", <-gotAuth)
+	require.NoError(t, fetchWholeChunk(context.Background(), bytesBuffer, lookup, "5,abc", nil, false, nil, jwtFn))
+	select {
+	case auth := <-gotAuth:
+		assert.Equal(t, security.BearerPrefix+"side-read-jwt", auth)
+	default:
+		t.Fatal("the proxied fetch never reached the handler")
+	}
 
 	// non-proxy URLs keep the volume-server credential and never call the provider
 	volumeURL := manifestServer(t, manifestBytes).URL + "/5,abc"
