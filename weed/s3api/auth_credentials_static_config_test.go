@@ -471,3 +471,71 @@ func TestStaticConfigKeepsBracesComingFromTheEnvironment(t *testing.T) {
 		t.Fatalf("expected the secret key from the environment verbatim, got %q", cred.SecretKey)
 	}
 }
+
+// Editing an identity out of the static config file and reloading must revoke it:
+// the identity, its access keys and those of its service accounts stop working on
+// the running gateway, and its name stops being protected as static. What the file
+// still declares, a dynamic filer-managed identity and the AWS environment
+// identity are all untouched.
+func TestReloadStaticConfigRevokesRemovedIdentity(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAENV1")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "c2VjcmV0")
+
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
+
+	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]},{"name":"revoked","credentials":[{"accessKey":"AKREVOKE","secretKey":"c2VjcmV0"}],"actions":["Read","List"]},{"name":"kept","credentials":[{"accessKey":"AKKEPT00","secretKey":"c2VjcmV0"}],"actions":["Read"]}],"serviceAccounts":[{"id":"sa-1","parentUser":"revoked","credential":{"accessKey":"AKSA0001","secretKey":"c2VjcmV0"}}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p1); err != nil {
+		t.Fatalf("failed to load initial config: %v", err)
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKREVOKE"); !found {
+		t.Fatalf("expected the identity to authenticate before the reload")
+	}
+
+	// A dynamic identity arrives from the filer and must survive the reload.
+	if err := s3a.iam.credentialManager.CreateUser(context.Background(), &iam_pb.Identity{Name: "dynamic", Credentials: []*iam_pb.Credential{{AccessKey: "AKDYN000", SecretKey: "c2VjcmV0"}}}); err != nil {
+		t.Fatalf("failed to create dynamic identity: %v", err)
+	}
+	if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		t.Fatalf("failed to load from credential manager: %v", err)
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKDYN000"); !found {
+		t.Fatalf("expected the dynamic identity's key to authenticate before the reload")
+	}
+
+	// Drop "revoked" and its service account from the file and reload.
+	p2 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]},{"name":"kept","credentials":[{"accessKey":"AKKEPT00","secretKey":"c2VjcmV0"}],"actions":["Read"]}]}`)
+	if err := s3a.iam.loadS3ApiConfigurationFromFile(p2); err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if hasIdentity(s3a.iam, "revoked") {
+		t.Fatalf("an identity removed from the config file must be dropped by the reload")
+	}
+	for _, key := range []string{"AKREVOKE", "AKSA0001"} {
+		if _, _, found := s3a.iam.lookupByAccessKey(key); found {
+			t.Fatalf("access key %s of the removed identity must stop authenticating", key)
+		}
+	}
+	if isStaticName(s3a.iam, "revoked") {
+		t.Fatalf("a name that left the config file must stop being static")
+	}
+
+	// What the file still declares is untouched.
+	if !hasIdentity(s3a.iam, "kept") || !isStaticName(s3a.iam, "kept") {
+		t.Fatalf("identities still in the file must survive the reload")
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKKEPT00"); !found {
+		t.Fatalf("a kept identity's access key must keep working")
+	}
+
+	// The file cannot revoke what it never declared.
+	if !hasIdentity(s3a.iam, "dynamic") {
+		t.Fatalf("a dynamic identity must survive a static-file reload")
+	}
+	if _, _, found := s3a.iam.lookupByAccessKey("AKDYN000"); !found {
+		t.Fatalf("a dynamic identity's access key must keep working after a static-file reload")
+	}
+	if !hasIdentity(s3a.iam, "admin-AKIAENV1") {
+		t.Fatalf("the AWS environment identity must survive a static-file reload")
+	}
+}
