@@ -66,7 +66,7 @@ func TestCompactFileChunksRealCase(t *testing.T) {
 
 	printChunks("before", chunks)
 
-	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, garbage, _ := CompactFileChunks(context.Background(), nil, chunks)
 
 	printChunks("compacted", compacted)
 	printChunks("garbage", garbage)

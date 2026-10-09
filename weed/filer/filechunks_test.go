@@ -22,7 +22,7 @@ func TestCompactFileChunks(t *testing.T) {
 		{Offset: 110, Size: 200, FileId: "jkl", ModifiedTsNs: 300},
 	}
 
-	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, garbage, _ := CompactFileChunks(context.Background(), nil, chunks)
 
 	if len(compacted) != 3 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -55,7 +55,7 @@ func TestCompactFileChunks2(t *testing.T) {
 		})
 	}
 
-	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, garbage, _ := CompactFileChunks(context.Background(), nil, chunks)
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -563,9 +563,46 @@ func TestCompactFileChunks3(t *testing.T) {
 		{Offset: 300, Size: 100, FileId: "def", ModifiedTsNs: 200},
 	}
 
-	compacted, _ := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, _, _ := CompactFileChunks(context.Background(), nil, chunks)
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
+	}
+}
+
+func TestCompactFileChunksCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	chunks := []*filer_pb.FileChunk{
+		{Offset: 10, Size: 100, FileId: "abc", ModifiedTsNs: 50, IsChunkManifest: true},
+	}
+
+	compacted, garbage, err := CompactFileChunks(ctx, nil, chunks)
+	if err == nil {
+		t.Fatalf("expected error on cancelled context, got nil")
+	}
+	if len(compacted) != 1 {
+		t.Fatalf("expected original chunks preserved, got %d", len(compacted))
+	}
+	if len(garbage) != 0 {
+		t.Fatalf("expected no garbage on error, got %d", len(garbage))
+	}
+}
+
+func TestSeparateGarbageChunksNilVisibles(t *testing.T) {
+	chunks := []*filer_pb.FileChunk{
+		{Offset: 10, Size: 100, FileId: "abc", ModifiedTsNs: 50},
+	}
+	compacted, garbage := SeparateGarbageChunks(nil, chunks)
+	if len(compacted) != 1 || len(garbage) != 0 {
+		t.Fatalf("expected fallback to original chunks with nil garbage")
+	}
+}
+
+func TestViewFromVisibleIntervalsNilVisibles(t *testing.T) {
+	views := ViewFromVisibleIntervals(nil, 0, 100)
+	if views == nil || views.Front() != nil {
+		t.Fatalf("expected empty interval list")
 	}
 }

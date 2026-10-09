@@ -136,7 +136,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(snapshotChunks)
 
 	// Compact chunks to remove fully overlapped ones
-	compactedChunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+	compactedChunks, _, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 
 	// Try to create manifest chunks for large files
 	// no chunk deleter here: a failed fold reports the blobs it saved
