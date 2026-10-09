@@ -1021,8 +1021,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
 				createCode, routed = s3err.ErrPreconditionFailed, true
 			case resp.Error != "":
-				// Non-precondition mutation error: fall back so the lock path maps it.
-				routedAmbiguous = true
+				// A failure at mutation 0 — the PUT itself — applied nothing, so
+				// the outcome is certain. Only a later failure is ambiguous: the
+				// entry may have committed while a bundled mutation did not.
+				if strings.HasPrefix(resp.Error, "mutation ") && !strings.HasPrefix(resp.Error, "mutation 0:") {
+					routedAmbiguous = true
+				}
 				glog.Warningf("putToFiler: routed PUT to %s returned %q for %s, falling back to lock", owner, resp.Error, filePath)
 			default:
 				entryCreated, routed, createCode = true, true, s3err.ErrNone
