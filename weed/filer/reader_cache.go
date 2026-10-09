@@ -171,8 +171,9 @@ retry:
 		// start wg.Wait() on a zero counter while this read is about to register.
 		cacher.wg.Add(1)
 		atomic.AddInt32(&cacher.readers, 1)
+		previous := stream.pin(cacher)
 		rc.RUnlock()
-		n, err := rc.readFromCacher(ctx, stream, cacher, buffer, offset, chunkSize)
+		n, err := rc.readFromCacher(ctx, stream, cacher, previous, buffer, offset, chunkSize)
 		if n > 0 || err != nil {
 			return n, err
 		}
@@ -202,8 +203,9 @@ retry:
 		}
 		cacher.wg.Add(1)
 		atomic.AddInt32(&cacher.readers, 1)
+		previous := stream.pin(cacher)
 		rc.Unlock()
-		n, err := rc.readFromCacher(ctx, stream, cacher, buffer, offset, chunkSize)
+		n, err := rc.readFromCacher(ctx, stream, cacher, previous, buffer, offset, chunkSize)
 		return n, err
 	}
 
@@ -243,18 +245,20 @@ retry:
 	cacher.wg.Add(2) // the fetch plus this read, so destroy() waits even before the goroutine runs
 	atomic.AddInt32(&cacher.readers, 1)
 	rc.downloaders[fileId] = cacher
+	previous := stream.pin(cacher)
 	rc.Unlock()
 	go cacher.startCaching()
 	<-cacher.cacheStartedCh
-	n, err := rc.readFromCacher(ctx, stream, cacher, buffer, offset, chunkSize)
+	n, err := rc.readFromCacher(ctx, stream, cacher, previous, buffer, offset, chunkSize)
 	return n, err
 }
 
-// readFromCacher pins the stream to cacher, serves the read, and releases
-// the pin if the stream finished the chunk. The caller must have registered
-// the read on cacher (wg + readers) while holding the map lock.
-func (rc *ReaderCache) readFromCacher(ctx context.Context, stream *chunkStream, cacher *SingleChunkCacher, buffer []byte, offset int64, chunkSize int) (n int, err error) {
-	rc.unpin(stream.pin(cacher))
+// readFromCacher serves the read and releases the pin if the stream finished
+// the chunk. The caller must have registered the read (wg + readers) and
+// pinned the stream under the map lock; previous is the chunk the stream left
+// when it pinned.
+func (rc *ReaderCache) readFromCacher(ctx context.Context, stream *chunkStream, cacher *SingleChunkCacher, previous *SingleChunkCacher, buffer []byte, offset int64, chunkSize int) (n int, err error) {
+	rc.unpin(previous)
 	n, err = cacher.readChunkAt(ctx, buffer, offset)
 	rc.releaseIfFinished(stream, cacher, offset, n, err, chunkSize)
 	return
