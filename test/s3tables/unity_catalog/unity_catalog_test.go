@@ -175,10 +175,12 @@ func TestUnityCatalogDeltaIntegration(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("PutObject with UC-vended credentials: %v", err)
 		}
-		_, _ = s3v.DeleteObject(ctx, &s3.DeleteObjectInput{
+		if _, err := s3v.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: aws.String(ucWarehouse),
 			Key:    aws.String(probeKey),
-		})
+		}); err != nil {
+			t.Fatalf("DeleteObject with UC-vended credentials: %v", err)
+		}
 	})
 
 	t.Run("DeleteTableSchemaCatalog", func(t *testing.T) {
