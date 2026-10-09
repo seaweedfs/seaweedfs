@@ -25,7 +25,7 @@ type ReaderCache struct {
 	lookupFileIdFn   wdclient.LookupFileIdFunctionType
 	cacheInvalidator CacheInvalidator
 	fetchChunkDataFn fetchChunkDataFnType
-	sync.Mutex
+	sync.RWMutex
 	downloaders map[string]*SingleChunkCacher
 	limit       int
 	budget      *ReaderCacheBudget
@@ -151,43 +151,52 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 
 func (rc *ReaderCache) readChunkAt(ctx context.Context, stream *chunkStream, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
 retry:
-	rc.Lock()
-
-	for {
-		if cacher, found := rc.downloaders[fileId]; found {
-			if cacher.hasCompletedError() {
-				delete(rc.downloaders, fileId)
-				rc.Unlock()
-				cacher.destroy()
-				rc.Lock()
-				continue
-			}
-			// Count this read on the cacher before releasing the map lock, so a
-			// concurrent destroy() (error eviction here, LRU, or UnCache) cannot
-			// start wg.Wait() on a zero counter while this read is about to register.
-			cacher.wg.Add(1)
-			atomic.AddInt32(&cacher.readers, 1)
-			rc.Unlock()
-			rc.unpin(stream.pin(cacher))
-			n, err := cacher.readChunkAt(ctx, buffer, offset)
-			rc.releaseIfFinished(stream, cacher, offset, n, err, chunkSize)
-			if n > 0 || err != nil {
-				return n, err
-			}
-			// If n=0 and err=nil, the cacher couldn't provide data for this offset.
-			// Fall through to try chunkCache.
-			rc.Lock()
+	rc.RLock()
+	if cacher, found := rc.downloaders[fileId]; found {
+		if cacher.hasCompletedError() {
+			rc.RUnlock()
+			rc.remove(cacher)
+			goto retry
 		}
-		break
+		// Count this read on the cacher before releasing the map lock, so a
+		// concurrent destroy() (error eviction here, LRU, or UnCache) cannot
+		// start wg.Wait() on a zero counter while this read is about to register.
+		cacher.wg.Add(1)
+		atomic.AddInt32(&cacher.readers, 1)
+		rc.RUnlock()
+		n, err := rc.readFromCacher(ctx, stream, cacher, buffer, offset, chunkSize)
+		if n > 0 || err != nil {
+			return n, err
+		}
+		// If n=0 and err=nil, the cacher couldn't provide data for this offset.
+		// Fall through to try chunkCache.
+	} else {
+		rc.RUnlock()
 	}
+
 	if shouldCache || rc.lookupFileIdFn == nil {
 		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
 		if n > 0 {
 			// Served from the chunk cache: the stream has left its pinned chunk.
-			rc.Unlock()
 			rc.unpin(stream.detach(nil))
 			return n, err
 		}
+	}
+
+	rc.Lock()
+	// A downloader may have registered between the read lock and this one.
+	if cacher, found := rc.downloaders[fileId]; found {
+		if cacher.hasCompletedError() {
+			delete(rc.downloaders, fileId)
+			rc.Unlock()
+			cacher.destroy()
+			goto retry
+		}
+		cacher.wg.Add(1)
+		atomic.AddInt32(&cacher.readers, 1)
+		rc.Unlock()
+		n, err := rc.readFromCacher(ctx, stream, cacher, buffer, offset, chunkSize)
+		return n, err
 	}
 
 	// clean up old downloaders; prefer one no stream is positioned in, but
@@ -229,11 +238,18 @@ retry:
 	cacher.wg.Add(1)
 	atomic.AddInt32(&cacher.readers, 1)
 	rc.Unlock()
-	rc.unpin(stream.pin(cacher))
-
-	n, err := cacher.readChunkAt(ctx, buffer, offset)
-	rc.releaseIfFinished(stream, cacher, offset, n, err, chunkSize)
+	n, err := rc.readFromCacher(ctx, stream, cacher, buffer, offset, chunkSize)
 	return n, err
+}
+
+// readFromCacher pins the stream to cacher, serves the read, and releases
+// the pin if the stream finished the chunk. The caller must have registered
+// the read on cacher (wg + readers) while holding the map lock.
+func (rc *ReaderCache) readFromCacher(ctx context.Context, stream *chunkStream, cacher *SingleChunkCacher, buffer []byte, offset int64, chunkSize int) (n int, err error) {
+	rc.unpin(stream.pin(cacher))
+	n, err = cacher.readChunkAt(ctx, buffer, offset)
+	rc.releaseIfFinished(stream, cacher, offset, n, err, chunkSize)
+	return
 }
 
 // pin makes cacher the stream's current chunk and returns the chunk it was
