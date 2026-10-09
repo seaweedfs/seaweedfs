@@ -549,6 +549,12 @@ func TestReloadStaticConfigRevokesRemovedIdentity(t *testing.T) {
 // A file reload always merges, so emptying the file must not flip the next reload
 // into replacing the store and dropping the filer-managed identities.
 func TestReloadStaticConfigWithoutIdentitiesKeepsDynamic(t *testing.T) {
+	// The AWS environment identity stays static across a file reload, so with credentials
+	// in the environment it would keep `hasStaticConfig` true and the regression would pass
+	// unnoticed. Clear them whatever the runner has set.
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+
 	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{})
 
 	p1 := writeTempIamConfig(t, `{"identities":[{"name":"static-admin","credentials":[{"accessKey":"AKADMIN0","secretKey":"c2VjcmV0"}],"actions":["Admin"]}]}`)
