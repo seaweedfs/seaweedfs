@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,34 +130,46 @@ func TestGetFederationToken_WithSessionPolicy(t *testing.T) {
 	assert.Equal(t, []string{"S3FullAccess"}, sessionInfo.Policies)
 }
 
-// TestGetFederationToken_RejectTemporaryCredentials tests that requests with
-// session tokens are rejected.
+// TestGetFederationToken_RejectTemporaryCredentials tests that requests
+// authenticated with temporary credentials are rejected.
 func TestGetFederationToken_RejectTemporaryCredentials(t *testing.T) {
 	stsService, _ := setupTestSTSService(t)
-	stsHandlers := NewSTSHandlers(stsService, &IdentityAccessManagement{
-		iamIntegration: &MockIAMIntegration{},
-	})
+	iam := &IdentityAccessManagement{
+		iamIntegration: &MockIAMIntegration{
+			validateSessionFunc: func(context.Context, string) (*sts.SessionInfo, error) {
+				return &sts.SessionInfo{
+					AssumedRoleUser: "role/user",
+					Principal:       "arn:aws:sts:::assumed-role/role/user",
+					Credentials: &sts.Credentials{
+						AccessKeyId:     "STSACCESSKEY",
+						SecretAccessKey: "sts-secret-key",
+					},
+					ExpiresAt: time.Now().Add(time.Hour),
+				}, nil
+			},
+		},
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	stsHandlers := NewSTSHandlers(stsService, iam)
 
 	tests := []struct {
-		name        string
-		setToken    func(r *http.Request)
-		description string
+		name     string
+		setToken func(r *http.Request)
 	}{
 		{
 			name: "SessionTokenInHeader",
 			setToken: func(r *http.Request) {
-				r.Header.Set("X-Amz-Security-Token", "some-session-token")
+				r.Header.Set("X-Amz-Security-Token", "session-token")
 			},
-			description: "Session token in X-Amz-Security-Token header should be rejected",
 		},
 		{
 			name: "SessionTokenInQuery",
 			setToken: func(r *http.Request) {
 				q := r.URL.Query()
-				q.Set("X-Amz-Security-Token", "some-session-token")
+				q.Set("X-Amz-Security-Token", "session-token")
 				r.URL.RawQuery = q.Encode()
 			},
-			description: "Session token in query string should be rejected",
 		},
 	}
 
@@ -167,26 +180,45 @@ func TestGetFederationToken_RejectTemporaryCredentials(t *testing.T) {
 			form.Set("Name", "TestUser")
 			form.Set("Version", "2011-06-15")
 
-			req := httptest.NewRequest("POST", "/", strings.NewReader(form.Encode()))
+			req := mustNewRequest(http.MethodPost, "http://sts.amazonaws.com/",
+				int64(len(form.Encode())), strings.NewReader(form.Encode()), t)
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			tt.setToken(req)
-
-			// Parse form so the handler can read it
-			require.NoError(t, req.ParseForm())
-			// Re-set values after parse
-			req.Form.Set("Action", "GetFederationToken")
-			req.Form.Set("Name", "TestUser")
-			req.Form.Set("Version", "2011-06-15")
+			require.NoError(t, signRequestV4(req, "STSACCESSKEY", "sts-secret-key"))
 
 			rr := httptest.NewRecorder()
 			stsHandlers.HandleSTSRequest(rr, req)
 
-			// The handler rejects temporary credentials before SigV4 verification
-			assert.Equal(t, http.StatusForbidden, rr.Code, tt.description)
+			assert.Equal(t, http.StatusForbidden, rr.Code)
 			assert.Contains(t, rr.Body.String(), "AccessDenied")
 			assert.Contains(t, rr.Body.String(), "cannot be called with temporary credentials")
 		})
 	}
+}
+
+// A session token attached to a statically configured credential (as credential
+// vendors emit) must not disqualify the caller as temporary.
+func TestGetFederationToken_VendedStaticCredential(t *testing.T) {
+	stsService, _ := setupTestSTSService(t)
+	iam := newTestIAMWithCreds()
+	stsHandlers := NewSTSHandlers(stsService, iam)
+
+	form := url.Values{}
+	form.Set("Action", "GetFederationToken")
+	form.Set("Name", "VendedApp")
+	form.Set("Version", "2011-06-15")
+
+	req := mustNewRequest(http.MethodPost, "http://sts.amazonaws.com/",
+		int64(len(form.Encode())), strings.NewReader(form.Encode()), t)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Amz-Security-Token", "vendor-token")
+	require.NoError(t, signRequestV4(req, "access_key_1", "secret_key_1"))
+
+	rr := httptest.NewRecorder()
+	stsHandlers.HandleSTSRequest(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	assert.Contains(t, rr.Body.String(), "GetFederationTokenResponse")
 }
 
 // TestGetFederationToken_MissingName tests that a missing Name parameter returns an error
