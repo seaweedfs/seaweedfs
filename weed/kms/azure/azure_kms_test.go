@@ -299,3 +299,24 @@ func TestGenerateDataKeyDecryptRoundTrip(t *testing.T) {
 		t.Fatal("Decrypt succeeded with a different encryption context")
 	}
 }
+
+func TestCheckContextEmpty(t *testing.T) {
+	// Keys wrapped without a context carry no digest; decrypting them with
+	// no context must succeed, and with a context must fail.
+	blob, err := seaweedkms.CreateEnvelope("azure", "my-key", "d3JhcHBlZA==", nil)
+	if err != nil {
+		t.Fatalf("create envelope: %v", err)
+	}
+	envelope, err := seaweedkms.ParseEnvelope(blob)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+	for _, context := range []map[string]string{nil, {}} {
+		if err := checkContext(envelope, context); err != nil {
+			t.Fatalf("empty context rejected for an unbound key: %v", err)
+		}
+	}
+	if err := checkContext(envelope, map[string]string{"k": "v"}); err == nil {
+		t.Fatal("context accepted for an unbound key")
+	}
+}

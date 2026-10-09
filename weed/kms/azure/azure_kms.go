@@ -86,10 +86,14 @@ func contextDigest(context map[string]string) string {
 // recorded when the key was wrapped.
 func checkContext(envelope *seaweedkms.CiphertextEnvelope, context map[string]string) error {
 	recorded, _ := envelope.ProviderSpecific["encryption_context_sha256"].(string)
-	if recorded != contextDigest(context) {
-		return fmt.Errorf("encryption context does not match the wrapped key")
+	if recorded == "" {
+		if len(context) == 0 {
+			return nil
+		}
+	} else if recorded == contextDigest(context) {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("encryption context does not match the wrapped key")
 }
 
 // decodeCiphertext reads back what encodeCiphertext wrote.
