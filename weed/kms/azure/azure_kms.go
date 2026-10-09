@@ -27,23 +27,41 @@ func init() {
 	seaweedkms.RegisterProvider("azure", NewAzureKMSProvider)
 }
 
+// vaultHost returns the host of a configured Key Vault URL, or "" when the URL
+// carries none. Hosts are compared case-insensitively and without a trailing
+// dot, as DNS names are.
+func vaultHost(vaultURL string) string {
+	parsed, err := url.Parse(vaultURL)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSuffix(parsed.Host, "."))
+}
+
 // splitKeyID turns a Key Vault key identifier into the (name, version) pair the
 // azkeys client expects. A plain key name, or anything that is not a Key Vault
 // URL, is returned unchanged together with an empty version, which the client
 // resolves to the latest version.
-func splitKeyID(keyID string) (string, string) {
+//
+// A URL naming a different vault than the one this provider is configured for
+// is rejected: the client addresses only its own vault, so dropping the host
+// would silently encrypt under this vault's same-named key.
+func (p *AzureKMSProvider) splitKeyID(keyID string) (string, string, error) {
 	parsed, err := url.Parse(keyID)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return keyID, ""
+		return keyID, "", nil
+	}
+	if host := vaultHost(p.vaultURL); host != "" && !strings.EqualFold(strings.TrimSuffix(parsed.Host, "."), host) {
+		return "", "", fmt.Errorf("key ID %q names vault %q, but this provider is configured for %q", keyID, parsed.Host, host)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "keys" {
-		return keyID, ""
+		return keyID, "", nil
 	}
 	if len(parts) >= 3 {
-		return parts[1], parts[2]
+		return parts[1], parts[2], nil
 	}
-	return parts[1], ""
+	return parts[1], "", nil
 }
 
 // encodeCiphertext stores the wrapped data key in the JSON envelope as base64.
@@ -200,7 +218,10 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 	}
 
 	// Call Azure Key Vault to encrypt the data key
-	keyName, keyVersion := splitKeyID(req.KeyID)
+	keyName, keyVersion, err := p.splitKeyID(req.KeyID)
+	if err != nil {
+		return nil, err
+	}
 	encryptResult, err := p.client.Encrypt(ctx, keyName, keyVersion, encryptParams, nil)
 	if err != nil {
 		return nil, p.convertAzureError(err, req.KeyID)
@@ -270,7 +291,10 @@ func (p *AzureKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptR
 
 	// Call Azure Key Vault to decrypt the data key
 	glog.V(4).Infof("Azure KMS: Decrypting data key using key %s", keyID)
-	decryptName, decryptVersion := splitKeyID(keyID)
+	decryptName, decryptVersion, err := p.splitKeyID(keyID)
+	if err != nil {
+		return nil, err
+	}
 	decryptResult, err := p.client.Decrypt(ctx, decryptName, decryptVersion, decryptParams, nil)
 	if err != nil {
 		return nil, p.convertAzureError(err, keyID)
@@ -303,7 +327,10 @@ func (p *AzureKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.Desc
 
 	// Get key from Azure Key Vault
 	glog.V(4).Infof("Azure KMS: Describing key %s", req.KeyID)
-	describeName, describeVersion := splitKeyID(req.KeyID)
+	describeName, describeVersion, err := p.splitKeyID(req.KeyID)
+	if err != nil {
+		return nil, err
+	}
 	result, err := p.client.GetKey(ctx, describeName, describeVersion, nil)
 	if err != nil {
 		return nil, p.convertAzureError(err, req.KeyID)

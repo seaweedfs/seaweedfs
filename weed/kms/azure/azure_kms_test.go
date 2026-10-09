@@ -11,11 +11,14 @@ import (
 )
 
 func TestSplitKeyID(t *testing.T) {
+	provider := &AzureKMSProvider{vaultURL: "https://myvault.vault.azure.net"}
+
 	tests := []struct {
 		name        string
 		keyID       string
 		wantName    string
 		wantVersion string
+		wantErr     bool
 	}{
 		{
 			name:     "plain key name",
@@ -39,6 +42,11 @@ func TestSplitKeyID(t *testing.T) {
 			wantName: "my-key",
 		},
 		{
+			name:     "key url with a mixed case host",
+			keyID:    "https://MyVault.vault.azure.net/keys/my-key",
+			wantName: "my-key",
+		},
+		{
 			name:     "key url with a non keys path",
 			keyID:    "https://myvault.vault.azure.net/secrets/my-secret",
 			wantName: "https://myvault.vault.azure.net/secrets/my-secret",
@@ -48,11 +56,25 @@ func TestSplitKeyID(t *testing.T) {
 			keyID:    "my-key:abc123",
 			wantName: "my-key:abc123",
 		},
+		{
+			name:    "key url from another vault",
+			keyID:   "https://othervault.vault.azure.net/keys/my-key",
+			wantErr: true,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			name, version := splitKeyID(test.keyID)
+			name, version, err := provider.splitKeyID(test.keyID)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("splitKeyID(%q) succeeded, want error", test.keyID)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("splitKeyID(%q): %v", test.keyID, err)
+			}
 			if name != test.wantName {
 				t.Fatalf("name = %q, want %q", name, test.wantName)
 			}
@@ -60,6 +82,16 @@ func TestSplitKeyID(t *testing.T) {
 				t.Fatalf("version = %q, want %q", version, test.wantVersion)
 			}
 		})
+	}
+}
+
+// The client addresses only the vault it was built for, so a key URL naming a
+// different vault must not resolve to this vault's same-named key.
+func TestSplitKeyIDRejectsForeignVault(t *testing.T) {
+	provider := &AzureKMSProvider{vaultURL: "https://myvault.vault.azure.net/"}
+
+	if _, _, err := provider.splitKeyID("https://evil.vault.azure.net/keys/my-key/abc123"); err == nil {
+		t.Fatal("splitKeyID accepted a key URL from another vault")
 	}
 }
 
