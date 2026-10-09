@@ -238,7 +238,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
-	chunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+	chunks, _, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 
 	if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
 		glog.V(0).Infof("maybeMergeChunks %s: %v", fileFullPath, mergeErr)

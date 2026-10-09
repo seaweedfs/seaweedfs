@@ -63,9 +63,12 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	return finalETag
 }
 
-func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
+func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk, err error) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	if err != nil {
+		return chunks, nil, err
+	}
 
 	compacted, garbage = SeparateGarbageChunks(visibles, chunks)
 
@@ -73,6 +76,9 @@ func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileId
 }
 
 func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
+	if visibles == nil {
+		return chunks, nil
+	}
 	fileIds := make(map[string]bool)
 	for x := visibles.Front(); x != nil; x = x.Next {
 		interval := x.Value
@@ -194,11 +200,14 @@ func (cv *ChunkView) CanRangeFetch() bool {
 	return cv.CipherKey == nil && !cv.IsGzipped
 }
 
-func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
+func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView], err error) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	if err != nil {
+		return nil, err
+	}
 
-	return ViewFromVisibleIntervals(visibles, offset, size)
+	return ViewFromVisibleIntervals(visibles, offset, size), nil
 
 }
 
@@ -213,6 +222,9 @@ func ViewFromVisibleIntervals(visibles *IntervalList[*VisibleInterval], offset i
 	}
 
 	chunkViews = NewIntervalList[*ChunkView]()
+	if visibles == nil {
+		return chunkViews
+	}
 	for x := visibles.Front(); x != nil; x = x.Next {
 		chunk := x.Value
 

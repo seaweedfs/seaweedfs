@@ -380,6 +380,7 @@ type ChunkStreamReader struct {
 	chunk        string
 	lookupFileId wdclient.LookupFileIdFunctionType
 	sourceErr    error
+	initErr      error
 }
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
@@ -388,7 +389,10 @@ var _ = io.Closer(&ChunkStreamReader{})
 
 func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
-	chunkViews := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	chunkViews, err := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	if chunkViews == nil {
+		chunkViews = NewIntervalList[*ChunkView]()
+	}
 
 	var totalSize int64
 	for x := chunkViews.Front(); x != nil; x = x.Next {
@@ -396,12 +400,15 @@ func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupF
 		totalSize += int64(chunk.ViewSize)
 	}
 
-	return &ChunkStreamReader{
+	reader := &ChunkStreamReader{
 		head:         chunkViews.Front(),
 		chunkView:    chunkViews.Front(),
 		lookupFileId: lookupFileIdFn,
 		totalSize:    totalSize,
+		initErr:      err,
 	}
+	reader.rememberSourceError(err)
+	return reader
 }
 
 func NewChunkStreamReaderFromFiler(ctx context.Context, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
@@ -487,6 +494,9 @@ func insideChunk(offset int64, chunk *ChunkView) bool {
 }
 
 func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
+	if c.initErr != nil {
+		return c.initErr
+	}
 	// stay in the same chunk
 	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
 		return nil

@@ -130,7 +130,10 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	totalSize := filer.FileSize(entry)
-	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	chunkViews, err := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
+	if err != nil {
+		return err
+	}
 
 	// Create append blob client
 	appendBlobClient := g.client.ServiceClient().NewContainerClient(g.container).NewAppendBlobClient(key)
@@ -138,7 +141,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	// Try to create the blob first (without access conditions for initial creation)
 	ctxCreate, cancelCreate := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 	defer cancelCreate()
-	_, err := appendBlobClient.Create(ctxCreate, nil)
+	_, err = appendBlobClient.Create(ctxCreate, nil)
 
 	needsWrite := true
 	freshlyCreated := false

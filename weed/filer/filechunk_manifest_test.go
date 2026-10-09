@@ -338,7 +338,7 @@ func TestCompactResolvedOverlappingManifests(t *testing.T) {
 	}
 
 	// CompactFileChunks on resolved sub-chunks (nil lookupFn is fine for non-manifest chunks)
-	compacted, garbage := CompactFileChunks(context.Background(), nil, dataChunks)
+	compacted, garbage, _ := CompactFileChunks(context.Background(), nil, dataChunks)
 
 	if len(compacted) != 3 {
 		t.Fatalf("expected 3 compacted chunks, got %d", len(compacted))
@@ -487,7 +487,7 @@ func TestCompactMultipleOverlappingManifestGenerations(t *testing.T) {
 	}
 
 	// Compact: only generation 5 (the newest 3 chunks) should survive
-	compacted, garbage := CompactFileChunks(context.Background(), nil, dataChunks)
+	compacted, garbage, _ := CompactFileChunks(context.Background(), nil, dataChunks)
 	if len(compacted) != 3 {
 		t.Errorf("expected 3 compacted (gen 5), got %d", len(compacted))
 	}
