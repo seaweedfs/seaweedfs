@@ -133,6 +133,23 @@ jobs:
           grep -A 12 "^kind: Ingress" /tmp/s3-ingress-labels.yaml | grep -q "^    external-dns: s3"
           echo "S3 ingress renders custom labels"
 
+          echo "=== Testing HTTPRoute ==="
+          helm template test $CHART_DIR --show-only templates/s3/s3-httproute.yaml \
+            --set s3.enabled=true,s3.httpRoute.enabled=true \
+            --set 's3.httpRoute.parentRefs[0].name=gateway' > /tmp/s3-httproute.yaml
+          grep -q "^kind: HTTPRoute" /tmp/s3-httproute.yaml
+          grep -A 4 -- '- group: ""' /tmp/s3-httproute.yaml | grep -q "name: test-seaweedfs-s3$"
+          grep -A 4 -- '- group: ""' /tmp/s3-httproute.yaml | grep -q "port: 8333$"
+          echo "S3 HTTPRoute routes to the s3 service by default"
+          helm template test $CHART_DIR --show-only templates/s3/s3-httproute.yaml \
+            --set filer.s3.enabled=true,filer.s3.port=8334,s3.httpRoute.enabled=true > /tmp/filer-s3-httproute.yaml
+          grep -A 4 -- '- group: ""' /tmp/filer-s3-httproute.yaml | grep -q "port: 8334$"
+          echo "S3 on filer HTTPRoute uses filer.s3.port"
+          helm template test $CHART_DIR --show-only templates/master/master-httproute.yaml \
+            --set allInOne.enabled=true,master.enabled=false,master.httpRoute.enabled=true > /tmp/allinone-master-httproute.yaml
+          grep -A 4 -- '- group: ""' /tmp/allinone-master-httproute.yaml | grep -q "name: test-seaweedfs-all-in-one$"
+          echo "All-in-one master HTTPRoute routes to the all-in-one service"
+
           echo "=== Testing with all-in-one mode ==="
           helm template test $CHART_DIR --set allInOne.enabled=true > /tmp/allinone.yaml
           grep -q "seaweedfs-all-in-one" /tmp/allinone.yaml

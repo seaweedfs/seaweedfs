@@ -542,6 +542,26 @@ helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum
 helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
 ```
 
+## Gateway API
+
+Every component with an `ingress` block (master, volume, filer, s3 and admin) can also be exposed through a [Gateway API](https://gateway-api.sigs.k8s.io/) `HTTPRoute`, for clusters that route through a Gateway instead of an Ingress controller. `<component>.httpRoute` sits next to `<component>.ingress` and is disabled by default. The chart does not create the Gateway, so point `parentRefs` at one that already exists, and the `gateway.networking.k8s.io/v1` CRDs must be installed.
+
+```yaml
+s3:
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: my-gateway
+        namespace: gateway-system
+        sectionName: https
+    hostnames:
+      - s3.example.com
+```
+
+With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service. When S3 runs only on the filer (`filer.s3.enabled` without `s3.enabled`), the s3 route uses `filer.s3.port`.
+
 ## Network Policies
 
 In a namespace with a default-deny policy the install hangs: the components cannot resolve each other, and the post-install bucket hook waits on the master and filer until it gives up. `networkPolicy.enabled` renders one `NetworkPolicy` per component, selecting its pods by the standard `app.kubernetes.io/{name,instance,component}` labels and admitting traffic from the other pods of the release on the ports that component listens on.
