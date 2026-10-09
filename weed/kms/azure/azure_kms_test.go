@@ -4,8 +4,19 @@ package azure
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys"
 
 	seaweedkms "github.com/seaweedfs/seaweedfs/weed/kms"
 )
@@ -57,6 +68,16 @@ func TestSplitKeyID(t *testing.T) {
 			wantName: "my-key:abc123",
 		},
 		{
+			name:     "key url with explicit default port",
+			keyID:    "https://myvault.vault.azure.net:443/keys/my-key",
+			wantName: "my-key",
+		},
+		{
+			name:    "key url with non-default port",
+			keyID:   "https://myvault.vault.azure.net:8443/keys/my-key",
+			wantErr: true,
+		},
+		{
 			name:    "key url from another vault",
 			keyID:   "https://othervault.vault.azure.net/keys/my-key",
 			wantErr: true,
@@ -87,6 +108,14 @@ func TestSplitKeyID(t *testing.T) {
 
 // The client addresses only the vault it was built for, so a key URL naming a
 // different vault must not resolve to this vault's same-named key.
+func TestSplitKeyIDExplicitDefaultPort(t *testing.T) {
+	provider := &AzureKMSProvider{vaultURL: "https://myvault.vault.azure.net:443"}
+	name, _, err := provider.splitKeyID("https://myvault.vault.azure.net/keys/my-key")
+	if err != nil || name != "my-key" {
+		t.Fatalf("splitKeyID = %q, %v; want my-key, nil", name, err)
+	}
+}
+
 func TestSplitKeyIDRejectsForeignVault(t *testing.T) {
 	provider := &AzureKMSProvider{vaultURL: "https://myvault.vault.azure.net/"}
 
@@ -157,5 +186,116 @@ func TestEncryptionContextBinding(t *testing.T) {
 	}
 	if err := checkContext(envelope, nil); err == nil {
 		t.Fatal("missing context accepted for a context-bound key")
+	}
+}
+
+type fakeCredential struct{}
+
+func (fakeCredential) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	return azcore.AccessToken{Token: "token", ExpiresOn: time.Now().Add(time.Hour)}, nil
+}
+
+type fakeTransport struct {
+	do func(*http.Request) (*http.Response, error)
+}
+
+func (t fakeTransport) Do(req *http.Request) (*http.Response, error) {
+	return t.do(req)
+}
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// Drive GenerateDataKey and Decrypt through a fake Key Vault transport so the
+// whole path — key ID split, request body shape, envelope encoding — is
+// exercised, not just the helpers.
+func TestGenerateDataKeyDecryptRoundTrip(t *testing.T) {
+	vaultURL := "https://myvault.vault.azure.net"
+	var wrapped []byte
+	var sawAAD bool
+
+	client, err := azkeys.NewClient(vaultURL, fakeCredential{}, &azkeys.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			Transport: fakeTransport{do: func(req *http.Request) (*http.Response, error) {
+				if req.Header.Get("Authorization") == "" {
+					// Key Vault answers an unauthenticated request with the
+					// challenge the client then satisfies.
+					resp := jsonResponse(401, `{"error":{"code":"Unauthorized"}}`)
+					resp.Header.Set("WWW-Authenticate", `Bearer authorization="https://login.windows.net/tenant", resource="https://vault.azure.net"`)
+					return resp, nil
+				}
+				var body []byte
+				if rc, err := req.GetBody(); err == nil {
+					body, _ = io.ReadAll(rc)
+					rc.Close()
+				} else if req.Body != nil {
+					body, _ = io.ReadAll(req.Body)
+				}
+				sawAAD = bytes.Contains(body, []byte(`"aad"`))
+				var params struct {
+					Value string `json:"value"`
+				}
+				if err := json.Unmarshal(body, &params); err != nil {
+					return nil, err
+				}
+				value, err := base64.RawURLEncoding.DecodeString(params.Value)
+				if err != nil {
+					return nil, err
+				}
+				switch {
+				case strings.HasSuffix(req.URL.Path, "/encrypt"):
+					wrapped = value
+					return jsonResponse(200, `{"kid":"`+vaultURL+`/keys/my-key/abc123","value":"`+base64.RawURLEncoding.EncodeToString(wrapped)+`"}`), nil
+				case strings.HasSuffix(req.URL.Path, "/decrypt"):
+					if !bytes.Equal(value, wrapped) {
+						return jsonResponse(400, `{"error":{"code":"BadParameter"}}`), nil
+					}
+					return jsonResponse(200, `{"kid":"`+vaultURL+`/keys/my-key/abc123","value":"`+params.Value+`"}`), nil
+				default:
+					return jsonResponse(404, `{"error":{"code":"NotFound"}}`), nil
+				}
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	provider := &AzureKMSProvider{client: client, vaultURL: vaultURL}
+	contextMap := map[string]string{"aws:s3:bucket": "bucket"}
+
+	resp, err := provider.GenerateDataKey(context.Background(), &seaweedkms.GenerateDataKeyRequest{
+		KeyID:             vaultURL + "/keys/my-key",
+		KeySpec:           seaweedkms.KeySpecAES256,
+		EncryptionContext: contextMap,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDataKey: %v", err)
+	}
+	if sawAAD {
+		t.Fatal("encrypt request carried AAD")
+	}
+
+	decrypted, err := provider.Decrypt(context.Background(), &seaweedkms.DecryptRequest{
+		CiphertextBlob:    resp.CiphertextBlob,
+		EncryptionContext: contextMap,
+	})
+	if err != nil {
+		t.Fatalf("Decrypt: %v", err)
+	}
+	if !bytes.Equal(decrypted.Plaintext, resp.Plaintext) {
+		t.Fatal("decrypted key differs from generated key")
+	}
+
+	if _, err := provider.Decrypt(context.Background(), &seaweedkms.DecryptRequest{
+		CiphertextBlob:    resp.CiphertextBlob,
+		EncryptionContext: map[string]string{"aws:s3:bucket": "other"},
+	}); err == nil {
+		t.Fatal("Decrypt succeeded with a different encryption context")
 	}
 }

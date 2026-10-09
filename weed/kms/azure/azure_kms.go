@@ -30,14 +30,15 @@ func init() {
 }
 
 // vaultHost returns the host of a configured Key Vault URL, or "" when the URL
-// carries none. Hosts are compared case-insensitively and without a trailing
-// dot, as DNS names are.
+// carries none. Hosts are compared case-insensitively, without a trailing dot,
+// and without an explicit :443, which names the same vault as no port.
 func vaultHost(vaultURL string) string {
 	parsed, err := url.Parse(vaultURL)
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSuffix(parsed.Host, "."))
+	host := strings.TrimSuffix(strings.ToLower(parsed.Host), ":443")
+	return strings.TrimSuffix(host, ".")
 }
 
 // splitKeyID turns a Key Vault key identifier into the (name, version) pair the
@@ -53,7 +54,7 @@ func (p *AzureKMSProvider) splitKeyID(keyID string) (string, string, error) {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return keyID, "", nil
 	}
-	if host := vaultHost(p.vaultURL); host != "" && !strings.EqualFold(strings.TrimSuffix(parsed.Host, "."), host) {
+	if host := vaultHost(p.vaultURL); host != "" && !strings.EqualFold(strings.TrimSuffix(strings.ToLower(parsed.Host), ":443"), host) {
 		return "", "", fmt.Errorf("key ID %q names vault %q, but this provider is configured for %q", keyID, parsed.Host, host)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
