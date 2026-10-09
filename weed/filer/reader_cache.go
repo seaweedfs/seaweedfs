@@ -78,6 +78,13 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 		count = 1
 	}
 
+	var started []*SingleChunkCacher
+	defer func() {
+		for _, cacher := range started {
+			<-cacher.cacheStartedCh
+		}
+	}()
+
 	rc.Lock()
 	defer rc.Unlock()
 
@@ -113,9 +120,10 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 		// cache this chunk if not yet
 		shouldCache := (uint64(chunkView.ViewOffset) + chunkView.ChunkSize) <= rc.chunkCache.GetMaxFilePartSizeInCache()
 		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), shouldCache)
-		go cacher.startCaching()
-		<-cacher.cacheStartedCh
+		cacher.wg.Add(1) // the fetch, so destroy() waits even before the goroutine runs
 		rc.downloaders[chunkView.FileId] = cacher
+		go cacher.startCaching()
+		started = append(started, cacher)
 		cached++
 	}
 
@@ -232,12 +240,12 @@ retry:
 	// glog.V(4).Infof("cache1 %s", fileId)
 
 	cacher := newSingleChunkCacher(rc, fileId, cipherKey, isGzipped, chunkSize, shouldCache)
+	cacher.wg.Add(2) // the fetch plus this read, so destroy() waits even before the goroutine runs
+	atomic.AddInt32(&cacher.readers, 1)
+	rc.downloaders[fileId] = cacher
+	rc.Unlock()
 	go cacher.startCaching()
 	<-cacher.cacheStartedCh
-	rc.downloaders[fileId] = cacher
-	cacher.wg.Add(1)
-	atomic.AddInt32(&cacher.readers, 1)
-	rc.Unlock()
 	n, err := rc.readFromCacher(ctx, stream, cacher, buffer, offset, chunkSize)
 	return n, err
 }
@@ -411,8 +419,9 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 }
 
 // startCaching downloads a chunk shared by concurrent readers.
+// The caller must s.wg.Add(1) before publishing the cacher in the
+// downloaders map, so a removal can never observe the fetch as absent.
 func (s *SingleChunkCacher) startCaching() {
-	s.wg.Add(1)
 	defer func() {
 		close(s.done)
 		s.wg.Done()
