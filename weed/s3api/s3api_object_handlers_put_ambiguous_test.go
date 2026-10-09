@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -17,10 +18,12 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -34,6 +37,7 @@ type fakeVolumeServer struct {
 
 	mu          sync.Mutex
 	deletedFids []string
+	stored      map[string][]byte
 }
 
 func (f *fakeVolumeServer) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -55,8 +59,28 @@ func (f *fakeVolumeServer) deleted() []string {
 
 func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 	t.Helper()
-	v := &fakeVolumeServer{}
+	v := &fakeVolumeServer{stored: map[string][]byte{}}
 	upload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fid := strings.TrimPrefix(r.URL.Path, "/")
+		if r.Method == http.MethodGet {
+			data, ok := v.stored[fid]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if rg := r.Header.Get("Range"); rg != "" {
+				var start, end int
+				fmt.Sscanf(rg, "bytes=%d-%d", &start, &end)
+				if end >= len(data) {
+					end = len(data) - 1
+				}
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write(data[start : end+1])
+				return
+			}
+			w.Write(data)
+			return
+		}
 		io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-MD5", r.Header.Get("Content-MD5"))
 		w.WriteHeader(http.StatusCreated)
@@ -320,5 +344,60 @@ func TestPutToFilerUnverifiableCreateKeepsChunks(t *testing.T) {
 	}
 	if deleted := volume.deleted(); len(deleted) != 0 {
 		t.Fatalf("chunks were deleted while the create outcome was unverifiable: %v", deleted)
+	}
+}
+
+// A volume-encrypted chunk must be decrypted before SSE decryption sees it:
+// fetchChunkData feeds ciphered chunks through the cipher-aware read path and
+// slices plaintext space, while plain chunks keep streaming range reads.
+func TestFetchChunkDataDecryptsVolumeCipher(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	plaintext := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
+	cipherKey := util.GenCipherKey()
+	ciphertext, err := util.Encrypt(plaintext, cipherKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fid := "3,01637037d6"
+	volume.stored[fid] = ciphertext
+
+	full, err := s3a.fetchFullChunk(context.Background(), &filer.ChunkView{
+		FileId: fid, ChunkSize: uint64(len(plaintext)), CipherKey: cipherKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(full)
+	full.Close()
+	if !bytes.Equal(got, plaintext) {
+		t.Fatalf("full chunk read = %q, want %q", got, plaintext)
+	}
+
+	view, err := s3a.fetchChunkViewData(context.Background(), &filer.ChunkView{
+		FileId: fid, OffsetInChunk: 5, ViewSize: 4, ChunkSize: uint64(len(plaintext)), CipherKey: cipherKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(view)
+	view.Close()
+	if !bytes.Equal(got, plaintext[5:9]) {
+		t.Fatalf("ranged ciphered read = %q, want %q", got, plaintext[5:9])
+	}
+
+	volume.stored[fid] = plaintext
+	plain, err := s3a.fetchChunkViewData(context.Background(), &filer.ChunkView{
+		FileId: fid, OffsetInChunk: 5, ViewSize: 4, ChunkSize: uint64(len(plaintext)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(plain)
+	plain.Close()
+	if !bytes.Equal(got, plaintext[5:9]) {
+		t.Fatalf("ranged plain read = %q, want %q", got, plaintext[5:9])
 	}
 }
