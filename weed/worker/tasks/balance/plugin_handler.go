@@ -13,9 +13,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
@@ -739,7 +741,9 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 		return err
 	}
 
-	execErr := h.checkMoveStillValid(execCtx, request.GetClusterContext().GetMasterGrpcAddresses(), params.VolumeId, params.Sources[0].Node, params.Targets[0].Node)
+	masterAddresses := request.GetClusterContext().GetMasterGrpcAddresses()
+	moveTopology := h.fetchMoveTopology(execCtx, masterAddresses)
+	execErr := h.checkMoveStillValid(execCtx, masterAddresses, moveTopology, params.VolumeId, params.Sources[0].Node, params.Targets[0].Node)
 	if execErr == nil {
 		execErr = task.Execute(execCtx, params)
 	}
@@ -793,7 +797,10 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 // would overwrite and the source delete would then reduce to a single copy.
 // Without master addresses (older admin) the check is skipped and the move
 // relies on the task's own execution-time guards.
-func (h *VolumeBalanceHandler) checkMoveStillValid(ctx context.Context, masterAddresses []string, volumeID uint32, sourceNode, targetNode string) error {
+func (h *VolumeBalanceHandler) checkMoveStillValid(ctx context.Context, masterAddresses []string, topologyInfo *master_pb.TopologyInfo, volumeID uint32, sourceNode, targetNode string) error {
+	if err := checkMoveDiskType(topologyInfo, volumeID, sourceNode, targetNode); err != nil {
+		return err
+	}
 	if len(masterAddresses) == 0 {
 		glog.Warningf("volume balance: no master addresses in cluster context, skipping pre-move check for volume %d", volumeID)
 		return nil
@@ -803,6 +810,68 @@ func (h *VolumeBalanceHandler) checkMoveStillValid(ctx context.Context, masterAd
 		return fmt.Errorf("pre-move check for volume %d: %w", volumeID, err)
 	}
 	return checkMovePreconditions(locations, volumeID, sourceNode, targetNode)
+}
+
+// fetchMoveTopology returns the master's volume list topology so each move
+// can be checked for disk-type compatibility before copying. Returns nil if
+// the master cannot be reached; checks that need it are then skipped.
+func (h *VolumeBalanceHandler) fetchMoveTopology(ctx context.Context, masterAddresses []string) *master_pb.TopologyInfo {
+	for _, address := range masterAddresses {
+		resp, err := pluginworker.FetchVolumeList(ctx, address, h.grpcDialOption)
+		if err == nil && resp != nil && resp.TopologyInfo != nil {
+			return resp.TopologyInfo
+		}
+	}
+	return nil
+}
+
+// checkMoveDiskType rejects a move whose target lacks a disk matching the
+// volume's disk type on the source. Detection buckets candidates by disk
+// type, but jobs can be stale or submitted out-of-band; without this check
+// the copy is doomed to be rejected by the target after the source disk was
+// already read. Unknown pieces (volume or target missing from the topology)
+// skip the check and let the server's own rejection decide.
+func checkMoveDiskType(topologyInfo *master_pb.TopologyInfo, volumeID uint32, sourceNode, targetNode string) error {
+	if topologyInfo == nil {
+		return nil
+	}
+	sourceAddress := pb.ServerAddress(strings.TrimSpace(sourceNode))
+	targetAddress := pb.ServerAddress(strings.TrimSpace(targetNode))
+	volumeFound := false
+	volumeDiskType := ""
+	targetFound := false
+	targetDiskTypes := map[string]bool{}
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, node := range rack.DataNodeInfos {
+				isSource := node.Id == sourceNode || pb.ServerAddress(node.Address).Equals(sourceAddress)
+				isTarget := node.Id == targetNode || pb.ServerAddress(node.Address).Equals(targetAddress)
+				if isTarget {
+					targetFound = true
+					for diskType := range node.DiskInfos {
+						targetDiskTypes[string(types.ToDiskType(diskType))] = true
+					}
+				}
+				if isSource && !volumeFound {
+					for diskType, diskInfo := range node.DiskInfos {
+						for _, v := range diskInfo.VolumeInfos {
+							if v.Id == volumeID {
+								volumeFound = true
+								volumeDiskType = diskType
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if !volumeFound || !targetFound {
+		return nil
+	}
+	if !targetDiskTypes[string(types.ToDiskType(volumeDiskType))] {
+		return fmt.Errorf("target %s has no %s disk for volume %d", targetNode, volumeDiskType, volumeID)
+	}
+	return nil
 }
 
 func checkMovePreconditions(locations []string, volumeID uint32, sourceNode, targetNode string) error {
@@ -942,6 +1011,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 	sem := make(chan struct{}, maxConcurrent)
 	results := make(chan moveResult, totalMoves)
 	masterAddresses := request.GetClusterContext().GetMasterGrpcAddresses()
+	moveTopology := h.fetchMoveTopology(batchCtx, masterAddresses)
 
 	for i, move := range moves {
 		sem <- struct{}{} // acquire slot
@@ -960,7 +1030,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 			})
 
 			moveParams := buildMoveTaskParams(m, bp)
-			err := h.checkMoveStillValid(batchCtx, masterAddresses, m.VolumeId, m.SourceNode, m.TargetNode)
+			err := h.checkMoveStillValid(batchCtx, masterAddresses, moveTopology, m.VolumeId, m.SourceNode, m.TargetNode)
 			if err == nil {
 				err = task.Execute(batchCtx, moveParams)
 			}
