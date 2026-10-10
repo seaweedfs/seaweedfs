@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -53,6 +54,7 @@ type streamMutateMux struct {
 	stream     filer_pb.SeaweedFiler_StreamMutateEntryClient
 	cancel     context.CancelFunc
 	grpcConn   *grpc.ClientConn // dedicated connection, closed on stream teardown
+	filerIdx   int32            // FilerAddresses index the current stream dialed
 	closed     bool
 	disabled   bool          // permanently disabled if filer doesn't support the RPC
 	stopSend   chan struct{} // closed to signal the current sendLoop to exit
@@ -182,21 +184,40 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	sendTimer := time.NewTimer(m.wfs.filerRPCWait())
 	select {
 	case err := <-sendReq.errCh:
+		sendTimer.Stop()
 		if err != nil {
 			return fmt.Errorf("rename send: %w: %v", ErrStreamTransport, err)
 		}
+	case <-sendTimer.C:
+		m.teardownStream(gen)
+		return fmt.Errorf("rename send: %w: timed out", ErrStreamTransport)
 	case <-ctx.Done():
+		sendTimer.Stop()
 		return ctx.Err()
 	}
 
-	// Collect rename events until is_last=true.
+	// Collect rename events until is_last=true. The timer bounds silence
+	// between events, not the whole rename.
+	respTimer := time.NewTimer(m.wfs.filerRPCWait())
+	defer respTimer.Stop()
 	for {
 		select {
 		case resp, ok := <-ch:
 			if !ok {
 				return fmt.Errorf("rename recv: %w: stream closed", ErrStreamTransport)
+			}
+			// Applying an event can legitimately outlast the silence bound —
+			// a directory rename migrates an open child's DLM lock under
+			// another writer. The timer bounds wire silence only, so stop it
+			// for the local work and re-arm it before the next wait.
+			if !respTimer.Stop() {
+				select {
+				case <-respTimer.C:
+				default:
+				}
 			}
 			if r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_RenameResponse); ok {
 				if r.RenameResponse != nil && r.RenameResponse.EventNotification != nil {
@@ -214,6 +235,10 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 				}
 				return nil
 			}
+			respTimer.Reset(m.wfs.filerRPCWait())
+		case <-respTimer.C:
+			m.teardownStream(gen)
+			return fmt.Errorf("rename recv: %w: timed out", ErrStreamTransport)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -243,17 +268,29 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	// Most callers pass context.Background(), so a stream blocked on Send or
+	// Recv over a dead transport would never surface an error here. Bound the
+	// wait and tear the stream down so the call can fall back to a unary RPC
+	// on another filer.
+	sendTimer := time.NewTimer(m.wfs.filerRPCWait())
 	select {
 	case err := <-sendReq.errCh:
+		sendTimer.Stop()
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrStreamTransport, err)
 		}
+	case <-sendTimer.C:
+		m.teardownStream(gen)
+		return nil, fmt.Errorf("%w: send timed out", ErrStreamTransport)
 	case <-ctx.Done():
+		sendTimer.Stop()
 		return nil, ctx.Err()
 	}
 
+	respTimer := time.NewTimer(m.wfs.filerRPCWait())
 	select {
 	case resp, ok := <-ch:
+		respTimer.Stop()
 		if !ok {
 			return nil, fmt.Errorf("%w: stream closed", ErrStreamTransport)
 		}
@@ -268,7 +305,11 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 			}
 		}
 		return resp, nil
+	case <-respTimer.C:
+		m.teardownStream(gen)
+		return nil, fmt.Errorf("%w: response timed out", ErrStreamTransport)
 	case <-ctx.Done():
+		respTimer.Stop()
 		return nil, ctx.Err()
 	}
 }
@@ -364,6 +405,7 @@ func (m *streamMutateMux) openStream(out *filer_pb.SeaweedFiler_StreamMutateEntr
 		}
 
 		atomic.StoreInt32(&m.wfs.option.filerIndex, idx)
+		m.filerIdx = idx
 		m.cancel = cancel
 		m.grpcConn = grpcConn
 		*out = stream
@@ -428,6 +470,7 @@ func (m *streamMutateMux) teardownStream(gen uint64) {
 		m.mu.Unlock()
 		return
 	}
+	filerIdx := m.filerIdx
 	m.stream = nil
 	if m.stopSend != nil {
 		close(m.stopSend)
@@ -439,6 +482,13 @@ func (m *streamMutateMux) teardownStream(gen uint64) {
 	}
 	conn := m.grpcConn
 	m.grpcConn = nil
+	// Rotate while still holding mu: a new generation cannot open until
+	// teardown releases the lock, so the index advanced here always belongs
+	// to the stream that just died — never to a successor ensureStream may
+	// have opened in between.
+	if n := int32(len(m.wfs.option.FilerAddresses)); n > 0 {
+		atomic.CompareAndSwapInt32(&m.wfs.option.filerIndex, filerIdx, (filerIdx+1)%n)
+	}
 	m.mu.Unlock()
 
 	// Do NOT call failAllPending here — recvLoop is the sole owner of

@@ -43,7 +43,7 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	entry.RUnlock()
 	if remoteOnly {
 		glog.V(4).Infof("download remote entry %s", fileFullPath)
-		err := fh.downloadRemoteEntry(entry)
+		err := fh.downloadRemoteEntry(ctx, entry)
 		if err != nil {
 			glog.V(1).Infof("download remote entry %s: %v", fileFullPath, err)
 			return 0, 0, err
@@ -111,12 +111,15 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	return int64(totalRead), ts, err
 }
 
-func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
+func (fh *FileHandle) downloadRemoteEntry(ctx context.Context, entry *LockedEntry) error {
 
 	fileFullPath := fh.FullPath()
 	dir, _ := fileFullPath.DirAndName()
 
-	err := fh.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	// callWait 0: this RPC streams a whole remote object filer-side, so a
+	// healthy download can legitimately outlast any metadata-call bound. The
+	// attempt stays bound to the caller's context instead.
+	err := fh.wfs.withFilerClient(ctx, false, 0, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: string(dir),
@@ -124,7 +127,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 		}
 
 		glog.V(4).Infof("download entry: %v", request)
-		resp, err := client.CacheRemoteObjectToLocalCluster(context.Background(), request)
+		resp, err := client.CacheRemoteObjectToLocalCluster(ctx, request)
 		if err != nil {
 			return fmt.Errorf("CacheRemoteObjectToLocalCluster file %s: %v", fileFullPath, err)
 		}
