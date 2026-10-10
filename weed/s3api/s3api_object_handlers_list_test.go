@@ -667,6 +667,42 @@ func TestMaxKeysParameterValidation(t *testing.T) {
 		assert.Equal(t, s3err.ErrInvalidMaxKeys, errCode, "non-numeric max-keys should return ErrInvalidMaxKeys")
 	})
 
+	t.Run("out of range max-keys values should return error", func(t *testing.T) {
+		for _, v := range []string{"-1", "2147483648", "1.5", " 10"} {
+			values := map[string][]string{
+				"max-keys": {v},
+			}
+			_, _, _, _, _, _, errCode := getListObjectsV1Args(values)
+			assert.Equal(t, s3err.ErrInvalidMaxKeys, errCode, "V1 max-keys=%q should return ErrInvalidMaxKeys", v)
+
+			_, _, _, _, _, _, _, _, errCode = getListObjectsV2Args(values)
+			assert.Equal(t, s3err.ErrInvalidMaxKeys, errCode, "V2 max-keys=%q should return ErrInvalidMaxKeys", v)
+		}
+	})
+
+	t.Run("max-keys up to 2147483647 is accepted and capped at 1000", func(t *testing.T) {
+		for v, want := range map[string]int{
+			"0":          0,
+			"999":        999,
+			"1000":       1000,
+			"1001":       1000,
+			"32768":      1000,
+			"65536":      1000,
+			"2147483647": 1000,
+		} {
+			values := map[string][]string{
+				"max-keys": {v},
+			}
+			_, _, _, _, maxkeys, _, errCode := getListObjectsV1Args(values)
+			assert.Equal(t, s3err.ErrNone, errCode, "V1 max-keys=%q should not return error", v)
+			assert.Equal(t, int16(want), maxkeys, "V1 max-keys=%q", v)
+
+			_, _, _, _, _, _, maxkeys2, _, errCode := getListObjectsV2Args(values)
+			assert.Equal(t, s3err.ErrNone, errCode, "V2 max-keys=%q should not return error", v)
+			assert.Equal(t, uint16(want), maxkeys2, "V2 max-keys=%q", v)
+		}
+	})
+
 	t.Run("empty max-keys should use default", func(t *testing.T) {
 		// Test empty max-keys
 		values := map[string][]string{}
