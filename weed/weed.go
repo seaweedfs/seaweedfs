@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/seaweedfs/seaweedfs/weed/logbuffer"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
@@ -69,6 +70,11 @@ func main() {
 	}
 
 	flag.Parse()
+
+	// Initialize in-memory log ring buffer (10k entries) for runtime log
+	// querying and SSE streaming. Must be called after flag.Parse() so that
+	// --log_json is already resolved.
+	logbuffer.Init(10000)
 
 	args := flag.Args()
 	if len(args) < 1 {
