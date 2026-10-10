@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"time"
 
@@ -235,8 +236,32 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		case !existingTarget.IsDirectory() && entry.IsDirectory():
 			return fmt.Errorf("%s: %w", existingTarget.FullPath, filer_pb.ErrExistingIsFile)
 		}
+	}
+
+	// a remote-only entry is copied on the remote before anything changes:
+	// deleting the old entry deletes the old object
+	copiedRemote, copyErr := fs.filer.CopyRemoteOnlyEntry(ctx, entry, oldPath, newPath)
+	if copyErr != nil {
+		return copyErr
+	}
+	remoteEntry := entry.Remote
+	if copiedRemote != nil {
+		remoteEntry = copiedRemote
+	}
+
+	if existingTarget != nil {
+		targetCtx := filer.WithSuppressedMetadataEvents(ctx)
+		if copiedRemote != nil {
+			// the copy has replaced the target's object; keep it
+			targetCtx = filer.WithKeepRemoteObject(targetCtx)
+			existingTarget.Extended = maps.Clone(existingTarget.Extended)
+			if existingTarget.Extended == nil {
+				existingTarget.Extended = map[string][]byte{}
+			}
+			existingTarget.Extended[filer.ExtKeepRemoteObjectKey] = []byte("true")
+		}
 		if deleteErr := fs.filer.DeleteEntryMetaAndData(
-			filer.WithSuppressedMetadataEvents(ctx),
+			targetCtx,
 			newPath,
 			false,
 			false,
@@ -258,7 +283,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Content:         entry.Content,
 		HardLinkCounter: entry.HardLinkCounter,
 		HardLinkId:      entry.HardLinkId,
-		Remote:          entry.Remote,
+		Remote:          remoteEntry,
 		Quota:           entry.Quota,
 	}
 	if skipTargetLookup {

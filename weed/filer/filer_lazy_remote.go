@@ -225,3 +225,48 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 	glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: deleted %s from remote", entry.FullPath)
 	return true, nil
 }
+
+// CopyRemoteOnlyEntry copies the remote object of a renamed entry whose
+// content exists only on the remote to the key of newPath, and returns the
+// RemoteEntry of the copy. The rename deletes the old key along with the old
+// entry, and with no local data nothing would write the new key. It returns
+// nil when no copy is needed: the entry has local data, which the remote sync
+// uploads to the new key, it is empty, which the sync writes as an empty
+// object, or it is not under a remote mount. A rename that
+// moves such an entry out of its mount, or onto a remote that cannot copy, is
+// refused, since it would delete the only copy of the content.
+func (f *Filer) CopyRemoteOnlyEntry(ctx context.Context, entry *Entry, oldPath, newPath util.FullPath) (*filer_pb.RemoteEntry, error) {
+	if f.RemoteStorage == nil || entry.IsDirectory() || !entry.IsInRemoteOnly() || len(entry.Content) > 0 {
+		return nil, nil
+	}
+
+	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(oldPath)
+	if remoteLoc == nil {
+		return nil, nil
+	}
+	if newMountDir, _ := f.RemoteStorage.FindMountDirectory(newPath); newMountDir != mountDir {
+		return nil, fmt.Errorf("%s exists only on the remote of mount %s and cannot be renamed out of it; cache it first", oldPath, mountDir)
+	}
+
+	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
+	if !found {
+		return nil, fmt.Errorf("resolve remote storage client for %s: not found", oldPath)
+	}
+	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+	if clientErr != nil {
+		return nil, fmt.Errorf("resolve remote storage client for %s: %w", oldPath, clientErr)
+	}
+	copier, ok := client.(remote_storage.RemoteStorageObjectCopier)
+	if !ok {
+		return nil, fmt.Errorf("%s exists only on the remote and remote storage type %s cannot copy it to the new name; cache it first", oldPath, remoteConf.Type)
+	}
+
+	src := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, oldPath)
+	dst := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, newPath)
+	remoteEntry, err := copier.CopyFile(src, dst)
+	if err != nil {
+		return nil, fmt.Errorf("copy remote %s to %s: %w", remote_storage.FormatLocation(src), remote_storage.FormatLocation(dst), err)
+	}
+	glog.V(3).InfofCtx(ctx, "CopyRemoteOnlyEntry: copied %s to %s", remote_storage.FormatLocation(src), remote_storage.FormatLocation(dst))
+	return remoteEntry, nil
+}
