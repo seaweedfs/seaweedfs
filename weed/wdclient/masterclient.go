@@ -167,6 +167,24 @@ type MasterClient struct {
 	streamLock      sync.Mutex
 	stream          master_pb.Seaweed_KeepConnectedClient
 	leavingLockRing bool
+
+	// announceCh, when non-nil, gates the registration send that adds this
+	// client to the master's list, so a server can connect and query masters
+	// before it is ready to be routed to.
+	announceCh chan struct{}
+}
+
+// SetAnnounceCh sets a channel that must be closed before this client
+// registers itself on the master.
+func (mc *MasterClient) SetAnnounceCh(ch chan struct{}) {
+	mc.announceCh = ch
+}
+
+// ListMasters returns the configured master addresses without waiting for a
+// connection, for callers that run before KeepConnectedToMaster is connected.
+func (mc *MasterClient) ListMasters() []pb.ServerAddress {
+	mc.masters.RefreshBySrvIfAvailable()
+	return mc.masters.GetInstances()
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
@@ -253,6 +271,14 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			return err
 		}
 		glog.V(1).Infof("%s.%s masterClient gRPC stream established to %s in %v", mc.FilerGroup, mc.clientType, master, time.Since(connectStartTime))
+
+		if mc.announceCh != nil {
+			select {
+			case <-mc.announceCh:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 
 		mc.streamLock.Lock()
 		err = stream.Send(&master_pb.KeepConnectedRequest{
