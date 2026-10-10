@@ -182,6 +182,11 @@ func TestPipelinedSenderStopsSendingOnCancel(t *testing.T) {
 	if err := sender.Close(); err != nil {
 		t.Fatalf("Close returned %v", err)
 	}
+	select {
+	case <-sender.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("sendLoop did not exit after cancel")
+	}
 	if n := stream.sends.Load(); n != 1 {
 		t.Fatalf("stream.Send ran %d times, want 1; a new send started after cancel", n)
 	}
