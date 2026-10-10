@@ -252,7 +252,12 @@ func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 				}
 			}
 		}
-		mc.setCurrentMaster("")
+		// After a canceled disconnect the last master still answers unary
+		// queries (e.g. the metadata-log flush during filer shutdown), so
+		// only clear the serving address on an unintended disconnect.
+		if ctx.Err() == nil {
+			mc.setCurrentMaster("")
+		}
 	}
 }
 

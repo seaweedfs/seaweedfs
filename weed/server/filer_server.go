@@ -388,9 +388,6 @@ func (fs *FilerServer) checkWithMaster() {
 // This prevents data corruption when the process receives SIGTERM during active uploads.
 func (fs *FilerServer) Shutdown() {
 	glog.V(0).Infof("Shutting down filer")
-	if fs.masterCancel != nil {
-		fs.masterCancel()
-	}
 	if fs.posixLockSweeperStop != nil {
 		close(fs.posixLockSweeperStop)
 	}
@@ -398,6 +395,12 @@ func (fs *FilerServer) Shutdown() {
 		fs.remoteCacheEvictCancel()
 	}
 	fs.filer.Shutdown()
+	// LeaveLockRing already ended the master stream in the normal path; this
+	// covers callers that skip it, and runs after the filer's own shutdown so
+	// the final metadata-log flush can still reach the master.
+	if fs.masterCancel != nil {
+		fs.masterCancel()
+	}
 }
 
 // priorOwnerWindowSkew covers peers and gateways that start their prior-owner
