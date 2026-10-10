@@ -840,6 +840,14 @@ func TestCheckMoveDiskType(t *testing.T) {
 			}}}},
 		}}
 	}
+	oldTopologyWith := func(sourceDisks, targetDisks map[string]*master_pb.DiskInfo) *master_pb.TopologyInfo {
+		return &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{
+			{RackInfos: []*master_pb.RackInfo{{DataNodeInfos: []*master_pb.DataNodeInfo{
+				{Id: "10.0.0.1:8080", GrpcPort: 18080, DiskInfos: sourceDisks},
+				{Id: "10.0.0.2:8080", GrpcPort: 18080, DiskInfos: targetDisks},
+			}}}},
+		}}
+	}
 
 	tests := []struct {
 		name       string
@@ -890,6 +898,21 @@ func TestCheckMoveDiskType(t *testing.T) {
 				map[string]*master_pb.DiskInfo{"ssd": {}}),
 			volumeID: 5, sourceNode: "10.0.0.1:8080", targetNode: "10.0.0.2:8080",
 			wantErr: "has no backup-hdd disk",
+		},
+		{
+			name: "old topology nodes matched via id and grpc port",
+			topology: oldTopologyWith(
+				map[string]*master_pb.DiskInfo{"backup-hdd": {VolumeInfos: volumeOnDisk(5)}},
+				map[string]*master_pb.DiskInfo{"ssd": {}}),
+			volumeID: 5, sourceNode: "10.0.0.1:8080.18080", targetNode: "10.0.0.2:8080.18080",
+			wantErr: "has no backup-hdd disk",
+		},
+		{
+			name: "old topology allows matching disk type",
+			topology: oldTopologyWith(
+				map[string]*master_pb.DiskInfo{"backup-hdd": {VolumeInfos: volumeOnDisk(5)}},
+				map[string]*master_pb.DiskInfo{"backup-hdd": {}}),
+			volumeID: 5, sourceNode: "10.0.0.1:8080.18080", targetNode: "10.0.0.2:8080.18080",
 		},
 	}
 	for _, tt := range tests {

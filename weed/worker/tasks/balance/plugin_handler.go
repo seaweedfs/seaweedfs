@@ -844,8 +844,12 @@ func checkMoveDiskType(topologyInfo *master_pb.TopologyInfo, volumeID uint32, so
 	for _, dc := range topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, node := range rack.DataNodeInfos {
-				isSource := node.Id == sourceNode || pb.ServerAddress(node.Address).Equals(sourceAddress)
-				isTarget := node.Id == targetNode || pb.ServerAddress(node.Address).Equals(targetAddress)
+				// NewServerAddressFromDataNode covers older masters whose
+				// topology omits Address: the move nodes carry the grpc
+				// suffix derived from the plain node Id and GrpcPort.
+				nodeAddress := pb.NewServerAddressFromDataNode(node)
+				isSource := node.Id == sourceNode || pb.ServerAddress(node.Address).Equals(sourceAddress) || nodeAddress.Equals(sourceAddress)
+				isTarget := node.Id == targetNode || pb.ServerAddress(node.Address).Equals(targetAddress) || nodeAddress.Equals(targetAddress)
 				if isTarget {
 					targetFound = true
 					for diskType := range node.DiskInfos {
