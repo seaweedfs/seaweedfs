@@ -1917,7 +1917,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	}
 
 	// List versions
-	result, err := s3a.listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter, maxKeys)
+	result, err := s3a.listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter, int(maxKeys))
 	if err != nil {
 		glog.Errorf("ListObjectVersionsHandler: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
