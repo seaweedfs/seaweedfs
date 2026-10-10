@@ -2246,7 +2246,7 @@ func (s3a *S3ApiServer) applySSEKMSDefaultEncryption(bucket string, r *http.Requ
 	// Use the KMS key ID from bucket configuration, or default if not specified
 	keyID := encryptionConfig.KmsKeyId
 	if keyID == "" {
-		keyID = "alias/aws/s3" // AWS default KMS key for S3
+		keyID = s3_constants.SSEKMSDefaultKeyID
 	}
 
 	// Check if bucket key is enabled in configuration

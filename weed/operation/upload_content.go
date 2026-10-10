@@ -422,6 +422,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			MimeType:          "",
 			PairMap:           nil,
 			Jwt:               option.Jwt,
+			BytesBuffer:       option.BytesBuffer,
 		})
 		if uploadResult == nil {
 			return
