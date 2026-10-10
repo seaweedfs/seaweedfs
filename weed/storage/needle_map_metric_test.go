@@ -39,6 +39,9 @@ func TestFastLoadingNeedleMapMetrics(t *testing.T) {
 	if mm.ContentSize() != nm.ContentSize() {
 		t.Fatalf("ContentSize = %d, want %d", mm.ContentSize(), nm.ContentSize())
 	}
+	if mm.MaxFileKey() != nm.MaxFileKey() {
+		t.Fatalf("MaxFileKey = %d, want %d", mm.MaxFileKey(), nm.MaxFileKey())
+	}
 	// Bloom false positives can hide a key whose latest row is live, which
 	// only inflates the deletion counters by a small bounded amount.
 	if got, want := mm.DeletedCount(), nm.DeletedCount(); got < want || got > want+256 {
