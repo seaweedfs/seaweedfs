@@ -999,7 +999,7 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 
 	t.Run("absent object", func(t *testing.T) {
 		remote := &recordingRemote{deleteErr: remote_storage.ErrRemoteObjectNotFound}
-		if err := processDeleteEvent(remote, mountedDir, mountLoc, resp); err != nil {
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, resp); err != nil {
 			t.Fatalf("err = %v, want nil: deleting an absent object is complete", err)
 		}
 		if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
@@ -1011,7 +1011,7 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 		marked := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
 		marked.EventNotification.OldEntry.Extended = map[string][]byte{filer.ExtKeepRemoteObjectKey: []byte("true")}
 		remote := &recordingRemote{}
-		if err := processDeleteEvent(remote, mountedDir, mountLoc, marked); err != nil {
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, marked); err != nil {
 			t.Fatalf("err = %v", err)
 		}
 		if len(remote.deletes) != 0 {
@@ -1019,9 +1019,41 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 		}
 	})
 
+	t.Run("a remote-only entry that took the path keeps the object", func(t *testing.T) {
+		// deleted, then a remote-only file renamed onto the path: the rename
+		// copied its content to this key before the sync got to the delete
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: &filer_pb.Entry{
+			Name:        "state.db.tmp",
+			Attributes:  &filer_pb.FuseAttributes{FileSize: 10},
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 10},
+		}}
+		if err := processDeleteEvent(filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("an entry with local data at the path does not stop the delete", func(t *testing.T) {
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: &filer_pb.Entry{
+			Name:        "state.db.tmp",
+			Content:     []byte("local"),
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 10},
+		}}
+		if err := processDeleteEvent(filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 1 {
+			t.Errorf("deletes = %+v, want one", remote.deletes)
+		}
+	})
+
 	t.Run("other failure still fails", func(t *testing.T) {
 		remote := &recordingRemote{deleteErr: errors.New("AccessDenied: Access Denied")}
-		if err := processDeleteEvent(remote, mountedDir, mountLoc, resp); err == nil {
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, resp); err == nil {
 			t.Fatal("err = nil, want the delete failure")
 		}
 	})

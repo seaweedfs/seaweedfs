@@ -38,6 +38,8 @@ func (m *copyObjectMock) HeadObject(input *awss3.HeadObjectInput) (*awss3.HeadOb
 		ContentType:             aws.String("image/jpeg"),
 		Expires:                 aws.String("Wed, 21 Oct 2026 07:28:00 GMT"),
 		WebsiteRedirectLocation: aws.String("/elsewhere"),
+		ServerSideEncryption:    aws.String("aws:kms"),
+		SSEKMSKeyId:             aws.String("key-1"),
 		ETag:                    aws.String(`"etag-` + aws.StringValue(input.Key) + `"`),
 	}, nil
 }
@@ -100,6 +102,8 @@ func TestS3CopyFileUsesCopyObjectUpToTheLimit(t *testing.T) {
 	require.Len(t, mock.copyInputs, 1)
 	require.Equal(t, "bucket/src/a%20b.jpg", aws.StringValue(mock.copyInputs[0].CopySource))
 	require.Equal(t, "dst/a b.jpg", aws.StringValue(mock.copyInputs[0].Key))
+	require.Equal(t, "aws:kms", aws.StringValue(mock.copyInputs[0].ServerSideEncryption))
+	require.Equal(t, "key-1", aws.StringValue(mock.copyInputs[0].SSEKMSKeyId))
 	require.Nil(t, mock.createInput)
 	// the RemoteEntry describes the destination
 	require.Equal(t, `"etag-dst/a b.jpg"`, remoteEntry.RemoteETag)
@@ -117,6 +121,8 @@ func TestS3CopyFileCopiesLargeObjectsInParts(t *testing.T) {
 	require.NotNil(t, mock.createInput)
 	require.Equal(t, "image/jpeg", aws.StringValue(mock.createInput.ContentType))
 	require.Equal(t, "/elsewhere", aws.StringValue(mock.createInput.WebsiteRedirectLocation))
+	require.Equal(t, "aws:kms", aws.StringValue(mock.createInput.ServerSideEncryption))
+	require.Equal(t, "key-1", aws.StringValue(mock.createInput.SSEKMSKeyId))
 	require.Equal(t, int64(1792567680), aws.TimeValue(mock.createInput.Expires).Unix())
 	// tags only where the remote supports tagging
 	require.Empty(t, mock.tagInputs)
@@ -124,6 +130,9 @@ func TestS3CopyFileCopiesLargeObjectsInParts(t *testing.T) {
 	require.Len(t, mock.partInputs, 11)
 	require.Equal(t, "bytes=0-536870911", aws.StringValue(mock.partInputs[0].CopySourceRange))
 	require.Equal(t, "bytes=5368709120-5368709120", aws.StringValue(mock.partInputs[10].CopySourceRange))
+	for _, part := range mock.partInputs {
+		require.Equal(t, `"etag-src/a b.jpg"`, aws.StringValue(part.CopySourceIfMatch))
+	}
 	require.Len(t, mock.completed.MultipartUpload.Parts, 11)
 	require.Equal(t, int64(11), aws.Int64Value(mock.completed.MultipartUpload.Parts[10].PartNumber))
 	require.False(t, mock.aborted)

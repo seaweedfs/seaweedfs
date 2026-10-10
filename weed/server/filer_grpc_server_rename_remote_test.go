@@ -226,18 +226,26 @@ func TestRenameEmptyRemoteEntryDoesNotCopy(t *testing.T) {
 	assert.Equal(t, []string{"delete origin/src/empty", "delete origin/m/empty"}, client.recorded())
 }
 
-func TestRenameRemoteOnlyEntryFailingAfterTheCopyKeepsTheContent(t *testing.T) {
-	client := copyingRenameRemoteClient{&renameRemoteClient{}}
-	server, store := newRenameRemoteTestServer(t, client)
-	store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101)
-	store.commitErr = errors.New("commit failed")
+func TestRenameRemoteOnlyEntryFailingAfterTheCopyKeepsTheSource(t *testing.T) {
+	for _, src := range []util.FullPath{"/buckets/b/src/a.jpg", "/buckets/b/src"} {
+		t.Run(string(src), func(t *testing.T) {
+			client := copyingRenameRemoteClient{&renameRemoteClient{}}
+			server, store := newRenameRemoteTestServer(t, client)
+			store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101)
+			store.commitErr = errors.New("commit failed")
 
-	err := renameFile(server, "/buckets/b/src/a.jpg", "/buckets/b/dst/a.jpg")
-	require.ErrorContains(t, err, "commit failed")
+			err := renameFile(server, src, "/buckets/b/moved")
+			require.ErrorContains(t, err, "commit failed")
 
-	// remote changes are not rolled back with the store: the old object is
-	// gone, but only after the copy at the new key was written
-	assert.Equal(t, []string{"copy origin/src/a.jpg origin/dst/a.jpg", "delete origin/src/a.jpg"}, client.recorded())
+			// the old object, and the old directory holding it, are deleted
+			// only once the rename has committed
+			dst := "origin/moved"
+			if src == "/buckets/b/src" {
+				dst = "origin/moved/a.jpg"
+			}
+			assert.Equal(t, []string{"copy origin/src/a.jpg " + dst}, client.recorded())
+		})
+	}
 }
 
 func TestRenameEntryWithLocalDataDoesNotCopy(t *testing.T) {
@@ -267,11 +275,13 @@ func TestRenameDirectoryCopiesRemoteOnlyChildren(t *testing.T) {
 
 	require.NoError(t, renameFile(server, "/buckets/b/src", "/buckets/b/moved"))
 
+	// b.jpg's old object goes with its entry; the old directory and a.jpg's
+	// old object wait for the commit
 	assert.Equal(t, []string{
 		"copy origin/src/a.jpg origin/moved/a.jpg",
-		"delete origin/src/a.jpg",
 		"delete origin/src/b.jpg",
 		"rmdir origin/src",
+		"delete origin/src/a.jpg",
 	}, client.recorded())
 	moved, err := store.FindEntry(context.Background(), "/buckets/b/moved/a.jpg")
 	require.NoError(t, err)

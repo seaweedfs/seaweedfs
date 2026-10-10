@@ -690,11 +690,14 @@ func (s *s3RemoteStorageClient) CopyFile(src *remote_pb.RemoteStorageLocation, d
 	}
 
 	if size := aws.Int64Value(headOut.ContentLength); size <= s3CopyObjectSizeLimit {
+		// a copy takes the bucket's default encryption unless told otherwise
 		if _, err = s.conn.CopyObject(&s3.CopyObjectInput{
-			Bucket:       aws.String(dst.Bucket),
-			Key:          aws.String(dstKey),
-			CopySource:   copySource,
-			StorageClass: storageClass,
+			Bucket:               aws.String(dst.Bucket),
+			Key:                  aws.String(dstKey),
+			CopySource:           copySource,
+			StorageClass:         storageClass,
+			ServerSideEncryption: headOut.ServerSideEncryption,
+			SSEKMSKeyId:          headOut.SSEKMSKeyId,
 		}); err != nil {
 			return nil, fmt.Errorf("copy s3 %s/%s to %s/%s: %w", src.Bucket, srcKey, dst.Bucket, dstKey, err)
 		}
@@ -744,6 +747,8 @@ func (s *s3RemoteStorageClient) multipartCopy(headOut *s3.HeadObjectOutput, src 
 		ContentDisposition:      headOut.ContentDisposition,
 		ContentLanguage:         headOut.ContentLanguage,
 		WebsiteRedirectLocation: headOut.WebsiteRedirectLocation,
+		ServerSideEncryption:    headOut.ServerSideEncryption,
+		SSEKMSKeyId:             headOut.SSEKMSKeyId,
 		StorageClass:            storageClass,
 	}
 	if headOut.Expires != nil {
@@ -781,6 +786,9 @@ func (s *s3RemoteStorageClient) multipartCopy(headOut *s3.HeadObjectOutput, src 
 			PartNumber:      aws.Int64(partNumber),
 			CopySource:      copySource,
 			CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, min(offset+partSize, size)-1)),
+			// every part from the object the HeadObject saw, not a mix of
+			// versions if it is overwritten mid-copy
+			CopySourceIfMatch: headOut.ETag,
 		})
 		if partErr == nil && partOut.CopyPartResult == nil {
 			partErr = errors.New("no part result")

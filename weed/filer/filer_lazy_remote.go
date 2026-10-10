@@ -226,6 +226,13 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 	return true, nil
 }
 
+// DeleteFromRemote deletes the object, or for a directory every object, the
+// entry maps to on its mounted remote storage.
+func (f *Filer) DeleteFromRemote(ctx context.Context, entry *Entry) error {
+	_, err := f.maybeDeleteFromRemote(ctx, entry)
+	return err
+}
+
 // CopyRemoteOnlyEntry copies the remote object of a renamed entry whose
 // content exists only on the remote to the key of newPath, and returns the
 // RemoteEntry of the copy. The rename deletes the old key along with the old
