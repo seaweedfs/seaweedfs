@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -33,10 +34,21 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 		// abandons just this rename. Bound the silence between events the way
 		// the mutation mux does: a filer that accepts the stream then stalls
 		// must not hold the failover walk hostage, but a long rename that
-		// keeps sending events may take as long as it needs.
+		// keeps sending events may take as long as it needs. Local event
+		// work is not wire silence — a directory rename can spend longer
+		// than the bound migrating a child's DLM lock — so the timer defers
+		// while the handler runs instead of cancelling a healthy stream.
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		silence := time.AfterFunc(wfs.filerRPCWait(), cancel)
+		var inHandler atomic.Bool
+		var silence *time.Timer
+		silence = time.AfterFunc(wfs.filerRPCWait(), func() {
+			if inHandler.Load() {
+				silence.Reset(wfs.filerRPCWait())
+				return
+			}
+			cancel()
+		})
 		defer silence.Stop()
 
 		stream, streamErr := client.StreamRenameEntry(streamCtx, request)
@@ -54,8 +66,10 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 				}
 				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
 			}
-			silence.Reset(wfs.filerRPCWait())
-			if err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock); err != nil {
+			inHandler.Store(true)
+			err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock)
+			inHandler.Store(false)
+			if err != nil {
 				return err
 			}
 		}

@@ -209,7 +209,16 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 			if !ok {
 				return fmt.Errorf("rename recv: %w: stream closed", ErrStreamTransport)
 			}
-			respTimer.Reset(m.wfs.filerRPCWait())
+			// Applying an event can legitimately outlast the silence bound —
+			// a directory rename migrates an open child's DLM lock under
+			// another writer. The timer bounds wire silence only, so stop it
+			// for the local work and re-arm it before the next wait.
+			if !respTimer.Stop() {
+				select {
+				case <-respTimer.C:
+				default:
+				}
+			}
 			if r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_RenameResponse); ok {
 				if r.RenameResponse != nil && r.RenameResponse.EventNotification != nil {
 					if err := onEvent(r.RenameResponse); err != nil {
@@ -226,6 +235,7 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 				}
 				return nil
 			}
+			respTimer.Reset(m.wfs.filerRPCWait())
 		case <-respTimer.C:
 			m.teardownStream(gen)
 			return fmt.Errorf("rename recv: %w: timed out", ErrStreamTransport)
