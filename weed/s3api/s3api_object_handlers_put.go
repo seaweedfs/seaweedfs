@@ -2594,6 +2594,10 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 
 // S3ApiServer implements EntryGetter interface
 func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
+	return objectETag(entry)
+}
+
+func objectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
 		etag := string(etagBytes)
@@ -2605,13 +2609,27 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 		}
 		// Empty stored ETag — fall through to Md5/chunk-based calculation
 	}
+	// The remote ETag still describes this entry only while the local copy
+	// holds the remote bytes: a synced cache fill, or a remote-only entry
+	// with no local content. Content changes made through the filer clear
+	// the sync stamp (Filer.UpdateEntry) or add chunks or inline content;
+	// resizes without new bytes show up in FileSize. Metadata-only updates
+	// like utimens keep the remote bytes, so Mtime is not part of the check.
+	if remote := entry.RemoteEntry; remote != nil && remote.RemoteETag != "" &&
+		entry.GetAttributes().GetFileSize() == uint64(remote.RemoteSize) &&
+		(remote.LastLocalSyncTsNs > 0 || (len(entry.Chunks) == 0 && len(entry.Content) == 0)) {
+		return quoteETag(remote.RemoteETag)
+	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
 	// Note: len(nil slice) == 0 in Go, so no need for explicit nil check
 	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
 		return fmt.Sprintf("\"%x\"", entry.Attributes.Md5)
 	}
 	// Fallback: calculate ETag from chunks
-	return s3a.calculateETagFromChunks(entry.Chunks)
+	if len(entry.Chunks) == 0 {
+		return `""`
+	}
+	return quoteETag(filer.ETagChunks(entry.Chunks))
 }
 
 func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string) bool {

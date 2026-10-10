@@ -601,27 +601,7 @@ func copyEntryETag(entry *filer_pb.Entry) string {
 	if entry == nil {
 		return ""
 	}
-	if entry.Extended != nil {
-		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(etag) > 0 {
-			return string(etag)
-		}
-	}
-	attr := filer.Attr{}
-	if entry.Attributes != nil {
-		attr = filer.Attr{
-			FileSize: entry.Attributes.FileSize,
-			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
-			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
-			Mime:     entry.Attributes.Mime,
-			Md5:      entry.Attributes.Md5,
-		}
-	}
-	return filer.ETagEntry(&filer.Entry{
-		Attr:    attr,
-		Chunks:  entry.Chunks,
-		Content: entry.Content,
-		Remote:  entry.RemoteEntry,
-	})
+	return strings.Trim(objectETag(entry), `"`)
 }
 
 func copyEntryToTarget(dst, src *filer_pb.Entry) {
