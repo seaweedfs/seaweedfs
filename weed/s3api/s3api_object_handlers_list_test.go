@@ -695,7 +695,7 @@ func TestMaxKeysParameterValidation(t *testing.T) {
 			}
 			_, _, _, _, maxkeys, _, errCode := getListObjectsV1Args(values)
 			assert.Equal(t, s3err.ErrNone, errCode, "V1 max-keys=%q should not return error", v)
-			assert.Equal(t, int16(want), maxkeys, "V1 max-keys=%q", v)
+			assert.Equal(t, uint16(want), maxkeys, "V1 max-keys=%q", v)
 
 			_, _, _, _, _, _, maxkeys2, _, errCode := getListObjectsV2Args(values)
 			assert.Equal(t, s3err.ErrNone, errCode, "V2 max-keys=%q should not return error", v)
@@ -708,7 +708,7 @@ func TestMaxKeysParameterValidation(t *testing.T) {
 		values := map[string][]string{}
 		_, _, _, _, maxkeys, _, errCode := getListObjectsV1Args(values)
 		assert.Equal(t, s3err.ErrNone, errCode, "empty max-keys should not return error")
-		assert.Equal(t, int16(1000), maxkeys, "empty max-keys should use default value")
+		assert.Equal(t, uint16(1000), maxkeys, "empty max-keys should use default value")
 
 		_, _, _, _, _, _, maxkeys2, _, errCode := getListObjectsV2Args(values)
 		assert.Equal(t, s3err.ErrNone, errCode, "empty max-keys should not return error")
