@@ -127,6 +127,21 @@ func newPipelinedSender(ctx context.Context, stream metadataStreamSender, bufSiz
 
 func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 	defer close(s.done)
+	// No Send may start after the subscription context ends: the handler is
+	// returning, and gRPC tears the stream down behind it. A Send already in
+	// flight is released by that teardown (the stream context unblocks it).
+	send := func(msg *filer_pb.SubscribeMetadataResponse) bool {
+		if s.ctx.Err() != nil {
+			return false
+		}
+		if err := stream.Send(msg); err != nil {
+			if s.ctx.Err() == nil {
+				s.reportErr(err)
+			}
+			return false
+		}
+		return true
+	}
 	for msg := range s.sendCh {
 		// LogFileRefs messages are unbatchable: the client recognizes them by
 		// the top-level field and skips the rest of the response, so a refs
@@ -141,8 +156,7 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 
 		if !shouldBatch {
 			// Real-time: send immediately for low latency
-			if err := stream.Send(msg); err != nil {
-				s.reportErr(err)
+			if !send(msg) {
 				return
 			}
 			continue
@@ -180,18 +194,14 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 			toSend = batch[0]
 			toSend.Events = batch[1:]
 		}
-		if err := stream.Send(toSend); err != nil {
-			s.reportErr(err)
+		if !send(toSend) {
 			return
 		}
 		if toSend.Events != nil {
 			toSend.Events = nil
 		}
-		if trailingSolo != nil {
-			if err := stream.Send(trailingSolo); err != nil {
-				s.reportErr(err)
-				return
-			}
+		if trailingSolo != nil && !send(trailingSolo) {
+			return
 		}
 	}
 }
@@ -206,6 +216,9 @@ func (s *pipelinedSender) reportErr(err error) {
 }
 
 func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case s.sendCh <- msg:
 		return nil

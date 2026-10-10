@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"sync/atomic"
 
 	"fmt"
 	"sync"
@@ -107,9 +108,16 @@ func TestPipelinedSenderRefsNeverBatched(t *testing.T) {
 
 type blockedStream struct {
 	release chan struct{}
+	entered chan struct{}
+	sends   atomic.Int32
 }
 
 func (s *blockedStream) Send(*filer_pb.SubscribeMetadataResponse) error {
+	s.sends.Add(1)
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
 	<-s.release
 	return nil
 }
@@ -145,5 +153,36 @@ func TestPipelinedSenderUnblocksOnCancel(t *testing.T) {
 	}
 	if err := sender.Close(); err != nil {
 		t.Fatalf("Close returned %v", err)
+	}
+}
+
+// Once the subscription context ends, sendLoop must not start another
+// stream.Send: the handler returns and gRPC ends the stream behind it, so a
+// send started then would race the stream's teardown. The one Send already
+// in flight is released by that teardown.
+func TestPipelinedSenderStopsSendingOnCancel(t *testing.T) {
+	stream := &blockedStream{release: make(chan struct{}), entered: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	sender := newPipelinedSender(ctx, stream, 4, false)
+
+	msg := &filer_pb.SubscribeMetadataResponse{EventNotification: &filer_pb.EventNotification{}}
+	if err := sender.Send(msg); err != nil {
+		t.Fatal(err)
+	}
+	<-stream.entered         // sendLoop is inside stream.Send
+	for i := 0; i < 2; i++ { // queued behind the blocked send
+		if err := sender.Send(msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cancel()
+	close(stream.release)
+
+	if err := sender.Close(); err != nil {
+		t.Fatalf("Close returned %v", err)
+	}
+	if n := stream.sends.Load(); n != 1 {
+		t.Fatalf("stream.Send ran %d times, want 1; a new send started after cancel", n)
 	}
 }
