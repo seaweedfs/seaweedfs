@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
@@ -814,6 +815,86 @@ func TestCheckMovePreconditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := checkMovePreconditions(tt.locations, 5, tt.sourceNode, tt.targetNode)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestCheckMoveDiskType(t *testing.T) {
+	volumeOnDisk := func(id uint32) []*master_pb.VolumeInformationMessage {
+		return []*master_pb.VolumeInformationMessage{{Id: id}}
+	}
+	topologyWith := func(sourceDisks, targetDisks map[string]*master_pb.DiskInfo) *master_pb.TopologyInfo {
+		return &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{
+			{RackInfos: []*master_pb.RackInfo{{DataNodeInfos: []*master_pb.DataNodeInfo{
+				{Id: "10.0.0.1:8080.18080", Address: "10.0.0.1:8080", DiskInfos: sourceDisks},
+				{Id: "10.0.0.2:8080.18080", Address: "10.0.0.2:8080", DiskInfos: targetDisks},
+			}}}},
+		}}
+	}
+
+	tests := []struct {
+		name       string
+		topology   *master_pb.TopologyInfo
+		volumeID   uint32
+		sourceNode string
+		targetNode string
+		wantErr    string
+	}{
+		{
+			name: "same disk type allowed",
+			topology: topologyWith(
+				map[string]*master_pb.DiskInfo{"backup-hdd": {VolumeInfos: volumeOnDisk(5)}},
+				map[string]*master_pb.DiskInfo{"backup-hdd": {}}),
+			volumeID: 5, sourceNode: "10.0.0.1:8080.18080", targetNode: "10.0.0.2:8080.18080",
+		},
+		{
+			name: "target without matching disk type rejected",
+			topology: topologyWith(
+				map[string]*master_pb.DiskInfo{"backup-hdd": {VolumeInfos: volumeOnDisk(5)}},
+				map[string]*master_pb.DiskInfo{"ssd": {}}),
+			volumeID: 5, sourceNode: "10.0.0.1:8080.18080", targetNode: "10.0.0.2:8080.18080",
+			wantErr: "has no backup-hdd disk",
+		},
+		{
+			name: "unknown volume skips check",
+			topology: topologyWith(
+				map[string]*master_pb.DiskInfo{"backup-hdd": {}},
+				map[string]*master_pb.DiskInfo{"ssd": {}}),
+			volumeID: 7, sourceNode: "10.0.0.1:8080.18080", targetNode: "10.0.0.2:8080.18080",
+		},
+		{
+			name: "unknown target skips check",
+			topology: topologyWith(
+				map[string]*master_pb.DiskInfo{"backup-hdd": {VolumeInfos: volumeOnDisk(5)}},
+				nil),
+			volumeID: 5, sourceNode: "10.0.0.1:8080.18080", targetNode: "10.0.0.9:8080.18080",
+		},
+		{
+			name:     "nil topology skips check",
+			topology: nil,
+			volumeID: 5, sourceNode: "10.0.0.1:8080.18080", targetNode: "10.0.0.2:8080.18080",
+		},
+		{
+			name: "nodes matched by address without grpc suffix",
+			topology: topologyWith(
+				map[string]*master_pb.DiskInfo{"backup-hdd": {VolumeInfos: volumeOnDisk(5)}},
+				map[string]*master_pb.DiskInfo{"ssd": {}}),
+			volumeID: 5, sourceNode: "10.0.0.1:8080", targetNode: "10.0.0.2:8080",
+			wantErr: "has no backup-hdd disk",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkMoveDiskType(tt.topology, tt.volumeID, tt.sourceNode, tt.targetNode)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
