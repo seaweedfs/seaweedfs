@@ -460,6 +460,7 @@ func (m *streamMutateMux) teardownStream(gen uint64) {
 		m.mu.Unlock()
 		return
 	}
+	filerIdx := m.filerIdx
 	m.stream = nil
 	if m.stopSend != nil {
 		close(m.stopSend)
@@ -471,6 +472,13 @@ func (m *streamMutateMux) teardownStream(gen uint64) {
 	}
 	conn := m.grpcConn
 	m.grpcConn = nil
+	// Rotate while still holding mu: a new generation cannot open until
+	// teardown releases the lock, so the index advanced here always belongs
+	// to the stream that just died — never to a successor ensureStream may
+	// have opened in between.
+	if n := int32(len(m.wfs.option.FilerAddresses)); n > 0 {
+		atomic.CompareAndSwapInt32(&m.wfs.option.filerIndex, filerIdx, (filerIdx+1)%n)
+	}
 	m.mu.Unlock()
 
 	// Do NOT call failAllPending here — recvLoop is the sole owner of
@@ -478,12 +486,6 @@ func (m *streamMutateMux) teardownStream(gen uint64) {
 	// closes a channel that recvLoop is about to send on.
 	if conn != nil {
 		conn.Close()
-	}
-
-	// The stream just proved its filer unreachable; point the sticky index at
-	// the next address so reopening rotates instead of redialing the dead one.
-	if n := int32(len(m.wfs.option.FilerAddresses)); n > 0 {
-		atomic.CompareAndSwapInt32(&m.wfs.option.filerIndex, m.filerIdx, (m.filerIdx+1)%n)
 	}
 }
 

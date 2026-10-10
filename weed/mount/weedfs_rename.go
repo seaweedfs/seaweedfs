@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -28,7 +29,17 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 		glog.V(1).Infof("Rename %s => %s: stream failed, falling back to unary: %v", oldPath, newPath, err)
 	}
 	return wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
-		stream, streamErr := client.StreamRenameEntry(ctx, request)
+		// The stream is dedicated to this attempt, so cancelling its context
+		// abandons just this rename. Bound the silence between events the way
+		// the mutation mux does: a filer that accepts the stream then stalls
+		// must not hold the failover walk hostage, but a long rename that
+		// keeps sending events may take as long as it needs.
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		silence := time.AfterFunc(wfs.filerRPCWait(), cancel)
+		defer silence.Stop()
+
+		stream, streamErr := client.StreamRenameEntry(streamCtx, request)
 		if streamErr != nil {
 			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
 		}
@@ -38,8 +49,12 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 				if recvErr == io.EOF {
 					break
 				}
+				if ctx.Err() == nil && streamCtx.Err() != nil {
+					return fmt.Errorf("dir Rename %s => %s: no event for %s", oldPath, newPath, wfs.filerRPCWait())
+				}
 				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
 			}
+			silence.Reset(wfs.filerRPCWait())
 			if err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock); err != nil {
 				return err
 			}

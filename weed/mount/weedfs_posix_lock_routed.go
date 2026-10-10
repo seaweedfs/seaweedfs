@@ -153,7 +153,7 @@ func posixLockContext(cancel <-chan struct{}) (context.Context, context.CancelFu
 
 func (wfs *WFS) callPosixLock(ctx context.Context, key string, op filer_pb.PosixLockOp, lk posixlock.Range) (*filer_pb.PosixLockResponse, error) {
 	var resp *filer_pb.PosixLockResponse
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		var e error
 		resp, e = client.PosixLock(ctx, &filer_pb.PosixLockRequest{
 			Key: key,
@@ -377,7 +377,7 @@ func (wfs *WFS) callPosixReassert(ctx context.Context, key string, locks []posix
 			Sid: l.Sid, Owner: l.Owner, Pid: l.Pid, IsFlock: l.IsFlock,
 		})
 	}
-	return wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	return wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		_, e := client.PosixLock(ctx, &filer_pb.PosixLockRequest{
 			Key:   key,
 			Op:    filer_pb.PosixLockOp_KEEP_ALIVE,

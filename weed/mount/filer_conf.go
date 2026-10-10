@@ -20,8 +20,8 @@ func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error)
 	confFullName := filepath.Join(filer.DirectoryEtcSeaweedFS, filer.FilerConfName)
 
 	// read current conf
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(context.Background(), client, confDir, confName)
+	err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		content, err := filer.ReadInsideFiler(ctx, client, confDir, confName)
 		if err != nil {
 			return err
 		}
