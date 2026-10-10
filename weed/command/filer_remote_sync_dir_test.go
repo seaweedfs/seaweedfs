@@ -1007,6 +1007,18 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 		}
 	})
 
+	t.Run("metadata-only delete keeps the remote object", func(t *testing.T) {
+		marked := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		marked.EventNotification.OldEntry.Extended = map[string][]byte{filer.ExtKeepRemoteObjectKey: []byte("true")}
+		remote := &recordingRemote{}
+		if err := processDeleteEvent(remote, mountedDir, mountLoc, marked); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
 	t.Run("other failure still fails", func(t *testing.T) {
 		remote := &recordingRemote{deleteErr: errors.New("AccessDenied: Access Denied")}
 		if err := processDeleteEvent(remote, mountedDir, mountLoc, resp); err == nil {

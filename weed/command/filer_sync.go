@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -671,7 +672,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
-			return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
+			return sink.DeleteEntry(dataSink, key, message.OldEntry.IsDirectory, message.DeleteChunks, filer.IsMetadataOnlyDelete(message.OldEntry), message.Signatures)
 		}
 
 		// handle new entries

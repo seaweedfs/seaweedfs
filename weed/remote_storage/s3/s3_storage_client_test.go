@@ -2,6 +2,7 @@ package s3
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
@@ -224,9 +226,8 @@ func (c *captureRoundTripper) uploadContentType() string {
 	return c.uploadReq.Header.Get("Content-Type")
 }
 
-func newCapturingS3Client(t *testing.T) (*s3RemoteStorageClient, *captureRoundTripper) {
+func newS3ClientWithTransport(t *testing.T, rt http.RoundTripper, supportTagging bool) *s3RemoteStorageClient {
 	t.Helper()
-	rt := &captureRoundTripper{}
 	conf := &remote_pb.RemoteConf{
 		Type:             "s3",
 		Name:             "test",
@@ -235,11 +236,17 @@ func newCapturingS3Client(t *testing.T) (*s3RemoteStorageClient, *captureRoundTr
 		S3ForcePathStyle: true,
 		S3AccessKey:      "test-key",
 		S3SecretKey:      "test-secret",
+		S3SupportTagging: supportTagging,
 	}
-	httpClient := &http.Client{Transport: rt}
-	rs, err := MakeWithHTTPClient(conf, httpClient)
+	rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: rt})
 	require.NoError(t, err)
-	return rs.(*s3RemoteStorageClient), rt
+	return rs.(*s3RemoteStorageClient)
+}
+
+func newCapturingS3Client(t *testing.T) (*s3RemoteStorageClient, *captureRoundTripper) {
+	t.Helper()
+	rt := &captureRoundTripper{}
+	return newS3ClientWithTransport(t, rt, false), rt
 }
 
 func TestS3WriteFilePassesMimeAsContentType(t *testing.T) {
@@ -281,19 +288,7 @@ func (c *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 func newRecordingS3Client(t *testing.T, supportTagging bool) (*s3RemoteStorageClient, *recordingRoundTripper) {
 	t.Helper()
 	rt := &recordingRoundTripper{}
-	conf := &remote_pb.RemoteConf{
-		Type:             "s3",
-		Name:             "test",
-		S3Region:         "us-east-1",
-		S3Endpoint:       "https://example.invalid",
-		S3ForcePathStyle: true,
-		S3AccessKey:      "test-key",
-		S3SecretKey:      "test-secret",
-		S3SupportTagging: supportTagging,
-	}
-	rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: rt})
-	require.NoError(t, err)
-	return rs.(*s3RemoteStorageClient), rt
+	return newS3ClientWithTransport(t, rt, supportTagging), rt
 }
 
 func TestS3UpdateFileMetadataSkipsTaggingWhenUnsupported(t *testing.T) {
@@ -344,4 +339,56 @@ func TestS3WriteFileOmitsContentTypeWhenMimeMissing(t *testing.T) {
 	// When entry.Attributes.Mime is empty we don't force a Content-Type so the
 	// remote can apply its own default rather than getting a misleading one.
 	require.Equal(t, "", rt.uploadContentType())
+}
+
+// errorRoundTripper answers every request with an S3 XML error.
+type errorRoundTripper struct {
+	statusCode int
+	code       string
+}
+
+func (e *errorRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	body := `<?xml version="1.0" encoding="UTF-8"?><Error><Code>` + e.code + `</Code><Message>m</Message></Error>`
+	return &http.Response{
+		StatusCode: e.statusCode,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/xml"}},
+		Request:    req,
+	}, nil
+}
+
+func TestS3ReadNotFoundClassification(t *testing.T) {
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "bucket", Path: "/obj.bin"}
+	tests := []struct {
+		name       string
+		statusCode int
+		code       string
+		notFound   bool
+	}{
+		{"missing key", http.StatusNotFound, "NoSuchKey", true},
+		{"missing bucket", http.StatusNotFound, "NoSuchBucket", false},
+		{"access denied", http.StatusForbidden, "AccessDenied", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newS3ClientWithTransport(t, &errorRoundTripper{statusCode: tt.statusCode, code: tt.code}, false)
+
+			_, err := client.ReadFile(loc, 0, 10)
+			require.Error(t, err)
+			require.Equal(t, tt.notFound, err == remote_storage.ErrRemoteObjectNotFound, "ReadFile: %v", err)
+
+			_, err = client.ReadFileAsStream(context.Background(), loc, 0, 10)
+			require.Error(t, err)
+			require.Equal(t, tt.notFound, err == remote_storage.ErrRemoteObjectNotFound, "ReadFileAsStream: %v", err)
+		})
+	}
+}
+
+func TestIsNoSuchKey(t *testing.T) {
+	require.True(t, isNoSuchKey(fmt.Errorf("download: %w", awserr.New(awss3.ErrCodeNoSuchKey, "missing", nil))))
+	require.False(t, isNoSuchKey(awserr.New(awss3.ErrCodeNoSuchBucket, "missing", nil)))
 }

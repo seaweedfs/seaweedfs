@@ -1169,10 +1169,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				entry = cachedEntry
 				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
 			} else if isFilerNotFound(cacheErr) {
-				// Authoritative: the entry vanished; the origin cannot resurrect it
-				glog.Errorf("streamFromVolumeServers: entry not found while caching %s/%s: %v", bucket, object, cacheErr)
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return newStreamErrorWithResponse(cacheErr)
+				// Authoritative: the entry vanished or its remote object is gone
+				return respondObjectGone(w, r, bucket, object, cacheErr)
 			} else {
 				// Client disconnected during the cache wait: report cancellation, not an
 				// error response, so we don't write to a closed connection.
@@ -1185,11 +1183,15 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				// latest-version read -- has no origin key, so it keeps the error
 				// paths below.
 				if cacheVersionId == "" || cacheVersionId == "null" {
-					if served, streamErr := s3a.serveObjectFromRemoteMount(w, r, entry, bucket, object, offset, size, isRangeRequest, totalSize, t0); served {
+					served, streamErr := s3a.serveObjectFromRemoteMount(w, r, entry, bucket, object, offset, size, isRangeRequest, totalSize, t0)
+					if served {
 						if streamErr != nil {
 							return newStreamErrorWithResponse(streamErr)
 						}
 						return nil
+					}
+					if errors.Is(streamErr, remote_storage.ErrRemoteObjectNotFound) {
+						return respondObjectGone(w, r, bucket, object, streamErr)
 					}
 				}
 				// Origin unreadable. A permanent cache error is final; a transient one
@@ -1398,14 +1400,21 @@ func probeReadable(ctx context.Context, reader ctxReaderAt, offset int64, timeou
 	return err
 }
 
+func respondObjectGone(w http.ResponseWriter, r *http.Request, bucket, object string, err error) error {
+	glog.V(1).Infof("streamFromVolumeServers: %s/%s not found: %v", bucket, object, err)
+	s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+	return newStreamErrorWithResponse(err)
+}
+
 // serveObjectFromRemoteMount serves [offset, offset+size) straight from the
 // mounted remote. served=false means nothing was written and the caller still
-// owns the error path; once served is true the response is committed.
+// owns the error path, with err saying why the origin could not be opened; once
+// served is true the response is committed.
 func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object string, offset, size int64, isRangeRequest bool, totalSize int64, t0 time.Time) (served bool, err error) {
 	remoteReader, remoteErr := s3a.openRemoteStream(r.Context(), bucket, object, offset, size, nil)
 	if remoteErr != nil {
 		glog.Warningf("streamFromVolumeServers: origin stream %s/%s: %v", bucket, object, remoteErr)
-		return false, nil
+		return false, remoteErr
 	}
 	defer remoteReader.Close()
 

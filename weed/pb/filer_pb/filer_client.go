@@ -340,6 +340,10 @@ func DoRemoveWithResponse(ctx context.Context, client SeaweedFilerClient, parent
 		IsFromOtherCluster:   isFromOtherCluster,
 		Signatures:           signatures,
 	}
+	return DoRemoveRequest(ctx, client, deleteEntryRequest)
+}
+
+func DoRemoveRequest(ctx context.Context, client SeaweedFilerClient, deleteEntryRequest *DeleteEntryRequest) (*DeleteEntryResponse, error) {
 	if resp, err := client.DeleteEntry(ctx, deleteEntryRequest); err != nil {
 		if strings.Contains(err.Error(), ErrNotFound.Error()) {
 			return nil, nil

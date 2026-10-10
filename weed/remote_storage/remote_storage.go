@@ -80,7 +80,7 @@ type Bucket struct {
 	CreatedAt time.Time
 }
 
-// ErrRemoteObjectNotFound is returned by StatFile when the object does not exist in the remote storage backend.
+// ErrRemoteObjectNotFound is returned by StatFile and the ReadFile variants when the object does not exist in the remote storage backend.
 var ErrRemoteObjectNotFound = errors.New("remote object not found")
 
 type RemoteStorageClient interface {

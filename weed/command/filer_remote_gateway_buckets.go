@@ -287,6 +287,10 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
+			if filer.IsMetadataOnlyDelete(message.OldEntry) {
+				glog.V(2).Infof("skipping remote delete of metadata-only delete: %s/%s", resp.Directory, message.OldEntry.Name)
+				return nil
+			}
 			if resp.Directory == option.bucketsDir {
 				return handleDeleteBucket(message.OldEntry)
 			}

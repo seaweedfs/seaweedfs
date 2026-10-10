@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -100,7 +101,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 
 	if oldEntry != nil && newEntry == nil {
 		glog.V(4).Infof("deleting %v", oldSinkKey)
-		return r.sink.DeleteEntry(oldSinkKey, oldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
+		return sink.DeleteEntry(r.sink, oldSinkKey, oldEntry.IsDirectory, message.DeleteChunks, filer.IsMetadataOnlyDelete(oldEntry), message.Signatures)
 	}
 	if oldEntry == nil && newEntry != nil {
 		glog.V(4).Infof("creating %v", oldSinkKey)
