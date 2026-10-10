@@ -116,8 +116,9 @@ func (opt *FastPathOptimizer) CollectDataSourcesWithTimeFilter(ctx context.Conte
 		// Read parquet file statistics
 		parquetStats, err := hybridScanner.ReadParquetStatistics(partitionPath)
 		if err != nil {
-			if isDebugMode(ctx) {
-				fmt.Printf("  ERROR: Failed to read parquet statistics: %v\n", err)
+			return dataSources, DataSourceError{
+				Source: "parquet_statistics",
+				Cause:  fmt.Errorf("partition %s: %w", partitionPath, err),
 			}
 		} else if len(parquetStats) == 0 {
 			if isDebugMode(ctx) {
@@ -141,8 +142,9 @@ func (opt *FastPathOptimizer) CollectDataSourcesWithTimeFilter(ctx context.Conte
 		parquetSources := opt.engine.extractParquetSourceFiles(dataSources.ParquetFiles[partitionPath])
 		liveLogCount, liveLogErr := opt.engine.countLiveLogRowsExcludingParquetSources(ctx, partitionPath, parquetSources)
 		if liveLogErr != nil {
-			if isDebugMode(ctx) {
-				fmt.Printf("  ERROR: Failed to count live log rows: %v\n", liveLogErr)
+			return dataSources, DataSourceError{
+				Source: "live_log_count",
+				Cause:  fmt.Errorf("partition %s: %w", partitionPath, liveLogErr),
 			}
 		} else {
 			dataSources.LiveLogRowCount += liveLogCount
@@ -308,7 +310,7 @@ func (comp *AggregationComputer) computeGlobalMin(spec AggregationSpec, dataSour
 
 			liveLogMin, _, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
 			if err != nil {
-				continue // Skip partitions with errors
+				return nil, err
 			}
 
 			if liveLogMin != nil {
@@ -384,7 +386,7 @@ func (comp *AggregationComputer) computeGlobalMax(spec AggregationSpec, dataSour
 
 			_, liveLogMax, err := comp.engine.computeLiveLogMinMax(partition, spec.Column, partitionParquetSources)
 			if err != nil {
-				continue // Skip partitions with errors
+				return nil, err
 			}
 
 			if liveLogMax != nil {

@@ -1140,9 +1140,7 @@ func (h *HybridMessageScanner) ReadParquetStatistics(partitionPath string) ([]*P
 		// Extract statistics from this parquet file
 		stats, err := h.extractParquetFileStats(entry, lookupFileIdFn, chunkCache)
 		if err != nil {
-			// Log error but continue processing other files
-			fmt.Printf("Warning: failed to extract stats from %s: %v\n", entry.Name, err)
-			return nil
+			return err
 		}
 
 		if stats != nil {
