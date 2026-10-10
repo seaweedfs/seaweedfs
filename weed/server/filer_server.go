@@ -91,6 +91,9 @@ type FilerOption struct {
 	TusSessionExpiry          time.Duration
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
+	// AnnounceCh, when set, must be closed before the filer registers on the
+	// master; it joins the filer list only once the gRPC port is serving.
+	AnnounceCh chan struct{}
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
@@ -154,6 +157,11 @@ type FilerServer struct {
 	// verifying a forwarded request's peer does not pay a DNS lookup per hop.
 	ringPeerIPs      atomic.Pointer[ringPeerIPs]
 	ringResolveGroup singleflight.Group
+
+	// masterCtx drives KeepConnectedToMaster; cancelling it ends the stream
+	// so the master drops this filer from its list before gRPC stops.
+	masterCtx    context.Context
+	masterCancel context.CancelFunc
 
 	// entryLockTable serializes mutations to the same entry path on this filer.
 	// CreateEntry takes it today; UpdateEntry and DeleteEntry are intended to take
@@ -265,7 +273,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
+	if option.AnnounceCh != nil {
+		fs.filer.MasterClient.SetAnnounceCh(option.AnnounceCh)
+	}
+	fs.masterCtx, fs.masterCancel = context.WithCancel(context.Background())
+	go fs.filer.MasterClient.KeepConnectedToMaster(fs.masterCtx)
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
@@ -376,6 +388,9 @@ func (fs *FilerServer) checkWithMaster() {
 // This prevents data corruption when the process receives SIGTERM during active uploads.
 func (fs *FilerServer) Shutdown() {
 	glog.V(0).Infof("Shutting down filer")
+	if fs.masterCancel != nil {
+		fs.masterCancel()
+	}
 	if fs.posixLockSweeperStop != nil {
 		close(fs.posixLockSweeperStop)
 	}
@@ -409,6 +424,11 @@ func (fs *FilerServer) leaveLockRingWithin(removalTimeout, budget time.Duration)
 	case <-left:
 	case <-time.After(budget):
 		glog.Warningf("LockRing: %s did not finish leaving within %v, shutting down anyway", fs.option.Host, budget)
+	}
+	// End the master stream so the master drops this filer from the cluster
+	// list before gRPC stops accepting connections.
+	if fs.masterCancel != nil {
+		fs.masterCancel()
 	}
 }
 
