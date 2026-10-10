@@ -63,7 +63,9 @@ func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 	upload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fid := strings.TrimPrefix(r.URL.Path, "/")
 		if r.Method == http.MethodGet {
+			v.mu.Lock()
 			data, ok := v.stored[fid]
+			v.mu.Unlock()
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -362,7 +364,9 @@ func TestFetchChunkDataDecryptsVolumeCipher(t *testing.T) {
 		t.Fatal(err)
 	}
 	fid := "3,01637037d6"
+	volume.mu.Lock()
 	volume.stored[fid] = ciphertext
+	volume.mu.Unlock()
 
 	full, err := s3a.fetchFullChunk(context.Background(), &filer.ChunkView{
 		FileId: fid, ChunkSize: uint64(len(plaintext)), CipherKey: cipherKey,
@@ -388,7 +392,9 @@ func TestFetchChunkDataDecryptsVolumeCipher(t *testing.T) {
 		t.Fatalf("ranged ciphered read = %q, want %q", got, plaintext[5:9])
 	}
 
+	volume.mu.Lock()
 	volume.stored[fid] = plaintext
+	volume.mu.Unlock()
 	plain, err := s3a.fetchChunkViewData(context.Background(), &filer.ChunkView{
 		FileId: fid, OffsetInChunk: 5, ViewSize: 4, ChunkSize: uint64(len(plaintext)),
 	})
