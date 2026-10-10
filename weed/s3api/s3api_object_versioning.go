@@ -328,6 +328,10 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	if maxKeys > 1000 {
 		maxKeys = 1000
 	}
+	// max-keys=0 asks for an empty, non-truncated page; no need to scan the bucket
+	if maxKeys <= 0 {
+		return s3a.splitIntoResult(nil, bucket, prefix, keyMarker, versionIdMarker, delimiter, 0, false, "", ""), nil
+	}
 	// Pre-allocate with capacity for maxKeys+1 to reduce reallocations
 	// The extra 1 is for truncation detection
 	allVersions := make([]interface{}, 0, maxKeys+1)
@@ -1906,12 +1910,10 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	versionIdMarker := query.Get("version-id-marker")
 	delimiter := query.Get("delimiter")
 
-	maxKeysStr := query.Get("max-keys")
-	maxKeys := 1000
-	if maxKeysStr != "" {
-		if mk, err := strconv.Atoi(maxKeysStr); err == nil && mk > 0 {
-			maxKeys = mk
-		}
+	maxKeys, errCode := parseMaxKeys(query.Get("max-keys"))
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
 	}
 
 	// List versions
