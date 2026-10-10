@@ -5,9 +5,12 @@ package azure
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -24,6 +27,93 @@ import (
 func init() {
 	// Register the Azure Key Vault provider
 	seaweedkms.RegisterProvider("azure", NewAzureKMSProvider)
+}
+
+// vaultHost returns the host of a configured Key Vault URL, or "" when the URL
+// carries none. Hosts are compared case-insensitively, without a trailing dot,
+// and without an explicit :443, which names the same vault as no port.
+func vaultHost(vaultURL string) string {
+	parsed, err := url.Parse(vaultURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Host), ":443")
+	return strings.TrimSuffix(host, ".")
+}
+
+// splitKeyID turns a Key Vault key identifier into the (name, version) pair the
+// azkeys client expects. A plain key name, or anything that is not a URL, is
+// returned unchanged together with an empty version, which the client resolves
+// to the latest version.
+//
+// A URL naming a different vault than the one this provider is configured for
+// is rejected: the client addresses only its own vault, so dropping the host
+// would silently encrypt under this vault's same-named key. A URL for this
+// vault that does not name a key under /keys/ is rejected too: passing the URL
+// on as a key name would only surface as a confusing vault-side 404.
+func (p *AzureKMSProvider) splitKeyID(keyID string) (string, string, error) {
+	parsed, err := url.Parse(keyID)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return keyID, "", nil
+	}
+	if host := vaultHost(p.vaultURL); host != "" && vaultHost(keyID) != host {
+		return "", "", fmt.Errorf("key ID %q names vault %q, but this provider is configured for %q", keyID, parsed.Host, host)
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 || parts[0] != "keys" || parts[1] == "" {
+		return "", "", fmt.Errorf("key ID %q is a Key Vault URL but does not name a key", keyID)
+	}
+	if len(parts) == 2 {
+		return parts[1], "", nil
+	}
+	if len(parts) == 3 {
+		return parts[1], parts[2], nil
+	}
+	return "", "", fmt.Errorf("key ID %q has too many path segments for a key URL", keyID)
+}
+
+// encodeCiphertext stores the wrapped data key in the JSON envelope as base64.
+// The envelope is JSON, so raw binary would be replaced by U+FFFD on the way in.
+func encodeCiphertext(ciphertext []byte) string {
+	return base64.StdEncoding.EncodeToString(ciphertext)
+}
+
+// contextDigest digests the encryption context for storage in the envelope.
+// RSA-OAEP takes no AAD, so the context is bound to the wrapped key by
+// recording its hash and checking it on decrypt instead. Unlike KMS-checked
+// AAD this is a client-side mismatch check only — it is not authenticated by
+// the vault, and an actor who can rewrite an object's envelope could swap in
+// a ciphertext and digest from another object.
+func contextDigest(context map[string]string) string {
+	encoded, _ := json.Marshal(context) // map keys marshal in sorted order
+	sum := sha256.Sum256(encoded)
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// checkContext verifies the request's encryption context matches the context
+// recorded when the key was wrapped.
+func checkContext(envelope *seaweedkms.CiphertextEnvelope, context map[string]string) error {
+	recorded, _ := envelope.ProviderSpecific["encryption_context_sha256"].(string)
+	if recorded == "" {
+		if len(context) == 0 {
+			return nil
+		}
+	} else if recorded == contextDigest(context) {
+		return nil
+	}
+	return fmt.Errorf("encryption context does not match the wrapped key")
+}
+
+// decodeCiphertext reads back what encodeCiphertext wrote.
+func decodeCiphertext(ciphertext string) ([]byte, error) {
+	decoded, err := base64.StdEncoding.Strict().DecodeString(ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("wrapped data key is not valid base64: %w", err)
+	}
+	if len(decoded) == 0 {
+		return nil, fmt.Errorf("wrapped data key is empty")
+	}
+	return decoded, nil
 }
 
 // AzureKMSProvider implements the KMSProvider interface using Azure Key Vault
@@ -155,19 +245,23 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 		Value:     dataKey,
 	}
 
-	// Add encryption context as Additional Authenticated Data (AAD) if provided
+	// RSA-OAEP takes no additional authenticated data: Key Vault rejects the
+	// request with BadParameter when AAD is set on an RSA-OAEP key. The
+	// context is bound to the wrapped key via a digest in the envelope
+	// instead, which Decrypt verifies.
+	var providerSpecific map[string]interface{}
 	if len(req.EncryptionContext) > 0 {
-		// Marshal encryption context to JSON for deterministic AAD
-		aadBytes, err := json.Marshal(req.EncryptionContext)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal encryption context: %w", err)
+		providerSpecific = map[string]interface{}{
+			"encryption_context_sha256": contextDigest(req.EncryptionContext),
 		}
-		encryptParams.AAD = aadBytes
-		glog.V(4).Infof("Azure KMS: Using encryption context as AAD for key %s", req.KeyID)
 	}
 
 	// Call Azure Key Vault to encrypt the data key
-	encryptResult, err := p.client.Encrypt(ctx, req.KeyID, "", encryptParams, nil)
+	keyName, keyVersion, err := p.splitKeyID(req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	encryptResult, err := p.client.Encrypt(ctx, keyName, keyVersion, encryptParams, nil)
 	if err != nil {
 		return nil, p.convertAzureError(err, req.KeyID)
 	}
@@ -179,7 +273,7 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 	}
 
 	// Create standardized envelope format for consistent API behavior
-	envelopeBlob, err := seaweedkms.CreateEnvelope("azure", actualKeyID, string(encryptResult.Result), nil)
+	envelopeBlob, err := seaweedkms.CreateEnvelope("azure", actualKeyID, encodeCiphertext(encryptResult.Result), providerSpecific)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ciphertext envelope: %w", err)
 	}
@@ -215,8 +309,11 @@ func (p *AzureKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptR
 		return nil, fmt.Errorf("envelope missing key ID")
 	}
 
-	// Convert string back to bytes
-	ciphertext := []byte(envelope.Ciphertext)
+	// Convert the base64 envelope field back to the raw wrapped key
+	ciphertext, err := decodeCiphertext(envelope.Ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Azure ciphertext envelope: %w", err)
+	}
 
 	// Prepare decryption parameters
 	decryptAlgorithm := azkeys.JSONWebKeyEncryptionAlgorithmRSAOAEP256
@@ -225,20 +322,19 @@ func (p *AzureKMSProvider) Decrypt(ctx context.Context, req *seaweedkms.DecryptR
 		Value:     ciphertext,
 	}
 
-	// Add encryption context as Additional Authenticated Data (AAD) if provided
-	if len(req.EncryptionContext) > 0 {
-		// Marshal encryption context to JSON for deterministic AAD (must match encryption)
-		aadBytes, err := json.Marshal(req.EncryptionContext)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal encryption context: %w", err)
-		}
-		decryptParams.AAD = aadBytes
-		glog.V(4).Infof("Azure KMS: Using encryption context as AAD for decryption of key %s", keyID)
+	// RSA-OAEP takes no AAD, so the encryption context is bound via a digest
+	// recorded in the envelope rather than authenticated by the vault.
+	if err := checkContext(envelope, req.EncryptionContext); err != nil {
+		return nil, err
 	}
 
 	// Call Azure Key Vault to decrypt the data key
 	glog.V(4).Infof("Azure KMS: Decrypting data key using key %s", keyID)
-	decryptResult, err := p.client.Decrypt(ctx, keyID, "", decryptParams, nil)
+	decryptName, decryptVersion, err := p.splitKeyID(keyID)
+	if err != nil {
+		return nil, err
+	}
+	decryptResult, err := p.client.Decrypt(ctx, decryptName, decryptVersion, decryptParams, nil)
 	if err != nil {
 		return nil, p.convertAzureError(err, keyID)
 	}
@@ -270,7 +366,11 @@ func (p *AzureKMSProvider) DescribeKey(ctx context.Context, req *seaweedkms.Desc
 
 	// Get key from Azure Key Vault
 	glog.V(4).Infof("Azure KMS: Describing key %s", req.KeyID)
-	result, err := p.client.GetKey(ctx, req.KeyID, "", nil)
+	describeName, describeVersion, err := p.splitKeyID(req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := p.client.GetKey(ctx, describeName, describeVersion, nil)
 	if err != nil {
 		return nil, p.convertAzureError(err, req.KeyID)
 	}
