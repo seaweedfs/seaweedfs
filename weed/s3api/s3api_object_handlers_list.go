@@ -171,10 +171,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if maxKeys < 0 {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
-		return
-	}
+	// maxKeys is uint16 here; negative values are rejected during parsing.
 
 	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
 	if allowUnordered && delimiter != "" {
@@ -192,7 +189,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		marker:          marker,
 		requestMarker:   requestMarker,
 		delimiter:       delimiter,
-		maxKeys:         uint16(maxKeys),
+		maxKeys:         maxKeys,
 		encodingTypeUrl: encodingTypeUrl,
 		fetchOwner:      true,
 	})
@@ -1313,16 +1310,9 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	startAfter = values.Get("start-after")
 	delimiter = values.Get("delimiter")
 	encodingTypeUrl = values.Get("encoding-type") == s3.EncodingTypeUrl
-	if values.Get("max-keys") != "" {
-		if maxKeys, err := strconv.ParseUint(values.Get("max-keys"), 10, 16); err == nil {
-			maxkeys = uint16(maxKeys)
-		} else {
-			// Invalid max-keys value (non-numeric)
-			errCode = s3err.ErrInvalidMaxKeys
-			return
-		}
-	} else {
-		maxkeys = maxObjectListSizeLimit
+	maxkeys, errCode = parseMaxKeys(values.Get("max-keys"))
+	if errCode != s3err.ErrNone {
+		return
 	}
 	fetchOwner = values.Get("fetch-owner") == "true"
 	allowUnordered = values.Get("allow-unordered") == "true"
@@ -1330,25 +1320,35 @@ func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter stri
 	return
 }
 
-func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys int16, allowUnordered bool, errCode s3err.ErrorCode) {
+func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, encodingTypeUrl bool, maxkeys uint16, allowUnordered bool, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	marker = values.Get("marker")
 	delimiter = values.Get("delimiter")
 	encodingTypeUrl = values.Get("encoding-type") == "url"
-	if values.Get("max-keys") != "" {
-		if maxKeys, err := strconv.ParseInt(values.Get("max-keys"), 10, 16); err == nil {
-			maxkeys = int16(maxKeys)
-		} else {
-			// Invalid max-keys value (non-numeric)
-			errCode = s3err.ErrInvalidMaxKeys
-			return
-		}
-	} else {
-		maxkeys = maxObjectListSizeLimit
+	maxkeys, errCode = parseMaxKeys(values.Get("max-keys"))
+	if errCode != s3err.ErrNone {
+		return
 	}
 	allowUnordered = values.Get("allow-unordered") == "true"
 	errCode = s3err.ErrNone
 	return
+}
+
+// parseMaxKeys parses the max-keys query parameter. Like AWS S3, any integer in
+// [0, 2147483647] is accepted and the page size is capped at maxObjectListSizeLimit;
+// an empty value means the default limit, anything else is ErrInvalidMaxKeys.
+func parseMaxKeys(value string) (uint16, s3err.ErrorCode) {
+	if value == "" {
+		return maxObjectListSizeLimit, s3err.ErrNone
+	}
+	maxKeys, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || maxKeys < 0 {
+		return 0, s3err.ErrInvalidMaxKeys
+	}
+	if maxKeys > maxObjectListSizeLimit {
+		return maxObjectListSizeLimit, s3err.ErrNone
+	}
+	return uint16(maxKeys), s3err.ErrNone
 }
 
 // compareWithDelimiter compares two strings for sorting, treating the delimiter character
