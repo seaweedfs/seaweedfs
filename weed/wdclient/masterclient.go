@@ -184,10 +184,21 @@ func (mc *MasterClient) SetAnnounceCh(ch chan struct{}) {
 // ListMasters returns the configured master addresses without waiting for a
 // connection, for callers that run before KeepConnectedToMaster is connected.
 func (mc *MasterClient) ListMasters() []pb.ServerAddress {
+	mc.refreshMasters()
+	return mc.masterInstances()
+}
+
+// refreshMasters resolves the SRV record outside mastersLock so a slow DNS
+// lookup does not stall masterInstances readers; the lock only covers saving
+// the resolved list.
+func (mc *MasterClient) refreshMasters() {
+	newList := mc.masters.LookupSrvInstances()
+	if newList == nil {
+		return
+	}
 	mc.mastersLock.Lock()
 	defer mc.mastersLock.Unlock()
-	mc.masters.RefreshBySrvIfAvailable()
-	return mc.masters.GetInstances()
+	mc.masters.SetInstances(newList)
 }
 
 // masterInstances returns a consistent copy of the configured masters,
@@ -239,10 +250,8 @@ func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerA
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 	var nextHintedLeader pb.ServerAddress
 	failedMasters := make(map[pb.ServerAddress]struct{})
-	mc.mastersLock.Lock()
-	mc.masters.RefreshBySrvIfAvailable()
-	masterAddrs := mc.masters.GetInstances()
-	mc.mastersLock.Unlock()
+	mc.refreshMasters()
+	masterAddrs := mc.masterInstances()
 	for _, master := range masterAddrs {
 		if _, failed := failedMasters[master]; failed {
 			continue
