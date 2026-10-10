@@ -7,6 +7,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 )
@@ -183,5 +185,26 @@ func (s3a *S3ApiServer) applyCopyBucketDefaultEncryption(state *EncryptionState,
 				state.DstSSES3 = true
 			}
 		}
+	}
+}
+
+// applyCopyBucketDefaultEncryptionHeaders surfaces a bucket's default
+// encryption as request headers, so multi-chunk copy paths that only read
+// request headers honor it too.
+func applyCopyBucketDefaultEncryptionHeaders(r *http.Request, cfg *s3_pb.EncryptionConfiguration) {
+	if cfg == nil {
+		return
+	}
+	switch cfg.SseAlgorithm {
+	case EncryptionTypeKMS:
+		r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
+		if cfg.KmsKeyId != "" {
+			r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, cfg.KmsKeyId)
+		}
+		if cfg.BucketKeyEnabled {
+			r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
+		}
+	case EncryptionTypeAES256:
+		r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
 	}
 }

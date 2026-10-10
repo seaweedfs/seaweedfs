@@ -163,19 +163,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	// default encryption, including its configured KMS key and bucket-key
 	// setting. Surface them as headers so every downstream parse sees them.
 	if !IsSSECRequest(r) && r.Header.Get(s3_constants.AmzServerSideEncryption) == "" {
-		if encryptionConfig, err := s3a.GetBucketEncryptionConfig(dstBucket); err == nil && encryptionConfig != nil {
-			switch encryptionConfig.SseAlgorithm {
-			case EncryptionTypeKMS:
-				r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
-				if encryptionConfig.KmsKeyId != "" {
-					r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, encryptionConfig.KmsKeyId)
-				}
-				if encryptionConfig.BucketKeyEnabled {
-					r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
-				}
-			case EncryptionTypeAES256:
-				r.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
-			}
+		if encryptionConfig, err := s3a.GetBucketEncryptionConfig(dstBucket); err == nil {
+			applyCopyBucketDefaultEncryptionHeaders(r, encryptionConfig)
 		}
 	}
 
