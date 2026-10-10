@@ -2605,6 +2605,11 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 		}
 		// Empty stored ETag — fall through to Md5/chunk-based calculation
 	}
+	// Cache fills preserve the origin validator; local writes clear the sync stamp.
+	if remote := entry.RemoteEntry; remote != nil && remote.RemoteETag != "" &&
+		(len(entry.Chunks) == 0 || remote.LastLocalSyncTsNs > 0) {
+		return quoteETag(remote.RemoteETag)
+	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
 	// Note: len(nil slice) == 0 in Go, so no need for explicit nil check
 	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
