@@ -458,23 +458,50 @@ const masterRemovalWaitBudget = 5 * time.Second
 // unwinds, which is asynchronous to cancel, so new requests could otherwise
 // route to this filer after its gRPC listener has already closed.
 func (fs *FilerServer) waitForClusterRemoval() {
-	deadline := time.Now().Add(masterRemovalWaitBudget)
-	for {
-		listed := false
+	ctx, cancel := context.WithTimeout(context.Background(), masterRemovalWaitBudget)
+	defer cancel()
+	confirmedAbsent := make(map[pb.ServerAddress]struct{})
+	for ctx.Err() == nil {
+		pending := false
 		for _, master := range fs.filer.MasterClient.ListMasters() {
-			queryCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			nodes := cluster.ListExistingPeerUpdates(queryCtx, master, fs.grpcDialOption, fs.filer.MasterClient.FilerGroup, cluster.FilerType)
-			cancel()
+			if _, ok := confirmedAbsent[master]; ok {
+				continue
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			// The per-query timeout shares the overall deadline, so a stalled
+			// master cannot stretch the wait past the budget.
+			queryCtx, queryCancel := context.WithTimeout(ctx, 2*time.Second)
+			nodes, err := cluster.ListExistingPeerUpdates(queryCtx, master, fs.grpcDialOption, fs.filer.MasterClient.FilerGroup, cluster.FilerType)
+			queryCancel()
+			if err != nil {
+				// A failed query is not confirmed removal; retry until the
+				// master answers or the overall deadline expires.
+				pending = true
+				continue
+			}
+			listed := false
 			for _, node := range nodes {
 				if node.Address == string(fs.option.Host) {
 					listed = true
+					break
 				}
 			}
+			if listed {
+				pending = true
+			} else {
+				confirmedAbsent[master] = struct{}{}
+			}
 		}
-		if !listed || time.Now().After(deadline) {
+		if !pending {
 			return
 		}
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 }
 
