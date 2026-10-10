@@ -203,7 +203,7 @@ func applyCopyBucketDefaultEncryptionHeaders(r *http.Request, cfg *s3_pb.Encrypt
 		// key ID here would let the copy paths take their plaintext branch.
 		keyID := cfg.KmsKeyId
 		if keyID == "" {
-			keyID = "alias/aws/s3"
+			keyID = s3_constants.SSEKMSDefaultKeyID
 		}
 		r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, keyID)
 		if cfg.BucketKeyEnabled {
