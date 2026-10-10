@@ -265,3 +265,28 @@ func TestUpdateEntryBackfillsMissingLegacyInode(t *testing.T) {
 	assert.NotZero(t, stored.Attr.Inode)
 	assert.NotEqual(t, uint64(1), stored.Attr.Inode)
 }
+
+// A transient store error must fail the write instead of being mistaken for a
+// missing entry: on upsert stores proceeding would replace the entry without
+// loading the old chunks, orphaning them from cleanup.
+func TestCreateEntryFailsWhenLookupErrors(t *testing.T) {
+	f, store := newTestFilerWithStubStore()
+	path := util.FullPath("/dir/file.txt")
+	require.NoError(t, store.InsertEntry(context.Background(), &Entry{
+		FullPath: path,
+		Content:  []byte("existing"),
+	}))
+	store.findErr = errors.New("transient store failure")
+
+	entry := &Entry{
+		FullPath: path,
+		Attr:     Attr{Mode: 0o644},
+		Content:  []byte("overwrite"),
+	}
+	require.Error(t, f.CreateEntry(context.Background(), entry, nil, false, false, nil, false, f.MaxFilenameLength))
+
+	store.findErr = nil
+	stored, findErr := store.FindEntry(context.Background(), path)
+	require.NoError(t, findErr)
+	assert.Equal(t, "existing", string(stored.Content))
+}
