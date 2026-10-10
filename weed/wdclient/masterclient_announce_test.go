@@ -30,8 +30,14 @@ func TestAnnounceGateDelaysRegistration(t *testing.T) {
 
 	// WaitUntilConnected returns once the stream is established, before any
 	// registration: queries (e.g. loading a chunked filer.conf during
-	// startup) must not block behind the gate.
-	mc.WaitUntilConnected(ctx)
+	// startup) must not block behind the gate. Bound the wait so a
+	// regression fails fast instead of hanging the test run.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer waitCancel()
+	mc.WaitUntilConnected(waitCtx)
+	if err := waitCtx.Err(); err != nil {
+		t.Fatalf("master stream not established within 3s: %v", err)
+	}
 	got := make(chan pb.ServerAddress, 1)
 	go func() { got <- mc.GetMaster(ctx) }()
 	select {
