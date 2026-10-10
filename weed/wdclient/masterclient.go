@@ -153,6 +153,7 @@ type MasterClient struct {
 	lastServedMaster     pb.ServerAddress
 	currentMasterLock    sync.RWMutex
 	masters              pb.ServerDiscovery
+	mastersLock          sync.Mutex
 	grpcDialOption       grpc.DialOption
 	grpcTimeout          time.Duration // Timeout for gRPC calls to master
 	OnPeerUpdate         func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
@@ -183,7 +184,17 @@ func (mc *MasterClient) SetAnnounceCh(ch chan struct{}) {
 // ListMasters returns the configured master addresses without waiting for a
 // connection, for callers that run before KeepConnectedToMaster is connected.
 func (mc *MasterClient) ListMasters() []pb.ServerAddress {
+	mc.mastersLock.Lock()
+	defer mc.mastersLock.Unlock()
 	mc.masters.RefreshBySrvIfAvailable()
+	return mc.masters.GetInstances()
+}
+
+// masterInstances returns a consistent copy of the configured masters,
+// serialized against SRV refreshes.
+func (mc *MasterClient) masterInstances() []pb.ServerAddress {
+	mc.mastersLock.Lock()
+	defer mc.mastersLock.Unlock()
 	return mc.masters.GetInstances()
 }
 
@@ -228,8 +239,11 @@ func (mc *MasterClient) SetOnMasterChangeFn(fn func(previous, current pb.ServerA
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 	var nextHintedLeader pb.ServerAddress
 	failedMasters := make(map[pb.ServerAddress]struct{})
+	mc.mastersLock.Lock()
 	mc.masters.RefreshBySrvIfAvailable()
-	for _, master := range mc.masters.GetInstances() {
+	masterAddrs := mc.masters.GetInstances()
+	mc.mastersLock.Unlock()
+	for _, master := range masterAddrs {
 		if _, failed := failedMasters[master]; failed {
 			continue
 		}
@@ -624,14 +638,14 @@ func (mc *MasterClient) GetMaster(ctx context.Context) pb.ServerAddress {
 // See GetMaster() for important initialization contract details.
 func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
 	mc.WaitUntilConnected(ctx)
-	return mc.masters.GetInstances()
+	return mc.masterInstances()
 }
 
 // ListMasterSet returns a set of configured master addresses keyed by their
 // canonical http form. Unlike GetMasters this does not wait for a connection,
 // so it is safe to call from admission paths that must stay non-blocking.
 func (mc *MasterClient) ListMasterSet() map[string]struct{} {
-	addrs := mc.masters.GetInstances()
+	addrs := mc.masterInstances()
 	set := make(map[string]struct{}, len(addrs))
 	for _, a := range addrs {
 		set[a.ToHttpAddress()] = struct{}{}
@@ -695,7 +709,7 @@ func (mc *MasterClient) KeepConnectedToMaster(ctx context.Context) {
 }
 
 func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddress) (leader string) {
-	for _, master := range mc.masters.GetInstances() {
+	for _, master := range mc.masterInstances() {
 		if master == myMasterAddress {
 			continue
 		}
