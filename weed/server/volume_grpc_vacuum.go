@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc/status"
 )
 
 var numCPU = runtime.NumCPU()
@@ -96,6 +97,16 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 		return nil, err
 	}
 
+	release, err := vs.acquireVacuumCommitSlot(ctx)
+	if err != nil {
+		glog.Warningf("commit volume %d not started: %v", req.VolumeId, err)
+		return nil, status.FromContextError(err).Err()
+	}
+	defer release()
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
+
 	start := time.Now()
 	defer func(start time.Time) {
 		stats.VolumeServerVacuumingHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds())
@@ -115,6 +126,32 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 	glog.V(1).Infof("commit volume %d", req.VolumeId)
 	return resp, nil
 
+}
+
+// acquireVacuumCommitSlot waits for a commit slot without holding any volume
+// lock, so a queued commit does not stall reads; the wait counts against the
+// caller's deadline.
+func (vs *VolumeServer) acquireVacuumCommitSlot(ctx context.Context) (release func(), err error) {
+	if vs.vacuumCommitSlots == nil {
+		return func() {}, nil
+	}
+	vs.vacuumCommitsWaiting.Add(1)
+	select {
+	case vs.vacuumCommitSlots <- struct{}{}:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	vs.vacuumCommitsWaiting.Add(-1)
+	if err != nil {
+		return nil, err
+	}
+	release = func() { <-vs.vacuumCommitSlots }
+	// select picks randomly when the slot and the deadline are ready together.
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_server_pb.VacuumVolumeCleanupRequest) (*volume_server_pb.VacuumVolumeCleanupResponse, error) {
