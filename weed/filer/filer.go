@@ -255,14 +255,16 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 }
 
 func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate) {
-	// Try every configured master: the KeepConnected stream may still be
-	// waiting for the announce gate, so GetMaster would block here.
+	// Ask every configured master and keep the fullest answer: the
+	// KeepConnected stream may still be waiting on the announce gate or
+	// attached to a follower, and a follower can return a partial filer list
+	// before the leader answers.
 	for _, master := range f.MasterClient.ListMasters() {
-		if nodes := cluster.ListExistingPeerUpdates(master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType); nodes != nil {
-			return nodes
+		if nodes := cluster.ListExistingPeerUpdates(master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType); len(nodes) > len(existingNodes) {
+			existingNodes = nodes
 		}
 	}
-	return nil
+	return existingNodes
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
