@@ -72,6 +72,9 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 			if err != nil {
 				return err
 			}
+			// The event just proved the filer alive; the bound covers the
+			// wait for the next one, not the whole rename.
+			silence.Reset(wfs.filerRPCWait())
 		}
 		return nil
 	})
