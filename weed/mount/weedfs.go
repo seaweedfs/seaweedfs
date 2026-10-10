@@ -145,6 +145,7 @@ type WFS struct {
 	manifestCache         *filer.ChunkManifestCache
 	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature             int32
+	filerCallTimeout      time.Duration // bounds one filer call; tests only, 0 = filerRPCTimeout
 	concurrentWriters     *util.LimitedConcurrentExecutor
 	copyBufferPool        sync.Pool
 	concurrentCopiersSem  chan struct{}
