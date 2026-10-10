@@ -1140,9 +1140,7 @@ func (h *HybridMessageScanner) ReadParquetStatistics(partitionPath string) ([]*P
 		// Extract statistics from this parquet file
 		stats, err := h.extractParquetFileStats(entry, lookupFileIdFn, chunkCache)
 		if err != nil {
-			// Log error but continue processing other files
-			fmt.Printf("Warning: failed to extract stats from %s: %v\n", entry.Name, err)
-			return nil
+			return err
 		}
 
 		if stats != nil {
@@ -1164,7 +1162,10 @@ func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lo
 	}
 	// Create reader for the parquet file
 	fileSize := filer.FileSize(entry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	if err != nil {
+		return nil, fmt.Errorf("resolve chunks of %s: %w", entry.Name, err)
+	}
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 	readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn, nil)
 	readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize), filer.DefaultPrefetchCount)

@@ -245,7 +245,10 @@ func TestCompactThenMergeCondition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			compacted, _ := filer.CompactFileChunks(context.Background(), nil, tt.chunks)
+			compacted, _, err := filer.CompactFileChunks(context.Background(), nil, tt.chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
 			_, _, merge := shouldMergeChunks(compacted, nil)
 			if merge != tt.wantMerge {
 				var total uint64
@@ -294,7 +297,10 @@ func TestRandomWritesBloatDetection(t *testing.T) {
 			}
 		}
 
-		compacted, _ := filer.CompactFileChunks(context.Background(), nil, chunks)
+		compacted, _, err := filer.CompactFileChunks(context.Background(), nil, chunks)
+		if err != nil {
+			t.Fatal(err)
+		}
 		totalCompacted, reportedFileSize, merge := shouldMergeChunks(compacted, nil)
 
 		// Sanity: condition must be consistent with its own inputs.
@@ -337,7 +343,10 @@ func TestFlushCycleManifestAccumulation(t *testing.T) {
 
 		// --- flush pipeline (mirrors flushMetadataToFiler) ---
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entryChunks)
-		compacted, _ := filer.CompactFileChunks(context.Background(), nil, nonManifestChunks)
+		compacted, _, err := filer.CompactFileChunks(context.Background(), nil, nonManifestChunks)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		_, _, merge := shouldMergeChunks(compacted, manifestChunks)
 		if merge {
@@ -406,9 +415,18 @@ func TestVisibleContentPreservedAfterCompact(t *testing.T) {
 			})
 		}
 
-		origViews := filer.ViewFromChunks(context.Background(), nil, chunks, 0, math.MaxInt64)
-		compacted, _ := filer.CompactFileChunks(context.Background(), nil, chunks)
-		compViews := filer.ViewFromChunks(context.Background(), nil, compacted, 0, math.MaxInt64)
+		origViews, err := filer.ViewFromChunks(context.Background(), nil, chunks, 0, math.MaxInt64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compacted, _, err := filer.CompactFileChunks(context.Background(), nil, chunks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compViews, err := filer.ViewFromChunks(context.Background(), nil, compacted, 0, math.MaxInt64)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		// Collect all (offset, size) pairs from views.
 		type viewKey struct {

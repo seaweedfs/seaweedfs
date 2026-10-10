@@ -3894,8 +3894,7 @@ func (e *SQLEngine) computeLiveLogMinMax(partitionPath string, columnName string
 		// Scan this log file for MIN/MAX values
 		fileMin, fileMax, err := e.computeFileMinMax(filerClient, filePath, columnName)
 		if err != nil {
-			fmt.Printf("Warning: failed to compute min/max for file %s: %v\n", filePath, err)
-			return nil // Continue with other files
+			return err
 		}
 
 		// Update global min/max
@@ -4030,7 +4029,10 @@ func (e *SQLEngine) eachLogEntryInFile(filerClient filer_pb.FilerClient, filePat
 
 	// Read file chunks and process them (pattern from countRowsInLogFile)
 	fileSize := filer.FileSize(fileEntry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, fileEntry.Chunks, 0, int64(fileSize))
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, fileEntry.Chunks, 0, int64(fileSize))
+	if err != nil {
+		return err
+	}
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 
 	for x := chunkViews.Front(); x != nil; x = x.Next {
@@ -4185,8 +4187,7 @@ func (e *SQLEngine) countLiveLogRowsExcludingParquetSources(ctx context.Context,
 		// Count rows in live log file
 		rowCount, err := e.countRowsInLogFile(filerClient, partitionPath, entry)
 		if err != nil {
-			fmt.Printf("Warning: failed to count rows in %s/%s: %v\n", partitionPath, entry.Name, err)
-			return nil // Continue with other files
+			return err
 		}
 		totalRows += rowCount
 		return nil
@@ -4354,7 +4355,10 @@ func (e *SQLEngine) countRowsInLogFile(filerClient filer_pb.FilerClient, partiti
 
 	// Read file chunks and process them (pattern from read_log_from_disk.go)
 	fileSize := filer.FileSize(entry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
+	if err != nil {
+		return 0, err
+	}
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 
 	for x := chunkViews.Front(); x != nil; x = x.Next {
@@ -4456,23 +4460,22 @@ func (e *SQLEngine) getTopicTotalRowCount(ctx context.Context, namespace, topicN
 	// For each partition, count both parquet and live log rows
 	for _, partition := range partitions {
 		// Count parquet rows
-		parquetStats, parquetErr := hybridScanner.ReadParquetStatistics(partition)
-		if parquetErr == nil {
-			for _, stats := range parquetStats {
-				totalRowCount += stats.RowCount
-			}
+		parquetStats, err := hybridScanner.ReadParquetStatistics(partition)
+		if err != nil {
+			return 0, fmt.Errorf("read parquet statistics for %s: %w", partition, err)
+		}
+		for _, stats := range parquetStats {
+			totalRowCount += stats.RowCount
 		}
 
 		// Count live log rows (with deduplication)
-		parquetSourceFiles := make(map[string]bool)
-		if parquetErr == nil {
-			parquetSourceFiles = e.extractParquetSourceFiles(parquetStats)
-		}
+		parquetSourceFiles := e.extractParquetSourceFiles(parquetStats)
 
-		liveLogCount, liveLogErr := e.countLiveLogRowsExcludingParquetSources(ctx, partition, parquetSourceFiles)
-		if liveLogErr == nil {
-			totalRowCount += liveLogCount
+		liveLogCount, err := e.countLiveLogRowsExcludingParquetSources(ctx, partition, parquetSourceFiles)
+		if err != nil {
+			return 0, fmt.Errorf("count live log rows for %s: %w", partition, err)
 		}
+		totalRowCount += liveLogCount
 	}
 
 	return totalRowCount, nil
@@ -4509,17 +4512,18 @@ func (e *SQLEngine) getActualRowsScannedForFastPath(ctx context.Context, namespa
 	// (parquet files use metadata/statistics, so they contribute 0 to scan count)
 	for _, partition := range partitions {
 		// Get parquet files to determine what was converted
-		parquetStats, parquetErr := hybridScanner.ReadParquetStatistics(partition)
-		parquetSourceFiles := make(map[string]bool)
-		if parquetErr == nil {
-			parquetSourceFiles = e.extractParquetSourceFiles(parquetStats)
+		parquetStats, err := hybridScanner.ReadParquetStatistics(partition)
+		if err != nil {
+			return 0, fmt.Errorf("read parquet statistics for %s: %w", partition, err)
 		}
+		parquetSourceFiles := e.extractParquetSourceFiles(parquetStats)
 
 		// Count only live log rows that haven't been converted to parquet
-		liveLogCount, liveLogErr := e.countLiveLogRowsExcludingParquetSources(ctx, partition, parquetSourceFiles)
-		if liveLogErr == nil {
-			totalScannedRows += liveLogCount
+		liveLogCount, err := e.countLiveLogRowsExcludingParquetSources(ctx, partition, parquetSourceFiles)
+		if err != nil {
+			return 0, fmt.Errorf("count live log rows for %s: %w", partition, err)
 		}
+		totalScannedRows += liveLogCount
 
 		// Note: Parquet files contribute 0 to scan count since we use their metadata/statistics
 	}
