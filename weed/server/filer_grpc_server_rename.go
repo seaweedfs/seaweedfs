@@ -151,8 +151,7 @@ type metadataEvent struct {
 	newEntry     *filer.Entry
 	deleteChunks bool
 	// the old entry's remote object is deleted once the rename has committed:
-	// it, or an object under it, was copied to the new key, and a rename that
-	// fails must not lose it
+	// it was copied to the new key, and a rename that fails must not lose it
 	deleteOldRemote bool
 }
 
@@ -350,16 +349,19 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		deleteOldRemote: copiedRemote != nil,
 	})
 	selfEvent := len(*metadataEvents) - 1
+	keepOldRemote := copiedRemote != nil
 
 	if moveFolderSubEntries != nil {
 		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
 			return moveChildrenErr
 		}
 		// removing the old directory on the remote removes every object under
-		// it, so it waits for the commit too once a child was copied
+		// its prefix, the copied children's old keys included, which must wait
+		// for the commit. Those are deleted one by one after it instead, and
+		// nothing else under the prefix is touched.
 		for _, event := range (*metadataEvents)[selfEvent+1:] {
 			if event.deleteOldRemote {
-				(*metadataEvents)[selfEvent].deleteOldRemote = true
+				keepOldRemote = true
 				break
 			}
 		}
@@ -368,7 +370,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	// delete old entry
 	ctx = context.WithValue(ctx, "OP", "MV")
 	deleteCtx := filer.WithSuppressedMetadataEvents(ctx)
-	if (*metadataEvents)[selfEvent].deleteOldRemote {
+	if keepOldRemote {
 		deleteCtx = filer.WithKeepRemoteObject(deleteCtx)
 	}
 	deleteErr := fs.filer.DeleteEntryMetaAndData(deleteCtx, oldPath, false, false, false, false, signatures, 0)

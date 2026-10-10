@@ -275,12 +275,11 @@ func TestRenameDirectoryCopiesRemoteOnlyChildren(t *testing.T) {
 
 	require.NoError(t, renameFile(server, "/buckets/b/src", "/buckets/b/moved"))
 
-	// b.jpg's old object goes with its entry; the old directory and a.jpg's
-	// old object wait for the commit
+	// b.jpg's old object goes with its entry, a.jpg's waits for the commit,
+	// and the old prefix is not swept: it could hold a newer object by then
 	assert.Equal(t, []string{
 		"copy origin/src/a.jpg origin/moved/a.jpg",
 		"delete origin/src/b.jpg",
-		"rmdir origin/src",
 		"delete origin/src/a.jpg",
 	}, client.recorded())
 	moved, err := store.FindEntry(context.Background(), "/buckets/b/moved/a.jpg")
