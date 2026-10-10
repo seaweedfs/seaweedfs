@@ -272,6 +272,11 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		}
 		glog.V(1).Infof("%s.%s masterClient gRPC stream established to %s in %v", mc.FilerGroup, mc.clientType, master, time.Since(connectStartTime))
 
+		// The stream is usable for queries before registration, so callers
+		// blocked in GetMaster (e.g. loading a chunked filer.conf during
+		// startup) proceed while the announce gate still holds.
+		mc.setCurrentMaster(master)
+
 		if mc.announceCh != nil {
 			select {
 			case <-mc.announceCh:
