@@ -825,6 +825,12 @@ func (f *Filer) Shutdown() {
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	// The final metadata-log flush still needs the store to append its entry.
 	f.LocalMetaLogBuffer.WaitForShutdown()
+	// Stop peer subscriptions and let each persist its last applied offset;
+	// the replay on the next start otherwise resumes from a stale offset and
+	// applies those old events over newer local state.
+	if f.MetaAggregator != nil {
+		f.MetaAggregator.Shutdown()
+	}
 	// Persist the deletion ledger one last time before the store closes, so a
 	// clean shutdown leaves the recovery set exactly consistent with reality.
 	f.snapshotDeletionLedger()
