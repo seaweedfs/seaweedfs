@@ -1,0 +1,52 @@
+package wdclient
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+// A filer connects to the master before its gRPC port serves so it can query
+// masters during startup; the registration send that adds it to the master's
+// filer list must wait until it is actually serving.
+func TestAnnounceGateDelaysRegistration(t *testing.T) {
+	srv := &fakeKeepConnectedServer{requests: make(chan *master_pb.KeepConnectedRequest, 4)}
+	addr := startFakeMasterServer(t, srv)
+	mc := NewMasterClient(
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		"", "filer", "filer1:18888", "", "",
+		*pb.NewServiceDiscoveryFromMap(map[string]pb.ServerAddress{"m": addr}),
+	)
+	gate := make(chan struct{})
+	mc.SetAnnounceCh(gate)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go mc.KeepConnectedToMaster(ctx)
+
+	// Give the stream time to connect, then confirm nothing registered.
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case req := <-srv.requests:
+		t.Fatalf("client registered before the gate opened: %+v", req)
+	default:
+	}
+
+	close(gate)
+	req := nextRequest(t, srv.requests)
+	if req.ClientAddress != "filer1:18888" {
+		t.Fatalf("registration ClientAddress = %q, want filer1:18888", req.ClientAddress)
+	}
+
+	got := make(chan pb.ServerAddress, 1)
+	go func() { got <- mc.GetMaster(ctx) }()
+	select {
+	case <-got:
+	case <-time.After(3 * time.Second):
+		t.Fatal("GetMaster did not return after the gate opened")
+	}
+}
