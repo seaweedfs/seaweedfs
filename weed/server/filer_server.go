@@ -433,6 +433,36 @@ func (fs *FilerServer) leaveLockRingWithin(removalTimeout, budget time.Duration)
 	if fs.masterCancel != nil {
 		fs.masterCancel()
 	}
+	fs.waitForClusterRemoval()
+}
+
+// masterRemovalWaitBudget bounds how long shutdown waits for masters to
+// drop this filer before gRPC drains anyway.
+const masterRemovalWaitBudget = 5 * time.Second
+
+// waitForClusterRemoval polls the configured masters until none still lists
+// this filer. The master removes membership when the KeepConnected handler
+// unwinds, which is asynchronous to cancel, so new requests could otherwise
+// route to this filer after its gRPC listener has already closed.
+func (fs *FilerServer) waitForClusterRemoval() {
+	deadline := time.Now().Add(masterRemovalWaitBudget)
+	for {
+		listed := false
+		for _, master := range fs.filer.MasterClient.ListMasters() {
+			queryCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			nodes := cluster.ListExistingPeerUpdates(queryCtx, master, fs.grpcDialOption, fs.filer.MasterClient.FilerGroup, cluster.FilerType)
+			cancel()
+			for _, node := range nodes {
+				if node.Address == string(fs.option.Host) {
+					listed = true
+				}
+			}
+		}
+		if !listed || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (fs *FilerServer) leaveLockRing(removalTimeout time.Duration) {
