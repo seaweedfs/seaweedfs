@@ -42,13 +42,15 @@ func vaultHost(vaultURL string) string {
 }
 
 // splitKeyID turns a Key Vault key identifier into the (name, version) pair the
-// azkeys client expects. A plain key name, or anything that is not a Key Vault
-// URL, is returned unchanged together with an empty version, which the client
-// resolves to the latest version.
+// azkeys client expects. A plain key name, or anything that is not a URL, is
+// returned unchanged together with an empty version, which the client resolves
+// to the latest version.
 //
 // A URL naming a different vault than the one this provider is configured for
 // is rejected: the client addresses only its own vault, so dropping the host
-// would silently encrypt under this vault's same-named key.
+// would silently encrypt under this vault's same-named key. A URL for this
+// vault that does not name a key under /keys/ is rejected too: passing the URL
+// on as a key name would only surface as a confusing vault-side 404.
 func (p *AzureKMSProvider) splitKeyID(keyID string) (string, string, error) {
 	parsed, err := url.Parse(keyID)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -58,13 +60,16 @@ func (p *AzureKMSProvider) splitKeyID(keyID string) (string, string, error) {
 		return "", "", fmt.Errorf("key ID %q names vault %q, but this provider is configured for %q", keyID, parsed.Host, host)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] != "keys" {
-		return keyID, "", nil
+	if len(parts) < 2 || parts[0] != "keys" || parts[1] == "" {
+		return "", "", fmt.Errorf("key ID %q is a Key Vault URL but does not name a key", keyID)
 	}
-	if len(parts) >= 3 {
+	if len(parts) == 2 {
+		return parts[1], "", nil
+	}
+	if len(parts) == 3 {
 		return parts[1], parts[2], nil
 	}
-	return parts[1], "", nil
+	return "", "", fmt.Errorf("key ID %q has too many path segments for a key URL", keyID)
 }
 
 // encodeCiphertext stores the wrapped data key in the JSON envelope as base64.
@@ -75,7 +80,10 @@ func encodeCiphertext(ciphertext []byte) string {
 
 // contextDigest digests the encryption context for storage in the envelope.
 // RSA-OAEP takes no AAD, so the context is bound to the wrapped key by
-// recording its hash and checking it on decrypt instead.
+// recording its hash and checking it on decrypt instead. Unlike KMS-checked
+// AAD this is a client-side mismatch check only — it is not authenticated by
+// the vault, and an actor who can rewrite an object's envelope could swap in
+// a ciphertext and digest from another object.
 func contextDigest(context map[string]string) string {
 	encoded, _ := json.Marshal(context) // map keys marshal in sorted order
 	sum := sha256.Sum256(encoded)
@@ -241,9 +249,11 @@ func (p *AzureKMSProvider) GenerateDataKey(ctx context.Context, req *seaweedkms.
 	// request with BadParameter when AAD is set on an RSA-OAEP key. The
 	// context is bound to the wrapped key via a digest in the envelope
 	// instead, which Decrypt verifies.
-	providerSpecific := map[string]interface{}{}
+	var providerSpecific map[string]interface{}
 	if len(req.EncryptionContext) > 0 {
-		providerSpecific["encryption_context_sha256"] = contextDigest(req.EncryptionContext)
+		providerSpecific = map[string]interface{}{
+			"encryption_context_sha256": contextDigest(req.EncryptionContext),
+		}
 	}
 
 	// Call Azure Key Vault to encrypt the data key

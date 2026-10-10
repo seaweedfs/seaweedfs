@@ -58,9 +58,19 @@ func TestSplitKeyID(t *testing.T) {
 			wantName: "my-key",
 		},
 		{
-			name:     "key url with a non keys path",
-			keyID:    "https://myvault.vault.azure.net/secrets/my-secret",
-			wantName: "https://myvault.vault.azure.net/secrets/my-secret",
+			name:    "key url with a non keys path",
+			keyID:   "https://myvault.vault.azure.net/secrets/my-secret",
+			wantErr: true,
+		},
+		{
+			name:    "key url with extra path segments",
+			keyID:   "https://myvault.vault.azure.net/keys/my-key/abc123/extra",
+			wantErr: true,
+		},
+		{
+			name:    "key url with an empty key name",
+			keyID:   "https://myvault.vault.azure.net/keys//abc123",
+			wantErr: true,
 		},
 		{
 			name:     "name that only looks like a url",
