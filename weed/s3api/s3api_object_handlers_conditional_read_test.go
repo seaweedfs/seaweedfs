@@ -109,6 +109,62 @@ func TestRemoteObjectETagAcrossCacheFill(t *testing.T) {
 	}
 }
 
+// A metadata-only update such as utimens changes Mtime without touching the
+// remote bytes, so the object must keep its remote ETag; otherwise a later
+// cache fill restores it and breaks clients holding the interim value.
+func TestRemoteObjectETagMetadataOnlyTouch(t *testing.T) {
+	s3a := &S3ApiServer{}
+	for _, cached := range []bool{false, true} {
+		entry := &filer_pb.Entry{
+			Name:       "object",
+			Attributes: &filer_pb.FuseAttributes{FileSize: 2048, Mtime: 100},
+			RemoteEntry: &filer_pb.RemoteEntry{
+				RemoteSize: 2048, RemoteMtime: 100, RemoteETag: "remote-multipart-2",
+			},
+		}
+		if cached {
+			entry.Chunks = []*filer_pb.FileChunk{{Size: 2048, ETag: "1B2M2Y8AsgTpgAmY7PhCfg=="}}
+			entry.RemoteEntry.LastLocalSyncTsNs = 200
+		}
+		entry.Attributes.Mtime = 101
+		entry.Attributes.MtimeNs = 500
+		if got := s3a.getObjectETag(entry); got != `"remote-multipart-2"` {
+			t.Errorf("cached=%v touched ETag = %q", cached, got)
+		}
+	}
+}
+
+// Extending or shrinking a cached remote file through setattr changes FileSize
+// while leaving its chunks and sync stamp alone; the remote ETag no longer
+// describes the local bytes and conditional reads must not answer 304 for it.
+func TestRemoteObjectETagLocalResize(t *testing.T) {
+	s3a := &S3ApiServer{}
+	for _, size := range []uint64{0, 1024, 4096} {
+		entry := &filer_pb.Entry{
+			Name:       "object",
+			Attributes: &filer_pb.FuseAttributes{FileSize: 2048, Mtime: 100},
+			Chunks:     []*filer_pb.FileChunk{{Size: 2048, ETag: "1B2M2Y8AsgTpgAmY7PhCfg=="}},
+			RemoteEntry: &filer_pb.RemoteEntry{
+				RemoteSize: 2048, RemoteMtime: 100, RemoteETag: "remote-multipart-2",
+				LastLocalSyncTsNs: 200,
+			},
+		}
+		entry.Attributes.FileSize = size
+		if got := s3a.getObjectETag(entry); got == `"remote-multipart-2"` {
+			t.Errorf("resized to %d retained remote ETag", size)
+		}
+		r := httptest.NewRequest(http.MethodHead, "/bucket/object", nil)
+		r.Header.Set(s3_constants.IfNoneMatch, `"remote-multipart-2"`)
+		headers, code := parseConditionalHeaders(r)
+		if code != s3err.ErrNone {
+			t.Fatal(code)
+		}
+		if got := s3a.validateConditionalHeadersForReads(r, headers, entry, "bucket", "object"); got.ErrorCode != s3err.ErrNone {
+			t.Errorf("resized to %d read: %v", size, got.ErrorCode)
+		}
+	}
+}
+
 func TestRemoteObjectETagCopyConditions(t *testing.T) {
 	s3a := &S3ApiServer{}
 	entry := &filer_pb.Entry{

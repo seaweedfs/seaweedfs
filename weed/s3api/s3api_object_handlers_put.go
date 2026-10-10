@@ -2609,12 +2609,15 @@ func objectETag(entry *filer_pb.Entry) string {
 		}
 		// Empty stored ETag — fall through to Md5/chunk-based calculation
 	}
-	// Local truncation retains RemoteEntry, so an empty chunk list alone
-	// cannot distinguish an untouched remote object from a local write.
+	// The remote ETag still describes this entry only while the local copy
+	// holds the remote bytes: a synced cache fill, or a remote-only entry
+	// with no local content. Content changes made through the filer clear
+	// the sync stamp (Filer.UpdateEntry) or add chunks or inline content;
+	// resizes without new bytes show up in FileSize. Metadata-only updates
+	// like utimens keep the remote bytes, so Mtime is not part of the check.
 	if remote := entry.RemoteEntry; remote != nil && remote.RemoteETag != "" &&
-		(remote.LastLocalSyncTsNs > 0 || (len(entry.Chunks) == 0 && len(entry.Content) == 0 &&
-			entry.GetAttributes().GetFileSize() == uint64(remote.RemoteSize) &&
-			entry.GetAttributes().GetMtime() == remote.RemoteMtime)) {
+		entry.GetAttributes().GetFileSize() == uint64(remote.RemoteSize) &&
+		(remote.LastLocalSyncTsNs > 0 || (len(entry.Chunks) == 0 && len(entry.Content) == 0)) {
 		return quoteETag(remote.RemoteETag)
 	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
