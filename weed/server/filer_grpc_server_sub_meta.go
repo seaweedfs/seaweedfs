@@ -11,6 +11,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -109,14 +111,16 @@ const (
 // current time (backlog catch-up), multiple events are packed into a single
 // stream.Send() using the Events field. Otherwise events are sent one-by-one.
 type pipelinedSender struct {
+	ctx      context.Context
 	sendCh   chan *filer_pb.SubscribeMetadataResponse
 	errCh    chan error
 	done     chan struct{}
 	canBatch bool // true only if client set ClientSupportsBatching
 }
 
-func newPipelinedSender(stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
+func newPipelinedSender(ctx context.Context, stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
 	s := &pipelinedSender{
+		ctx:      ctx,
 		sendCh:   make(chan *filer_pb.SubscribeMetadataResponse, bufSize),
 		errCh:    make(chan error, 1),
 		done:     make(chan struct{}),
@@ -128,6 +132,21 @@ func newPipelinedSender(stream metadataStreamSender, bufSize int, clientSupports
 
 func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 	defer close(s.done)
+	// No Send may start after the subscription context ends: the handler is
+	// returning, and gRPC tears the stream down behind it. A Send already in
+	// flight is released by that teardown (the stream context unblocks it).
+	send := func(msg *filer_pb.SubscribeMetadataResponse) bool {
+		if s.ctx.Err() != nil {
+			return false
+		}
+		if err := stream.Send(msg); err != nil {
+			if s.ctx.Err() == nil {
+				s.reportErr(err)
+			}
+			return false
+		}
+		return true
+	}
 	for msg := range s.sendCh {
 		// LogFileRefs messages are unbatchable: the client recognizes them by
 		// the top-level field and skips the rest of the response, so a refs
@@ -142,8 +161,7 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 
 		if !shouldBatch {
 			// Real-time: send immediately for low latency
-			if err := stream.Send(msg); err != nil {
-				s.reportErr(err)
+			if !send(msg) {
 				return
 			}
 			continue
@@ -181,18 +199,14 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 			toSend = batch[0]
 			toSend.Events = batch[1:]
 		}
-		if err := stream.Send(toSend); err != nil {
-			s.reportErr(err)
+		if !send(toSend) {
 			return
 		}
 		if toSend.Events != nil {
 			toSend.Events = nil
 		}
-		if trailingSolo != nil {
-			if err := stream.Send(trailingSolo); err != nil {
-				s.reportErr(err)
-				return
-			}
+		if trailingSolo != nil && !send(trailingSolo) {
+			return
 		}
 	}
 }
@@ -207,11 +221,16 @@ func (s *pipelinedSender) reportErr(err error) {
 }
 
 func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case s.sendCh <- msg:
 		return nil
 	case err := <-s.errCh:
 		return err
+	case <-s.ctx.Done():
+		return s.ctx.Err()
 	case <-s.done:
 		// Sender goroutine exited (stream error or shutdown).
 		select {
@@ -225,7 +244,12 @@ func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 
 func (s *pipelinedSender) Close() error {
 	close(s.sendCh)
-	<-s.done
+	// A sendLoop stuck in stream.Send only unblocks once the handler's return
+	// ends the stream, so stop waiting when the subscription ends.
+	select {
+	case <-s.done:
+	case <-s.ctx.Done():
+	}
 	select {
 	case err := <-s.errCh:
 		return err
@@ -602,7 +626,7 @@ func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, 
 	return gapContinue
 }
 
-func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
+func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) (err error) {
 	// A filer that has not learned remote peers yet serves the local log and
 	// upgrades when the first one appears. RemotePeerArrivedChan takes the
 	// arrival channel under the same lock as the peer check, so a peer
@@ -616,7 +640,9 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		return fs.subscribeLocalMetadata(req, stream, nil)
 	}
 
-	ctx := stream.Context()
+	ctx, cancelSubscription := fs.subscriptionContext(stream.Context())
+	defer cancelSubscription()
+	defer func() { err = fs.endOfSubscription(stream.Context(), err) }()
 	peerAddress := findClientAddress(ctx, 0)
 
 	isReplacing, alreadyKnown, clientName := fs.addClient("", req.ClientName, peerAddress, req.PathPrefix, req.ClientId, req.ClientEpoch)
@@ -643,7 +669,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// had already arrived and been delivered).
 	diskAnchorTsNs := req.SinceNs
 
-	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
+	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
 	// Register for instant notification when new data arrives in the aggregated log buffer.
@@ -669,7 +695,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// written from this single goroutine, so no synchronization is needed.
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
-	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
+	baseEachLogEntryFn := eachLogEntryFn(ctx, req, sender, eachEventNotificationFn, &unsyncedEvents)
 	// heldAtTsNs remembers the entry a read was held at (for the log line);
 	// diskHeldAtTsNs is the same marker for the disk pass alone: a pending
 	// disk hold keeps the pass re-reading until the entry is served.
@@ -1004,6 +1030,59 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 }
 
+// StopSubscriptions ends every metadata subscription and any started later.
+// Shutdown calls it before gRPC GracefulStop, which waits on open streams;
+// subscribers living in this process - the filer's own MetaAggregator and an
+// in-process S3 gateway - are otherwise torn down only by the later
+// fs.Shutdown, so every stop waited out the graceful-stop timeout. Ended
+// subscribers get codes.Unavailable (see endOfSubscription) and reconnect
+// with their usual retry.
+//
+// A subscriber blocked in stream.Send is released once its handler returns:
+// the sender's Send and Close honor the subscription context, so the handler
+// exits and gRPC tears the stream down.
+func (fs *FilerServer) StopSubscriptions() {
+	if fs.stopSubscriptions != nil {
+		fs.stopSubscriptions()
+	}
+}
+
+// subscriptionContext ends with the stream or with StopSubscriptions,
+// whichever comes first. It keeps the stream's values (peer address).
+func (fs *FilerServer) subscriptionContext(stream context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(stream)
+	if fs.subscriptionsStopped == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(fs.subscriptionsStopped, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// endOfSubscription turns the end of a subscription that StopSubscriptions
+// cut short into codes.Unavailable. Followers read a clean end as "caught up,
+// done": the client returns nil on io.EOF, and util.RetryUntil - which the S3
+// gateway and mount follow with - stops on nil. A context.Canceled from the
+// subscription context is the stop signal surfacing, not a real error, and
+// reads as non-retryable to transient-error classifiers. Unavailable is what
+// a dropped connection looks like, so followers reconnect with their usual
+// retry. Handler errors pass through, and so does the end of a stream the
+// client closed.
+func (fs *FilerServer) endOfSubscription(stream context.Context, err error) error {
+	if stream.Err() != nil {
+		return err
+	}
+	if fs.subscriptionsStopped == nil || fs.subscriptionsStopped.Err() == nil {
+		return err
+	}
+	if err == nil || errors.Is(err, context.Canceled) {
+		return status.Error(codes.Unavailable, "filer is shutting down")
+	}
+	return err
+}
+
 func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
 	return fs.subscribeLocalMetadata(req, stream, nil)
 }
@@ -1012,9 +1091,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 // aggregation streams pass upgradeOnRemotePeer == nil; the SubscribeMetadata
 // delegation passes the aggregator's arrival channel so the stream ends
 // when a remote peer appears and the client reconnects to the aggregated path.
-func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream metadataLocalStream, upgradeOnRemotePeer <-chan struct{}) error {
+func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream metadataLocalStream, upgradeOnRemotePeer <-chan struct{}) (err error) {
 
-	ctx := stream.Context()
+	ctx, cancelSubscription := fs.subscriptionContext(stream.Context())
+	defer cancelSubscription()
+	defer func() { err = fs.endOfSubscription(stream.Context(), err) }()
 	peerAddress := findClientAddress(ctx, 0)
 
 	// use negative client id to differentiate from addClient()/deleteClient() used in SubscribeMetadata()
@@ -1033,7 +1114,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, gapResumeCursorOffset)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
-	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
+	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
 	// Bounded gap waits use the buffer's subscriber notification plus a retry
@@ -1059,7 +1140,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var lastSeenTsNs int64
 	var lastHeartbeatNs int64
 	var lastFlushReportNs int64
-	baseEachLogEntryFn := eachLogEntryFn(req, sender, eachEventNotificationFn, &unsyncedEvents)
+	baseEachLogEntryFn := eachLogEntryFn(ctx, req, sender, eachEventNotificationFn, &unsyncedEvents)
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 		if upgradeOnRemotePeer != nil {
 			select {
@@ -1224,12 +1305,17 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
-func eachLogEntryFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
+func eachLogEntryFn(ctx context.Context, req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error, filtered *int64) log_buffer.EachLogEntryFuncType {
 	// A shallow scan of the path fields skips unmarshaling chunk-heavy events
 	// this subscriber would filter out anyway; scan surprises fall back to the
 	// full decode. Only a delivery resets the shared unsynced-events counter.
 	prefilter := req.PathPrefix != "" || len(req.PathPrefixes) > 0 || len(req.Directories) > 0
 	return func(logEntry *filer_pb.LogEntry) (bool, error) {
+		// A cancelled context ends the pass here: neither loop checks it
+		// per entry, and the send path alone cannot cover filtered entries.
+		if ctx.Err() != nil {
+			return true, nil
+		}
 		if prefilter {
 			if skeleton, ok := filer_pb.ScanMetadataEventSkeleton(logEntry.Data); ok &&
 				!filer_pb.MetadataEventMatchesSubscription(skeleton, req.PathPrefix, req.PathPrefixes, req.Directories) {
@@ -1370,7 +1456,7 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 	if len(refs) == 0 {
 		return startPos.Time.UnixNano(), false, nil
 	}
-	if err := fs.sendRefsBatched(sender, refs, upgradeOnRemotePeer); err != nil {
+	if err := fs.sendRefsBatched(ctx, sender, refs, upgradeOnRemotePeer); err != nil {
 		return 0, false, err
 	}
 	if upgradeOnRemotePeer != nil {
@@ -1430,9 +1516,12 @@ func (fs *FilerServer) chunkDiskPass(ctx context.Context, sender metadataStreamS
 // sendRefsBatched sends refs through the pipelined sender, which keeps them
 // out of Events batches; gRPC allows one sending goroutine per stream and the
 // sender's goroutine is it.
-func (fs *FilerServer) sendRefsBatched(sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef, upgradeOnRemotePeer <-chan struct{}) error {
+func (fs *FilerServer) sendRefsBatched(ctx context.Context, sender metadataStreamSender, refs []*filer_pb.LogFileChunkRef, upgradeOnRemotePeer <-chan struct{}) error {
 	const maxRefsPerMessage = 64
 	for i := 0; i < len(refs); i += maxRefsPerMessage {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if upgradeOnRemotePeer != nil {
 			select {
 			case <-upgradeOnRemotePeer:

@@ -170,6 +170,12 @@ type FilerServer struct {
 	posixLocks *posixlock.Manager
 	// posixLockSweeperStop stops the lease-reaping sweeper goroutine on Shutdown.
 	posixLockSweeperStop chan struct{}
+
+	// subscriptionsStopped is cancelled by StopSubscriptions when the filer
+	// starts shutting down; every metadata subscription derives its context
+	// from it as well as from its stream.
+	subscriptionsStopped context.Context
+	stopSubscriptions    context.CancelFunc
 	// posixLockReadyAt is the unix-nanos when this filer began serving POSIX
 	// locks. For posixLockWarmup after it, the owner defers would-be grants while
 	// mounts re-assert, so a (re)started owner does not double-grant from empty
@@ -220,6 +226,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		entryLockTable:        util.NewLockTable[util.FullPath](),
 		posixLocks:            posixlock.NewManager(),
 	}
+	fs.subscriptionsStopped, fs.stopSubscriptions = context.WithCancel(context.Background())
 	fs.startPosixLockSweeper()
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()

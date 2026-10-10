@@ -1,6 +1,8 @@
 package weed_server
 
 import (
+	"context"
+
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -131,7 +133,7 @@ func TestPipelinedSenderThroughput(t *testing.T) {
 	var batchedRate float64
 	t.Run("pipelined_batched_send", func(t *testing.T) {
 		stream := &slowStream{sendDelay: sendDelay}
-		sender := newPipelinedSender(stream, 1024, true)
+		sender := newPipelinedSender(context.Background(), stream, 1024, true)
 
 		start := time.Now()
 		for _, file := range files {
@@ -217,7 +219,7 @@ func TestBatchingAdaptive(t *testing.T) {
 
 	t.Run("old_events_are_batched", func(t *testing.T) {
 		stream := &slowStream{sendDelay: 10 * time.Microsecond}
-		sender := newPipelinedSender(stream, 1024, true)
+		sender := newPipelinedSender(context.Background(), stream, 1024, true)
 
 		// Push all events at once (no read delay) so the sender can batch aggressively
 		for _, ev := range makeOldEvents(numEvents) {
@@ -237,7 +239,7 @@ func TestBatchingAdaptive(t *testing.T) {
 
 	t.Run("recent_events_sent_individually", func(t *testing.T) {
 		stream := &slowStream{sendDelay: 10 * time.Microsecond}
-		sender := newPipelinedSender(stream, 1024, true)
+		sender := newPipelinedSender(context.Background(), stream, 1024, true)
 
 		for _, ev := range makeRecentEvents(numEvents) {
 			sender.Send(ev)
@@ -281,7 +283,7 @@ func TestPipelinedSenderErrorPropagation(t *testing.T) {
 	t.Run("send_returns_error", func(t *testing.T) {
 		// Stream fails after 5 successful sends
 		stream := &errorStreamImpl{failAfter: 5, err: sendErr}
-		sender := newPipelinedSender(stream, 4, true)
+		sender := newPipelinedSender(context.Background(), stream, 4, true)
 
 		var lastErr error
 		for i := 0; i < 100; i++ {
@@ -303,7 +305,7 @@ func TestPipelinedSenderErrorPropagation(t *testing.T) {
 		// since Send may have already returned before the sender goroutine
 		// processes the message.
 		stream := &errorStreamImpl{failAfter: 0, err: sendErr}
-		sender := newPipelinedSender(stream, 1024, true)
+		sender := newPipelinedSender(context.Background(), stream, 1024, true)
 
 		ev := makeOldEvents(1)[0]
 		sender.Send(ev)
@@ -352,7 +354,7 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 	// simulatePipeline: read files with I/O delay, push events, send via pipelinedSender
 	simulatePipeline := func(files []logFile) (eventsSent, sends int64, elapsed time.Duration, err error) {
 		stream := &slowStream{sendDelay: sendDelay}
-		sender := newPipelinedSender(stream, 1024, true)
+		sender := newPipelinedSender(context.Background(), stream, 1024, true)
 
 		start := time.Now()
 	outer:
