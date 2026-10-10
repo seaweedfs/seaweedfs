@@ -289,3 +289,22 @@ func TestRenameDirectoryCopiesRemoteOnlyChildren(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `"orig"`, moved.Remote.RemoteETag)
 }
+
+func TestDeferredOldKeyDeleteKeepsAKeyRetakenSince(t *testing.T) {
+	client := copyingRenameRemoteClient{&renameRemoteClient{}}
+	server, store := newRenameRemoteTestServer(t, client)
+	event := metadataEvent{
+		oldEntry:        remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101),
+		newEntry:        remoteOnlyRenameEntry("/buckets/b/moved/a.jpg", 101),
+		deleteOldRemote: true,
+	}
+
+	// another rename put a remote-only entry at the old path after the commit
+	store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 303)
+	event.notify(server.filer, context.Background(), nil)
+	assert.Empty(t, client.recorded())
+
+	delete(store.entries, "/buckets/b/src/a.jpg")
+	event.notify(server.filer, context.Background(), nil)
+	assert.Equal(t, []string{"delete origin/src/a.jpg"}, client.recorded())
+}
