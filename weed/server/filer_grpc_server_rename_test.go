@@ -31,6 +31,7 @@ type renameTestStore struct {
 	deleteErr error
 	listErr   error         // simulates a transient store/RPC failure from a directory listing
 	findDelay time.Duration // optional: widen check-then-act windows in tests
+	findErr   error         // simulates a failing entry lookup
 }
 
 func newRenameTestStore() *renameTestStore {
@@ -77,6 +78,9 @@ func (s *renameTestStore) FindEntry(_ context.Context, p util.FullPath) (*filer.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.findCalls[string(p)]++
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
 	entry, found := s.entries[string(p)]
 	if !found {
 		return nil, filer_pb.ErrNotFound

@@ -195,7 +195,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
-			return processDeleteEvent(client, mountedDir, remoteStorageMountLocation, resp)
+			return processDeleteEvent(filerSource, client, mountedDir, remoteStorageMountLocation, resp)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
 			return processUpdateEvent(option, filerSource, *option.storageClass, client, mountedDir, remoteStorageMountLocation, resp)
@@ -212,8 +212,11 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 // event the inline delete already handled), and GCS reports that case as
 // ErrRemoteObjectNotFound where S3 and Azure answer an idempotent success.
 // Returning the error would pin the sync offset on an event that has nothing
-// left to do.
+// left to do. A file whose path a remote-only entry has taken since keeps its
+// object: a rename copied that entry's content to this key, and it exists
+// nowhere else.
 func processDeleteEvent(
+	filerSource filer_pb.FilerClient,
 	client remote_storage.RemoteStorageClient,
 	mountedDir string,
 	remoteStorageMountLocation *remote_pb.RemoteStorageLocation,
@@ -232,6 +235,16 @@ func processDeleteEvent(
 	}
 	glog.V(2).Infof("delete: %+v", resp)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
+	if !message.OldEntry.IsDirectory {
+		current, err := currentEntry(filerSource, resp.Directory, message.OldEntry.Name)
+		if err != nil {
+			return err
+		}
+		if isRemoteOnly(current) {
+			glog.V(0).Infof("keep %s: a remote-only entry has taken its path since", remote_storage.FormatLocation(dest))
+			return nil
+		}
+	}
 	if message.OldEntry.IsDirectory {
 		glog.V(0).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
 		return client.RemoveDirectory(dest)

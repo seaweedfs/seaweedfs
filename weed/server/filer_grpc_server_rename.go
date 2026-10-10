@@ -2,7 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"time"
 
@@ -149,9 +151,29 @@ type metadataEvent struct {
 	oldEntry     *filer.Entry
 	newEntry     *filer.Entry
 	deleteChunks bool
+	// the old entry's remote object is deleted once the rename has committed:
+	// it was copied to the new key, and a rename that fails must not lose it
+	deleteOldRemote bool
 }
 
 func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signatures []int32) {
+	if event.deleteOldRemote {
+		// a child path is not locked by its directory's rename, so another
+		// rename may have put a remote-only entry at the old key meanwhile;
+		// the store is asked directly, a lazy fetch would revive the old key.
+		// When in doubt the object stays: an extra object loses nothing.
+		current, findErr := f.Store.FindEntry(ctx, event.oldEntry.FullPath)
+		switch {
+		case findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound):
+			glog.WarningfCtx(ctx, "keep remote object of renamed %s: look up its old path: %v", event.oldEntry.FullPath, findErr)
+		case findErr == nil && current.IsInRemoteOnly():
+			glog.V(0).InfofCtx(ctx, "keep remote object of renamed %s: a remote-only entry has taken its path", event.oldEntry.FullPath)
+		default:
+			if err := f.DeleteFromRemote(ctx, event.oldEntry); err != nil {
+				glog.WarningfCtx(ctx, "delete remote object of renamed %s: %v", event.oldEntry.FullPath, err)
+			}
+		}
+	}
 	f.NotifyUpdateEvent(ctx, event.oldEntry, event.newEntry, event.deleteChunks, false, signatures)
 }
 
@@ -235,8 +257,32 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		case !existingTarget.IsDirectory() && entry.IsDirectory():
 			return fmt.Errorf("%s: %w", existingTarget.FullPath, filer_pb.ErrExistingIsFile)
 		}
+	}
+
+	// a remote-only entry is copied on the remote before anything changes:
+	// deleting the old entry deletes the old object
+	copiedRemote, copyErr := fs.filer.CopyRemoteOnlyEntry(ctx, entry, oldPath, newPath)
+	if copyErr != nil {
+		return copyErr
+	}
+	remoteEntry := entry.Remote
+	if copiedRemote != nil {
+		remoteEntry = copiedRemote
+	}
+
+	if existingTarget != nil {
+		targetCtx := filer.WithSuppressedMetadataEvents(ctx)
+		if copiedRemote != nil {
+			// the copy has replaced the target's object; keep it
+			targetCtx = filer.WithKeepRemoteObject(targetCtx)
+			existingTarget.Extended = maps.Clone(existingTarget.Extended)
+			if existingTarget.Extended == nil {
+				existingTarget.Extended = map[string][]byte{}
+			}
+			existingTarget.Extended[filer.ExtKeepRemoteObjectKey] = []byte("true")
+		}
 		if deleteErr := fs.filer.DeleteEntryMetaAndData(
-			filer.WithSuppressedMetadataEvents(ctx),
+			targetCtx,
 			newPath,
 			false,
 			false,
@@ -258,7 +304,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Content:         entry.Content,
 		HardLinkCounter: entry.HardLinkCounter,
 		HardLinkId:      entry.HardLinkId,
-		Remote:          entry.Remote,
+		Remote:          remoteEntry,
 		Quota:           entry.Quota,
 	}
 	if skipTargetLookup {
@@ -311,19 +357,36 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		})
 	}
 	*metadataEvents = append(*metadataEvents, metadataEvent{
-		oldEntry: sourceEntry,
-		newEntry: newEntry,
+		oldEntry:        sourceEntry,
+		newEntry:        newEntry,
+		deleteOldRemote: copiedRemote != nil,
 	})
+	selfEvent := len(*metadataEvents) - 1
+	keepOldRemote := copiedRemote != nil
 
 	if moveFolderSubEntries != nil {
 		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
 			return moveChildrenErr
 		}
+		// removing the old directory on the remote removes every object under
+		// its prefix, the copied children's old keys included, which must wait
+		// for the commit. Those are deleted one by one after it instead, and
+		// nothing else under the prefix is touched.
+		for _, event := range (*metadataEvents)[selfEvent+1:] {
+			if event.deleteOldRemote {
+				keepOldRemote = true
+				break
+			}
+		}
 	}
 
 	// delete old entry
 	ctx = context.WithValue(ctx, "OP", "MV")
-	deleteErr := fs.filer.DeleteEntryMetaAndData(filer.WithSuppressedMetadataEvents(ctx), oldPath, false, false, false, false, signatures, 0)
+	deleteCtx := filer.WithSuppressedMetadataEvents(ctx)
+	if keepOldRemote {
+		deleteCtx = filer.WithKeepRemoteObject(deleteCtx)
+	}
+	deleteErr := fs.filer.DeleteEntryMetaAndData(deleteCtx, oldPath, false, false, false, false, signatures, 0)
 	if deleteErr != nil {
 		return deleteErr
 	}
