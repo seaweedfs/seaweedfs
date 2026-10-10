@@ -254,13 +254,23 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 
 }
 
+// peerLookupTimeout bounds each master query so one unresponsive master
+// cannot stall the peer scan.
+const peerLookupTimeout = 10 * time.Second
+
 func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate) {
 	// Ask every configured master and keep the fullest answer: the
 	// KeepConnected stream may still be waiting on the announce gate or
 	// attached to a follower, and a follower can return a partial filer list
 	// before the leader answers.
 	for _, master := range f.MasterClient.ListMasters() {
-		if nodes := cluster.ListExistingPeerUpdates(master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType); len(nodes) > len(existingNodes) {
+		if ctx.Err() != nil {
+			break
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+		nodes := cluster.ListExistingPeerUpdates(lookupCtx, master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+		cancel()
+		if len(nodes) > len(existingNodes) {
 			existingNodes = nodes
 		}
 	}

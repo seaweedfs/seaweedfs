@@ -10,10 +10,10 @@ import (
 	"google.golang.org/grpc"
 )
 
-func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string, clientType string) (existingNodes []*master_pb.ClusterNodeUpdate) {
+func ListExistingPeerUpdates(ctx context.Context, master pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string, clientType string) (existingNodes []*master_pb.ClusterNodeUpdate) {
 
-	if grpcErr := pb.WithMasterClient(context.Background(), false, master, grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+	if grpcErr := pb.WithMasterClient(ctx, false, master, grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: clientType,
 			FilerGroup: filerGroup,
 		})
