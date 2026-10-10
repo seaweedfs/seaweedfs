@@ -151,6 +151,8 @@ func (mm *mapMetric) MaxNeedleEnd() int64 {
 func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric, version needle.Version) error {
 	var bf *boom.BloomFilter
 	buf := make([]byte, NeedleIdSize)
+	var liveKeyCount uint32
+	var liveKeyBytes uint64
 	err := reverseWalkIndexFile(r, func(entryCount int64) {
 		bf = boom.NewBloomFilter(uint(entryCount), 0.001)
 	}, func(key NeedleId, offset Offset, size Size) error {
@@ -158,27 +160,27 @@ func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric, version needle.Vers
 		mm.MaybeSetMaxFileKey(key)
 		mm.MaybeSetMaxNeedleEnd(offset, size, version)
 		NeedleIdToBytes(buf, key)
-		if size.IsValid() {
-			mm.FileByteCounter += uint64(size)
+		seen := bf.TestAndAdd(buf)
+		if offset.IsZero() || size.IsDeleted() {
+			return nil
 		}
-
 		mm.FileCounter++
-		if !bf.TestAndAdd(buf) {
-			// if !size.IsValid(), then this file is deleted already
-			if !size.IsValid() {
-				mm.DeletionCounter++
-			}
-		} else {
-			// deleted file
-			mm.DeletionCounter++
-			if size.IsValid() {
-				// previously already deleted file
-				mm.DeletionByteCounter += uint64(size)
-			}
+		mm.FileByteCounter += uint64(size)
+		if !seen {
+			liveKeyCount++
+			liveKeyBytes += uint64(size)
 		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// Runtime counters tally each live-key removal: an overwrite deletes the
+	// superseded row and a tombstone deletes the live row. Replaying forward,
+	// that is (file rows) - (keys whose latest row is live).
+	mm.DeletionCounter = mm.FileCounter - liveKeyCount
+	mm.DeletionByteCounter = mm.FileByteCounter - liveKeyBytes
+	return nil
 }
 
 func newNeedleMapMetricFromIndexFile(r *os.File, version needle.Version) (mm *mapMetric, err error) {
