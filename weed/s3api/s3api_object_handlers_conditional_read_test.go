@@ -3,6 +3,7 @@ package s3api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,6 +106,61 @@ func TestRemoteObjectETagAcrossCacheFill(t *testing.T) {
 	entry.RemoteEntry.LastLocalSyncTsNs = 0
 	if got, want := s3a.getObjectETag(entry), s3a.calculateETagFromChunks(entry.Chunks); got != want {
 		t.Errorf("unsynced local ETag = %q, want %q", got, want)
+	}
+}
+
+func TestRemoteObjectETagCopyConditions(t *testing.T) {
+	s3a := &S3ApiServer{}
+	entry := &filer_pb.Entry{
+		Attributes:  &filer_pb.FuseAttributes{FileSize: 2048, Mtime: 100},
+		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 2048, RemoteMtime: 100, RemoteETag: "remote-multipart-2"},
+	}
+	for _, cached := range []bool{false, true} {
+		if cached {
+			entry.Chunks = []*filer_pb.FileChunk{{Size: 2048, ETag: "1B2M2Y8AsgTpgAmY7PhCfg=="}}
+			entry.RemoteEntry.LastLocalSyncTsNs = 200
+		}
+		for _, condition := range []string{s3_constants.AmzCopySourceIfMatch, s3_constants.AmzCopySourceIfNoneMatch} {
+			r := httptest.NewRequest(http.MethodPut, "/bucket/copy", nil)
+			r.Header.Set(condition, s3a.getObjectETag(entry))
+			want := s3err.ErrNone
+			if condition == s3_constants.AmzCopySourceIfNoneMatch {
+				want = s3err.ErrPreconditionFailed
+			}
+			if got := s3a.validateConditionalCopyHeaders(r, entry); got != want {
+				t.Errorf("cached=%v %s: got %v, want %v", cached, condition, got, want)
+			}
+		}
+	}
+}
+
+func TestRemoteObjectETagLocalChanges(t *testing.T) {
+	s3a := &S3ApiServer{}
+	for _, content := range [][]byte{nil, []byte("new local content")} {
+		entry := &filer_pb.Entry{
+			Attributes:  &filer_pb.FuseAttributes{FileSize: uint64(len(content)), Mtime: 101},
+			Content:     content,
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 2048, RemoteMtime: 100, RemoteETag: "old-origin"},
+		}
+		if got, want := copyEntryETag(entry), strings.Trim(s3a.getObjectETag(entry), `"`); got != want {
+			t.Errorf("local copy ETag = %q, read ETag = %q", got, want)
+		}
+		if got := s3a.getObjectETag(entry); got == `"old-origin"` {
+			t.Errorf("local content %q retained remote ETag", content)
+		}
+		r := httptest.NewRequest(http.MethodHead, "/bucket/object", nil)
+		r.Header.Set(s3_constants.IfNoneMatch, `"old-origin"`)
+		headers, code := parseConditionalHeaders(r)
+		if code != s3err.ErrNone {
+			t.Fatal(code)
+		}
+		if got := s3a.validateConditionalHeadersForReads(r, headers, entry, "bucket", "object"); got.ErrorCode != s3err.ErrNone {
+			t.Errorf("local content %q read: %v", content, got.ErrorCode)
+		}
+		r.Header.Set(s3_constants.AmzCopySourceIfMatch, `"old-origin"`)
+		if got := s3a.validateConditionalCopyHeaders(r, entry); got != s3err.ErrPreconditionFailed {
+			t.Errorf("local content %q copy: %v", content, got)
+		}
 	}
 }
 

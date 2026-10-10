@@ -2594,6 +2594,10 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 
 // S3ApiServer implements EntryGetter interface
 func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
+	return objectETag(entry)
+}
+
+func objectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
 		etag := string(etagBytes)
@@ -2605,9 +2609,12 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 		}
 		// Empty stored ETag — fall through to Md5/chunk-based calculation
 	}
-	// Cache fills preserve the origin validator; local writes clear the sync stamp.
+	// Local truncation retains RemoteEntry, so an empty chunk list alone
+	// cannot distinguish an untouched remote object from a local write.
 	if remote := entry.RemoteEntry; remote != nil && remote.RemoteETag != "" &&
-		(len(entry.Chunks) == 0 || remote.LastLocalSyncTsNs > 0) {
+		(remote.LastLocalSyncTsNs > 0 || (len(entry.Chunks) == 0 && len(entry.Content) == 0 &&
+			entry.GetAttributes().GetFileSize() == uint64(remote.RemoteSize) &&
+			entry.GetAttributes().GetMtime() == remote.RemoteMtime)) {
 		return quoteETag(remote.RemoteETag)
 	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
@@ -2616,7 +2623,10 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 		return fmt.Sprintf("\"%x\"", entry.Attributes.Md5)
 	}
 	// Fallback: calculate ETag from chunks
-	return s3a.calculateETagFromChunks(entry.Chunks)
+	if len(entry.Chunks) == 0 {
+		return `""`
+	}
+	return quoteETag(filer.ETagChunks(entry.Chunks))
 }
 
 func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string) bool {
