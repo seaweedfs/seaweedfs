@@ -63,6 +63,7 @@ type MetaAggregator struct {
 	flushAdvanced         chan struct{}
 	remotePeerArrived     chan struct{}
 	peerWatermarksLock    sync.Mutex
+	peerWg                sync.WaitGroup
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
@@ -102,7 +103,11 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		// Account for the peer before its stream signals; keep prior values
 		// on reconnect.
 		ma.initPeerWatermark(address)
-		go ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
+		ma.peerWg.Add(1)
+		go func() {
+			defer ma.peerWg.Done()
+			ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
+		}()
 	} else {
 		if prevChan, found := ma.peerChans[address]; found {
 			close(prevChan)
@@ -329,6 +334,32 @@ func (ma *MetaAggregator) HasPeer(address pb.ServerAddress) bool {
 	return false
 }
 
+// Shutdown stops every peer subscription and waits for each to return,
+// letting the deferred offset save persist the last applied position before
+// the store closes. Without it a graceful restart resumes from the last
+// periodically-saved offset — up to a minute stale — and replays those
+// events over newer local state.
+func (ma *MetaAggregator) Shutdown() {
+	ma.peerChansLock.Lock()
+	chans := ma.peerChans
+	ma.peerChans = make(map[pb.ServerAddress]chan struct{})
+	for _, stopChan := range chans {
+		close(stopChan)
+	}
+	ma.peerChansLock.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		ma.peerWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		glog.Warningf("meta aggregator shutdown: peer subscriptions still stopping")
+	}
+}
+
 func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time, stopChan chan struct{}) {
 	lastTsNs := startFrom.UnixNano()
 	for {
@@ -353,7 +384,12 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 		if lastTsNs < nextLastTsNs {
 			lastTsNs = nextLastTsNs
 		}
-		time.Sleep(1733 * time.Millisecond)
+		select {
+		case <-stopChan:
+			glog.V(0).Infof("stop subscribing peer %s meta change", peer)
+			return
+		case <-time.After(1733 * time.Millisecond):
+		}
 	}
 }
 

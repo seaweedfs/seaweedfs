@@ -109,3 +109,130 @@ func TestReplicateMetadataChangeGivesUpLoudlyOnPermanentFailure(t *testing.T) {
 		t.Fatalf("FilerMetaAggregatorReplayFailures[%s] = %v, want %v", peer, got, before+1)
 	}
 }
+
+func overwriteEvent(dir, name string, tsNs int64, content string) *filer_pb.SubscribeMetadataResponse {
+	return &filer_pb.SubscribeMetadataResponse{
+		Directory: dir,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: name},
+			NewEntry: &filer_pb.Entry{Name: name, Content: []byte(content)},
+		},
+		TsNs: tsNs,
+	}
+}
+
+func deleteEvent(dir, name string, tsNs int64) *filer_pb.SubscribeMetadataResponse {
+	return &filer_pb.SubscribeMetadataResponse{
+		Directory: dir,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: name},
+		},
+		TsNs: tsNs,
+	}
+}
+
+func TestReplaySkipsEventOlderThanLocalEntry(t *testing.T) {
+	store := newStubFilerStore()
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+	store.entries[string(path)] = &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now},
+		Content:  []byte("newer local write"),
+	}
+
+	if err := Replay(store, overwriteEvent("/dir", "file", now.Add(-time.Minute).UnixNano(), "old replayed version")); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	entry, err := store.FindEntry(context.Background(), path)
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if string(entry.Content) != "newer local write" {
+		t.Fatalf("content = %q, want local write kept", entry.Content)
+	}
+}
+
+func TestReplayAppliesEventNewerThanLocalEntry(t *testing.T) {
+	store := newStubFilerStore()
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+	store.entries[string(path)] = &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now.Add(-time.Minute)},
+		Content:  []byte("old local write"),
+	}
+
+	if err := Replay(store, overwriteEvent("/dir", "file", now.UnixNano(), "newer peer write")); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	entry, err := store.FindEntry(context.Background(), path)
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if string(entry.Content) != "newer peer write" {
+		t.Fatalf("content = %q, want peer write applied", entry.Content)
+	}
+}
+
+func TestReplaySkipsDeleteOlderThanLocalEntry(t *testing.T) {
+	store := newStubFilerStore()
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+	store.entries[string(path)] = &Entry{FullPath: path, Attr: Attr{Mtime: now}}
+
+	if err := Replay(store, deleteEvent("/dir", "file", now.Add(-time.Minute).UnixNano())); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), path); err != nil {
+		t.Fatalf("newer local entry must survive a stale delete: %v", err)
+	}
+}
+
+func TestReplayAppliesNewerDelete(t *testing.T) {
+	store := newStubFilerStore()
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+	store.entries[string(path)] = &Entry{FullPath: path, Attr: Attr{Mtime: now.Add(-time.Minute)}}
+
+	if err := Replay(store, deleteEvent("/dir", "file", now.UnixNano())); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), path); err == nil {
+		t.Fatal("newer delete must remove the local entry")
+	}
+}
+
+// A move event touches two paths; the local check applies to each side
+// independently, so a newer destination is kept while the source is removed.
+func TestReplayMoveChecksEachPathSeparately(t *testing.T) {
+	store := newStubFilerStore()
+	now := time.Now()
+	oldPath := util.NewFullPath("/a", "file")
+	newPath := util.NewFullPath("/b", "file")
+	store.entries[string(oldPath)] = &Entry{FullPath: oldPath, Attr: Attr{Mtime: now.Add(-time.Minute)}}
+	store.entries[string(newPath)] = &Entry{FullPath: newPath, Attr: Attr{Mtime: now}, Content: []byte("kept")}
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/a",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "file"},
+			NewParentPath: "/b",
+		},
+		TsNs: now.Add(-time.Minute).UnixNano(),
+	}
+	if err := Replay(store, event); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), oldPath); err == nil {
+		t.Fatal("old source entry should be deleted")
+	}
+	entry, err := store.FindEntry(context.Background(), newPath)
+	if err != nil {
+		t.Fatalf("FindEntry: %v", err)
+	}
+	if string(entry.Content) != "kept" {
+		t.Fatalf("content = %q, want newer destination kept", entry.Content)
+	}
+}
