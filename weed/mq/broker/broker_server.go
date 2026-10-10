@@ -125,7 +125,10 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	)
 	glog.V(0).Info("Started idle partition cleanup task (check: 1m, timeout: 5m)")
 
-	existingNodes := cluster.ListExistingPeerUpdates(context.Background(), mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
+	existingNodes, listErr := cluster.ListExistingPeerUpdates(context.Background(), mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
+	if listErr != nil {
+		glog.Warningf("broker failed to list existing peers: %v", listErr)
+	}
 	for _, newNode := range existingNodes {
 		mqBroker.OnBrokerUpdate(newNode, time.Now())
 	}

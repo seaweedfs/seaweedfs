@@ -341,7 +341,11 @@ func (fc *FilerClient) refreshFilerList() {
 	generation := fc.peerUpdateGeneration()
 
 	// Query master for filers in our group
-	updates := cluster.ListExistingPeerUpdates(context.Background(), currentMaster, fc.grpcDialOption, fc.filerGroup, cluster.FilerType)
+	updates, err := cluster.ListExistingPeerUpdates(context.Background(), currentMaster, fc.grpcDialOption, fc.filerGroup, cluster.FilerType)
+	if err != nil {
+		glog.V(1).Infof("FilerClient: failed to list filers in group '%s': %v", fc.filerGroup, err)
+		return
+	}
 
 	if len(updates) == 0 {
 		glog.V(2).Infof("FilerClient: no filers found in group '%s'", fc.filerGroup)

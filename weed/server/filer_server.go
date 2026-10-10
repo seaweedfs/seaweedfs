@@ -326,7 +326,20 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.readonlyFilerHandler)))
 	}
 
-	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())
+	// A failed peer scan is not an empty cluster: a fresh filer that skipped
+	// bootstrap here would serve without the existing files, so retry until a
+	// master answers. This runs before the announce gate opens, so the filer
+	// is not yet advertised.
+	var existingNodes []*master_pb.ClusterNodeUpdate
+	for {
+		var listErr error
+		existingNodes, listErr = fs.filer.ListExistingPeerUpdates(context.Background())
+		if listErr == nil {
+			break
+		}
+		glog.Warningf("%s cannot list existing peers: %v; retrying", option.Host, listErr)
+		time.Sleep(2 * time.Second)
+	}
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
 	if isFresh {
 		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)

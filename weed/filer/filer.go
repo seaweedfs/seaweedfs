@@ -258,23 +258,71 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 // cannot stall the peer scan.
 const peerLookupTimeout = 10 * time.Second
 
-func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate) {
-	// Ask every configured master and keep the fullest answer: the
-	// KeepConnected stream may still be waiting on the announce gate or
-	// attached to a follower, and a follower can return a partial filer list
-	// before the leader answers.
-	for _, master := range f.MasterClient.ListMasters() {
+// ListExistingPeerUpdates returns the peer list to bootstrap from. The
+// leader's list is authoritative: after a leader change an old master keeps
+// its registrations until its streams end, so the longest answer is not
+// necessarily the current one. The leader's answer wins whenever it can be
+// found and queried; only when the leader is unreachable does the scan fall
+// back to the fullest answer from the other masters. It returns an error when
+// no master answers, so a failed lookup is not mistaken for an empty cluster.
+func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate, err error) {
+	masters := f.MasterClient.ListMasters()
+	var queryErrs []error
+
+	var leader pb.ServerAddress
+	for _, master := range masters {
 		if ctx.Err() != nil {
 			break
 		}
 		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
-		nodes := cluster.ListExistingPeerUpdates(lookupCtx, master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+		l, lookErr := cluster.LookupClusterLeader(lookupCtx, master, f.GrpcDialOption)
 		cancel()
+		if lookErr != nil {
+			queryErrs = append(queryErrs, lookErr)
+			continue
+		}
+		if l != "" {
+			leader = l
+			break
+		}
+	}
+	if leader != "" {
+		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+		nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, leader, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+		cancel()
+		if listErr == nil {
+			return nodes, nil
+		}
+		queryErrs = append(queryErrs, fmt.Errorf("list peers from leader %s: %w", leader, listErr))
+	}
+
+	answered := false
+	for _, master := range masters {
+		if ctx.Err() != nil {
+			break
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+		nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+		cancel()
+		if listErr != nil {
+			queryErrs = append(queryErrs, listErr)
+			continue
+		}
+		answered = true
 		if len(nodes) > len(existingNodes) {
 			existingNodes = nodes
 		}
 	}
-	return existingNodes
+	if !answered {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if err = errors.Join(queryErrs...); err == nil {
+			err = fmt.Errorf("no masters configured")
+		}
+		return nil, fmt.Errorf("list existing peers: %w", err)
+	}
+	return existingNodes, nil
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
