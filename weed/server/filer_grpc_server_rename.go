@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -159,11 +160,18 @@ func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signature
 	if event.deleteOldRemote {
 		// a child path is not locked by its directory's rename, so another
 		// rename may have put a remote-only entry at the old key meanwhile;
-		// the store is asked directly, a lazy fetch would revive the old key
-		if current, err := f.Store.FindEntry(ctx, event.oldEntry.FullPath); err == nil && current.IsInRemoteOnly() {
+		// the store is asked directly, a lazy fetch would revive the old key.
+		// When in doubt the object stays: an extra object loses nothing.
+		current, findErr := f.Store.FindEntry(ctx, event.oldEntry.FullPath)
+		switch {
+		case findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound):
+			glog.WarningfCtx(ctx, "keep remote object of renamed %s: look up its old path: %v", event.oldEntry.FullPath, findErr)
+		case findErr == nil && current.IsInRemoteOnly():
 			glog.V(0).InfofCtx(ctx, "keep remote object of renamed %s: a remote-only entry has taken its path", event.oldEntry.FullPath)
-		} else if err := f.DeleteFromRemote(ctx, event.oldEntry); err != nil {
-			glog.WarningfCtx(ctx, "delete remote object of renamed %s: %v", event.oldEntry.FullPath, err)
+		default:
+			if err := f.DeleteFromRemote(ctx, event.oldEntry); err != nil {
+				glog.WarningfCtx(ctx, "delete remote object of renamed %s: %v", event.oldEntry.FullPath, err)
+			}
 		}
 	}
 	f.NotifyUpdateEvent(ctx, event.oldEntry, event.newEntry, event.deleteChunks, false, signatures)

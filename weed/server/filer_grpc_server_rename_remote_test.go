@@ -304,7 +304,13 @@ func TestDeferredOldKeyDeleteKeepsAKeyRetakenSince(t *testing.T) {
 	event.notify(server.filer, context.Background(), nil)
 	assert.Empty(t, client.recorded())
 
+	// a lookup that fails says nothing about the path
 	delete(store.entries, "/buckets/b/src/a.jpg")
+	store.findErr = errors.New("store unavailable")
+	event.notify(server.filer, context.Background(), nil)
+	assert.Empty(t, client.recorded())
+
+	store.findErr = nil
 	event.notify(server.filer, context.Background(), nil)
 	assert.Equal(t, []string{"delete origin/src/a.jpg"}, client.recorded())
 }
