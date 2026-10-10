@@ -159,12 +159,27 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Validate the client's encryption headers as sent: synthesizing bucket
+	// defaults first would launder a malformed request (a KMS option without
+	// aws:kms, or a repeated header) into an accepted one.
+	if errCode := ValidateRequestEncryption(r.Header); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// A copy request without SSE headers takes the destination bucket's
 	// default encryption, including its configured KMS key and bucket-key
 	// setting. Surface them as headers so every downstream parse sees them.
 	if !IsSSECRequest(r) && r.Header.Get(s3_constants.AmzServerSideEncryption) == "" {
-		if encryptionConfig, err := s3a.GetBucketEncryptionConfig(dstBucket); err == nil {
+		encryptionConfig, encErr := s3a.GetBucketEncryptionConfig(dstBucket)
+		switch {
+		case encErr == nil:
 			applyCopyBucketDefaultEncryptionHeaders(r, encryptionConfig)
+		case errors.Is(encErr, ErrNoEncryptionConfig):
+		default:
+			glog.Errorf("CopyObjectHandler: read encryption config for bucket %s: %v", dstBucket, encErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
 		}
 	}
 

@@ -198,9 +198,14 @@ func applyCopyBucketDefaultEncryptionHeaders(r *http.Request, cfg *s3_pb.Encrypt
 	switch cfg.SseAlgorithm {
 	case EncryptionTypeKMS:
 		r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
-		if cfg.KmsKeyId != "" {
-			r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, cfg.KmsKeyId)
+		// aws:kms with no configured key resolves the AWS default, the same
+		// fallback applySSEKMSDefaultEncryption uses for uploads; an empty
+		// key ID here would let the copy paths take their plaintext branch.
+		keyID := cfg.KmsKeyId
+		if keyID == "" {
+			keyID = "alias/aws/s3"
 		}
+		r.Header.Set(s3_constants.AmzServerSideEncryptionAwsKmsKeyId, keyID)
 		if cfg.BucketKeyEnabled {
 			r.Header.Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
 		}
