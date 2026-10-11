@@ -1372,6 +1372,13 @@ func TestMetadataOnlyUpdateRestampsSyncTs(t *testing.T) {
 	if stamp <= 1 {
 		t.Errorf("LastLocalSyncTsNs = %d, want it advanced past the previous stamp", stamp)
 	}
+	expected := filerClient.updated.Condition.Clauses[0].ExpectedEntry
+	if got := expected.GetRemoteEntry().GetLastLocalSyncTsNs(); got != 1 {
+		t.Errorf("precondition stamp = %d, want the stored stamp 1 or IF_ENTRY_EQUAL rejects the write", got)
+	}
+	if got := replicated.GetLastLocalSyncTsNs(); got != 1 {
+		t.Errorf("shared RemoteEntry stamp = %d, want 1: stamping must not mutate the caller's RemoteEntry", got)
+	}
 	if shouldSendToRemote(filerClient.updated.Entry) {
 		t.Error("the restamped entry should read synced")
 	}

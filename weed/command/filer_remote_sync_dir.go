@@ -630,6 +630,7 @@ func remoteWriteEntry(entry *filer_pb.Entry, storageClass string) *filer_pb.Entr
 // in the log and stamps the current entry, so the stale stamp is skipped the
 // same way a superseded upload is.
 func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
+	remoteEntry = proto.Clone(remoteEntry).(*filer_pb.RemoteEntry)
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
 	expected := proto.Clone(entry).(*filer_pb.Entry)
 	entry.RemoteEntry = remoteEntry
