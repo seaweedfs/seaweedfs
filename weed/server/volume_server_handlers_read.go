@@ -309,7 +309,10 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 		ext = strings.ToLower(ext)
 	}
 	if r.Method == http.MethodHead {
-		return true, true
+		// Attempt only, so a needle up to PagedReadLimit is still read whole:
+		// on a spinning disk one read is cheaper than a header read followed
+		// by a trailer read.
+		return true, false
 	}
 	_, _, _, shouldResize := shouldResizeImages(ext, r)
 	_, _, _, _, shouldCrop := shouldCropImages(ext, r)

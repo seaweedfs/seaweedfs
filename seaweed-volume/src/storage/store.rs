@@ -736,6 +736,20 @@ impl Store {
         vol.read_needle(n)
     }
 
+    /// Read a needle from a volume using the given read option.
+    ///
+    /// On return, `read_option.is_meta_only` tells the caller whether the
+    /// payload was skipped.
+    pub fn read_volume_needle_with_option(
+        &self,
+        vid: VolumeId,
+        n: &mut Needle,
+        read_option: &mut ReadOption,
+    ) -> Result<i32, VolumeError> {
+        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
+        vol.read_needle_with_option(n, read_option)
+    }
+
     /// Read a needle from a volume, optionally reading deleted needles.
     pub fn read_volume_needle_opt(
         &self,

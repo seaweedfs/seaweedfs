@@ -3058,6 +3058,20 @@ struct DeleteResult {
     size: i64,
 }
 
+/// Read option for deletes: read only the needle's header and trailer.
+///
+/// A delete needs to know that the needle exists, what its cookie is, and
+/// whether it is a chunk manifest. None of that requires the payload. If the
+/// needle turns out to be a chunk manifest, the read loads its data as well,
+/// because the delete needs the manifest to delete the chunks.
+pub(crate) fn delete_read_option() -> ReadOption {
+    ReadOption {
+        attempt_meta_only: true,
+        must_meta_only: true,
+        ..ReadOption::default()
+    }
+}
+
 pub async fn delete_handler(
     State(state): State<Arc<VolumeServerState>>,
     request: Request<Body>,
@@ -3226,7 +3240,7 @@ pub async fn delete_handler(
     let original_cookie = cookie;
     {
         let store = state.store.read().unwrap();
-        match store.read_volume_needle(vid, &mut n) {
+        match store.read_volume_needle_with_option(vid, &mut n, &mut delete_read_option()) {
             Ok(_) => {}
             Err(_) => {
                 let result = DeleteResult { size: 0 };
@@ -5523,6 +5537,17 @@ mod tests {
         (status, headers, body)
     }
 
+    /// The public router does not accept DELETE requests, so this calls the
+    /// handler directly, the same way the admin router does.
+    async fn send_delete(state: &Arc<VolumeServerState>, path: &str) -> StatusCode {
+        let request = Request::builder()
+            .method(Method::DELETE)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        delete_handler(State(state.clone()), request).await.status()
+    }
+
     /// A GET whose needle read is parked must not hold the store lock: a
     /// writer, here a real append to the same volume, must get through.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5625,6 +5650,43 @@ mod tests {
             !reads.is_empty() && reads.iter().all(|&len| len < 64 * 1024),
             "the large needle's payload must not be read before streaming: {reads:?}"
         );
+    }
+
+    /// A delete needs the needle's cookie and its chunk-manifest flag. Both
+    /// are stored in the header and trailer, so the delete must not read the
+    /// payload.
+    #[tokio::test]
+    async fn test_delete_reads_needle_meta_only() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::Mutex;
+
+        const ID: u64 = 0x6e7a_0a01;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let data: Vec<u8> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
+        let path = put_test_needle(&state, ID, &data);
+
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let _hook = needle_read_hook::register(NeedleId(ID), {
+            let reads = reads.clone();
+            move |len| reads.lock().unwrap().push(len)
+        });
+
+        let wrong_cookie = format!("/1,{:x}{:08x}", ID, TEST_COOKIE + 1);
+        assert_eq!(
+            send_delete(&state, &wrong_cookie).await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(send_delete(&state, &path).await, StatusCode::ACCEPTED);
+
+        let reads = reads.lock().unwrap().clone();
+        assert!(
+            !reads.is_empty() && reads.iter().all(|&len| len < 4096),
+            "a delete must not read the needle's payload ({} bytes): {reads:?}",
+            data.len()
+        );
+        let (status, _, _) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     /// HEAD and ranged reads keep answering from the needle meta and the
