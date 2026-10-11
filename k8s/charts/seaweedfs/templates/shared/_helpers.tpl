@@ -701,6 +701,10 @@ nothing (on install), and the first upgrade then changed the checksum and restar
 although nothing had changed. Only the values that template reads are hashed, so scaling the S3
 gateway or changing its resources does not restart the filer. Keep this list in step with
 s3-secret.yaml.
+Keys the chart generated are not part of it. Deleting the Secret to rotate them regenerates them on
+the next upgrade without restarting the pods; restart them afterwards (kubectl rollout restart).
+Folding the stored keys in would bring the first-upgrade restart back, since lookup finds nothing
+on install.
 */}}
 {{- define "seaweedfs.s3.configChecksum" -}}
 {{- dict
