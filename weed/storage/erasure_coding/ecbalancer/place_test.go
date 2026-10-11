@@ -685,3 +685,232 @@ func TestReleaseVolumeShardsKeepsOtherLiveCounts(t *testing.T) {
 		t.Error("other volume shards were dropped")
 	}
 }
+
+const imbalanceLiveBase = 200
+const imbalanceDiskCap = 5000
+
+// buildImbalancedTopo is racks × machines × disks: one VS per machine, disk
+// ids 0..D-1. Earlier (rack, machine, disk) ids are fatter — more liveShards,
+// fewer freeSlots (cap−live). Sorted-id extras would pile on those first ids;
+// freeSlots-then-liveShards extras must walk the other way.
+func buildImbalancedTopo(racks, machines, disks int) *Topology {
+	topo := NewTopology()
+	idx := 0
+	for r := 0; r < racks; r++ {
+		rackKey := fmt.Sprintf("dc1:rack%d", r)
+		for m := 0; m < machines; m++ {
+			host := fmt.Sprintf("10.0.%d.%d", r, m)
+			lives := make([]int, disks)
+			frees := make([]int, disks)
+			nodeFree := 0
+			for d := 0; d < disks; d++ {
+				lives[d] = imbalanceLiveBase - idx
+				idx++
+				frees[d] = imbalanceDiskCap - lives[d]
+				nodeFree += frees[d]
+			}
+			n := topo.AddNode(host+":8080", "dc1", rackKey, nodeFree)
+			n.SetHost(host)
+			for d := 0; d < disks; d++ {
+				n.AddDisk(uint32(d), "", frees[d], lives[d])
+			}
+		}
+	}
+	return topo
+}
+
+type diskKey struct {
+	node   string
+	diskID uint32
+}
+
+func snapshotDiskLive(topo *Topology) map[diskKey]int {
+	out := make(map[diskKey]int)
+	for _, n := range topo.nodes {
+		for id, d := range n.disks {
+			out[diskKey{n.id, id}] = d.shardCount
+		}
+	}
+	return out
+}
+
+func snapshotRackLive(topo *Topology) map[string]int {
+	out := make(map[string]int)
+	for _, n := range topo.nodes {
+		out[n.rack] += nodeLiveShardCount(n)
+	}
+	return out
+}
+
+func place104Counts(t *testing.T, topo *Topology) (perDisk map[diskKey]int, perRack map[string]int) {
+	t.Helper()
+	res, err := topo.Place(1, "c1", allShards(), Constraints{}, PlaceStrict)
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	if len(res.Destinations) != erasure_coding.TotalShardsCount {
+		t.Fatalf("placed %d shards, want %d", len(res.Destinations), erasure_coding.TotalShardsCount)
+	}
+	perDisk = map[diskKey]int{}
+	perRack = map[string]int{}
+	for _, d := range res.Destinations {
+		perDisk[diskKey{d.Node, d.DiskID}]++
+		perRack[topo.nodes[d.Node].rack]++
+	}
+	return perDisk, perRack
+}
+
+func assertTailsPreferThinDisks(t *testing.T, topo *Topology, before map[diskKey]int, got map[diskKey]int) {
+	t.Helper()
+	for _, n := range topo.nodes {
+		type row struct {
+			live int
+			got  int
+			id   uint32
+		}
+		rows := make([]row, 0, len(n.disks))
+		for id := range n.disks {
+			k := diskKey{n.id, id}
+			rows = append(rows, row{live: before[k], got: got[k], id: id})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].live != rows[j].live {
+				return rows[i].live > rows[j].live
+			}
+			return rows[i].id < rows[j].id
+		})
+		for i := 1; i < len(rows); i++ {
+			if rows[i-1].got > rows[i].got {
+				t.Errorf("node %s: fatter disk %d (live=%d) got %d of this volume, thinner disk %d (live=%d) got %d; remainder tails must prefer thin disks, not first ids",
+					n.id, rows[i-1].id, rows[i-1].live, rows[i-1].got, rows[i].id, rows[i].live, rows[i].got)
+			}
+		}
+	}
+}
+
+func assertRackExtrasWalkThin(t *testing.T, before map[string]int, got map[string]int) {
+	t.Helper()
+	type row struct {
+		rack string
+		live int
+		got  int
+	}
+	rows := make([]row, 0, len(before))
+	for rk, live := range before {
+		rows = append(rows, row{rack: rk, live: live, got: got[rk]})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].live != rows[j].live {
+			return rows[i].live > rows[j].live
+		}
+		return rows[i].rack < rows[j].rack
+	})
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].got > rows[i].got {
+			t.Errorf("fatter rack %s (live=%d) got %d, thinner rack %s (live=%d) got %d; extras must walk to thinner racks",
+				rows[i-1].rack, rows[i-1].live, rows[i-1].got, rows[i].rack, rows[i].live, rows[i].got)
+		}
+	}
+}
+
+func assertLiveGapFrozen(t *testing.T, before, after map[diskKey]int, placed map[diskKey]int) {
+	t.Helper()
+	keys := make([]diskKey, 0, len(before))
+	for k := range before {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].node != keys[j].node {
+			return keys[i].node < keys[j].node
+		}
+		return keys[i].diskID < keys[j].diskID
+	})
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			a, b := keys[i], keys[j]
+			if before[a]-before[b] != after[a]-after[b] {
+				t.Errorf("live gap %s/%d vs %s/%d changed %d → %d (placed %d vs %d); remainder 0 must not close the gap",
+					a.node, a.diskID, b.node, b.diskID, before[a]-before[b], after[a]-after[b], placed[a], placed[b])
+			}
+		}
+	}
+}
+
+// TestPlace10Plus4ImbalanceTiebreak: 10+4 onto seeded liveShards/freeSlots
+// skew. Remainder tails pay thin disks/racks, not sorted-first ids. Remainder
+// 0 (1-1-7, 7-1-2) is a no-op on the live gap — that is the contract.
+// Existing 4-1-2 / within-rack 2-disk cases stay in the tests above.
+func TestPlace10Plus4ImbalanceTiebreak(t *testing.T) {
+	cases := []struct {
+		name              string
+		racks, machines, disks int
+		remainderZero     bool
+		fatFirstGetsZero  bool
+		rackExtras        bool
+		fatRacksTwoPlusOne bool
+	}{
+		{name: "1-1-4", racks: 1, machines: 1, disks: 4},
+		{name: "1-1-6", racks: 1, machines: 1, disks: 6},
+		{name: "1-1-8", racks: 1, machines: 1, disks: 8},
+		{name: "1-1-15", racks: 1, machines: 1, disks: 15, fatFirstGetsZero: true},
+		{name: "1-1-7", racks: 1, machines: 1, disks: 7, remainderZero: true},
+		{name: "7-1-2", racks: 7, machines: 1, disks: 2, remainderZero: true},
+		{name: "4-2-3", racks: 4, machines: 2, disks: 3, rackExtras: true},
+		{name: "5-2-2", racks: 5, machines: 2, disks: 2, rackExtras: true},
+		{name: "6-1-2", racks: 6, machines: 1, disks: 2, rackExtras: true, fatRacksTwoPlusOne: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			topo := buildImbalancedTopo(tc.racks, tc.machines, tc.disks)
+			beforeDisk := snapshotDiskLive(topo)
+			beforeRack := snapshotRackLive(topo)
+
+			gotDisk, gotRack := place104Counts(t, topo)
+
+			if tc.fatFirstGetsZero {
+				var zero []diskKey
+				for _, n := range topo.nodes {
+					for id := range n.disks {
+						k := diskKey{n.id, id}
+						if gotDisk[k] == 0 {
+							zero = append(zero, k)
+						}
+					}
+				}
+				if len(zero) != 1 {
+					t.Fatalf("want exactly one disk with 0 shards of this volume, got %v (placed %v)", zero, gotDisk)
+				}
+				if zero[0].diskID != 0 {
+					t.Fatalf("zero-of-this-volume disk is %s/%d; must be the fat first-id disk, not the last sorted id", zero[0].node, zero[0].diskID)
+				}
+			}
+
+			assertTailsPreferThinDisks(t, topo, beforeDisk, gotDisk)
+
+			if tc.rackExtras || tc.remainderZero && tc.racks > 1 {
+				assertRackExtrasWalkThin(t, beforeRack, gotRack)
+			}
+
+			if tc.fatRacksTwoPlusOne {
+				for _, n := range topo.nodes {
+					if gotRack[n.rack] != 3 {
+						continue
+					}
+					counts := make([]int, 0, len(n.disks))
+					for id := range n.disks {
+						counts = append(counts, gotDisk[diskKey{n.id, id}])
+					}
+					sort.Ints(counts)
+					if len(counts) != 2 || counts[0] != 1 || counts[1] != 2 {
+						t.Errorf("rack %s has 3 shards on disks %v, want 2+1", n.rack, counts)
+					}
+				}
+			}
+
+			if tc.remainderZero {
+				after := snapshotDiskLive(topo)
+				assertLiveGapFrozen(t, beforeDisk, after, gotDisk)
+			}
+		})
+	}
+}
