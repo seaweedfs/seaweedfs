@@ -91,8 +91,10 @@ const (
 )
 
 func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath, maxCacheableEntries int) error {
-	// Use singleflight to deduplicate concurrent requests for the same path
-	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
+	// Use singleflight to deduplicate concurrent requests for the same path.
+	// DoChan so a canceled request stops waiting even when another request
+	// owns the in-flight build.
+	resultCh := mc.visitGroup.DoChan(string(path), func() (interface{}, error) {
 		// Check for cancellation before starting
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -222,7 +224,12 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		cleanupDone = true // Prevent deferred cleanup after successful publish
 		return nil, nil
 	})
-	return err
+	select {
+	case result := <-resultCh:
+		return result.Err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func IsHiddenSystemEntry(dir, name string) bool {

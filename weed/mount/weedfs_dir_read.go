@@ -188,6 +188,8 @@ func (wfs *WFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fus
 }
 
 func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out DirEntrySink, isPlusMode bool) fuse.Status {
+	listingCtx := filer_pb.WithChunksOmitted(ctx)
+
 	// Get the directory handle and lock it for the duration of this operation.
 	// This serializes concurrent readdir calls on the same handle, fixing the
 	// race condition that caused hangs with NFS-Ganesha.
@@ -286,7 +288,7 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 	dh.dropConsumed(input.Offset)
 
 	if wfs.inodeToPath.ShouldReadDirectoryDirect(dirPath) {
-		return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+		return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 	}
 
 	// Read from cache first, then load next batch if needed
@@ -299,29 +301,32 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			if err := wfs.ensureDirectoryVisited(ctx, dirPath); err != nil {
 				var tooLarge *meta_cache.DirectoryTooLargeError
 				if errors.As(err, &tooLarge) {
-					return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+					return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 				}
 				glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 				return fuse.EIO
 			}
 
 			// Serve the maintained-but-unverified cache if the filer is unreachable.
-			if err := meta_cache.EnsureListingFresh(context.Background(), wfs.metaCache, wfs, dirPath, ""); err != nil {
+			if err := meta_cache.EnsureListingFresh(ctx, wfs.metaCache, wfs, dirPath, ""); err != nil {
 				if errors.Is(err, meta_cache.ErrRefreshRangeTooLarge) {
 					// re-tile with a full rebuild; serve this request direct
 					wfs.purgeDirectoryCache(dirPath)
-					return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+					return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 				}
 				glog.V(1).Infof("refresh %s sections: %v", dirPath, err)
 			}
 
 			// Load entries from beginning to fill cache up to the requested offset
-			storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
+			storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(listingCtx, dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
 				dh.entryStream = append(dh.entryStream, entry)
 				return true, nil
 			})
 			dh.lastListedName = storeLastName
 			if loadErr != nil {
+				if ctx.Err() != nil {
+					return fuse.EINTR
+				}
 				glog.Errorf("list meta cache: %v", loadErr)
 				return fuse.EIO
 			}
@@ -358,7 +363,10 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			if errors.As(err, &tooLarge) {
 				// The direct path keeps the same pagination state on dh, so it
 				// carries on from wherever the cached walk reached.
-				return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+				return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
+			}
+			if ctx.Err() != nil {
+				return fuse.EINTR
 			}
 			glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 			return fuse.EIO
@@ -373,17 +381,17 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 		}
 
 		// Serve the maintained-but-unverified cache if the filer is unreachable.
-		if err := meta_cache.EnsureListingFresh(context.Background(), wfs.metaCache, wfs, dirPath, lastEntryName); err != nil {
+		if err := meta_cache.EnsureListingFresh(ctx, wfs.metaCache, wfs, dirPath, lastEntryName); err != nil {
 			if errors.Is(err, meta_cache.ErrRefreshRangeTooLarge) {
 				// re-tile with a full rebuild; serve this request direct
 				wfs.purgeDirectoryCache(dirPath)
-				return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+				return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 			}
 			glog.V(1).Infof("refresh %s sections: %v", dirPath, err)
 		}
 
 		bufferFull := false
-		storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(readdirContext, dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
+		storeLastName, loadErr := wfs.metaCache.ListDirectoryEntries(listingCtx, dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
 			currentIndex := int64(len(dh.entryStream))
 			dh.entryStream = append(dh.entryStream, entry)
 			if !processEachEntryFn(entry, currentIndex) {
@@ -393,6 +401,9 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			return true, nil
 		})
 		if loadErr != nil {
+			if ctx.Err() != nil {
+				return fuse.EINTR
+			}
 			glog.Errorf("list meta cache: %v", loadErr)
 			return fuse.EIO
 		}
@@ -421,14 +432,18 @@ func (wfs *WFS) ensureDirectoryVisited(ctx context.Context, dirPath util.FullPat
 	return err
 }
 
-func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *DirectoryHandle, dirPath util.FullPath, processEachEntryFn func(entry *filer.Entry, index int64) bool) fuse.Status {
+func (wfs *WFS) readDirectoryDirect(ctx context.Context, input *fuse.ReadIn, out DirEntrySink, dh *DirectoryHandle, dirPath util.FullPath, processEachEntryFn func(entry *filer.Entry, index int64) bool) fuse.Status {
+	listingCtx := filer_pb.WithChunksOmitted(ctx)
 	var lastEntryName string
 
 	if input.Offset >= dh.entryStreamOffset {
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
-			entries, snapshotTs, err := loadDirectoryEntriesDirect(readdirContext, wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
+			entries, snapshotTs, err := loadDirectoryEntriesDirect(listingCtx, wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 			if err != nil {
+				if ctx.Err() != nil {
+					return fuse.EINTR
+				}
 				glog.Errorf("list filer directory: %v", err)
 				return fuse.EIO
 			}
@@ -461,8 +476,11 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out DirEntrySink, dh *Di
 			}
 		}
 
-		entries, snapshotTs, err := loadDirectoryEntriesDirect(readdirContext, wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
+		entries, snapshotTs, err := loadDirectoryEntriesDirect(listingCtx, wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs, wfs.option.IncludeSystemEntries)
 		if err != nil {
+			if ctx.Err() != nil {
+				return fuse.EINTR
+			}
 			glog.Errorf("list filer directory: %v", err)
 			return fuse.EIO
 		}
