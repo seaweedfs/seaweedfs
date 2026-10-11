@@ -82,6 +82,11 @@ type Filer struct {
 	persistedLogCache             *persistedLogCache
 	metaLogInflight               metaLogInflight
 	remoteTombstones              *remoteDeletionTombstones
+	// EntryLockTable serializes mutations per entry path. The filer server
+	// holds it across local read-modify-write mutations and the meta
+	// aggregator across a replayed peer change's check-and-apply, so the two
+	// cannot interleave on the same path.
+	EntryLockTable *util.LockTable[util.FullPath]
 	// remoteTombstonesDone, when non-nil, is closed once the startup tombstone
 	// rebuild finishes; lazy remote reads wait on it so a pending delete
 	// cannot resurrect in the gap.
@@ -133,6 +138,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
 		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
 		remoteTombstones:    newRemoteDeletionTombstones(),
+		EntryLockTable:      util.NewLockTable[util.FullPath](),
 	}
 	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
 	if f.UniqueFilerId < 0 {

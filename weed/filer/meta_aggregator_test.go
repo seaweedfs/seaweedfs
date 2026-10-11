@@ -68,3 +68,21 @@ func TestMetaAggregatorShutdownStopsPeerLoops(t *testing.T) {
 		t.Fatal("peer loop was not stopped")
 	}
 }
+
+// After Shutdown begins, a peer-add update arriving on the still-connected
+// master watch must not start a subscription: it would have no stop signal
+// and could run past the store close.
+func TestOnPeerUpdateAfterShutdownRejected(t *testing.T) {
+	ma := NewMetaAggregator(nil, pb.ServerAddress("127.0.0.1:2"), nil)
+	ma.Shutdown()
+
+	peer := pb.ServerAddress("127.0.0.1:1")
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(peer), IsAdd: true}, time.Now())
+
+	ma.peerChansLock.Lock()
+	_, found := ma.peerChans[peer]
+	ma.peerChansLock.Unlock()
+	if found {
+		t.Fatal("peer subscription started after shutdown")
+	}
+}
