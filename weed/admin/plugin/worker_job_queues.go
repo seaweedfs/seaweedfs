@@ -140,8 +140,9 @@ func (r *Plugin) assignJobsToWorkerQueues(
 	return qs
 }
 
-// takeQueuedJob pops a home-runnable job, or steals from a queue at/over K
-// onto a free worker. Returns nil when nothing can start now.
+// takeQueuedJob pops a home-runnable job, or steals onto a free worker.
+// Live homes are stolen from only when their queue is at/over K.
+// A home missing from live executors is stolen immediately (no K).
 func (r *Plugin) takeQueuedJob(
 	qs *workerJobQueues,
 	jobType string,
@@ -156,6 +157,11 @@ func (r *Plugin) takeQueuedJob(
 	}
 	lane := JobTypeLane(jobType)
 	pin := policy.LocalQueuePin
+	defer func() {
+		if item != nil && targetID != "" {
+			r.bindQueuedJobWorker(item.job, targetID)
+		}
+	}()
 
 	qs.mu.Lock()
 	defer qs.mu.Unlock()
@@ -212,18 +218,34 @@ func (r *Plugin) takeQueuedJob(
 		return item, thief.WorkerID
 	}
 
+	live := make(map[string]struct{}, len(executors))
+	for _, exec := range executors {
+		live[exec.WorkerID] = struct{}{}
+	}
+
 	victimID := ""
 	victimLen := 0
+	victimOrphan := false
 	for id, qq := range qs.q {
 		if len(qq) == 0 {
 			continue
 		}
-		if pin > 0 && len(qq) < pin {
+		_, isLive := live[id]
+		if isLive && pin > 0 && len(qq) < pin {
 			continue
 		}
-		if victimID == "" || len(qq) > victimLen || (len(qq) == victimLen && id < victimID) {
+		orphan := !isLive
+		better := victimID == ""
+		if !better && orphan != victimOrphan {
+			better = orphan
+		}
+		if !better && orphan == victimOrphan {
+			better = len(qq) > victimLen || (len(qq) == victimLen && id < victimID)
+		}
+		if better {
 			victimID = id
 			victimLen = len(qq)
+			victimOrphan = orphan
 		}
 	}
 	if victimID == "" {

@@ -200,6 +200,46 @@ func TestTakeStealsImmediatelyWhenPinDisabled(t *testing.T) {
 	}
 }
 
+func TestTakeStealsOrphanedHomeWithoutK(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	registerECWorkers(t, pluginSvc, map[string]string{
+		"worker-local":  "10.0.0.1:9334",
+		"worker-remote": "10.0.0.2:9334",
+	})
+
+	jobs := []*plugin_pb.JobSpec{
+		replicaJob("o1", "10.0.0.1:8080"),
+		replicaJob("o2", "10.0.0.1:8080"),
+	}
+	policy := schedulerPolicy{PerWorkerConcurrency: 1, LocalQueuePin: 5}
+	qs := pluginSvc.assignJobsToWorkerQueues("erasure_coding", jobs, policy)
+	if qs.queueLen("worker-local") != 2 {
+		t.Fatalf("want 2 on local, got %d", qs.queueLen("worker-local"))
+	}
+
+	pluginSvc.registry.Remove("worker-local")
+
+	stolen, stealTarget := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if stolen == nil || stealTarget != "worker-remote" {
+		t.Fatalf("dead home should steal without K, got job=%v target=%s", stolen, stealTarget)
+	}
+	if qs.queueLen("worker-local") != 1 {
+		t.Fatalf("want 1 orphan left, got %d", qs.queueLen("worker-local"))
+	}
+
+	stolen2, stealTarget2 := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if stolen2 == nil || stealTarget2 != "worker-remote" {
+		t.Fatalf("second orphan should also move, got job=%v target=%s", stolen2, stealTarget2)
+	}
+}
+
 func TestBindQueuedJobWorkerKeepsPendingState(t *testing.T) {
 	t.Parallel()
 
