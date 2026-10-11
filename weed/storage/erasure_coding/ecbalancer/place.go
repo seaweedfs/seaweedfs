@@ -481,9 +481,9 @@ func rackShardRoomUnderRP(r *rack, vk volKey, eligible func(*disk) bool, maxPerD
 // FromActiveTopology keeps all disk types/tags in the snapshot, so without this a
 // node with free volume slots but no eligible disk could be chosen.
 //
-// Even first (this volume, machine then node). Remainders: higher freeSlots,
-// then lower liveShards+assignedThisPlace (disk.shardCount). A 3-shard rack is
-// 2+1; a 4-shard rack stays 2+2 — no 3+1. SameRackCount is a hard cap.
+// Even first (this volume, machine then node). Machine freeSlots remainder
+// (mFree) was dropped: keep host even (mCount); remainder is disk freeSlots
+// then liveShards so thin disks fill first. SameRackCount / 2+2 unchanged.
 func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, maxPerDisk int) *Node {
 	machineShards := countShardsByHost(vk, r.nodes)
 	var best *Node

@@ -575,7 +575,18 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 			continue
 		}
 		score := nodeLiveShardCount(node)
-		if best == nil || count < bestCount || (count == bestCount && (node.freeSlots > bestFree || (node.freeSlots == bestFree && score < bestScore))) {
+		better := false
+		switch {
+		case best == nil:
+			better = true
+		case count != bestCount:
+			better = count < bestCount
+		case node.freeSlots != bestFree:
+			better = node.freeSlots > bestFree
+		default:
+			better = score < bestScore
+		}
+		if better {
 			best, bestCount, bestFree, bestScore = node, count, node.freeSlots, score
 		}
 	}
