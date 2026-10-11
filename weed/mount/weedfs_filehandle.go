@@ -11,12 +11,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
-func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
+func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
 	// If there is an in-flight async flush for this inode, wait for it to
 	// complete before reopening.  Otherwise the new handle would be built
 	// from pre-close filer metadata and its next flush could overwrite the
 	// data that was just written asynchronously.
-	wfs.waitForPendingAsyncFlush(context.Background(), inode)
+	wfs.waitForPendingAsyncFlush(ctx, inode)
 
 	path, pathStatus := wfs.inodeToPath.GetPath(inode)
 	if pathStatus != fuse.OK {
@@ -39,7 +39,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		})
 		entryVersionTsNs = entryVersion{tsNs: existingFh.entryVersionTsNs.Load(), signature: existingFh.entryVersionSignature.Load()}
 	} else {
-		entry, entryVersionTsNs, status = wfs.maybeLoadEntry(context.Background(), path)
+		entry, entryVersionTsNs, status = wfs.maybeLoadEntry(ctx, path)
 		if status != fuse.OK {
 			return nil, status
 		}

@@ -54,7 +54,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 			return fuse.Status(syscall.EEXIST)
 		}
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
-		fileHandle, status := wfs.AcquireHandle(inode, in.Flags, in.Uid, in.Gid)
+		fileHandle, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
 		if status != fuse.OK {
 			return status
 		}
@@ -103,7 +103,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 			return fuse.EIO
 		}
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
-		fileHandle, status := wfs.AcquireHandle(inode, in.Flags, in.Uid, in.Gid)
+		fileHandle, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
 		if status != fuse.OK {
 			return status
 		}

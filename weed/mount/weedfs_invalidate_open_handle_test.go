@@ -499,7 +499,7 @@ func TestQueuedEventDoesNotRollBackHandleOpenedAfterEnqueue(t *testing.T) {
 	// Open now: the lookup reaches the filer, which serves the newer
 	// size-200 state versioned at log position 2000.
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
@@ -563,7 +563,7 @@ func TestAbortedBuildEventDoesNotRollBackLaterOpen(t *testing.T) {
 	}
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
@@ -626,7 +626,7 @@ func TestEventDuringOpenLookupIsFenced(t *testing.T) {
 	}
 	opened := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		opened <- openResult{fh, status}
 	}()
 
@@ -755,7 +755,7 @@ func TestLocalAckDoesNotFenceUnrelatedDelayedEvents(t *testing.T) {
 	// Open the file: the cached-store read must not claim position 2000 —
 	// the local ack versioned only its own path.
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
@@ -794,14 +794,14 @@ func TestSlowerConcurrentOpenDoesNotOverwriteNewerHandle(t *testing.T) {
 	}
 	slow := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		slow <- openResult{fh, status}
 	}()
 	<-fake.lookupStarted
 
 	// The faster opener completes with newer state while the slow lookup is
 	// still in flight.
-	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fastFh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
 	}
@@ -925,12 +925,12 @@ func TestSlowerOpenRejectedWhenHandleDirtyOrLookupUnversioned(t *testing.T) {
 	}
 	slow := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		slow <- openResult{fh, status}
 	}()
 	<-fake.lookupStarted
 
-	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fastFh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
 	}
@@ -969,12 +969,12 @@ func TestUnversionedSlowerOpenDoesNotOverwrite(t *testing.T) {
 	}
 	slow := make(chan openResult, 1)
 	go func() {
-		fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+		fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 		slow <- openResult{fh, status}
 	}()
 	<-fake.lookupStarted
 
-	fastFh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fastFh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("fast AcquireHandle status = %v, want OK", status)
 	}
@@ -1820,7 +1820,7 @@ func TestEventFromAnotherFilerIsNotFencedByForeignClock(t *testing.T) {
 	startFakeFiler(t, wfs, &fakeFilerServer{lookupSize: 200, lookupLogTsNs: 5000, lookupSignature: 11})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, status := wfs.AcquireHandle(inode, 0, 0, 0)
+	fh, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0)
 	if status != fuse.OK {
 		t.Fatalf("AcquireHandle status = %v, want OK", status)
 	}
