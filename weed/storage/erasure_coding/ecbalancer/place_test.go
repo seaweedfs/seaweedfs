@@ -541,3 +541,152 @@ func TestPlaceRotatesExtraRackShardsAcrossVolumes(t *testing.T) {
 		t.Errorf("extra (4-shard) racks did not rotate; hit %v over %d volumes", gotFour, volumes)
 	}
 }
+
+func twoDiskRackRP() *super_block.ReplicaPlacement {
+	return &super_block.ReplicaPlacement{DiffRackCount: 4, SameRackCount: 2}
+}
+
+func placeNeed(t *testing.T, topo *Topology, vid uint32, n int, rp *super_block.ReplicaPlacement) map[string]int {
+	t.Helper()
+	need := make([]int, n)
+	for i := range need {
+		need[i] = i
+	}
+	res, err := topo.Place(vid, "c1", need, Constraints{
+		ReplicaPlacement: rp,
+		Ratio:            func(string) (int, int) { return 10, 4 },
+	}, PlaceDurabilityFirst)
+	if err != nil {
+		t.Fatalf("Place vid=%d: %v", vid, err)
+	}
+	got := map[string]int{}
+	for _, d := range res.Destinations {
+		got[d.Node]++
+	}
+	return got
+}
+
+// TestWithinRackPaysDownShardDebt3: 2 VS, live 100 vs 135, 3 shards, cap 2.
+// Pair on the thinner every volume until the gap is gone — not 50/50 from vol 1.
+func TestWithinRackPaysDownShardDebt3(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 5000)
+	a.AddDisk(0, "", 5000, 100)
+	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 5000)
+	b.AddDisk(0, "", 5000, 135)
+	rp := twoDiskRackRP()
+
+	got := placeNeed(t, topo, 1, 3, rp)
+	if got["a:8080"] != 2 || got["b:8081"] != 1 {
+		t.Fatalf("first volume %v, want a=2 b=1 (pair on thinner)", got)
+	}
+
+	const rounds = 35
+	for v := uint32(2); v <= rounds; v++ {
+		beforeA, beforeB := nodeLiveShardCount(a), nodeLiveShardCount(b)
+		got = placeNeed(t, topo, v, 3, rp)
+		if beforeA+2 <= beforeB && (got["a:8080"] != 2 || got["b:8081"] != 1) {
+			t.Fatalf("volume %d %v before A=%d B=%d; debt≥2 must stay 2+1 on A",
+				v, got, beforeA, beforeB)
+		}
+	}
+	if ga, gb := nodeLiveShardCount(a), nodeLiveShardCount(b); ga != 170 || gb != 170 {
+		t.Errorf("after %d×(2+1) live A=%d B=%d, want 170/170", rounds, ga, gb)
+	}
+}
+
+// TestWithinRackPaysDownShardDebt4: 4 shards on 2 disks. Gap≥2 must be 3+1
+// (2+2 never heals). After scores meet, back to 2+2.
+func TestWithinRackPaysDownShardDebt4(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 5000)
+	a.AddDisk(0, "", 5000, 100)
+	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 5000)
+	b.AddDisk(0, "", 5000, 130)
+	rp := twoDiskRackRP()
+
+	got := placeNeed(t, topo, 1, 4, rp)
+	if got["a:8080"] != 3 || got["b:8081"] != 1 {
+		t.Fatalf("first volume %v, want a=3 b=1", got)
+	}
+
+	for v := uint32(2); v <= 15; v++ {
+		beforeA, beforeB := nodeLiveShardCount(a), nodeLiveShardCount(b)
+		got = placeNeed(t, topo, v, 4, rp)
+		if beforeA+2 <= beforeB && (got["a:8080"] != 3 || got["b:8081"] != 1) {
+			t.Fatalf("volume %d %v before A=%d B=%d; debt≥2 must stay 3+1",
+				v, got, beforeA, beforeB)
+		}
+	}
+	if ga, gb := nodeLiveShardCount(a), nodeLiveShardCount(b); ga != 145 || gb != 145 {
+		t.Fatalf("after 15×(3+1) live A=%d B=%d, want 145/145", ga, gb)
+	}
+	got = placeNeed(t, topo, 16, 4, rp)
+	if got["a:8080"] != 2 || got["b:8081"] != 2 {
+		t.Errorf("converged volume %v, want 2+2", got)
+	}
+}
+
+// TestEcVolumeCountIsNotScore: both VS show the same "EC volumes" cardinality;
+// the pair still goes to the lower shard count.
+func TestEcVolumeCountIsNotScore(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 5000)
+	a.AddDisk(0, "", 5000, 2528)
+	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 5000)
+	b.AddDisk(0, "", 5000, 2563)
+	for i := uint32(1); i <= 1000; i++ {
+		a.AddShards(i, "other", 0, erasure_coding.ShardBits(1))
+		b.AddShards(i, "other", 0, erasure_coding.ShardBits(1))
+	}
+	got := placeNeed(t, topo, 2000, 3, twoDiskRackRP())
+	if got["a:8080"] != 2 || got["b:8081"] != 1 {
+		t.Fatalf("got %v; score must be shard count (2528 vs 2563), not 1000 EC volumes", got)
+	}
+}
+
+// TestFreeSlotsTieDoesNotOverrideShardDebt: fatter disk may have more free
+// slots; the pair/triple still lands on the thinner shard count.
+func TestFreeSlotsTieDoesNotOverrideShardDebt(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
+	a.AddDisk(0, "", 100, 100)
+	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 200)
+	b.AddDisk(0, "", 200, 135)
+	rp := twoDiskRackRP()
+	got := placeNeed(t, topo, 1, 3, rp)
+	if got["a:8080"] != 2 || got["b:8081"] != 1 {
+		t.Fatalf("3 shards %v, want 2+1 on thinner despite B freeSlots", got)
+	}
+
+	topo = NewTopology()
+	a = topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
+	a.AddDisk(0, "", 100, 100)
+	b = topo.AddNode("b:8081", "dc1", "dc1:rack0", 200)
+	b.AddDisk(0, "", 200, 135)
+	got = placeNeed(t, topo, 1, 4, rp)
+	if got["a:8080"] != 3 || got["b:8081"] != 1 {
+		t.Fatalf("4 shards %v, want 3+1 on thinner despite B freeSlots", got)
+	}
+}
+
+// TestReleaseVolumeShardsKeepsOtherLiveCounts: encode's ReleaseVolumeShards
+// must not zero disk.shardCount for other volumes (that was the green-field bug).
+func TestReleaseVolumeShardsKeepsOtherLiveCounts(t *testing.T) {
+	topo := NewTopology()
+	n := topo.AddNode("n0:8080", "dc1", "dc1:rack0", 100)
+	n.AddDisk(0, "", 90, 10)
+	n.AddShards(1, "c1", 0, erasure_coding.ShardBits(1<<0))
+	n.AddShards(2, "c1", 0, erasure_coding.ShardBits(1<<1|1<<2))
+	n.disks[0].shardCount = 10
+	n.disks[0].freeSlots = 90
+
+	topo.ReleaseVolumeShards("c1", 1)
+
+	if nodeLiveShardCount(n) != 9 {
+		t.Errorf("live shardCount = %d after releasing 1 of 10, want 9 (must not zero the snapshot)", nodeLiveShardCount(n))
+	}
+	if _, ok := n.shards[volKey{collection: "c1", vid: 2}]; !ok {
+		t.Error("other volume shards were dropped")
+	}
+}

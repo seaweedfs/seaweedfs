@@ -290,6 +290,10 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 	var journal []placedEntry
 	relaxedSeen := map[string]bool{}
 	spilledType := false
+	// Live EC shard counts before this volume's assignments. ReleaseVolumeShards
+	// only drops this vid; other volumes stay. Node pick scores
+	// liveStart + assigned-this-Place so a 2528 vs 2563 disk debt is visible.
+	liveStart := snapshotNodeLiveShards(t.nodes)
 
 	placeShard := func(sid int, isData bool) bool {
 		typeTotal := dataShards
@@ -297,7 +301,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 			typeTotal = parityShards
 		}
 		for _, rl := range attempts {
-			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, parityShards, rackCap(rl), racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl)
+			node, diskID, spilled, ok := chooseShardDest(vk, sid, isData, dataShards, typeTotal, numEligibleRacks, parityShards, rackCap(rl), racks, rackKeys, rp, eligible, prefer, shardsPerRack[isData], rackShardCount, bearing, rl, liveStart)
 			if !ok {
 				continue
 			}
@@ -355,7 +359,7 @@ func (t *Topology) tryPlace(vk volKey, need []int, dataShards, parityShards int,
 // chosen rack fits (e.g. every node is at SameRackCount), the next-best rack is
 // tried. The third return reports whether the disk spilled off the
 // soft-preferred type. ok=false when no rack/node/disk fits.
-func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks, maxPerDisk, maxTotalPerRack int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation) (*Node, uint32, bool, bool) {
+func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, numEligibleRacks, maxPerDisk, maxTotalPerRack int, racks map[string]*rack, rackKeys []string, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, prefer func(*disk) bool, shardsPerRackType map[string][]int, rackShardCount map[string]int, bearing map[bool]map[string]bool, rl relaxation, liveStart map[string]int) (*Node, uint32, bool, bool) {
 	maxPerRack := numEligibleRacks*typeTotal + 1 // effectively unlimited when caps are relaxed
 	if rl.caps {
 		if maxPerRack = ceilDivide(typeTotal, numEligibleRacks); maxPerRack < 1 {
@@ -394,7 +398,7 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 		if !ok {
 			return nil, 0, false, false
 		}
-		if node := pickNodeInRackEligible(racks[destRack], vk, rp, eligible, maxPerDisk); node != nil {
+		if node := pickNodeInRackEligible(racks[destRack], vk, rp, eligible, maxPerDisk, liveStart); node != nil {
 			if diskID, ok, spilled := pickBestDiskEligible(node, vk, eligible, prefer, sid, dataShards, maxPerDisk); ok {
 				return node, diskID, spilled, true
 			}
@@ -481,40 +485,41 @@ func rackShardRoomUnderRP(r *rack, vk volKey, eligible func(*disk) bool, maxPerD
 // FromActiveTopology keeps all disk types/tags in the snapshot, so without this a
 // node with free volume slots but no eligible disk could be chosen.
 //
-// Among eligible nodes it ranks by fewest shards of the volume per machine, then per
-// node, with free capacity breaking ties. The free-capacity tie-break (not sorted id)
-// keeps the lowest-id machine from winning every volume's first shard against the
-// shared encode snapshot and piling up load.
-func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, maxPerDisk int) *Node {
-	machineShards := countShardsByHost(vk, r.nodes)
-	machineFree := freeSlotsByHost(r.nodes)
+// Score is live EC shards (all volumes) plus shards already assigned in this Place.
+// Lower wins. freeSlots / this-volume counts break ties only, so a 2528 vs 2563
+// disk debt gets the pair (2+1) or triple (3+1), not a 50/50 rotation. Machine
+// live score stays first so a multi-box rack still spreads within parity.
+func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, maxPerDisk int, liveStart map[string]int) *Node {
+	hostLive := make(map[string]int)
+	for _, n := range r.nodes {
+		hostLive[n.host] += nodeLiveShardCount(n)
+	}
 	var best *Node
-	var bestMCount, bestMFree, bestNCount, bestNFree int
+	var bestMScore, bestNScore, bestNFree int
 	for _, id := range sortedNodeKeys(r.nodes) {
 		node := r.nodes[id]
 		if nodeShardRoom(node, vk, eligible, maxPerDisk) <= 0 {
 			continue
 		}
 		count := volumeShardCount(node, vk)
-		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
+		if cap := sameRackNodeCap(r, node, vk, rp, liveStart); cap > 0 && count >= cap {
 			continue
 		}
-		mCount, mFree := machineShards[node.host], machineFree[node.host]
+		nScore := nodeLiveShardCount(node)
+		mScore := hostLive[node.host]
 		better := false
 		switch {
 		case best == nil:
 			better = true
-		case mCount != bestMCount:
-			better = mCount < bestMCount
-		case mFree != bestMFree:
-			better = mFree > bestMFree
-		case count != bestNCount:
-			better = count < bestNCount
+		case mScore != bestMScore:
+			better = mScore < bestMScore
+		case nScore != bestNScore:
+			better = nScore < bestNScore
 		default:
 			better = node.freeSlots > bestNFree
 		}
 		if better {
-			best, bestMCount, bestMFree, bestNCount, bestNFree = node, mCount, mFree, count, node.freeSlots
+			best, bestMScore, bestNScore, bestNFree = node, mScore, nScore, node.freeSlots
 		}
 	}
 	return best
@@ -627,6 +632,9 @@ func (t *Topology) ClearShardAccounting(nodeID, collection string, vid uint32, s
 // distributing the new shards) neither occupy capacity nor skew anti-affinity /
 // per-disk caps during planning. Unlike repair's ClearShardAccounting, it credits
 // freeSlots because the deletes run before the new writes.
+//
+// Other volumes' disk.shardCount stay put: zeroing the snapshot here is what
+// made within-rack Place see a green field and 50/50 the current volume only.
 func (t *Topology) ReleaseVolumeShards(collection string, vid uint32) {
 	vk := volKey{collection: collection, vid: vid}
 	for _, n := range t.nodes {
