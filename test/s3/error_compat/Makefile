@@ -76,9 +76,12 @@ start-server: check-deps
 
 stop-server:
 	@if [ -f weed-server.pid ]; then \
-		echo "Stopping SeaweedFS server..."; \
-		kill $$(cat weed-server.pid) 2>/dev/null || true; \
-		sleep 2; \
+		pid=$$(cat weed-server.pid); \
+		if ps -p $$pid -o comm= 2>/dev/null | grep -q weed; then \
+			echo "Stopping SeaweedFS server..."; \
+			kill $$pid 2>/dev/null || true; \
+			sleep 2; \
+		fi; \
 		rm -f weed-server.pid; \
 	fi
 
@@ -89,8 +92,9 @@ test-errors:
 		--access-key admin \
 		--secret-key admin
 
-test-with-server: start-server
-	@$(MAKE) test-errors; TEST_RESULT=$$?; \
+test-with-server:
+	@$(MAKE) start-server; START_RESULT=$$?; \
+	if [ $$START_RESULT -eq 0 ]; then $(MAKE) test-errors; TEST_RESULT=$$?; else TEST_RESULT=$$START_RESULT; fi; \
 	$(MAKE) stop-server; exit $$TEST_RESULT
 
 logs:

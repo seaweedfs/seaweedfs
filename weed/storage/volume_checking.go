@@ -264,7 +264,7 @@ func (v *Volume) recoverLastModifiedTs(indexFile *os.File) {
 	if err != nil || indexSize == 0 {
 		return
 	}
-	appendAtNs, err := findLastWriteAppendAtNs(v, indexFile, indexSize)
+	appendAtNs, key, err := findLastWriteAppendAtNs(v, indexFile, indexSize)
 	if err != nil {
 		glog.Warningf("volume %d recover last write from %s: %v", v.Id, indexFile.Name(), err)
 		return
@@ -273,6 +273,11 @@ func (v *Volume) recoverLastModifiedTs(indexFile *os.File) {
 		return
 	}
 	v.lastModifiedTsSeconds = appendAtNs / uint64(time.Second)
+	if appendAtNs > v.lastWriteAppendAtNs {
+		v.lastWriteAppendAtNs = appendAtNs
+		v.lastWriteNeedleKey = key
+		v.lastWriteDeleted = false
+	}
 }
 
 // vacuumedLastWriteScanEntries bounds the work a vacuumed volume's recovery
@@ -285,25 +290,27 @@ var vacuumedLastWriteScanEntries = 1 << 16
 
 // findLastWriteAppendAtNs scans the .idx backwards for the newest write -- an
 // entry that is not a deletion tombstone -- and returns that needle's append
-// timestamp. The .idx and the .dat share an order, so an append-ordered volume
-// answers with the first write the scan reaches. Vacuum rewrites both in key
-// order, which tracks write order only because the master issues keys
-// increasing: an overwrite keeps its original, lower key, so a vacuumed volume
-// has to take the maximum over every write it indexes. Returns 0 when the .idx
-// holds nothing but tombstones, when a vacuumed volume holds more needles than
-// the scan budget, or for a volume older than version 3, whose needles carry no
-// append timestamp.
-func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (uint64, error) {
+// timestamp and key. The .idx and the .dat share an order, so an
+// append-ordered volume answers with the first write the scan reaches. Vacuum
+// rewrites both in key order, which tracks write order only because the master
+// issues keys increasing: an overwrite keeps its original, lower key, so a
+// vacuumed volume has to take the maximum over every write it indexes. Returns
+// 0 when the .idx holds nothing but tombstones, when a vacuumed volume holds
+// more needles than the scan budget, or for a volume older than version 3,
+// whose needles carry no append timestamp.
+func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (uint64, types.NeedleId, error) {
 	version := v.Version()
 	if version != needle.Version3 {
-		return 0, nil
+		return 0, 0, nil
 	}
 	scanEveryWrite := v.SuperBlock.CompactionRevision > 0
 	entryBudget := vacuumedLastWriteScanEntries
 	if scanEveryWrite && !affordableVacuumedScan(indexFile, indexSize, v.Id, v.FileName(".dat")) {
-		return 0, nil
+		return 0, 0, nil
 	}
 	var lastWriteAppendAtNs uint64
+	var lastWriteKey types.NeedleId
+	dead := make(map[types.NeedleId]struct{})
 	block := make([]byte, types.NeedleMapEntrySize*idx.RowsToRead)
 	for end := indexSize; end > 0; {
 		start := max(end-int64(len(block)), 0)
@@ -313,11 +320,17 @@ func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (ui
 			err = nil
 		}
 		if err != nil {
-			return 0, fmt.Errorf("read %s at %d: %v", indexFile.Name(), start, err)
+			return 0, 0, fmt.Errorf("read %s at %d: %v", indexFile.Name(), start, err)
 		}
 		for i := len(entries) - types.NeedleMapEntrySize; i >= 0; i -= types.NeedleMapEntrySize {
 			key, offset, size := idx.IdxFileEntry(entries[i : i+types.NeedleMapEntrySize])
+			// The first row a key presents is its latest state: a tombstone
+			// there retires the write rows beneath it.
+			if _, gone := dead[key]; gone {
+				continue
+			}
 			if offset.IsZero() || size.IsDeleted() {
+				dead[key] = struct{}{}
 				continue
 			}
 			needleOffset := findNeedleOffset(v.DataBackend, version, offset.ToActualOffset(), key, size)
@@ -326,21 +339,24 @@ func findLastWriteAppendAtNs(v *Volume, indexFile *os.File, indexSize int64) (ui
 			}
 			appendAtNs, err := readNeedleAppendAtNs(v.DataBackend, needleOffset, size)
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
-			lastWriteAppendAtNs = max(lastWriteAppendAtNs, appendAtNs)
+			if appendAtNs > lastWriteAppendAtNs {
+				lastWriteAppendAtNs = appendAtNs
+				lastWriteKey = key
+			}
 			if !scanEveryWrite {
-				return lastWriteAppendAtNs, nil
+				return lastWriteAppendAtNs, lastWriteKey, nil
 			}
 			if entryBudget--; entryBudget == 0 {
 				glog.V(0).Infof("volume %d: more than %d needles to scan for its last write, keeping the %s mtime",
 					v.Id, vacuumedLastWriteScanEntries, v.FileName(".dat"))
-				return 0, nil
+				return 0, 0, nil
 			}
 		}
 		end = start
 	}
-	return lastWriteAppendAtNs, nil
+	return lastWriteAppendAtNs, lastWriteKey, nil
 }
 
 // affordableVacuumedScan reports whether a vacuumed volume's recovery scan fits

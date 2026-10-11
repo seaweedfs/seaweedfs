@@ -865,6 +865,10 @@ func DetermineUnifiedCopyStrategy(state *EncryptionState, srcMetadata map[string
 		return CopyStrategyReencrypt, nil
 	}
 
+	if state.SrcSSES3 && state.DstSSES3 {
+		return CopyStrategyDirect, nil
+	}
+
 	// Encrypt: plain → encrypted
 	if !state.IsSourceEncrypted() && state.IsTargetEncrypted() {
 		return CopyStrategyEncrypt, nil

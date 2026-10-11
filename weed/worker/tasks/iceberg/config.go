@@ -130,6 +130,10 @@ type Config struct {
 	SortMaxInputBytes           int64
 	SortBufferRows              int64
 	SortSpillDir                string
+	// Row groups of a compacted file, from the table's write.parquet.*
+	// properties; zero means the default.
+	RowGroupSizeBytes int64
+	RowGroupRowLimit  int64
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.

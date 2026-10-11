@@ -1289,6 +1289,16 @@ func (m *ObjectMutation) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.KeepRemoteObject {
+		i--
+		if m.KeepRemoteObject {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x70
+	}
 	if m.RemoveEmptyParent {
 		i--
 		if m.RemoveEmptyParent {
@@ -2461,6 +2471,16 @@ func (m *DeleteEntryRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if m.KeepRemoteObject {
+		i--
+		if m.KeepRemoteObject {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x50
 	}
 	if m.IfNotModifiedAfter != 0 {
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(m.IfNotModifiedAfter))
@@ -7066,6 +7086,9 @@ func (m *ObjectMutation) SizeVT() (n int) {
 	if m.RemoveEmptyParent {
 		n += 2
 	}
+	if m.KeepRemoteObject {
+		n += 2
+	}
 	n += len(m.unknownFields)
 	return n
 }
@@ -7494,6 +7517,9 @@ func (m *DeleteEntryRequest) SizeVT() (n int) {
 	}
 	if m.IfNotModifiedAfter != 0 {
 		n += 1 + protohelpers.SizeOfVarint(uint64(m.IfNotModifiedAfter))
+	}
+	if m.KeepRemoteObject {
+		n += 2
 	}
 	n += len(m.unknownFields)
 	return n
@@ -13030,6 +13056,26 @@ func (m *ObjectMutation) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.RemoveEmptyParent = bool(v != 0)
+		case 14:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeepRemoteObject", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.KeepRemoteObject = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])
@@ -15997,6 +16043,26 @@ func (m *DeleteEntryRequest) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
+		case 10:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeepRemoteObject", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.KeepRemoteObject = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

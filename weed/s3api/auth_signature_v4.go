@@ -265,38 +265,40 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 
 	var cred *Credential
 
-	// 2. Check for STS session token
-	sessionToken := r.Header.Get("X-Amz-Security-Token")
-	if sessionToken == "" {
-		sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
-	}
-	if sessionToken != "" {
-		// Validate STS session token
-		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
-		if errCode != s3err.ErrNone {
-			return nil, nil, "", nil, errCode
-		}
-	} else {
-		// 3. Lookup user and credentials
-		var found bool
-		identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
-		if !found {
-			// Log detailed error information for InvalidAccessKeyId (avoid slice allocation for performance)
-			iam.m.RLock()
-			keyCount := len(iam.accessKeyIdent)
-			iam.m.RUnlock()
-
-			glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
-				authInfo.AccessKey, keyCount, iam.isAuthEnabled)
-			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
-		}
-
+	// 2. Resolve the credential. A configured access key wins over a session
+	// token: credential vendors like Unity Catalog emit a token with static
+	// credentials too, and it adds nothing the signature does not prove.
+	// STS-issued access keys are never registered in the static map, so they
+	// still land on session-token validation.
+	sessionToken := extractSessionToken(r)
+	var found bool
+	identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
+	switch {
+	case found:
 		// Check service account expiration
 		if cred.isCredentialExpired() {
 			glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 				authInfo.AccessKey, cred.Expiration, time.Now().Unix())
 			return nil, nil, "", nil, s3err.ErrAccessDenied
 		}
+		if sessionToken != "" {
+			*r = *r.WithContext(s3_constants.IgnoreSessionTokenInContext(r.Context()))
+		}
+	case sessionToken != "":
+		// Validate STS session token
+		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
+		if errCode != s3err.ErrNone {
+			return nil, nil, "", nil, errCode
+		}
+	default:
+		// Log detailed error information for InvalidAccessKeyId (avoid slice allocation for performance)
+		iam.m.RLock()
+		keyCount := len(iam.accessKeyIdent)
+		iam.m.RUnlock()
+
+		glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			authInfo.AccessKey, keyCount, iam.isAuthEnabled)
+		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// 3. Perform permission check

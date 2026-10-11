@@ -8,6 +8,7 @@ package unity_catalog
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestUnityCatalogDeltaIntegration(t *testing.T) {
 	}
 
 	t.Log(">>> starting Unity Catalog server (static keys)...")
-	env.startUnityCatalog(t, ctx, ucServerOpts{})
+	env.startUnityCatalog(t, ctx, ucServerOpts{SessionToken: ucVendedSessionToken})
 	t.Log(">>> Unity Catalog ready")
 
 	uc := newUCClient(fmt.Sprintf("http://127.0.0.1:%d", env.ucHostPort))
@@ -145,28 +146,41 @@ func TestUnityCatalogDeltaIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("TemporaryTableCredentialsRejected", func(t *testing.T) {
-		// With aws.masterRoleArn empty AND no s3.sessionToken.0 set, UC OSS
-		// always tries to AssumeRole via its internal StsClient (see
-		// AwsCredentialVendor.createPerBucketCredentialGenerator). Against a
-		// non-AWS endpoint, that call doesn't reach a real STS, so UC returns
-		// "S3 bucket configuration not found." or an STS-side error. This is
-		// the gap users hit at <https://github.com/data-engineering-helpers/mds-in-a-box/blob/main/unitycatalog-playground/etc/conf/server.properties#L45>:
-		// "with simple S3 access and secret keys, Unity Catalog does not seem
-		// to work."
-		//
-		// The assertion is therefore inverted: we expect a non-nil error from
-		// /temporary-table-credentials with this configuration. A future
-		// variant can pin s3.sessionToken.0 (UC's StaticAwsCredentialGenerator
-		// path) once SeaweedFS' SigV4 path tolerates the vended session token.
+	t.Run("TemporaryTableCredentials", func(t *testing.T) {
+		// s3.sessionToken.0 is set, so UC's AwsCredentialVendor takes the
+		// StaticAwsCredentialGenerator path and vends the configured keys
+		// verbatim, token included — no STS call at all. SeaweedFS authenticates
+		// the request on the static access key and tolerates the foreign token.
 		if createdTable.TableID == "" {
 			t.Fatalf("created table has empty table_id; cannot request temporary credentials")
 		}
-		_, err := uc.generateTemporaryTableCredentials(ctx, createdTable.TableID, "READ_WRITE")
-		if err == nil {
-			t.Fatalf("expected /temporary-table-credentials to fail with the static-key playground configuration; it succeeded unexpectedly")
+		creds, err := uc.generateTemporaryTableCredentials(ctx, createdTable.TableID, "READ_WRITE")
+		if err != nil {
+			t.Fatalf("temporary-table-credentials: %v", err)
 		}
-		t.Logf("expected failure (UC static-key path requires AWS STS): %v", err)
+		awsCreds := creds.AwsTempCredentials
+		if awsCreds == nil || awsCreds.AccessKeyID == "" || awsCreds.SessionToken == "" {
+			t.Fatalf("expected aws_temp_credentials with a session_token, got %+v", creds)
+		}
+		if awsCreds.AccessKeyID != env.accessKey || awsCreds.SessionToken != ucVendedSessionToken {
+			t.Fatalf("expected UC to vend the configured static credential, got %+v", awsCreds)
+		}
+
+		s3v := env.newHostS3ClientWithCreds(t, ctx, awsCreds.AccessKeyID, awsCreds.SecretAccessKey, awsCreds.SessionToken)
+		probeKey := fmt.Sprintf("%s/%s/%s/vended.txt", ucWarehouseKey, schemaName, tableName)
+		if _, err := s3v.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(ucWarehouse),
+			Key:    aws.String(probeKey),
+			Body:   strings.NewReader("ok"),
+		}); err != nil {
+			t.Fatalf("PutObject with UC-vended credentials: %v", err)
+		}
+		if _, err := s3v.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(ucWarehouse),
+			Key:    aws.String(probeKey),
+		}); err != nil {
+			t.Fatalf("DeleteObject with UC-vended credentials: %v", err)
+		}
 	})
 
 	t.Run("DeleteTableSchemaCatalog", func(t *testing.T) {

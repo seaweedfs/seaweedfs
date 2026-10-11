@@ -32,9 +32,14 @@ type deleteRewriteGroup struct {
 	TotalSize      int64
 }
 
+// positionDeleteRow is the Iceberg position-delete schema: the spec reserves
+// field ids 2147483546 (file_path) and 2147483545 (pos). file_path is
+// dictionary-encoded: PyArrow cannot decode parquet-go's default
+// DELTA_LENGTH_BYTE_ARRAY into the dictionary PyIceberg asks for, and the
+// column repeats one data file's path anyway.
 type positionDeleteRow struct {
-	FilePath string `parquet:"file_path"`
-	Pos      int64  `parquet:"pos"`
+	FilePath string `parquet:"file_path,dict,id(2147483546)"`
+	Pos      int64  `parquet:"pos,id(2147483545)"`
 }
 
 func hasEligibleDeleteRewrite(

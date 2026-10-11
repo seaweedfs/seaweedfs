@@ -10,3 +10,5 @@ updates:
   directory: "/"
   schedule:
     interval: weekly
+  ignore:
+    - dependency-name: "github.com/seaweedfs/goexif"

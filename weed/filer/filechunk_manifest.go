@@ -16,6 +16,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -55,7 +56,16 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 }
 
 func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
-	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator)
+	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator, nil)
+	defer resolver.close()
+	return resolver.resolve(chunks, startOffset, stopOffset)
+}
+
+// ResolveChunkManifestWithFilerJwt is ResolveChunkManifest that signs proxied
+// manifest downloads with filerJwtFn instead of the process-wide filer read
+// key, for readers carrying per-source credentials.
+func ResolveChunkManifestWithFilerJwt(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, filerJwtFn security.FilerJwtProvider, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator, filerJwtFn)
 	defer resolver.close()
 	return resolver.resolve(chunks, startOffset, stopOffset)
 }
@@ -81,6 +91,7 @@ type chunkManifestResolver struct {
 	cancel         context.CancelFunc
 	lookupFileIdFn wdclient.LookupFileIdFunctionType
 	invalidator    CacheInvalidator
+	filerJwtFn     security.FilerJwtProvider
 	jobs           chan chunkManifestResolveJob
 	overflowSem    chan struct{}
 	workers        sync.WaitGroup
@@ -88,7 +99,7 @@ type chunkManifestResolver struct {
 	started        bool
 }
 
-func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator) *chunkManifestResolver {
+func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator, filerJwtFn security.FilerJwtProvider) *chunkManifestResolver {
 	workCtx, cancel := context.WithCancel(ctx)
 	resolver := &chunkManifestResolver{
 		ctx:            workCtx,
@@ -96,6 +107,7 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 		cancel:         cancel,
 		lookupFileIdFn: lookupFileIdFn,
 		invalidator:    invalidator,
+		filerJwtFn:     filerJwtFn,
 		jobs:           make(chan chunkManifestResolveJob, chunkManifestResolveJobBufferSize),
 		overflowSem:    make(chan struct{}, maxChunkManifestResolveWorkers),
 	}
@@ -103,7 +115,7 @@ func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.Looku
 }
 
 func (r *chunkManifestResolver) executeJob(job chunkManifestResolveJob) {
-	job.result.chunks, job.result.err = ResolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator)
+	job.result.chunks, job.result.err = resolveOneChunkManifest(job.batchCtx, r.lookupFileIdFn, job.chunk, r.invalidator, nil, r.filerJwtFn)
 	if job.result.err != nil && r.parentCtx.Err() == nil {
 		if job.batchCtx.Err() != nil && errors.Is(job.result.err, context.Canceled) {
 			job.result.internalCancel = true
@@ -293,14 +305,23 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 // Keeping this signature stable preserves the existing four-argument contract
 // for external callers.
 func ResolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
-	return resolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator, nil)
+	return resolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator, nil, nil)
+}
+
+// ResolveOneChunkManifestWithFilerJwt is ResolveOneChunkManifest that signs
+// proxied manifest downloads with filerJwtFn instead of the process-wide
+// filer read key, for readers carrying per-source credentials.
+func ResolveOneChunkManifestWithFilerJwt(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, filerJwtFn security.FilerJwtProvider, chunk *filer_pb.FileChunk, invalidator CacheInvalidator) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	return resolveOneChunkManifest(ctx, lookupFileIdFn, chunk, invalidator, nil, filerJwtFn)
 }
 
 // resolveOneChunkManifest is the cache-aware implementation. cache may be nil,
 // in which case the manifest is fetched and validated on every call, matching
 // the historical uncached behavior. A non-nil cache is owned by a single mount
-// (WFS) and coalesces concurrent cold misses via singleflight.
-func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator, cache *ChunkManifestCache) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+// (WFS) and coalesces concurrent cold misses via singleflight. filerJwtFn
+// overrides the filer read credential for proxied downloads; nil means the
+// process-wide key.
+func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunk *filer_pb.FileChunk, invalidator CacheInvalidator, cache *ChunkManifestCache, filerJwtFn security.FilerJwtProvider) (dataChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	if !chunk.IsChunkManifest {
 		return
 	}
@@ -318,7 +339,7 @@ func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 		bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
 		bytesBuffer.Reset()
 		defer bytesBufferPool.Put(bytesBuffer)
-		if err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, key.fileID, chunk.CipherKey, chunk.IsCompressed, invalidator); err != nil {
+		if err := fetchWholeChunk(ctx, bytesBuffer, lookupFileIdFn, key.fileID, chunk.CipherKey, chunk.IsCompressed, invalidator, filerJwtFn); err != nil {
 			return nil, fmt.Errorf("fail to read manifest %s: %w", key.fileID, err)
 		}
 		// Copy before the buffer returns to the pool so concurrent callers
@@ -357,13 +378,18 @@ func resolveOneChunkManifest(ctx context.Context, lookupFileIdFn wdclient.Lookup
 	return m.Chunks, nil
 }
 
-func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, invalidator CacheInvalidator) error {
+func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, invalidator CacheInvalidator, filerJwtFn security.FilerJwtProvider) error {
 	urlStrings, err := lookupFileIdFn(ctx, fileId)
 	if err != nil {
 		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", fileId, err)
 		return err
 	}
-	jwt := ChunkReadJwt(urlStrings, fileId)
+	var jwt string
+	if filerJwtFn != nil && len(urlStrings) > 0 && util_http.IsProxyChunkUrl(urlStrings[0]) {
+		jwt = string(filerJwtFn(false))
+	} else {
+		jwt = ChunkReadJwt(urlStrings, fileId)
+	}
 	if _, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0, refreshUrls(ctx, invalidator, lookupFileIdFn, fileId)); err == nil {
 		return nil
 	}

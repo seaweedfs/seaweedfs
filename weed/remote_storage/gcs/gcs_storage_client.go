@@ -252,6 +252,9 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 	// breaks range reads and returns sizes that disagree with RemoteSize
 	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(context.Background(), offset, size)
 	if readErr != nil {
+		if errors.Is(readErr, storage.ErrObjectNotExist) {
+			return nil, gcs.missingObjectError(context.Background(), loc)
+		}
 		return nil, readErr
 	}
 	data, err = io.ReadAll(rangeReader)
@@ -268,11 +271,34 @@ func (gcs *gcsRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *re
 	reader, err = gcs.client.Bucket(loc.Bucket).Object(key).ReadCompressed(true).NewRangeReader(ctx, offset, size)
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotExist) {
-			return nil, remote_storage.ErrRemoteObjectNotFound
+			return nil, gcs.missingObjectError(ctx, loc)
 		}
 		return nil, fmt.Errorf("failed to open stream for %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	return reader, nil
+}
+
+// missingObjectError confirms a read's ErrObjectNotExist before reporting the
+// object gone: GCS answers a read from a missing bucket the same way, and that
+// must not read as every object under the mount being deleted.
+func (gcs *gcsRemoteStorageClient) missingObjectError(ctx context.Context, loc *remote_pb.RemoteStorageLocation) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultGCSOpTimeout)
+	defer cancel()
+	key := loc.Path[1:]
+	query := &storage.Query{Prefix: key}
+	if err := query.SetAttrSelection([]string{"Name"}); err != nil {
+		return fmt.Errorf("read gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	attrs, err := gcs.client.Bucket(loc.Bucket).Objects(ctx, query).Next()
+	switch {
+	case errors.Is(err, iterator.Done):
+		return remote_storage.ErrRemoteObjectNotFound
+	case err != nil:
+		return fmt.Errorf("read gcs %s%s: object not found and bucket unconfirmed: %w", loc.Bucket, loc.Path, err)
+	case attrs.Name == key:
+		return fmt.Errorf("read gcs %s%s: object not found but listed", loc.Bucket, loc.Path)
+	}
+	return remote_storage.ErrRemoteObjectNotFound
 }
 
 func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {

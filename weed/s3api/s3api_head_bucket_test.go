@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 
@@ -21,6 +22,7 @@ type fakeLookupFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	entry     *filer_pb.Entry
 	lookupErr error
+	deleted   []string
 }
 
 func (f *fakeLookupFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -28,6 +30,12 @@ func (f *fakeLookupFiler) LookupDirectoryEntry(ctx context.Context, req *filer_p
 		return nil, f.lookupErr
 	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: f.entry}, nil
+}
+
+func (f *fakeLookupFiler) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.deleted = append(f.deleted, path.Join(req.Directory, req.Name))
+	f.entry = nil
+	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
 func newHeadBucketTestServer(t *testing.T, impl filer_pb.SeaweedFilerServer) *S3ApiServer {

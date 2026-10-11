@@ -396,13 +396,18 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	}
 
 	err = idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) (e error) {
-		m.mapMetric.FileCounter++
 		m.mapMetric.MaybeSetMaxNeedleEnd(offset, size, version)
 		bytes := make([]byte, NeedleIdSize)
 		NeedleIdToBytes(bytes[0:NeedleIdSize], key)
+		validRow := !offset.IsZero() && !size.IsDeleted()
+		if validRow {
+			m.mapMetric.FileCounter++
+		}
 		// fresh loading
 		if startFrom == 0 {
-			m.mapMetric.FileByteCounter += uint64(size)
+			if validRow {
+				m.mapMetric.FileByteCounter += uint64(size)
+			}
 			e = levelDbWrite(db, key, offset, size, false, 0)
 			return e
 		}
@@ -414,24 +419,28 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 				return err
 			}
 			// new needle, unlikely happen
-			m.mapMetric.FileByteCounter += uint64(size)
+			if validRow {
+				m.mapMetric.FileByteCounter += uint64(size)
+			}
 			e = levelDbWrite(db, key, offset, size, false, 0)
 		} else {
 			// needle is found
 			oldSize := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
 			oldOffset := BytesToOffset(data[0:OffsetSize])
-			if !offset.IsZero() && !size.IsDeleted() {
+			if validRow {
 				// updated needle
 				m.mapMetric.FileByteCounter += uint64(size)
-				if !oldOffset.IsZero() && !oldSize.IsDeleted() {
+				if !oldOffset.IsZero() && oldSize.IsValid() {
 					m.mapMetric.DeletionCounter++
 					m.mapMetric.DeletionByteCounter += uint64(oldSize)
 				}
 				e = levelDbWrite(db, key, offset, size, false, 0)
 			} else {
 				// deleted needle
-				m.mapMetric.DeletionCounter++
-				m.mapMetric.DeletionByteCounter += uint64(oldSize)
+				if oldSize > 0 {
+					m.mapMetric.DeletionCounter++
+					m.mapMetric.DeletionByteCounter += uint64(oldSize)
+				}
 				e = levelDbDelete(db, key)
 			}
 		}

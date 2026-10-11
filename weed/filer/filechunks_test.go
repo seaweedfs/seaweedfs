@@ -22,7 +22,10 @@ func TestCompactFileChunks(t *testing.T) {
 		{Offset: 110, Size: 200, FileId: "jkl", ModifiedTsNs: 300},
 	}
 
-	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, garbage, err := CompactFileChunks(context.Background(), nil, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(compacted) != 3 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -55,7 +58,10 @@ func TestCompactFileChunks2(t *testing.T) {
 		})
 	}
 
-	compacted, garbage := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, garbage, err := CompactFileChunks(context.Background(), nil, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))
@@ -427,7 +433,10 @@ func TestChunksReading(t *testing.T) {
 			// continue
 		}
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
-		chunks := ViewFromChunks(context.Background(), nil, testcase.Chunks, testcase.Offset, testcase.Size)
+		chunks, err := ViewFromChunks(context.Background(), nil, testcase.Chunks, testcase.Offset, testcase.Size)
+		if err != nil {
+			t.Fatal(err)
+		}
 		x := -1
 		for c := chunks.Front(); c != nil; c = c.Next {
 			x++
@@ -474,7 +483,9 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 
 	for n := 0; n < b.N; n++ {
-		CompactFileChunks(context.Background(), nil, chunks)
+		if _, _, err := CompactFileChunks(context.Background(), nil, chunks); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -563,7 +574,10 @@ func TestCompactFileChunks3(t *testing.T) {
 		{Offset: 300, Size: 100, FileId: "def", ModifiedTsNs: 200},
 	}
 
-	compacted, _ := CompactFileChunks(context.Background(), nil, chunks)
+	compacted, _, err := CompactFileChunks(context.Background(), nil, chunks)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(compacted) != 4 {
 		t.Fatalf("unexpected compacted: %d", len(compacted))

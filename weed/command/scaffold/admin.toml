@@ -64,6 +64,8 @@
 # preferred_tags = ["fast", "ssd"]
 # EC shard placement constraint, e.g. "020"; empty uses the master default replication
 # replica_placement = ""
+# fail planning when the placement constraints cannot be met instead of relaxing them
+# strict_placement = false
 # max retry attempts for a failed erasure coding job
 # retry_limit = 1
 # seconds to wait between retry attempts

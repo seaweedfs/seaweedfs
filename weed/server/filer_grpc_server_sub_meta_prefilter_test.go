@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -37,7 +38,7 @@ func TestEachLogEntryFnPrefilterSkipsDecode(t *testing.T) {
 	sender := &recordingSender{}
 	var decoded int
 	var unsyncedEvents int64
-	fn := eachLogEntryFn(req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	fn := eachLogEntryFn(context.Background(), req, sender, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		decoded++
 		unsyncedEvents = 0 // emulate a delivery, like the notification fn after a send
 		return nil
@@ -83,7 +84,7 @@ func TestEachLogEntryFnNoFilterDecodesEverything(t *testing.T) {
 	req := &filer_pb.SubscribeMetadataRequest{}
 	var decoded int
 	var unsyncedEvents int64
-	fn := eachLogEntryFn(req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	fn := eachLogEntryFn(context.Background(), req, &recordingSender{}, func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		decoded++
 		return nil
 	}, &unsyncedEvents)

@@ -114,7 +114,7 @@ func TestMergeParquetFilesRowLineage(t *testing.T) {
 	}
 
 	merged, count, err := mergeParquetFiles(context.Background(), client, "test-bucket", "ns/tbl",
-		entries, nil, nil, nil, true)
+		entries, nil, nil, nil, 0, true)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestMergeParquetFilesRowLineagePositionDelete(t *testing.T) {
 	posDeletes := map[string][]int64{"ns/tbl/data/file1.parquet": {1}}
 
 	merged, count, err := mergeParquetFiles(context.Background(), client, "test-bucket", "ns/tbl",
-		entries, posDeletes, nil, nil, true)
+		entries, posDeletes, nil, nil, 0, true)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestMergeParquetFilesRowLineageMaterialized(t *testing.T) {
 		lineageEntry(t, "data/mats.parquet", 200, 9, 1),
 	}
 	merged, count, err := mergeParquetFiles(context.Background(), client, "test-bucket", "ns/tbl",
-		entries, nil, nil, nil, true)
+		entries, nil, nil, nil, 0, true)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
 	}

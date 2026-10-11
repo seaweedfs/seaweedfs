@@ -574,7 +574,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, tlsConfig)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(fs.LeaveLockRing, stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, fs.StopSubscriptions, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -603,7 +603,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultHandler, nil)
 		httpServers = append(httpServers, httpS)
-		shutdown := newFilerShutdown(fs.LeaveLockRing, stopGrpcServer, fs.Shutdown, httpServers...)
+		shutdown := newFilerShutdown(fs.LeaveLockRing, fs.StopSubscriptions, stopGrpcServer, fs.Shutdown, httpServers...)
 
 		grace.OnInterrupt(shutdown)
 
@@ -625,10 +625,13 @@ func (fo *FilerOptions) startFiler() {
 // newFilerShutdown joins shutdown callers while gRPC and HTTP drain concurrently.
 // The filer leaves the lock ring first: peers and S3 gateways route keys to it
 // until the ring changes, and would hit refused connections once gRPC stops.
-func newFilerShutdown(leaveLockRing, stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
+// Then it ends its metadata subscriptions, so gRPC GracefulStop does not wait
+// out its timeout on streams whose subscribers sit in this same process.
+func newFilerShutdown(leaveLockRing, stopSubscriptions, stopGrpc, shutdownFiler func(), httpServers ...*http.Server) func() {
 	drain := newGracefulShutdown(stopGrpc, shutdownFiler, httpServers...)
 	return sync.OnceFunc(func() {
 		leaveLockRing()
+		stopSubscriptions()
 		drain()
 	})
 }

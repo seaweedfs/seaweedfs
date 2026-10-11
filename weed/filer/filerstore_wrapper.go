@@ -141,6 +141,7 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 
 	filer_pb.BeforeEntrySerialization(entry.GetChunks())
 	normalizeEntryMimeForStore(entry)
+	delete(entry.Extended, ExtKeepRemoteObjectKey)
 
 	if len(entry.HardLinkId) > 0 {
 		glog.V(4).InfofCtx(ctx, "InsertEntry %s has HardLinkId %x counter=%d",
@@ -170,6 +171,7 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 
 	filer_pb.BeforeEntrySerialization(entry.GetChunks())
 	normalizeEntryMimeForStore(entry)
+	delete(entry.Extended, ExtKeepRemoteObjectKey)
 
 	if len(entry.HardLinkId) > 0 {
 		glog.V(4).InfofCtx(ctx, "InsertEntryKnownAbsent %s has HardLinkId %x counter=%d",
@@ -196,6 +198,7 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 
 	filer_pb.BeforeEntrySerialization(entry.GetChunks())
 	normalizeEntryMimeForStore(entry)
+	delete(entry.Extended, ExtKeepRemoteObjectKey)
 
 	if len(entry.HardLinkId) > 0 {
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s has HardLinkId %x counter=%d",

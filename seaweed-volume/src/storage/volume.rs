@@ -1182,6 +1182,10 @@ pub struct Volume {
 
     last_modified_ts_seconds: u64,
     last_append_at_ns: u64,
+    last_write_append_at_ns: u64, // AppendAtNs of the newest write; tombstones don't move it
+    last_write_needle_key: NeedleId, // the write behind the watermark
+    last_write_deleted: bool,     // that write was deleted, so recovery has to rescan
+    keep_last_modified_ts_on_load: bool,
     pub last_disk_check_ns: Arc<std::sync::atomic::AtomicI64>, // for phantom volume detection cache
 
     last_compact_index_offset: u64,
@@ -1281,6 +1285,10 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            last_write_append_at_ns: 0,
+            last_write_needle_key: NeedleId(0),
+            last_write_deleted: false,
+            keep_last_modified_ts_on_load: false,
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
@@ -1327,6 +1335,10 @@ impl Volume {
             location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
+            last_write_append_at_ns: 0,
+            last_write_needle_key: NeedleId(0),
+            last_write_deleted: false,
+            keep_last_modified_ts_on_load: false,
             last_disk_check_ns: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             last_compact_index_offset: 0,
             last_compact_revision: 0,
@@ -1442,12 +1454,14 @@ impl Volume {
                 Err(e) => return Err(e.into()),
             }
 
-            self.last_modified_ts_seconds = metadata
-                .modified()
-                .unwrap_or(SystemTime::UNIX_EPOCH)
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            if !self.keep_last_modified_ts_on_load {
+                self.last_modified_ts_seconds = metadata
+                    .modified()
+                    .unwrap_or(SystemTime::UNIX_EPOCH)
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+            }
 
             if metadata.len() >= SUPER_BLOCK_SIZE as u64 {
                 already_has_super_block = true;
@@ -1549,7 +1563,9 @@ impl Volume {
                         "volumeDataIntegrityChecking failed"
                     );
                 }
-                self.recover_last_modified_ts();
+                if !self.keep_last_modified_ts_on_load {
+                    self.recover_last_modified_ts();
+                }
 
                 // Structural check: no .idx entry may reference bytes past the
                 // end of .dat. The needle map's load walk above already
@@ -2339,6 +2355,13 @@ impl Volume {
                 .collect();
         }
         self.last_append_at_ns = last_append_at_ns;
+        for ((n, _), r) in run.iter().zip(&staged) {
+            if matches!(r, Ok(Some(_))) && n.append_at_ns > self.last_write_append_at_ns {
+                self.last_write_append_at_ns = n.append_at_ns;
+                self.last_write_needle_key = n.id;
+                self.last_write_deleted = false;
+            }
+        }
 
         // A durable entry that fails to publish stops the volume taking
         // writes, so the entries after it are refused the way a lone
@@ -2521,6 +2544,9 @@ impl Volume {
         }
 
         self.last_append_at_ns = n.append_at_ns;
+        self.last_write_append_at_ns = n.append_at_ns;
+        self.last_write_needle_key = n.id;
+        self.last_write_deleted = false;
 
         self.publish_write(n, offset, fsync)?;
 
@@ -2839,6 +2865,11 @@ impl Volume {
         if let Some(nm) = &mut self.nm {
             nm.delete(n.id, Offset::from_actual_offset(offset as i64))?;
         }
+        if n.id == self.last_write_needle_key {
+            self.last_write_append_at_ns = 0;
+            self.last_write_needle_key = NeedleId(0);
+            self.last_write_deleted = true;
+        }
         let checkpoint_ok = self.maybe_checkpoint_index(false);
 
         // Clear the EIO streak after a successful delete (tombstone append +
@@ -3106,8 +3137,15 @@ impl Volume {
             return;
         }
         match self.find_last_write_append_at_ns() {
-            Ok(0) => {}
-            Ok(append_at_ns) => self.last_modified_ts_seconds = append_at_ns / 1_000_000_000,
+            Ok((0, _)) => {}
+            Ok((append_at_ns, key)) => {
+                self.last_modified_ts_seconds = append_at_ns / 1_000_000_000;
+                if append_at_ns > self.last_write_append_at_ns {
+                    self.last_write_append_at_ns = append_at_ns;
+                    self.last_write_needle_key = key;
+                    self.last_write_deleted = false;
+                }
+            }
             Err(e) => warn!(
                 volume_id = self.id.0,
                 error = %e,
@@ -3117,7 +3155,8 @@ impl Volume {
     }
 
     /// Scan the .idx backwards for the newest write — an entry that is not a
-    /// deletion tombstone — and return that needle's append timestamp. The .idx
+    /// deletion tombstone — and return that needle's append timestamp and key.
+    /// The .idx
     /// and the .dat share an order, so an append-ordered volume answers with the
     /// first write the scan reaches. Vacuum rewrites both in key order, which
     /// tracks write order only because the master issues keys increasing: an
@@ -3126,19 +3165,21 @@ impl Volume {
     /// nothing but tombstones, when a vacuumed volume holds more needles than
     /// the scan budget, or for a volume older than version 3, whose needles
     /// carry no append timestamp. Mirrors Go's findLastWriteAppendAtNs.
-    fn find_last_write_append_at_ns(&self) -> Result<u64, VolumeError> {
+    fn find_last_write_append_at_ns(&self) -> Result<(u64, NeedleId), VolumeError> {
         let version = self.version();
         if version != VERSION_3 {
-            return Ok(0);
+            return Ok((0, NeedleId(0)));
         }
         let idx_path = self.file_name(".idx");
         let idx_size = fs::metadata(&idx_path).map(|m| m.len()).unwrap_or(0) as i64;
         if idx_size == 0 || idx_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
-            return Ok(0);
+            return Ok((0, NeedleId(0)));
         }
         let scan_every_write = self.super_block.compaction_revision > 0;
         let mut entry_budget = Self::VACUUMED_LAST_WRITE_SCAN_ENTRIES;
         let mut last_write_append_at_ns = 0u64;
+        let mut last_write_key = NeedleId(0);
+        let mut dead = HashSet::new();
         let mut idx_file = File::open(&idx_path)?;
         let mut block = vec![0u8; NEEDLE_MAP_ENTRY_SIZE * idx::ROWS_TO_READ];
         let mut end = idx_size;
@@ -3149,7 +3190,13 @@ impl Volume {
             idx_file.read_exact(entries)?;
             for entry in entries.as_chunks::<NEEDLE_MAP_ENTRY_SIZE>().0.iter().rev() {
                 let (key, offset, size) = idx_entry_from_bytes(entry);
+                // The first row a key presents is its latest state: a tombstone
+                // there retires the write rows beneath it.
+                if dead.contains(&key) {
+                    continue;
+                }
                 if offset.is_zero() || size.is_deleted() {
+                    dead.insert(key);
                     continue;
                 }
                 let Some(needle_offset) =
@@ -3157,10 +3204,13 @@ impl Volume {
                 else {
                     continue;
                 };
-                last_write_append_at_ns = last_write_append_at_ns
-                    .max(self.read_needle_append_at_ns(needle_offset, size)?);
+                let append_at_ns = self.read_needle_append_at_ns(needle_offset, size)?;
+                if append_at_ns > last_write_append_at_ns {
+                    last_write_append_at_ns = append_at_ns;
+                    last_write_key = key;
+                }
                 if !scan_every_write {
-                    return Ok(last_write_append_at_ns);
+                    return Ok((last_write_append_at_ns, last_write_key));
                 }
                 entry_budget -= 1;
                 if entry_budget == 0 {
@@ -3169,12 +3219,12 @@ impl Volume {
                         budget = Self::VACUUMED_LAST_WRITE_SCAN_ENTRIES,
                         "too many needles to scan for the last write, keeping the .dat mtime"
                     );
-                    return Ok(0);
+                    return Ok((0, NeedleId(0)));
                 }
             }
             end = start;
         }
-        Ok(last_write_append_at_ns)
+        Ok((last_write_append_at_ns, last_write_key))
     }
 
     /// The .dat offset holding the needle an .idx entry describes, or None when
@@ -4294,6 +4344,9 @@ impl Volume {
 
         // Update lastAppendAtNs (matches Go L352: v.lastAppendAtNs = appendAtNs)
         self.last_append_at_ns = append_at_ns;
+        self.last_write_append_at_ns = append_at_ns;
+        self.last_write_needle_key = needle_id;
+        self.last_write_deleted = false;
 
         // Update needle map index
         let offset = Offset::from_actual_offset(dat_size);
@@ -4493,8 +4546,18 @@ impl Volume {
         self.write_compact_commit_marker()?;
         self.apply_compact_swap()?;
 
-        // Reload
-        self.load(true, false, 0, self.version())?;
+        // The write watermark already equals what recover_last_modified_ts
+        // would rescan, so keep the clock instead of paying for the scan
+        // under the lock. If its write was itself deleted, the reload
+        // recovers the newest surviving write instead.
+        if self.last_write_append_at_ns != 0 {
+            self.last_modified_ts_seconds = self.last_write_append_at_ns / 1_000_000_000;
+        }
+        self.keep_last_modified_ts_on_load =
+            self.last_modified_ts_seconds != 0 && !self.last_write_deleted;
+        let load_result = self.load(true, false, 0, self.version());
+        self.keep_last_modified_ts_on_load = false;
+        load_result?;
 
         Ok(())
     }
@@ -6381,6 +6444,7 @@ mod tests {
         let prior = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
         let dat_len_before = dat_len(&v);
         let last_append_before = v.last_append_at_ns;
+        let last_write_append_before = v.last_write_append_at_ns;
         let last_modified_before = v.last_modified_ts_seconds;
         let file_count_before = v.file_count();
 
@@ -6402,6 +6466,7 @@ mod tests {
         );
         assert_eq!(dat_len(&v), dat_len_before, "the run is off the .dat");
         assert_eq!(v.last_append_at_ns, last_append_before);
+        assert_eq!(v.last_write_append_at_ns, last_write_append_before);
         assert_eq!(v.last_modified_ts_seconds, last_modified_before);
         let now = v.nm.as_ref().unwrap().get(NeedleId(1)).unwrap().unwrap();
         assert_eq!((now.offset, now.size), (prior.offset, prior.size));
@@ -7034,6 +7099,146 @@ mod tests {
         assert!(
             !v.is_expired(content_size, 1024 * 1024),
             "a volume overwritten a minute ago must not be expired after a vacuum and reload"
+        );
+    }
+
+    // Covers the reload that ends a vacuum commit: the clock must keep the
+    // last write's append time rather than be re-derived, and the intervening
+    // delete's tombstone must not freshen it.
+    #[test]
+    fn test_ttl_clock_carried_across_vacuum_commit() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let last_write_ns = (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 2 * 60 * 60)
+            * 1_000_000_000;
+
+        let mut v = make_ttl_volume(dir, ttl);
+        let mut written = Vec::new();
+        for i in 1..=3u64 {
+            let data = format!("data {}", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
+            written.push((offset, n.size));
+        }
+        v.delete_needle(&mut Needle {
+            id: NeedleId(2),
+            cookie: Cookie(2),
+            ..Needle::default()
+        })
+        .unwrap();
+        v.sync_to_disk().unwrap();
+        for (offset, size) in written {
+            backdate_append_at_ns(&v.dat_path(), offset, size, last_write_ns);
+        }
+        // Where a restart's recovery would have left the clock. The delete
+        // above pushed last_append_at_ns to ~now; the commit must not use it.
+        v.set_last_modified_ts_for_test(last_write_ns / 1_000_000_000);
+        v.last_write_append_at_ns = last_write_ns;
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        assert_eq!(v.last_modified_ts(), last_write_ns / 1_000_000_000);
+        assert!(
+            v.is_expired(v.content_size(), 1024 * 1024),
+            "a TTL volume whose last write is 2h old must stay expired across a vacuum commit"
+        );
+    }
+
+    // A write's client supplied modified time can lie ahead of or behind when
+    // it was appended; the commit keeps the server-side write watermark the
+    // recovery scan would recompute.
+    #[test]
+    fn test_ttl_clock_at_commit_uses_append_time() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let future = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 24 * 60 * 60;
+
+        let mut v = make_ttl_volume(dir, ttl);
+        let data = b"data".to_vec();
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data,
+            data_size: 4,
+            last_modified: future,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true, false).unwrap();
+        assert!(v.last_modified_ts() >= future);
+        let append_watermark_sec = v.last_write_append_at_ns / 1_000_000_000;
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        assert_eq!(v.last_modified_ts(), append_watermark_sec);
+    }
+
+    // A vacuum commit whose newest write was deleted first: the carried
+    // watermark belonged to that write, so the commit has to let the reload
+    // rescan and land on the newest surviving write rather than keep the
+    // volume alive on a deleted write's time.
+    #[test]
+    fn test_ttl_clock_at_commit_skips_deleted_write() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("5m").unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let old_write_ns = (now - 2 * 60 * 60) * 1_000_000_000;
+        let new_write_ns = (now - 60 * 60) * 1_000_000_000;
+
+        let mut v = make_ttl_volume(dir, ttl);
+        for (id, append_at_ns) in [(1u64, old_write_ns), (2, new_write_ns)] {
+            let data = format!("data {}", id);
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(id as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
+            v.sync_to_disk().unwrap();
+            backdate_append_at_ns(&v.dat_path(), offset, n.size, append_at_ns);
+        }
+        // The delete lands inside the commit window: makeup_diff replays its
+        // tombstone into the new .idx behind the write row the copy carried.
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.delete_needle(&mut Needle {
+            id: NeedleId(2),
+            cookie: Cookie(2),
+            ..Needle::default()
+        })
+        .unwrap();
+        assert!(
+            v.last_write_deleted,
+            "deleting the newest write must mark the watermark dead"
+        );
+        v.commit_compact().unwrap();
+
+        assert_eq!(v.last_modified_ts(), old_write_ns / 1_000_000_000);
+        assert!(
+            !v.last_write_deleted,
+            "the reload's rescan must reseed the watermark off the surviving write"
         );
     }
 

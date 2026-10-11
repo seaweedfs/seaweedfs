@@ -3,7 +3,10 @@ package azure
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -429,4 +432,54 @@ func TestAzureRemoteStorageClientImplementsInterface(t *testing.T) {
 func TestAzureErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
 	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
 	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
+}
+
+// azureErrorRoundTripper answers every request with an Azure blob error.
+type azureErrorRoundTripper struct {
+	statusCode int
+	code       string
+}
+
+func (e *azureErrorRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_ = req.Body.Close()
+	}
+	body := `<?xml version="1.0" encoding="utf-8"?><Error><Code>` + e.code + `</Code><Message>m</Message></Error>`
+	return &http.Response{
+		StatusCode: e.statusCode,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header: http.Header{
+			"Content-Type":    []string{"application/xml"},
+			"X-Ms-Error-Code": []string{e.code},
+		},
+		Request: req,
+	}, nil
+}
+
+func TestAzureReadNotFoundClassification(t *testing.T) {
+	loc := &remote_pb.RemoteStorageLocation{Name: "test", Bucket: "container", Path: "/obj.bin"}
+	tests := []struct {
+		name       string
+		statusCode int
+		code       string
+		size       int64
+		notFound   bool
+	}{
+		{"missing blob", http.StatusNotFound, "BlobNotFound", 10, true},
+		{"missing blob, read to end", http.StatusNotFound, "BlobNotFound", 0, true},
+		{"missing container", http.StatusNotFound, "ContainerNotFound", 10, false},
+		{"auth failure", http.StatusForbidden, "AuthenticationFailed", 10, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := &remote_pb.RemoteConf{Name: "test", AzureAccountName: "testaccount", AzureAccountKey: "dGVzdGtleQ=="}
+			rs, err := MakeWithHTTPClient(conf, &http.Client{Transport: &azureErrorRoundTripper{statusCode: tt.statusCode, code: tt.code}})
+			require.NoError(t, err)
+
+			_, err = rs.ReadFile(loc, 0, tt.size)
+			require.Error(t, err)
+			require.Equal(t, tt.notFound, err == remote_storage.ErrRemoteObjectNotFound, "err: %v", err)
+		})
+	}
 }

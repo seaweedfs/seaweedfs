@@ -203,9 +203,11 @@ func (h *Handler) compactDataFiles(
 		return "", nil, err
 	}
 
-	// Build compaction bins: group small data files by partition.
+	// Build compaction bins: group small data files by partition, each bin's
+	// files in the order of their bounds so the merged file keeps the
+	// ordering its inputs had.
 	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
-	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles, meta)
 	initialBinCount := len(bins)
 	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	if len(bins) == 0 {
@@ -288,10 +290,11 @@ func (h *Handler) compactDataFiles(
 
 		var mergedData []byte
 		var recordCount int64
+		rowGroupRows := rowsPerRowGroup(bin, config)
 		if rewritePlan != nil && rewritePlan.strategy == "sort" {
-			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan, lineage)
+			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan, rowGroupRows, lineage)
 		} else {
-			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, lineage)
+			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, dataPath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rowGroupRows, lineage)
 		}
 		if err != nil {
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
@@ -332,6 +335,14 @@ func (h *Handler) compactDataFiles(
 				goto binDone
 			}
 			writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
+
+			// Record the column statistics readers prune files by; without
+			// them every scan has to read every compacted file.
+			if stats, statsErr := collectColumnStats(mergedData, schema); statsErr != nil {
+				glog.Warningf("iceberg compact: no column statistics for %s: %v", mergedFileName, statsErr)
+			} else {
+				stats.applyTo(dfBuilder)
+			}
 
 			// A merged file keeps its rows' row IDs, so its entry names the first
 			// materialized one instead of inheriting a fresh range at commit.
@@ -561,7 +572,13 @@ func (h *Handler) compactDataFiles(
 // buildCompactionBins groups small data files by partition for bin-packing.
 // A file is "small" if it's below targetSize. A bin must have at least
 // minFiles entries to be worth compacting.
-func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minFiles int) []compactionBin {
+//
+// With an order, every bin lists its files by their bounds on the ordering
+// column and an oversized partition is split into runs of consecutive files,
+// so each merged file covers one contiguous range of that column. Without one
+// the files keep manifest order and an oversized partition is packed
+// largest-first.
+func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minFiles int, meta table.Metadata) []compactionBin {
 	if minFiles < 2 {
 		minFiles = 2
 	}
@@ -594,14 +611,37 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 		bin.TotalSize += df.FileSizeBytes()
 	}
 
-	// Filter to bins with enough files, splitting oversized bins
+	// Filter to bins with enough files, splitting oversized bins. The merge
+	// order resolves per group over the files that survived the eligibility
+	// filter, so a file that can never participate (oversized, another
+	// format) cannot veto ordering for the ones that can.
 	var result []compactionBin
 	for _, bin := range groups {
 		if len(bin.Entries) < minFiles {
 			continue
 		}
+		order := resolveCompactionOrder(meta, bin.Entries)
+		order.sortEntries(bin.Entries)
 		if bin.TotalSize <= targetSize {
 			result = append(result, *bin)
+		} else if order != nil {
+			runs, leftover := splitOrderedBin(*bin, targetSize, minFiles)
+			result = append(result, runs...)
+			if order.bestEffort && len(leftover) > 0 {
+				runtBin := compactionBin{PartitionKey: bin.PartitionKey, Partition: bin.Partition, SpecID: bin.SpecID, Entries: leftover}
+				packed := splitOversizedBin(runtBin, targetSize, minFiles)
+				if len(packed) == 0 {
+					// Stragglers cannot merge even with each other; repacking
+					// the whole bin lets them pair across the ordered runs.
+					// Only replace the runs when the repack yields bins —
+					// otherwise the runs stay valid compaction work.
+					if full := splitOversizedBin(*bin, targetSize, minFiles); len(full) > 0 {
+						result = result[:len(result)-len(runs)]
+						packed = full
+					}
+				}
+				result = append(result, packed...)
+			}
 		} else {
 			result = append(result, splitOversizedBin(*bin, targetSize, minFiles)...)
 		}
@@ -995,6 +1035,46 @@ func resolveEqualityColIndices(pqSchema *parquet.Schema, fieldIDs []int, iceberg
 	return indices, nil
 }
 
+const (
+	// Iceberg's write.parquet.row-group-size-bytes default and PyIceberg's
+	// write.parquet.row-group-limit default.
+	defaultRowGroupSizeBytes = 128 * 1024 * 1024
+	defaultRowGroupRowLimit  = 1048576
+	minRowGroupRows          = 1024
+)
+
+// rowsPerRowGroup is the most rows one row group of a compacted file holds:
+// the row limit, lowered so a row group stays near the byte size, estimated
+// from the bin's inputs' bytes per row. parquet-go's writers have no limit of
+// their own, so without one every compacted file is a single row group. The
+// floor only protects the estimate — a configured row limit always wins.
+func rowsPerRowGroup(bin compactionBin, config Config) int64 {
+	rows, sizeBytes := config.RowGroupRowLimit, config.RowGroupSizeBytes
+	explicit := rows > 0
+	if !explicit {
+		rows = defaultRowGroupRowLimit
+	}
+	if sizeBytes <= 0 {
+		sizeBytes = defaultRowGroupSizeBytes
+	}
+	var totalRows int64
+	for _, entry := range bin.Entries {
+		totalRows += entry.DataFile().Count()
+	}
+	if totalRows > 0 && bin.TotalSize > 0 {
+		bytesPerRow := max(bin.TotalSize/totalRows, 1)
+		estimated := sizeBytes / bytesPerRow
+		if !explicit {
+			estimated = max(estimated, minRowGroupRows)
+		}
+		rows = min(rows, estimated)
+	}
+	if !explicit {
+		rows = max(rows, minRowGroupRows)
+	}
+	return rows
+}
+
 // mergeParquetFiles reads multiple small Parquet files and merges them into
 // a single Parquet file, optionally filtering out rows matching position or
 // equality deletes. Files are processed one at a time to keep memory usage
@@ -1007,6 +1087,7 @@ func mergeParquetFiles(
 	positionDeletes map[string][]int64,
 	eqDeleteGroups []equalityDeleteGroup,
 	icebergSchema *iceberg.Schema,
+	rowGroupRows int64,
 	lineage bool,
 ) ([]byte, int64, error) {
 	if len(entries) == 0 {
@@ -1044,7 +1125,7 @@ func mergeParquetFiles(
 	}
 
 	var outputBuf bytes.Buffer
-	writer := parquet.NewWriter(&outputBuf, outputSchema)
+	writer := parquet.NewWriter(&outputBuf, outputSchema, parquet.MaxRowsPerRowGroup(rowGroupRows))
 
 	drainReader := func(reader *parquet.Reader, entry iceberg.ManifestEntry) (int64, error) {
 		source := entry.DataFile().FilePath()
@@ -1215,6 +1296,7 @@ func mergeParquetFilesSorted(
 	eqDeleteGroups []equalityDeleteGroup,
 	icebergSchema *iceberg.Schema,
 	rewritePlan *compactionRewritePlan,
+	rowGroupRows int64,
 	lineage bool,
 ) ([]byte, int64, error) {
 	if len(entries) == 0 {
@@ -1275,6 +1357,7 @@ func mergeParquetFilesSorted(
 
 	var outputBuf bytes.Buffer
 	writer := parquet.NewSortingWriter[any](&outputBuf, sortBufferRows, outputSchema,
+		parquet.MaxRowsPerRowGroup(rowGroupRows),
 		parquet.SortingWriterConfig(
 			parquet.SortingColumns(sortingColumns...),
 			parquet.SortingBuffers(parquet.NewFileBufferPool(spillDir, "seaweedfs-iceberg-sort-*")),

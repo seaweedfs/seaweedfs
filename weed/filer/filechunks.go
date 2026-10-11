@@ -63,9 +63,15 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	return finalETag
 }
 
-func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
+// CompactFileChunks splits chunks into those still visible and those fully
+// covered by newer writes. It fails if the chunk manifests cannot be resolved,
+// including when ctx is cancelled.
+func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk, err error) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	compacted, garbage = SeparateGarbageChunks(visibles, chunks)
 
@@ -194,11 +200,17 @@ func (cv *ChunkView) CanRangeFetch() bool {
 	return cv.CipherKey == nil && !cv.IsGzipped
 }
 
-func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
+// ViewFromChunks returns the views of chunks that cover [offset, offset+size).
+// It fails if the chunk manifests cannot be resolved, including when ctx is
+// cancelled.
+func ViewFromChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView], err error) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	visibles, err := NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	if err != nil {
+		return nil, err
+	}
 
-	return ViewFromVisibleIntervals(visibles, offset, size)
+	return ViewFromVisibleIntervals(visibles, offset, size), nil
 
 }
 
