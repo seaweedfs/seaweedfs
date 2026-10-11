@@ -273,6 +273,21 @@ func lowWatermarkOf(watermarks map[pb.ServerAddress]int64) int64 {
 	return low
 }
 
+// PeersCaughtUpTo reports whether every listed peer's stream has delivered
+// an event or idle heartbeat at or past tsNs, i.e. no pre-tsNs backlog can
+// still arrive from it. A peer no longer tracked counts as caught up: it
+// cannot deliver a backlog anymore.
+func (ma *MetaAggregator) PeersCaughtUpTo(peers []pb.ServerAddress, tsNs int64) bool {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	for _, peer := range peers {
+		if ts, found := ma.peerWatermarks[peer]; found && ts < tsNs {
+			return false
+		}
+	}
+	return true
+}
+
 func (ma *MetaAggregator) HasRemotePeers() bool {
 	ma.peerChansLock.Lock()
 	defer ma.peerChansLock.Unlock()

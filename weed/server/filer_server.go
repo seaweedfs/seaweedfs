@@ -91,6 +91,10 @@ type FilerOption struct {
 	TusSessionExpiry          time.Duration
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
+	// AnnounceCh, when set, must be closed before the filer registers on the
+	// master; it joins the filer list only once the gRPC port is serving and
+	// the metadata replay has caught up with the peers found at startup.
+	AnnounceCh chan struct{}
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
 	AllowUntrustedRemoteEndpoints bool
@@ -154,6 +158,16 @@ type FilerServer struct {
 	// verifying a forwarded request's peer does not pay a DNS lookup per hop.
 	ringPeerIPs      atomic.Pointer[ringPeerIPs]
 	ringResolveGroup singleflight.Group
+
+	// masterCtx drives KeepConnectedToMaster; cancelling it ends the stream
+	// so the master drops this filer from its list before gRPC stops.
+	masterCtx    context.Context
+	masterCancel context.CancelFunc
+
+	// startupPeers are the filers discovered during NewFilerServer, before
+	// this filer announced itself; AnnounceOnceCaughtUp waits for their
+	// replayed backlogs before the filer joins the master's list.
+	startupPeers []pb.ServerAddress
 
 	// entryLockTable serializes mutations to the same entry path on this filer.
 	// CreateEntry takes it today; UpdateEntry and DeleteEntry are intended to take
@@ -272,7 +286,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
+	if option.AnnounceCh != nil {
+		fs.filer.MasterClient.SetAnnounceCh(option.AnnounceCh)
+	}
+	fs.masterCtx, fs.masterCancel = context.WithCancel(context.Background())
+	go fs.filer.MasterClient.KeepConnectedToMaster(fs.masterCtx)
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
@@ -321,7 +339,20 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.readonlyFilerHandler)))
 	}
 
-	existingNodes := fs.filer.ListExistingPeerUpdates(context.Background())
+	// A failed peer scan is not an empty cluster: a fresh filer that skipped
+	// bootstrap here would serve without the existing files, so retry until a
+	// master answers. This runs before the announce gate opens, so the filer
+	// is not yet advertised.
+	var existingNodes []*master_pb.ClusterNodeUpdate
+	for {
+		var listErr error
+		existingNodes, listErr = fs.filer.ListExistingPeerUpdates(context.Background())
+		if listErr == nil {
+			break
+		}
+		glog.Warningf("%s cannot list existing peers: %v; retrying", option.Host, listErr)
+		time.Sleep(2 * time.Second)
+	}
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
 	if isFresh {
 		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
@@ -334,6 +365,15 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		fs.filer.EmptyFolderCleanupDelay = d
 	}
 	fs.filer.AggregateFromPeers(option.Host, existingNodes, startFromTime)
+
+	// A peer replaying its backlog applies the old owner's events over this
+	// filer's fresh writes if it takes lock-ring ownership before the replay
+	// finishes, so the announce gate waits for these peers to catch up.
+	for _, node := range existingNodes {
+		if addr := pb.ServerAddress(node.Address); !addr.Equals(option.Host) {
+			fs.startupPeers = append(fs.startupPeers, addr)
+		}
+	}
 
 	fs.filer.LoadFilerConf()
 
@@ -390,6 +430,12 @@ func (fs *FilerServer) Shutdown() {
 		fs.remoteCacheEvictCancel()
 	}
 	fs.filer.Shutdown()
+	// LeaveLockRing already ended the master stream in the normal path; this
+	// covers callers that skip it, and runs after the filer's own shutdown so
+	// the final metadata-log flush can still reach the master.
+	if fs.masterCancel != nil {
+		fs.masterCancel()
+	}
 }
 
 // priorOwnerWindowSkew covers peers and gateways that start their prior-owner
@@ -416,6 +462,106 @@ func (fs *FilerServer) leaveLockRingWithin(removalTimeout, budget time.Duration)
 	case <-left:
 	case <-time.After(budget):
 		glog.Warningf("LockRing: %s did not finish leaving within %v, shutting down anyway", fs.option.Host, budget)
+	}
+	// End the master stream so the master drops this filer from the cluster
+	// list before gRPC stops accepting connections.
+	if fs.masterCancel != nil {
+		fs.masterCancel()
+	}
+	fs.waitForClusterRemoval()
+}
+
+// announceCatchUpCap bounds how long startup holds the master registration
+// while the metadata replay catches up with the peers found at startup. Past
+// it the filer announces anyway, as it did when the gate opened on serve.
+const announceCatchUpCap = time.Minute
+
+// AnnounceOnceCaughtUp closes announce once every peer found at startup has
+// replayed its backlog. Each peer's stream advances a watermark per event or
+// idle heartbeat, so a watermark past waitStart means nothing older can still
+// land on top of this filer's fresh writes. Called once gRPC is serving, so
+// routed traffic is answerable the moment the filer is listed.
+func (fs *FilerServer) AnnounceOnceCaughtUp(announce chan struct{}, waitStart time.Time) {
+	defer close(announce)
+	if len(fs.startupPeers) == 0 || fs.filer.MetaAggregator == nil {
+		return
+	}
+	deadline := time.Now().Add(announceCatchUpCap)
+	for {
+		// Take the channel before reading the watermarks so a rise in
+		// between still wakes this wait (see DeliveryWatermarkAdvancedChan).
+		advanced := fs.filer.MetaAggregator.DeliveryWatermarkAdvancedChan()
+		if fs.filer.MetaAggregator.PeersCaughtUpTo(fs.startupPeers, waitStart.UnixNano()) {
+			glog.V(0).Infof("%s caught up with %d startup peers, announcing to masters", fs.option.Host, len(fs.startupPeers))
+			return
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			glog.Warningf("%s metadata replay not caught up after %v, announcing anyway", fs.option.Host, announceCatchUpCap)
+			return
+		}
+		select {
+		case <-advanced:
+		case <-time.After(min(remaining, time.Second)):
+		}
+	}
+}
+
+// masterRemovalWaitBudget bounds how long shutdown waits for masters to
+// drop this filer before gRPC drains anyway.
+const masterRemovalWaitBudget = 5 * time.Second
+
+// waitForClusterRemoval polls the configured masters until none still lists
+// this filer. The master removes membership when the KeepConnected handler
+// unwinds, which is asynchronous to cancel, so new requests could otherwise
+// route to this filer after its gRPC listener has already closed.
+func (fs *FilerServer) waitForClusterRemoval() {
+	ctx, cancel := context.WithTimeout(context.Background(), masterRemovalWaitBudget)
+	defer cancel()
+	confirmedAbsent := make(map[pb.ServerAddress]struct{})
+	for ctx.Err() == nil {
+		pending := false
+		// The cached list keeps a slow SRV lookup from stretching the
+		// removal-wait budget.
+		for _, master := range fs.filer.MasterClient.ListCachedMasters() {
+			if _, ok := confirmedAbsent[master]; ok {
+				continue
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			// The per-query timeout shares the overall deadline, so a stalled
+			// master cannot stretch the wait past the budget.
+			queryCtx, queryCancel := context.WithTimeout(ctx, 2*time.Second)
+			nodes, err := cluster.ListExistingPeerUpdates(queryCtx, master, fs.grpcDialOption, fs.filer.MasterClient.FilerGroup, cluster.FilerType)
+			queryCancel()
+			if err != nil {
+				// A failed query is not confirmed removal; retry until the
+				// master answers or the overall deadline expires.
+				pending = true
+				continue
+			}
+			listed := false
+			for _, node := range nodes {
+				if node.Address == string(fs.option.Host) {
+					listed = true
+					break
+				}
+			}
+			if listed {
+				pending = true
+			} else {
+				confirmedAbsent[master] = struct{}{}
+			}
+		}
+		if !pending {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 }
 
