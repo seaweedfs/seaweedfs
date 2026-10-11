@@ -507,7 +507,8 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 			return r != pm.src.rack && racks[r].freeSlots > 0 &&
 				(!pm.avoidDataRack || !antiAffinity[r])
 		}
-		destRack, ok := pickTarget(rackKeys, shardsPerRack, maxPerRack, antiAffinity, hasRoom, withinLimit)
+		rackFree := func(r string) int { return racks[r].freeSlots }
+		destRack, ok := pickTarget(rackKeys, shardsPerRack, maxPerRack, antiAffinity, hasRoom, withinLimit, rackFree)
 		if !ok && totalCap > 0 && rackShardCount[pm.src.rack] > totalCap {
 			// No rack is under the per-type cap. A shard must not stay on a rack
 			// above the total cap while another rack is under it, so relax the
@@ -515,7 +516,7 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 			// inside pickTarget. Only a source above the total cap may relax:
 			// otherwise the destination just takes over the per-type overflow
 			// and the next Plan moves it back.
-			destRack, ok = pickTarget(rackKeys, shardsPerRack, totalCap, antiAffinity, hasRoom, withinLimit)
+			destRack, ok = pickTarget(rackKeys, shardsPerRack, totalCap, antiAffinity, hasRoom, withinLimit, rackFree)
 		}
 		if !ok {
 			continue
@@ -663,7 +664,14 @@ func withinRackMachineSpread(vk volKey, r *rack, machines map[string][]*Node, di
 		// rather than settled on and the move dropped.
 		destHost, ok := pickTarget(machineKeys, shardsPerMachine, maxPerMachine, nil,
 			func(h string) bool { return h != pm.src.host && pickBestNodeForVolume(machines[h], vk, rp) != nil },
-			func(string) bool { return true })
+			func(string) bool { return true },
+			func(h string) int {
+				n := 0
+				for _, node := range machines[h] {
+					n += node.freeSlots
+				}
+				return n
+			})
 		if !ok {
 			continue
 		}
@@ -755,7 +763,8 @@ func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards
 					return nodeShardCount[n] < rp.SameRackCount
 				}
 				return true
-			})
+			},
+			func(n string) int { return r.nodes[n].freeSlots })
 		if !ok {
 			continue
 		}
@@ -967,12 +976,16 @@ func shardsByGroup(vk volKey, nodes map[string]*Node, dataShards int, key func(*
 
 // pickTarget selects a destination key with room for another shard of a type, in
 // two passes: first excluding anti-affinity targets, then any valid target. Among
-// valid targets it prefers the fewest shards of this type; ties break on sorted
-// key order, so selection is deterministic.
-func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTarget int, antiAffinity map[string]bool, hasFreeSlots, withinLimit func(string) bool) (string, bool) {
+// valid targets it prefers the fewest shards of this type. Count ties break on
+// remaining freeSlots (same idea as pickNodeInRackEligible), not sorted key
+// order: otherwise 14/4 leftovers always land on the first rack/machine/node ids
+// and the extra shards of 4+4+3+3 never walk. Equal freeSlots still keep the
+// first seen key so a single run stays deterministic.
+func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTarget int, antiAffinity map[string]bool, hasFreeSlots, withinLimit func(string) bool, freeSlots func(string) int) (string, bool) {
 	try := func(skipAnti bool) (string, bool) {
 		best := ""
 		bestCount := maxPerTarget + 1
+		bestFree := -1
 		for _, c := range candidates {
 			if skipAnti && antiAffinity[c] {
 				continue
@@ -986,8 +999,13 @@ func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTar
 			if !withinLimit(c) {
 				continue
 			}
-			if cnt := len(shardsPerTarget[c]); cnt < bestCount {
-				best, bestCount = c, cnt
+			cnt := len(shardsPerTarget[c])
+			free := 0
+			if freeSlots != nil {
+				free = freeSlots(c)
+			}
+			if best == "" || cnt < bestCount || (cnt == bestCount && free > bestFree) {
+				best, bestCount, bestFree = c, cnt, free
 			}
 		}
 		return best, best != ""

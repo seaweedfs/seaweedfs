@@ -389,7 +389,8 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 		return !tried[r] && racks[r].freeSlots > 0 && rackShardRoom(racks[r], vk, eligible, maxPerDisk) > 0
 	}
 	for {
-		destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti, hasRoom, withinLimit)
+		destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti, hasRoom, withinLimit,
+			func(r string) int { return racks[r].freeSlots })
 		if !ok {
 			return nil, 0, false, false
 		}

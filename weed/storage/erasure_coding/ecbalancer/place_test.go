@@ -2,6 +2,7 @@ package ecbalancer
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -498,5 +499,45 @@ func TestPlaceStrictCapsCountEligibleRacks(t *testing.T) {
 		if disk := topo.nodes[d.Node].disks[d.DiskID]; disk == nil || disk.diskType != "ssd" {
 			t.Errorf("shard %d not on an SSD disk: node=%s disk=%d", sid, d.Node, d.DiskID)
 		}
+	}
+}
+
+// TestPlaceRotatesExtraRackShardsAcrossVolumes: 10+4 onto 4 equal racks is
+// always 4+4+3+3. Sorted-id tie-breaks pinned the two fours on the first rack
+// ids every volume. Free-slot tie-breaks must walk the extra shards so every
+// rack is in the "4" set across a short series.
+func TestPlaceRotatesExtraRackShardsAcrossVolumes(t *testing.T) {
+	topo := buildPlaceTopo(4, 2, 200)
+	const volumes = 8
+	gotFour := map[string]int{}
+	for v := 0; v < volumes; v++ {
+		res, err := topo.Place(uint32(v+1), "c1", allShards(), Constraints{}, PlaceStrict)
+		if err != nil {
+			t.Fatalf("Place volume %d: %v", v+1, err)
+		}
+		perRack := map[string]int{}
+		for _, d := range res.Destinations {
+			perRack[d.Rack]++
+		}
+		if len(perRack) != 4 {
+			t.Fatalf("volume %d racks %v, want 4", v+1, perRack)
+		}
+		counts := make([]int, 0, 4)
+		for rack, n := range perRack {
+			counts = append(counts, n)
+			if n != 3 && n != 4 {
+				t.Errorf("volume %d rack %s has %d shards, want 3 or 4", v+1, rack, n)
+			}
+			if n == 4 {
+				gotFour[rack]++
+			}
+		}
+		sort.Ints(counts)
+		if counts[0] != 3 || counts[3] != 4 {
+			t.Errorf("volume %d rack counts %v, want 3,3,4,4", v+1, perRack)
+		}
+	}
+	if len(gotFour) < 4 {
+		t.Errorf("extra (4-shard) racks did not rotate; hit %v over %d volumes", gotFour, volumes)
 	}
 }
