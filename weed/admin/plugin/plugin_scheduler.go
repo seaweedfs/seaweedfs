@@ -873,7 +873,7 @@ func (r *Plugin) dispatchScheduledProposals(
 						continue jobLoop
 					}
 
-					executor, release, reserveErr := r.reserveScheduledExecutor(ctx, jobType, policy)
+					executor, release, reserveErr := r.reserveScheduledExecutor(ctx, jobType, policy, JobReplicaHosts(job))
 					if reserveErr != nil {
 						if ctx.Err() != nil {
 							r.cancelQueuedJob(job, ctx.Err())
@@ -988,6 +988,7 @@ func (r *Plugin) reserveScheduledExecutor(
 	ctx context.Context,
 	jobType string,
 	policy schedulerPolicy,
+	preferredHosts []string,
 ) (*WorkerSession, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1015,7 +1016,7 @@ func (r *Plugin) reserveScheduledExecutor(
 			return nil, nil, fmt.Errorf("timed out waiting for executor capacity for %s", jobType)
 		}
 
-		executors, err := r.registry.ListExecutors(jobType)
+		executors, err := r.registry.ListExecutors(jobType, preferredHosts...)
 		if err != nil {
 			if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
 				if ctx.Err() != nil {

@@ -609,7 +609,7 @@ func (r *Plugin) ExecuteJob(
 	releaseGate := r.acquireDetectionExecutionGate(jobType, true)
 	defer releaseGate()
 
-	executor, err := r.registry.PickExecutor(jobType)
+	executor, err := r.registry.PickExecutor(jobType, JobReplicaHosts(job)...)
 	if err != nil {
 		return nil, err
 	}

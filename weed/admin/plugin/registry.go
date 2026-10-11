@@ -277,14 +277,24 @@ func (r *Registry) PickDetector(jobType string) (*WorkerSession, error) {
 }
 
 // PickExecutor picks one executor worker for a job type.
-func (r *Registry) PickExecutor(jobType string) (*WorkerSession, error) {
-	return r.pickByKind(jobType, false)
+// preferredHosts, when set, ranks workers whose Hello Address host matches a
+// replica/source host ahead of others (same-machine EC pull). Empty means the
+// previous slots+round-robin order.
+func (r *Registry) PickExecutor(jobType string, preferredHosts ...string) (*WorkerSession, error) {
+	list, err := r.ListExecutors(jobType, preferredHosts...)
+	if err != nil {
+		return nil, err
+	}
+	return list[0], nil
 }
 
 // ListExecutors returns sorted executor candidates for one job type.
 // Ordering is by most available execution slots, then lexical worker ID.
 // The top tie group is rotated round-robin to prevent sticky assignment.
-func (r *Registry) ListExecutors(jobType string) ([]*WorkerSession, error) {
+// preferredHosts, when any worker matches, are listed first (then the rest);
+// rotation applies only inside the preferred group so a local worker is not
+// rotated away in favor of a remote one.
+func (r *Registry) ListExecutors(jobType string, preferredHosts ...string) ([]*WorkerSession, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -293,8 +303,16 @@ func (r *Registry) ListExecutors(jobType string) ([]*WorkerSession, error) {
 		return nil, fmt.Errorf("no executor worker available for job_type=%s", jobType)
 	}
 
-	sortByKind(candidates, jobType, false)
-	r.rotateTopCandidatesLocked(candidates, jobType, false)
+	pref, rest := partitionByPreferredHost(candidates, preferredHosts)
+	if len(pref) > 0 {
+		sortByKind(pref, jobType, false)
+		r.rotateTopCandidatesLocked(pref, jobType, false)
+		sortByKind(rest, jobType, false)
+		candidates = append(pref, rest...)
+	} else {
+		sortByKind(candidates, jobType, false)
+		r.rotateTopCandidatesLocked(candidates, jobType, false)
+	}
 
 	out := make([]*WorkerSession, 0, len(candidates))
 	for _, candidate := range candidates {

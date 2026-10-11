@@ -138,13 +138,13 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 		ExecutorReserveBackoff: time.Millisecond,
 	}
 
-	executor1, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+	executor1, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
 	defer release1()
 
-	executor2, release2, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+	executor2, release2, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 	if err != nil {
 		t.Fatalf("reserve executor 2: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 
 	start := time.Now()
 	pluginSvc.Shutdown()
-	_, _, err = pluginSvc.reserveScheduledExecutor(context.Background(), "missing-job-type", policy)
+	_, _, err = pluginSvc.reserveScheduledExecutor(context.Background(), "missing-job-type", policy, nil)
 	if err == nil {
 		t.Fatalf("expected reservation shutdown error")
 	}
@@ -297,7 +297,7 @@ func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
 		ExecutorReserveBackoff: 5 * time.Millisecond,
 	}
 
-	_, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+	_, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
 	}
 	secondReserveCh := make(chan reserveResult, 1)
 	go func() {
-		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 		if release2 != nil {
 			release2()
 		}

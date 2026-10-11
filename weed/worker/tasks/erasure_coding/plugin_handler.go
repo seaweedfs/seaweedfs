@@ -670,8 +670,15 @@ func buildErasureCodingProposal(
 	}
 
 	sourceNode := ""
-	if len(params.Sources) > 0 {
-		sourceNode = strings.TrimSpace(params.Sources[0].Node)
+	var replicaServers []string
+	for _, s := range params.Sources {
+		if s == nil || strings.TrimSpace(s.Node) == "" || len(s.ShardIds) > 0 {
+			continue
+		}
+		replicaServers = append(replicaServers, s.Node)
+		if sourceNode == "" {
+			sourceNode = strings.TrimSpace(s.Node)
+		}
 	}
 
 	summary := fmt.Sprintf("Erasure code volume %d", result.VolumeID)
@@ -701,6 +708,9 @@ func buildErasureCodingProposal(
 			},
 			"source_server": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: sourceNode},
+			},
+			"replica_servers": {
+				Kind: &plugin_pb.ConfigValue_StringList{StringList: &plugin_pb.StringList{Values: replicaServers}},
 			},
 			"collection": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: result.Collection},

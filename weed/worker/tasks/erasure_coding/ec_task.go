@@ -21,6 +21,7 @@ import (
 	storagetypes "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_replica"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
@@ -403,7 +404,50 @@ func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
 		glog.Infof("EC encode: using best replica %s as source for volume %d (was %s)", best.Url, t.volumeID, t.server)
 		t.server = best.Url
 	}
+	// Host-affinity: if this worker sits on a replica and that copy is as
+	// complete as the union (typical 010 after sync), pull from localhost
+	// instead of the lexically-first / largest remote replica.
+	if local := preferLocalReplicaIfComplete(t.grpcDialOption, needle.VolumeId(t.volumeID), locs, t.server); local != "" && local != t.server {
+		glog.Infof("EC encode: preferring local replica %s as source for volume %d (was %s)", local, t.volumeID, t.server)
+		t.server = local
+	}
 	return nil
+}
+
+// preferLocalReplicaIfComplete returns a replica URL on this machine whose
+// file count is >= the best remote replica. After SyncAndSelectBestReplica
+// a consistent set is equal everywhere; an inconsistent union lives only on
+// the chosen best, so a stale local copy is not selected.
+func preferLocalReplicaIfComplete(dial grpc.DialOption, vid needle.VolumeId, locs []wdclient.Location, current string) string {
+	var localURL string
+	for _, loc := range locs {
+		if util.AddressIsLocal(loc.Url) {
+			localURL = loc.Url
+			break
+		}
+	}
+	if localURL == "" || localURL == current {
+		return current
+	}
+	statuses := volume_replica.GetReplicaStatuses(dial, vid, locs)
+	var localCount, maxCount uint64
+	var sawLocal bool
+	for _, s := range statuses {
+		if s.Error != nil {
+			continue
+		}
+		if s.FileCount > maxCount {
+			maxCount = s.FileCount
+		}
+		if s.Location.Url == localURL {
+			localCount = s.FileCount
+			sawLocal = true
+		}
+	}
+	if !sawLocal || localCount < maxCount {
+		return current
+	}
+	return localURL
 }
 
 // rollbackReadonly is a best-effort restore of every replica markReplicasReadonly
