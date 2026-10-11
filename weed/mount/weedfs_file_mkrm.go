@@ -274,11 +274,11 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// will remove it again.
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
 		wfs.markHandleDeleted(inode)
-		wfs.waitForPendingAsyncFlush(inode)
+		wfs.waitForPendingAsyncFlush(context.Background(), inode)
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 		inodeFromEntry := entry.Attributes.Inode
 		wfs.markHandleDeleted(inodeFromEntry)
-		wfs.waitForPendingAsyncFlush(inodeFromEntry)
+		wfs.waitForPendingAsyncFlush(context.Background(), inodeFromEntry)
 	}
 
 	// first, ensure the filer store can correctly delete

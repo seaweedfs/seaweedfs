@@ -393,13 +393,13 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		// skips old-path metadata creation (which would re-insert the
 		// renamed entry into the meta cache after rename events clean it up).
 		wfs.fhMap.MarkInodeRenamed(sourceInode)
-		wfs.waitForPendingAsyncFlush(sourceInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), sourceInode)
 	} else if oldEntry != nil && oldEntry.Attributes != nil && oldEntry.Attributes.Inode != 0 {
 		// GetInode failed (Forget already removed the mapping), but the
 		// entry's stored inode can still identify pending async flushes.
 		sourceInode = oldEntry.Attributes.Inode
 		wfs.fhMap.MarkInodeRenamed(sourceInode)
-		wfs.waitForPendingAsyncFlush(sourceInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), sourceInode)
 	}
 
 	// Replacing the destination deletes what it held, so a handle still open
@@ -419,7 +419,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			// belongs to the destination as it stands, and one that runs
 			// marked is skipped and takes its handle with it, past the reach
 			// of the restore below.
-			wfs.waitForPendingAsyncFlush(targetInode)
+			wfs.waitForPendingAsyncFlush(context.Background(), targetInode)
 			epoch := wfs.markHandleDeleted(targetInode)
 			// A rename that does not happen leaves the destination where it
 			// was, so its handle has to go back to writing that name.
