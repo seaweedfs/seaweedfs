@@ -145,6 +145,7 @@ type WFS struct {
 	manifestCache         *filer.ChunkManifestCache
 	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature             int32
+	filerCallTimeout      time.Duration // bounds one filer call; tests only, 0 = filerRPCTimeout
 	concurrentWriters     *util.LimitedConcurrentExecutor
 	copyBufferPool        sync.Pool
 	concurrentCopiersSem  chan struct{}
@@ -657,8 +658,8 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	var entry *filer_pb.Entry
 	var lookupVersion entryVersion
 	lookupDir, lookupName := fullpath.DirAndName()
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+	err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: lookupDir,
 			Name:      lookupName,
 		})
