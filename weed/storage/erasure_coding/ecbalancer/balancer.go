@@ -558,13 +558,14 @@ func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node 
 	return pickBestNodeForVolume(sortedNodeSlice(r.nodes), vk, rp)
 }
 
-// pickBestNodeForVolume spreads this volume evenly first, then the thinner live
-// shard count, then freeSlots. SameRackCount is a hard cap (no +1 for debt).
+// pickBestNodeForVolume spreads this volume evenly first. Remainders: higher
+// freeSlots, then lower liveShards+assignedThisPlace. SameRackCount is a hard
+// cap (no +1 for debt).
 func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlacement) *Node {
 	var best *Node
 	bestCount := -1
-	bestScore := -1
 	bestFree := -1
+	bestScore := -1
 	for _, node := range nodes {
 		if node.freeSlots <= 0 {
 			continue
@@ -574,8 +575,8 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 			continue
 		}
 		score := nodeLiveShardCount(node)
-		if best == nil || count < bestCount || (count == bestCount && (score < bestScore || (score == bestScore && node.freeSlots > bestFree))) {
-			best, bestCount, bestScore, bestFree = node, count, score, node.freeSlots
+		if best == nil || count < bestCount || (count == bestCount && (node.freeSlots > bestFree || (node.freeSlots == bestFree && score < bestScore))) {
+			best, bestCount, bestFree, bestScore = node, count, node.freeSlots, score
 		}
 	}
 	return best
@@ -979,11 +980,12 @@ func shardsByGroup(vk volKey, nodes map[string]*Node, dataShards int, key func(*
 
 // pickTarget selects a destination key with room for another shard of a type, in
 // two passes: first excluding anti-affinity targets, then any valid target. Among
-// valid targets it prefers the fewest shards of this type. Count ties break on
-// remaining freeSlots (same idea as pickNodeInRackEligible), not sorted key
-// order: otherwise 14/4 leftovers always land on the first rack/machine/node ids
-// and the extra shards of 4+4+3+3 never walk. Equal freeSlots still keep the
-// first seen key so a single run stays deterministic.
+// valid targets it prefers the fewest shards of this type (even spread). Count
+// ties break on remaining freeSlots, not sorted key order: otherwise 14/4
+// leftovers always land on the first rack/machine/node ids and the extra shards
+// of 4+4+3+3 never walk. Equal freeSlots still keep the first seen key so a
+// single run stays deterministic. Node-in-rack Place remainders (after even) are
+// freeSlots then liveShards — see pickNodeInRackEligible.
 func pickTarget(candidates []string, shardsPerTarget map[string][]int, maxPerTarget int, antiAffinity map[string]bool, hasFreeSlots, withinLimit func(string) bool, freeSlots func(string) int) (string, bool) {
 	try := func(skipAnti bool) (string, bool) {
 		best := ""

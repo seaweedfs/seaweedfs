@@ -566,8 +566,9 @@ func placeNeed(t *testing.T, topo *Topology, vid uint32, n int, rp *super_block.
 	return got
 }
 
-// TestWithinRackPaysDownShardDebt3: 2 VS, live 100 vs 135, 3 shards, cap 2.
-// Pair on the thinner every volume until the gap is gone — not 50/50 from vol 1.
+// TestWithinRackPaysDownShardDebt3: 2 VS, equal freeSlots, live 100 vs 135,
+// 3 shards, cap 2. Remainder tie-breaks on liveShards — pair on the thinner
+// until the gap is gone, not 50/50 from vol 1.
 func TestWithinRackPaysDownShardDebt3(t *testing.T) {
 	topo := NewTopology()
 	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 5000)
@@ -636,9 +637,10 @@ func TestEcVolumeCountIsNotScore(t *testing.T) {
 	}
 }
 
-// TestFreeSlotsTieDoesNotOverrideShardDebt: fatter disk may have more free
-// slots; the pair/triple still lands on the thinner shard count.
-func TestFreeSlotsTieDoesNotOverrideShardDebt(t *testing.T) {
+// TestFreeSlotsWinsAsymmetricExtras: more freeSlots on the fatter disk takes
+// the remainder even if that disk already has more live shards. 4 shards stay
+// 2+2 (remainder 0; no 3+1).
+func TestFreeSlotsWinsAsymmetricExtras(t *testing.T) {
 	topo := NewTopology()
 	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 100)
 	a.AddDisk(0, "", 100, 100)
@@ -646,8 +648,8 @@ func TestFreeSlotsTieDoesNotOverrideShardDebt(t *testing.T) {
 	b.AddDisk(0, "", 200, 135)
 	rp := twoDiskRackRP()
 	got := placeNeed(t, topo, 1, 3, rp)
-	if got["a:8080"] != 2 || got["b:8081"] != 1 {
-		t.Fatalf("3 shards %v, want 2+1 on thinner despite B freeSlots", got)
+	if got["a:8080"] != 1 || got["b:8081"] != 2 {
+		t.Fatalf("3 shards %v, want 2+1 on B (more freeSlots) even though B has more shards", got)
 	}
 
 	topo = NewTopology()

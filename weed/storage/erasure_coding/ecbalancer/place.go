@@ -481,14 +481,13 @@ func rackShardRoomUnderRP(r *rack, vk volKey, eligible func(*disk) bool, maxPerD
 // FromActiveTopology keeps all disk types/tags in the snapshot, so without this a
 // node with free volume slots but no eligible disk could be chosen.
 //
-// Even first (this volume, machine then node), remainders by live shard score
-// (all volumes + assigned this Place). A 3-shard rack is 2+1 on the thinner;
-// a 4-shard rack stays 2+2 — 3+1 would put 3 shards on one disk. freeSlots
-// only after those. SameRackCount is a hard cap, never +1 for debt.
+// Even first (this volume, machine then node). Remainders: higher freeSlots,
+// then lower liveShards+assignedThisPlace (disk.shardCount). A 3-shard rack is
+// 2+1; a 4-shard rack stays 2+2 — no 3+1. SameRackCount is a hard cap.
 func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, maxPerDisk int) *Node {
 	machineShards := countShardsByHost(vk, r.nodes)
 	var best *Node
-	var bestMCount, bestNCount, bestNScore, bestNFree int
+	var bestMCount, bestNCount, bestNFree, bestNScore int
 	for _, id := range sortedNodeKeys(r.nodes) {
 		node := r.nodes[id]
 		if nodeShardRoom(node, vk, eligible, maxPerDisk) <= 0 {
@@ -508,13 +507,13 @@ func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 			better = mCount < bestMCount
 		case count != bestNCount:
 			better = count < bestNCount
-		case nScore != bestNScore:
-			better = nScore < bestNScore
-		default:
+		case node.freeSlots != bestNFree:
 			better = node.freeSlots > bestNFree
+		default:
+			better = nScore < bestNScore
 		}
 		if better {
-			best, bestMCount, bestNCount, bestNScore, bestNFree = node, mCount, count, nScore, node.freeSlots
+			best, bestMCount, bestNCount, bestNFree, bestNScore = node, mCount, count, node.freeSlots, nScore
 		}
 	}
 	return best
