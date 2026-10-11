@@ -61,6 +61,9 @@ func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 	if policy.JobTypeMaxRuntime != 30*time.Minute {
 		t.Fatalf("unexpected max runtime: got=%v", policy.JobTypeMaxRuntime)
 	}
+	if policy.LocalQueuePin != defaultLocalQueuePin {
+		t.Fatalf("unexpected local queue pin: got=%d", policy.LocalQueuePin)
+	}
 }
 
 func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {
@@ -990,5 +993,181 @@ func TestLaneStatus_LifecycleNextDetectionSurvivesDefaultLanePrune(t *testing.T)
 	if !status.NextDetectionAt.Equal(expected) {
 		t.Fatalf("next_detection_at = %v, want %v (must be the 24h schedule, not the idle-sleep fallback)",
 			status.NextDetectionAt, expected)
+	}
+}
+
+func TestReservePinsToPreferredWhileLoadBelowK(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-local",
+		Address:  "10.0.0.1:9334",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-remote",
+		Address:  "10.0.0.2:9334",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+
+	policy := schedulerPolicy{
+		ExecutionTimeout:       time.Second,
+		PerWorkerConcurrency:   1,
+		ExecutorReserveBackoff: 5 * time.Millisecond,
+		LocalQueuePin:          5,
+	}
+	preferred := []string{"10.0.0.1:8080"}
+
+	first, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "erasure_coding", policy, preferred)
+	if err != nil {
+		t.Fatalf("reserve local: %v", err)
+	}
+	defer release1()
+	if first.WorkerID != "worker-local" {
+		t.Fatalf("first reserve want worker-local, got %s", first.WorkerID)
+	}
+
+	type reserveResult struct {
+		id  string
+		err error
+	}
+	secondCh := make(chan reserveResult, 1)
+	go func() {
+		exec, release, reserveErr := pluginSvc.reserveScheduledExecutor(context.Background(), "erasure_coding", policy, preferred)
+		id := ""
+		if exec != nil {
+			id = exec.WorkerID
+		}
+		if release != nil {
+			release()
+		}
+		secondCh <- reserveResult{id: id, err: reserveErr}
+	}()
+
+	select {
+	case result := <-secondCh:
+		t.Fatalf("expected pin wait, got worker=%s err=%v", result.id, result.err)
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	release1()
+
+	select {
+	case result := <-secondCh:
+		if result.err != nil {
+			t.Fatalf("second reserve after release: %v", result.err)
+		}
+		if result.id != "worker-local" {
+			t.Fatalf("after pin wait want worker-local, got %s", result.id)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("second reserve did not complete after local release")
+	}
+}
+
+func TestReserveSpillsWhenPinDisabled(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-local",
+		Address:  "10.0.0.1:9334",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-remote",
+		Address:  "10.0.0.2:9334",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+
+	policy := schedulerPolicy{
+		PerWorkerConcurrency:   1,
+		ExecutorReserveBackoff: time.Millisecond,
+		LocalQueuePin:          0,
+	}
+	preferred := []string{"10.0.0.1:8080"}
+
+	first, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "erasure_coding", policy, preferred)
+	if err != nil {
+		t.Fatalf("reserve local: %v", err)
+	}
+	defer release1()
+	if first.WorkerID != "worker-local" {
+		t.Fatalf("first reserve want worker-local, got %s", first.WorkerID)
+	}
+
+	second, release2, err := pluginSvc.reserveScheduledExecutor(context.Background(), "erasure_coding", policy, preferred)
+	if err != nil {
+		t.Fatalf("expected immediate spill, got %v", err)
+	}
+	defer release2()
+	if second.WorkerID != "worker-remote" {
+		t.Fatalf("K=0 should spill to worker-remote, got %s", second.WorkerID)
+	}
+}
+
+func TestReserveWaterfillsPreferredHosts(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	ids := []string{"worker-a", "worker-b", "worker-c", "worker-d"}
+	for _, id := range ids {
+		pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+			WorkerId: id,
+			Address:  "10.0.0.1:9334",
+			Capabilities: []*plugin_pb.JobTypeCapability{
+				{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 8},
+			},
+		})
+	}
+
+	policy := schedulerPolicy{
+		PerWorkerConcurrency:   8,
+		ExecutorReserveBackoff: time.Millisecond,
+		LocalQueuePin:          5,
+	}
+	preferred := []string{"10.0.0.1:8080"}
+
+	seen := map[string]int{}
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	for i := 0; i < 4; i++ {
+		exec, release, err := pluginSvc.reserveScheduledExecutor(context.Background(), "erasure_coding", policy, preferred)
+		if err != nil {
+			t.Fatalf("reserve %d: %v", i, err)
+		}
+		releases = append(releases, release)
+		seen[exec.WorkerID]++
+	}
+	if len(seen) != 4 {
+		t.Fatalf("want one job per worker, got %v", seen)
 	}
 }

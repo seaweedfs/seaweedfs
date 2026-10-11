@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,9 @@ const (
 	defaultScheduledMaxResults           int32 = 1000
 	defaultScheduledExecutionConcurrency       = 1
 	defaultScheduledPerWorkerConcurrency       = 1
+	// Hold a job on replica-host workers until their reservation load
+	// reaches this; 0 disables the pin and spills immediately.
+	defaultLocalQueuePin                       = 5
 	maxScheduledExecutionConcurrency           = 128
 	defaultScheduledRetryBackoff               = 5 * time.Second
 	defaultClusterContextTimeout               = 10 * time.Second
@@ -49,6 +53,9 @@ type schedulerPolicy struct {
 	PerWorkerConcurrency   int
 	RetryLimit             int
 	ExecutorReserveBackoff time.Duration
+	// LocalQueuePin is K: do not spill off replica-host workers while
+	// min(load(pref)) < K. Zero is the old immediate-spill path.
+	LocalQueuePin int
 }
 
 // laneSchedulerLoop is the main scheduling goroutine for a single lane.
@@ -466,6 +473,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		PerWorkerConcurrency:   int(adminRuntime.PerWorkerExecutionConcurrency),
 		RetryLimit:             int(adminRuntime.RetryLimit),
 		ExecutorReserveBackoff: 200 * time.Millisecond,
+		LocalQueuePin:          defaultLocalQueuePin,
 	}
 
 	if policy.DetectionInterval < r.schedulerTick {
@@ -495,6 +503,9 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 
 	if policy.ExecutionTimeout < defaultScheduledExecutionTimeout {
 		policy.ExecutionTimeout = defaultScheduledExecutionTimeout
+	}
+	if policy.LocalQueuePin < 0 {
+		policy.LocalQueuePin = 0
 	}
 
 	return policy, true, nil
@@ -1027,11 +1038,28 @@ func (r *Plugin) reserveScheduledExecutor(
 			continue
 		}
 
-		for _, executor := range executors {
-			release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
-			if !ok {
+		pref, rest := partitionByPreferredHost(executors, preferredHosts)
+		lane := JobTypeLane(jobType)
+		loadOf := func(e *WorkerSession) int { return r.executorReservationLoad(e, lane) }
+
+		if len(pref) > 0 {
+			sortExecutorsByLoad(pref, loadOf)
+			if executor, release, ok := r.tryReserveFirst(pref, jobType, policy); ok {
+				return executor, release, nil
+			}
+			if policy.LocalQueuePin > 0 && loadOf(pref[0]) < policy.LocalQueuePin {
+				if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+					if ctx.Err() != nil {
+						return nil, nil, ctx.Err()
+					}
+					return nil, nil, fmt.Errorf("plugin is shutting down")
+				}
 				continue
 			}
+		}
+
+		sortExecutorsByLoad(rest, loadOf)
+		if executor, release, ok := r.tryReserveFirst(rest, jobType, policy); ok {
 			return executor, release, nil
 		}
 
@@ -1050,6 +1078,53 @@ func (r *Plugin) tryReserveExecutorCapacity(
 	policy schedulerPolicy,
 ) (func(), bool) {
 	return r.tryReserveExecutorCapacityForLane(executor, jobType, policy, JobTypeLane(jobType))
+}
+
+func (r *Plugin) tryReserveFirst(executors []*WorkerSession, jobType string, policy schedulerPolicy) (*WorkerSession, func(), bool) {
+	for _, executor := range executors {
+		release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
+		if ok {
+			return executor, release, true
+		}
+	}
+	return nil, nil, false
+}
+
+func (r *Plugin) executorReservationLoad(executor *WorkerSession, lane SchedulerLane) int {
+	if executor == nil {
+		return 0
+	}
+	load := 0
+	if executor.Heartbeat != nil && executor.Heartbeat.ExecutionSlotsUsed > 0 {
+		load = int(executor.Heartbeat.ExecutionSlotsUsed)
+	}
+	workerID := strings.TrimSpace(executor.WorkerID)
+	if ls := r.lanes[lane]; ls != nil {
+		ls.execMu.Lock()
+		load += ls.execRes[workerID]
+		ls.execMu.Unlock()
+		return load
+	}
+	r.schedulerExecMu.Lock()
+	load += r.schedulerExecReservations[workerID]
+	r.schedulerExecMu.Unlock()
+	return load
+}
+
+func sortExecutorsByLoad(executors []*WorkerSession, load func(*WorkerSession) int) {
+	sort.SliceStable(executors, func(i, j int) bool {
+		if executors[i] == nil {
+			return false
+		}
+		if executors[j] == nil {
+			return true
+		}
+		li, lj := load(executors[i]), load(executors[j])
+		if li != lj {
+			return li < lj
+		}
+		return executors[i].WorkerID < executors[j].WorkerID
+	})
 }
 
 // tryReserveExecutorCapacityForLane reserves an execution slot on the
@@ -1578,6 +1653,7 @@ func (r *Plugin) DispatchProposals(
 			ExecutionTimeout:       defaultScheduledExecutionTimeout,
 			RetryBackoff:           defaultScheduledRetryBackoff,
 			ExecutorReserveBackoff: 200 * time.Millisecond,
+			LocalQueuePin:          defaultLocalQueuePin,
 		}
 	}
 
