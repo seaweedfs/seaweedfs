@@ -79,6 +79,9 @@ func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileId
 }
 
 func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
+	if visibles == nil {
+		return chunks, nil
+	}
 	fileIds := make(map[string]bool)
 	for x := visibles.Front(); x != nil; x = x.Next {
 		interval := x.Value
@@ -225,6 +228,9 @@ func ViewFromVisibleIntervals(visibles *IntervalList[*VisibleInterval], offset i
 	}
 
 	chunkViews = NewIntervalList[*ChunkView]()
+	if visibles == nil {
+		return chunkViews
+	}
 	for x := visibles.Front(); x != nil; x = x.Next {
 		chunk := x.Value
 
