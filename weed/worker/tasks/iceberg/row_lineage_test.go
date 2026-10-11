@@ -324,7 +324,7 @@ func TestCompactDataFilesV3RowLineageManifestRead(t *testing.T) {
 		t.Fatalf("no new snapshot committed: %+v", newSnap)
 	}
 	if newSnap.FirstRowID == nil || *newSnap.FirstRowID != 5 {
-		t.Fatalf("new snapshot first-row-id = %v, want 5", *newSnap.FirstRowID)
+		t.Fatalf("new snapshot first-row-id = %v, want 5", newSnap.FirstRowID)
 	}
 
 	manifestListData, err := loadFileByIcebergPath(ctx, client, setup.BucketName, state.DataPath, newSnap.ManifestList)
