@@ -84,6 +84,7 @@ type fakeFilerServer struct {
 	lookupCalls             atomic.Int32
 	lookupStarted           chan struct{} // closed when the first lookup arrives
 	lookupGate              chan struct{} // first lookup waits here when non-nil
+	createCalls             atomic.Int32
 }
 
 func (s *fakeFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -125,6 +126,7 @@ func (s *fakeFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream f
 }
 
 func (s *fakeFilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	s.createCalls.Add(1)
 	return &filer_pb.CreateEntryResponse{
 		MetadataEvent: &filer_pb.SubscribeMetadataResponse{
 			Directory: req.Directory,

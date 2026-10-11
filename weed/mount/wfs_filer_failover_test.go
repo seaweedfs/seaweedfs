@@ -93,31 +93,36 @@ func TestWithFilerClientFailsOverPastWedgedFiler(t *testing.T) {
 }
 
 // A mutation stream whose peer never answers must surface as a transport
-// error instead of hanging, and the sticky index must move off the dead filer
-// so the next stream opens elsewhere.
+// error instead of hanging: the sticky index moves off the dead filer and
+// streamCreateEntry's unary fallback lands the same mutation on the live one.
 func TestStreamMutateTimesOutAndRotatesFiler(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 	wfs.filerCallTimeout = 200 * time.Millisecond
 
 	wedged := listenFiler(t, &wedgedFiler{})
-	wfs.option.FilerAddresses = []pb.ServerAddress{
-		wedged,
-		pb.NewServerAddressWithGrpcPort("127.0.0.1:1", 1),
-	}
+	live := &fakeFilerServer{}
+	liveAddress := listenFiler(t, live)
+	wfs.option.FilerAddresses = []pb.ServerAddress{wedged, liveAddress}
 	atomic.StoreInt32(&wfs.option.filerIndex, 0)
 
-	mux := newStreamMutateMux(wfs)
-	defer mux.Close()
+	wfs.streamMutate = newStreamMutateMux(wfs)
+	defer wfs.streamMutate.Close()
 
-	_, err := mux.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+	resp, err := wfs.streamCreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 		Directory: "/dir",
 		Entry:     &filer_pb.Entry{Name: "file"},
 	})
-	if !errors.Is(err, ErrStreamTransport) {
-		t.Fatalf("err = %v, want ErrStreamTransport", err)
+	if err != nil {
+		t.Fatalf("streamCreateEntry: %v, want the unary fallback to succeed", err)
+	}
+	if resp == nil {
+		t.Fatal("streamCreateEntry returned no response")
 	}
 	if got := atomic.LoadInt32(&wfs.option.filerIndex); got != 1 {
 		t.Fatalf("filerIndex = %d, want 1 after teardown of the wedged stream", got)
+	}
+	if got := live.createCalls.Load(); got != 1 {
+		t.Fatalf("live filer createCalls = %d, want 1 (unary fallback ran)", got)
 	}
 }
 
