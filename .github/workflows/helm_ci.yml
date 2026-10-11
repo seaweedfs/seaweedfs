@@ -95,6 +95,31 @@ jobs:
           grep -A 5 "^          lifecycle:" /tmp/s3-rollout.yaml | grep -q -- "- sleep"
           echo "S3 rollout settings render correctly"
 
+          echo "=== Testing the S3 config checksum is stable across renders ==="
+          # s3-secret.yaml keeps its generated keys with lookup. Hashing the rendered
+          # Secret drew new keys for the checksum whenever lookup found nothing (on
+          # install), so the first upgrade changed the checksum and restarted the
+          # filer and S3 pods although nothing had changed.
+          s3_auth_args=(--set s3.enabled=true --set s3.enableAuth=true)
+          first=$(helm template test $CHART_DIR "${s3_auth_args[@]}" | grep 'checksum/s3config' | sort -u)
+          second=$(helm template test $CHART_DIR "${s3_auth_args[@]}" | grep 'checksum/s3config' | sort -u)
+          test -n "$first"
+          test "$(printf '%s\n' "$first" | wc -l)" -eq 1   # filer and S3 carry the same checksum
+          test "$first" = "$second"
+          changed=$(helm template test $CHART_DIR "${s3_auth_args[@]}" \
+            --set s3.credentials.admin.accessKey=a --set s3.credentials.admin.secretKey=b \
+            | grep 'checksum/s3config' | sort -u)
+          test "$first" != "$changed"
+          audit=$(helm template test $CHART_DIR "${s3_auth_args[@]}" \
+            --set-json 'filer.s3.auditLogConfig={"fluent_port":24224}' \
+            | grep 'checksum/s3config' | sort -u)
+          test "$first" != "$audit"
+          # Settings the Secret does not read must not restart the S3 and filer pods.
+          scaled=$(helm template test $CHART_DIR "${s3_auth_args[@]}" --set s3.replicas=3 \
+            --set s3.resources.limits.cpu=1 | grep 'checksum/s3config' | sort -u)
+          test "$first" = "$scaled"
+          echo "S3 config checksum is stable and follows only what the S3 Secret reads"
+
           echo "=== Testing S3 credentials from an existing secret ==="
           credential_args=(
             --set s3.credentials.admin.existingSecret=minio-root
