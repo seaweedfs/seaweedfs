@@ -23,13 +23,23 @@ type workerJobQueues struct {
 	leftover     []*queuedJob
 	remaining    int
 	missingSince map[string]time.Time
+	homes        map[string]struct{}
 }
 
 func newWorkerJobQueues() *workerJobQueues {
 	return &workerJobQueues{
 		q:            make(map[string][]*queuedJob),
 		missingSince: make(map[string]time.Time),
+		homes:        make(map[string]struct{}),
 	}
+}
+
+func (qs *workerJobQueues) hasHome(workerID string) bool {
+	if qs == nil || workerID == "" {
+		return false
+	}
+	_, ok := qs.homes[workerID]
+	return ok
 }
 
 func (qs *workerJobQueues) push(home string, job *plugin_pb.JobSpec) {
@@ -148,6 +158,11 @@ func (r *Plugin) assignJobsToWorkerQueues(
 			qs.push("", job)
 			continue
 		}
+		for _, e := range pref {
+			if e != nil && e.WorkerID != "" {
+				qs.homes[e.WorkerID] = struct{}{}
+			}
+		}
 		sortExecutorsByLoad(pref, func(e *WorkerSession) int {
 			return r.executorReservationLoad(e, lane) + queued[e.WorkerID]
 		})
@@ -159,11 +174,14 @@ func (r *Plugin) assignJobsToWorkerQueues(
 	return qs
 }
 
-// takeQueuedJob pops a job for a free worker, in order:
-//  1. that worker's own home queue
-//  2. steal from another home if len>=K, or the home was known and is
-//     now gone past OrphanRehomeGrace (0 = immediately)
-//  3. homeless leftover FIFO (no K, no grace)
+// takeQueuedJob pops a job for a free worker.
+// Home worker (hostname matched a replica / has a home-queue identity):
+//  1. own home queue
+//  2. steal from another home if len>=K, or orphan past OrphanRehomeGrace
+//  3. homeless leftover FIFO
+// No-home worker (no matching replica, no home-queue identity):
+//  1. homeless leftover FIFO
+//  2. only if leftover empty: steal (K / orphan), same rules
 func (r *Plugin) takeQueuedJob(
 	qs *workerJobQueues,
 	jobType string,
@@ -233,6 +251,20 @@ func (r *Plugin) takeQueuedJob(
 		return nil, ""
 	}
 
+	takeLeftover := func() (*queuedJob, string) {
+		if len(qs.leftover) == 0 {
+			return nil, ""
+		}
+		item, qs.leftover = popFront(qs.leftover)
+		qs.remaining--
+		return item, thief.WorkerID
+	}
+	if !qs.hasHome(thief.WorkerID) {
+		if item, id := takeLeftover(); item != nil {
+			return item, id
+		}
+	}
+
 	live := make(map[string]struct{}, len(executors))
 	for _, exec := range executors {
 		live[exec.WorkerID] = struct{}{}
@@ -281,11 +313,5 @@ func (r *Plugin) takeQueuedJob(
 		qs.remaining--
 		return item, thief.WorkerID
 	}
-
-	if len(qs.leftover) > 0 {
-		item, qs.leftover = popFront(qs.leftover)
-		qs.remaining--
-		return item, thief.WorkerID
-	}
-	return nil, ""
+	return takeLeftover()
 }

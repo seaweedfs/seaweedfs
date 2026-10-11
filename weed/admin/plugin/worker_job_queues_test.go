@@ -491,7 +491,7 @@ func TestIdleHomeWorkerTakesHomelessAfterEmptyHomeQueue(t *testing.T) {
 	}
 }
 
-func TestStealBeforeHomelessWhenHomeQueueReachesK(t *testing.T) {
+func TestHomelessWorkerTakesFIFOBeforeStealableHome(t *testing.T) {
 	t.Parallel()
 
 	pluginSvc, err := New(Options{})
@@ -515,6 +515,9 @@ func TestStealBeforeHomelessWhenHomeQueueReachesK(t *testing.T) {
 	if qs.queueLen("worker-local") != 6 || qs.leftoverLen() != 1 {
 		t.Fatalf("home=%d leftover=%d", qs.queueLen("worker-local"), qs.leftoverLen())
 	}
+	if qs.hasHome("worker-remote") {
+		t.Fatal("remote must have no home identity")
+	}
 
 	_, target := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
 	if target != "worker-local" {
@@ -526,9 +529,70 @@ func TestStealBeforeHomelessWhenHomeQueueReachesK(t *testing.T) {
 	}
 	defer release()
 
+	item, takeTarget := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if item == nil || takeTarget != "worker-remote" || item.job.JobId != "homeless-1" {
+		t.Fatalf("remote must take homeless FIFO before K-steal, got job=%v target=%s", item, takeTarget)
+	}
+	if qs.leftoverLen() != 0 {
+		t.Fatalf("homeless should be gone, leftover=%d", qs.leftoverLen())
+	}
+	if qs.queueLen("worker-local") != 5 {
+		t.Fatalf("stealable home must stay until FIFO empty, got %d", qs.queueLen("worker-local"))
+	}
+
 	stolen, stealTarget := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
 	if stolen == nil || stealTarget != "worker-remote" || stolen.job.JobId == "homeless-1" {
-		t.Fatalf("K-steal should beat homeless, got job=%v target=%s", stolen, stealTarget)
+		t.Fatalf("after FIFO empty remote may steal >=K, got job=%v target=%s", stolen, stealTarget)
+	}
+}
+
+func TestHomeWorkerStealsBeforeHomelessAfterOwnQueueEmpty(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	registerECWorkers(t, pluginSvc, map[string]string{
+		"worker-local": "10.0.0.1:9334",
+		"worker-other": "10.0.0.2:9334",
+	})
+
+	jobs := make([]*plugin_pb.JobSpec, 0, 8)
+	for i := 0; i < 6; i++ {
+		jobs = append(jobs, replicaJob(fmt.Sprintf("j%d", i), "10.0.0.1:8080"))
+	}
+	jobs = append(jobs, replicaJob("other-1", "10.0.0.2:8080"))
+	jobs = append(jobs, replicaJob("homeless-1", "10.0.0.9:8080"))
+	policy := schedulerPolicy{PerWorkerConcurrency: 1, LocalQueuePin: 5}
+	qs := pluginSvc.assignJobsToWorkerQueues("erasure_coding", jobs, policy)
+	if qs.queueLen("worker-local") != 6 || qs.queueLen("worker-other") != 1 || qs.leftoverLen() != 1 {
+		t.Fatalf("local=%d other=%d leftover=%d", qs.queueLen("worker-local"), qs.queueLen("worker-other"), qs.leftoverLen())
+	}
+	if !qs.hasHome("worker-other") {
+		t.Fatal("other must keep home identity")
+	}
+
+	item1, target1 := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if item1 == nil || target1 != "worker-local" {
+		t.Fatalf("first take want local home, got job=%v target=%s", item1, target1)
+	}
+	_, release, err := pluginSvc.reserveExecutorByID("erasure_coding", policy, "worker-local")
+	if err != nil {
+		t.Fatalf("reserve local: %v", err)
+	}
+	defer release()
+
+	item2, target2 := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if item2 == nil || item2.job.JobId != "other-1" || target2 != "worker-other" {
+		t.Fatalf("other should drain own home first, got job=%v target=%s", item2, target2)
+	}
+
+	stolen, stealTarget := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if stolen == nil || stealTarget != "worker-other" || stolen.job.JobId == "homeless-1" {
+		t.Fatalf("home worker with empty own queue still steals before homeless, got job=%v target=%s", stolen, stealTarget)
 	}
 	if qs.leftoverLen() != 1 {
 		t.Fatalf("homeless should still wait, leftover=%d", qs.leftoverLen())
