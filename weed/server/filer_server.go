@@ -92,7 +92,8 @@ type FilerOption struct {
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
 	// AnnounceCh, when set, must be closed before the filer registers on the
-	// master; it joins the filer list only once the gRPC port is serving.
+	// master; it joins the filer list only once the gRPC port is serving and
+	// the metadata replay has caught up with the peers found at startup.
 	AnnounceCh chan struct{}
 	// AllowUntrustedRemoteEndpoints lets a read of a remote-only entry dial a
 	// mounted endpoint that resolves to a loopback / private / metadata host.
@@ -162,6 +163,11 @@ type FilerServer struct {
 	// so the master drops this filer from its list before gRPC stops.
 	masterCtx    context.Context
 	masterCancel context.CancelFunc
+
+	// startupPeers are the filers discovered during NewFilerServer, before
+	// this filer announced itself; AnnounceOnceCaughtUp waits for their
+	// replayed backlogs before the filer joins the master's list.
+	startupPeers []pb.ServerAddress
 
 	// entryLockTable serializes mutations to the same entry path on this filer.
 	// CreateEntry takes it today; UpdateEntry and DeleteEntry are intended to take
@@ -353,6 +359,15 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 	fs.filer.AggregateFromPeers(option.Host, existingNodes, startFromTime)
 
+	// A peer replaying its backlog applies the old owner's events over this
+	// filer's fresh writes if it takes lock-ring ownership before the replay
+	// finishes, so the announce gate waits for these peers to catch up.
+	for _, node := range existingNodes {
+		if addr := pb.ServerAddress(node.Address); !addr.Equals(option.Host) {
+			fs.startupPeers = append(fs.startupPeers, addr)
+		}
+	}
+
 	fs.filer.LoadFilerConf()
 
 	fs.filer.LoadRemoteStorageConfAndMapping()
@@ -449,6 +464,42 @@ func (fs *FilerServer) leaveLockRingWithin(removalTimeout, budget time.Duration)
 	fs.waitForClusterRemoval()
 }
 
+// announceCatchUpCap bounds how long startup holds the master registration
+// while the metadata replay catches up with the peers found at startup. Past
+// it the filer announces anyway, as it did when the gate opened on serve.
+const announceCatchUpCap = time.Minute
+
+// AnnounceOnceCaughtUp closes announce once every peer found at startup has
+// replayed its backlog. Each peer's stream advances a watermark per event or
+// idle heartbeat, so a watermark past waitStart means nothing older can still
+// land on top of this filer's fresh writes. Called once gRPC is serving, so
+// routed traffic is answerable the moment the filer is listed.
+func (fs *FilerServer) AnnounceOnceCaughtUp(announce chan struct{}, waitStart time.Time) {
+	defer close(announce)
+	if len(fs.startupPeers) == 0 || fs.filer.MetaAggregator == nil {
+		return
+	}
+	deadline := time.Now().Add(announceCatchUpCap)
+	for {
+		// Take the channel before reading the watermarks so a rise in
+		// between still wakes this wait (see DeliveryWatermarkAdvancedChan).
+		advanced := fs.filer.MetaAggregator.DeliveryWatermarkAdvancedChan()
+		if fs.filer.MetaAggregator.PeersCaughtUpTo(fs.startupPeers, waitStart.UnixNano()) {
+			glog.V(0).Infof("%s caught up with %d startup peers, announcing to masters", fs.option.Host, len(fs.startupPeers))
+			return
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			glog.Warningf("%s metadata replay not caught up after %v, announcing anyway", fs.option.Host, announceCatchUpCap)
+			return
+		}
+		select {
+		case <-advanced:
+		case <-time.After(min(remaining, time.Second)):
+		}
+	}
+}
+
 // masterRemovalWaitBudget bounds how long shutdown waits for masters to
 // drop this filer before gRPC drains anyway.
 const masterRemovalWaitBudget = 5 * time.Second
@@ -463,7 +514,9 @@ func (fs *FilerServer) waitForClusterRemoval() {
 	confirmedAbsent := make(map[pb.ServerAddress]struct{})
 	for ctx.Err() == nil {
 		pending := false
-		for _, master := range fs.filer.MasterClient.ListMasters() {
+		// The cached list keeps a slow SRV lookup from stretching the
+		// removal-wait budget.
+		for _, master := range fs.filer.MasterClient.ListCachedMasters() {
 			if _, ok := confirmedAbsent[master]; ok {
 				continue
 			}
