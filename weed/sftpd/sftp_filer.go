@@ -247,21 +247,24 @@ func (fs *SftpServer) listAllPages(dirPath string) (sftp.ListerAt, error) {
 	var all []os.FileInfo
 	last := ""
 	for {
-		page, err := fs.fetchDirectoryPage(dirPath, last)
+		page, lastName, received, err := fs.fetchDirectoryPage(dirPath, last)
 		if err != nil {
 			return nil, err
 		}
 		all = append(all, page...)
-		if len(page) < defaultListLimit {
+		if received < defaultListLimit {
 			break
 		}
-		last = page[len(page)-1].Name()
+		last = lastName
 	}
 	return listerat(all), nil
 }
 
-func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, error) {
+// fetchDirectoryPage returns the entries the user may list, plus the last name and count the filer sent.
+func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, string, int, error) {
 	var list []os.FileInfo
+	lastName := ""
+	received := 0
 	err := fs.callWithClient(true, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{Directory: dirPath, StartFromFileName: start, Limit: defaultListLimit})
 		if err != nil {
@@ -272,9 +275,14 @@ func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, 
 			if err == io.EOF {
 				break
 			}
-			if err != nil || r.Entry == nil {
+			if err != nil {
+				return err
+			}
+			if r.Entry == nil {
 				continue
 			}
+			received++
+			lastName = r.Entry.Name
 			p := path.Join(dirPath, r.Entry.Name)
 			if err := fs.checkFilePermission(p, "list"); err != nil {
 				continue
@@ -283,7 +291,7 @@ func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, 
 		}
 		return nil
 	})
-	return list, err
+	return list, lastName, received, err
 }
 
 // makeDir creates a new directory with proper permissions.
