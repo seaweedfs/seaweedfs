@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
@@ -15,14 +16,18 @@ type queuedJob struct {
 // workerJobQueues holds per-worker FIFOs for one dispatch batch.
 // Home assignment is done once up front; run goroutines only pop/steal.
 type workerJobQueues struct {
-	mu        sync.Mutex
-	q         map[string][]*queuedJob
-	leftover  []*queuedJob
-	remaining int
+	mu           sync.Mutex
+	q            map[string][]*queuedJob
+	leftover     []*queuedJob
+	remaining    int
+	missingSince map[string]time.Time
 }
 
 func newWorkerJobQueues() *workerJobQueues {
-	return &workerJobQueues{q: make(map[string][]*queuedJob)}
+	return &workerJobQueues{
+		q:            make(map[string][]*queuedJob),
+		missingSince: make(map[string]time.Time),
+	}
 }
 
 func (qs *workerJobQueues) push(home string, job *plugin_pb.JobSpec) {
@@ -142,7 +147,8 @@ func (r *Plugin) assignJobsToWorkerQueues(
 
 // takeQueuedJob pops a home-runnable job, or steals onto a free worker.
 // Live homes are stolen from only when their queue is at/over K.
-// A home missing from live executors is stolen immediately (no K).
+// A home missing from live executors is stolen without K after
+// OrphanRehomeGrace (0 = immediately).
 func (r *Plugin) takeQueuedJob(
 	qs *workerJobQueues,
 	jobType string,
@@ -221,20 +227,33 @@ func (r *Plugin) takeQueuedJob(
 	live := make(map[string]struct{}, len(executors))
 	for _, exec := range executors {
 		live[exec.WorkerID] = struct{}{}
+		delete(qs.missingSince, exec.WorkerID)
 	}
 
+	now := time.Now()
+	grace := policy.OrphanRehomeGrace
 	victimID := ""
 	victimLen := 0
 	victimOrphan := false
 	for id, qq := range qs.q {
 		if len(qq) == 0 {
+			delete(qs.missingSince, id)
 			continue
 		}
 		_, isLive := live[id]
-		if isLive && pin > 0 && len(qq) < pin {
-			continue
-		}
 		orphan := !isLive
+		if isLive {
+			if pin > 0 && len(qq) < pin {
+				continue
+			}
+		} else {
+			if _, ok := qs.missingSince[id]; !ok {
+				qs.missingSince[id] = now
+			}
+			if grace > 0 && now.Sub(qs.missingSince[id]) < grace {
+				continue
+			}
+		}
 		better := victimID == ""
 		if !better && orphan != victimOrphan {
 			better = orphan

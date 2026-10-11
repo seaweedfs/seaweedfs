@@ -64,6 +64,9 @@ func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 	if policy.LocalQueuePin != defaultLocalQueuePin {
 		t.Fatalf("unexpected local queue pin: got=%d", policy.LocalQueuePin)
 	}
+	if policy.OrphanRehomeGrace != defaultOrphanRehomeGrace {
+		t.Fatalf("unexpected orphan rehome grace: got=%v", policy.OrphanRehomeGrace)
+	}
 }
 
 func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {

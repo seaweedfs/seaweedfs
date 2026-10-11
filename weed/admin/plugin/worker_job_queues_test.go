@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
@@ -218,7 +219,11 @@ func TestTakeStealsOrphanedHomeWithoutK(t *testing.T) {
 		replicaJob("o1", "10.0.0.1:8080"),
 		replicaJob("o2", "10.0.0.1:8080"),
 	}
-	policy := schedulerPolicy{PerWorkerConcurrency: 1, LocalQueuePin: 5}
+	policy := schedulerPolicy{
+		PerWorkerConcurrency: 1,
+		LocalQueuePin:        5,
+		OrphanRehomeGrace:    30 * time.Second,
+	}
 	qs := pluginSvc.assignJobsToWorkerQueues("erasure_coding", jobs, policy)
 	if qs.queueLen("worker-local") != 2 {
 		t.Fatalf("want 2 on local, got %d", qs.queueLen("worker-local"))
@@ -226,9 +231,20 @@ func TestTakeStealsOrphanedHomeWithoutK(t *testing.T) {
 
 	pluginSvc.registry.Remove("worker-local")
 
+	if item, tgt := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy); item != nil {
+		t.Fatalf("within grace should hold orphan queue, got target=%s", tgt)
+	}
+	if qs.queueLen("worker-local") != 2 {
+		t.Fatalf("held queue changed: %d", qs.queueLen("worker-local"))
+	}
+
+	qs.mu.Lock()
+	qs.missingSince["worker-local"] = time.Now().Add(-time.Minute)
+	qs.mu.Unlock()
+
 	stolen, stealTarget := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
 	if stolen == nil || stealTarget != "worker-remote" {
-		t.Fatalf("dead home should steal without K, got job=%v target=%s", stolen, stealTarget)
+		t.Fatalf("after grace should steal without K, got job=%v target=%s", stolen, stealTarget)
 	}
 	if qs.queueLen("worker-local") != 1 {
 		t.Fatalf("want 1 orphan left, got %d", qs.queueLen("worker-local"))
@@ -237,6 +253,64 @@ func TestTakeStealsOrphanedHomeWithoutK(t *testing.T) {
 	stolen2, stealTarget2 := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
 	if stolen2 == nil || stealTarget2 != "worker-remote" {
 		t.Fatalf("second orphan should also move, got job=%v target=%s", stolen2, stealTarget2)
+	}
+}
+
+func TestTakeKeepsOrphanWhenHomeReconnectsDuringGrace(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	registerECWorkers(t, pluginSvc, map[string]string{
+		"worker-local":  "10.0.0.1:9334",
+		"worker-remote": "10.0.0.2:9334",
+	})
+
+	jobs := []*plugin_pb.JobSpec{replicaJob("blink", "10.0.0.1:8080")}
+	policy := schedulerPolicy{
+		PerWorkerConcurrency: 1,
+		LocalQueuePin:        5,
+		OrphanRehomeGrace:    30 * time.Second,
+	}
+	qs := pluginSvc.assignJobsToWorkerQueues("erasure_coding", jobs, policy)
+	pluginSvc.registry.Remove("worker-local")
+	if item, _ := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy); item != nil {
+		t.Fatal("expected hold during grace")
+	}
+
+	registerECWorkers(t, pluginSvc, map[string]string{"worker-local": "10.0.0.1:9334"})
+	item, target := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if item == nil || target != "worker-local" {
+		t.Fatalf("reconnected home should run its queue, got job=%v target=%s", item, target)
+	}
+}
+
+func TestTakeStealsOrphanImmediatelyWhenGraceDisabled(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	registerECWorkers(t, pluginSvc, map[string]string{
+		"worker-local":  "10.0.0.1:9334",
+		"worker-remote": "10.0.0.2:9334",
+	})
+
+	jobs := []*plugin_pb.JobSpec{replicaJob("o1", "10.0.0.1:8080")}
+	policy := schedulerPolicy{PerWorkerConcurrency: 1, LocalQueuePin: 5, OrphanRehomeGrace: 0}
+	qs := pluginSvc.assignJobsToWorkerQueues("erasure_coding", jobs, policy)
+	pluginSvc.registry.Remove("worker-local")
+
+	stolen, stealTarget := pluginSvc.takeQueuedJob(qs, "erasure_coding", policy)
+	if stolen == nil || stealTarget != "worker-remote" {
+		t.Fatalf("grace=0 should steal immediately, got job=%v target=%s", stolen, stealTarget)
 	}
 }
 

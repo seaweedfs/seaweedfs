@@ -31,7 +31,10 @@ const (
 	defaultScheduledPerWorkerConcurrency       = 1
 	// Hold a job on replica-host workers until their reservation load
 	// reaches this; 0 disables the pin and spills immediately.
-	defaultLocalQueuePin             = 5
+	defaultLocalQueuePin = 5
+	// Wait this long after a home worker disappears before stealing
+	// its queue; 0 steals immediately. Covers a reconnect blink.
+	defaultOrphanRehomeGrace         = 30 * time.Second
 	maxScheduledExecutionConcurrency = 128
 	defaultScheduledRetryBackoff     = 5 * time.Second
 	defaultClusterContextTimeout     = 10 * time.Second
@@ -56,6 +59,9 @@ type schedulerPolicy struct {
 	// LocalQueuePin is K: do not spill off replica-host workers while
 	// min(load(pref)) < K. Zero is the old immediate-spill path.
 	LocalQueuePin int
+	// OrphanRehomeGrace is how long a missing home's queue is held
+	// before steal-without-K. Zero steals as soon as the worker is gone.
+	OrphanRehomeGrace time.Duration
 }
 
 // laneSchedulerLoop is the main scheduling goroutine for a single lane.
@@ -474,6 +480,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		RetryLimit:             int(adminRuntime.RetryLimit),
 		ExecutorReserveBackoff: 200 * time.Millisecond,
 		LocalQueuePin:          defaultLocalQueuePin,
+		OrphanRehomeGrace:      defaultOrphanRehomeGrace,
 	}
 
 	if policy.DetectionInterval < r.schedulerTick {
@@ -1650,6 +1657,7 @@ func (r *Plugin) DispatchProposals(
 			RetryBackoff:           defaultScheduledRetryBackoff,
 			ExecutorReserveBackoff: 200 * time.Millisecond,
 			LocalQueuePin:          defaultLocalQueuePin,
+			OrphanRehomeGrace:      defaultOrphanRehomeGrace,
 		}
 	}
 
