@@ -420,6 +420,7 @@ type stubFilerClient struct {
 	updateErr error
 	lookups   int
 	updates   int
+	updated   *filer_pb.UpdateEntryRequest
 }
 
 func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.LookupDirectoryEntryRequest, ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -430,8 +431,9 @@ func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.Lookup
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
 }
 
-func (c *stubFilerClient) UpdateEntry(context.Context, *filer_pb.UpdateEntryRequest, ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+func (c *stubFilerClient) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
 	c.updates++
+	c.updated = req
 	if c.updateErr != nil {
 		return &filer_pb.UpdateEntryResponse{}, c.updateErr
 	}
@@ -677,9 +679,10 @@ func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
 
 type recordingRemote struct {
 	remote_storage.RemoteStorageClient
-	deletes []*remote_pb.RemoteStorageLocation
-	writes  []*remote_pb.RemoteStorageLocation
-	written [][]byte
+	deletes         []*remote_pb.RemoteStorageLocation
+	writes          []*remote_pb.RemoteStorageLocation
+	metadataUpdates []*remote_pb.RemoteStorageLocation
+	written         [][]byte
 	// chunk ids of each written entry: which version of the file went up
 	writtenChunks [][]string
 	deleteErr     error
@@ -725,6 +728,11 @@ func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset 
 func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
 	r.deletes = append(r.deletes, loc)
 	return r.deleteErr
+}
+
+func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) error {
+	r.metadataUpdates = append(r.metadataUpdates, loc)
+	return nil
 }
 
 // TestRenameWithInheritedRemoteEntryWritesNewKey reproduces #11261: a rename
@@ -1324,5 +1332,47 @@ func TestShouldSendToRemote(t *testing.T) {
 				t.Errorf("shouldSendToRemote = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// A metadata-only update pushed to the remote must advance the sync stamp.
+// Without the restamp a same-second edit stays dirty forever and every
+// following event re-sends the metadata update.
+func TestMetadataOnlyUpdateRestampsSyncTs(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
+
+	replicated := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1}
+	oldEntry := entryWith("a.txt", replicated, chunk("3,01", "e1"))
+	newEntry := entryWith("a.txt", replicated, chunk("3,01", "e1"))
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/dir",
+			NewEntry:      newEntry,
+		},
+	}
+
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{entry: newEntry}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.metadataUpdates) != 1 {
+		t.Fatalf("metadata updates = %+v, want 1", remote.metadataUpdates)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want none: the content did not change", remote.writes)
+	}
+	if filerClient.updates != 1 {
+		t.Fatalf("stamped %d times, want 1: the entry is restamped after the metadata update", filerClient.updates)
+	}
+	stamp := filerClient.updated.Entry.GetRemoteEntry().GetLastLocalSyncTsNs()
+	if stamp <= 1 {
+		t.Errorf("LastLocalSyncTsNs = %d, want it advanced past the previous stamp", stamp)
+	}
+	if shouldSendToRemote(filerClient.updated.Entry) {
+		t.Error("the restamped entry should read synced")
 	}
 }

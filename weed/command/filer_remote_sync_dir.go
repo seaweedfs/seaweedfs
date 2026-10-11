@@ -286,7 +286,10 @@ func processUpdateEvent(
 		}
 		if remoteEntry != nil {
 			glog.V(2).Infof("update meta: %+v", resp)
-			return client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass))
+			if err := client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass)); err != nil {
+				return err
+			}
+			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
