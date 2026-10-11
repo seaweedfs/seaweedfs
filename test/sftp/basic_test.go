@@ -3,6 +3,7 @@ package sftp
 import (
 	"bytes"
 	"io"
+	"os"
 	"path"
 	"testing"
 
@@ -600,6 +601,32 @@ func TestFileContent(t *testing.T) {
 
 		// Clean up
 		sftpClient.Remove("/binary.bin")
+	})
+
+	t.Run("WriteAtOffsetKeepsExistingBytes", func(t *testing.T) {
+		file, err := sftpClient.Create("/resume.txt")
+		require.NoError(t, err)
+		_, err = file.Write([]byte("hello world"))
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+
+		// Reopen without O_TRUNC and write past the start, as a resumed upload does
+		file, err = sftpClient.OpenFile("/resume.txt", os.O_WRONLY)
+		require.NoError(t, err)
+		_, err = file.WriteAt([]byte("WORLD!"), 6)
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+
+		readFile, err := sftpClient.Open("/resume.txt")
+		require.NoError(t, err)
+		content, err := io.ReadAll(readFile)
+		require.NoError(t, err)
+		readFile.Close()
+
+		require.Equal(t, "hello WORLD!", string(content))
+
+		// Clean up
+		sftpClient.Remove("/resume.txt")
 	})
 
 	t.Run("EmptyFile", func(t *testing.T) {

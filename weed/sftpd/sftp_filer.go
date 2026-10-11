@@ -160,6 +160,14 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
+	// Without O_TRUNC the client writes into the existing file, so start from its current bytes.
+	if !r.Pflags().Trunc {
+		if err := fs.copyExistingContent(absPath, tmpFile); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			return nil, err
+		}
+	}
 
 	return &SeaweedSftpFileWriter{
 		fs:          *fs,
@@ -171,6 +179,24 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 		gid:         fs.user.Gid,
 		offset:      0,
 	}, nil
+}
+
+func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {
+	entry, err := fs.getEntry(absPath)
+	if err == os.ErrNotExist {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if entry.IsDirectory {
+		return nil
+	}
+	src := io.NewSectionReader(NewSeaweedFileReaderAt(fs, entry), 0, int64(entry.Attributes.FileSize))
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("read existing content of %s: %w", absPath, err)
+	}
+	return nil
 }
 
 func (fs *SftpServer) removeEntry(absPath string) error {
