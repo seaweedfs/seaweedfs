@@ -37,7 +37,7 @@ func TestEnsureVisitedRefusesOversizedDirectory(t *testing.T) {
 
 	accessor := &buildFilerAccessor{client: &buildListClient{responses: listResponses(10)}}
 
-	err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 5)
+	err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/dir"), 5)
 	var tooLarge *DirectoryTooLargeError
 	if !errors.As(err, &tooLarge) {
 		t.Fatalf("EnsureVisited = %v, want DirectoryTooLargeError", err)
@@ -61,7 +61,7 @@ func TestEnsureVisitedRefusesOversizedDirectory(t *testing.T) {
 	}
 
 	// A second visit fails fast without streaming to the limit again.
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 5); !errors.As(err, &tooLarge) {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/dir"), 5); !errors.As(err, &tooLarge) {
 		t.Fatalf("second EnsureVisited = %v, want DirectoryTooLargeError", err)
 	}
 }
@@ -74,7 +74,7 @@ func TestEnsureVisitedStepsOverOversizedAncestor(t *testing.T) {
 	mc.markOversized(util.FullPath("/huge"))
 
 	accessor := &buildFilerAccessor{client: &buildListClient{responses: listResponses(3)}}
-	if err := EnsureVisited(mc, accessor, util.FullPath("/huge/sub"), 5); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/huge/sub"), 5); err != nil {
 		t.Fatalf("EnsureVisited under an oversized ancestor: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/huge/sub")) {
@@ -92,7 +92,7 @@ func TestEnsureVisitedUnderTheLimitStillCaches(t *testing.T) {
 	defer mc.Shutdown()
 
 	accessor := &buildFilerAccessor{client: &buildListClient{responses: listResponses(5)}}
-	if err := EnsureVisited(mc, accessor, util.FullPath("/dir"), 5); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/dir"), 5); err != nil {
 		t.Fatalf("EnsureVisited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
@@ -123,7 +123,7 @@ func TestEnsureVisitedAncestorFoundOversizedMidVisit(t *testing.T) {
 		"/huge/sub": listResponses(3),
 	}}}
 
-	if err := EnsureVisited(mc, accessor, util.FullPath("/huge/sub"), 5); err != nil {
+	if err := EnsureVisited(context.Background(), mc, accessor, util.FullPath("/huge/sub"), 5); err != nil {
 		t.Fatalf("EnsureVisited: %v", err)
 	}
 	if !mc.IsDirectoryCached(util.FullPath("/huge/sub")) {

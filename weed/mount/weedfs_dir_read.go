@@ -176,14 +176,18 @@ func (wfs *WFS) FsyncDir(cancel <-chan struct{}, input *fuse.FsyncIn) (code fuse
  * '1'.
  */
 func (wfs *WFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) (code fuse.Status) {
-	return wfs.doReadDirectory(input, fuseDirEntryList{out}, false)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	return wfs.doReadDirectory(ctx, input, fuseDirEntryList{out}, false)
 }
 
 func (wfs *WFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) (code fuse.Status) {
-	return wfs.doReadDirectory(input, fuseDirEntryList{out}, true)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	return wfs.doReadDirectory(ctx, input, fuseDirEntryList{out}, true)
 }
 
-func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode bool) fuse.Status {
+func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out DirEntrySink, isPlusMode bool) fuse.Status {
 	// Get the directory handle and lock it for the duration of this operation.
 	// This serializes concurrent readdir calls on the same handle, fixing the
 	// race condition that caused hangs with NFS-Ganesha.
@@ -292,7 +296,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := int64(input.Offset - dh.entryStreamOffset)
 
-			if err := wfs.ensureDirectoryVisited(dirPath); err != nil {
+			if err := wfs.ensureDirectoryVisited(ctx, dirPath); err != nil {
 				var tooLarge *meta_cache.DirectoryTooLargeError
 				if errors.As(err, &tooLarge) {
 					return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
@@ -349,7 +353,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 		}
 
 		// Cache exhausted, load next batch
-		if err := wfs.ensureDirectoryVisited(dirPath); err != nil {
+		if err := wfs.ensureDirectoryVisited(ctx, dirPath); err != nil {
 			var tooLarge *meta_cache.DirectoryTooLargeError
 			if errors.As(err, &tooLarge) {
 				// The direct path keeps the same pagination state on dh, so it
@@ -408,8 +412,8 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out DirEntrySink, isPlusMode
 // ensureDirectoryVisited pulls the directory into the local cache, unless it is
 // too large to cache: then the directory is marked read-through, so later
 // listings go straight to the filer without re-asking.
-func (wfs *WFS) ensureDirectoryVisited(dirPath util.FullPath) error {
-	err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath, wfs.option.CacheDirMaxEntries)
+func (wfs *WFS) ensureDirectoryVisited(ctx context.Context, dirPath util.FullPath) error {
+	err := meta_cache.EnsureVisited(ctx, wfs.metaCache, wfs, dirPath, wfs.option.CacheDirMaxEntries)
 	var tooLarge *meta_cache.DirectoryTooLargeError
 	if errors.As(err, &tooLarge) {
 		wfs.inodeToPath.MarkDirectoryReadThrough(dirPath, time.Now())

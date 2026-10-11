@@ -26,7 +26,7 @@ func (e *DirectoryTooLargeError) Error() string {
 
 // maxCacheableEntries is the directory size above which a build gives up, or 0
 // to cache everything.
-func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, maxCacheableEntries int) error {
+func EnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, maxCacheableEntries int) error {
 	// Collect all uncached paths from target directory up to root
 	var uncachedPaths []util.FullPath
 	currentPath := dirPath
@@ -61,7 +61,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 	// Fetch all uncached directories in parallel with context for cancellation
 	// If one fetch fails, cancel the others to avoid unnecessary work
-	g, ctx := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(ctx)
 	for _, p := range uncachedPaths {
 		path := p // capture for closure
 		g.Go(func() error {

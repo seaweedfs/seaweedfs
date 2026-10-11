@@ -111,7 +111,7 @@ func TestReadDirResumePastShrunkDirectory(t *testing.T) {
 	defer wfs.ReleaseDirectoryHandle(dhid)
 
 	sink := &pagingSink{limit: 4096}
-	status := wfs.doReadDirectory(&fuse.ReadIn{
+	status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 		InHeader: fuse.InHeader{NodeId: dirInode},
 		Fh:       uint64(dhid),
 		Offset:   152, // past the end of a directory that now holds 100
@@ -158,7 +158,7 @@ func TestReadDirWithExpiredEntries(t *testing.T) {
 	var offset uint64
 	for round := 0; round < 20; round++ {
 		sink.round = 0
-		status := wfs.doReadDirectory(&fuse.ReadIn{
+		status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 			InHeader: fuse.InHeader{NodeId: dirInode},
 			Fh:       uint64(dhid),
 			Offset:   offset,
@@ -209,7 +209,7 @@ func TestReadDirTrimsConsumedEntries(t *testing.T) {
 	for round := 0; round < 500; round++ {
 		sink.round = 0
 		before := len(sink.names)
-		status := wfs.doReadDirectory(&fuse.ReadIn{
+		status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 			InHeader: fuse.InHeader{NodeId: dirInode},
 			Fh:       uint64(dhid),
 			Offset:   offset,
@@ -301,7 +301,7 @@ func TestReadDirDirectTrimsConsumedEntries(t *testing.T) {
 	for round := 0; round < 500; round++ {
 		sink.round = 0
 		before := len(sink.names)
-		status := wfs.doReadDirectory(&fuse.ReadIn{
+		status := wfs.doReadDirectory(context.Background(), &fuse.ReadIn{
 			InHeader: fuse.InHeader{NodeId: dirInode},
 			Fh:       uint64(dhid),
 			Offset:   offset,

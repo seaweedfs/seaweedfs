@@ -549,7 +549,7 @@ func TestCreateRegularFileValidatesParentUnderDefaultPermissions(t *testing.T) {
 	wfs, _ := newCreateTestWFS(t)
 	wfs.option.DefaultPermissions = true
 
-	if _, _, code := wfs.createRegularFile(util.FullPath("/ghost"), "f.txt", 0o644, 99, 100, 0, false, false); code == fuse.OK {
+	if _, _, code := wfs.createRegularFile(context.Background(), util.FullPath("/ghost"), "f.txt", 0o644, 99, 100, 0, false, false); code == fuse.OK {
 		t.Fatal("createRegularFile returned OK for a missing parent directory")
 	}
 }

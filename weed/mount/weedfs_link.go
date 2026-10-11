@@ -57,7 +57,9 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// probe can move the two apart even for an entry that does carry one.
 	sourceInode := in.Oldnodeid
 
-	oldEntry, _, status := wfs.maybeLoadEntry(oldEntryPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	oldEntry, _, status := wfs.maybeLoadEntry(ctx, oldEntryPath)
 	if status != fuse.OK {
 		return status
 	}
@@ -89,7 +91,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		// Do not fall back to the pre-lock snapshot: if every alias
 		// was deleted while we waited, abort instead of deriving the
 		// next counter from a stale entry.
-		fresh, _, freshStatus := wfs.maybeLoadEntry(oldEntryPath)
+		fresh, _, freshStatus := wfs.maybeLoadEntry(ctx, oldEntryPath)
 		if freshStatus != fuse.OK {
 			return freshStatus
 		}
@@ -137,7 +139,6 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// apply changes to the filer, and also apply to local metaCache
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	ctx := context.Background()
 	updateResp, err := wfs.streamUpdateEntry(ctx, updateOldEntryRequest)
 	if err == nil {
 		updateEvent := updateResp.GetMetadataEvent()

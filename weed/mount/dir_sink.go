@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"context"
+
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 )
 
@@ -39,5 +41,5 @@ func (l fuseDirEntryList) TakesLookupRef() bool { return true }
 // ReadDirectoryInto runs a readdir against sink. ReadDir and ReadDirPlus are
 // this with the kernel reply buffer as the sink.
 func (wfs *WFS) ReadDirectoryInto(input *fuse.ReadIn, sink DirEntrySink, isPlusMode bool) fuse.Status {
-	return wfs.doReadDirectory(input, sink, isPlusMode)
+	return wfs.doReadDirectory(context.Background(), input, sink, isPlusMode)
 }

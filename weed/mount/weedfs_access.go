@@ -82,7 +82,9 @@ func clearSupplementaryGroupCache() {
  * This method is not called under Linux kernel versions 2.4.x
  */
 func (wfs *WFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) (code fuse.Status) {
-	_, _, entry, code := wfs.maybeReadEntry(input.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	_, _, entry, code := wfs.maybeReadEntry(ctx, input.NodeId)
 	if code != fuse.OK {
 		return code
 	}

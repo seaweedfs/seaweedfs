@@ -41,7 +41,9 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	entryFullPath := dirFullPath.Child(name)
 	var inode uint64
 
-	newEntry, _, code := wfs.maybeLoadEntry(entryFullPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	newEntry, _, code := wfs.maybeLoadEntry(ctx, entryFullPath)
 	if code == fuse.OK {
 		if newEntry == nil || newEntry.Attributes == nil {
 			return fuse.EIO
@@ -86,14 +88,14 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		}
 	}
 
-	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, !wfs.option.EagerFilerCreate, true)
+	inode, newEntry, code = wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, !wfs.option.EagerFilerCreate, true)
 	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
 		// Race: another process created the file between our check and create.
 		// Reopen the winner's entry; AcquireHandle takes its own lock.
 		if dlmLock != nil {
 			dlmLock.Stop()
 		}
-		newEntry, _, code = wfs.maybeLoadEntry(entryFullPath)
+		newEntry, _, code = wfs.maybeLoadEntry(ctx, entryFullPath)
 		if code != fuse.OK {
 			return code
 		}
@@ -177,7 +179,9 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return
 	}
 
-	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev, false, false)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	inode, newEntry, code := wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev, false, false)
 	if code != fuse.OK {
 		return code
 	}
@@ -207,7 +211,9 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 	entryFullPath := dirFullPath.Child(name)
 
-	entry, _, code := wfs.maybeLoadEntry(entryFullPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	entry, _, code := wfs.maybeLoadEntry(ctx, entryFullPath)
 	if code != fuse.OK {
 		if code == fuse.ENOENT {
 			return fuse.OK
@@ -236,7 +242,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		// maybeLoadEntry path above. Do not fall back to the stale
 		// pre-lock snapshot: proceeding with its HardLinkCounter would
 		// reintroduce the stale-base update the lock is meant to prevent.
-		fresh, _, freshCode := wfs.maybeLoadEntry(entryFullPath)
+		fresh, _, freshCode := wfs.maybeLoadEntry(ctx, entryFullPath)
 		if freshCode == fuse.ENOENT {
 			return fuse.OK
 		}
@@ -247,7 +253,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	// POSIX: enforce sticky bit on the parent directory.
-	if dirEntry, _, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if entry != nil && entry.Attributes != nil {
 			targetUid = entry.Attributes.Uid
@@ -266,11 +272,11 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// will remove it again.
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
 		wfs.markHandleDeleted(inode)
-		wfs.waitForPendingAsyncFlush(inode)
+		wfs.waitForPendingAsyncFlush(ctx, inode)
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 		inodeFromEntry := entry.Attributes.Inode
 		wfs.markHandleDeleted(inodeFromEntry)
-		wfs.waitForPendingAsyncFlush(inodeFromEntry)
+		wfs.waitForPendingAsyncFlush(ctx, inodeFromEntry)
 	}
 
 	// first, ensure the filer store can correctly delete
@@ -337,7 +343,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 }
 
-func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32, deferFilerCreate bool, skipExistenceCheck bool) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
+func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32, deferFilerCreate bool, skipExistenceCheck bool) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
 	if wfs.IsOverQuotaWithUncommitted() {
 		return 0, nil, fuse.Status(syscall.ENOSPC)
 	}
@@ -346,7 +352,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	// SkipCheckParentDirectory, so this is the only parent check). With
 	// default_permissions the kernel already verified write+search on it before
 	// Create/Mknod, so skip only the mode-bit check and its group lookup.
-	parentEntry, _, parentStatus := wfs.maybeLoadEntry(dirFullPath)
+	parentEntry, _, parentStatus := wfs.maybeLoadEntry(ctx, dirFullPath)
 	if parentStatus != fuse.OK {
 		return 0, nil, parentStatus
 	}
@@ -367,7 +373,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 
 	entryFullPath := dirFullPath.Child(name)
 	if !skipExistenceCheck {
-		if _, _, status := wfs.maybeLoadEntry(entryFullPath); status == fuse.OK {
+		if _, _, status := wfs.maybeLoadEntry(ctx, entryFullPath); status == fuse.OK {
 			return 0, nil, fuse.Status(syscall.EEXIST)
 		} else if status != fuse.ENOENT {
 			return 0, nil, status
