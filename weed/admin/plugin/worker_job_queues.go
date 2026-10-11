@@ -15,6 +15,8 @@ type queuedJob struct {
 
 // workerJobQueues holds per-worker FIFOs for one dispatch batch.
 // Home assignment is done once up front; run goroutines only pop/steal.
+// leftover is the homeless FIFO: replica hostnames with no currently
+// registered worker. Orphan grace does not apply here.
 type workerJobQueues struct {
 	mu           sync.Mutex
 	q            map[string][]*queuedJob
@@ -84,6 +86,15 @@ func (qs *workerJobQueues) queueLen(workerID string) int {
 	return len(qs.q[workerID])
 }
 
+func (qs *workerJobQueues) leftoverLen() int {
+	if qs == nil {
+		return 0
+	}
+	qs.mu.Lock()
+	defer qs.mu.Unlock()
+	return len(qs.leftover)
+}
+
 func (qs *workerJobQueues) drain() []*queuedJob {
 	if qs == nil {
 		return nil
@@ -110,7 +121,9 @@ func popFront(qq []*queuedJob) (*queuedJob, []*queuedJob) {
 }
 
 // assignJobsToWorkerQueues parks each job on the least-loaded replica-host
-// worker (or any worker if none match). Single-threaded; no steal here.
+// worker. A home exists only if a currently registered worker's -address
+// hostname matches a replica host. Otherwise the job is homeless: global
+// leftover FIFO, no fake home, no K, no orphan grace. Single-threaded.
 func (r *Plugin) assignJobsToWorkerQueues(
 	jobType string,
 	jobs []*plugin_pb.JobSpec,
@@ -129,15 +142,16 @@ func (r *Plugin) assignJobsToWorkerQueues(
 			qs.push("", job)
 			continue
 		}
-		pref, rest := partitionByPreferredHost(executors, JobReplicaHosts(job))
-		cands := pref
-		if len(cands) == 0 {
-			cands = rest
+		pref, _ := partitionByPreferredHost(executors, JobReplicaHosts(job))
+		if len(pref) == 0 {
+			// Never registered for that hostname: homeless, not an orphan.
+			qs.push("", job)
+			continue
 		}
-		sortExecutorsByLoad(cands, func(e *WorkerSession) int {
+		sortExecutorsByLoad(pref, func(e *WorkerSession) int {
 			return r.executorReservationLoad(e, lane) + queued[e.WorkerID]
 		})
-		home := cands[0].WorkerID
+		home := pref[0].WorkerID
 		qs.push(home, job)
 		queued[home]++
 		r.bindQueuedJobWorker(job, home)
@@ -145,10 +159,11 @@ func (r *Plugin) assignJobsToWorkerQueues(
 	return qs
 }
 
-// takeQueuedJob pops a home-runnable job, or steals onto a free worker.
-// Live homes are stolen from only when their queue is at/over K.
-// A home missing from live executors is stolen without K after
-// OrphanRehomeGrace (0 = immediately).
+// takeQueuedJob pops a job for a free worker, in order:
+//  1. that worker's own home queue
+//  2. steal from another home if len>=K, or the home was known and is
+//     now gone past OrphanRehomeGrace (0 = immediately)
+//  3. homeless leftover FIFO (no K, no grace)
 func (r *Plugin) takeQueuedJob(
 	qs *workerJobQueues,
 	jobType string,
@@ -218,12 +233,6 @@ func (r *Plugin) takeQueuedJob(
 		return nil, ""
 	}
 
-	if len(qs.leftover) > 0 {
-		item, qs.leftover = popFront(qs.leftover)
-		qs.remaining--
-		return item, thief.WorkerID
-	}
-
 	live := make(map[string]struct{}, len(executors))
 	for _, exec := range executors {
 		live[exec.WorkerID] = struct{}{}
@@ -267,10 +276,16 @@ func (r *Plugin) takeQueuedJob(
 			victimOrphan = orphan
 		}
 	}
-	if victimID == "" {
-		return nil, ""
+	if victimID != "" {
+		item, qs.q[victimID] = popFront(qs.q[victimID])
+		qs.remaining--
+		return item, thief.WorkerID
 	}
-	item, qs.q[victimID] = popFront(qs.q[victimID])
-	qs.remaining--
-	return item, thief.WorkerID
+
+	if len(qs.leftover) > 0 {
+		item, qs.leftover = popFront(qs.leftover)
+		qs.remaining--
+		return item, thief.WorkerID
+	}
+	return nil, ""
 }
