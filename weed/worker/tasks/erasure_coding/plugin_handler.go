@@ -26,7 +26,9 @@ func init() {
 		Category: pluginworker.CategoryHeavy,
 		Aliases:  []string{"erasure-coding", "erasure.coding", "ec"},
 		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
-			return NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir), nil
+			h := NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir)
+			h.workerAddress = strings.TrimSpace(opts.WorkerAddress)
+			return h, nil
 		},
 	})
 }
@@ -39,6 +41,7 @@ type erasureCodingWorkerConfig struct {
 type ErasureCodingHandler struct {
 	grpcDialOption grpc.DialOption
 	workingDir     string
+	workerAddress  string
 }
 
 func NewErasureCodingHandler(grpcDialOption grpc.DialOption, workingDir string) *ErasureCodingHandler {
@@ -519,6 +522,7 @@ func (h *ErasureCodingHandler) Execute(
 		params.Collection,
 		h.grpcDialOption,
 	)
+	task.workerAddress = h.workerAddress
 	execCtx, execCancel := context.WithCancel(ctx)
 	defer execCancel()
 	task.SetProgressCallback(func(progress float64, stage string) {

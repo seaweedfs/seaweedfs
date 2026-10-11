@@ -37,6 +37,9 @@ type ErasureCodingTask struct {
 	workDir        string
 	progress       float64
 	grpcDialOption grpc.DialOption
+	// workerAddress is weed worker -address (host:port). Not a volume URL;
+	// late-bind matches replica hostnames against HostKey(workerAddress).
+	workerAddress string
 
 	// EC parameters
 	dataShards       int32
@@ -404,50 +407,73 @@ func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
 		glog.Infof("EC encode: using best replica %s as source for volume %d (was %s)", best.Url, t.volumeID, t.server)
 		t.server = best.Url
 	}
-	// Host-affinity: if this worker sits on a replica and that copy is as
-	// complete as the union (typical 010 after sync), pull from localhost
-	// instead of the lexically-first / largest remote replica.
-	if local := preferLocalReplicaIfComplete(t.grpcDialOption, needle.VolumeId(t.volumeID), locs, t.server); local != "" && local != t.server {
-		glog.Infof("EC encode: preferring local replica %s as source for volume %d (was %s)", local, t.volumeID, t.server)
+	// Late-bind from after consistency: worker -address hostname, not Sources[0]
+	// and not AddressIsLocal (replica URLs are hostnames like full-02:8081).
+	workerAddr := strings.TrimSpace(t.workerAddress)
+	if workerAddr == "" {
+		workerAddr, _ = os.Hostname()
+	}
+	if local := preferWorkerHostReplicaIfComplete(t.grpcDialOption, needle.VolumeId(t.volumeID), locs, t.server, workerAddr); local != "" && local != t.server {
+		glog.Infof("EC encode: preferring worker-host replica %s as source for volume %d (was %s)", local, t.volumeID, t.server)
 		t.server = local
 	}
 	return nil
 }
 
-// preferLocalReplicaIfComplete returns a replica URL on this machine whose
-// file count is >= the best remote replica. After SyncAndSelectBestReplica
-// a consistent set is equal everywhere; an inconsistent union lives only on
-// the chosen best, so a stale local copy is not selected.
-func preferLocalReplicaIfComplete(dial grpc.DialOption, vid needle.VolumeId, locs []wdclient.Location, current string) string {
-	var localURL string
-	for _, loc := range locs {
-		if util.AddressIsLocal(loc.Url) {
-			localURL = loc.Url
-			break
-		}
+type replicaFileCount struct {
+	url       string
+	fileCount uint64
+	err       error
+}
+
+// preferWorkerHostReplicaIfComplete rebinds from to a same-hostname replica
+// only when live FileCounts are equal. Diverged counts keep current (max).
+func preferWorkerHostReplicaIfComplete(dial grpc.DialOption, vid needle.VolumeId, locs []wdclient.Location, current, workerAddress string) string {
+	statuses := volume_replica.GetReplicaStatuses(dial, vid, locs)
+	replicas := make([]replicaFileCount, 0, len(statuses))
+	for _, s := range statuses {
+		replicas = append(replicas, replicaFileCount{url: s.Location.Url, fileCount: s.FileCount, err: s.Error})
 	}
-	if localURL == "" || localURL == current {
+	return lateBindSourceToWorkerHost(current, workerAddress, replicas)
+}
+
+// lateBindSourceToWorkerHost: equal FileCount → replica on worker -address host
+// (any port). Diverge → keep current (already max FileCount). Worker address
+// is not a volume URL.
+func lateBindSourceToWorkerHost(current, workerAddress string, replicas []replicaFileCount) string {
+	workerHost := util.HostKey(workerAddress)
+	if workerHost == "" {
 		return current
 	}
-	statuses := volume_replica.GetReplicaStatuses(dial, vid, locs)
-	var localCount, maxCount uint64
-	var sawLocal bool
-	for _, s := range statuses {
-		if s.Error != nil {
+	var live []replicaFileCount
+	for _, r := range replicas {
+		if r.err != nil || r.url == "" {
 			continue
 		}
-		if s.FileCount > maxCount {
-			maxCount = s.FileCount
-		}
-		if s.Location.Url == localURL {
-			localCount = s.FileCount
-			sawLocal = true
-		}
+		live = append(live, r)
 	}
-	if !sawLocal || localCount < maxCount {
+	if len(live) == 0 {
 		return current
 	}
-	return localURL
+	maxCount := live[0].fileCount
+	allSame := true
+	for _, r := range live[1:] {
+		if r.fileCount != live[0].fileCount {
+			allSame = false
+		}
+		if r.fileCount > maxCount {
+			maxCount = r.fileCount
+		}
+	}
+	if !allSame {
+		return current
+	}
+	for _, r := range live {
+		if util.HostKey(r.url) == workerHost {
+			return r.url
+		}
+	}
+	return current
 }
 
 // rollbackReadonly is a best-effort restore of every replica markReplicasReadonly
