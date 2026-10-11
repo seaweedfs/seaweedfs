@@ -303,6 +303,9 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 				if errors.As(err, &tooLarge) {
 					return wfs.readDirectoryDirect(ctx, input, out, dh, dirPath, processEachEntryFn)
 				}
+				if ctx.Err() != nil {
+					return fuse.EINTR
+				}
 				glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 				return fuse.EIO
 			}
