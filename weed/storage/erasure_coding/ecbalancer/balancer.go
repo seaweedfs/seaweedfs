@@ -558,16 +558,11 @@ func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node 
 	return pickBestNodeForVolume(sortedNodeSlice(r.nodes), vk, rp)
 }
 
-// pickBestNodeForVolume returns the node with the fewest shards of the volume that
-// has a free slot and is under the SameRackCount cap, or nil.
+// pickBestNodeForVolume spreads this volume evenly first, then the thinner live
+// shard count, then freeSlots. SameRackCount is a hard cap (no +1 for debt).
 func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlacement) *Node {
-	siblings := &rack{nodes: make(map[string]*Node, len(nodes))}
-	liveStart := make(map[string]int, len(nodes))
-	for _, n := range nodes {
-		siblings.nodes[n.id] = n
-		liveStart[n.id] = nodeLiveShardCount(n)
-	}
 	var best *Node
+	bestCount := -1
 	bestScore := -1
 	bestFree := -1
 	for _, node := range nodes {
@@ -575,12 +570,12 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 			continue
 		}
 		count := volumeShardCount(node, vk)
-		if cap := sameRackNodeCap(siblings, node, vk, rp, liveStart); cap > 0 && count >= cap {
+		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
 		score := nodeLiveShardCount(node)
-		if best == nil || score < bestScore || (score == bestScore && node.freeSlots > bestFree) {
-			best, bestScore, bestFree = node, score, node.freeSlots
+		if best == nil || count < bestCount || (count == bestCount && (score < bestScore || (score == bestScore && node.freeSlots > bestFree))) {
+			best, bestCount, bestScore, bestFree = node, count, score, node.freeSlots
 		}
 	}
 	return best
@@ -1206,62 +1201,6 @@ func nodeLiveShardCount(n *Node) int {
 		total += d.shardCount
 	}
 	return total
-}
-
-func snapshotNodeLiveShards(nodes map[string]*Node) map[string]int {
-	m := make(map[string]int, len(nodes))
-	for id, n := range nodes {
-		m[id] = nodeLiveShardCount(n)
-	}
-	return m
-}
-
-// sameRackNodeCap is ReplicaPlacement.SameRackCount, plus one extra slot when
-// this node started Place at least 2 live shards behind a sibling *and* a
-// sibling already holds a shard of this volume. That turns a 4-shard rack into
-// 3+1 (2+2 never pays disk debt) without turning a 3-shard rack into 3+0.
-func sameRackNodeCap(r *rack, node *Node, vk volKey, rp *super_block.ReplicaPlacement, liveStart map[string]int) int {
-	if rp == nil || rp.SameRackCount <= 0 || node == nil {
-		return 0
-	}
-	cap := rp.SameRackCount
-	if !nodeHasLiveDebt(node, r, liveStart) {
-		return cap
-	}
-	if r != nil {
-		for _, other := range r.nodes {
-			if other == nil || other.id == node.id {
-				continue
-			}
-			if volumeShardCount(other, vk) >= 1 {
-				return cap + 1
-			}
-		}
-	}
-	return cap
-}
-
-func nodeHasLiveDebt(node *Node, r *rack, liveStart map[string]int) bool {
-	if node == nil || r == nil {
-		return false
-	}
-	my := 0
-	if liveStart != nil {
-		my = liveStart[node.id]
-	}
-	for _, other := range r.nodes {
-		if other == nil || other.id == node.id {
-			continue
-		}
-		otherLive := 0
-		if liveStart != nil {
-			otherLive = liveStart[other.id]
-		}
-		if my+2 <= otherLive {
-			return true
-		}
-	}
-	return false
 }
 
 func nodeInRackHoldingShard(nodes map[string]*Node, rackID string, vk volKey, shardID int) *Node {

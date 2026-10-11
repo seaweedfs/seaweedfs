@@ -595,9 +595,9 @@ func TestWithinRackPaysDownShardDebt3(t *testing.T) {
 	}
 }
 
-// TestWithinRackPaysDownShardDebt4: 4 shards on 2 disks. Gap≥2 must be 3+1
-// (2+2 never heals). After scores meet, back to 2+2.
-func TestWithinRackPaysDownShardDebt4(t *testing.T) {
+// TestWithinRackFourShardsStayEven: 4 shards / 2 disks is always 2+2.
+// Remainder is 0 — packing 3+1 would put 3 shards on one disk.
+func TestWithinRackFourShardsStayEven(t *testing.T) {
 	topo := NewTopology()
 	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 5000)
 	a.AddDisk(0, "", 5000, 100)
@@ -606,24 +606,15 @@ func TestWithinRackPaysDownShardDebt4(t *testing.T) {
 	rp := twoDiskRackRP()
 
 	got := placeNeed(t, topo, 1, 4, rp)
-	if got["a:8080"] != 3 || got["b:8081"] != 1 {
-		t.Fatalf("first volume %v, want a=3 b=1", got)
-	}
-
-	for v := uint32(2); v <= 15; v++ {
-		beforeA, beforeB := nodeLiveShardCount(a), nodeLiveShardCount(b)
-		got = placeNeed(t, topo, v, 4, rp)
-		if beforeA+2 <= beforeB && (got["a:8080"] != 3 || got["b:8081"] != 1) {
-			t.Fatalf("volume %d %v before A=%d B=%d; debt≥2 must stay 3+1",
-				v, got, beforeA, beforeB)
-		}
-	}
-	if ga, gb := nodeLiveShardCount(a), nodeLiveShardCount(b); ga != 145 || gb != 145 {
-		t.Fatalf("after 15×(3+1) live A=%d B=%d, want 145/145", ga, gb)
-	}
-	got = placeNeed(t, topo, 16, 4, rp)
 	if got["a:8080"] != 2 || got["b:8081"] != 2 {
-		t.Errorf("converged volume %v, want 2+2", got)
+		t.Fatalf("first volume %v, want 2+2 (no 3+1)", got)
+	}
+	if ga, gb := nodeLiveShardCount(a), nodeLiveShardCount(b); ga != 102 || gb != 132 {
+		t.Fatalf("after 2+2 live A=%d B=%d, want 102/132 (gap frozen)", ga, gb)
+	}
+	got = placeNeed(t, topo, 2, 4, rp)
+	if got["a:8080"] != 2 || got["b:8081"] != 2 {
+		t.Fatalf("second volume %v, want 2+2", got)
 	}
 }
 
@@ -665,8 +656,8 @@ func TestFreeSlotsTieDoesNotOverrideShardDebt(t *testing.T) {
 	b = topo.AddNode("b:8081", "dc1", "dc1:rack0", 200)
 	b.AddDisk(0, "", 200, 135)
 	got = placeNeed(t, topo, 1, 4, rp)
-	if got["a:8080"] != 3 || got["b:8081"] != 1 {
-		t.Fatalf("4 shards %v, want 3+1 on thinner despite B freeSlots", got)
+	if got["a:8080"] != 2 || got["b:8081"] != 2 {
+		t.Fatalf("4 shards %v, want 2+2 (remainder 0; freeSlots must not pack 3+1)", got)
 	}
 }
 
