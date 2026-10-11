@@ -58,8 +58,8 @@ func TestListXAttrCanceledWhileFilerStalled(t *testing.T) {
 
 	select {
 	case code := <-done:
-		if code == fuse.OK {
-			t.Fatal("a canceled op must not report success")
+		if code != fuse.EINTR {
+			t.Fatalf("interrupted lookup returned %v, want EINTR", code)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("ListXAttr still blocked after the FUSE request was interrupted")
@@ -87,8 +87,8 @@ func TestListXAttrTimesOutWhileFilerStalled(t *testing.T) {
 
 	select {
 	case code := <-done:
-		if code == fuse.OK {
-			t.Fatal("a stalled filer must not report success")
+		if code != fuse.EIO {
+			t.Fatalf("stalled filer lookup returned %v, want EIO", code)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("ListXAttr still blocked after the filer lookup deadline")
