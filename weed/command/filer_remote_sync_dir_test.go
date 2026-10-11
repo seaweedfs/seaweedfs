@@ -420,6 +420,7 @@ type stubFilerClient struct {
 	updateErr error
 	lookups   int
 	updates   int
+	updated   *filer_pb.UpdateEntryRequest
 }
 
 func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.LookupDirectoryEntryRequest, ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -430,8 +431,9 @@ func (c *stubFilerClient) LookupDirectoryEntry(context.Context, *filer_pb.Lookup
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entry}, nil
 }
 
-func (c *stubFilerClient) UpdateEntry(context.Context, *filer_pb.UpdateEntryRequest, ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
+func (c *stubFilerClient) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest, _ ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
 	c.updates++
+	c.updated = req
 	if c.updateErr != nil {
 		return &filer_pb.UpdateEntryResponse{}, c.updateErr
 	}
@@ -677,9 +679,10 @@ func TestRetriedWriteFileStopsWhenSuperseded(t *testing.T) {
 
 type recordingRemote struct {
 	remote_storage.RemoteStorageClient
-	deletes []*remote_pb.RemoteStorageLocation
-	writes  []*remote_pb.RemoteStorageLocation
-	written [][]byte
+	deletes         []*remote_pb.RemoteStorageLocation
+	writes          []*remote_pb.RemoteStorageLocation
+	metadataUpdates []*remote_pb.RemoteStorageLocation
+	written         [][]byte
 	// chunk ids of each written entry: which version of the file went up
 	writtenChunks [][]string
 	deleteErr     error
@@ -727,16 +730,22 @@ func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error
 	return r.deleteErr
 }
 
+func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) error {
+	r.metadataUpdates = append(r.metadataUpdates, loc)
+	return nil
+}
+
 // TestRenameWithInheritedRemoteEntryWritesNewKey reproduces #11261: a rename
 // arrives as an update whose NewEntry carries the RemoteEntry inherited from
-// the source. shouldSendToRemote returns false for it (RemoteMtime >= Mtime),
-// so the old code skipped the event and never wrote the new key, while the
-// filer had already deleted the old object. A path change must always write.
+// the source. shouldSendToRemote returns false for it (the sync stamp covers
+// the entry's mtime), so the old code skipped the event and never wrote the
+// new key, while the filer had already deleted the old object. A path change
+// must always write.
 func TestRenameWithInheritedRemoteEntryWritesNewKey(t *testing.T) {
 	const mountedDir = "/buckets"
 	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
 
-	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669}
+	replicated := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1786096669*1e9 + 1}
 	oldEntry := &filer_pb.Entry{Name: "probe.bin", Attributes: &filer_pb.FuseAttributes{Mtime: 1786096669}, RemoteEntry: replicated}
 	newEntry := &filer_pb.Entry{
 		Name:        "probe.bin",
@@ -1094,9 +1103,9 @@ func TestUpdateLocalEntrySkipsDeletedEntry(t *testing.T) {
 // TestSupersededRenameUploadsCurrentEntry: a rename A -> B queued behind a
 // rewrite of B. The rename's snapshot is superseded (B's chunks changed) and
 // the old key A is already deleted. The rewrite's own event uploads B unless
-// shouldSendToRemote skips it on the inherited RemoteEntry (same-second
-// mtimes); only then does the rename upload what the filer holds now, so the
-// content goes up exactly once.
+// the entry already reads synced (the stamp covers its mtime, or the remote
+// is newer); only then does the rename upload what the filer holds now, so
+// the content goes up exactly once.
 func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 	const mountedDir = "/buckets"
 	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
@@ -1112,9 +1121,9 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 	wantDelete := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dir/a.txt"}
 	wantWrite := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/b/dir/b.txt"}
 
-	t.Run("rewrite hidden by the inherited stamp: upload once here", func(t *testing.T) {
-		// RemoteMtime inherited from a.txt equals the rewrite's mtime.
-		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024}, chunk("3,02", "e2"))
+	t.Run("rewrite already synced: upload once here", func(t *testing.T) {
+		// The stamp covers the rewrite's mtime, so its own event skips.
+		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024, LastLocalSyncTsNs: 1786096669*1e9 + 1}, chunk("3,02", "e2"))
 		remote := &recordingRemote{}
 		filerClient := &stubFilerClient{entry: current}
 		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
@@ -1218,7 +1227,7 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("snapshot remote-only but rewritten since: the rewrite's bytes go up, nothing is copied", func(t *testing.T) {
+	t.Run("snapshot remote-only but rewritten since: the rewrite's own event uploads", func(t *testing.T) {
 		remoteOnly := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7}
 		snapshot := &filer_pb.SubscribeMetadataResponse{
 			Directory: "/buckets/b/dir",
@@ -1228,21 +1237,17 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 				NewEntry:      entryWith("b.txt", remoteOnly),
 			},
 		}
-		// rewritten with the inherited stamp still hiding it from shouldSendToRemote
-		current := entryWith("b.txt", remoteOnly, chunk("3,09", "e9"))
+		// rewritten since the stamp; its own event uploads, not this one
+		rewritten := proto.Clone(remoteOnly).(*filer_pb.RemoteEntry)
+		rewritten.LastLocalSyncTsNs = 1
+		current := entryWith("b.txt", rewritten, chunk("3,09", "e9"))
 		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload")}}
 		filerClient := &stubFilerClient{entry: current}
 		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, snapshot); err != nil {
 			t.Fatalf("err = %v, want nil", err)
 		}
-		if len(remote.writes) != 1 || !proto.Equal(remote.writes[0], wantWrite) {
-			t.Fatalf("writes = %+v, want one upload of the rewritten b.txt", remote.writes)
-		}
-		if len(remote.writtenChunks[0]) != 1 || remote.writtenChunks[0][0] != "3,09" {
-			t.Errorf("uploaded chunks = %v, want the rewrite's chunk 3,09, not the chunkless snapshot", remote.writtenChunks[0])
-		}
-		if string(remote.written[0]) == "payload" {
-			t.Error("the old object's bytes were copied over a rewritten entry")
+		if len(remote.writes) != 0 {
+			t.Errorf("writes = %+v, want none: the rewrite event behind this one uploads b.txt", remote.writes)
 		}
 		if len(remote.deletes) != 1 {
 			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
@@ -1299,4 +1304,82 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
 		}
 	})
+}
+
+func TestShouldSendToRemote(t *testing.T) {
+	const mtime = 1786096669
+
+	tests := []struct {
+		name    string
+		mtime   int64
+		mtimeNs int32
+		remote  *filer_pb.RemoteEntry
+		want    bool
+	}{
+		{name: "no RemoteEntry", mtime: mtime, want: true},
+		{name: "remote older", mtime: mtime, remote: &filer_pb.RemoteEntry{RemoteMtime: mtime - 1}, want: true},
+		{name: "remote newer", mtime: mtime, remote: &filer_pb.RemoteEntry{RemoteMtime: mtime + 1}, want: false},
+		{name: "same second, no sync stamp", mtime: mtime, remote: &filer_pb.RemoteEntry{RemoteMtime: mtime}, want: true},
+		{name: "same second, synced at the second", mtime: mtime, remote: &filer_pb.RemoteEntry{RemoteMtime: mtime, LastLocalSyncTsNs: mtime * 1e9}, want: false},
+		{name: "same second, synced after", mtime: mtime, remote: &filer_pb.RemoteEntry{RemoteMtime: mtime, LastLocalSyncTsNs: mtime*1e9 + 1}, want: false},
+		{name: "same second, rewritten after the sync", mtime: mtime, mtimeNs: 337, remote: &filer_pb.RemoteEntry{RemoteMtime: mtime, LastLocalSyncTsNs: mtime*1e9 + 100}, want: true},
+		{name: "same second, rewrite synced", mtime: mtime, mtimeNs: 337, remote: &filer_pb.RemoteEntry{RemoteMtime: mtime, LastLocalSyncTsNs: mtime*1e9 + 400}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Mtime: tt.mtime, MtimeNs: tt.mtimeNs}, RemoteEntry: tt.remote}
+			if got := shouldSendToRemote(entry); got != tt.want {
+				t.Errorf("shouldSendToRemote = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A metadata-only update pushed to the remote must advance the sync stamp.
+// Without the restamp a same-second edit stays dirty forever and every
+// following event re-sends the metadata update.
+func TestMetadataOnlyUpdateRestampsSyncTs(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
+
+	replicated := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: "abc", RemoteSize: 2048, RemoteMtime: 1786096669, LastLocalSyncTsNs: 1}
+	oldEntry := entryWith("a.txt", replicated, chunk("3,01", "e1"))
+	newEntry := entryWith("a.txt", replicated, chunk("3,01", "e1"))
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      oldEntry,
+			NewParentPath: "/buckets/b/dir",
+			NewEntry:      newEntry,
+		},
+	}
+
+	remote := &recordingRemote{}
+	filerClient := &stubFilerClient{entry: newEntry}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.metadataUpdates) != 1 {
+		t.Fatalf("metadata updates = %+v, want 1", remote.metadataUpdates)
+	}
+	if len(remote.writes) != 0 {
+		t.Errorf("writes = %+v, want none: the content did not change", remote.writes)
+	}
+	if filerClient.updates != 1 {
+		t.Fatalf("stamped %d times, want 1: the entry is restamped after the metadata update", filerClient.updates)
+	}
+	stamp := filerClient.updated.Entry.GetRemoteEntry().GetLastLocalSyncTsNs()
+	if stamp <= 1 {
+		t.Errorf("LastLocalSyncTsNs = %d, want it advanced past the previous stamp", stamp)
+	}
+	expected := filerClient.updated.Condition.Clauses[0].ExpectedEntry
+	if got := expected.GetRemoteEntry().GetLastLocalSyncTsNs(); got != 1 {
+		t.Errorf("precondition stamp = %d, want the stored stamp 1 or IF_ENTRY_EQUAL rejects the write", got)
+	}
+	if got := replicated.GetLastLocalSyncTsNs(); got != 1 {
+		t.Errorf("shared RemoteEntry stamp = %d, want 1: stamping must not mutate the caller's RemoteEntry", got)
+	}
+	if shouldSendToRemote(filerClient.updated.Entry) {
+		t.Error("the restamped entry should read synced")
+	}
 }

@@ -286,7 +286,10 @@ func processUpdateEvent(
 		}
 		if remoteEntry != nil {
 			glog.V(2).Infof("update meta: %+v", resp)
-			return client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass))
+			if err := client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass)); err != nil {
+				return err
+			}
+			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
@@ -414,14 +417,14 @@ func openRemoteObject(client remote_storage.RemoteStorageClient, loc *remote_pb.
 }
 
 // uploadCurrentEntry uploads what the filer holds at dir/name now, when the
-// event that superseded this rename will not. A rename whose snapshot is
-// superseded has already deleted the old key; the rewrite behind it in the
-// log uploads the destination itself unless shouldSendToRemote skips it on
-// the inherited RemoteEntry, whose RemoteMtime can equal the rewrite's mtime
-// within the same second. Only that case uploads here, so the content goes
-// up once. A remote-only entry is finished the way completeRemoteOnlyRename
-// finishes a rename: its stamp can already describe the destination (a sync
-// plus remote.uncache in the meantime), and only then is it complete.
+// event that superseded this rename will not. A superseded rename has
+// already deleted the old key; the rewrite behind it in the log uploads the
+// destination itself whenever shouldSendToRemote sees it as unsynced, so
+// only a current entry that reads synced is uploaded here and the content
+// goes up once. A remote-only entry is finished the way
+// completeRemoteOnlyRename finishes a rename: its stamp can already describe
+// the destination (a sync plus remote.uncache in the meantime), and only
+// then is it complete.
 func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, oldDest, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
 	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
@@ -593,10 +596,12 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return true
 	}
-	if entry.RemoteEntry.RemoteMtime < entry.Attributes.Mtime {
-		return true
+	if entry.RemoteEntry.RemoteMtime != entry.Attributes.Mtime {
+		return entry.RemoteEntry.RemoteMtime < entry.Attributes.Mtime
 	}
-	return false
+	// Equal seconds cannot tell a rewrite from the version already
+	// uploaded; the sync stamp can, the same check remote.uncache uses.
+	return entry.RemoteEntry.LastLocalSyncTsNs < entry.Attributes.Mtime*1e9+int64(entry.Attributes.MtimeNs)
 }
 
 // remoteWriteEntry returns the entry as remote storage should see it: the
@@ -625,6 +630,7 @@ func remoteWriteEntry(entry *filer_pb.Entry, storageClass string) *filer_pb.Entr
 // in the log and stamps the current entry, so the stale stamp is skipped the
 // same way a superseded upload is.
 func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
+	remoteEntry = proto.Clone(remoteEntry).(*filer_pb.RemoteEntry)
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
 	expected := proto.Clone(entry).(*filer_pb.Entry)
 	entry.RemoteEntry = remoteEntry
