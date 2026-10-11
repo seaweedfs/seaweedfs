@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -51,6 +52,46 @@ type deleteEntryError struct {
 
 func (e *deleteEntryError) Error() string { return e.msg }
 func (e *deleteEntryError) Unwrap() error { return e.cause }
+
+// ExtKeepRemoteObjectKey marks the entry in the event of a metadata-only
+// delete, so the remote write-back daemons leave the remote object alone too.
+// It is set on the event only; the store drops it from every write, so a
+// client cannot plant it on an entry.
+const ExtKeepRemoteObjectKey = "Seaweed-X-Keep-Remote-Object"
+
+// IsMetadataOnlyDelete reports a delete event's entry marked by
+// WithKeepRemoteObject.
+func IsMetadataOnlyDelete(oldEntry *filer_pb.Entry) bool {
+	_, marked := oldEntry.GetExtended()[ExtKeepRemoteObjectKey]
+	return marked
+}
+
+type keepRemoteObjectKey struct{}
+
+// WithKeepRemoteObject marks a delete as metadata-only: neither the filer nor
+// filer.remote.sync deletes the entry's object on the mounted remote storage.
+// Unlike isFromOtherCluster, the metadata event stays an ordinary local
+// delete, so replication still carries it.
+func WithKeepRemoteObject(ctx context.Context) context.Context {
+	return context.WithValue(ctx, keepRemoteObjectKey{}, true)
+}
+
+func keepsRemoteObject(ctx context.Context) bool {
+	return ctx.Value(keepRemoteObjectKey{}) != nil
+}
+
+func deleteEventEntry(ctx context.Context, entry *Entry) *Entry {
+	if !keepsRemoteObject(ctx) {
+		return entry
+	}
+	marked := entry.ShallowClone()
+	marked.Extended = maps.Clone(entry.Extended)
+	if marked.Extended == nil {
+		marked.Extended = map[string][]byte{}
+	}
+	marked.Extended[ExtKeepRemoteObjectKey] = []byte("true")
+	return marked
+}
 
 type OnChunksFunc func([]*filer_pb.FileChunk) error
 type OnHardLinkIdsFunc func([]HardLinkId) error
@@ -165,7 +206,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 					subIsDeletingBucket := f.IsBucket(sub)
 					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil, onHardLinkIdsFn)
 				} else {
-					if !isFromOtherCluster {
+					if !isFromOtherCluster && !keepsRemoteObject(ctx) {
 						if _, remoteErr := f.maybeDeleteFromRemote(ctx, sub); remoteErr != nil {
 							glog.Warningf("remote delete child %s: %v", sub.FullPath, remoteErr)
 							if !ignoreRecursiveError {
@@ -176,7 +217,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 					if err != nil && !ignoreRecursiveError {
 						break
 					}
-					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
+					f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, sub), nil, shouldDeleteChunks, isFromOtherCluster, nil)
 					if len(sub.HardLinkId) != 0 {
 						// hard link chunk data are deleted separately
 						err = onHardLinkIdsFn([]HardLinkId{sub.HardLinkId})
@@ -207,7 +248,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 		}
 	}
 
-	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
+	f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, entry), nil, shouldDeleteChunks, isFromOtherCluster, signatures)
 	f.DeleteChunks(ctx, entry.FullPath, chunksToDelete)
 
 	return nil
@@ -217,7 +258,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 	glog.V(3).InfofCtx(ctx, "deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
-	if !isFromOtherCluster {
+	if !isFromOtherCluster && !keepsRemoteObject(ctx) {
 		if _, remoteDeletionErr := f.maybeDeleteFromRemote(ctx, entry); remoteDeletionErr != nil {
 			return remoteDeletionErr
 		}
@@ -230,7 +271,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	}
 
 	if !entry.IsDirectory() {
-		f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
+		f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, entry), nil, shouldDeleteChunks, isFromOtherCluster, signatures)
 	}
 
 	return nil

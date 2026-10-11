@@ -268,3 +268,109 @@ func TestGetEncryptedStreamFromVolumesRangesInlineContent(t *testing.T) {
 		})
 	}
 }
+
+func TestDetermineUnifiedCopyStrategySSES3(t *testing.T) {
+	testCases := []struct {
+		name     string
+		state    *EncryptionState
+		expected UnifiedCopyStrategy
+	}{
+		{
+			name: "SSE-S3 to SSE-S3 direct copy",
+			state: &EncryptionState{
+				SrcSSES3: true,
+				DstSSES3: true,
+			},
+			expected: CopyStrategyDirect,
+		},
+		{
+			name: "SSE-S3 to plain decrypt copy",
+			state: &EncryptionState{
+				SrcSSES3: true,
+				DstSSES3: false,
+			},
+			expected: CopyStrategyDecrypt,
+		},
+		{
+			name: "Plain to SSE-S3 encrypt copy",
+			state: &EncryptionState{
+				SrcSSES3: false,
+				DstSSES3: true,
+			},
+			expected: CopyStrategyEncrypt,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			strategy, err := DetermineUnifiedCopyStrategy(tc.state, nil, nil)
+			if err != nil {
+				t.Fatalf("DetermineUnifiedCopyStrategy failed: %v", err)
+			}
+			if strategy != tc.expected {
+				t.Errorf("expected strategy %v, got %v", tc.expected, strategy)
+			}
+		})
+	}
+}
+
+func TestDecryptChunkVolumeCipher(t *testing.T) {
+	s3a := &S3ApiServer{}
+	plainData := []byte("hello-seaweedfs-encrypted-volume-data-verification-test")
+
+	t.Run("unencrypted chunk passes through", func(t *testing.T) {
+		chunk := &filer_pb.FileChunk{
+			CipherKey: nil,
+		}
+		got, err := s3a.decryptChunkVolumeCipher(plainData, chunk)
+		if err != nil {
+			t.Fatalf("decryptChunkVolumeCipher failed: %v", err)
+		}
+		if !bytes.Equal(got, plainData) {
+			t.Fatalf("expected %q, got %q", plainData, got)
+		}
+	})
+
+	t.Run("volume cipher encrypted chunk decrypts correctly", func(t *testing.T) {
+		cipherKey := util.GenCipherKey()
+		encrypted, err := util.Encrypt(plainData, cipherKey)
+		if err != nil {
+			t.Fatalf("Encrypt failed: %v", err)
+		}
+
+		chunk := &filer_pb.FileChunk{
+			CipherKey: cipherKey,
+		}
+		got, err := s3a.decryptChunkVolumeCipher(encrypted, chunk)
+		if err != nil {
+			t.Fatalf("decryptChunkVolumeCipher failed: %v", err)
+		}
+		if !bytes.Equal(got, plainData) {
+			t.Fatalf("expected %q, got %q", plainData, got)
+		}
+	})
+
+	t.Run("volume cipher encrypted and compressed chunk decrypts correctly", func(t *testing.T) {
+		cipherKey := util.GenCipherKey()
+		compressed, err := util.GzipData(plainData)
+		if err != nil {
+			t.Fatalf("GzipData failed: %v", err)
+		}
+		encrypted, err := util.Encrypt(compressed, cipherKey)
+		if err != nil {
+			t.Fatalf("Encrypt failed: %v", err)
+		}
+
+		chunk := &filer_pb.FileChunk{
+			CipherKey:    cipherKey,
+			IsCompressed: true,
+		}
+		got, err := s3a.decryptChunkVolumeCipher(encrypted, chunk)
+		if err != nil {
+			t.Fatalf("decryptChunkVolumeCipher failed: %v", err)
+		}
+		if !bytes.Equal(got, plainData) {
+			t.Fatalf("expected %q, got %q", plainData, got)
+		}
+	})
+}

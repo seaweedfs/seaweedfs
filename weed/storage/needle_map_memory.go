@@ -42,14 +42,16 @@ func doLoading(file *os.File, nm *NeedleMap, version needle.Version) (*NeedleMap
 			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
-			if !oldOffset.IsZero() && !oldSize.IsDeleted() {
+			if !oldOffset.IsZero() && oldSize.IsValid() {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
 		} else {
 			oldSize := nm.m.Delete(NeedleId(key))
-			nm.DeletionCounter++
-			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+			if oldSize > 0 {
+				nm.DeletionCounter++
+				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+			}
 		}
 		return nil
 	})
@@ -126,18 +128,20 @@ func (nm *NeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom ui
 	e := idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		nm.MaybeSetMaxNeedleEnd(offset, size, version)
-		nm.FileCounter++
 		if !offset.IsZero() && !size.IsDeleted() {
+			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
-			if !oldOffset.IsZero() && !oldSize.IsDeleted() {
+			if !oldOffset.IsZero() && oldSize.IsValid() {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
 		} else {
 			oldSize := nm.m.Delete(NeedleId(key))
-			nm.DeletionCounter++
-			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+			if oldSize > 0 {
+				nm.DeletionCounter++
+				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+			}
 		}
 		return nil
 	})

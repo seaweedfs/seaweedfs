@@ -254,8 +254,96 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 
 }
 
-func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate) {
-	return cluster.ListExistingPeerUpdates(f.GetMaster(ctx), f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+// peerLookupTimeout bounds each master query so one unresponsive master
+// cannot stall the peer scan.
+const peerLookupTimeout = 10 * time.Second
+
+// leaderSettleTimeout bounds how long an empty peer list from the leader is
+// re-polled: a freshly elected leader has not yet received the filers'
+// reconnects, so an immediate empty answer can just mean membership has not
+// migrated yet. A persistent empty answer is then checked against the other
+// masters below before it is accepted as an empty cluster.
+const leaderSettleTimeout = 10 * time.Second
+const leaderSettleInterval = time.Second
+
+// ListExistingPeerUpdates returns the peer list to bootstrap from. The
+// leader's list is authoritative: after a leader change an old master keeps
+// its registrations until its streams end, so the longest answer is not
+// necessarily the current one. The leader's answer wins whenever it can be
+// found and queried; only when the leader is unreachable does the scan fall
+// back to the fullest answer from the other masters. It returns an error when
+// no master answers, so a failed lookup is not mistaken for an empty cluster.
+func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*master_pb.ClusterNodeUpdate, err error) {
+	masters := f.MasterClient.ListMasters()
+	var queryErrs []error
+
+	var leader pb.ServerAddress
+	for _, master := range masters {
+		if ctx.Err() != nil {
+			break
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+		l, lookErr := cluster.LookupClusterLeader(lookupCtx, master, f.GrpcDialOption)
+		cancel()
+		if lookErr != nil {
+			queryErrs = append(queryErrs, lookErr)
+			continue
+		}
+		if l != "" {
+			leader = l
+			break
+		}
+	}
+	if leader != "" {
+		settleDeadline := time.Now().Add(leaderSettleTimeout)
+		for {
+			lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+			nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, leader, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+			cancel()
+			if listErr != nil {
+				queryErrs = append(queryErrs, fmt.Errorf("list peers from leader %s: %w", leader, listErr))
+				break
+			}
+			if len(nodes) > 0 {
+				return nodes, nil
+			}
+			if ctx.Err() != nil || !time.Now().Before(settleDeadline) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(leaderSettleInterval):
+			}
+		}
+	}
+
+	answered := false
+	for _, master := range masters {
+		if ctx.Err() != nil {
+			break
+		}
+		lookupCtx, cancel := context.WithTimeout(ctx, peerLookupTimeout)
+		nodes, listErr := cluster.ListExistingPeerUpdates(lookupCtx, master, f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
+		cancel()
+		if listErr != nil {
+			queryErrs = append(queryErrs, listErr)
+			continue
+		}
+		answered = true
+		if len(nodes) > len(existingNodes) {
+			existingNodes = nodes
+		}
+	}
+	if !answered {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if err = errors.Join(queryErrs...); err == nil {
+			err = fmt.Errorf("no masters configured")
+		}
+		return nil, fmt.Errorf("list existing peers: %w", err)
+	}
+	return existingNodes, nil
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
@@ -339,9 +427,9 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	if oldEntry == nil {
 		var findErr error
 		oldEntry, findErr = f.FindEntry(ctx, entry.FullPath)
-		if o_excl && findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
-			// An exclusive create cannot decide whether the path exists when
-			// the lookup itself failed; proceeding would upsert over it.
+		if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+			// A create cannot decide whether the path exists when the lookup
+			// itself failed; proceeding would upsert over it.
 			return fmt.Errorf("find entry %s: %w", entry.FullPath, findErr)
 		}
 	}

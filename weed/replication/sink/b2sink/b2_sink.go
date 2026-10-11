@@ -106,7 +106,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 	totalSize := filer.FileSize(entry)
 	chunkViews, err := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve chunks of %s: %w", key, err)
 	}
 
 	bucket, err := g.client.Bucket(context.Background(), g.bucket)

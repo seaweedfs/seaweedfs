@@ -148,3 +148,21 @@ jobs:
     # -short skips the e2e suites already covered on amd64.
     - name: Test linux/386
       run: cd weed; GOOS=linux GOARCH=386 go test -short ./...
+
+  build-azurekms:
+    name: Build and test with azurekms tag
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v7
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: 'go.mod'
+    # weed/kms/azure is excluded from every default build, so without this
+    # nothing compiles it and tag-gated code silently rots.
+    - name: Build and test with azurekms
+      run: |
+        cd weed
+        go build -tags azurekms ./...
+        go test -tags azurekms ./kms/...

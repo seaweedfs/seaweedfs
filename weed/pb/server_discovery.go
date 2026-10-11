@@ -24,8 +24,19 @@ func NewServiceDiscoveryFromMap(m map[string]ServerAddress) (sd *ServerDiscovery
 // RefreshBySrvIfAvailable performs a DNS SRV lookup and updates list with the results
 // of the lookup
 func (sd *ServerDiscovery) RefreshBySrvIfAvailable() {
+	if newList := sd.LookupSrvInstances(); newList != nil {
+		sd.SetInstances(newList)
+	}
+}
+
+// LookupSrvInstances resolves the SRV record without touching the stored
+// list. It returns nil when there is no SRV record, the lookup fails, or the
+// result has no well-formed names. Running it without holding a lock keeps a
+// slow resolver from blocking GetInstances callers; callers serialize the
+// SetInstances that saves the result.
+func (sd *ServerDiscovery) LookupSrvInstances() []ServerAddress {
 	if sd.srvRecord == nil {
-		return
+		return nil
 	}
 	newList, err := sd.srvRecord.LookUp()
 	if err != nil {
@@ -33,8 +44,14 @@ func (sd *ServerDiscovery) RefreshBySrvIfAvailable() {
 	}
 	if newList == nil || len(newList) == 0 {
 		glog.V(0).Infof("looked up SRV for %s, but found no well-formed names", *sd.srvRecord)
-		return
+		return nil
 	}
+	return newList
+}
+
+// SetInstances saves a resolved address list. Callers racing a refresh must
+// serialize this with their GetInstances reads.
+func (sd *ServerDiscovery) SetInstances(newList []ServerAddress) {
 	if !reflect.DeepEqual(sd.list, newList) {
 		sd.list = newList
 	}

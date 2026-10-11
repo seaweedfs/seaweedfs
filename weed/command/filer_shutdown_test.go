@@ -56,7 +56,7 @@ func TestFilerShutdownJoinsServeDuringParallelDrain(t *testing.T) {
 	grpcStopped := make(chan struct{})
 	filerClosed := make(chan struct{})
 	var closes atomic.Int32
-	shutdown := newFilerShutdown(func() {}, func() {
+	shutdown := newFilerShutdown(func() {}, func() {}, func() {
 		close(grpcStarted)
 		<-grpcRelease
 		close(grpcStopped)
@@ -138,7 +138,7 @@ func TestFilerShutdownWaitsForHTTPAfterGrpcStops(t *testing.T) {
 	server.Config.RegisterOnShutdown(func() { close(httpClosing) })
 	grpcStopped := make(chan struct{})
 	filerClosed := make(chan struct{})
-	shutdown := newFilerShutdown(func() {}, func() { close(grpcStopped) }, func() { close(filerClosed) }, server.Config)
+	shutdown := newFilerShutdown(func() {}, func() {}, func() { close(grpcStopped) }, func() { close(filerClosed) }, server.Config)
 	joined := make(chan struct{})
 	go func() { shutdown(); close(joined) }()
 	<-httpClosing
@@ -172,7 +172,7 @@ func TestFilerShutdownLeavesLockRingBeforeDraining(t *testing.T) {
 	shutdown := newFilerShutdown(func() {
 		close(leaving)
 		<-releaseLeave
-	}, func() { close(grpcStopping) }, func() {}, server.Config)
+	}, func() {}, func() { close(grpcStopping) }, func() {}, server.Config)
 	joined := make(chan struct{})
 	go func() { shutdown(); close(joined) }()
 
@@ -194,5 +194,33 @@ func TestFilerShutdownLeavesLockRingBeforeDraining(t *testing.T) {
 	case <-grpcStopping:
 	default:
 		t.Error("gRPC was not stopped after leaving the lock ring")
+	}
+}
+
+// The filer's own MetaAggregator and an in-process S3 gateway keep metadata
+// subscription streams open until the filer is shut down, which happens after
+// gRPC GracefulStop - so the subscriptions have to end before it, or every
+// shutdown sits out the full graceful-stop timeout.
+func TestFilerShutdownStopsSubscriptionsBeforeGrpc(t *testing.T) {
+	var order []string
+	var mu sync.Mutex
+	record := func(step string) func() {
+		return func() {
+			mu.Lock()
+			defer mu.Unlock()
+			order = append(order, step)
+		}
+	}
+	shutdown := newFilerShutdown(record("leave"), record("subscriptions"), record("grpc"), record("filer"))
+	shutdown()
+
+	want := []string{"leave", "subscriptions", "grpc", "filer"}
+	if len(order) != len(want) {
+		t.Fatalf("shutdown steps %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("shutdown steps %v, want %v", order, want)
+		}
 	}
 }

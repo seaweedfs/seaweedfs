@@ -110,7 +110,7 @@ func (wfs *WFS) getQuotaCheckInterval() time.Duration {
 }
 
 func (wfs *WFS) checkQuotaOnce() {
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.StatisticsRequest{
 			Collection:  wfs.option.Collection,
@@ -119,7 +119,7 @@ func (wfs *WFS) checkQuotaOnce() {
 			DiskType:    string(wfs.option.DiskType),
 		}
 
-		resp, err := client.Statistics(context.Background(), request)
+		resp, err := client.Statistics(ctx, request)
 		if err != nil {
 			glog.V(0).Infof("reading quota usage %v: %v", request, err)
 			return err

@@ -26,6 +26,10 @@ const (
 	ucAPIBase      = "/api/2.1/unity-catalog"
 	ucWarehouse    = "lakehouse"
 	ucWarehouseKey = "warehouse"
+	// A non-empty s3.sessionToken.N puts UC's credential vendor on its
+	// StaticAwsCredentialGenerator path: it vends the configured access key,
+	// secret key and this token verbatim instead of calling AWS STS.
+	ucVendedSessionToken = "unity-catalog-vended-session-token"
 
 	// Role used by the master-role STS-vended variant of the test. The trust
 	// policy is wide open so any caller can assume it; in production UC
@@ -65,6 +69,9 @@ type ucServerOpts struct {
 	// MasterRoleArn populates aws.masterRoleArn. Empty means UC falls back to
 	// static aws.accessKey / aws.secretKey for storage operations.
 	MasterRoleArn string
+	// SessionToken populates s3.sessionToken.0, selecting UC's static
+	// credential generator for the per-bucket config.
+	SessionToken string
 	// ExtraEnv adds environment variables to the UC container, useful for
 	// AWS_ENDPOINT_URL_STS-style overrides.
 	ExtraEnv map[string]string
@@ -220,6 +227,7 @@ func (env *testEnv) startUnityCatalog(t *testing.T, ctx context.Context, opts uc
 		fmt.Sprintf("s3.awsRoleArn.0=%s", opts.MasterRoleArn),
 		fmt.Sprintf("s3.accessKey.0=%s", env.accessKey),
 		fmt.Sprintf("s3.secretKey.0=%s", env.secretKey),
+		fmt.Sprintf("s3.sessionToken.0=%s", opts.SessionToken),
 		fmt.Sprintf("s3.endpoint.0=%s", s3EndpointForContainer),
 		"",
 	}, "\n")

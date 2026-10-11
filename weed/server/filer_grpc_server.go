@@ -468,6 +468,9 @@ func (fs *FilerServer) applyObjectMutation(ctx context.Context, m *filer_pb.Obje
 
 	case filer_pb.ObjectMutation_DELETE:
 		fullpath := util.NewFullPath(m.Directory, m.Name)
+		if m.KeepRemoteObject {
+			ctx = filer.WithKeepRemoteObject(ctx)
+		}
 		err := fs.filer.DeleteEntryMetaAndData(ctx, fullpath, m.IsRecursive, false, m.IsDeleteData, fromOtherCluster, signatures, 0)
 		if err != nil && err != filer_pb.ErrNotFound {
 			return err
@@ -800,8 +803,7 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(newEntry.GetChunks())
 
-	var coveredChunks []*filer_pb.FileChunk
-	chunks, coveredChunks, err = filer.CompactFileChunks(ctx, fs.lookupFileId, nonManifestChunks)
+	chunks, coveredChunks, err := filer.CompactFileChunks(ctx, fs.lookupFileId, nonManifestChunks)
 	if err != nil {
 		return newEntry.GetChunks(), nil, fmt.Errorf("CompactFileChunks: %w", err)
 	}
@@ -900,6 +902,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
 
+	if req.KeepRemoteObject {
+		ctx = filer.WithKeepRemoteObject(ctx)
+	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}

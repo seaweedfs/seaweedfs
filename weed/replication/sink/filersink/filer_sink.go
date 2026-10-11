@@ -172,11 +172,31 @@ func (fs *FilerSink) ActiveTransfers() []ChunkTransferSnapshot {
 }
 
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+	return fs.deleteEntry(key, deleteIncludeChunks, false, signatures)
+}
+
+func (fs *FilerSink) DeleteEntryKeepingRemoteObject(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
+	return fs.deleteEntry(key, deleteIncludeChunks, true, signatures)
+}
+
+func (fs *FilerSink) deleteEntry(key string, deleteIncludeChunks, keepRemoteObject bool, signatures []int32) error {
 
 	dir, name := util.FullPath(key).DirAndName()
 
 	glog.V(4).Infof("delete entry: %v", key)
-	err := filer_pb.Remove(context.Background(), fs, dir, name, deleteIncludeChunks, true, true, true, signatures)
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer_pb.DoRemoveRequest(context.Background(), client, &filer_pb.DeleteEntryRequest{
+			Directory:            dir,
+			Name:                 name,
+			IsDeleteData:         deleteIncludeChunks,
+			IsRecursive:          true,
+			IgnoreRecursiveError: true,
+			IsFromOtherCluster:   true,
+			Signatures:           signatures,
+			KeepRemoteObject:     keepRemoteObject,
+		})
+		return err
+	})
 	if err != nil {
 		glog.V(0).Infof("delete entry %s: %v", key, err)
 		return fmt.Errorf("delete entry %s: %w", key, err)

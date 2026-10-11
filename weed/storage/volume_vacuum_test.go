@@ -105,6 +105,7 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 	}
 	v.CommitCompact()
 	realRecordCount := v.nm.IndexFileSize() / types.NeedleMapEntrySize
+	liveRowCount := uint64(countLiveIndexRows(t, v.FileName(".idx")))
 	if needleMapKind == NeedleMapLevelDb {
 		nm := reflect.ValueOf(v.nm).Interface().(*LevelDbNeedleMap)
 		mm := nm.mapMetric
@@ -115,10 +116,10 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 			t.Fatalf("testing watermark failed")
 		}
 	} else {
-		t.Logf("realRecordCount:%d, v.FileCount():%d mm.DeletedCount():%d", realRecordCount, v.FileCount(), v.DeletedCount())
+		t.Logf("realRecordCount:%d, liveRowCount:%d, v.FileCount():%d mm.DeletedCount():%d", realRecordCount, liveRowCount, v.FileCount(), v.DeletedCount())
 	}
-	if realRecordCount != v.FileCount() {
-		t.Fatalf("testing file count failed")
+	if liveRowCount != v.FileCount() {
+		t.Fatalf("testing file count failed: live idx rows %d, FileCount %d", liveRowCount, v.FileCount())
 	}
 
 	v.Close()
@@ -564,6 +565,25 @@ func TestExceedsExpectedCompactedSize(t *testing.T) {
 			}
 		})
 	}
+}
+
+func countLiveIndexRows(t *testing.T, indexFileName string) int {
+	t.Helper()
+	f, err := os.Open(indexFileName)
+	if err != nil {
+		t.Fatalf("open index file %s: %v", indexFileName, err)
+	}
+	defer f.Close()
+	count := 0
+	if err := idx.WalkIndexFile(f, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+		if !offset.IsZero() && !size.IsDeleted() {
+			count++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk index file %s: %v", indexFileName, err)
+	}
+	return count
 }
 
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {

@@ -259,7 +259,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		if !shouldValidateCopyCounts {
 			return nil
 		}
-		return checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount())
+		// Counter drift (bloom-filter estimates, rows appended between the
+		// status snapshots) is not proof of a bad copy; the byte sizes
+		// already match. Warn instead of rejecting the copy.
+		if countErr := checkCopyCounts(sourceVolumeStatusAfterCopy, targetVolume.FileCount(), targetVolume.DeletedCount()); countErr != nil {
+			glog.Warningf("copied volume %d counts differ from source in-memory counters (counter drift): %v", req.VolumeId, countErr)
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to mount or validate volume %d: %w", req.VolumeId, err)
@@ -302,7 +308,7 @@ func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeSe
 
 }
 
-// checkCopyFiles verifies the copied file sizes. Record counts are checked
+// checkCopyFiles verifies the copied file sizes. Record counts are compared
 // after the target volume is mounted, when the target needle map is available.
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, hasRemoteDatFile bool, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)

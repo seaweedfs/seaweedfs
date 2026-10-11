@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -525,7 +527,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		data, readRemoteErr = client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
 	}
 	if readRemoteErr != nil {
-		return nil, fmt.Errorf("read from remote %+v: %w", remoteStorageLocation, readRemoteErr)
+		return nil, volumeRemoteReadError(remoteStorageLocation, readRemoteErr)
 	}
 	// The chunk is recorded with the requested size, so a short read would be
 	// cached as a full-size chunk with a zero-padded or truncated tail. Fail
@@ -616,4 +618,15 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	}
 
 	return resp, err
+}
+
+// volumeRemoteReadError keeps a confirmed missing object distinguishable across
+// gRPC, where a wrapped sentinel would arrive as codes.Unknown text. The
+// sentinel's text in the message is what the filer matches, so a NotFound for
+// any other reason cannot pass for it.
+func volumeRemoteReadError(loc *remote_pb.RemoteStorageLocation, err error) error {
+	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return status.Errorf(codes.NotFound, "read from remote %+v: %v", loc, remote_storage.ErrRemoteObjectNotFound)
+	}
+	return fmt.Errorf("read from remote %+v: %w", loc, err)
 }

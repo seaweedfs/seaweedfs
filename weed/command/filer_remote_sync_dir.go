@@ -226,6 +226,10 @@ func processDeleteEvent(
 		glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
 		return nil
 	}
+	if filer.IsMetadataOnlyDelete(message.OldEntry) {
+		glog.V(2).Infof("skipping remote delete of metadata-only delete: %s/%s", resp.Directory, message.OldEntry.Name)
+		return nil
+	}
 	glog.V(2).Infof("delete: %+v", resp)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	if message.OldEntry.IsDirectory {
