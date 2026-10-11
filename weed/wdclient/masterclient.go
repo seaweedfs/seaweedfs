@@ -145,15 +145,18 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 type MasterClient struct {
 	*vidMapClient // Embedded cache with shared logic
 
-	FilerGroup           string
-	clientType           string
-	clientHost           pb.ServerAddress
-	rack                 string
-	currentMaster        pb.ServerAddress
-	lastServedMaster     pb.ServerAddress
-	currentMasterLock    sync.RWMutex
-	masters              pb.ServerDiscovery
-	mastersLock          sync.Mutex
+	FilerGroup        string
+	clientType        string
+	clientHost        pb.ServerAddress
+	rack              string
+	currentMaster     pb.ServerAddress
+	lastServedMaster  pb.ServerAddress
+	currentMasterLock sync.RWMutex
+	masters           pb.ServerDiscovery
+	mastersLock       sync.Mutex
+	// refreshLock serializes SRV refreshes so an older lookup finishing
+	// second cannot overwrite a newer saved list.
+	refreshLock          sync.Mutex
 	grpcDialOption       grpc.DialOption
 	grpcTimeout          time.Duration // Timeout for gRPC calls to master
 	OnPeerUpdate         func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
@@ -188,10 +191,20 @@ func (mc *MasterClient) ListMasters() []pb.ServerAddress {
 	return mc.masterInstances()
 }
 
+// ListCachedMasters returns the most recently resolved master addresses
+// without a fresh SRV lookup, for callers on a deadline that cannot wait for
+// DNS.
+func (mc *MasterClient) ListCachedMasters() []pb.ServerAddress {
+	return mc.masterInstances()
+}
+
 // refreshMasters resolves the SRV record outside mastersLock so a slow DNS
 // lookup does not stall masterInstances readers; the lock only covers saving
-// the resolved list.
+// the resolved list. refreshLock is held across lookup and save so
+// overlapping refreshes keep resolution order.
 func (mc *MasterClient) refreshMasters() {
+	mc.refreshLock.Lock()
+	defer mc.refreshLock.Unlock()
 	newList := mc.masters.LookupSrvInstances()
 	if newList == nil {
 		return
