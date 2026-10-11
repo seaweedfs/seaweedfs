@@ -253,7 +253,9 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	// POSIX: enforce sticky bit on the parent directory.
-	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode == fuse.EINTR {
+		return dirCode
+	} else if dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if entry != nil && entry.Attributes != nil {
 			targetUid = entry.Attributes.Uid
@@ -272,11 +274,11 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	// will remove it again.
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
 		wfs.markHandleDeleted(inode)
-		wfs.waitForPendingAsyncFlush(ctx, inode)
+		wfs.waitForPendingAsyncFlush(inode)
 	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 		inodeFromEntry := entry.Attributes.Inode
 		wfs.markHandleDeleted(inodeFromEntry)
-		wfs.waitForPendingAsyncFlush(ctx, inodeFromEntry)
+		wfs.waitForPendingAsyncFlush(inodeFromEntry)
 	}
 
 	// first, ensure the filer store can correctly delete

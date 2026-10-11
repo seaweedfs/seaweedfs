@@ -164,7 +164,9 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 
 	// POSIX: enforce sticky bit on the parent directory.
-	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode == fuse.EINTR {
+		return dirCode
+	} else if dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if targetEntry != nil && targetEntry.Attributes != nil {
 			targetUid = targetEntry.Attributes.Uid

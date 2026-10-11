@@ -623,7 +623,7 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 		// flush of the target entry land first so the rebuilt cache does not
 		// capture pre-flush metadata and bypass the wait below.
 		if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
-			wfs.waitForPendingAsyncFlush(ctx, inode)
+			wfs.waitForPendingAsyncFlush(inode)
 		}
 		if err := wfs.ensureDirectoryVisited(ctx, dirPath); err != nil {
 			// Record the attempt so the cooldown suppresses repeated rebuilds
@@ -668,7 +668,7 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 	// truncate's old size or a write's old chunks. The cache paths above are
 	// already consistent and must not pay this wait.
 	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
-		wfs.waitForPendingAsyncFlush(ctx, inode)
+		wfs.waitForPendingAsyncFlush(inode)
 	}
 
 	// Directory not cached - fetch directly from filer without caching the entire directory.

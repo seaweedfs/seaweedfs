@@ -139,20 +139,20 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// apply changes to the filer, and also apply to local metaCache
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	updateResp, err := wfs.streamUpdateEntry(ctx, updateOldEntryRequest)
+	updateResp, err := wfs.streamUpdateEntry(context.Background(), updateOldEntryRequest)
 	if err == nil {
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {
 			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
 		}
-		if applyErr := wfs.applyLocalMetadataEvent(ctx, updateEvent); applyErr != nil {
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
 	}
 	if err == nil {
 		var createResp *filer_pb.CreateEntryResponse
-		createResp, err = wfs.streamCreateEntry(ctx, request)
+		createResp, err = wfs.streamCreateEntry(context.Background(), request)
 		if err != nil {
 			// Rollback: restore original HardLinkId/Counter on the source entry
 			oldEntry.HardLinkId = origHardLinkId
@@ -162,7 +162,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				Entry:      oldEntry,
 				Signatures: []int32{wfs.signature},
 			}
-			if _, rollbackErr := wfs.streamUpdateEntry(ctx, rollbackReq); rollbackErr != nil {
+			if _, rollbackErr := wfs.streamUpdateEntry(context.Background(), rollbackReq); rollbackErr != nil {
 				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
 			}
 		} else {
@@ -170,7 +170,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			if createEvent == nil {
 				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
 			}
-			if applyErr := wfs.applyLocalMetadataEvent(ctx, createEvent); applyErr != nil {
+			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
 				wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
 			}
