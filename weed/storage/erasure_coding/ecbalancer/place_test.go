@@ -566,15 +566,17 @@ func placeNeed(t *testing.T, topo *Topology, vid uint32, n int, rp *super_block.
 	return got
 }
 
-// TestWithinRackPaysDownShardDebt3: 2 VS, equal freeSlots, live 100 vs 135,
-// 3 shards, cap 2. Remainder tie-breaks on liveShards — pair on the thinner
-// until the gap is gone, not 50/50 from vol 1.
+// TestWithinRackPaysDownShardDebt3: 2 VS, same disk cap, live 100 vs 135,
+// 3 shards, cap 2. freeSlots = cap−shards so the thinner also has more
+// remaining slots; extras pay the debt — not 50/50 from vol 1.
+// Equal remaining slots (same free, different shards) are the liveShards
+// tie-break; see TestEcVolumeCountIsNotScore.
 func TestWithinRackPaysDownShardDebt3(t *testing.T) {
 	topo := NewTopology()
-	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 5000)
-	a.AddDisk(0, "", 5000, 100)
-	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 5000)
-	b.AddDisk(0, "", 5000, 135)
+	a := topo.AddNode("a:8080", "dc1", "dc1:rack0", 4900)
+	a.AddDisk(0, "", 4900, 100)
+	b := topo.AddNode("b:8081", "dc1", "dc1:rack0", 4865)
+	b.AddDisk(0, "", 4865, 135)
 	rp := twoDiskRackRP()
 
 	got := placeNeed(t, topo, 1, 3, rp)
