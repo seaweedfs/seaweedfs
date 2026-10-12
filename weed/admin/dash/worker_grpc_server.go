@@ -188,6 +188,10 @@ func (s *WorkerGrpcServer) Stop() error {
 func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStreamServer) error {
 	ctx := stream.Context()
 
+	if err := security.CheckGrpcAdminPeer(ctx, security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+		return err
+	}
+
 	// get client address
 	address := findClientAddress(ctx)
 
