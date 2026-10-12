@@ -100,7 +100,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -233,7 +233,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 	}
 	bucketName, namespaceName, tableName := target.bucketName, target.namespaceName, target.tableName
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -1494,7 +1494,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
