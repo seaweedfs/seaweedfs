@@ -762,6 +762,30 @@ func (vl *VolumeLayout) ShouldGrowVolumes() bool {
 	return writable <= crowded
 }
 
+// WritableAvgFill returns the average fill ratio of the writable volumes and
+// how many there are. The fill of a single volume is its tracked effective
+// size over the layout's volume size limit; volumes without a size-tracking
+// entry yet (freshly created, no heartbeat size report so far) count as
+// empty. This lets a caller decide whether to grow proactively on fill level,
+// without listing all volumes to compute the ratio itself.
+func (vl *VolumeLayout) WritableAvgFill() (avgFill float64, writableCount int) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	writableCount = len(vl.writables)
+	if writableCount == 0 || vl.volumeSizeLimit == 0 {
+		return 0, writableCount
+	}
+	var total uint64
+	for _, vid := range vl.writables {
+		if st := vl.sizeTracking[vid]; st != nil {
+			total += st.effectiveSize
+		}
+	}
+	avgFill = float64(total) / (float64(writableCount) * float64(vl.volumeSizeLimit))
+	return avgFill, writableCount
+}
+
 func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeId, dcId NodeId, rackId NodeId) bool {
 	// When replication spans multiple racks (DiffRackCount > 0), a writable
 	// volume's replicas only cover some racks in a DC. It is wrong to

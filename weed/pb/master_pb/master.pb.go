@@ -1739,8 +1739,13 @@ type VolumeGrowRequest struct {
 	DataNode            string                 `protobuf:"bytes,7,opt,name=data_node,json=dataNode,proto3" json:"data_node,omitempty"`
 	MemoryMapMaxSizeMb  uint32                 `protobuf:"varint,8,opt,name=memory_map_max_size_mb,json=memoryMapMaxSizeMb,proto3" json:"memory_map_max_size_mb,omitempty"`
 	DiskType            string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// If > 0, grow only when the average fill ratio of the layout's writable
+	// volumes has reached this threshold (e.g. 0.6). Lets callers pre-grow on
+	// fill level with one call, instead of listing volumes to compute the
+	// ratio themselves. Ignored when there are no writable volumes.
+	GrowAvgFillThreshold float32 `protobuf:"fixed32,10,opt,name=grow_avg_fill_threshold,json=growAvgFillThreshold,proto3" json:"grow_avg_fill_threshold,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *VolumeGrowRequest) Reset() {
@@ -1834,6 +1839,13 @@ func (x *VolumeGrowRequest) GetDiskType() string {
 		return x.DiskType
 	}
 	return ""
+}
+
+func (x *VolumeGrowRequest) GetGrowAvgFillThreshold() float32 {
+	if x != nil {
+		return x.GrowAvgFillThreshold
+	}
+	return 0
 }
 
 type AssignResponse struct {
@@ -4659,7 +4671,12 @@ func (x *RaftLeadershipTransferResponse) GetNewLeader() string {
 }
 
 type VolumeGrowResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Average fill ratio of the layout's writable volumes at request time
+	// (0 when there are none). Reported whether or not growth was triggered.
+	AvgFill float32 `protobuf:"fixed32,1,opt,name=avg_fill,json=avgFill,proto3" json:"avg_fill,omitempty"`
+	// Number of writable volumes at request time.
+	WritableCount uint32 `protobuf:"varint,2,opt,name=writable_count,json=writableCount,proto3" json:"writable_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4692,6 +4709,20 @@ func (x *VolumeGrowResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use VolumeGrowResponse.ProtoReflect.Descriptor instead.
 func (*VolumeGrowResponse) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *VolumeGrowResponse) GetAvgFill() float32 {
+	if x != nil {
+		return x.AvgFill
+	}
+	return 0
+}
+
+func (x *VolumeGrowResponse) GetWritableCount() uint32 {
+	if x != nil {
+		return x.WritableCount
+	}
+	return 0
 }
 
 type SuperBlockExtra_ErasureCoding struct {
@@ -5229,7 +5260,7 @@ const file_master_proto_rawDesc = "" +
 	"\x15writable_volume_count\x18\t \x01(\rR\x13writableVolumeCount\x12\x1b\n" +
 	"\tdisk_type\x18\n" +
 	" \x01(\tR\bdiskType\x12,\n" +
-	"\x12expected_data_size\x18\v \x01(\x04R\x10expectedDataSize\"\xbe\x02\n" +
+	"\x12expected_data_size\x18\v \x01(\x04R\x10expectedDataSize\"\xf5\x02\n" +
 	"\x11VolumeGrowRequest\x122\n" +
 	"\x15writable_volume_count\x18\x01 \x01(\rR\x13writableVolumeCount\x12 \n" +
 	"\vreplication\x18\x02 \x01(\tR\vreplication\x12\x1e\n" +
@@ -5242,7 +5273,9 @@ const file_master_proto_rawDesc = "" +
 	"\x04rack\x18\x06 \x01(\tR\x04rack\x12\x1b\n" +
 	"\tdata_node\x18\a \x01(\tR\bdataNode\x122\n" +
 	"\x16memory_map_max_size_mb\x18\b \x01(\rR\x12memoryMapMaxSizeMb\x12\x1b\n" +
-	"\tdisk_type\x18\t \x01(\tR\bdiskType\"\xc4\x01\n" +
+	"\tdisk_type\x18\t \x01(\tR\bdiskType\x125\n" +
+	"\x17grow_avg_fill_threshold\x18\n" +
+	" \x01(\x02R\x14growAvgFillThreshold\"\xc4\x01\n" +
 	"\x0eAssignResponse\x12\x10\n" +
 	"\x03fid\x18\x01 \x01(\tR\x03fid\x12\x14\n" +
 	"\x05count\x18\x04 \x01(\x04R\x05count\x12\x14\n" +
@@ -5477,8 +5510,10 @@ const file_master_proto_rawDesc = "" +
 	"\x1eRaftLeadershipTransferResponse\x12'\n" +
 	"\x0fprevious_leader\x18\x01 \x01(\tR\x0epreviousLeader\x12\x1d\n" +
 	"\n" +
-	"new_leader\x18\x02 \x01(\tR\tnewLeader\"\x14\n" +
-	"\x12VolumeGrowResponse2\xf1\x12\n" +
+	"new_leader\x18\x02 \x01(\tR\tnewLeader\"V\n" +
+	"\x12VolumeGrowResponse\x12\x19\n" +
+	"\bavg_fill\x18\x01 \x01(\x02R\aavgFill\x12%\n" +
+	"\x0ewritable_count\x18\x02 \x01(\rR\rwritableCount2\xf1\x12\n" +
 	"\aSeaweed\x12I\n" +
 	"\rSendHeartbeat\x12\x14.master_pb.Heartbeat\x1a\x1c.master_pb.HeartbeatResponse\"\x00(\x010\x01\x12X\n" +
 	"\rKeepConnected\x12\x1f.master_pb.KeepConnectedRequest\x1a .master_pb.KeepConnectedResponse\"\x00(\x010\x01\x12Q\n" +
