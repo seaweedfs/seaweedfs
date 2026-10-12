@@ -26,7 +26,9 @@ func init() {
 		Category: pluginworker.CategoryHeavy,
 		Aliases:  []string{"erasure-coding", "erasure.coding", "ec"},
 		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
-			return NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir), nil
+			h := NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir)
+			h.workerAddress = strings.TrimSpace(opts.WorkerAddress)
+			return h, nil
 		},
 	})
 }
@@ -39,6 +41,7 @@ type erasureCodingWorkerConfig struct {
 type ErasureCodingHandler struct {
 	grpcDialOption grpc.DialOption
 	workingDir     string
+	workerAddress  string
 }
 
 func NewErasureCodingHandler(grpcDialOption grpc.DialOption, workingDir string) *ErasureCodingHandler {
@@ -519,6 +522,7 @@ func (h *ErasureCodingHandler) Execute(
 		params.Collection,
 		h.grpcDialOption,
 	)
+	task.workerAddress = h.workerAddress
 	execCtx, execCancel := context.WithCancel(ctx)
 	defer execCancel()
 	task.SetProgressCallback(func(progress float64, stage string) {
@@ -670,8 +674,15 @@ func buildErasureCodingProposal(
 	}
 
 	sourceNode := ""
-	if len(params.Sources) > 0 {
-		sourceNode = strings.TrimSpace(params.Sources[0].Node)
+	var replicaServers []string
+	for _, s := range params.Sources {
+		if s == nil || strings.TrimSpace(s.Node) == "" || len(s.ShardIds) > 0 {
+			continue
+		}
+		replicaServers = append(replicaServers, s.Node)
+		if sourceNode == "" {
+			sourceNode = strings.TrimSpace(s.Node)
+		}
 	}
 
 	summary := fmt.Sprintf("Erasure code volume %d", result.VolumeID)
@@ -701,6 +712,9 @@ func buildErasureCodingProposal(
 			},
 			"source_server": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: sourceNode},
+			},
+			"replica_servers": {
+				Kind: &plugin_pb.ConfigValue_StringList{StringList: &plugin_pb.StringList{Values: replicaServers}},
 			},
 			"collection": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: result.Collection},

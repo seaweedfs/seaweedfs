@@ -61,6 +61,12 @@ func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 	if policy.JobTypeMaxRuntime != 30*time.Minute {
 		t.Fatalf("unexpected max runtime: got=%v", policy.JobTypeMaxRuntime)
 	}
+	if policy.LocalQueuePin != defaultLocalQueuePin {
+		t.Fatalf("unexpected local queue pin: got=%d", policy.LocalQueuePin)
+	}
+	if policy.OrphanRehomeGrace != defaultOrphanRehomeGrace {
+		t.Fatalf("unexpected orphan rehome grace: got=%v", policy.OrphanRehomeGrace)
+	}
 }
 
 func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {
@@ -138,13 +144,13 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 		ExecutorReserveBackoff: time.Millisecond,
 	}
 
-	executor1, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+	executor1, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
 	defer release1()
 
-	executor2, release2, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+	executor2, release2, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 	if err != nil {
 		t.Fatalf("reserve executor 2: %v", err)
 	}
@@ -266,7 +272,7 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 
 	start := time.Now()
 	pluginSvc.Shutdown()
-	_, _, err = pluginSvc.reserveScheduledExecutor(context.Background(), "missing-job-type", policy)
+	_, _, err = pluginSvc.reserveScheduledExecutor(context.Background(), "missing-job-type", policy, nil)
 	if err == nil {
 		t.Fatalf("expected reservation shutdown error")
 	}
@@ -297,7 +303,7 @@ func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
 		ExecutorReserveBackoff: 5 * time.Millisecond,
 	}
 
-	_, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+	_, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
@@ -308,7 +314,7 @@ func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
 	}
 	secondReserveCh := make(chan reserveResult, 1)
 	go func() {
-		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
+		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy, nil)
 		if release2 != nil {
 			release2()
 		}
@@ -990,5 +996,52 @@ func TestLaneStatus_LifecycleNextDetectionSurvivesDefaultLanePrune(t *testing.T)
 	if !status.NextDetectionAt.Equal(expected) {
 		t.Fatalf("next_detection_at = %v, want %v (must be the 24h schedule, not the idle-sleep fallback)",
 			status.NextDetectionAt, expected)
+	}
+}
+
+func TestReserveWaterfillsPreferredHosts(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	ids := []string{"worker-a", "worker-b", "worker-c", "worker-d"}
+	for _, id := range ids {
+		pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+			WorkerId: id,
+			Address:  "10.0.0.1:9334",
+			Capabilities: []*plugin_pb.JobTypeCapability{
+				{JobType: "erasure_coding", CanExecute: true, MaxExecutionConcurrency: 8},
+			},
+		})
+	}
+
+	policy := schedulerPolicy{
+		PerWorkerConcurrency:   8,
+		ExecutorReserveBackoff: time.Millisecond,
+		LocalQueuePin:          5,
+	}
+	preferred := []string{"10.0.0.1:8080"}
+
+	seen := map[string]int{}
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	for i := 0; i < 4; i++ {
+		exec, release, err := pluginSvc.reserveScheduledExecutor(context.Background(), "erasure_coding", policy, preferred)
+		if err != nil {
+			t.Fatalf("reserve %d: %v", i, err)
+		}
+		releases = append(releases, release)
+		seen[exec.WorkerID]++
+	}
+	if len(seen) != 4 {
+		t.Fatalf("want one job per worker, got %v", seen)
 	}
 }
