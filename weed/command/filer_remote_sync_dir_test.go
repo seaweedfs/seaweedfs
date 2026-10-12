@@ -1734,3 +1734,20 @@ func TestCompleteRemoteOnlyRenameKeepsAReusedOldKey(t *testing.T) {
 		t.Errorf("deletes = %+v, want the reused key kept", remote.deletes)
 	}
 }
+
+func TestCompleteRemoteOnlyRenameRetryUsesTheSourceStamp(t *testing.T) {
+	// an earlier run copied a multipart source and stamped the entry with
+	// the copy's ETag, then failed to delete the source
+	oldDest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/a.jpg"}
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/b.jpg"}
+	current := &filer_pb.Entry{Name: "b.jpg", RemoteEntry: &filer_pb.RemoteEntry{RemoteETag: `"copy"`, RemoteSize: 6}}
+	remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("data-a")},
+		statETags: map[string]string{"/b/a.jpg": `"a-2"`, "/b/b.jpg": `"copy"`}}
+	source := renameSource{path: "/buckets/b/a.jpg", loc: oldDest, stamp: &filer_pb.RemoteEntry{RemoteETag: `"a-2"`, RemoteSize: 6}}
+	if err := completeRemoteOnlyRename(&stubFilerClient{entry: current}, remote, "/buckets/b", current, source, dest, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/b/a.jpg" {
+		t.Errorf("deletes = %+v, want the unchanged source deleted on the retry", remote.deletes)
+	}
+}

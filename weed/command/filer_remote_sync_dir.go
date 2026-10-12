@@ -336,13 +336,14 @@ func processUpdateEvent(
 	}
 	oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
-	eventSource := renameSource{path: util.NewFullPath(resp.Directory, message.OldEntry.Name), loc: oldDest}
+	eventSource := renameSource{path: util.NewFullPath(resp.Directory, message.OldEntry.Name), loc: oldDest, stamp: message.OldEntry.GetRemoteEntry()}
 	// sourceOf is where a remote-only entry's content is: the source its
 	// pending-rename marker names, which may be an earlier rename's old key,
 	// or else the event's old key
 	sourceOf := func(entry *filer_pb.Entry, fallback renameSource) renameSource {
 		if src := string(entry.Extended[filer.ExtRemoteRenameSourceKey]); strings.HasPrefix(src, strings.TrimSuffix(mountedDir, "/")+"/") {
-			return renameSource{path: util.FullPath(src), loc: toRemoteStorageLocation(util.FullPath(mountedDir), util.FullPath(src), remoteStorageMountLocation)}
+			// a pending entry carries the stamp of the source it reads
+			return renameSource{path: util.FullPath(src), loc: toRemoteStorageLocation(util.FullPath(mountedDir), util.FullPath(src), remoteStorageMountLocation), stamp: entry.GetRemoteEntry()}
 		}
 		return fallback
 	}
@@ -484,8 +485,12 @@ func isRemoteOnly(entry *filer_pb.Entry) bool {
 // fails and holds the offset for recovery.
 func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir string, current *filer_pb.Entry, source renameSource, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
 	oldDest := source.loc
-	// the stamp from before the copy describes the source object
-	sourceStamp := proto.Clone(current.RemoteEntry).(*filer_pb.RemoteEntry)
+	// the source's recorded stamp; a retry can find the entry already
+	// stamped with the copy, whose ETag a multipart source does not share
+	sourceStamp := source.stamp
+	if sourceStamp == nil {
+		sourceStamp = proto.Clone(current.RemoteEntry).(*filer_pb.RemoteEntry)
+	}
 	if existing, err := client.StatFile(dest); err == nil {
 		if describes(current.RemoteEntry, existing) {
 			glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
@@ -525,10 +530,11 @@ func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_st
 }
 
 // renameSource is where a renamed remote-only entry's content was read
-// from: the path and the object it maps to.
+// from: the path, the object it maps to, and the stamp describing it.
 type renameSource struct {
-	path util.FullPath
-	loc  *remote_pb.RemoteStorageLocation
+	path  util.FullPath
+	loc   *remote_pb.RemoteStorageLocation
+	stamp *filer_pb.RemoteEntry
 }
 
 // deleteRenameSource deletes a rename's old key once the renamed entry no
