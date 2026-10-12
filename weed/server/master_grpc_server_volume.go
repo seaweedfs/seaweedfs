@@ -509,6 +509,27 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 		Force:  true,
 		Reason: "grpc volume grow",
 	}
+
+	// Report the layout's fill observed at request time whether or not
+	// growth was triggered, so callers can tell an empty layout from a
+	// skipped one. A missing collection/layout reports zeros.
+	var avgFill float64
+	var writableCount int
+	if vl := ms.Topo.FindVolumeLayout(req.Collection, replicaPlacement, ttl, types.ToDiskType(req.DiskType)); vl != nil {
+		avgFill, writableCount = vl.WritableAvgFill(&volumeGrowOption)
+	}
+
+	// Conditional grow: with a threshold set, grow only when the layout's
+	// writable volumes have reached this average fill. A layout with no
+	// writable volumes (none yet, or all just filled) skips the check — that
+	// is the case growth exists to fix.
+	if req.GrowAvgFillThreshold > 0 && writableCount > 0 && avgFill < float64(req.GrowAvgFillThreshold) {
+		return &master_pb.VolumeGrowResponse{
+			AvgFill:       float32(avgFill),
+			WritableCount: uint32(writableCount),
+		}, nil
+	}
+
 	replicaCount := int64(req.WritableVolumeCount * uint32(replicaPlacement.GetCopyCount()))
 
 	if ms.Topo.AvailableSpaceFor(&volumeGrowOption) < replicaCount {
@@ -517,5 +538,8 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 
 	ms.DoAutomaticVolumeGrow(&volumeGrowRequest)
 
-	return &master_pb.VolumeGrowResponse{}, nil
+	return &master_pb.VolumeGrowResponse{
+		AvgFill:       float32(avgFill),
+		WritableCount: uint32(writableCount),
+	}, nil
 }

@@ -448,6 +448,22 @@ func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.Replic
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
 }
 
+// FindVolumeLayout is the read-only counterpart of GetVolumeLayout: it returns
+// nil when the collection or its layout does not exist, instead of creating
+// one. Lets callers check a layout's state without polluting the collection
+// map with an empty collection.
+func (t *Topology) FindVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) *VolumeLayout {
+	c, ok := t.collectionMap.Find(collectionName)
+	if !ok {
+		return nil
+	}
+	vl, ok := c.(*Collection).GetVolumeLayout(rp, ttl, diskType)
+	if !ok {
+		return nil
+	}
+	return vl
+}
+
 // DecayQuietVolumeSizes decays pending assign estimates across every layout.
 // A volume that changed reports within a pulse, so two quiet pulses mean the
 // size on record is the size there is.
