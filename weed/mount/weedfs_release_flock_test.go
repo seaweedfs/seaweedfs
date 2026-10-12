@@ -17,6 +17,7 @@ import (
 func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 	wfs.posixLocks = NewPosixLockTable()
+	startFakeFiler(t, wfs, &fakeFilerServer{})
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/f"), time.Now().Unix(), false, false, 0, false)
 	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
@@ -66,9 +67,7 @@ func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Let the parked flush finish quickly: the unlinked-file re-check under the
-	// handle lock turns it into a no-op instead of a filer round trip.
-	fh.isDeleted = true
+	// Let the parked flush through: the live filer answers the metadata update.
 	releaseLock()
 	select {
 	case <-done:
