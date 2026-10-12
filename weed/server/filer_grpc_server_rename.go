@@ -82,13 +82,8 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
 	fs.finishRemoteCopies(afterCommitCtx, pendingRemoteCopies)
-	for i := range metadataEvents {
-		event := &metadataEvents[i]
-		for _, pending := range pendingRemoteCopies {
-			if pending.failed && event.oldEntry.FullPath == pending.oldPath {
-				event.deleteOldRemote = false
-			}
-		}
+	applyRemoteCopies(metadataEvents, pendingRemoteCopies)
+	for _, event := range metadataEvents {
 		event.notify(fs.filer, afterCommitCtx, req.Signatures)
 	}
 
@@ -154,13 +149,8 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
 	fs.finishRemoteCopies(afterCommitCtx, pendingRemoteCopies)
-	for i := range metadataEvents {
-		event := &metadataEvents[i]
-		for _, pending := range pendingRemoteCopies {
-			if pending.failed && event.oldEntry.FullPath == pending.oldPath {
-				event.deleteOldRemote = false
-			}
-		}
+	applyRemoteCopies(metadataEvents, pendingRemoteCopies)
+	for _, event := range metadataEvents {
 		event.notify(fs.filer, afterCommitCtx, req.Signatures)
 	}
 
@@ -184,6 +174,7 @@ type pendingRemoteCopy struct {
 	oldPath util.FullPath
 	newPath util.FullPath
 	failed  bool
+	copied  *filer_pb.RemoteEntry
 }
 
 // finishRemoteCopies runs the deferred remote copies after the commit. A
@@ -208,6 +199,30 @@ func (fs *FilerServer) finishRemoteCopies(ctx context.Context, pendings []*pendi
 		if updateErr := fs.filer.UpdateEntry(ctx, entry, entry, false); updateErr != nil {
 			glog.WarningfCtx(ctx, "stamp remote rename copy of %s: %v", pending.newPath, updateErr)
 			pending.failed = true
+			continue
+		}
+		pending.copied = remoteEntry
+	}
+}
+
+// applyRemoteCopies brings the queued rename events in line with the deferred
+// copies. The stamp is written with a plain UpdateEntry, which publishes no
+// event, so the rename event carries it to peer filers and subscribers. A
+// failed copy keeps the old object, which the entry still describes.
+func applyRemoteCopies(events []metadataEvent, pendings []*pendingRemoteCopy) {
+	for i := range events {
+		event := &events[i]
+		for _, pending := range pendings {
+			if event.oldEntry.FullPath != pending.oldPath {
+				continue
+			}
+			if pending.failed {
+				event.deleteOldRemote = false
+			} else if pending.copied != nil && event.newEntry != nil {
+				newEntry := event.newEntry.ShallowClone()
+				newEntry.Remote = pending.copied
+				event.newEntry = newEntry
+			}
 		}
 	}
 }

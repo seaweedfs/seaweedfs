@@ -236,11 +236,20 @@ func processDeleteEvent(
 	glog.V(2).Infof("delete: %+v", resp)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	if !message.OldEntry.IsDirectory {
+		current, err := currentEntry(filerSource, resp.Directory, message.OldEntry.Name)
+		if err != nil {
+			return err
+		}
+		if isRemoteOnly(current) {
+			glog.V(0).Infof("keep %s: a remote-only entry has taken its path since", remote_storage.FormatLocation(dest))
+			return nil
+		}
 		// The object at the key may have been replaced since the delete: a
 		// rename copies another entry's content onto it, a rewrite uploads
 		// over it. Match the recorded etag before deleting so only the
-		// object the delete meant goes away.
-		if oldETag := message.OldEntry.GetRemoteEntry().GetRemoteETag(); oldETag != "" {
+		// object the delete meant goes away. A changed object with no entry
+		// at the path is an upload that finished after the delete, and goes.
+		if oldETag := message.OldEntry.GetRemoteEntry().GetRemoteETag(); oldETag != "" && current != nil {
 			if live, err := client.StatFile(dest); err == nil {
 				if live.RemoteETag != "" && live.RemoteETag != oldETag {
 					glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))
@@ -249,14 +258,6 @@ func processDeleteEvent(
 			} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
 				return err
 			}
-		}
-		current, err := currentEntry(filerSource, resp.Directory, message.OldEntry.Name)
-		if err != nil {
-			return err
-		}
-		if isRemoteOnly(current) {
-			glog.V(0).Infof("keep %s: a remote-only entry has taken its path since", remote_storage.FormatLocation(dest))
-			return nil
 		}
 	}
 	if message.OldEntry.IsDirectory {

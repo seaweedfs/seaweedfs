@@ -147,6 +147,8 @@ func TestRenameRemoteOnlyEntryOverTargetKeepsTheCopy(t *testing.T) {
 	require.Len(t, events, 2)
 	assert.True(t, filer.IsMetadataOnlyDelete(events[0].notification.OldEntry), "the target's delete event must leave the remote object alone")
 	assert.False(t, filer.IsMetadataOnlyDelete(events[1].notification.OldEntry))
+	// the copy lands after the commit; the rename event still carries its stamp
+	assert.Equal(t, `"copy"`, events[1].notification.NewEntry.RemoteEntry.GetRemoteETag())
 	dst, err := store.FindEntry(context.Background(), "/buckets/b/dst/a.jpg")
 	require.NoError(t, err)
 	assert.Equal(t, uint64(101), dst.Attr.Inode)
