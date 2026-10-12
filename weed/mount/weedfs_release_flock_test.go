@@ -32,7 +32,14 @@ func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 
 	// Stall the release flush at the handle lock flushMetadataToFiler waits on.
 	active := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
-	defer wfs.fhLockTable.ReleaseLock(fh.fh, active)
+	released := false
+	releaseLock := func() {
+		if !released {
+			wfs.fhLockTable.ReleaseLock(fh.fh, active)
+			released = true
+		}
+	}
+	defer releaseLock()
 
 	done := make(chan struct{})
 	go func() {
@@ -59,11 +66,13 @@ func TestReleaseDropsFlockWhileFlushBlocked(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	wfs.fhLockTable.ReleaseLock(fh.fh, active)
+	// Let the parked flush finish quickly: the unlinked-file re-check under the
+	// handle lock turns it into a no-op instead of a filer round trip.
+	fh.isDeleted = true
+	releaseLock()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
-		// The flush may still be in its retry budget against the dead filer;
-		// the lock drop is already verified.
+	case <-time.After(10 * time.Second):
+		t.Fatal("release never completed after the flush unblocked")
 	}
 }
