@@ -164,6 +164,8 @@ type metadataEvent struct {
 	// the old entry's remote object is deleted once the rename has committed:
 	// it was copied to the new key, and a rename that fails must not lose it
 	deleteOldRemote bool
+	// the pending source an immediate copy read, released along with it
+	deleteRemoteSource util.FullPath
 }
 
 // pendingRemoteCopy is a remote-only rename over a remote-only target whose
@@ -233,23 +235,31 @@ func applyRemoteCopies(events []metadataEvent, pendings []*pendingRemoteCopy) {
 
 func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signatures []int32) {
 	if event.deleteOldRemote {
-		// a child path is not locked by its directory's rename, so another
-		// rename may have put a remote-only entry at the old key meanwhile;
-		// the store is asked directly, a lazy fetch would revive the old key.
-		// When in doubt the object stays: an extra object loses nothing.
-		current, findErr := f.Store.FindEntry(ctx, event.oldEntry.FullPath)
-		switch {
-		case findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound):
-			glog.WarningfCtx(ctx, "keep remote object of renamed %s: look up its old path: %v", event.oldEntry.FullPath, findErr)
-		case findErr == nil && current.IsInRemoteOnly():
-			glog.V(0).InfofCtx(ctx, "keep remote object of renamed %s: a remote-only entry has taken its path", event.oldEntry.FullPath)
-		default:
-			if err := f.DeleteFromRemote(ctx, event.oldEntry); err != nil {
-				glog.WarningfCtx(ctx, "delete remote object of renamed %s: %v", event.oldEntry.FullPath, err)
-			}
-		}
+		deleteRenamedRemoteObject(f, ctx, event.oldEntry)
+	}
+	if event.deleteRemoteSource != "" {
+		deleteRenamedRemoteObject(f, ctx, &filer.Entry{FullPath: event.deleteRemoteSource, Remote: event.oldEntry.Remote})
 	}
 	f.NotifyUpdateEvent(ctx, event.oldEntry, event.newEntry, event.deleteChunks, false, signatures)
+}
+
+// deleteRenamedRemoteObject deletes the remote object a committed rename no
+// longer needs. A child path is not locked by its directory's rename, so
+// another rename may have put a remote-only entry at the key meanwhile; the
+// store is asked directly, a lazy fetch would revive the key. When in doubt
+// the object stays: an extra object loses nothing.
+func deleteRenamedRemoteObject(f *filer.Filer, ctx context.Context, entry *filer.Entry) {
+	current, findErr := f.Store.FindEntry(ctx, entry.FullPath)
+	switch {
+	case findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound):
+		glog.WarningfCtx(ctx, "keep remote object of renamed %s: look up its old path: %v", entry.FullPath, findErr)
+	case findErr == nil && current.IsInRemoteOnly():
+		glog.V(0).InfofCtx(ctx, "keep remote object of renamed %s: a remote-only entry has taken its path", entry.FullPath)
+	default:
+		if err := f.DeleteFromRemote(ctx, entry); err != nil {
+			glog.WarningfCtx(ctx, "delete remote object of renamed %s: %v", entry.FullPath, err)
+		}
+	}
 }
 
 func (fs *FilerServer) moveEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk, pendingRemoteCopies *[]*pendingRemoteCopy) error {
@@ -387,6 +397,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	}
 
 	// add to new directory
+	var pendingSource util.FullPath
 	newEntry := &filer.Entry{
 		FullPath:        newPath,
 		Attr:            entry.Attr,
@@ -407,6 +418,9 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		newEntry.Extended[filer.ExtRemoteRenameSourceKey] = []byte(fs.filer.RemoteSourcePath(entry, oldPath))
 	} else if copiedRemote != nil && len(newEntry.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
 		// the copy came from the pending source; the new key holds it now
+		if source := fs.filer.RemoteSourcePath(entry, oldPath); source != oldPath {
+			pendingSource = source
+		}
 		newEntry.Extended = maps.Clone(newEntry.Extended)
 		delete(newEntry.Extended, filer.ExtRemoteRenameSourceKey)
 	}
@@ -460,9 +474,10 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		})
 	}
 	*metadataEvents = append(*metadataEvents, metadataEvent{
-		oldEntry:        sourceEntry,
-		newEntry:        newEntry,
-		deleteOldRemote: copiedRemote != nil || deferredCopy,
+		oldEntry:           sourceEntry,
+		newEntry:           newEntry,
+		deleteOldRemote:    copiedRemote != nil || deferredCopy,
+		deleteRemoteSource: pendingSource,
 	})
 	selfEvent := len(*metadataEvents) - 1
 	keepOldRemote := copiedRemote != nil || deferredCopy

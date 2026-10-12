@@ -377,6 +377,8 @@ func TestRenamePendingEntryAgainCopiesFromItsSource(t *testing.T) {
 	client.copyErr = nil
 	require.NoError(t, renameFile(server, "/buckets/b/dst/d.jpg", "/buckets/b/dst/c.jpg"))
 	assert.Contains(t, client.recorded(), "copy origin/src/a.jpg origin/dst/c.jpg")
+	// the source the copy read goes too, once the rename has committed
+	assert.Contains(t, client.recorded(), "delete origin/src/a.jpg")
 	c, err := store.FindEntry(context.Background(), "/buckets/b/dst/c.jpg")
 	require.NoError(t, err)
 	assert.Empty(t, c.Extended[filer.ExtRemoteRenameSourceKey])

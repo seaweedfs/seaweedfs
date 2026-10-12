@@ -295,6 +295,15 @@ func processUpdateEvent(
 	}
 	oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+	// sourceOf is where a remote-only entry's content is: the source its
+	// pending-rename marker names, which may be an earlier rename's old key,
+	// or else the event's old key
+	sourceOf := func(entry *filer_pb.Entry, eventSource *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {
+		if src := string(entry.Extended[filer.ExtRemoteRenameSourceKey]); strings.HasPrefix(src, strings.TrimSuffix(mountedDir, "/")+"/") {
+			return toRemoteStorageLocation(util.FullPath(mountedDir), util.FullPath(src), remoteStorageMountLocation)
+		}
+		return eventSource
+	}
 	if proto.Equal(oldDest, dest) && !shouldSendToRemote(message.NewEntry) {
 		glog.V(2).Infof("skipping updating: %+v", resp)
 		return nil
@@ -331,7 +340,14 @@ func processUpdateEvent(
 			return err
 		}
 		if isRemoteOnly(current) {
-			return completeRemoteOnlyRename(filerClient, client, message.NewParentPath, current, oldDest, dest, storageClass)
+			return completeRemoteOnlyRename(filerClient, client, message.NewParentPath, current, sourceOf(current, oldDest), dest, storageClass)
+		}
+		if current == nil && len(message.NewEntry.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+			// the rename's copy was pending and the entry has moved on: a
+			// later rename carries the source in its own marker and finishes
+			// or releases it, so this one leaves it
+			glog.V(0).Infof("keep %s: the pending rename moved on", remote_storage.FormatLocation(oldDest))
+			return nil
 		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 		if err := client.DeleteFile(oldDest); err != nil {
@@ -347,7 +363,7 @@ func processUpdateEvent(
 	if errors.Is(writeErr, errSuperseded) {
 		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
 		if !proto.Equal(oldDest, dest) {
-			return uploadCurrentEntry(filerClient, filerSource, client, message.NewParentPath, message.NewEntry.Name, oldDest, dest, storageClass)
+			return uploadCurrentEntry(filerClient, filerSource, client, message.NewParentPath, message.NewEntry.Name, oldDest, dest, storageClass, sourceOf)
 		}
 		return nil
 	}
@@ -469,7 +485,7 @@ func openRemoteObject(client remote_storage.RemoteStorageClient, loc *remote_pb.
 // up once. A remote-only entry is finished the way completeRemoteOnlyRename
 // finishes a rename: its stamp can already describe the destination (a sync
 // plus remote.uncache in the meantime), and only then is it complete.
-func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, oldDest, dest *remote_pb.RemoteStorageLocation, storageClass string) error {
+func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, oldDest, dest *remote_pb.RemoteStorageLocation, storageClass string, sourceOf func(*filer_pb.Entry, *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation) error {
 	current, _, _, err := filer_pb.GetEntry(context.Background(), filerSource, util.NewFullPath(dir, name))
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return nil
@@ -481,7 +497,7 @@ func uploadCurrentEntry(filerClient filer_pb.FilerClient, filerSource filer_pb.F
 		return nil
 	}
 	if isRemoteOnly(current) {
-		return completeRemoteOnlyRename(filerClient, client, dir, current, oldDest, dest, storageClass)
+		return completeRemoteOnlyRename(filerClient, client, dir, current, sourceOf(current, oldDest), dest, storageClass)
 	}
 	if shouldSendToRemote(current) {
 		glog.V(0).Infof("leaving %s to the rewrite that superseded the rename", remote_storage.FormatLocation(dest))

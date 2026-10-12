@@ -1377,7 +1377,7 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
 		remote := &recordingRemote{}
 		filerClient := &stubFilerClient{entry: current}
-		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, "")
+		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, "", eventSource)
 		if err == nil || !strings.Contains(err.Error(), "neither") {
 			t.Errorf("err = %v, want the lost-content failure", err)
 		}
@@ -1390,7 +1390,7 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
 		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/b.txt": []byte("payload")}}
 		filerClient := &stubFilerClient{entry: current}
-		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, ""); err != nil {
+		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, "", eventSource); err != nil {
 			t.Fatalf("err = %v, want nil: the destination object matches the entry's stamp", err)
 		}
 		if len(remote.writes) != 0 {
@@ -1443,6 +1443,68 @@ func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
 		}
 		if len(remote.deletes) != 0 {
 			t.Errorf("deletes = %+v, want none while the entry reads the source", remote.deletes)
+		}
+	})
+}
+
+// eventSource resolves a rename's source to the event's old key.
+func eventSource(_ *filer_pb.Entry, oldDest *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {
+	return oldDest
+}
+
+func TestRenameOfAPendingEntryFollowsItsSource(t *testing.T) {
+	// A was renamed over B and B over C, both copies failing: C reads A's
+	// object through the marker, and B's key holds the old target's bytes
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+	remoteOnly := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6}
+	pendingC := func() *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "c.jpg",
+			Attributes:  &filer_pb.FuseAttributes{FileSize: 6},
+			RemoteEntry: remoteOnly,
+			Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/a.jpg")},
+		}
+	}
+	event := func(oldName, newName string) *filer_pb.SubscribeMetadataResponse {
+		newEntry := pendingC()
+		newEntry.Name = newName
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory: "/buckets/b",
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: oldName, RemoteEntry: remoteOnly},
+				NewParentPath: "/buckets/b",
+				NewEntry:      newEntry,
+			},
+		}
+	}
+	objects := func() map[string][]byte {
+		return map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b"), "/b/c.jpg": []byte("old-c")}
+	}
+
+	t.Run("the first rename leaves the source to the entry that moved on", func(t *testing.T) {
+		remote := &recordingRemote{objects: objects()}
+		filerClient := &stubFilerClient{} // nothing at b.jpg any more
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event("a.jpg", "b.jpg")); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.deletes) != 0 || len(remote.writes) != 0 {
+			t.Errorf("deletes = %+v, writes = %+v, want neither: c.jpg still reads a.jpg", remote.deletes, remote.writes)
+		}
+	})
+
+	t.Run("the second rename copies from the marker's source", func(t *testing.T) {
+		current := pendingC()
+		remote := &recordingRemote{objects: objects()}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event("b.jpg", "c.jpg")); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.written) != 1 || string(remote.written[0]) != "data-a" {
+			t.Errorf("written = %q, want a.jpg's content", remote.written)
+		}
+		if len(remote.deletes) != 1 || remote.deletes[0].Path != "/b/a.jpg" {
+			t.Errorf("deletes = %+v, want the source once the stamp cleared the marker", remote.deletes)
 		}
 	})
 }
