@@ -650,13 +650,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 		writableVolumeId := vl.writables[(start+i)%lenWriters]
 		volumeLocationList := vl.vid2location[writableVolumeId]
 		for _, dn := range volumeLocationList.list {
-			if option.DataCenter != "" && dn.GetDataCenter().Id() != NodeId(option.DataCenter) {
-				continue
-			}
-			if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
-				continue
-			}
-			if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
+			if !dn.matchesLocation(option) {
 				continue
 			}
 			sample[found] = writableVolumeId
@@ -766,21 +760,36 @@ func (vl *VolumeLayout) ShouldGrowVolumes() bool {
 // how many there are. The fill of a single volume is its tracked effective
 // size over the layout's volume size limit; volumes without a size-tracking
 // entry yet (freshly created, no heartbeat size report so far) count as
-// empty. This lets a caller decide whether to grow proactively on fill level,
-// without listing all volumes to compute the ratio itself.
-func (vl *VolumeLayout) WritableAvgFill() (avgFill float64, writableCount int) {
+// empty. A non-empty location filter in option narrows the measure to
+// writables serving that target, so a targeted grow is not blocked or
+// triggered by fill elsewhere in the layout.
+func (vl *VolumeLayout) WritableAvgFill(option *VolumeGrowOption) (avgFill float64, writableCount int) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	writableCount = len(vl.writables)
-	if writableCount == 0 || vl.volumeSizeLimit == 0 {
-		return 0, writableCount
-	}
 	var total uint64
 	for _, vid := range vl.writables {
+		if option != nil && (option.DataCenter != "" || option.Rack != "" || option.DataNode != "") {
+			matched := false
+			if loc := vl.vid2location[vid]; loc != nil {
+				for _, dn := range loc.list {
+					if dn.matchesLocation(option) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		writableCount++
 		if st := vl.sizeTracking[vid]; st != nil {
 			total += st.effectiveSize
 		}
+	}
+	if writableCount == 0 || vl.volumeSizeLimit == 0 {
+		return 0, writableCount
 	}
 	avgFill = float64(total) / (float64(writableCount) * float64(vl.volumeSizeLimit))
 	return avgFill, writableCount

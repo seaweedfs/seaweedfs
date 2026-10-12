@@ -499,7 +499,7 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 	var avgFill float64
 	var writableCount int
 	if vl := ms.Topo.FindVolumeLayout(req.Collection, replicaPlacement, ttl, types.ToDiskType(req.DiskType)); vl != nil {
-		avgFill, writableCount = vl.WritableAvgFill()
+		avgFill, writableCount = vl.WritableAvgFill(&volumeGrowOption)
 	}
 
 	// Conditional grow: with a threshold set, grow only when the layout's
