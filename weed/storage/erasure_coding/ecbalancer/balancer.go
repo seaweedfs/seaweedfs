@@ -504,10 +504,10 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 	var moves []*move
 	for _, pm := range toMove {
 		hasRoom := func(r string) bool {
-			return r != pm.src.rack && racks[r].freeSlots > 0 &&
+			return r != pm.src.rack && rackFreeForType(racks[r], diskType) > 0 &&
 				(!pm.avoidDataRack || !antiAffinity[r])
 		}
-		rackFree := func(r string) int { return racks[r].freeSlots }
+		rackFree := func(r string) int { return rackFreeForType(racks[r], diskType) }
 		destRack, ok := pickTarget(rackKeys, shardsPerRack, maxPerRack, antiAffinity, hasRoom, withinLimit, rackFree)
 		if !ok && totalCap > 0 && rackShardCount[pm.src.rack] > totalCap {
 			// No rack is under the per-type cap. A shard must not stay on a rack
@@ -521,7 +521,7 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 		if !ok {
 			continue
 		}
-		destNode := pickNodeInRack(racks[destRack], vk, rp)
+		destNode := pickNodeInRack(racks[destRack], vk, rp, diskType)
 		if destNode == nil {
 			continue
 		}
@@ -554,8 +554,45 @@ func balanceShardTypeAcrossRacks(vk volKey, nodes map[string]*Node, racks map[st
 	return moves
 }
 
-func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement) *Node {
-	return pickBestNodeForVolume(sortedNodeSlice(r.nodes), vk, rp)
+func pickNodeInRack(r *rack, vk volKey, rp *super_block.ReplicaPlacement, diskType string) *Node {
+	return pickBestNodeForVolumeOnDisk(sortedNodeSlice(r.nodes), vk, rp, diskType)
+}
+
+// pickBestNodeForVolumeOnDisk is pickBestNodeForVolume restricted to nodes with
+// free capacity on a disk of diskType, so the pick cannot land on a node whose
+// room sits on another type.
+func pickBestNodeForVolumeOnDisk(nodes []*Node, vk volKey, rp *super_block.ReplicaPlacement, diskType string) *Node {
+	eligible := make([]*Node, 0, len(nodes))
+	for _, node := range nodes {
+		if freeSlotsForType(node, diskType) > 0 {
+			eligible = append(eligible, node)
+		}
+	}
+	return pickBestNodeForVolume(eligible, vk, rp)
+}
+
+// freeSlotsForType is the node's free EC slots usable by diskType. Per-disk
+// metadata is authoritative when present; without it the node's aggregate
+// stands in so the volume server's own disk selection can place the shard.
+func freeSlotsForType(n *Node, diskType string) int {
+	if len(n.disks) == 0 {
+		return n.freeSlots
+	}
+	free := 0
+	for _, d := range n.disks {
+		if d.freeSlots > 0 && (diskType == "" || d.diskType == diskType) {
+			free += d.freeSlots
+		}
+	}
+	return free
+}
+
+func rackFreeForType(r *rack, diskType string) int {
+	free := 0
+	for _, n := range r.nodes {
+		free += freeSlotsForType(n, diskType)
+	}
+	return free
 }
 
 // pickBestNodeForVolume spreads this volume evenly first. Remainders: higher
@@ -678,19 +715,21 @@ func withinRackMachineSpread(vk volKey, r *rack, machines map[string][]*Node, di
 		// shard (free slot, under SameRackCount), so a capped machine is skipped
 		// rather than settled on and the move dropped.
 		destHost, ok := pickTarget(machineKeys, shardsPerMachine, maxPerMachine, nil,
-			func(h string) bool { return h != pm.src.host && pickBestNodeForVolume(machines[h], vk, rp) != nil },
+			func(h string) bool {
+				return h != pm.src.host && pickBestNodeForVolumeOnDisk(machines[h], vk, rp, diskType) != nil
+			},
 			func(string) bool { return true },
 			func(h string) int {
 				n := 0
 				for _, node := range machines[h] {
-					n += node.freeSlots
+					n += freeSlotsForType(node, diskType)
 				}
 				return n
 			})
 		if !ok {
 			continue
 		}
-		destNode := pickBestNodeForVolume(machines[destHost], vk, rp)
+		destNode := pickBestNodeForVolumeOnDisk(machines[destHost], vk, rp, diskType)
 		if destNode == nil {
 			continue
 		}
@@ -772,14 +811,14 @@ func balanceShardTypeAcrossNodes(vk volKey, r *rack, diskType string, dataShards
 	var moves []*move
 	for _, pm := range toMove {
 		destID, ok := pickTarget(nodeKeys, shardsPerNode, maxPerNode, antiAffinity,
-			func(n string) bool { return n != pm.src.id && r.nodes[n].freeSlots > 0 },
+			func(n string) bool { return n != pm.src.id && freeSlotsForType(r.nodes[n], diskType) > 0 },
 			func(n string) bool {
 				if rp != nil && rp.SameRackCount > 0 {
 					return nodeShardCount[n] < rp.SameRackCount
 				}
 				return true
 			},
-			func(n string) int { return r.nodes[n].freeSlots })
+			func(n string) int { return freeSlotsForType(r.nodes[n], diskType) })
 		if !ok {
 			continue
 		}
