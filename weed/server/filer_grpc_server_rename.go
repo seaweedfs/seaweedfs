@@ -47,6 +47,9 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 
 	defer fs.acquireRenamePathLocks("AtomicRenameEntry", oldParent.Child(req.OldName), newParent.Child(req.NewName))()
 
+	// a SQL store keeps the transaction in the context and refuses calls
+	// through it once committed; the work after the commit uses this one
+	afterCommitCtx := ctx
 	ctx, err := fs.filer.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
@@ -78,7 +81,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	if len(pendingChunkDeletes) > 0 {
 		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
-	fs.finishRemoteCopies(ctx, pendingRemoteCopies)
+	fs.finishRemoteCopies(afterCommitCtx, pendingRemoteCopies)
 	for i := range metadataEvents {
 		event := &metadataEvents[i]
 		for _, pending := range pendingRemoteCopies {
@@ -86,7 +89,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 				event.deleteOldRemote = false
 			}
 		}
-		event.notify(fs.filer, ctx, req.Signatures)
+		event.notify(fs.filer, afterCommitCtx, req.Signatures)
 	}
 
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
@@ -107,6 +110,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 
 	ctx := context.Background()
 
+	afterCommitCtx := ctx
 	ctx, err = fs.filer.BeginTransaction(ctx)
 	if err != nil {
 		return err
@@ -149,7 +153,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	if len(pendingChunkDeletes) > 0 {
 		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
-	fs.finishRemoteCopies(ctx, pendingRemoteCopies)
+	fs.finishRemoteCopies(afterCommitCtx, pendingRemoteCopies)
 	for i := range metadataEvents {
 		event := &metadataEvents[i]
 		for _, pending := range pendingRemoteCopies {
@@ -157,7 +161,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 				event.deleteOldRemote = false
 			}
 		}
-		event.notify(fs.filer, ctx, req.Signatures)
+		event.notify(fs.filer, afterCommitCtx, req.Signatures)
 	}
 
 	return nil

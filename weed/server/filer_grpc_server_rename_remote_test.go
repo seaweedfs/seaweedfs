@@ -315,3 +315,27 @@ func TestDeferredOldKeyDeleteKeepsAKeyRetakenSince(t *testing.T) {
 	event.notify(server.filer, context.Background(), nil)
 	assert.Equal(t, []string{"delete origin/src/a.jpg"}, client.recorded())
 }
+
+func TestRenameRemoteOnlyEntryFinishesAfterTheCommitOnASQLStore(t *testing.T) {
+	// a SQL store keeps the transaction in the context and refuses calls
+	// through it once committed, so the work after the commit must not use it
+	for _, overTarget := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new path", true: "over a remote-only target"}[overTarget], func(t *testing.T) {
+			client := copyingRenameRemoteClient{&renameRemoteClient{}}
+			server, store := newRenameRemoteTestServer(t, client)
+			store.strictTx = true
+			store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101)
+			if overTarget {
+				store.entries["/buckets/b/dst/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/dst/a.jpg", 202)
+			}
+
+			require.NoError(t, renameFile(server, "/buckets/b/src/a.jpg", "/buckets/b/dst/a.jpg"))
+
+			// the copy is stamped and the old key deleted by the filer itself
+			assert.Equal(t, []string{"copy origin/src/a.jpg origin/dst/a.jpg", "delete origin/src/a.jpg"}, client.recorded())
+			dst, err := store.FindEntry(context.Background(), "/buckets/b/dst/a.jpg")
+			require.NoError(t, err)
+			assert.Equal(t, `"copy"`, dst.Remote.RemoteETag)
+		})
+	}
+}
