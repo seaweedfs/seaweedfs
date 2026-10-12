@@ -90,6 +90,71 @@ func TestPickBestDiskOnNode(t *testing.T) {
 	})
 }
 
+func TestPickBestNodeForVolume(t *testing.T) {
+	const vid = uint32(100)
+	vk := volKey{collection: "c", vid: vid}
+
+	t.Run("more free slots wins the count tie", func(t *testing.T) {
+		topo := NewTopology()
+		thin := topo.AddNode("n1", "dc1", "dc1:r1", 5)
+		thin.AddDisk(1, "", 5, 0)
+		fat := topo.AddNode("n2", "dc1", "dc1:r1", 50)
+		fat.AddDisk(1, "", 50, 0)
+		if got := pickBestNodeForVolume([]*Node{thin, fat}, vk, nil); got != fat {
+			t.Errorf("got %v, want n2 (more free slots)", got.id)
+		}
+	})
+
+	t.Run("fewer live shards wins the free tie", func(t *testing.T) {
+		topo := NewTopology()
+		idle := topo.AddNode("n1", "dc1", "dc1:r1", 10)
+		idle.AddDisk(1, "", 10, 0)
+		busy := topo.AddNode("n2", "dc1", "dc1:r1", 10)
+		busy.AddDisk(1, "", 10, 9)
+		if got := pickBestNodeForVolume([]*Node{busy, idle}, vk, nil); got != idle {
+			t.Errorf("got %v, want n1 (fewer live shards)", got.id)
+		}
+	})
+
+	t.Run("volume spread beats free slots", func(t *testing.T) {
+		topo := NewTopology()
+		holding := topo.AddNode("n1", "dc1", "dc1:r1", 100)
+		holding.AddDisk(1, "", 100, 1)
+		holding.AddShards(vid, "c", 1, bits(0))
+		empty := topo.AddNode("n2", "dc1", "dc1:r1", 1)
+		empty.AddDisk(1, "", 1, 0)
+		if got := pickBestNodeForVolume([]*Node{holding, empty}, vk, nil); got != empty {
+			t.Errorf("got %v, want n2 (volume spread first)", got.id)
+		}
+	})
+}
+
+func TestPlanSkipsDestinationsWithoutMatchingDiskType(t *testing.T) {
+	topo := NewTopology()
+	src := topo.AddNode("node1", "dc1", "dc1:rack1", 0)
+	src.AddDisk(0, "ssd", 0, 14)
+	src.AddShards(100, "col1", 0, bits(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))
+	// Aggregate capacity alone would make the hdd-only node look like the
+	// roomiest destination; none of its slots can take an ssd shard.
+	wrong := topo.AddNode("node2", "dc1", "dc1:rack2", 600)
+	wrong.AddDisk(1, "hdd", 600, 0)
+	right := topo.AddNode("node3", "dc1", "dc1:rack3", 600)
+	right.AddDisk(1, "ssd", 600, 0)
+
+	moves := Plan(topo, Options{ImbalanceThreshold: 0.01, DiskType: "ssd", Ratio: ratio(10, 4)})
+	if len(moves) == 0 {
+		t.Fatal("expected moves")
+	}
+	for _, m := range moves {
+		if m.TargetNode == wrong.id {
+			t.Errorf("shard %d targeted the hdd-only node", m.ShardID)
+		}
+		if m.TargetNode == right.id && m.TargetDisk != 1 {
+			t.Errorf("shard %d landed on disk %d, want 1", m.ShardID, m.TargetDisk)
+		}
+	}
+}
+
 func TestPlanSourceDiskAttribution(t *testing.T) {
 	shardsByDisk := map[uint32][]int{0: {0, 1, 2}, 1: {3, 4, 5}, 2: {6, 7}, 3: {8, 9}, 4: {10, 11}, 5: {12, 13}}
 	shardToDisk := map[int]uint32{}

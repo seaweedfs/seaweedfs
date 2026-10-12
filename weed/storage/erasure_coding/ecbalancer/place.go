@@ -389,7 +389,8 @@ func chooseShardDest(vk volKey, sid int, isData bool, dataShards, typeTotal, num
 		return !tried[r] && racks[r].freeSlots > 0 && rackShardRoom(racks[r], vk, eligible, maxPerDisk) > 0
 	}
 	for {
-		destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti, hasRoom, withinLimit)
+		destRack, ok := pickTarget(rackKeys, shardsPerRackType, maxPerRack, anti, hasRoom, withinLimit,
+			func(r string) int { return racks[r].freeSlots })
 		if !ok {
 			return nil, 0, false, false
 		}
@@ -480,15 +481,13 @@ func rackShardRoomUnderRP(r *rack, vk volKey, eligible func(*disk) bool, maxPerD
 // FromActiveTopology keeps all disk types/tags in the snapshot, so without this a
 // node with free volume slots but no eligible disk could be chosen.
 //
-// Among eligible nodes it ranks by fewest shards of the volume per machine, then per
-// node, with free capacity breaking ties. The free-capacity tie-break (not sorted id)
-// keeps the lowest-id machine from winning every volume's first shard against the
-// shared encode snapshot and piling up load.
+// Even first (this volume, machine then node). Machine freeSlots remainder
+// (mFree) was dropped: keep host even (mCount); remainder is disk freeSlots
+// then liveShards so thin disks fill first. SameRackCount / 2+2 unchanged.
 func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement, eligible func(*disk) bool, maxPerDisk int) *Node {
 	machineShards := countShardsByHost(vk, r.nodes)
-	machineFree := freeSlotsByHost(r.nodes)
 	var best *Node
-	var bestMCount, bestMFree, bestNCount, bestNFree int
+	var bestMCount, bestNCount, bestNFree, bestNScore int
 	for _, id := range sortedNodeKeys(r.nodes) {
 		node := r.nodes[id]
 		if nodeShardRoom(node, vk, eligible, maxPerDisk) <= 0 {
@@ -498,22 +497,23 @@ func pickNodeInRackEligible(r *rack, vk volKey, rp *super_block.ReplicaPlacement
 		if rp != nil && rp.SameRackCount > 0 && count >= rp.SameRackCount {
 			continue
 		}
-		mCount, mFree := machineShards[node.host], machineFree[node.host]
+		mCount := machineShards[node.host]
+		nScore := nodeLiveShardCount(node)
 		better := false
 		switch {
 		case best == nil:
 			better = true
 		case mCount != bestMCount:
 			better = mCount < bestMCount
-		case mFree != bestMFree:
-			better = mFree > bestMFree
 		case count != bestNCount:
 			better = count < bestNCount
-		default:
+		case node.freeSlots != bestNFree:
 			better = node.freeSlots > bestNFree
+		default:
+			better = nScore < bestNScore
 		}
 		if better {
-			best, bestMCount, bestMFree, bestNCount, bestNFree = node, mCount, mFree, count, node.freeSlots
+			best, bestMCount, bestNCount, bestNFree, bestNScore = node, mCount, count, node.freeSlots, nScore
 		}
 	}
 	return best
@@ -626,6 +626,9 @@ func (t *Topology) ClearShardAccounting(nodeID, collection string, vid uint32, s
 // distributing the new shards) neither occupy capacity nor skew anti-affinity /
 // per-disk caps during planning. Unlike repair's ClearShardAccounting, it credits
 // freeSlots because the deletes run before the new writes.
+//
+// Other volumes' disk.shardCount stay put: zeroing the snapshot here is what
+// made within-rack Place see a green field and 50/50 the current volume only.
 func (t *Topology) ReleaseVolumeShards(collection string, vid uint32) {
 	vk := volKey{collection: collection, vid: vid}
 	for _, n := range t.nodes {
