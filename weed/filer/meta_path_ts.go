@@ -215,19 +215,24 @@ func (f *Filer) pendingPathTsNs(path util.FullPath) (changeTsNs, deleteTsNs int6
 // recorded event time, or a still-pending one — and fallbackTsNs when none
 // exists. Peers stamp traversal entries with it so a bootstrap subscriber
 // orders each entry on the sender's commit clock rather than the entry's
-// client-settable mtime.
-func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs int64) int64 {
+// client-settable mtime. A store read failure is an error, not a fallback:
+// the mtime it would mint could outdate real commits.
+func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs int64) (int64, error) {
 	if f.Store == nil {
-		return fallbackTsNs
+		return fallbackTsNs, nil
 	}
 	tsNs := fallbackTsNs
-	if recTs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, path)); err == nil && found {
+	recTs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, path))
+	if err != nil {
+		return 0, err
+	}
+	if found {
 		tsNs = recTs
 	}
 	if pendTs, _ := f.pendingPathTsNs(path); pendTs > tsNs {
 		tsNs = pendTs
 	}
-	return tsNs
+	return tsNs, nil
 }
 
 // noteCommittedEvent records the event's commit timestamp for every path it

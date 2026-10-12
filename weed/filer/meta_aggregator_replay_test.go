@@ -637,18 +637,18 @@ func TestCommitTsNsPrefersRecordAndPending(t *testing.T) {
 	f := newReplayTestFiler(store)
 	path := util.NewFullPath("/dir", "file")
 
-	if got := f.CommitTsNs(context.Background(), path, 7); got != 7 {
-		t.Fatalf("no record: CommitTsNs = %d, want fallback 7", got)
+	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 7 {
+		t.Fatalf("no record: CommitTsNs = %d, %v; want fallback 7", got, err)
 	}
 	f.notePathChange(path, 50, false)
-	if got := f.CommitTsNs(context.Background(), path, 7); got != 50 {
-		t.Fatalf("recorded: CommitTsNs = %d, want 50", got)
+	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 50 {
+		t.Fatalf("recorded: CommitTsNs = %d, %v; want 50", got, err)
 	}
 	pending := &metaTsPendingRec{}
 	pending.changeTsNs.Store(80)
 	f.metaTsPending.Store(string(path), pending)
-	if got := f.CommitTsNs(context.Background(), path, 7); got != 80 {
-		t.Fatalf("pending: CommitTsNs = %d, want 80", got)
+	if got, err := f.CommitTsNs(context.Background(), path, 7); err != nil || got != 80 {
+		t.Fatalf("pending: CommitTsNs = %d, %v; want 80", got, err)
 	}
 }
 
