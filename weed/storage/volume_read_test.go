@@ -322,3 +322,125 @@ func TestReadNeedleDataIntoChecksumMismatchHoldsLastPage(t *testing.T) {
 		})
 	}
 }
+
+// With MustMetaOnly set, the payload is skipped whatever the needle's size.
+// This is the option a delete uses. A chunk manifest is the exception: its
+// data is still read, because a delete needs it to find the chunks.
+func TestReadNeedleMustMetaOnly(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	plain := newRandomNeedle(1)
+	plain.Cookie = 0x1234
+	plain.Name = []byte("a.jpg")
+	plain.NameSize = uint8(len(plain.Name))
+	plain.SetHasName()
+	plainOffset, _, _, err := v.writeNeedle2(plain, true, false, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	manifest := newRandomNeedle(2)
+	manifest.SetIsChunkManifest()
+	if _, _, _, err := v.writeNeedle2(manifest, true, false, false); err != nil {
+		t.Fatalf("write chunk manifest: %v", err)
+	}
+
+	read := func(id uint64, option *ReadOption) (*needle.Needle, error) {
+		n := &needle.Needle{Id: types.Uint64ToNeedleId(id)}
+		_, err := v.readNeedle(n, option, nil)
+		return n, err
+	}
+	metaOnly := func() *ReadOption { return &ReadOption{AttemptMetaOnly: true, MustMetaOnly: true} }
+
+	option := metaOnly()
+	got, err := read(1, option)
+	if err != nil {
+		t.Fatalf("metadata read: %v", err)
+	}
+	if !option.IsMetaOnly || len(got.Data) != 0 {
+		t.Errorf("metadata read: IsMetaOnly %v, %d bytes of data", option.IsMetaOnly, len(got.Data))
+	}
+	if got.Cookie != plain.Cookie || got.Size != plain.Size || got.DataSize != plain.DataSize || string(got.Name) != "a.jpg" {
+		t.Errorf("metadata read: cookie %x size %d data size %d name %q", got.Cookie, got.Size, got.DataSize, got.Name)
+	}
+
+	// With AttemptMetaOnly alone, a small needle is still read in full.
+	option = &ReadOption{AttemptMetaOnly: true}
+	if got, err = read(1, option); err != nil || option.IsMetaOnly || !bytes.Equal(got.Data, plain.Data) {
+		t.Errorf("attempted metadata read of a small needle: IsMetaOnly %v, %d bytes, %v", option.IsMetaOnly, len(got.Data), err)
+	}
+
+	option = metaOnly()
+	if got, err = read(2, option); err != nil || option.IsMetaOnly || !bytes.Equal(got.Data, manifest.Data) {
+		t.Errorf("metadata read of a chunk manifest: IsMetaOnly %v, %d bytes, %v", option.IsMetaOnly, len(got.Data), err)
+	}
+
+	// A meta-only read never looks at the payload. Corrupt the payload and
+	// check that only a full read reports the damage.
+	damaged := []byte{^plain.Data[0]}
+	if _, err := v.DataBackend.WriteAt(damaged, int64(plainOffset)+types.NeedleHeaderSize+types.DataSizeSize); err != nil {
+		t.Fatalf("damage needle: %v", err)
+	}
+	if _, err := read(1, nil); !errors.Is(err, needle.ErrorCorrupted) {
+		t.Errorf("full read of a damaged needle: %v, want %v", err, needle.ErrorCorrupted)
+	}
+	if _, err := read(1, metaOnly()); err != nil {
+		t.Errorf("metadata read of a damaged needle: %v", err)
+	}
+}
+
+// A version 1 needle has no data size field and no metadata after its data,
+// so the metadata-only reader cannot parse it. A metadata-only read of a
+// version 1 volume must fall back to a full read instead of failing.
+func TestReadNeedleMetaOnlyVersion1(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	// New volumes are always created with the current version, so switch this
+	// one to version 1 before anything is written to it.
+	v.volumeInfo.Version = uint32(needle.Version1)
+	if v.Version() != needle.Version1 {
+		t.Fatalf("volume version %d, want %d", v.Version(), needle.Version1)
+	}
+
+	// The payload starts with bytes that would be a huge data size if the
+	// metadata-only reader took them for the version 2 data size field.
+	small := &needle.Needle{Id: 1, Cookie: 0x1234, Data: []byte("hello world")}
+	small.Checksum = needle.NewCRC(small.Data)
+	if _, _, _, err := v.writeNeedle2(small, true, false, false); err != nil {
+		t.Fatalf("write small needle: %v", err)
+	}
+	large := &needle.Needle{Id: 2, Cookie: 0x5678, Data: bytes.Repeat([]byte("hello world "), PagedReadLimit/12+1)}
+	large.Checksum = needle.NewCRC(large.Data)
+	if _, _, _, err := v.writeNeedle2(large, true, false, false); err != nil {
+		t.Fatalf("write large needle: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		want   *needle.Needle
+		option *ReadOption
+	}{
+		{"must be metadata only, small needle", small, &ReadOption{AttemptMetaOnly: true, MustMetaOnly: true}},
+		{"must be metadata only, large needle", large, &ReadOption{AttemptMetaOnly: true, MustMetaOnly: true}},
+		{"attempt metadata only, large needle", large, &ReadOption{AttemptMetaOnly: true}},
+	} {
+		got := &needle.Needle{Id: tc.want.Id}
+		if _, err := v.readNeedle(got, tc.option, nil); err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if tc.option.IsMetaOnly || got.Cookie != tc.want.Cookie || !bytes.Equal(got.Data, tc.want.Data) {
+			t.Errorf("%s: IsMetaOnly %v, cookie %x, %d bytes of data", tc.name, tc.option.IsMetaOnly, got.Cookie, len(got.Data))
+		}
+	}
+}

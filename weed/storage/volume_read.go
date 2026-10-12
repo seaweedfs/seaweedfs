@@ -51,7 +51,9 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	if onReadSizeFn != nil {
 		onReadSizeFn(readSize)
 	}
-	if readOption != nil && readOption.AttemptMetaOnly && readSize > PagedReadLimit {
+	// A version 1 needle has no data size field and no metadata after its
+	// data, which ReadNeedleMeta relies on, so it is always read in full.
+	if readOption != nil && readOption.AttemptMetaOnly && v.Version() != needle.Version1 && (readOption.MustMetaOnly || readSize > PagedReadLimit) {
 		readOption.VolumeRevision = v.SuperBlock.CompactionRevision
 		err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
