@@ -100,7 +100,8 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		buf := bufPool.Get().(*bytes.Buffer)
 		buf.Reset()
 		buf.ReadFrom(part1)
-		filerResult, replyerr, _ = fs.saveMetaData(ctx, r, fileName, contentType, so, chunkSize, nil, nil, 0, buf.Bytes())
+		md5bytes = util.Md5(buf.Bytes())
+		filerResult, replyerr, _ = fs.saveMetaData(ctx, r, fileName, contentType, so, chunkSize, md5bytes, nil, int64(buf.Len()), buf.Bytes())
 		bufPool.Put(buf)
 		return
 	}

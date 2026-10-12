@@ -270,6 +270,47 @@ func TestFilerInlineAppendMultipartPostStaysInline(t *testing.T) {
 	}
 }
 
+func TestFilerSaveInsideMultipartPostRecordsSize(t *testing.T) {
+	ctx := context.Background()
+	content := []byte(`{"identities":[]}`)
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	fs := &FilerServer{filer: f, option: &FilerOption{MaxMB: 1}}
+
+	var body bytes.Buffer
+	multipartWriter := multipart.NewWriter(&body)
+	part, err := multipartWriter.CreateFormFile("file", "identity.json")
+	if err != nil {
+		t.Fatalf("create multipart file part: %v", err)
+	}
+	if _, err = part.Write(content); err != nil {
+		t.Fatalf("write multipart file part: %v", err)
+	}
+	if err = multipartWriter.Close(); err != nil {
+		t.Fatalf("close multipart body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", &body)
+	r.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	result, requestMD5, err := fs.doPostAutoChunk(ctx, httptest.NewRecorder(), r, 4, int64(body.Len()), &operation.StorageOption{SaveInside: true})
+	if err != nil {
+		t.Fatalf("POST saveInside: %v", err)
+	}
+	if result == nil || result.Size != int64(len(content)) {
+		t.Fatalf("result = %#v, want size %d", result, len(content))
+	}
+	wantMD5 := md5.Sum(content)
+	if !bytes.Equal(requestMD5, wantMD5[:]) {
+		t.Fatalf("request MD5 = %x, want %x", requestMD5, wantMD5)
+	}
+	saved, err := f.FindEntry(ctx, "/identity.json")
+	if err != nil {
+		t.Fatalf("find saved entry: %v", err)
+	}
+	if !bytes.Equal(saved.Content, content) || saved.FileSize != uint64(len(content)) {
+		t.Fatalf("saved entry: content=%q size=%d, want %q size %d", saved.Content, saved.FileSize, content, len(content))
+	}
+}
+
 func TestFilerInlineOffsetWriteRemainsUnsupported(t *testing.T) {
 	ctx := context.Background()
 	const filePath = "/offset.txt"
