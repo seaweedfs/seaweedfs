@@ -247,9 +247,11 @@ func processDeleteEvent(
 		// The object at the key may have been replaced since the delete: a
 		// rename copies another entry's content onto it, a rewrite uploads
 		// over it. Match the recorded etag before deleting so only the
-		// object the delete meant goes away. A changed object with no entry
-		// at the path is an upload that finished after the delete, and goes.
-		if oldETag := message.OldEntry.GetRemoteEntry().GetRemoteETag(); oldETag != "" && current != nil {
+		// object the delete meant goes away. That holds with no entry at the
+		// path too: a rename copies before its new entry becomes visible. An
+		// upload that finished after the delete is kept the same way, which
+		// leaks that object rather than risking the only copy of a rename.
+		if oldETag := message.OldEntry.GetRemoteEntry().GetRemoteETag(); oldETag != "" {
 			if live, err := client.StatFile(dest); err == nil {
 				if live.RemoteETag != "" && live.RemoteETag != oldETag {
 					glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))

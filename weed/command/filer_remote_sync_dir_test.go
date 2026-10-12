@@ -1053,17 +1053,17 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 		}
 	})
 
-	t.Run("a changed object with no entry at the path still goes", func(t *testing.T) {
-		// an upload that finished after the delete leaves a newer object that
-		// no entry describes; keeping it would leave it on the remote forever
+	t.Run("a changed object with no entry at the path yet is kept", func(t *testing.T) {
+		// a directory rename copies a child onto the key before its new entry
+		// becomes visible; the copy may be the content's only remaining home
 		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
 		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 10}
-		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("late")}, statETag: `"late"`}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("copied")}, statETag: `"copy"`}
 		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
 			t.Fatalf("err = %v", err)
 		}
-		if len(remote.deletes) != 1 {
-			t.Errorf("deletes = %+v, want one", remote.deletes)
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
 		}
 	})
 
