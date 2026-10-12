@@ -156,13 +156,20 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	entryFullPath := dirFullPath.Child(name)
 
-	targetEntry, _, targetCode := wfs.maybeLoadEntry(entryFullPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	targetEntry, _, targetCode := wfs.maybeLoadEntry(ctx, entryFullPath)
+	if targetCode == fuse.EINTR {
+		return targetCode
+	}
 	if targetCode != fuse.OK {
 		targetEntry = nil
 	}
 
 	// POSIX: enforce sticky bit on the parent directory.
-	if dirEntry, _, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode != fuse.OK {
+		return dirCode
+	} else if dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if targetEntry != nil && targetEntry.Attributes != nil {
 			targetUid = targetEntry.Attributes.Uid

@@ -2009,12 +2009,29 @@ impl Volume {
             return Ok(0);
         }
 
-        match self.read_needle_data_at_unlocked(
-            n,
-            nv.offset.to_actual_offset(),
-            read_size,
-            read_option,
-        ) {
+        // With `must_meta_only`, read the header and trailer first. If the
+        // needle is compressed or is a chunk manifest, the caller needs its
+        // data, so read the payload as well.
+        //
+        // A version 1 needle has no data size field and no metadata after its
+        // data, so the metadata reader would treat the whole payload as
+        // metadata. It is always read in full.
+        let offset = nv.offset.to_actual_offset();
+        // `is_meta_only` is a result: clear it in case the option is reused.
+        read_option.is_meta_only = false;
+        let meta_first = read_option.must_meta_only && self.version() != VERSION_1;
+        let mut read = if meta_first {
+            self.read_needle_meta_at_unlocked(n, offset, read_size)
+        } else {
+            Ok(())
+        };
+        if read.is_ok() && meta_first && !n.is_compressed() && !n.is_chunk_manifest() {
+            read_option.is_meta_only = true;
+        }
+        if read.is_ok() && !read_option.is_meta_only {
+            read = self.read_needle_data_at_unlocked(n, offset, read_size, read_option);
+        }
+        match read {
             Ok(()) => self.check_read_write_error(None),
             Err(VolumeError::Io(ref e)) => {
                 self.check_read_write_error(Some(e));
@@ -6078,6 +6095,120 @@ mod tests {
         assert_eq!(count, 11);
         assert_eq!(read_n.data, b"hello world");
         assert_eq!(read_n.cookie, Cookie(0x12345678));
+    }
+
+    /// With `must_meta_only` set, the payload is skipped whatever the needle's
+    /// size. This is the option a delete uses. A chunk manifest is the
+    /// exception: its data is still read, because a delete needs it to find
+    /// the chunks.
+    #[test]
+    fn test_read_needle_must_meta_only() {
+        let tmp = TempDir::new().unwrap();
+        let mut v = make_test_volume(tmp.path().to_str().unwrap());
+        let data = vec![7u8; 8192];
+        let mut plain = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x1234),
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut plain, true, false).unwrap();
+        let mut manifest = Needle {
+            id: NeedleId(2),
+            data: b"{}".to_vec(),
+            data_size: 2,
+            ..Needle::default()
+        };
+        manifest.set_is_chunk_manifest();
+        v.write_needle(&mut manifest, true, false).unwrap();
+
+        let read = |id: u64, read_option: &mut ReadOption| {
+            let mut n = Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            };
+            v.read_needle_with_option(&mut n, read_option).unwrap();
+            n
+        };
+        let meta_only = || ReadOption {
+            attempt_meta_only: true,
+            must_meta_only: true,
+            ..ReadOption::default()
+        };
+
+        let mut read_option = meta_only();
+        let n = read(1, &mut read_option);
+        assert!(read_option.is_meta_only);
+        assert!(n.data.is_empty(), "{} bytes of data read", n.data.len());
+        assert_eq!(n.cookie, Cookie(0x1234));
+        assert_eq!(n.data_size as usize, data.len());
+
+        // Without `must_meta_only`, the needle is read in full.
+        let mut read_option = ReadOption::default();
+        let n = read(1, &mut read_option);
+        assert!(!read_option.is_meta_only);
+        assert_eq!(n.data, data);
+
+        let mut read_option = meta_only();
+        let n = read(2, &mut read_option);
+        assert!(!read_option.is_meta_only);
+        assert_eq!(n.data, b"{}");
+
+        // The option is reused: a metadata-only result from the first read
+        // must not carry over and skip the chunk manifest's data.
+        let mut read_option = meta_only();
+        read(1, &mut read_option);
+        assert!(read_option.is_meta_only);
+        let n = read(2, &mut read_option);
+        assert!(!read_option.is_meta_only);
+        assert_eq!(n.data, b"{}");
+    }
+
+    /// A version 1 needle is a header, the data and a checksum: it has no data
+    /// size field and no metadata after the data, so the metadata reader would
+    /// take the whole payload for metadata and reject anything over 128 KiB.
+    /// A read with `must_meta_only` must fall back to a full read.
+    #[test]
+    fn test_read_needle_must_meta_only_version_1() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let spec = VolumeSpec {
+            version: VERSION_1,
+            ..VolumeSpec::default()
+        };
+        let mut v = Volume::new(dir, dir, VolumeId(1), NeedleMapKind::InMemory, &spec).unwrap();
+        assert_eq!(v.version(), VERSION_1);
+
+        for (id, len) in [(1u64, 11usize), (2, 256 * 1024)] {
+            let data: Vec<u8> = b"hello world".iter().copied().cycle().take(len).collect();
+            // The server only writes version 2 and 3 records, so build the
+            // version 1 record by hand.
+            let size = Size(len as i32);
+            let mut blob = vec![0u8; NEEDLE_HEADER_SIZE];
+            Cookie(0x1234).to_bytes(&mut blob[0..COOKIE_SIZE]);
+            NeedleId(id).to_bytes(&mut blob[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
+            size.to_bytes(&mut blob[COOKIE_SIZE + NEEDLE_ID_SIZE..NEEDLE_HEADER_SIZE]);
+            blob.extend_from_slice(&data);
+            blob.extend_from_slice(&CRC::new(&data).0.to_be_bytes());
+            blob.resize(get_actual_size(size, VERSION_1) as usize, 0);
+            v.write_needle_blob_and_index(NeedleId(id), &blob, size)
+                .unwrap();
+
+            let mut n = Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            };
+            let mut read_option = ReadOption {
+                attempt_meta_only: true,
+                must_meta_only: true,
+                ..ReadOption::default()
+            };
+            v.read_needle_with_option(&mut n, &mut read_option).unwrap();
+            assert!(!read_option.is_meta_only);
+            assert_eq!(n.cookie, Cookie(0x1234));
+            assert_eq!(n.data, data, "{len} byte needle");
+        }
     }
 
     /// A durable write goes down the same path and lands the same data; the

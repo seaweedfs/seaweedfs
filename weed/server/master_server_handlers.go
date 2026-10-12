@@ -190,6 +190,22 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
+	if !ms.Topo.RackExists(option.DataCenter, option.Rack) {
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("rack %v not found in topology", option.Rack),
+		})
+		return
+	}
+	if !ms.Topo.DataNodeExists(option.DataCenter, option.Rack, option.DataNode) {
+		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
+			Error: fmt.Sprintf("data node %v not found in topology", option.DataNode),
+		})
+		return
+	}
+
+	// As in gRPC Assign: the periodic growth scan keeps this layout topped up
+	// to the writableVolumeCount clients ask for. 0 (not sent) is ignored.
+	vl.SetLastGrowCount(uint32(writableVolumeCount))
 
 	for time.Since(startTime) < maxTimeout {
 		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl, expectedDataSize)

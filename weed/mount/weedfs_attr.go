@@ -26,7 +26,9 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	}
 
 	inode := input.NodeId
-	path, fh, entry, status := wfs.maybeReadEntry(inode)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, inode)
 	if status != fuse.OK {
 		return status
 	}
@@ -65,7 +67,9 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	path, fh, entry, status := wfs.maybeReadEntry(ctx, input.NodeId)
 	if status != fuse.OK || entry == nil {
 		return status
 	}
@@ -336,7 +340,7 @@ func (wfs *WFS) touchDirMtimeCtimeBest(dirPath util.FullPath) {
 // touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
 // POSIX requires this when entries are created or removed in the directory.
 func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
-	dirEntry, _, code := wfs.maybeLoadEntry(dirPath)
+	dirEntry, _, code := wfs.maybeLoadEntry(context.Background(), dirPath)
 	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
 		return
 	}

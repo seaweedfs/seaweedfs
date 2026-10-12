@@ -2430,8 +2430,10 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 	// Apply S3 passthrough headers from query parameters
 	// AWS S3 supports overriding response headers via query parameters like:
 	// ?response-cache-control=no-cache&response-content-type=application/json
-	// This allows presigned URLs to control how browsers handle the downloaded content
-	if r != nil {
+	// This allows presigned URLs to control how browsers handle the downloaded content.
+	// AWS requires the request to be signed; anonymous requests must not influence
+	// how the stored object is served.
+	if r != nil && getRequestAuthType(r) != authTypeAnonymous {
 		for queryParam, headerValue := range r.URL.Query() {
 			if normalizedHeader, ok := s3_constants.PassThroughHeaders[strings.ToLower(queryParam)]; ok && len(headerValue) > 0 && headerValue[0] != "" {
 				w.Header().Set(normalizedHeader, headerValue[0])

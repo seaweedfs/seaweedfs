@@ -95,6 +95,41 @@ jobs:
           grep -A 5 "^          lifecycle:" /tmp/s3-rollout.yaml | grep -q -- "- sleep"
           echo "S3 rollout settings render correctly"
 
+          echo "=== Testing the S3 config checksum is stable across renders ==="
+          # s3-secret.yaml keeps its generated keys with lookup. Hashing the rendered
+          # Secret drew new keys for the checksum whenever lookup found nothing (on
+          # install), so the first upgrade changed the checksum and restarted the
+          # filer and S3 pods although nothing had changed.
+          s3_checksum() {  # <template> <helm args...>: the checksum/s3config of one workload
+            local template=$1; shift
+            local sum
+            sum=$(helm template test $CHART_DIR --show-only "$template" "$@" \
+              | grep 'checksum/s3config:' | awk '{print $2}')
+            test -n "$sum" || { echo "no checksum/s3config in $template" >&2; return 1; }
+            echo "$sum"
+          }
+          s3_auth_args=(--set s3.enabled=true --set s3.enableAuth=true)
+          s3_sum=$(s3_checksum templates/s3/s3-deployment.yaml "${s3_auth_args[@]}")
+          filer_sum=$(s3_checksum templates/filer/filer-statefulset.yaml "${s3_auth_args[@]}")
+          test "$s3_sum" = "$filer_sum"   # one Secret, one checksum
+          test "$s3_sum" = "$(s3_checksum templates/s3/s3-deployment.yaml "${s3_auth_args[@]}")"
+          s3_creds_sum=$(s3_checksum templates/s3/s3-deployment.yaml "${s3_auth_args[@]}" \
+            --set s3.credentials.admin.accessKey=a --set s3.credentials.admin.secretKey=b)
+          test "$s3_sum" != "$s3_creds_sum"
+          filer_audit_sum=$(s3_checksum templates/filer/filer-statefulset.yaml "${s3_auth_args[@]}" \
+            --set-json 'filer.s3.auditLogConfig={"fluent_port":24224}')
+          test "$filer_sum" != "$filer_audit_sum"
+          # Settings the Secret does not read must not restart the S3 and filer pods.
+          test "$filer_sum" = "$(s3_checksum templates/filer/filer-statefulset.yaml "${s3_auth_args[@]}" \
+            --set s3.replicas=3 --set s3.resources.limits.cpu=1)"
+          all_in_one_args=(--set allInOne.enabled=true --set allInOne.s3.enabled=true --set allInOne.s3.enableAuth=true)
+          aio_sum=$(s3_checksum templates/all-in-one/all-in-one-deployment.yaml "${all_in_one_args[@]}")
+          test "$aio_sum" = "$(s3_checksum templates/all-in-one/all-in-one-deployment.yaml "${all_in_one_args[@]}")"
+          aio_creds_sum=$(s3_checksum templates/all-in-one/all-in-one-deployment.yaml "${all_in_one_args[@]}" \
+            --set s3.credentials.admin.accessKey=a --set s3.credentials.admin.secretKey=b)
+          test "$aio_sum" != "$aio_creds_sum"
+          echo "S3 config checksum is stable and follows only what the S3 Secret reads"
+
           echo "=== Testing S3 credentials from an existing secret ==="
           credential_args=(
             --set s3.credentials.admin.existingSecret=minio-root

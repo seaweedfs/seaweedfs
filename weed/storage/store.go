@@ -34,7 +34,12 @@ const (
 
 type ReadOption struct {
 	// request
-	ReadDeleted     bool
+	ReadDeleted bool
+	// AttemptMetaOnly alone skips the payload only for needles larger than
+	// PagedReadLimit. Setting MustMetaOnly as well skips it at any size.
+	// A compressed needle or a chunk manifest is always read in full, because
+	// the caller needs its data. After the read, IsMetaOnly reports whether
+	// the payload was skipped.
 	AttemptMetaOnly bool
 	MustMetaOnly    bool
 	// response

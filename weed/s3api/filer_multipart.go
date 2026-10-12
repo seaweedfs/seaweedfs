@@ -110,6 +110,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		if input.ContentType != nil {
 			entry.Attributes.Mime = *input.ContentType
 		}
+		applyPutObjectACL(r, entry)
 
 		// Prepare and apply encryption configuration within directory creation
 		// This ensures encryption resources are only allocated if directory creation succeeds

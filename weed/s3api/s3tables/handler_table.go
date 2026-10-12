@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -100,7 +101,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -233,7 +234,7 @@ func (h *S3TablesHandler) handleRegisterTable(w http.ResponseWriter, r *http.Req
 	}
 	bucketName, namespaceName, tableName := target.bucketName, target.namespaceName, target.tableName
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -996,6 +997,26 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			// still a live catalog entry. Only this table's authorization was
 			// checked; a decoupled location has had its catalog attributes
 			// stripped, so a surviving marker means the path belongs elsewhere.
+			// The marker lives on the entry's name path, so ancestors of the
+			// data path are checked as well: a location inside another table's
+			// directory resolves above any marker the data path itself would
+			// carry.
+			for dir := path.Dir(dataPath); dir != GetTableBucketPath(bucketName) && strings.HasPrefix(dir, GetTableBucketPath(bucketName)+"/"); dir = path.Dir(dir) {
+				ancestor, lookupErr := h.lookupEntry(r.Context(), client, dir)
+				if lookupErr != nil {
+					if errors.Is(lookupErr, filer_pb.ErrNotFound) {
+						continue
+					}
+					return fmt.Errorf("refusing to delete table %s: cannot read data path %q: %w", tableName, dataPath, lookupErr)
+				}
+				if _, ok := ancestor.Extended[ExtendedKeyEntryType]; ok {
+					return fmt.Errorf("refusing to delete table %s: data path %q is inside another catalog entry", tableName, dataPath)
+				}
+				var ownerMeta tableMetadataInternal
+				if data := ancestor.Extended[ExtendedKeyMetadata]; json.Unmarshal(data, &ownerMeta) == nil && ownerMeta.Name != "" {
+					return fmt.Errorf("refusing to delete table %s: data path %q is inside another catalog entry", tableName, dataPath)
+				}
+			}
 			switch _, markerErr := h.getExtendedAttribute(r.Context(), client, dataPath, ExtendedKeyMetadata); {
 			case markerErr == nil:
 				return fmt.Errorf("refusing to delete table %s: data path %q is another catalog entry", tableName, dataPath)
@@ -1494,7 +1515,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName); err != nil {
+	if err := ValidateMetadataLocation(req.MetadataLocation, bucketName, namespaceName); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}

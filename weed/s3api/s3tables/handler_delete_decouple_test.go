@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"path"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
@@ -119,4 +120,51 @@ func TestDeleteTableRefusesLiveSiblingDataPath(t *testing.T) {
 		"the targeted table's catalog entry must survive")
 	assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t"), "data"),
 		"the targeted table's data must survive")
+}
+
+// A location inside another table's directory carries no catalog marker of its
+// own — the marker lives on the name path. Dropping a table whose
+// MetadataLocation resolves into nsa/vtab/data must be refused by the ancestor
+// check, or the victim's marker-less data subdirectory is purged wholesale.
+func TestDeleteTableRefusesNestedSiblingDataPath(t *testing.T) {
+	fs, m := startRenameManager(t)
+
+	nsaMeta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"nsa"}, OwnerAccountID: DefaultAccountID})
+	fs.Put(GetTableBucketPath(renameTestBucket), "nsa", map[string][]byte{ExtendedKeyMetadata: nsaMeta})
+
+	victimMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "vtab",
+		Namespace:        "nsa",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/nsa/vtab/metadata/v1.metadata.json",
+	})
+	victimTablePath := GetTablePath(renameTestBucket, "nsa", "vtab")
+	fs.Put(GetNamespacePath(renameTestBucket, "nsa"), "vtab", map[string][]byte{
+		ExtendedKeyMetadata:  victimMeta,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+	})
+	fs.Put(victimTablePath, "data", nil)
+	fs.Put(path.Join(victimTablePath, "data"), "important-0001.parquet", nil)
+
+	evilMeta, _ := json.Marshal(tableMetadataInternal{
+		Name:             "evil",
+		Namespace:        "attackerns2",
+		Format:           "ICEBERG",
+		OwnerAccountID:   DefaultAccountID,
+		MetadataLocation: "s3://" + renameTestBucket + "/nsa/vtab/data/metadata/v1.metadata.json",
+	})
+	nsMeta, _ := json.Marshal(namespaceMetadata{Namespace: []string{"attackerns2"}, OwnerAccountID: DefaultAccountID})
+	fs.Put(GetTableBucketPath(renameTestBucket), "attackerns2", map[string][]byte{ExtendedKeyMetadata: nsMeta})
+	fs.Put(GetNamespacePath(renameTestBucket, "attackerns2"), "evil", map[string][]byte{
+		ExtendedKeyMetadata:  evilMeta,
+		ExtendedKeyEntryType: []byte(EntryTypeTable),
+	})
+
+	require.Error(t, runDeleteTable(t, m, fs, "attackerns2", "evil"))
+
+	assert.NotNil(t, fs.Get(path.Join(victimTablePath, "data"), "important-0001.parquet"),
+		"data inside another table's directory must survive")
+	assert.NotNil(t, fs.Get(GetNamespacePath(renameTestBucket, "nsa"), "vtab"),
+		"the victim table's catalog entry must survive")
 }

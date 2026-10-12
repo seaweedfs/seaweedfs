@@ -65,7 +65,9 @@ import (
 */
 func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut) (status fuse.Status) {
 	var fileHandle *FileHandle
-	fileHandle, status = wfs.AcquireHandle(in.NodeId, in.Flags, in.Uid, in.Gid)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	fileHandle, status = wfs.AcquireHandle(ctx, in.NodeId, in.Flags, in.Uid, in.Gid)
 	if status == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
 		out.OpenFlags = 0

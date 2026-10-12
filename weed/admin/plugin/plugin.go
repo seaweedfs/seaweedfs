@@ -14,6 +14,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -267,6 +269,10 @@ func (r *Plugin) Shutdown() {
 }
 
 func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStreamServer) error {
+	if err := security.CheckGrpcAdminPeer(stream.Context(), security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+		return err
+	}
+
 	first, err := stream.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {

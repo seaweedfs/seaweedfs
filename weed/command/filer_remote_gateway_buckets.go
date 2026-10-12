@@ -359,7 +359,14 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 					if message.OldEntry.RemoteEntry != nil && filer.IsSameData(message.OldEntry, message.NewEntry) {
 						glog.V(2).Infof("update meta: %+v", resp)
 						oldDest := toRemoteStorageLocation(oldBucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), oldRemoteStorageMountLocation)
-						return client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry)
+						if err := client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry); err != nil {
+							return err
+						}
+						remoteEntry := message.NewEntry.RemoteEntry
+						if remoteEntry == nil {
+							remoteEntry = message.OldEntry.RemoteEntry
+						}
+						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 					} else {
 						newDest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), newRemoteStorageMountLocation)
 						remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewParentPath, message.NewEntry, newDest)

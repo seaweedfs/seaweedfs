@@ -20,7 +20,7 @@ func (wfs *WFS) streamCreateEntry(ctx context.Context, req *filer_pb.CreateEntry
 		glog.V(1).Infof("streamCreateEntry %s/%s: stream failed, falling back to unary: %v", req.Directory, req.Entry.Name, err)
 	}
 	var resp *filer_pb.CreateEntryResponse
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		var err error
 		resp, err = filer_pb.CreateEntryWithResponse(ctx, client, req)
 		return err
@@ -39,7 +39,7 @@ func (wfs *WFS) streamUpdateEntry(ctx context.Context, req *filer_pb.UpdateEntry
 		glog.V(1).Infof("streamUpdateEntry %s/%s: stream failed, falling back to unary: %v", req.Directory, req.Entry.Name, err)
 	}
 	var resp *filer_pb.UpdateEntryResponse
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		var err error
 		resp, err = client.UpdateEntry(ctx, req)
 		return err
@@ -58,7 +58,7 @@ func (wfs *WFS) streamDeleteEntry(ctx context.Context, req *filer_pb.DeleteEntry
 		glog.V(1).Infof("streamDeleteEntry %s/%s: stream failed, falling back to unary: %v", req.Directory, req.Name, err)
 	}
 	var resp *filer_pb.DeleteEntryResponse
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		var err error
 		resp, err = client.DeleteEntry(ctx, req)
 		if err != nil {

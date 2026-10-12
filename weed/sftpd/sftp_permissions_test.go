@@ -1,9 +1,19 @@
 package sftpd
 
 import (
+	"context"
+	"net"
+	"os"
 	"testing"
 
+	"github.com/pkg/sftp"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func TestPathWithin(t *testing.T) {
@@ -61,4 +71,101 @@ func TestIsPathInHomeDirectorySiblingPrefix(t *testing.T) {
 	if isPathInHomeDirectory(u, "/tenants/alice-archive/secret.txt") {
 		t.Error("home /tenants/alice must not match sibling /tenants/alice-archive")
 	}
+}
+
+// newFileWriter must honor a more specific ACL on the target file, not just
+// the parent directory's: a file the user cannot write stays read-only even
+// in a writable directory. Missing paths still defer to the parent directory.
+func TestNewFileWriterChecksTargetFile(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/":                       {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home":                   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: 0755}},
+		"/home/alice":             {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/locked.txt":  {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		"/home/alice/ok.txt":      {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		"/home/alice/nested":      {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/nested/ok.f": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice":            {"readwrite"},
+				"/home/alice/locked.txt": {"read"},
+			},
+		},
+	}
+
+	write := func(path string) error {
+		w, err := fs.newFileWriter(&sftp.Request{Filepath: path})
+		if writer, ok := w.(*SeaweedSftpFileWriter); ok {
+			_ = os.Remove(writer.tmpFile.Name())
+			_ = writer.tmpFile.Close()
+		}
+		return err
+	}
+
+	if err := write("/locked.txt"); err == nil {
+		t.Error("expected write denial on a file with an explicit read-only ACL")
+	}
+	if err := write("/ok.txt"); err != nil {
+		t.Errorf("expected write under the directory ACL, got %v", err)
+	}
+	if err := write("/new.txt"); err != nil {
+		t.Errorf("expected write on a new file in a writable dir, got %v", err)
+	}
+	if err := write("/nested/new.txt"); err != nil {
+		t.Errorf("expected write on a new file under a missing intermediate check, got %v", err)
+	}
+	delete(filer.entries, "/home/alice/nested")
+	delete(filer.entries, "/home/alice/nested/ok.f")
+	if err := write("/gone/deeper.txt"); err != nil {
+		t.Errorf("expected write when ancestors resolve to the writable dir, got %v", err)
+	}
+}
+
+func TestCheckFilePermissionMissingAncestorsTerminates(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user:           &user.User{Username: "alice", Uid: 1000, HomeDir: "/home/alice"},
+	}
+	if err := fs.checkFilePermission("/a/b/c", "write"); err == nil {
+		t.Error("expected denial when no ancestor exists")
+	}
+}
+
+type permissionTestFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	entries map[string]*filer_pb.Entry
+}
+
+func (f *permissionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if entry, ok := f.entries[req.Directory+"/"+req.Name]; ok {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
+	}
+	return nil, status.Error(codes.NotFound, "no entry is found")
 }

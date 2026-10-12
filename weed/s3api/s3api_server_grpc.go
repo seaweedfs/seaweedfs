@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"context"
-	"net"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -10,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -56,46 +54,7 @@ func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
 }
 
 func checkLocalPeer(ctx context.Context) error {
-	if ctx == nil {
-		return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
-	}
-	pr, ok := peer.FromContext(ctx)
-	if !ok {
-		return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
-	}
-	if _, isUnix := pr.Addr.(*net.UnixAddr); isUnix {
-		return nil
-	}
-	var ip net.IP
-	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
-		ip = tcpAddr.IP
-	} else if h, _, err := net.SplitHostPort(pr.Addr.String()); err == nil {
-		ip = net.ParseIP(h)
-	} else {
-		ip = net.ParseIP(pr.Addr.String())
-	}
-	if ip != nil && (ip.IsLoopback() || isLocalAddress(ip)) {
-		return nil
-	}
-	glog.V(1).Infof("rejected unauthenticated admin gRPC call from %s: no jwt.filer_signing.key configured", pr.Addr)
-	return status.Error(codes.Unauthenticated, "admin gRPC calls require jwt.filer_signing.key or a local client")
-}
-
-// isLocalAddress enumerates interfaces per call: only reachable for
-// non-loopback TCP peers on the no-key admin path, which is low-volume —
-// and a cached set would keep trusting an address after it is removed from
-// the host and reassigned.
-func isLocalAddress(ip net.IP) bool {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return false
-	}
-	for _, a := range addrs {
-		if ipNet, ok := a.(*net.IPNet); ok && ipNet.IP.Equal(ip) {
-			return true
-		}
-	}
-	return false
+	return security.CheckLocalGrpcPeer(ctx)
 }
 
 func (s3a *S3ApiServer) PutIdentity(ctx context.Context, req *iam_pb.PutIdentityRequest) (*iam_pb.PutIdentityResponse, error) {

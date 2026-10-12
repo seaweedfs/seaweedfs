@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -28,7 +30,28 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 		glog.V(1).Infof("Rename %s => %s: stream failed, falling back to unary: %v", oldPath, newPath, err)
 	}
 	return wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
-		stream, streamErr := client.StreamRenameEntry(ctx, request)
+		// The stream is dedicated to this attempt, so cancelling its context
+		// abandons just this rename. Bound the silence between events the way
+		// the mutation mux does: a filer that accepts the stream then stalls
+		// must not hold the failover walk hostage, but a long rename that
+		// keeps sending events may take as long as it needs. Local event
+		// work is not wire silence — a directory rename can spend longer
+		// than the bound migrating a child's DLM lock — so the timer defers
+		// while the handler runs instead of cancelling a healthy stream.
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		var inHandler atomic.Bool
+		var silence *time.Timer
+		silence = time.AfterFunc(wfs.filerRPCWait(), func() {
+			if inHandler.Load() {
+				silence.Reset(wfs.filerRPCWait())
+				return
+			}
+			cancel()
+		})
+		defer silence.Stop()
+
+		stream, streamErr := client.StreamRenameEntry(streamCtx, request)
 		if streamErr != nil {
 			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
 		}
@@ -38,11 +61,20 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 				if recvErr == io.EOF {
 					break
 				}
+				if ctx.Err() == nil && streamCtx.Err() != nil {
+					return fmt.Errorf("dir Rename %s => %s: no event for %s", oldPath, newPath, wfs.filerRPCWait())
+				}
 				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
 			}
-			if err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock); err != nil {
+			inHandler.Store(true)
+			err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock)
+			inHandler.Store(false)
+			if err != nil {
 				return err
 			}
+			// The event just proved the filer alive; the bound covers the
+			// wait for the next one, not the whole rename.
+			silence.Reset(wfs.filerRPCWait())
 		}
 		return nil
 	})
@@ -199,13 +231,17 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 	newPath := newDir.Child(newName)
 
-	oldEntry, _, status := wfs.maybeLoadEntry(oldPath)
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+	oldEntry, _, status := wfs.maybeLoadEntry(ctx, oldPath)
 	if status != fuse.OK {
 		return status
 	}
 
 	// POSIX: enforce sticky bit on the source directory.
-	if oldDirEntry, _, dirCode := wfs.maybeLoadEntry(oldDir); dirCode == fuse.OK && oldDirEntry != nil && oldDirEntry.Attributes != nil {
+	if oldDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, oldDir); dirCode != fuse.OK {
+		return dirCode
+	} else if oldDirEntry != nil && oldDirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if oldEntry != nil && oldEntry.Attributes != nil {
 			targetUid = oldEntry.Attributes.Uid
@@ -217,14 +253,18 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	var newEntry *filer_pb.Entry
 	if in.Flags != RenameNoReplace {
-		if loaded, _, newStatus := wfs.maybeLoadEntry(newPath); newStatus == fuse.OK {
+		if loaded, _, newStatus := wfs.maybeLoadEntry(ctx, newPath); newStatus == fuse.OK {
 			newEntry = loaded
+		} else if newStatus != fuse.ENOENT {
+			return newStatus
 		}
 	}
 
 	// POSIX: enforce sticky bit on the destination directory when replacing an existing entry.
 	if newEntry != nil {
-		if newDirEntry, _, dirCode := wfs.maybeLoadEntry(newDir); dirCode == fuse.OK && newDirEntry != nil && newDirEntry.Attributes != nil {
+		if newDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, newDir); dirCode != fuse.OK {
+			return dirCode
+		} else if newDirEntry != nil && newDirEntry.Attributes != nil {
 			targetUid := uint32(0)
 			if newEntry.Attributes != nil {
 				targetUid = newEntry.Attributes.Uid
@@ -359,13 +399,13 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		// skips old-path metadata creation (which would re-insert the
 		// renamed entry into the meta cache after rename events clean it up).
 		wfs.fhMap.MarkInodeRenamed(sourceInode)
-		wfs.waitForPendingAsyncFlush(sourceInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), sourceInode)
 	} else if oldEntry != nil && oldEntry.Attributes != nil && oldEntry.Attributes.Inode != 0 {
 		// GetInode failed (Forget already removed the mapping), but the
 		// entry's stored inode can still identify pending async flushes.
 		sourceInode = oldEntry.Attributes.Inode
 		wfs.fhMap.MarkInodeRenamed(sourceInode)
-		wfs.waitForPendingAsyncFlush(sourceInode)
+		wfs.waitForPendingAsyncFlush(context.Background(), sourceInode)
 	}
 
 	// Replacing the destination deletes what it held, so a handle still open
@@ -385,7 +425,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			// belongs to the destination as it stands, and one that runs
 			// marked is skipped and takes its handle with it, past the reach
 			// of the restore below.
-			wfs.waitForPendingAsyncFlush(targetInode)
+			wfs.waitForPendingAsyncFlush(context.Background(), targetInode)
 			epoch := wfs.markHandleDeleted(targetInode)
 			// A rename that does not happen leaves the destination where it
 			// was, so its handle has to go back to writing that name.
@@ -406,8 +446,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		Signatures:   []int32{wfs.signature},
 	}
 
-	ctx := context.Background()
-	err := wfs.doRename(ctx, request, oldPath, newPath, &newPathLock)
+	err := wfs.doRename(context.Background(), request, oldPath, newPath, &newPathLock)
 	if err != nil {
 		glog.V(0).Infof("Rename %s => %s: %v", oldPath, newPath, err)
 		// Map error strings to FUSE status codes. String matching is used

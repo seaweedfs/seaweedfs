@@ -238,3 +238,30 @@ func TestRemoteObjectETagFallback(t *testing.T) {
 		t.Errorf("local object ETag = %q", got)
 	}
 }
+
+func TestSetResponseHeadersIgnoresOverridesForAnonymous(t *testing.T) {
+	s3a := &S3ApiServer{}
+	entry := &filer_pb.Entry{
+		Name:       "object",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 8, Mtime: 100},
+	}
+	for name, url := range map[string]string{
+		"anonymous": "/bucket/object?response-content-type=text%2Fhtml&response-content-disposition=inline",
+		"signed":    "/bucket/object?response-content-type=text%2Fhtml&response-content-disposition=inline",
+		"presigned": "/bucket/object?X-Amz-Credential=k&response-content-type=text%2Fhtml",
+	} {
+		r := httptest.NewRequest(http.MethodGet, url, nil)
+		if name == "signed" {
+			r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=k")
+		}
+		w := httptest.NewRecorder()
+		s3a.setResponseHeaders(w, r, entry, 8)
+		if name == "anonymous" {
+			if got := w.Header().Get("Content-Disposition"); got != "" {
+				t.Errorf("anonymous request must not override response headers, got Content-Disposition %q", got)
+			}
+		} else if got := w.Header().Get("Content-Type"); got != "text/html" {
+			t.Errorf("%s request should apply response overrides, got Content-Type %q", name, got)
+		}
+	}
+}

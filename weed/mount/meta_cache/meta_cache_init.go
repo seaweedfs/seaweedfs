@@ -26,7 +26,7 @@ func (e *DirectoryTooLargeError) Error() string {
 
 // maxCacheableEntries is the directory size above which a build gives up, or 0
 // to cache everything.
-func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, maxCacheableEntries int) error {
+func EnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, maxCacheableEntries int) error {
 	// Collect all uncached paths from target directory up to root
 	var uncachedPaths []util.FullPath
 	currentPath := dirPath
@@ -61,7 +61,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 	// Fetch all uncached directories in parallel with context for cancellation
 	// If one fetch fails, cancel the others to avoid unnecessary work
-	g, ctx := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(ctx)
 	for _, p := range uncachedPaths {
 		path := p // capture for closure
 		g.Go(func() error {
@@ -91,8 +91,10 @@ const (
 )
 
 func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath, maxCacheableEntries int) error {
-	// Use singleflight to deduplicate concurrent requests for the same path
-	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
+	// Use singleflight to deduplicate concurrent requests for the same path.
+	// DoChan so a canceled request stops waiting even when another request
+	// owns the in-flight build.
+	resultCh := mc.visitGroup.DoChan(string(path), func() (interface{}, error) {
 		// Check for cancellation before starting
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -222,7 +224,12 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		cleanupDone = true // Prevent deferred cleanup after successful publish
 		return nil, nil
 	})
-	return err
+	select {
+	case result := <-resultCh:
+		return result.Err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func IsHiddenSystemEntry(dir, name string) bool {

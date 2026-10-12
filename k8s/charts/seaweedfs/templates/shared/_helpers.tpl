@@ -692,3 +692,28 @@ Usage: {{ include "seaweedfs.service.loadBalancerFields" .Values.s3.service }}
 {{- end }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Checksum that restarts the S3-serving pods when the generated S3 config changes. It hashes the
+values s3-secret.yaml is built from, not the rendered Secret: that template keeps its generated keys
+with lookup, so rendering it again for a checksum draws new random keys whenever lookup finds
+nothing (on install), and the first upgrade then changed the checksum and restarted the pods
+although nothing had changed. Only the values that template reads are hashed, so scaling the S3
+gateway or changing its resources does not restart the filer. Keep this list in step with
+s3-secret.yaml.
+Keys the chart generated are not part of it. Deleting the Secret to rotate them regenerates them on
+the next upgrade without restarting the pods; restart them afterwards (kubectl rollout restart).
+Folding the stored keys in would bring the first-upgrade restart back, since lookup finds nothing
+on install.
+*/}}
+{{- define "seaweedfs.s3.configChecksum" -}}
+{{- dict
+  "secretName" (include "seaweedfs.fullname" .)
+  "enabled" (list .Values.s3.enabled .Values.filer.s3.enabled .Values.allInOne.enabled .Values.allInOne.s3.enabled)
+  "enableAuth" (list .Values.s3.enableAuth .Values.filer.s3.enableAuth .Values.allInOne.s3.enableAuth)
+  "existingConfigSecret" (list .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret .Values.allInOne.s3.existingConfigSecret)
+  "credentials" .Values.s3.credentials
+  "legacySecret" (list .Values.s3.reuseLegacySecret .Values.s3.legacySecretName)
+  "auditLogConfig" (list .Values.s3.auditLogConfig .Values.filer.s3.auditLogConfig)
+  | toJson | sha256sum -}}
+{{- end -}}

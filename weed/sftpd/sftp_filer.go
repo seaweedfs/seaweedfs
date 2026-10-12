@@ -150,9 +150,8 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, _ := util.FullPath(absPath).DirAndName()
-	if err := fs.checkFilePermission(dir, "write"); err != nil {
-		glog.Errorf("Permission denied for %s", dir)
+	if err := fs.checkFilePermission(absPath, "write"); err != nil {
+		glog.Errorf("Permission denied for %s", absPath)
 		return nil, err
 	}
 	// Create a temporary file to buffer writes

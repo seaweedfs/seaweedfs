@@ -382,8 +382,10 @@ func (fo *FilerOptions) startFiler() {
 		}
 	}
 
+	announce := make(chan struct{})
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:                   fo.masters,
+		AnnounceCh:                announce,
 		FilerGroup:                *fo.filerGroup,
 		Collection:                *fo.collection,
 		DefaultReplication:        *fo.defaultReplicaPlacement,
@@ -499,6 +501,13 @@ func (fo *FilerOptions) startFiler() {
 	}
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
+
+	// Membership in the master's filer list routes S3 and peer traffic here;
+	// announce once the gRPC port is serving and the metadata replay has
+	// caught up with the peers found at startup, so the filer does not take
+	// lock-ring ownership while a peer's older events can still land on top
+	// of its fresh writes. A cap bounds the wait.
+	go fs.AnnounceOnceCaughtUp(announce, time.Now())
 
 	// Helper to gracefully stop the gRPC server, waiting for active RPCs.
 	gracefulTimeout := fo.gracefulStopTimeout

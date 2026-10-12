@@ -106,7 +106,7 @@ func TestLinkReportsKernelNodeIdWhenEntryHasNoPersistedInode(t *testing.T) {
 	if _, status := wfs.inodeToPath.GetPath(sourceInode); status != fuse.OK {
 		t.Fatalf("GetPath(%d) = %v, want OK", sourceInode, status)
 	}
-	linked, _, status := wfs.maybeLoadEntry(sourcePath)
+	linked, _, status := wfs.maybeLoadEntry(context.Background(), sourcePath)
 	if status != fuse.OK {
 		t.Fatalf("reload source: %v", status)
 	}
@@ -229,7 +229,7 @@ func TestLinkSyncsHardLinkSiblingsOnThirdLink(t *testing.T) {
 	// any sibling returns the attributes of the last write to any of them,
 	// synced or not. Feeding the loop an authoritative counter that no other
 	// write has stored is what makes its work visible.
-	authoritative, _, status := wfs.maybeLoadEntry(sourcePath)
+	authoritative, _, status := wfs.maybeLoadEntry(context.Background(), sourcePath)
 	if status != fuse.OK {
 		t.Fatalf("reload source: %v", status)
 	}

@@ -12,6 +12,10 @@ name = "seaweed_worker_core"
 # Helpers the Rust volume server needs as well. A path dependency because
 # the two trees are separate cargo workspaces with no common root manifest.
 seaweed-common = { path = "../../../seaweed-common" }
+# Already in the graph through tonic's `tls-aws-lc` feature; named here so the
+# admin token can sign with the same HMAC the Go worker uses.
+aws-lc-rs = "1"
+base64 = "0.22"
 anyhow.workspace = true
 async-trait.workspace = true
 prost.workspace = true

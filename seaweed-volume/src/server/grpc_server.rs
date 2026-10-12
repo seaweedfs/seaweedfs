@@ -986,7 +986,12 @@ impl VolumeServer for VolumeGrpcService {
                 let original_cookie = n.cookie;
                 if !is_ec_volume {
                     let store = self.state.store.read().unwrap();
-                    match store.read_volume_needle(file_id.volume_id, &mut n) {
+                    let mut read_option = crate::server::handlers::delete_read_option();
+                    match store.read_volume_needle_with_option(
+                        file_id.volume_id,
+                        &mut n,
+                        &mut read_option,
+                    ) {
                         Ok(_) => {}
                         Err(e) => {
                             results.push(volume_server_pb::DeleteResult {
@@ -10995,6 +11000,50 @@ mod tests {
         assert_eq!(resp.results.len(), 1, "{:?}", resp.results);
         let r = &resp.results[0];
         (r.status, r.error.clone())
+    }
+
+    /// A batch delete only needs the needle's cookie, which is stored in the
+    /// header, so it must not read the payload.
+    #[tokio::test]
+    async fn batch_delete_reads_needle_meta_only() {
+        use crate::storage::volume::needle_read_hook;
+        use std::sync::Mutex;
+
+        const ID: u64 = 0x6e7a_0b01;
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let data = vec![7u8; 512 * 1024];
+        let mut n = Needle {
+            id: NeedleId(ID),
+            cookie: Cookie(0x3344),
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .write_volume_needle(VolumeId(1), &mut n, false)
+            .unwrap();
+
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let _hook = needle_read_hook::register(NeedleId(ID), {
+            let reads = reads.clone();
+            move |len| reads.lock().unwrap().push(len)
+        });
+
+        let (status, _) = batch_delete_1(&service, ID, 0x3345, false).await;
+        assert_eq!(status, 400);
+        let (status, error) = batch_delete_1(&service, ID, 0x3344, false).await;
+        assert_eq!(status, 202, "{error}");
+
+        let reads = reads.lock().unwrap().clone();
+        assert!(
+            !reads.is_empty() && reads.iter().all(|&len| len < 4096),
+            "a batch delete must not read the needle's payload ({} bytes): {reads:?}",
+            data.len()
+        );
     }
 
     const GO_EC_NEEDLE_NOT_FOUND: &str =

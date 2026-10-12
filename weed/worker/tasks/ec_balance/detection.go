@@ -3,6 +3,7 @@ package ec_balance
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -186,6 +187,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 
 			for _, dn := range rack.DataNodeInfos {
 				freeSlots := 0
+				freeByType := make(map[string]int)    // disk type -> free EC slots
 				diskTypeOf := make(map[uint32]string) // physical disk_id -> disk type
 				diskShardCount := make(map[uint32]int)
 				fullDiskTypes := make(map[string]bool) // physically near-full, ineligible as a target
@@ -207,6 +209,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 					fs := int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countEcShards(diskInfo.EcShardInfos)
 					if fs > 0 && !fullDiskTypes[diskType] {
 						freeSlots += fs
+						freeByType[diskType] += fs
 					}
 					// Discover physical disks from regular volumes too, so an
 					// EC-empty disk is still a candidate destination.
@@ -234,23 +237,33 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 				// machines, not just nodes (servers on one host are one fault domain).
 				node.SetHost(pb.NewServerAddressFromDataNode(dn).ToHost())
 
-				// Spread the node's free slots only over its non-full disks, so a
-				// physically full disk type doesn't dilute the share the usable disks
-				// advertise (its own disks get 0 below). The total is preserved.
-				nonFullDiskCount := 0
+				// Spread each disk type's free slots over that type's non-full
+				// disks, so a physically full disk type doesn't dilute the share
+				// the usable disks advertise (its own disks get 0 below) and other
+				// types don't inflate it. Ceil division keeps the remainder on the
+				// first disks instead of dropping it.
+				nonFullByType := make(map[string]int)
 				for _, dt := range diskTypeOf {
 					if !fullDiskTypes[dt] {
-						nonFullDiskCount++
+						nonFullByType[dt]++
 					}
 				}
-				perDiskFree := 0
-				if nonFullDiskCount > 0 && freeSlots > 0 {
-					perDiskFree = freeSlots / nonFullDiskCount
+				var diskIDs []uint32
+				for diskID := range diskTypeOf {
+					diskIDs = append(diskIDs, diskID)
 				}
-				for diskID, diskType := range diskTypeOf {
-					diskFree := perDiskFree
-					if fullDiskTypes[diskType] {
-						diskFree = 0
+				slices.Sort(diskIDs)
+				remainingByType := make(map[string]int, len(freeByType))
+				for dt, free := range freeByType {
+					remainingByType[dt] = free
+				}
+				for _, diskID := range diskIDs {
+					diskType := diskTypeOf[diskID]
+					diskFree := 0
+					if count := nonFullByType[diskType]; !fullDiskTypes[diskType] && count > 0 {
+						diskFree = (remainingByType[diskType] + count - 1) / count
+						remainingByType[diskType] -= diskFree
+						nonFullByType[diskType]--
 					}
 					node.AddDisk(diskID, diskType, diskFree, diskShardCount[diskID])
 				}

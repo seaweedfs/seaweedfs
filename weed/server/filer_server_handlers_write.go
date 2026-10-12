@@ -255,7 +255,15 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
+	// The delete and the commit record it emits must serialize with peer
+	// replay of this path, same as the gRPC DeleteEntry handler.
+	fullPath := util.FullPath(objectPath)
+	if fs.entryLockTable != nil {
+		pathLock := fs.entryLockTable.AcquireLock("DeleteHandler", fullPath, util.ExclusiveLock)
+		defer fs.entryLockTable.ReleaseLock(fullPath, pathLock)
+	}
+
+	err = fs.filer.DeleteEntryMetaAndData(context.Background(), fullPath, isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, 0)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		writeJsonError(w, r, http.StatusInternalServerError, err)

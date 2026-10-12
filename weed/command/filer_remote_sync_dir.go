@@ -363,7 +363,10 @@ func processUpdateEvent(
 		}
 		if remoteEntry != nil {
 			glog.V(2).Infof("update meta: %+v", resp)
-			return client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass))
+			if err := client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass)); err != nil {
+				return err
+			}
+			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
 	}
@@ -735,10 +738,12 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return true
 	}
-	if entry.RemoteEntry.RemoteMtime < entry.Attributes.Mtime {
-		return true
+	if entry.RemoteEntry.RemoteMtime != entry.Attributes.Mtime {
+		return entry.RemoteEntry.RemoteMtime < entry.Attributes.Mtime
 	}
-	return false
+	// Equal seconds cannot tell a rewrite from the version already
+	// uploaded; the sync stamp can, the same check remote.uncache uses.
+	return entry.RemoteEntry.LastLocalSyncTsNs < entry.Attributes.Mtime*1e9+int64(entry.Attributes.MtimeNs)
 }
 
 // remoteWriteEntry returns the entry as remote storage should see it: the
@@ -767,6 +772,7 @@ func remoteWriteEntry(entry *filer_pb.Entry, storageClass string) *filer_pb.Entr
 // in the log and stamps the current entry, so the stale stamp is skipped the
 // same way a superseded upload is.
 func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
+	remoteEntry = proto.Clone(remoteEntry).(*filer_pb.RemoteEntry)
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
 	expected := proto.Clone(entry).(*filer_pb.Entry)
 	entry.RemoteEntry = remoteEntry
