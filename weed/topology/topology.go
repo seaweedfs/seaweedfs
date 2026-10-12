@@ -585,6 +585,40 @@ func (t *Topology) DataCenterExists(dcName string) bool {
 	return dcName == "" || t.GetDataCenter(dcName) != nil
 }
 
+func (t *Topology) RackExists(rackName string) bool {
+	if rackName == "" {
+		return true
+	}
+	t.RLock()
+	defer t.RUnlock()
+	for _, c := range t.children {
+		for _, r := range c.Children() {
+			if string(r.Id()) == rackName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (t *Topology) DataNodeExists(nodeId string) bool {
+	if nodeId == "" {
+		return true
+	}
+	t.RLock()
+	defer t.RUnlock()
+	for _, c := range t.children {
+		for _, r := range c.Children() {
+			for _, dn := range r.Children() {
+				if string(dn.Id()) == nodeId {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (t *Topology) GetDataCenter(dcName string) (dc *DataCenter) {
 	t.RLock()
 	defer t.RUnlock()

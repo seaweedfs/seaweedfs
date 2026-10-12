@@ -119,6 +119,31 @@ func TestDirAssignRecordsWritableVolumeCountLikeGrpcAssign(t *testing.T) {
 	}
 }
 
+// An assign naming a placement the topology cannot serve must fail before it
+// records a growth target: the periodic scan drops the requested placement, so
+// the volumes it would keep growing could never serve the requester.
+func TestDirAssignRejectsUnknownPlacementBeforeGrowCount(t *testing.T) {
+	c := newAssignTestCluster(t, 1, "000")
+	c.grow("c", 1)
+	vl := c.layout("c")
+
+	for _, query := range []string{
+		"collection=c&replication=000&writableVolumeCount=30&rack=missing",
+		"collection=c&replication=000&writableVolumeCount=30&dataNode=missing",
+	} {
+		w := httptest.NewRecorder()
+		c.ms.dirAssignHandler(w, httptest.NewRequest(http.MethodGet, "/dir/assign?"+query, nil))
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	}
+	assert.Zero(t, vl.GetLastGrowCount())
+
+	_, err := c.ms.Assign(context.Background(), &master_pb.AssignRequest{
+		Count: 1, Collection: "c", Replication: "000", WritableVolumeCount: 30, Rack: "missing",
+	})
+	assert.Error(t, err)
+	assert.Zero(t, vl.GetLastGrowCount())
+}
+
 // Replays the outage of an HTTP-only writer with writableVolumeCount=30 on a
 // "010" collection across 5 racks. Writes are spread by remaining capacity, so
 // the 30 volumes fill in lockstep. Before the fix the periodic scan only ever
