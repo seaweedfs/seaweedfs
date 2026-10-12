@@ -140,6 +140,12 @@ func (wfs *WFS) invalidateOpenMtimeCache(inode uint64) {
 }
 
 func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
+	// Drop the file description's flock locks first: close() frees them
+	// regardless of how writeback fares, and a flush stuck on an unreachable
+	// filer must not pin a dead holder's lock in the table.
+	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
+		wfs.releaseFlockOwner(in.NodeId, in.LockOwner)
+	}
 	// Flush is usually sent before Release, but the FUSE protocol does not
 	// guarantee it. Route every Release through doFlush so a dirty handle
 	// (e.g. a deferred create with no intervening Flush) is not dropped.
@@ -152,9 +158,6 @@ func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
 		if status := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, allowAsync); status != fuse.OK {
 			glog.Warningf("release fh %d inode %d: fallback flush failed: %v", in.Fh, in.NodeId, status)
 		}
-	}
-	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
-		wfs.releaseFlockOwner(in.NodeId, in.LockOwner)
 	}
 	wfs.ReleaseHandle(FileHandleId(in.Fh))
 }
