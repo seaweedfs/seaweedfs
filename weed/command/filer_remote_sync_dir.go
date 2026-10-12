@@ -399,11 +399,6 @@ func processUpdateEvent(
 			glog.V(0).Infof("keep %s: the pending rename moved on", remote_storage.FormatLocation(oldDest))
 			return nil
 		}
-		// the destination holds its own data now (cached, or rewritten), so a
-		// pending source the old entry read is no longer needed
-		if err := releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry); err != nil {
-			return err
-		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 		if err := client.DeleteFile(oldDest); err != nil {
 			if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
@@ -418,14 +413,43 @@ func processUpdateEvent(
 	if errors.Is(writeErr, errSuperseded) {
 		glog.Errorf("skipping %s: %v", remote_storage.FormatLocation(dest), writeErr)
 		if !proto.Equal(oldDest, dest) {
-			return uploadCurrentEntry(filerClient, filerSource, client, message.NewParentPath, message.NewEntry.Name, oldDest, dest, storageClass, sourceOf)
+			if err := uploadCurrentEntry(filerClient, filerSource, client, message.NewParentPath, message.NewEntry.Name, oldDest, dest, storageClass, sourceOf); err != nil {
+				return err
+			}
+			return releaseRenamedSource(filerSource, client, mountedDir, remoteStorageMountLocation, message)
 		}
 		return nil
 	}
 	if writeErr != nil {
 		return writeErr
 	}
-	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
+	if err := updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry); err != nil {
+		return err
+	}
+	if !proto.Equal(oldDest, dest) {
+		return releaseRenamedSource(filerSource, client, mountedDir, remoteStorageMountLocation, message)
+	}
+	return nil
+}
+
+// releaseRenamedSource releases a pending source the renamed entry's old
+// version read, once the destination holds the content on the remote under
+// its own key: only after the upload and its stamp, which clears the marker,
+// and only if the entry does not read through a marker any more. Released
+// earlier, an upload that fails followed by remote.uncache would leave the
+// entry reading a deleted source.
+func releaseRenamedSource(filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, message *filer_pb.EventNotification) error {
+	if len(message.OldEntry.GetExtended()[filer.ExtRemoteRenameSourceKey]) == 0 {
+		return nil
+	}
+	current, err := currentEntry(filerSource, message.NewParentPath, message.NewEntry.Name)
+	if err != nil {
+		return err
+	}
+	if current != nil && len(current.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+		return nil
+	}
+	return releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry)
 }
 
 // currentEntry returns what the filer holds at dir/name now, nil when the

@@ -684,6 +684,7 @@ type recordingRemote struct {
 	// chunk ids of each written entry: which version of the file went up
 	writtenChunks [][]string
 	deleteErr     error
+	writeErr      error
 	// objects present on the remote, by path: StatFile and ReadFile answer
 	// from it, everything else is ErrRemoteObjectNotFound.
 	objects map[string][]byte
@@ -692,6 +693,9 @@ type recordingRemote struct {
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
+	if r.writeErr != nil {
+		return nil, r.writeErr
+	}
 	r.writes = append(r.writes, loc)
 	var ids []string
 	for _, c := range entry.GetChunks() {
@@ -1566,6 +1570,31 @@ func TestPendingRenameSourceIsReleasedOnlyWhileUnchanged(t *testing.T) {
 		}
 		if got := deletedPaths(remote); !slices.Contains(got, "/b/a.jpg") {
 			t.Errorf("deletes = %v, want the pending source released", got)
+		}
+	})
+
+	t.Run("a cached entry still reading the source keeps it until its upload lands", func(t *testing.T) {
+		// c.jpg was cached through its marker; until the upload is stamped
+		// and the marker cleared, a.jpg is what remote.uncache would fall
+		// back to
+		marked := func() *filer_pb.Entry {
+			return &filer_pb.Entry{Name: "c.jpg", Content: []byte("data-a"), Attributes: &filer_pb.FuseAttributes{FileSize: 6},
+				RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6},
+				Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/a.jpg")}}
+		}
+		for name, writeErr := range map[string]error{"upload fails": errors.New("upload failed"), "stamp does not land": nil} {
+			t.Run(name, func(t *testing.T) {
+				remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b")}, statETag: `"a"`, writeErr: writeErr}
+				event := &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{
+					OldEntry: pendingB(), NewParentPath: "/buckets/b", NewEntry: marked(),
+				}}
+				// the filer keeps the marker: the stub does not store updates
+				filerClient := &pathFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/b/c.jpg": marked()}}
+				_ = processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event)
+				if got := deletedPaths(remote); slices.Contains(got, "/b/a.jpg") {
+					t.Errorf("deletes = %v, want the source kept while the entry reads it", got)
+				}
+			})
 		}
 	})
 
