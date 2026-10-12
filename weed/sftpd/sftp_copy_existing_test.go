@@ -102,14 +102,32 @@ func TestCopyExistingContentFillsSparseGaps(t *testing.T) {
 // A remote-only file has no local chunks: copying nothing would upload an
 // empty replacement on close. Refusing the read keeps the remote object.
 func TestCopyExistingContentRejectsUnreadableEntry(t *testing.T) {
+	remoteOnly := chunkedEntry(0)
+	remoteOnly.RemoteEntry = &filer_pb.RemoteEntry{RemoteSize: 100}
 	entries := map[string]*filer_pb.Entry{
-		"/home/remote.bin": chunkedEntry(42),
+		"/home/remote.bin": remoteOnly,
 	}
 	fs := newCopyTestServer(t, "", entries)
 
 	var dst bytes.Buffer
 	if err := fs.copyExistingContent("/home/remote.bin", &dst); err == nil {
 		t.Fatal("expected refusal when no local bytes exist")
+	}
+}
+
+// A file whose size is all holes still keeps its zeros.
+func TestCopyExistingContentAllHoles(t *testing.T) {
+	entries := map[string]*filer_pb.Entry{
+		"/home/holes.bin": chunkedEntry(10),
+	}
+	fs := newCopyTestServer(t, "", entries)
+
+	var dst bytes.Buffer
+	if err := fs.copyExistingContent("/home/holes.bin", &dst); err != nil {
+		t.Fatalf("all-holes file: %v", err)
+	}
+	if dst.Len() != 10 || !bytes.Equal(dst.Bytes(), make([]byte, 10)) {
+		t.Fatalf("wrote %d bytes, want 10 zeros", dst.Len())
 	}
 }
 

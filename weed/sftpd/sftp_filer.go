@@ -195,15 +195,26 @@ func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {
 		return nil
 	}
 	size := int64(entry.Attributes.FileSize)
+	if remote := entry.GetRemoteEntry(); remote != nil && remote.RemoteSize > size {
+		size = remote.RemoteSize
+	}
 	if size == 0 {
 		return nil
 	}
 	if len(entry.Content) > 0 {
-		_, err := dst.Write(entry.Content)
-		return err
+		if _, err := dst.Write(entry.Content); err != nil {
+			return err
+		}
+		if remaining := size - int64(len(entry.Content)); remaining > 0 {
+			return writeZeros(dst, remaining)
+		}
+		return nil
 	}
 	if len(entry.GetChunks()) == 0 {
-		return fmt.Errorf("existing content of %s is not readable", absPath)
+		if entry.GetRemoteEntry() != nil {
+			return fmt.Errorf("existing content of %s is not readable", absPath)
+		}
+		return writeZeros(dst, size)
 	}
 	streamFn, err := filer.PrepareStreamContent(lookupFileIdFn(filer.LookupFn(fs)), filer.JwtForVolumeServer, entry.GetChunks(), 0, size)
 	if err != nil {
@@ -222,6 +233,22 @@ type lookupFileIdFn wdclient.LookupFileIdFunctionType
 
 func (fn lookupFileIdFn) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
 	return wdclient.LookupFileIdFunctionType(fn)
+}
+
+func writeZeros(w io.Writer, size int64) error {
+	zeros := make([]byte, 8192)
+	for size > 0 {
+		n := int64(len(zeros))
+		if size < n {
+			n = size
+		}
+		written, err := w.Write(zeros[:n])
+		size -= int64(written)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (fs *SftpServer) removeEntry(absPath string) error {
