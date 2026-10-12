@@ -158,7 +158,7 @@ func TestLookupRebuildsExpiredDirectoryCache(t *testing.T) {
 	}
 	startFakeFiler(t, wfs, fake)
 
-	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dir, 0); err != nil {
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, dir, 0); err != nil {
 		t.Fatalf("EnsureVisited: %v", err)
 	}
 	if !wfs.inodeToPath.IsChildrenCached(dir) {
@@ -174,7 +174,7 @@ func TestLookupRebuildsExpiredDirectoryCache(t *testing.T) {
 	lookupCallsBefore := fake.lookupCalls.Load()
 
 	for _, name := range []string{"a", "b", "c"} {
-		entry, _, status := wfs.lookupEntry(dir.Child(name))
+		entry, _, status := wfs.lookupEntry(context.Background(), dir.Child(name))
 		if status != fuse.OK {
 			t.Fatalf("lookupEntry %s: %v", name, status)
 		}
@@ -211,7 +211,7 @@ func TestLookupRebuildDeduplicatesConcurrentRebuilds(t *testing.T) {
 	}
 	startFakeFiler(t, wfs, fake)
 
-	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dir, 0); err != nil {
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, dir, 0); err != nil {
 		t.Fatalf("EnsureVisited: %v", err)
 	}
 	expireDirCache(t, wfs.inodeToPath, dir)
@@ -228,7 +228,7 @@ func TestLookupRebuildDeduplicatesConcurrentRebuilds(t *testing.T) {
 		wg.Add(1)
 		go func(i int, name string) {
 			defer wg.Done()
-			if _, _, status := wfs.lookupEntry(dir.Child(name)); status != fuse.OK {
+			if _, _, status := wfs.lookupEntry(context.Background(), dir.Child(name)); status != fuse.OK {
 				errs[i] = fmt.Errorf("lookupEntry %s: %v", name, status)
 			}
 		}(i, name)
@@ -271,7 +271,7 @@ func TestLookupRebuildCooldownAfterFailure(t *testing.T) {
 	}
 	startFakeFiler(t, wfs, fake)
 
-	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dir, 0); err != nil {
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, dir, 0); err != nil {
 		t.Fatalf("EnsureVisited: %v", err)
 	}
 	expireDirCache(t, wfs.inodeToPath, dir)
@@ -280,7 +280,7 @@ func TestLookupRebuildCooldownAfterFailure(t *testing.T) {
 	fake.listErr = errors.New("persistent listing failure")
 	listCallsBefore := fake.listCalls.Load()
 	lookupCallsBefore := fake.lookupCalls.Load()
-	if entry, _, status := wfs.lookupEntry(dir.Child("a")); status != fuse.OK || entry == nil || entry.Name() != "a" {
+	if entry, _, status := wfs.lookupEntry(context.Background(), dir.Child("a")); status != fuse.OK || entry == nil || entry.Name() != "a" {
 		t.Fatalf("lookupEntry a after failed rebuild: status=%v entry=%v", status, entry)
 	}
 	if got := fake.lookupCalls.Load() - lookupCallsBefore; got != 1 {
@@ -293,7 +293,7 @@ func TestLookupRebuildCooldownAfterFailure(t *testing.T) {
 	// Immediate retry: cooldown suppresses the rebuild, falls through again.
 	listCallsBefore = fake.listCalls.Load()
 	lookupCallsBefore = fake.lookupCalls.Load()
-	if _, _, status := wfs.lookupEntry(dir.Child("a")); status != fuse.OK {
+	if _, _, status := wfs.lookupEntry(context.Background(), dir.Child("a")); status != fuse.OK {
 		t.Fatalf("second lookupEntry a: %v", status)
 	}
 	if got := fake.listCalls.Load() - listCallsBefore; got != 0 {
@@ -308,7 +308,7 @@ func TestLookupRebuildCooldownAfterFailure(t *testing.T) {
 	advanceRebuildAttempt(t, wfs.inodeToPath, dir, expiredDirRebuildCooldown+time.Second)
 	listCallsBefore = fake.listCalls.Load()
 	lookupCallsBefore = fake.lookupCalls.Load()
-	if _, _, status := wfs.lookupEntry(dir.Child("a")); status != fuse.OK {
+	if _, _, status := wfs.lookupEntry(context.Background(), dir.Child("a")); status != fuse.OK {
 		t.Fatalf("third lookupEntry a: %v", status)
 	}
 	if got := fake.listCalls.Load() - listCallsBefore; got != 1 {

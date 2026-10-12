@@ -502,12 +502,30 @@ func (wfs *WFS) Init(server *fuse.Server) {
 	wfs.fuseServer = server
 }
 
+// ctxFromCancel bridges a FUSE request's interrupt channel into a context so
+// metadata lookups can abandon a stalled filer call when the kernel has given
+// up on the operation.
+func ctxFromCancel(cancel <-chan struct{}) (context.Context, context.CancelFunc) {
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	if cancel == nil {
+		return ctx, cancelFunc
+	}
+	go func() {
+		select {
+		case <-cancel:
+			cancelFunc()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancelFunc
+}
+
 // maybeReadEntry resolves an inode to the entry metadata operations act on. An
 // open handle answers ahead of the path: unlink drops the name while the
 // descriptor stays valid, so an unlinked-but-open file returns its handle's
 // entry with an empty path instead of ENOENT. A removed directory has no
 // handle; its remembered entry answers the same way.
-func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {
+func (wfs *WFS) maybeReadEntry(ctx context.Context, inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {
 	var found bool
 	if fh, found = wfs.fhMap.FindFileHandle(inode); found {
 		path, _ = wfs.inodeToPath.GetPath(inode)
@@ -525,7 +543,7 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 		}
 		return
 	}
-	entry, _, status = wfs.maybeLoadEntry(path)
+	entry, _, status = wfs.maybeLoadEntry(ctx, path)
 	return
 }
 
@@ -554,7 +572,7 @@ func (wfs *WFS) isLocalOnlyEntry(entry *filer.Entry) bool {
 
 // maybeLoadEntry returns the entry and the log position it reflects, or a zero
 // position when unknown.
-func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, entryVersion, fuse.Status) {
+func (wfs *WFS) maybeLoadEntry(ctx context.Context, fullpath util.FullPath) (*filer_pb.Entry, entryVersion, fuse.Status) {
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 	_, name := fullpath.DirAndName()
 
@@ -573,7 +591,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, entryVe
 		}, entryVersion{}, fuse.OK
 	}
 
-	entry, version, status := wfs.lookupEntry(fullpath)
+	entry, version, status := wfs.lookupEntry(ctx, fullpath)
 	if status != fuse.OK {
 		return nil, entryVersion{}, status
 	}
@@ -592,7 +610,7 @@ const expiredDirRebuildCooldown = 30 * time.Second
 // local entries do not leak back into lookup results.
 // It also returns the log position the entry reflects: the entry's stored
 // version, the lookup response's, or zero if unknown.
-func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion, fuse.Status) {
+func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer.Entry, entryVersion, fuse.Status) {
 	dir, _ := fullpath.DirAndName()
 	dirPath := util.FullPath(dir)
 
@@ -605,9 +623,11 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 		// flush of the target entry land first so the rebuilt cache does not
 		// capture pre-flush metadata and bypass the wait below.
 		if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
-			wfs.waitForPendingAsyncFlush(inode)
+			if !wfs.waitForPendingAsyncFlush(ctx, inode) {
+				return nil, entryVersion{}, fuse.EINTR
+			}
 		}
-		if err := wfs.ensureDirectoryVisited(dirPath); err != nil {
+		if err := wfs.ensureDirectoryVisited(ctx, dirPath); err != nil {
 			// Record the attempt so the cooldown suppresses repeated rebuilds
 			// while the listing keeps failing; once it elapses a later lookup
 			// retries. Oversized dirs are already marked read-through.
@@ -619,7 +639,7 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	}
 
 	if wfs.metaCache.IsDirectoryCached(dirPath) && wfs.metaCache.IsNameFresh(fullpath) {
-		cachedEntry, cachedVersionTsNs, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
+		cachedEntry, cachedVersionTsNs, cacheErr := wfs.metaCache.FindEntry(ctx, fullpath)
 		if cacheErr != nil && cacheErr != filer_pb.ErrNotFound {
 			glog.Errorf("lookupEntry: cache lookup for %s failed: %v", fullpath, cacheErr)
 			return nil, entryVersion{}, fuse.EIO
@@ -650,7 +670,9 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	// truncate's old size or a write's old chunks. The cache paths above are
 	// already consistent and must not pay this wait.
 	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
-		wfs.waitForPendingAsyncFlush(inode)
+		if !wfs.waitForPendingAsyncFlush(ctx, inode) {
+			return nil, entryVersion{}, fuse.EINTR
+		}
 	}
 
 	// Directory not cached - fetch directly from filer without caching the entire directory.
@@ -658,7 +680,7 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	var entry *filer_pb.Entry
 	var lookupVersion entryVersion
 	lookupDir, lookupName := fullpath.DirAndName()
-	err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: lookupDir,
 			Name:      lookupName,
@@ -671,6 +693,9 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 		return nil
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, entryVersion{}, fuse.EINTR
+		}
 		if err == filer_pb.ErrNotFound {
 			// The entry may exist in the local store from a deferred create
 			// (deferFilerCreate=true) that hasn't been flushed yet. Only trust
@@ -689,7 +714,7 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 				wfs.pendingAsyncFlushMu.Unlock()
 
 				if hasDirtyHandle || hasPendingFlush {
-					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
+					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntry(ctx, fullpath); localErr == nil && localEntry != nil {
 						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
 						return localEntry, entryVersion{tsNs: localVersionTsNs}, fuse.OK
 					}
@@ -723,7 +748,7 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 				// up without -v=4 — and include layer-by-layer state so the
 				// next failed run pinpoints which layer dropped the entry.
 				localPresent := false
-				if localEntry, _, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
+				if localEntry, _, localErr := wfs.metaCache.FindEntry(ctx, fullpath); localErr == nil && localEntry != nil {
 					localPresent = true
 				}
 				glog.Warningf("lookupEntry: filer ErrNotFound for tracked path %s (inode=%d dirtyHandle=%v pendingFlush=%v localCache=%v dirCached=%v) — possible coherence bug",
