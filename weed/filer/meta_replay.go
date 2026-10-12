@@ -129,26 +129,32 @@ func (f *Filer) replayBlockedByLocal(ctx context.Context, path util.FullPath, ts
 // included because the replay check consults ancestor delete records: a
 // local recursive delete or directory rename holds only the ancestor's lock,
 // and without contending on it a replay could reinsert a stale child after
-// its check. The root is never locked — it cannot be deleted, and an
-// exclusive root lock would serialize every replayed event.
+// its check. Ancestors are locked shared — they only need to exclude an
+// exclusive holder, not each other, or every replay under a busy parent
+// would serialize — while a path the event actually changes stays exclusive
+// even when it is also the other path's ancestor. The root is never locked:
+// it cannot be deleted, and a shared root lock would still be excluded by
+// every top-level delete.
 func (f *Filer) lockReplayPaths(oldPath, newPath util.FullPath) func() {
 	lt := f.EntryLockTable
 	if lt == nil {
 		return func() {}
 	}
 	var paths []util.FullPath
-	addWithAncestors := func(p util.FullPath) {
-		for p != "" && p != "/" {
-			paths = append(paths, p)
-			i := strings.LastIndexByte(string(p), '/')
-			if i <= 0 {
-				break
-			}
+	addAncestors := func(p util.FullPath) {
+		for i := strings.LastIndexByte(string(p), '/'); i > 0; i = strings.LastIndexByte(string(p), '/') {
 			p = p[:i]
+			paths = append(paths, p)
 		}
 	}
-	addWithAncestors(oldPath)
-	addWithAncestors(newPath)
+	addAncestors(oldPath)
+	addAncestors(newPath)
+	if oldPath != "" {
+		paths = append(paths, oldPath)
+	}
+	if newPath != "" {
+		paths = append(paths, newPath)
+	}
 	if len(paths) == 0 {
 		return func() {}
 	}
@@ -156,7 +162,11 @@ func (f *Filer) lockReplayPaths(oldPath, newPath util.FullPath) func() {
 	paths = slices.Compact(paths)
 	locks := make([]*util.ActiveLock, len(paths))
 	for i, p := range paths {
-		locks[i] = lt.AcquireLock("MetaReplay", p, util.ExclusiveLock)
+		lockType := util.SharedLock
+		if p == oldPath || p == newPath {
+			lockType = util.ExclusiveLock
+		}
+		locks[i] = lt.AcquireLock("MetaReplay", p, lockType)
 	}
 	return func() {
 		for i := len(paths) - 1; i >= 0; i-- {
