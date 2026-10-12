@@ -115,6 +115,38 @@ func TestCopyExistingContentRejectsUnreadableEntry(t *testing.T) {
 	}
 }
 
+// A locally shortened file still names its older, larger remote object. Once
+// the local entry is newer the remote size is stale: copying must not pad the
+// file back out to it.
+func TestCopyExistingContentIgnoresStaleRemoteSize(t *testing.T) {
+	chunkA := []byte("AAAAAAAAAA")
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/3,01" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(chunkA)
+	}))
+	t.Cleanup(volume.Close)
+
+	entries := map[string]*filer_pb.Entry{
+		"/home/short.bin": {
+			Attributes:  &filer_pb.FuseAttributes{FileSize: 10, Mtime: 200},
+			Chunks:      []*filer_pb.FileChunk{fileChunk("3,01", 0, 10)},
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 100, RemoteMtime: 100},
+		},
+	}
+	fs := newCopyTestServer(t, volume.Listener.Addr().String(), entries)
+
+	var dst bytes.Buffer
+	if err := fs.copyExistingContent("/home/short.bin", &dst); err != nil {
+		t.Fatalf("copyExistingContent: %v", err)
+	}
+	if !bytes.Equal(dst.Bytes(), chunkA) {
+		t.Fatalf("copied %d bytes, want the %d local bytes only", dst.Len(), len(chunkA))
+	}
+}
+
 // A file whose size is all holes still keeps its zeros.
 func TestCopyExistingContentAllHoles(t *testing.T) {
 	entries := map[string]*filer_pb.Entry{

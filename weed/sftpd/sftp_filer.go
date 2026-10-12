@@ -194,9 +194,16 @@ func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {
 	if entry.IsDirectory {
 		return nil
 	}
-	size := int64(entry.Attributes.FileSize)
-	if remote := entry.GetRemoteEntry(); remote != nil && remote.RemoteSize > size {
-		size = remote.RemoteSize
+	size := int64(filer.FileSize(entry))
+	remote := entry.GetRemoteEntry()
+	if len(entry.Content) == 0 && len(entry.GetChunks()) == 0 {
+		if remote != nil && remote.RemoteSize > 0 {
+			return fmt.Errorf("existing content of %s is not readable", absPath)
+		}
+		if size == 0 {
+			return nil
+		}
+		return writeZeros(dst, size)
 	}
 	if size == 0 {
 		return nil
@@ -209,12 +216,6 @@ func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {
 			return writeZeros(dst, remaining)
 		}
 		return nil
-	}
-	if len(entry.GetChunks()) == 0 {
-		if entry.GetRemoteEntry() != nil {
-			return fmt.Errorf("existing content of %s is not readable", absPath)
-		}
-		return writeZeros(dst, size)
 	}
 	streamFn, err := filer.PrepareStreamContent(lookupFileIdFn(filer.LookupFn(fs)), filer.JwtForVolumeServer, entry.GetChunks(), 0, size)
 	if err != nil {
