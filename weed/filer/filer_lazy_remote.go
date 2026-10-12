@@ -21,8 +21,8 @@ type lazyFetchContextKey struct{}
 // maybeLazyFetchFromRemote is called by FindEntry when the store returns no
 // entry for p. If p is under a remote-storage mount, it stats the remote
 // object, builds a filer Entry from the result, and persists it via
-// CreateEntry with SkipCheckParentDirectory so phantom parent directories
-// under the mount are not required.
+// CreateEntry together with its missing parent directories: remote.uncache
+// and cache eviction find entries by walking down from the mount directory.
 //
 // On a CreateEntry failure after a successful StatFile the in-memory entry is
 // still returned (availability over consistency); the singleflight key is
@@ -127,7 +127,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted during remote stat", p)
 			return lazyFetchResult{nil}, nil
 		}
-		saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, true, f.MaxFilenameLength)
+		saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
 			f.lazyFetchGroup.Forget(key)

@@ -375,6 +375,70 @@ func TestMaybeLazyFetchFromRemote_HitsRemoteAndPersists(t *testing.T) {
 	assert.Equal(t, []byte("zstd"), stored.Extended["Content-Encoding"])
 }
 
+func TestMaybeLazyFetchFromRemote_PersistsParentDirectories(t *testing.T) {
+	const storageType = "stub_lazy_parents"
+	stub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 1234},
+		},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "mystore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "mystore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+
+	const filePath = "/buckets/mybucket/a/b/file.bin"
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, 1, stub.statCalls, "parent directories must not be stat'ed on the remote")
+
+	for _, dir := range []string{"/buckets/mybucket/a", "/buckets/mybucket/a/b"} {
+		dirEntry := store.getEntry(dir)
+		require.NotNil(t, dirEntry, "parent %s not persisted", dir)
+		assert.True(t, dirEntry.IsDirectory(), "%s should be a directory", dir)
+	}
+
+	// Once the content is cached, eviction walks down from the mount and must reach it.
+	stored := store.getEntry(filePath)
+	require.NotNil(t, stored)
+	stored.Chunks = []*filer_pb.FileChunk{{FileId: "1,01637037d6", Size: 1234}}
+	stored.Remote.LastLocalSyncTsNs = time.Now().UnixNano()
+	require.NoError(t, store.UpdateEntry(context.Background(), stored))
+
+	evictable := f.ListEvictableRemoteEntries(context.Background(), []util.FullPath{"/buckets/mybucket"}, 0)
+	require.Len(t, evictable, 1)
+	assert.Equal(t, util.FullPath(filePath), evictable[0].FullPath)
+}
+
+func TestIsUnderRemoteMount(t *testing.T) {
+	rs := NewFilerRemoteStorage()
+	rs.mapDirectoryToRemoteStorage("/buckets/mirror", &remote_pb.RemoteStorageLocation{
+		Name:   "mystore",
+		Bucket: "mirror",
+		Path:   "/",
+	})
+	f := newTestFiler(t, newStubFilerStore(), rs)
+
+	for path, want := range map[util.FullPath]bool{
+		"/buckets/mirror":     true,
+		"/buckets/mirror/a/b": true,
+		"/buckets/mirror2/a":  false,
+		"/buckets/local/a":    false,
+	} {
+		assert.Equal(t, want, f.IsUnderRemoteMount(path), path)
+	}
+}
+
 func TestMaybeLazyFetchFromRemote_NotUnderMount(t *testing.T) {
 	rs := NewFilerRemoteStorage()
 	store := newStubFilerStore()

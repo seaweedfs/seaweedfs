@@ -605,6 +605,16 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 // setgid, setuid and sticky, quietly changing group inheritance and delete semantics.
 const restorableModeBits = os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky
 
+// IsUnderRemoteMount reports whether p is a remote mount directory or lies under one.
+func (f *Filer) IsUnderRemoteMount(p util.FullPath) bool {
+	if f.RemoteStorage == nil {
+		return false
+	}
+	// Mount rules are keyed with a trailing slash, so this also matches the mount directory itself.
+	_, remoteLoc := f.RemoteStorage.FindMountDirectory(util.FullPath(string(p) + "/"))
+	return remoteLoc != nil
+}
+
 // DirectoryAttributes reads what a directory would need to be recreated as it is.
 func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) (attrs empty_folder_cleanup.DirectoryAttributes, err error) {
 	entry, err := f.FindEntry(ctx, dirPath)
