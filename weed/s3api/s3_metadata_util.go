@@ -94,18 +94,6 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 		metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(keyMD5)
 	}
 
-	// ACL owner
-	acpOwner := r.Header.Get(s3_constants.ExtAmzOwnerKey)
-	if len(acpOwner) > 0 {
-		metadata[s3_constants.ExtAmzOwnerKey] = []byte(acpOwner)
-	}
-
-	// ACL grants
-	acpGrants := r.Header.Get(s3_constants.ExtAmzAclKey)
-	if len(acpGrants) > 0 {
-		metadata[s3_constants.ExtAmzAclKey] = []byte(acpGrants)
-	}
-
 	return metadata, s3err.ErrNone
 }
 
