@@ -233,6 +233,21 @@ func (f *Filer) DeleteFromRemote(ctx context.Context, entry *Entry) error {
 	return err
 }
 
+// ExtRemoteRenameSourceKey marks a remote-only entry whose rename committed
+// while its copy to the new key was still pending: it holds the path whose
+// object remote-only reads must serve until the copy stamps the entry.
+const ExtRemoteRenameSourceKey = "Seaweed-X-Remote-Rename-Source"
+
+// RemoteReadPath returns the dir and name whose object a remote-only read of
+// entry serves: its own, or the renamed-from path a pending deferred copy
+// still reads.
+func RemoteReadPath(entry *Entry, dir, name string) (string, string) {
+	if src := entry.Extended[ExtRemoteRenameSourceKey]; len(src) > 0 {
+		return util.FullPath(src).DirAndName()
+	}
+	return dir, name
+}
+
 // CopyRemoteOnlyEntry copies the remote object of a renamed entry whose
 // content exists only on the remote to the key of newPath, and returns the
 // RemoteEntry of the copy. The rename deletes the old key along with the old

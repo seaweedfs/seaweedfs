@@ -658,6 +658,7 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 	remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
 	expected := proto.Clone(entry).(*filer_pb.Entry)
 	entry.RemoteEntry = remoteEntry
+	delete(entry.Extended, filer.ExtRemoteRenameSourceKey)
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 			Directory: dir,

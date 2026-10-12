@@ -196,6 +196,7 @@ func (fs *FilerServer) finishRemoteCopies(ctx context.Context, pendings []*pendi
 			continue
 		}
 		entry.Remote = remoteEntry
+		delete(entry.Extended, filer.ExtRemoteRenameSourceKey)
 		if updateErr := fs.filer.UpdateEntry(ctx, entry, entry, false); updateErr != nil {
 			glog.WarningfCtx(ctx, "stamp remote rename copy of %s: %v", pending.newPath, updateErr)
 			pending.failed = true
@@ -393,6 +394,13 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		HardLinkId:      entry.HardLinkId,
 		Remote:          remoteEntry,
 		Quota:           entry.Quota,
+	}
+	if deferredCopy {
+		newEntry.Extended = maps.Clone(newEntry.Extended)
+		if newEntry.Extended == nil {
+			newEntry.Extended = map[string][]byte{}
+		}
+		newEntry.Extended[filer.ExtRemoteRenameSourceKey] = []byte(oldPath)
 	}
 	if skipTargetLookup {
 		if newEntry.FullPath.IsLongerFileName(fs.filer.MaxFilenameLength) {

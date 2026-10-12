@@ -153,6 +153,7 @@ func TestRenameRemoteOnlyEntryOverTargetKeepsTheCopy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(101), dst.Attr.Inode)
 	assert.Equal(t, `"copy"`, dst.Remote.RemoteETag)
+	assert.Empty(t, dst.Extended[filer.ExtRemoteRenameSourceKey])
 }
 
 func TestRenameRemoteOnlyEntryCopyFailureKeepsTheOldObject(t *testing.T) {
@@ -172,6 +173,12 @@ func TestRenameRemoteOnlyEntryCopyFailureKeepsTheOldObject(t *testing.T) {
 	dst, err := store.FindEntry(context.Background(), "/buckets/b/dst/a.jpg")
 	require.NoError(t, err)
 	assert.Equal(t, `"orig"`, dst.Remote.RemoteETag)
+	// reads keep resolving the source's key until the copy stamps the entry:
+	// its own key still holds the target's old object
+	assert.Equal(t, "/buckets/b/src/a.jpg", string(dst.Extended[filer.ExtRemoteRenameSourceKey]))
+	readDir, readName := filer.RemoteReadPath(dst, "/buckets/b/dst", "a.jpg")
+	assert.Equal(t, "/buckets/b/src", readDir)
+	assert.Equal(t, "a.jpg", readName)
 }
 
 func TestRenameRemoteOnlyEntryWithoutCopierIsRefused(t *testing.T) {
