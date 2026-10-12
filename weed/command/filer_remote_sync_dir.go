@@ -236,6 +236,20 @@ func processDeleteEvent(
 	glog.V(2).Infof("delete: %+v", resp)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	if !message.OldEntry.IsDirectory {
+		// The object at the key may have been replaced since the delete: a
+		// rename copies another entry's content onto it, a rewrite uploads
+		// over it. Match the recorded etag before deleting so only the
+		// object the delete meant goes away.
+		if oldETag := message.OldEntry.GetRemoteEntry().GetRemoteETag(); oldETag != "" {
+			if live, err := client.StatFile(dest); err == nil {
+				if live.RemoteETag != "" && live.RemoteETag != oldETag {
+					glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))
+					return nil
+				}
+			} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+				return err
+			}
+		}
 		current, err := currentEntry(filerSource, resp.Directory, message.OldEntry.Name)
 		if err != nil {
 			return err

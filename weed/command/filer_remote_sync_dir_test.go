@@ -686,6 +686,8 @@ type recordingRemote struct {
 	// objects present on the remote, by path: StatFile and ReadFile answer
 	// from it, everything else is ErrRemoteObjectNotFound.
 	objects map[string][]byte
+	// statETag is the ETag StatFile reports for a present object.
+	statETag string
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
@@ -711,7 +713,7 @@ func (r *recordingRemote) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer
 	if !ok {
 		return nil, remote_storage.ErrRemoteObjectNotFound
 	}
-	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body))}, nil
+	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body)), RemoteETag: r.statETag}, nil
 }
 
 func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) ([]byte, error) {
@@ -1033,6 +1035,32 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 		}
 		if len(remote.deletes) != 0 {
 			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("a replaced object is kept", func(t *testing.T) {
+		// the delete recorded the old object's etag; a rename copied another
+		// entry's content onto the key since, and it must not go with it
+		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 10}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("copied")}, statETag: `"copy"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("an unchanged object still goes", func(t *testing.T) {
+		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 10}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("old")}, statETag: `"orig"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 1 {
+			t.Errorf("deletes = %+v, want one", remote.deletes)
 		}
 	})
 
