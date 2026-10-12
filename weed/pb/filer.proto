@@ -714,6 +714,10 @@ message TraverseBfsMetadataRequest {
 message TraverseBfsMetadataResponse {
     string directory = 1;
     Entry entry = 2;
+    // The sender's per-path commit timestamp (see meta_path_ts.go): the newest
+    // event time this filer committed for the path, 0 when unrecorded so
+    // subscribers fall back to the entry's mtime.
+    int64 entry_ts_ns = 3;
 }
 
 message LogEntry {

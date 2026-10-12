@@ -82,6 +82,11 @@ type Filer struct {
 	persistedLogCache             *persistedLogCache
 	metaLogInflight               metaLogInflight
 	remoteTombstones              *remoteDeletionTombstones
+	// EntryLockTable serializes mutations per entry path. The filer server
+	// holds it across local read-modify-write mutations and the meta
+	// aggregator across a replayed peer change's check-and-apply, so the two
+	// cannot interleave on the same path.
+	EntryLockTable *util.LockTable[util.FullPath]
 	// remoteTombstonesDone, when non-nil, is closed once the startup tombstone
 	// rebuild finishes; lazy remote reads wait on it so a pending delete
 	// cannot resurrect in the gap.
@@ -110,6 +115,12 @@ type Filer struct {
 	// overwriting the unread ledger with a partial set.
 	deletionLedgerBlocked atomic.Bool
 	deletionLedgerFlush   chan struct{}
+	// metaTsPending holds per-path commit records whose KV write failed,
+	// keyed by path; ordering reads consult it until the retry lands them
+	// (see meta_path_ts.go). metaTsRepairing marks paths with a live
+	// repair goroutine so failures neither strand a record nor pile on.
+	metaTsPending   sync.Map
+	metaTsRepairing sync.Map
 	// flushCtx is the context metadata-log flushes append under. It stays
 	// live for the process lifetime and is cancelled once during Shutdown,
 	// bounding every retry - in-flight and queued alike - to one deadline.
@@ -133,6 +144,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
 		persistedLogCache:   newPersistedLogCache(persistedLogCacheMaxBytes),
 		remoteTombstones:    newRemoteDeletionTombstones(),
+		EntryLockTable:      util.NewLockTable[util.FullPath](),
 	}
 	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
 	if f.UniqueFilerId < 0 {
@@ -913,6 +925,12 @@ func (f *Filer) Shutdown() {
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	// The final metadata-log flush still needs the store to append its entry.
 	f.LocalMetaLogBuffer.WaitForShutdown()
+	// Stop peer subscriptions and let each persist its last applied offset;
+	// the replay on the next start otherwise resumes from a stale offset and
+	// applies those old events over newer local state.
+	if f.MetaAggregator != nil {
+		f.MetaAggregator.Shutdown()
+	}
 	// Persist the deletion ledger one last time before the store closes, so a
 	// clean shutdown leaves the recovery set exactly consistent with reality.
 	f.snapshotDeletionLedger()

@@ -42,9 +42,14 @@ func (fs *FilerServer) TraverseBfsMetadata(req *filer_pb.TraverseBfsMetadataRequ
 	// the filer on large trees (e.g. during a peer's first-time bootstrap).
 	sendEntry := func(entry *filer.Entry) error {
 		parent, _ := entry.FullPath.DirAndName()
+		entryTsNs, err := fs.filer.CommitTsNs(ctx, entry.FullPath, entry.Mtime.UnixNano())
+		if err != nil {
+			return fmt.Errorf("commit timestamp of %s: %w", entry.FullPath, err)
+		}
 		if err := stream.Send(&filer_pb.TraverseBfsMetadataResponse{
 			Directory: parent,
 			Entry:     entry.ToProtoEntry(),
+			EntryTsNs: entryTsNs,
 		}); err != nil {
 			return fmt.Errorf("send traverse bfs metadata response: %w", err)
 		}

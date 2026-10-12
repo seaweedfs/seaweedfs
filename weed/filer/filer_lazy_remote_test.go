@@ -35,6 +35,7 @@ type stubFilerStore struct {
 	kv              map[string][]byte
 	insertErr       error
 	findErr         error
+	kvPutErr        error
 	kvGetErr        error
 	kvDeleteErr     error
 	kvGetHook       func(key []byte)
@@ -49,6 +50,12 @@ func newStubFilerStore() *stubFilerStore {
 	}
 }
 
+func (s *stubFilerStore) setKvPutErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kvPutErr = err
+}
+
 func (s *stubFilerStore) GetName() string                             { return "stub" }
 func (s *stubFilerStore) Initialize(util.Configuration, string) error { return nil }
 func (s *stubFilerStore) Shutdown()                                   {}
@@ -60,6 +67,9 @@ func (s *stubFilerStore) RollbackTransaction(context.Context) error { return nil
 func (s *stubFilerStore) KvPut(_ context.Context, key []byte, value []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.kvPutErr != nil {
+		return s.kvPutErr
+	}
 	s.kv[string(key)] = append([]byte(nil), value...)
 	return nil
 }

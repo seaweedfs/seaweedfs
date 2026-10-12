@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
@@ -37,8 +38,9 @@ func TestPtrie(t *testing.T) {
 
 type captureTraverseStream struct {
 	grpc.ServerStream
-	ctx     context.Context
-	visited []string
+	ctx       context.Context
+	visited   []string
+	entryTsNs map[string]int64
 }
 
 func (s *captureTraverseStream) Context() context.Context { return s.ctx }
@@ -48,7 +50,12 @@ func (s *captureTraverseStream) Send(resp *filer_pb.TraverseBfsMetadataResponse)
 	if dir != "/" {
 		dir += "/"
 	}
-	s.visited = append(s.visited, dir+resp.Entry.Name)
+	path := dir + resp.Entry.Name
+	s.visited = append(s.visited, path)
+	if s.entryTsNs == nil {
+		s.entryTsNs = make(map[string]int64)
+	}
+	s.entryTsNs[path] = resp.EntryTsNs
 	return nil
 }
 
@@ -88,6 +95,16 @@ func TestTraverseBfsMetadata(t *testing.T) {
 			assert.Truef(t, seen[parent], "parent %s of %s not streamed first", parent, path)
 		}
 		seen[path] = true
+	}
+
+	// Every response carries a commit timestamp for ordering; with no
+	// recorded commit it falls back to the entry's mtime.
+	for path, tsNs := range stream.entryTsNs {
+		if path == "/" {
+			assert.Equal(t, filer.Root.Attr.Mtime.UnixNano(), tsNs)
+			continue
+		}
+		assert.Equalf(t, store.entries[path].Attr.Mtime.UnixNano(), tsNs, "entry_ts_ns for %s", path)
 	}
 }
 

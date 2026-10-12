@@ -63,6 +63,11 @@ type MetaAggregator struct {
 	flushAdvanced         chan struct{}
 	remotePeerArrived     chan struct{}
 	peerWatermarksLock    sync.Mutex
+	peerWg                sync.WaitGroup
+	// stopped is set under peerChansLock by Shutdown; OnPeerUpdate then
+	// rejects adds so no subscription can outlive the shutdown wait and run
+	// against a store Filer.Shutdown has already closed.
+	stopped bool
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
@@ -87,6 +92,13 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 	ma.peerChansLock.Lock()
 	defer ma.peerChansLock.Unlock()
 
+	// After Shutdown the master connection may still deliver an update; a
+	// subscription started now would have no stop signal and could run past
+	// the store close.
+	if ma.stopped {
+		return
+	}
+
 	address := pb.ServerAddress(update.Address)
 	if update.IsAdd {
 		// the peer is already followed, restarting would only lose the events
@@ -102,7 +114,11 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 		// Account for the peer before its stream signals; keep prior values
 		// on reconnect.
 		ma.initPeerWatermark(address)
-		go ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
+		ma.peerWg.Add(1)
+		go func() {
+			defer ma.peerWg.Done()
+			ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
+		}()
 	} else {
 		if prevChan, found := ma.peerChans[address]; found {
 			close(prevChan)
@@ -344,6 +360,42 @@ func (ma *MetaAggregator) HasPeer(address pb.ServerAddress) bool {
 	return false
 }
 
+// Shutdown stops every peer subscription and waits for each to return,
+// letting the deferred offset save persist the last applied position before
+// the store closes. Without it a graceful restart resumes from the last
+// periodically-saved offset — up to a minute stale — and replays those
+// events over newer local state.
+func (ma *MetaAggregator) Shutdown() {
+	ma.peerChansLock.Lock()
+	ma.stopped = true
+	chans := ma.peerChans
+	ma.peerChans = make(map[pb.ServerAddress]chan struct{})
+	for _, stopChan := range chans {
+		close(stopChan)
+	}
+	ma.peerChansLock.Unlock()
+
+	// Wait without a cap: every blocking point in the subscribe loop is
+	// stop-aware, so a peer still running here is genuinely wedged and
+	// returning anyway would let Filer.Shutdown close the store under it and
+	// skip its deferred offset save.
+	done := make(chan struct{})
+	go func() {
+		ma.peerWg.Wait()
+		close(done)
+	}()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			glog.Warningf("meta aggregator shutdown: peer subscriptions still stopping")
+		}
+	}
+}
+
 func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time, stopChan chan struct{}) {
 	lastTsNs := startFrom.UnixNano()
 	for {
@@ -368,7 +420,12 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 		if lastTsNs < nextLastTsNs {
 			lastTsNs = nextLastTsNs
 		}
-		time.Sleep(1733 * time.Millisecond)
+		select {
+		case <-stopChan:
+			glog.V(0).Infof("stop subscribing peer %s meta change", peer)
+			return
+		case <-time.After(1733 * time.Millisecond):
+		}
 	}
 }
 
@@ -384,11 +441,34 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	*/
 
-	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
+	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse) error
 	lastPersistTime := time.Now()
 	lastTsNs := startFrom
+	// replayFloorTsNs is the earliest event this session gave up replaying.
+	// The persisted offset and the reconnect resume point must stay behind
+	// it so the event is redelivered on the next subscribe instead of being
+	// skipped forever.
+	var replayFloorTsNs int64
+	persistableTsNs := func(tsNs int64) int64 {
+		if replayFloorTsNs > 0 && replayFloorTsNs-1 < tsNs {
+			return replayFloorTsNs - 1
+		}
+		return tsNs
+	}
 
-	peerSignature, err := ma.readFilerStoreSignature(peer)
+	// Everything below derives from ctx, cancelled when the peer is removed
+	// or the aggregator shuts down, so no stage can block past its stop.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-stopChan:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	peerSignature, err := ma.readFilerStoreSignature(ctx, peer)
 	if err != nil {
 		return lastTsNs, fmt.Errorf("connecting to peer filer %s: %v", peer, err)
 	}
@@ -408,7 +488,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			// different concept and can be set to arbitrary values.
 			preTraverseTime := time.Now()
 			glog.V(0).Infof("no previous offset for peer %s, starting full metadata sync", peer)
-			if traverseErr := ma.traversePeerMetadata(f, peer); traverseErr != nil {
+			if traverseErr := ma.traversePeerMetadata(ctx, f, peer); traverseErr != nil {
 				return lastTsNs, fmt.Errorf("initial metadata sync from %s: %v", peer, traverseErr)
 			}
 			lastTsNs = preTraverseTime.Add(-time.Minute).UnixNano()
@@ -420,11 +500,12 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			return lastTsNs, fmt.Errorf("read offset for peer %s: %w", peer, err)
 		}
 		defer func(prevTsNs int64) {
-			if lastTsNs != prevTsNs && lastTsNs != lastPersistTime.UnixNano() {
-				if err := ma.updateOffset(f, peer, peerSignature, lastTsNs); err == nil {
-					glog.V(0).Infof("last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
+			saveTsNs := persistableTsNs(lastTsNs)
+			if saveTsNs != prevTsNs && lastTsNs != lastPersistTime.UnixNano() {
+				if err := ma.updateOffset(f, peer, peerSignature, saveTsNs); err == nil {
+					glog.V(0).Infof("last sync time with %s at %v (%d)", peer, time.Unix(0, saveTsNs), saveTsNs)
 				} else {
-					glog.Errorf("failed to save last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
+					glog.Errorf("failed to save last sync time with %s at %v (%d)", peer, time.Unix(0, saveTsNs), saveTsNs)
 				}
 			}
 		}(lastTsNs)
@@ -432,11 +513,23 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		glog.V(0).Infof("follow peer: %v, last %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
 		var counter int64
 		var synced bool
-		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
-			replicateMetadataChange(f.Store, peer, event)
+		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) error {
+			if err := replicateMetadataChange(f, peer, event, stopChan); err != nil {
+				if errors.Is(err, errPeerSubscriptionStopped) {
+					return err
+				}
+				// A failed event becomes a barrier the persisted offset and
+				// the reconnect resume point cannot pass, while the stream
+				// keeps flowing: blocking on an event that can never replay
+				// would stall every later event from this peer.
+				if replayFloorTsNs == 0 || event.TsNs < replayFloorTsNs {
+					replayFloorTsNs = event.TsNs
+				}
+				return nil
+			}
 			counter++
 			if lastPersistTime.Add(time.Minute).Before(time.Now()) {
-				if err := ma.updateOffset(f, peer, peerSignature, event.TsNs); err == nil {
+				if err := ma.updateOffset(f, peer, peerSignature, persistableTsNs(event.TsNs)); err == nil {
 					if event.TsNs < time.Now().Add(-2*time.Minute).UnixNano() {
 						glog.V(0).Infof("sync with %s progressed to: %v %0.2f/sec", peer, time.Unix(0, event.TsNs), float64(counter)/60.0)
 					} else if !synced {
@@ -449,6 +542,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 					glog.V(0).Infof("failed to update offset for %v: %v", peer, err)
 				}
 			}
+			return nil
 		}
 	}
 
@@ -465,7 +559,9 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			return err
 		}
 		if maybeReplicateMetadataChange != nil {
-			maybeReplicateMetadataChange(event)
+			if err := maybeReplicateMetadataChange(event); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -476,17 +572,8 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	glog.V(0).Infof("subscribing remote %s meta change: %v, clientId:%d", peer, time.Unix(0, lastTsNs), ma.filer.UniqueFilerId)
 	err = pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		// Stop the stream promptly on removal; the blocking Recv below would
-		// otherwise only notice when the stream errors on its own.
-		go func() {
-			select {
-			case <-stopChan:
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
+		// ctx is cancelled on stopChan by the watch above; the blocking Recv
+		// below stops promptly on removal or shutdown.
 		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
 		// Construct a log file reader that reads chunks via the peer filer's LookupVolume.
 		lookupFn := LookupFn(filerClient{client})
@@ -511,6 +598,14 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		}
 
 		processOne := func(event *filer_pb.SubscribeMetadataResponse) error {
+			// Bail promptly on stop; a cancelled stream may still deliver
+			// queued events while unwinding, and replaying them now only
+			// delays the offset save the shutdown is waiting on.
+			select {
+			case <-stopChan:
+				return errPeerSubscriptionStopped
+			default:
+			}
 			if err := processEventFn(event); err != nil {
 				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", event, err)
 				return fmt.Errorf("process %v: %w", event, err)
@@ -587,19 +682,37 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			}
 		}
 	})
-	return lastTsNs, err
+	return persistableTsNs(lastTsNs), err
 }
 
 // replicateMetadataChange retries transient Replay failures with bounded
-// backoff. A failure that outlives the retry budget is counted and logged,
-// then skipped: blocking on an event that can never replay would stall every
-// later event from this peer, which is worse than one entry staying stale.
-func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse) {
-	err := util.Retry("replicate metadata change from "+string(peer), func() error {
-		return Replay(store, event)
-	})
-	if err == nil {
-		return
+// backoff and reports the outcome. errPeerSubscriptionStopped is returned
+// when the subscription stops mid-retry so the caller aborts and the offset
+// save keeps the last completed event. A failure that outlives the retry
+// budget is counted and logged, then returned: the caller pins the peer's
+// offset at the event so a restart replays it rather than skipping it.
+func replicateMetadataChange(f *Filer, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse, stopChan <-chan struct{}) error {
+	waitTime := time.Second
+	var err error
+	for waitTime < util.RetryWaitTime {
+		select {
+		case <-stopChan:
+			return errPeerSubscriptionStopped
+		default:
+		}
+		if err = f.Replay(event); err == nil {
+			return nil
+		}
+		if !util.IsTransientError(err) {
+			break
+		}
+		glog.V(0).Infof("retry replicate metadata change from %s: %v", peer, err)
+		select {
+		case <-stopChan:
+			return errPeerSubscriptionStopped
+		case <-time.After(waitTime):
+		}
+		waitTime += waitTime / 2
 	}
 	stats.FilerMetaAggregatorReplayFailures.WithLabelValues(string(peer)).Inc()
 	name := event.GetEventNotification().GetNewEntry().GetName()
@@ -607,15 +720,20 @@ func replicateMetadataChange(store FilerStore, peer pb.ServerAddress, event *fil
 		name = event.GetEventNotification().GetOldEntry().GetName()
 	}
 	glog.Errorf("giving up replicating metadata change from %s for %s/%s (ts=%d): %v", peer, event.Directory, name, event.TsNs, err)
+	return err
 }
+
+// errPeerSubscriptionStopped ends event processing once the subscription's
+// stop channel closed.
+var errPeerSubscriptionStopped = errors.New("peer subscription stopped")
 
 // traversePeerMetadata does a full BFS traversal of a peer filer's metadata
 // and inserts all entries into the local store. This is used when a filer
 // connects to a peer for the first time and needs to bootstrap pre-existing data.
-func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) error {
+// The ctx cancels on the peer's stop channel so a shutdown does not have to
+// out-wait a long traversal.
+func (ma *MetaAggregator) traversePeerMetadata(ctx context.Context, f *Filer, peer pb.ServerAddress) error {
 	return pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		stream, err := client.TraverseBfsMetadata(ctx, &filer_pb.TraverseBfsMetadataRequest{
 			Directory:        "/",
 			ExcludedPrefixes: []string{SystemLogDir},
@@ -635,22 +753,17 @@ func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) 
 			if resp.Entry == nil {
 				continue
 			}
-			fullpath := util.Join(resp.Directory, resp.Entry.Name)
 			entry := FromPbEntry(resp.Directory, resp.Entry)
-			if insertErr := f.Store.InsertEntry(context.Background(), entry); insertErr != nil {
-				// Entry may already exist (root dir, or partial previous bootstrap).
-				existing, findErr := f.Store.FindEntry(context.Background(), entry.FullPath)
-				if findErr != nil {
-					return fmt.Errorf("insert entry %s: %w", fullpath, insertErr)
-				}
-				// Only overwrite if the peer's entry is newer.
-				if entry.Attr.Mtime.After(existing.Attr.Mtime) {
-					if updateErr := f.Store.UpdateEntry(context.Background(), entry); updateErr != nil {
-						return fmt.Errorf("update entry %s: %w", fullpath, updateErr)
-					}
-				} else {
-					glog.V(1).Infof("skip older peer entry %s (peer mtime %v <= local mtime %v)", fullpath, entry.Attr.Mtime, existing.Attr.Mtime)
-				}
+			// Order on the sender's per-path commit timestamp, not the
+			// entry's mtime — mtime is client-settable and does not track
+			// when the peer committed the change. Peers that predate the
+			// field send 0 and fall back to mtime.
+			peerTsNs := resp.EntryTsNs
+			if peerTsNs == 0 {
+				peerTsNs = entry.Attr.Mtime.UnixNano()
+			}
+			if applyErr := f.applyTraversedEntry(ctx, entry, peerTsNs); applyErr != nil {
+				return applyErr
 			}
 			count++
 			if count%10000 == 0 {
@@ -662,9 +775,38 @@ func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) 
 	})
 }
 
-func (ma *MetaAggregator) readFilerStoreSignature(peer pb.ServerAddress) (sig int32, err error) {
+// applyTraversedEntry merges one bootstrap entry under the path's replay
+// locks, keeping local state when its commit is newer than the sender's —
+// most importantly a delete, whose tombstone must not let the bootstrap
+// resurrect the path. An applied entry records the sender's commit time so a
+// later peer replay orders against it rather than the entry's mtime.
+func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs int64) error {
+	unlock := f.lockReplayPaths(entry.FullPath, "")
+	defer unlock()
+	localTsNs, err := f.localCommitTsNs(ctx, entry.FullPath)
+	if err != nil {
+		return fmt.Errorf("check local state for %s: %w", entry.FullPath, err)
+	}
+	if localTsNs >= peerTsNs {
+		return nil
+	}
+	if insertErr := f.Store.InsertEntry(ctx, entry); insertErr != nil {
+		// Entry already exists (root dir, or partial previous bootstrap);
+		// the lock kept the check above current, so the peer commit is newer.
+		if _, findErr := f.Store.FindEntry(ctx, entry.FullPath); findErr != nil {
+			return fmt.Errorf("insert entry %s: %w", entry.FullPath, insertErr)
+		}
+		if updateErr := f.Store.UpdateEntry(ctx, entry); updateErr != nil {
+			return fmt.Errorf("update entry %s: %w", entry.FullPath, updateErr)
+		}
+	}
+	f.notePathChange(entry.FullPath, peerTsNs, false)
+	return nil
+}
+
+func (ma *MetaAggregator) readFilerStoreSignature(ctx context.Context, peer pb.ServerAddress) (sig int32, err error) {
 	err = pb.WithFilerClient(false, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}

@@ -268,6 +268,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
 	glog.V(0).Infof("max_file_name_length %d", maxFilenameLength)
 	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, nil)
+	// Peer metadata replay takes the same per-path locks, so a replayed change
+	// cannot split a local mutation's read-modify-write.
+	fs.entryLockTable = fs.filer.EntryLockTable
 	fs.filer.Cipher = option.Cipher
 	fs.filer.DefaultDiskType = option.DiskType
 	fs.filer.BuildGuardedRemoteClient = BuildGuardedRemoteStorageClient

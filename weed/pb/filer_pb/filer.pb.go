@@ -4777,9 +4777,13 @@ func (x *TraverseBfsMetadataRequest) GetExcludedPrefixes() []string {
 }
 
 type TraverseBfsMetadataResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Directory     string                 `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
-	Entry         *Entry                 `protobuf:"bytes,2,opt,name=entry,proto3" json:"entry,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Directory string                 `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
+	Entry     *Entry                 `protobuf:"bytes,2,opt,name=entry,proto3" json:"entry,omitempty"`
+	// The sender's per-path commit timestamp (see meta_path_ts.go): the newest
+	// event time this filer committed for the path, 0 when unrecorded so
+	// subscribers fall back to the entry's mtime.
+	EntryTsNs     int64 `protobuf:"varint,3,opt,name=entry_ts_ns,json=entryTsNs,proto3" json:"entry_ts_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4826,6 +4830,13 @@ func (x *TraverseBfsMetadataResponse) GetEntry() *Entry {
 		return x.Entry
 	}
 	return nil
+}
+
+func (x *TraverseBfsMetadataResponse) GetEntryTsNs() int64 {
+	if x != nil {
+		return x.EntryTsNs
+	}
+	return 0
 }
 
 type LogEntry struct {
@@ -7688,10 +7699,11 @@ const file_filer_proto_rawDesc = "" +
 	"\bfiler_id\x18\x03 \x01(\tR\afilerId\"g\n" +
 	"\x1aTraverseBfsMetadataRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12+\n" +
-	"\x11excluded_prefixes\x18\x02 \x03(\tR\x10excludedPrefixes\"b\n" +
+	"\x11excluded_prefixes\x18\x02 \x03(\tR\x10excludedPrefixes\"\x82\x01\n" +
 	"\x1bTraverseBfsMetadataResponse\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
-	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\"\x8b\x01\n" +
+	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12\x1e\n" +
+	"\ventry_ts_ns\x18\x03 \x01(\x03R\tentryTsNs\"\x8b\x01\n" +
 	"\bLogEntry\x12\x13\n" +
 	"\x05ts_ns\x18\x01 \x01(\x03R\x04tsNs\x12,\n" +
 	"\x12partition_key_hash\x18\x02 \x01(\x05R\x10partitionKeyHash\x12\x12\n" +

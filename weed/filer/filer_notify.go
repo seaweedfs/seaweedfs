@@ -71,6 +71,10 @@ func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 	}
 
 	f.logMetaEvent(ctx, event)
+	// Record the commit timestamp so a peer replay ordered by the entry lock
+	// this mutation may still be under sees the local change, including as a
+	// tombstone after the entry itself is gone.
+	f.noteCommittedEvent(event)
 	if sink := metadataEventSinkFromContext(ctx); sink != nil {
 		sink.Record(event)
 	}
