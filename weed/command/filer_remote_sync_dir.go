@@ -236,6 +236,12 @@ func processDeleteEvent(
 	glog.V(2).Infof("delete: %+v", resp)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	if !message.OldEntry.IsDirectory {
+		// a deleted entry whose rename copy was still pending read its
+		// content from the source its marker names, which nothing else
+		// releases
+		if err := releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry); err != nil {
+			return err
+		}
 		// The object at the key may have been replaced since the delete: a
 		// rename copies another entry's content onto it, a rewrite uploads
 		// over it, and a copy can land before its entry is visible. Delete
@@ -265,6 +271,41 @@ func processDeleteEvent(
 	}
 	glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
 	return deleteRemoteFile(client, dest)
+}
+
+// releasePendingSource deletes the source a pending-rename marker on entry
+// names, once nothing needs it. The filer never deletes a marked source: a
+// concurrent rename can copy onto that key before its entry is visible. So
+// the object goes only while it is still the one entry's stamp describes, and
+// no remote-only entry holds its path.
+func releasePendingSource(filerSource filer_pb.FilerClient, client remote_storage.RemoteStorageClient, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) error {
+	src := util.FullPath(entry.GetExtended()[filer.ExtRemoteRenameSourceKey])
+	if src == "" || !strings.HasPrefix(string(src), strings.TrimSuffix(mountedDir, "/")+"/") {
+		return nil
+	}
+	srcDest := toRemoteStorageLocation(util.FullPath(mountedDir), src, remoteStorageMountLocation)
+	srcDir, srcName := src.DirAndName()
+	current, err := currentEntry(filerSource, srcDir, srcName)
+	if err != nil {
+		return err
+	}
+	if isRemoteOnly(current) {
+		glog.V(0).Infof("keep %s: a remote-only entry holds the pending rename's source", remote_storage.FormatLocation(srcDest))
+		return nil
+	}
+	live, err := client.StatFile(srcDest)
+	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if stamp := entry.GetRemoteEntry(); !describes(stamp, live) || stamp.RemoteETag != "" && live.RemoteETag == "" {
+		glog.V(0).Infof("keep %s: the pending rename's source changed since", remote_storage.FormatLocation(srcDest))
+		return nil
+	}
+	glog.V(0).Infof("delete %s, the source of a pending rename", remote_storage.FormatLocation(srcDest))
+	return deleteRemoteFile(client, srcDest)
 }
 
 // deleteRemoteFile deletes the object and treats an already-absent object as
@@ -340,7 +381,16 @@ func processUpdateEvent(
 			return err
 		}
 		if isRemoteOnly(current) {
-			return completeRemoteOnlyRename(filerClient, client, message.NewParentPath, current, sourceOf(current, oldDest), dest, storageClass)
+			source := sourceOf(current, oldDest)
+			if err := completeRemoteOnlyRename(filerClient, client, message.NewParentPath, current, source, dest, storageClass); err != nil {
+				return err
+			}
+			// a pending entry the filer copied on this rename leaves the
+			// source its marker named
+			if pending := sourceOf(message.OldEntry, nil); pending != nil && !proto.Equal(pending, source) {
+				return releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry)
+			}
+			return nil
 		}
 		if current == nil && len(message.NewEntry.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
 			// the rename's copy was pending and the entry has moved on: a

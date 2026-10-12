@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1507,4 +1508,77 @@ func TestRenameOfAPendingEntryFollowsItsSource(t *testing.T) {
 			t.Errorf("deletes = %+v, want the source once the stamp cleared the marker", remote.deletes)
 		}
 	})
+}
+
+func TestPendingRenameSourceIsReleasedOnlyWhileUnchanged(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+	// b.jpg's copy failed after it replaced a target: it read a.jpg's object
+	pendingB := func() *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "b.jpg",
+			RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6},
+			Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/a.jpg")},
+		}
+	}
+	deleted := func() *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{OldEntry: pendingB()}}
+	}
+	deletedPaths := func(r *recordingRemote) (paths []string) {
+		for _, d := range r.deletes {
+			paths = append(paths, d.Path)
+		}
+		return
+	}
+
+	t.Run("deleting the pending entry releases its source", func(t *testing.T) {
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a")}, statETag: `"a"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted()); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); !slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the source", got)
+		}
+	})
+
+	t.Run("a source replaced since is kept", func(t *testing.T) {
+		// another rename copied onto a.jpg before its entry became visible
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-d")}, statETag: `"d"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted()); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the replaced source kept", got)
+		}
+	})
+
+	t.Run("a later rename the filer copied releases the source", func(t *testing.T) {
+		// b.jpg was renamed to c.jpg and the filer copied a.jpg there at once
+		copied := &filer_pb.Entry{Name: "c.jpg", Attributes: &filer_pb.FuseAttributes{FileSize: 6}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6}}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b"), "/b/c.jpg": []byte("data-a")}, statETag: `"a"`}
+		event := &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{
+			OldEntry: pendingB(), NewParentPath: "/buckets/b", NewEntry: copied,
+		}}
+		filerClient := &pathFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/b/c.jpg": copied}}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); !slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the pending source released", got)
+		}
+	})
+}
+
+// pathFilerClient serves entries by path; a path it lacks is not found.
+type pathFilerClient struct {
+	stubFilerClient
+	entries map[string]*filer_pb.Entry
+}
+
+func (c *pathFilerClient) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entries[req.Directory+"/"+req.Name]}, nil
+}
+
+func (c *pathFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
 }

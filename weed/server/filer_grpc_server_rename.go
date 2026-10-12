@@ -164,8 +164,6 @@ type metadataEvent struct {
 	// the old entry's remote object is deleted once the rename has committed:
 	// it was copied to the new key, and a rename that fails must not lose it
 	deleteOldRemote bool
-	// the pending source an immediate copy read, released along with it
-	deleteRemoteSource util.FullPath
 }
 
 // pendingRemoteCopy is a remote-only rename over a remote-only target whose
@@ -236,9 +234,6 @@ func applyRemoteCopies(events []metadataEvent, pendings []*pendingRemoteCopy) {
 func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signatures []int32) {
 	if event.deleteOldRemote {
 		deleteRenamedRemoteObject(f, ctx, event.oldEntry)
-	}
-	if event.deleteRemoteSource != "" {
-		deleteRenamedRemoteObject(f, ctx, &filer.Entry{FullPath: event.deleteRemoteSource, Remote: event.oldEntry.Remote})
 	}
 	f.NotifyUpdateEvent(ctx, event.oldEntry, event.newEntry, event.deleteChunks, false, signatures)
 }
@@ -397,7 +392,6 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	}
 
 	// add to new directory
-	var pendingSource util.FullPath
 	newEntry := &filer.Entry{
 		FullPath:        newPath,
 		Attr:            entry.Attr,
@@ -417,10 +411,9 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		}
 		newEntry.Extended[filer.ExtRemoteRenameSourceKey] = []byte(fs.filer.RemoteSourcePath(entry, oldPath))
 	} else if copiedRemote != nil && len(newEntry.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
-		// the copy came from the pending source; the new key holds it now
-		if source := fs.filer.RemoteSourcePath(entry, oldPath); source != oldPath {
-			pendingSource = source
-		}
+		// the copy came from the pending source; the new key holds it now.
+		// The source itself is left to remote.sync, which deletes it only
+		// while it is still the object the rename event recorded
 		newEntry.Extended = maps.Clone(newEntry.Extended)
 		delete(newEntry.Extended, filer.ExtRemoteRenameSourceKey)
 	}
@@ -474,10 +467,9 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		})
 	}
 	*metadataEvents = append(*metadataEvents, metadataEvent{
-		oldEntry:           sourceEntry,
-		newEntry:           newEntry,
-		deleteOldRemote:    copiedRemote != nil || deferredCopy,
-		deleteRemoteSource: pendingSource,
+		oldEntry:        sourceEntry,
+		newEntry:        newEntry,
+		deleteOldRemote: copiedRemote != nil || deferredCopy,
 	})
 	selfEvent := len(*metadataEvents) - 1
 	keepOldRemote := copiedRemote != nil || deferredCopy
