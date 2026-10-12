@@ -115,6 +115,12 @@ type Filer struct {
 	// overwriting the unread ledger with a partial set.
 	deletionLedgerBlocked atomic.Bool
 	deletionLedgerFlush   chan struct{}
+	// metaTsPending holds per-path commit records whose KV write failed,
+	// keyed by path; ordering reads consult it until the retry lands them
+	// (see meta_path_ts.go). metaTsRepairing marks paths with a live
+	// repair goroutine so failures neither strand a record nor pile on.
+	metaTsPending   sync.Map
+	metaTsRepairing sync.Map
 	// flushCtx is the context metadata-log flushes append under. It stays
 	// live for the process lifetime and is cancelled once during Shutdown,
 	// bounding every retry - in-flight and queued alike - to one deadline.

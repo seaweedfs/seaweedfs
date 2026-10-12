@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -65,6 +66,12 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 // The write uses a fresh context: callers notify after CommitTransaction,
 // and SQL stores keep the already-committed *sql.Tx in the request context —
 // a record written through it would fail and the path would lose ordering.
+//
+// A failed write is kept in metaTsPending and retried in the background: the
+// mutation the record orders has already committed, so dropping it would let
+// a stale replayed change overwrite or resurrect the path while the store is
+// unreachable. Ordering reads consult the pending record until the retry
+// lands it.
 func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 	if f.Store == nil {
 		return
@@ -72,20 +79,109 @@ func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 	ctx := context.Background()
 	value := make([]byte, 8)
 	util.Uint64toBytes(value, uint64(tsNs))
-	if err := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value); err != nil {
-		glog.WarningfCtx(ctx, "record meta change time %s: %v", path, err)
-	}
+	tsErr := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value)
+	var delErr error
 	if deleted {
-		if err := f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value); err != nil {
-			glog.WarningfCtx(ctx, "record meta delete time %s: %v", path, err)
+		delErr = f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value)
+	}
+	if tsErr == nil && delErr == nil {
+		return
+	}
+	if tsErr != nil {
+		glog.WarningfCtx(ctx, "record meta change time %s: %v", path, tsErr)
+	}
+	if delErr != nil {
+		glog.WarningfCtx(ctx, "record meta delete time %s: %v", path, delErr)
+	}
+	key := string(path)
+	if cur, loaded := f.metaTsPending.Load(key); loaded {
+		c := cur.(*metaTsPendingRec)
+		if c.tsNs >= tsNs && (!deleted || c.deleted) {
+			return
+		}
+		rec := &metaTsPendingRec{tsNs: max(tsNs, c.tsNs), deleted: deleted || c.deleted}
+		f.metaTsPending.Store(key, rec)
+	} else {
+		f.metaTsPending.Store(key, &metaTsPendingRec{tsNs: tsNs, deleted: deleted})
+	}
+	if _, running := f.metaTsRepairing.LoadOrStore(key, struct{}{}); !running {
+		go f.repairMetaPathTs(path)
+	}
+}
+
+// metaTsPendingRec is a commit record still on its way to the store: tsNs is
+// the newest committed change for the path and deleted says its delete record
+// is also pending.
+type metaTsPendingRec struct {
+	tsNs    int64
+	deleted bool
+}
+
+// repairMetaPathTs retries a pending commit record until it lands. Each pass
+// writes the record the map currently holds, so a merge by a later failure
+// is picked up without another goroutine. The retry is unbounded — the
+// mutation is already committed and only the record preserves its ordering.
+func (f *Filer) repairMetaPathTs(path util.FullPath) {
+	key := string(path)
+	ctx := f.flushCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	defer func() {
+		f.metaTsRepairing.Delete(key)
+		// A failure landing between the last pass and the flag release
+		// still needs a repair pass — unless the retry context is done.
+		if ctx.Err() != nil {
+			return
+		}
+		if _, ok := f.metaTsPending.Load(key); ok {
+			if _, running := f.metaTsRepairing.LoadOrStore(key, struct{}{}); !running {
+				go f.repairMetaPathTs(path)
+			}
+		}
+	}()
+	for {
+		cur, ok := f.metaTsPending.Load(key)
+		if !ok {
+			return
+		}
+		rec := cur.(*metaTsPendingRec)
+		value := make([]byte, 8)
+		util.Uint64toBytes(value, uint64(rec.tsNs))
+		tsErr := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value)
+		var delErr error
+		if rec.deleted {
+			delErr = f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value)
+		}
+		if tsErr == nil && delErr == nil {
+			f.metaTsPending.CompareAndDelete(key, rec)
+			continue
+		}
+		glog.V(0).InfofCtx(ctx, "retry record meta change time %s: %v %v", path, tsErr, delErr)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
 		}
 	}
 }
 
+// pendingPathTsNs returns the newest pending commit timestamp for path and
+// whether a pending delete is among its records.
+func (f *Filer) pendingPathTsNs(path util.FullPath) (tsNs int64, deleted bool) {
+	cur, ok := f.metaTsPending.Load(string(path))
+	if !ok {
+		return 0, false
+	}
+	rec := cur.(*metaTsPendingRec)
+	return rec.tsNs, rec.deleted
+}
+
 // CommitTsNs returns the newest commit timestamp known for path — the
-// recorded event time — and fallbackTsNs when none exists. Peers stamp
-// traversal entries with it so a bootstrap subscriber orders each entry on
-// the sender's commit clock rather than the entry's client-settable mtime.
+// recorded event time, or a still-pending one — and fallbackTsNs when none
+// exists. Peers stamp traversal entries with it so a bootstrap subscriber
+// orders each entry on the sender's commit clock rather than the entry's
+// client-settable mtime.
 func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs int64) int64 {
 	if f.Store == nil {
 		return fallbackTsNs
@@ -93,6 +189,9 @@ func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs
 	tsNs := fallbackTsNs
 	if recTs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, path)); err == nil && found {
 		tsNs = recTs
+	}
+	if pendTs, _ := f.pendingPathTsNs(path); pendTs > tsNs {
+		tsNs = pendTs
 	}
 	return tsNs
 }
@@ -137,6 +236,9 @@ func (f *Filer) deletedAfterTsNs(ctx context.Context, path util.FullPath) (int64
 		if found && ts > tsNs {
 			tsNs = ts
 		}
+		if pendTs, pendDel := f.pendingPathTsNs(util.FullPath(p)); pendDel && pendTs > tsNs {
+			tsNs = pendTs
+		}
 		i := strings.LastIndexByte(p, '/')
 		if i <= 0 {
 			break
@@ -168,6 +270,9 @@ func (f *Filer) localCommitTsNs(ctx context.Context, path util.FullPath) (int64,
 		}
 	} else if entry != nil {
 		tsNs = entry.Mtime.UnixNano()
+	}
+	if pendTs, _ := f.pendingPathTsNs(path); pendTs > tsNs {
+		tsNs = pendTs
 	}
 	delTs, err := f.deletedAfterTsNs(ctx, path)
 	if err != nil {

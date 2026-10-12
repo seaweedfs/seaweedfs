@@ -572,3 +572,80 @@ func TestBootstrapUpdatesExistingByCommitTime(t *testing.T) {
 		t.Fatalf("content = %q, newer peer commit must update despite the future local mtime", got.Content)
 	}
 }
+
+// A delete whose commit record failed to persist still blocks a stale
+// replayed create: the pending record stands in until the retry lands it.
+func TestPendingDeleteRecordBlocksStaleReplay(t *testing.T) {
+	store := newStubFilerStore()
+	store.setKvPutErr(errors.New("kv store unreachable"))
+	f := newReplayTestFiler(store)
+	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
+	defer f.flushCancel()
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+
+	// The delete already committed; only its ordering record failed.
+	f.notePathChange(path, now.UnixNano(), true)
+
+	createEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "file", Content: []byte("stale resurrect")},
+		},
+		TsNs: now.Add(-time.Minute).UnixNano(),
+	}
+	if err := f.Replay(createEvent); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), path); err == nil {
+		t.Fatal("stale create resurrected a path whose delete record is still pending")
+	}
+}
+
+// The failed record write retries until it lands, then leaves the pending set.
+func TestPendingCommitRecordRepairs(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
+	defer f.flushCancel()
+	path := util.NewFullPath("/dir", "file")
+
+	store.setKvPutErr(errors.New("kv store unreachable"))
+	f.notePathChange(path, 100, true)
+	if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
+		t.Fatal("failed record write must stay pending")
+	}
+	store.setKvPutErr(nil)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
+			ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path))
+			if err != nil || !found || ts != 100 {
+				t.Fatalf("delete record after repair: ts=%v found=%v err=%v", ts, found, err)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("pending record was not repaired")
+}
+
+// CommitTsNs reports the recorded commit time over the entry mtime, and a
+// still-pending record over both.
+func TestCommitTsNsPrefersRecordAndPending(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	path := util.NewFullPath("/dir", "file")
+
+	if got := f.CommitTsNs(context.Background(), path, 7); got != 7 {
+		t.Fatalf("no record: CommitTsNs = %d, want fallback 7", got)
+	}
+	f.notePathChange(path, 50, false)
+	if got := f.CommitTsNs(context.Background(), path, 7); got != 50 {
+		t.Fatalf("recorded: CommitTsNs = %d, want 50", got)
+	}
+	f.metaTsPending.Store(string(path), &metaTsPendingRec{tsNs: 80})
+	if got := f.CommitTsNs(context.Background(), path, 7); got != 80 {
+		t.Fatalf("pending: CommitTsNs = %d, want 80", got)
+	}
+}
