@@ -239,9 +239,9 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 
 	// POSIX: enforce sticky bit on the source directory.
-	if oldDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, oldDir); dirCode == fuse.EINTR {
+	if oldDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, oldDir); dirCode != fuse.OK {
 		return dirCode
-	} else if dirCode == fuse.OK && oldDirEntry != nil && oldDirEntry.Attributes != nil {
+	} else if oldDirEntry != nil && oldDirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if oldEntry != nil && oldEntry.Attributes != nil {
 			targetUid = oldEntry.Attributes.Uid
@@ -253,18 +253,18 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	var newEntry *filer_pb.Entry
 	if in.Flags != RenameNoReplace {
-		if loaded, _, newStatus := wfs.maybeLoadEntry(ctx, newPath); newStatus == fuse.EINTR {
-			return newStatus
-		} else if newStatus == fuse.OK {
+		if loaded, _, newStatus := wfs.maybeLoadEntry(ctx, newPath); newStatus == fuse.OK {
 			newEntry = loaded
+		} else if newStatus != fuse.ENOENT {
+			return newStatus
 		}
 	}
 
 	// POSIX: enforce sticky bit on the destination directory when replacing an existing entry.
 	if newEntry != nil {
-		if newDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, newDir); dirCode == fuse.EINTR {
+		if newDirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, newDir); dirCode != fuse.OK {
 			return dirCode
-		} else if dirCode == fuse.OK && newDirEntry != nil && newDirEntry.Attributes != nil {
+		} else if newDirEntry != nil && newDirEntry.Attributes != nil {
 			targetUid := uint32(0)
 			if newEntry.Attributes != nil {
 				targetUid = newEntry.Attributes.Uid
