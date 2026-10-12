@@ -154,6 +154,11 @@ func TestRenameRemoteOnlyEntryOverTargetKeepsTheCopy(t *testing.T) {
 	assert.Equal(t, uint64(101), dst.Attr.Inode)
 	assert.Equal(t, `"copy"`, dst.Remote.RemoteETag)
 	assert.Empty(t, dst.Extended[filer.ExtRemoteRenameSourceKey])
+	// peers replay the post-copy state, not the source's stamp the entry
+	// committed with
+	newEvent := events[1].notification.NewEntry
+	assert.Equal(t, `"copy"`, newEvent.RemoteEntry.RemoteETag)
+	assert.Empty(t, newEvent.Extended[filer.ExtRemoteRenameSourceKey])
 }
 
 func TestRenameRemoteOnlyEntryCopyFailureKeepsTheOldObject(t *testing.T) {

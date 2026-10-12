@@ -208,8 +208,9 @@ func (fs *FilerServer) finishRemoteCopies(ctx context.Context, pendings []*pendi
 
 // applyRemoteCopies brings the queued rename events in line with the deferred
 // copies. The stamp is written with a plain UpdateEntry, which publishes no
-// event, so the rename event carries it to peer filers and subscribers. A
-// failed copy keeps the old object, which the entry still describes.
+// event, so the rename event carries it, without the pending-source marker,
+// to peer filers and subscribers. A failed copy keeps the old object, which
+// the entry still reads through the marker.
 func applyRemoteCopies(events []metadataEvent, pendings []*pendingRemoteCopy) {
 	for i := range events {
 		event := &events[i]
@@ -222,6 +223,8 @@ func applyRemoteCopies(events []metadataEvent, pendings []*pendingRemoteCopy) {
 			} else if pending.copied != nil && event.newEntry != nil {
 				newEntry := event.newEntry.ShallowClone()
 				newEntry.Remote = pending.copied
+				newEntry.Extended = maps.Clone(newEntry.Extended)
+				delete(newEntry.Extended, filer.ExtRemoteRenameSourceKey)
 				event.newEntry = newEntry
 			}
 		}
