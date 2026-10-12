@@ -36,6 +36,7 @@ type stubFilerStore struct {
 	kv              map[string][]byte
 	insertErr       error
 	findErr         error
+	findErrByPath   map[string]error
 	kvPutErr        error
 	kvGetErr        error
 	kvDeleteErr     error
@@ -200,6 +201,9 @@ func (s *stubFilerStore) FindEntry(_ context.Context, p util.FullPath) (*Entry, 
 	defer s.mu.Unlock()
 	if s.findErr != nil {
 		return nil, s.findErr
+	}
+	if err := s.findErrByPath[string(p)]; err != nil {
+		return nil, err
 	}
 	if e, ok := s.entries[string(p)]; ok {
 		return e, nil
@@ -447,6 +451,18 @@ func TestMaybeLazyFetchFromRemote_PersistsParentDirectories(t *testing.T) {
 	evictable := f.ListEvictableRemoteEntries(context.Background(), []util.FullPath{"/buckets/mybucket"}, 0)
 	require.Len(t, evictable, 1)
 	assert.Equal(t, util.FullPath(filePath), evictable[0].FullPath)
+}
+
+func TestMaybeLazyFetchFromRemote_ParentLookupStopsAtStoreError(t *testing.T) {
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/a/b/file.bin": {RemoteMtime: 1700000000, RemoteSize: 1234},
+	}}
+	f, store := newPathStatFiler(t, "stub_lazy_parent_store_error", stub)
+	store.findErrByPath = map[string]error{"/buckets/mybucket/a/b": errors.New("store unavailable")}
+
+	_, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/a/b/file.bin")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a/b/file.bin"}, stub.statCalls, "a parent the store cannot read is not treated as missing")
 }
 
 func TestMaybeLazyFetchFromRemote_PromotesRemoteObjectAtParentKey(t *testing.T) {

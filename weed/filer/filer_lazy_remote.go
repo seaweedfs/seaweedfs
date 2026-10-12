@@ -166,7 +166,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 func (f *Filer) fetchMissingRemoteParents(ctx context.Context, mountDir, p util.FullPath) {
 	var missing []util.FullPath
 	for dir, _ := p.DirAndName(); len(dir) > len(mountDir); dir, _ = util.FullPath(dir).DirAndName() {
-		if _, err := f.Store.FindEntry(ctx, util.FullPath(dir)); err == nil {
+		if _, err := f.Store.FindEntry(ctx, util.FullPath(dir)); !errors.Is(err, filer_pb.ErrNotFound) {
 			break
 		}
 		missing = append(missing, util.FullPath(dir))
