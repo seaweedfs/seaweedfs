@@ -159,3 +159,22 @@ func TestListAllPagesContinuesPastHiddenEntries(t *testing.T) {
 		t.Fatalf("unexpected first/last entries %q, %q", names[0], names[len(names)-1])
 	}
 }
+
+func TestListAllPagesContinuesPastFullyHiddenPage(t *testing.T) {
+	const tail = 10
+	fs := newListTestServer(t, &fakeListFiler{names: fileNames(defaultListLimit + tail)})
+	// The whole first page is hidden from the user; only the tail is listable.
+	for i := 0; i < defaultListLimit; i++ {
+		fs.user.Permissions[fmt.Sprintf("/d/f%05d", i)] = []string{}
+	}
+	names, err := listNames(t, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != tail {
+		t.Fatalf("expected the %d entries after the hidden page, got %d", tail, len(names))
+	}
+	if names[0] != fmt.Sprintf("f%05d", defaultListLimit) {
+		t.Fatalf("unexpected first entry %q", names[0])
+	}
+}
