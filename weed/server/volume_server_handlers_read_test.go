@@ -22,6 +22,8 @@ func TestShouldAttemptStreamWrite(t *testing.T) {
 		{"HEAD", http.MethodHead, "/1,abc.jpg", ".jpg", true, true, false},
 		{"GET", http.MethodGet, "/1,abc.jpg", ".jpg", true, true, false},
 		{"GET of a resized image", http.MethodGet, "/1,abc.jpg?width=100", ".jpg", true, false, false},
+		{"HEAD of a resized image", http.MethodHead, "/1,abc.jpg?width=100", ".jpg", true, false, false},
+		{"HEAD of a cropped image", http.MethodHead, "/1,abc.jpg?crop_x1=0&crop_y1=0&crop_x2=100&crop_y2=100", ".jpg", true, false, false},
 		{"HEAD without a local volume", http.MethodHead, "/1,abc.jpg", ".jpg", false, false, false},
 	} {
 		r := httptest.NewRequest(tc.method, tc.target, nil)

@@ -161,9 +161,10 @@ impl SourceReadRequest {
 
     /// HEAD, a range, or a stream.
     fn served_from_source(&self, n: &Needle) -> bool {
-        // HEAD is meta-only unless the payload is needed to expand a manifest.
         if self.is_head {
-            return !(n.is_chunk_manifest() && !self.bypass_cm);
+            // HEAD is meta-only unless the payload is needed to expand a
+            // manifest or to answer an image transform's length.
+            return !self.has_image_ops && !(n.is_chunk_manifest() && !self.bypass_cm);
         }
         self.direct(n) && (self.has_range || n.data_size > STREAMING_THRESHOLD)
     }
@@ -171,8 +172,10 @@ impl SourceReadRequest {
     /// Meta first only if the needle could be served from source; its data
     /// size is below its index size.
     fn try_meta_first(&self, size: Size) -> bool {
-        self.is_head
-            || (!self.has_image_ops && (self.has_range || size.0 > STREAMING_THRESHOLD as i32))
+        if self.has_image_ops {
+            return false;
+        }
+        self.is_head || self.has_range || size.0 > STREAMING_THRESHOLD as i32
     }
 }
 
@@ -6165,6 +6168,29 @@ mod tests {
         let (status, _, _) = send_read(&state, Method::GET, &crop, Some(past.as_bytes())).await;
         assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(taken(&reads), vec![1]);
+    }
+
+    /// A HEAD asking for an image transform needs the payload too: a
+    /// meta-only read could not produce the transformed length.
+    #[tokio::test]
+    async fn test_head_with_image_op_reads_full() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let png = solid_png(8, 8);
+        let stored = put_test_needle(&state, 0x6e7a_0a30, &png);
+        let crop = format!(
+            "{}.png?crop_x1=0&crop_y1=0&crop_x2=2&crop_y2=2",
+            stored
+        );
+
+        let (get_status, _, cropped) = send_read(&state, Method::GET, &crop, None).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_ne!(cropped.len(), png.len(), "the crop must change the length");
+
+        let (status, headers, body) = send_read(&state, Method::HEAD, &crop, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.is_empty());
+        assert_eq!(headers[header::CONTENT_LENGTH], cropped.len().to_string());
     }
 
     /// Go takes the transform extension from the URL first — including a fid

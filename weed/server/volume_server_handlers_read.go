@@ -308,16 +308,18 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
+	_, _, _, shouldResize := shouldResizeImages(ext, r)
+	_, _, _, _, shouldCrop := shouldCropImages(ext, r)
+	if shouldResize || shouldCrop {
+		// A transformed image's length is not the needle's; the payload is
+		// needed to answer — also true for HEAD, which reports it.
+		return false, false
+	}
 	if r.Method == http.MethodHead {
 		// Attempt only, so a needle up to PagedReadLimit is still read whole:
 		// on a spinning disk one read is cheaper than a header read followed
 		// by a trailer read.
 		return true, false
-	}
-	_, _, _, shouldResize := shouldResizeImages(ext, r)
-	_, _, _, _, shouldCrop := shouldCropImages(ext, r)
-	if shouldResize || shouldCrop {
-		return false, false
 	}
 	return true, false
 }
