@@ -644,8 +644,67 @@ func TestCommitTsNsPrefersRecordAndPending(t *testing.T) {
 	if got := f.CommitTsNs(context.Background(), path, 7); got != 50 {
 		t.Fatalf("recorded: CommitTsNs = %d, want 50", got)
 	}
-	f.metaTsPending.Store(string(path), &metaTsPendingRec{tsNs: 80})
+	pending := &metaTsPendingRec{}
+	pending.changeTsNs.Store(80)
+	f.metaTsPending.Store(string(path), pending)
 	if got := f.CommitTsNs(context.Background(), path, 7); got != 80 {
 		t.Fatalf("pending: CommitTsNs = %d, want 80", got)
+	}
+}
+
+// A successful write discharges what the pending record owed before it, so a
+// repair pass can never put an older timestamp back over it.
+func TestPendingCommitRecordDischargedByNewerWrite(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
+	defer f.flushCancel()
+	path := util.NewFullPath("/dir", "file")
+
+	store.setKvPutErr(errors.New("kv store unreachable"))
+	f.notePathChange(path, 100, false)
+	store.setKvPutErr(nil)
+	f.notePathChange(path, 200, false)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathTsPrefix, path))
+	if err != nil || !found || ts != 200 {
+		t.Fatalf("MpTs after repair = %v, %v, %v; want 200", ts, found, err)
+	}
+}
+
+// A failed delete record keeps its own time even when a later failed change
+// merges into the pending record: the repair must not stamp the delete at
+// the newer change's time.
+func TestPendingDeleteRecordKeepsItsTime(t *testing.T) {
+	store := newStubFilerStore()
+	store.setKvPutErr(errors.New("kv store unreachable"))
+	f := newReplayTestFiler(store)
+	f.flushCtx, f.flushCancel = context.WithCancel(context.Background())
+	defer f.flushCancel()
+	path := util.NewFullPath("/dir", "file")
+
+	f.notePathChange(path, 100, true)
+	f.notePathChange(path, 200, false)
+	store.setKvPutErr(nil)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, loaded := f.metaTsPending.Load(string(path)); !loaded {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathTsPrefix, path)); err != nil || !found || ts != 200 {
+		t.Fatalf("MpTs = %v, %v, %v; want 200", ts, found, err)
+	}
+	if ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path)); err != nil || !found || ts != 100 {
+		t.Fatalf("MpDl = %v, %v, %v; want 100", ts, found, err)
 	}
 }

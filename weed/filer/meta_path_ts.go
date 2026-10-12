@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -77,50 +79,72 @@ func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 		return
 	}
 	ctx := context.Background()
+	key := string(path)
+	rec := f.pendingRec(key)
+	defer rec.mu.Unlock()
+
 	value := make([]byte, 8)
 	util.Uint64toBytes(value, uint64(tsNs))
-	tsErr := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value)
-	var delErr error
-	if deleted {
-		delErr = f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value)
-	}
-	if tsErr == nil && delErr == nil {
-		return
-	}
-	if tsErr != nil {
-		glog.WarningfCtx(ctx, "record meta change time %s: %v", path, tsErr)
-	}
-	if delErr != nil {
-		glog.WarningfCtx(ctx, "record meta delete time %s: %v", path, delErr)
-	}
-	key := string(path)
-	if cur, loaded := f.metaTsPending.Load(key); loaded {
-		c := cur.(*metaTsPendingRec)
-		if c.tsNs >= tsNs && (!deleted || c.deleted) {
-			return
+	if err := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value); err != nil {
+		glog.WarningfCtx(ctx, "record meta change time %s: %v", path, err)
+		if tsNs > rec.changeTsNs.Load() {
+			rec.changeTsNs.Store(tsNs)
 		}
-		rec := &metaTsPendingRec{tsNs: max(tsNs, c.tsNs), deleted: deleted || c.deleted}
-		f.metaTsPending.Store(key, rec)
-	} else {
-		f.metaTsPending.Store(key, &metaTsPendingRec{tsNs: tsNs, deleted: deleted})
+	} else if rec.changeTsNs.Load() <= tsNs {
+		// This write covers every change record owed so far.
+		rec.changeTsNs.Store(0)
+	}
+	if deleted {
+		if err := f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value); err != nil {
+			glog.WarningfCtx(ctx, "record meta delete time %s: %v", path, err)
+			if tsNs > rec.deleteTsNs.Load() {
+				rec.deleteTsNs.Store(tsNs)
+			}
+		} else if rec.deleteTsNs.Load() <= tsNs {
+			rec.deleteTsNs.Store(0)
+		}
+	}
+	if rec.changeTsNs.Load() == 0 && rec.deleteTsNs.Load() == 0 {
+		f.metaTsPending.CompareAndDelete(key, rec)
+		return
 	}
 	if _, running := f.metaTsRepairing.LoadOrStore(key, struct{}{}); !running {
 		go f.repairMetaPathTs(path)
 	}
 }
 
-// metaTsPendingRec is a commit record still on its way to the store: tsNs is
-// the newest committed change for the path and deleted says its delete record
-// is also pending.
+// metaTsPendingRec is a commit record still on its way to the store, holding
+// only work not yet written: changeTsNs is the newest committed change the
+// MpTs record lacks and deleteTsNs the newest delete the MpDl record lacks —
+// the two keep their own times so a later update cannot masquerade as the
+// delete. Store writes and the bookkeeping they discharge share mu, so a
+// repair pass can never write an older record over a newer one that already
+// landed; readers take the atomic fields directly.
 type metaTsPendingRec struct {
-	tsNs    int64
-	deleted bool
+	mu         sync.Mutex
+	changeTsNs atomic.Int64
+	deleteTsNs atomic.Int64
+}
+
+// pendingRec returns the live pending record for key, locked for mutation,
+// recreating it when a repair already dropped the previous one.
+func (f *Filer) pendingRec(key string) *metaTsPendingRec {
+	for {
+		cur, _ := f.metaTsPending.LoadOrStore(key, &metaTsPendingRec{})
+		rec := cur.(*metaTsPendingRec)
+		rec.mu.Lock()
+		if live, ok := f.metaTsPending.Load(key); ok && live == cur {
+			return rec
+		}
+		rec.mu.Unlock()
+	}
 }
 
 // repairMetaPathTs retries a pending commit record until it lands. Each pass
-// writes the record the map currently holds, so a merge by a later failure
-// is picked up without another goroutine. The retry is unbounded — the
-// mutation is already committed and only the record preserves its ordering.
+// writes only what the record still owes, so a merge by a later failure is
+// picked up without another goroutine and a landed write is never rewritten.
+// The retry is unbounded — the mutation is already committed and only the
+// record preserves its ordering.
 func (f *Filer) repairMetaPathTs(path util.FullPath) {
 	key := string(path)
 	ctx := f.flushCtx
@@ -141,40 +165,50 @@ func (f *Filer) repairMetaPathTs(path util.FullPath) {
 		}
 	}()
 	for {
-		cur, ok := f.metaTsPending.Load(key)
-		if !ok {
+		if _, ok := f.metaTsPending.Load(key); !ok {
 			return
 		}
-		rec := cur.(*metaTsPendingRec)
-		value := make([]byte, 8)
-		util.Uint64toBytes(value, uint64(rec.tsNs))
-		tsErr := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value)
-		var delErr error
-		if rec.deleted {
-			delErr = f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value)
+		rec := f.pendingRec(key)
+		var tsErr, delErr error
+		if tsNs := rec.changeTsNs.Load(); tsNs > 0 {
+			value := make([]byte, 8)
+			util.Uint64toBytes(value, uint64(tsNs))
+			if tsErr = f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value); tsErr == nil {
+				rec.changeTsNs.Store(0)
+			}
 		}
-		if tsErr == nil && delErr == nil {
+		if tsNs := rec.deleteTsNs.Load(); tsNs > 0 {
+			value := make([]byte, 8)
+			util.Uint64toBytes(value, uint64(tsNs))
+			if delErr = f.Store.KvPut(ctx, metaPathKey(metaPathDelPrefix, path), value); delErr == nil {
+				rec.deleteTsNs.Store(0)
+			}
+		}
+		done := rec.changeTsNs.Load() == 0 && rec.deleteTsNs.Load() == 0
+		if done {
 			f.metaTsPending.CompareAndDelete(key, rec)
-			continue
 		}
-		glog.V(0).InfofCtx(ctx, "retry record meta change time %s: %v %v", path, tsErr, delErr)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(time.Second):
+		rec.mu.Unlock()
+		if !done {
+			glog.V(0).InfofCtx(ctx, "retry record meta change time %s: %v %v", path, tsErr, delErr)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 		}
 	}
 }
 
 // pendingPathTsNs returns the newest pending commit timestamp for path and
-// whether a pending delete is among its records.
-func (f *Filer) pendingPathTsNs(path util.FullPath) (tsNs int64, deleted bool) {
+// the newest pending delete timestamp.
+func (f *Filer) pendingPathTsNs(path util.FullPath) (changeTsNs, deleteTsNs int64) {
 	cur, ok := f.metaTsPending.Load(string(path))
 	if !ok {
-		return 0, false
+		return 0, 0
 	}
 	rec := cur.(*metaTsPendingRec)
-	return rec.tsNs, rec.deleted
+	return rec.changeTsNs.Load(), rec.deleteTsNs.Load()
 }
 
 // CommitTsNs returns the newest commit timestamp known for path — the
@@ -236,8 +270,8 @@ func (f *Filer) deletedAfterTsNs(ctx context.Context, path util.FullPath) (int64
 		if found && ts > tsNs {
 			tsNs = ts
 		}
-		if pendTs, pendDel := f.pendingPathTsNs(util.FullPath(p)); pendDel && pendTs > tsNs {
-			tsNs = pendTs
+		if _, pendDel := f.pendingPathTsNs(util.FullPath(p)); pendDel > tsNs {
+			tsNs = pendDel
 		}
 		i := strings.LastIndexByte(p, '/')
 		if i <= 0 {
