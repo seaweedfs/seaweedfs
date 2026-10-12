@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -23,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
 
@@ -192,11 +194,34 @@ func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {
 	if entry.IsDirectory {
 		return nil
 	}
-	src := io.NewSectionReader(NewSeaweedFileReaderAt(fs, entry), 0, int64(entry.Attributes.FileSize))
-	if _, err := io.Copy(dst, src); err != nil {
+	size := int64(entry.Attributes.FileSize)
+	if size == 0 {
+		return nil
+	}
+	if len(entry.Content) > 0 {
+		_, err := dst.Write(entry.Content)
+		return err
+	}
+	if len(entry.GetChunks()) == 0 {
+		return fmt.Errorf("existing content of %s is not readable", absPath)
+	}
+	streamFn, err := filer.PrepareStreamContent(lookupFileIdFn(filer.LookupFn(fs)), filer.JwtForVolumeServer, entry.GetChunks(), 0, size)
+	if err != nil {
+		return fmt.Errorf("read existing content of %s: %w", absPath, err)
+	}
+	if err := streamFn(dst); err != nil {
 		return fmt.Errorf("read existing content of %s: %w", absPath, err)
 	}
 	return nil
+}
+
+// lookupFileIdFn adapts a filer LookupFn to the chunk streamer's provider
+// interface. PrepareStreamContent fills unstored gaps with zeros, so a sparse
+// file's tail survives the copy.
+type lookupFileIdFn wdclient.LookupFileIdFunctionType
+
+func (fn lookupFileIdFn) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
+	return wdclient.LookupFileIdFunctionType(fn)
 }
 
 func (fs *SftpServer) removeEntry(absPath string) error {
