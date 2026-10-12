@@ -12,8 +12,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var (
@@ -251,6 +254,15 @@ func (c *GrpcAdminClient) handleConnect(cmd grpcCommand, s *grpcState) {
 	cmd.resp <- nil
 }
 
+// adminWorkerCredentials mints the Bearer token the admin worker gRPC service
+// requires when jwt.filer_signing.key is configured; nil when it is not.
+func adminWorkerCredentials() metadata.MD {
+	v := util.GetViper()
+	return security.GrpcAdminPeerCredentials(
+		security.SigningKey(v.GetString("jwt.filer_signing.key")),
+		v.GetInt("jwt.filer_signing.expires_after_seconds"))
+}
+
 // createConnection attempts to connect using the provided dial option
 func (c *GrpcAdminClient) createConnection() (*grpc.ClientConn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -278,6 +290,9 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 
 	// Create bidirectional stream
 	s.streamCtx, s.streamCancel = context.WithCancel(context.Background())
+	if md := adminWorkerCredentials(); len(md) > 0 {
+		s.streamCtx = metadata.NewOutgoingContext(s.streamCtx, md)
+	}
 	stream, err := s.client.WorkerStream(s.streamCtx)
 	glog.Infof("[session %s] Worker stream created", c.sessionID)
 	if err != nil {
