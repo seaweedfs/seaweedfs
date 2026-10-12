@@ -238,14 +238,29 @@ func (f *Filer) DeleteFromRemote(ctx context.Context, entry *Entry) error {
 // object remote-only reads must serve until the copy stamps the entry.
 const ExtRemoteRenameSourceKey = "Seaweed-X-Remote-Rename-Source"
 
-// RemoteReadPath returns the dir and name whose object a remote-only read of
-// entry serves: its own, or the renamed-from path a pending deferred copy
-// still reads.
-func RemoteReadPath(entry *Entry, dir, name string) (string, string) {
-	if src := entry.Extended[ExtRemoteRenameSourceKey]; len(src) > 0 {
-		return util.FullPath(src).DirAndName()
+// RemoteSourcePath returns the path whose remote object holds the content of
+// the remote-only entry at p: the renamed-from path a pending deferred copy
+// still reads, or p itself. A marker leading out of p's mount is ignored, so
+// whoever can set extended attributes cannot point reads at another mount.
+func (f *Filer) RemoteSourcePath(entry *Entry, p util.FullPath) util.FullPath {
+	src := util.FullPath(entry.Extended[ExtRemoteRenameSourceKey])
+	if src == "" || f.RemoteStorage == nil {
+		return p
 	}
-	return dir, name
+	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(p)
+	if remoteLoc == nil {
+		return p
+	}
+	if srcMountDir, _ := f.RemoteStorage.FindMountDirectory(src); srcMountDir != mountDir {
+		return p
+	}
+	return src
+}
+
+// RemoteReadPath returns the dir and name whose object a remote-only read of
+// the entry at dir/name serves.
+func (f *Filer) RemoteReadPath(entry *Entry, dir, name string) (string, string) {
+	return f.RemoteSourcePath(entry, util.NewFullPath(dir, name)).DirAndName()
 }
 
 // CopyRemoteOnlyEntry copies the remote object of a renamed entry whose
@@ -300,7 +315,7 @@ func (f *Filer) RemoteCopyLocations(ctx context.Context, entry *Entry, oldPath, 
 		return nil, nil, nil, fmt.Errorf("%s exists only on the remote and remote storage type %s cannot copy it to the new name; cache it first", oldPath, remoteConf.Type)
 	}
 
-	src = MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, oldPath)
+	src = MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, f.RemoteSourcePath(entry, oldPath))
 	dst = MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, newPath)
 	return src, dst, copier, nil
 }

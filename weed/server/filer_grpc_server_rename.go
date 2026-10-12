@@ -399,11 +399,16 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Quota:           entry.Quota,
 	}
 	if deferredCopy {
+		// a pending entry renamed again still reads its original source
 		newEntry.Extended = maps.Clone(newEntry.Extended)
 		if newEntry.Extended == nil {
 			newEntry.Extended = map[string][]byte{}
 		}
-		newEntry.Extended[filer.ExtRemoteRenameSourceKey] = []byte(oldPath)
+		newEntry.Extended[filer.ExtRemoteRenameSourceKey] = []byte(fs.filer.RemoteSourcePath(entry, oldPath))
+	} else if copiedRemote != nil && len(newEntry.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+		// the copy came from the pending source; the new key holds it now
+		newEntry.Extended = maps.Clone(newEntry.Extended)
+		delete(newEntry.Extended, filer.ExtRemoteRenameSourceKey)
 	}
 	if skipTargetLookup {
 		if newEntry.FullPath.IsLongerFileName(fs.filer.MaxFilenameLength) {

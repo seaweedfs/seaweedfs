@@ -1401,3 +1401,48 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		}
 	})
 }
+
+func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
+	oldDest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/src/a.jpg"}
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/dst/a.jpg"}
+	pending := func() *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "a.jpg",
+			Attributes:  &filer_pb.FuseAttributes{FileSize: 4},
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteETag: `"copy"`, RemoteSize: 4},
+			Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/src/a.jpg")},
+		}
+	}
+	objects := func() map[string][]byte {
+		return map[string][]byte{"/b/src/a.jpg": []byte("data"), "/b/dst/a.jpg": []byte("data")}
+	}
+
+	t.Run("stamped, then the source goes", func(t *testing.T) {
+		// the destination already holds the copy; the entry still reads the
+		// source until its stamp clears the marker
+		current := pending()
+		filerClient := &stubFilerClient{entry: current}
+		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
+		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", current, oldDest, dest, ""); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if filerClient.updates != 1 {
+			t.Errorf("updates = %d, want the stamp that clears the marker", filerClient.updates)
+		}
+		if len(remote.deletes) != 1 || remote.deletes[0].Path != "/b/src/a.jpg" {
+			t.Errorf("deletes = %+v, want the source", remote.deletes)
+		}
+	})
+
+	t.Run("a marker still in place keeps the source", func(t *testing.T) {
+		// the stamp did not land: the filer still has the marker
+		filerClient := &stubFilerClient{entry: pending()}
+		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
+		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", pending(), oldDest, dest, ""); err == nil {
+			t.Fatal("err = nil, want the event retried")
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none while the entry reads the source", remote.deletes)
+		}
+	})
+}

@@ -468,6 +468,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
+			if k == filer.ExtRemoteRenameSourceKey {
+				continue // set by the filer only: it picks the remote key reads serve
+			}
 			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
 				entry.Extended[k] = []byte(v[0])
 			}

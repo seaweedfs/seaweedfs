@@ -3,6 +3,8 @@ package weed_server
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -181,7 +183,7 @@ func TestRenameRemoteOnlyEntryCopyFailureKeepsTheOldObject(t *testing.T) {
 	// reads keep resolving the source's key until the copy stamps the entry:
 	// its own key still holds the target's old object
 	assert.Equal(t, "/buckets/b/src/a.jpg", string(dst.Extended[filer.ExtRemoteRenameSourceKey]))
-	readDir, readName := filer.RemoteReadPath(dst, "/buckets/b/dst", "a.jpg")
+	readDir, readName := server.filer.RemoteReadPath(dst, "/buckets/b/dst", "a.jpg")
 	assert.Equal(t, "/buckets/b/src", readDir)
 	assert.Equal(t, "a.jpg", readName)
 }
@@ -352,4 +354,59 @@ func TestRenameRemoteOnlyEntryFinishesAfterTheCommitOnASQLStore(t *testing.T) {
 			assert.Equal(t, `"copy"`, dst.Remote.RemoteETag)
 		})
 	}
+}
+
+func TestRenamePendingEntryAgainCopiesFromItsSource(t *testing.T) {
+	client := copyingRenameRemoteClient{&renameRemoteClient{copyErr: errors.New("copy refused")}}
+	server, store := newRenameRemoteTestServer(t, client)
+	store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101)
+	store.entries["/buckets/b/dst/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/dst/a.jpg", 202)
+	store.entries["/buckets/b/dst/d.jpg"] = remoteOnlyRenameEntry("/buckets/b/dst/d.jpg", 303)
+
+	// the deferred copy fails: dst/a.jpg reads src/a.jpg's object
+	require.NoError(t, renameFile(server, "/buckets/b/src/a.jpg", "/buckets/b/dst/a.jpg"))
+
+	// renamed again over another remote-only file, failing again: the marker
+	// keeps naming the original source, not dst/a.jpg's old object
+	require.NoError(t, renameFile(server, "/buckets/b/dst/a.jpg", "/buckets/b/dst/d.jpg"))
+	d, err := store.FindEntry(context.Background(), "/buckets/b/dst/d.jpg")
+	require.NoError(t, err)
+	assert.Equal(t, "/buckets/b/src/a.jpg", string(d.Extended[filer.ExtRemoteRenameSourceKey]))
+
+	// renamed to a new path, the copy comes from the source and clears the marker
+	client.copyErr = nil
+	require.NoError(t, renameFile(server, "/buckets/b/dst/d.jpg", "/buckets/b/dst/c.jpg"))
+	assert.Contains(t, client.recorded(), "copy origin/src/a.jpg origin/dst/c.jpg")
+	c, err := store.FindEntry(context.Background(), "/buckets/b/dst/c.jpg")
+	require.NoError(t, err)
+	assert.Empty(t, c.Extended[filer.ExtRemoteRenameSourceKey])
+	assert.Equal(t, `"copy"`, c.Remote.RemoteETag)
+}
+
+func TestRemoteSourcePathStaysInTheMount(t *testing.T) {
+	server, _ := newRenameRemoteTestServer(t, &renameRemoteClient{})
+	entry := remoteOnlyRenameEntry("/buckets/b/x.jpg", 101)
+	for marker, want := range map[string]util.FullPath{
+		"/buckets/b/src/y.jpg": "/buckets/b/src/y.jpg", // same mount: the pending source
+		"/buckets/c/y.jpg":     "/buckets/b/x.jpg",     // another mount: ignored
+		"/tmp/y.jpg":           "/buckets/b/x.jpg",     // no mount: ignored
+	} {
+		entry.Extended = map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte(marker)}
+		assert.Equal(t, want, server.filer.RemoteSourcePath(entry, "/buckets/b/x.jpg"), marker)
+	}
+}
+
+func TestTaggingCannotSetThePendingSourceMarker(t *testing.T) {
+	server, store := newRenameRemoteTestServer(t, &renameRemoteClient{})
+	store.entries["/buckets/b/x.jpg"] = remoteOnlyRenameEntry("/buckets/b/x.jpg", 101)
+
+	r := httptest.NewRequest(http.MethodPut, "/buckets/b/x.jpg?tagging", nil)
+	r.Header.Set("Seaweed-X-Remote-Rename-Source", "/buckets/b/other.jpg")
+	r.Header.Set("Seaweed-Album", "2026")
+	server.PutTaggingHandler(httptest.NewRecorder(), r)
+
+	x, err := store.FindEntry(context.Background(), "/buckets/b/x.jpg")
+	require.NoError(t, err)
+	assert.Equal(t, "2026", string(x.Extended["Seaweed-Album"]))
+	assert.Empty(t, x.Extended[filer.ExtRemoteRenameSourceKey], "only the filer sets the pending source")
 }

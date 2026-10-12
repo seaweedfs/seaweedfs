@@ -387,7 +387,13 @@ func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_st
 	if existing, err := client.StatFile(dest); err == nil {
 		if describes(current.RemoteEntry, existing) {
 			glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
-			return deleteRemoteFile(client, oldDest)
+			if len(current.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+				// reads still go to the source until the stamp clears the marker
+				if err := updateLocalEntry(filerClient, dir, current, existing); err != nil {
+					return err
+				}
+			}
+			return deleteRenameSource(filerClient, client, dir, current.Name, oldDest)
 		}
 		glog.V(0).Infof("%s holds an object the entry does not describe (size %d, want %d); replacing it from %s", remote_storage.FormatLocation(dest), existing.RemoteSize, current.RemoteEntry.RemoteSize, remote_storage.FormatLocation(oldDest))
 	} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
@@ -412,6 +418,20 @@ func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_st
 	}
 	if err := updateLocalEntry(filerClient, dir, current, remoteEntry); err != nil {
 		return err
+	}
+	return deleteRenameSource(filerClient, client, dir, current.Name, oldDest)
+}
+
+// deleteRenameSource deletes a rename's old key once the renamed entry no
+// longer reads it: an entry still carrying the pending-source marker (its
+// stamp lost a race) keeps the source, and the event is retried.
+func deleteRenameSource(filerClient filer_pb.FilerClient, client remote_storage.RemoteStorageClient, dir, name string, oldDest *remote_pb.RemoteStorageLocation) error {
+	current, err := currentEntry(filerClient, dir, name)
+	if err != nil {
+		return err
+	}
+	if current != nil && len(current.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
+		return fmt.Errorf("%s still reads %s", util.NewFullPath(dir, name), remote_storage.FormatLocation(oldDest))
 	}
 	return deleteRemoteFile(client, oldDest)
 }
