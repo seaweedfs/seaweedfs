@@ -57,7 +57,6 @@ type FilerOperations interface {
 	IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error)
 	DirectoryAttributes(ctx context.Context, p util.FullPath) (DirectoryAttributes, error)
 	EnsureDirectoryEntry(ctx context.Context, p util.FullPath, attrs DirectoryAttributes) error
-	IsUnderRemoteMount(p util.FullPath) bool
 }
 
 // folderState tracks the state of a folder for empty folder cleanup
@@ -496,13 +495,6 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	// is inserted between the emptiness check and the folder delete, then wiped,
 	// so the upload silently vanishes. Leave this tree to the upload lifecycle.
 	if isMultipartUploadsPath(efc.bucketPath, folder) {
-		return
-	}
-
-	// Deleting a folder under a remote mount deletes its whole prefix on the
-	// remote, and a folder empty here can still hold remote objects never read.
-	if efc.filer.IsUnderRemoteMount(util.FullPath(folder)) {
-		glog.V(3).Infof("EmptyFolderCleaner: skipping %s (triggered by %s), under a remote mount", folder, triggeredBy)
 		return
 	}
 

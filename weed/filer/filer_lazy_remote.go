@@ -127,6 +127,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted during remote stat", p)
 			return lazyFetchResult{nil}, nil
 		}
+		f.fetchMissingRemoteParents(persistBaseCtx, mountDir, p)
 		saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
@@ -155,6 +156,24 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, fmt.Errorf("maybeLazyFetchFromRemote: unexpected singleflight result type %T for %s", val, p)
 	}
 	return result.entry, nil
+}
+
+// fetchMissingRemoteParents looks up p's missing parents under mountDir, top
+// down, through lazy fetch. A remote object stored at a parent's key is then
+// materialized first, so creating p promotes it to a prefix object instead of
+// hiding it behind a plain directory. Each missing parent costs one remote
+// stat, once per directory.
+func (f *Filer) fetchMissingRemoteParents(ctx context.Context, mountDir, p util.FullPath) {
+	var missing []util.FullPath
+	for dir, _ := p.DirAndName(); len(dir) > len(mountDir); dir, _ = util.FullPath(dir).DirAndName() {
+		if _, err := f.Store.FindEntry(ctx, util.FullPath(dir)); err == nil {
+			break
+		}
+		missing = append(missing, util.FullPath(dir))
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		f.FindEntry(ctx, missing[i])
+	}
 }
 
 // retractLazyRemoteEntry deletes the entry at entry.FullPath only when it is

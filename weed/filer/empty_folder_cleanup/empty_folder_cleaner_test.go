@@ -19,14 +19,6 @@ type mockFilerOps struct {
 	isDirKeyObjFn func(path util.FullPath) (bool, error)
 	ensureDirFn   func(path util.FullPath, attrs DirectoryAttributes) error
 	dirAttrsFn    func(path util.FullPath) (DirectoryAttributes, error)
-	remoteMountFn func(path util.FullPath) bool
-}
-
-func (m *mockFilerOps) IsUnderRemoteMount(p util.FullPath) bool {
-	if m.remoteMountFn == nil {
-		return false
-	}
-	return m.remoteMountFn(p)
 }
 
 func (m *mockFilerOps) EnsureDirectoryEntry(_ context.Context, p util.FullPath, attrs DirectoryAttributes) error {
@@ -1375,53 +1367,6 @@ func TestEmptyFolderCleaner_executeCleanup_skipsCatalogEntry(t *testing.T) {
 
 	if len(deleted) != 1 || deleted[0] != table+"/metadata" {
 		t.Fatalf("expected only %s to be deleted, got %v", table+"/metadata", deleted)
-	}
-}
-
-func TestEmptyFolderCleaner_executeCleanup_skipsRemoteMount(t *testing.T) {
-	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
-
-	const mountDir = "/buckets/mirror"
-
-	var deleted []string
-	mock := &mockFilerOps{
-		countFn: func(_ util.FullPath) (int, error) {
-			return 0, nil
-		},
-		deleteFn: func(path util.FullPath) error {
-			deleted = append(deleted, string(path))
-			return nil
-		},
-		remoteMountFn: func(path util.FullPath) bool {
-			return isUnderPath(string(path), mountDir)
-		},
-	}
-
-	cleaner := &EmptyFolderCleaner{
-		filer:          mock,
-		lockRing:       lockRing,
-		host:           "filer1:8888",
-		bucketPath:     "/buckets",
-		enabled:        true,
-		folderCounts:   make(map[string]*folderState),
-		cleanupQueue:   NewCleanupQueue(1000, time.Minute),
-		maxCountCheck:  1000,
-		cacheExpiry:    time.Minute,
-		processorSleep: time.Second,
-		stopCh:         make(chan struct{}),
-	}
-
-	// Empty locally says nothing about the remote prefix, so neither the folder
-	// nor the cascade up to the mount may be deleted.
-	cleaner.executeCleanup(mountDir+"/a/b", "file.bin")
-	if len(deleted) != 0 {
-		t.Fatalf("expected no deletes under the remote mount, got %v", deleted)
-	}
-
-	cleaner.executeCleanup("/buckets/local/a", "file.bin")
-	if len(deleted) != 1 || deleted[0] != "/buckets/local/a" {
-		t.Fatalf("expected /buckets/local/a to be deleted, got %v", deleted)
 	}
 }
 

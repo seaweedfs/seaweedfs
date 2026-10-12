@@ -605,16 +605,6 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 // setgid, setuid and sticky, quietly changing group inheritance and delete semantics.
 const restorableModeBits = os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky
 
-// IsUnderRemoteMount reports whether p is a remote mount directory or lies under one.
-func (f *Filer) IsUnderRemoteMount(p util.FullPath) bool {
-	if f.RemoteStorage == nil {
-		return false
-	}
-	// Mount rules are keyed with a trailing slash, so this also matches the mount directory itself.
-	_, remoteLoc := f.RemoteStorage.FindMountDirectory(util.FullPath(string(p) + "/"))
-	return remoteLoc != nil
-}
-
 // DirectoryAttributes reads what a directory would need to be recreated as it is.
 func (f *Filer) DirectoryAttributes(ctx context.Context, dirPath util.FullPath) (attrs empty_folder_cleanup.DirectoryAttributes, err error) {
 	entry, err := f.FindEntry(ctx, dirPath)
@@ -900,7 +890,7 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	parentDir, _ := dirPath.DirAndName()
 	if dirEntry, findErr := f.FindEntry(ctx, dirPath); findErr == nil {
-		if delErr := f.doDeleteEntryMetaAndData(ctx, dirEntry, false, false, nil); delErr == nil {
+		if delErr := f.doDeleteEntryMetaAndData(f.emptyFolderDeleteContext(ctx, dirPath), dirEntry, false, false, nil); delErr == nil {
 			// Successfully deleted, continue checking upwards
 			f.DeleteEmptyParentDirectories(ctx, util.FullPath(parentDir), stopAtPath)
 		} else {

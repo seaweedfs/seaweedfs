@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -340,6 +341,11 @@ func putConfigEntry(store *stubFilerStore, path string, content []byte) {
 	}
 }
 
+// putDirEntry stores a plain directory entry, so a lazy fetch below it finds its parent in place.
+func putDirEntry(store *stubFilerStore, path string) {
+	store.entries[path] = &Entry{FullPath: util.FullPath(path), Attr: Attr{Mode: os.ModeDir | 0755}}
+}
+
 // --- tests ---
 
 func TestMaybeLazyFetchFromRemote_HitsRemoteAndPersists(t *testing.T) {
@@ -375,15 +381,24 @@ func TestMaybeLazyFetchFromRemote_HitsRemoteAndPersists(t *testing.T) {
 	assert.Equal(t, []byte("zstd"), stored.Extended["Content-Encoding"])
 }
 
-func TestMaybeLazyFetchFromRemote_PersistsParentDirectories(t *testing.T) {
-	const storageType = "stub_lazy_parents"
-	stub := &countingRemoteClient{
-		stubRemoteClient: stubRemoteClient{
-			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 1234},
-		},
-	}
-	defer registerStubMaker(t, storageType, stub)()
+// pathStatRemoteClient stats only the objects it holds, keyed by remote path.
+type pathStatRemoteClient struct {
+	stubRemoteClient
+	objects   map[string]*filer_pb.RemoteEntry
+	statCalls []string
+}
 
+func (c *pathStatRemoteClient) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+	c.statCalls = append(c.statCalls, loc.Path)
+	if remoteEntry, found := c.objects[loc.Path]; found {
+		return remoteEntry, nil
+	}
+	return nil, remote_storage.ErrRemoteObjectNotFound
+}
+
+func newPathStatFiler(t *testing.T, storageType string, client remote_storage.RemoteStorageClient) (*Filer, *stubFilerStore) {
+	t.Helper()
+	t.Cleanup(registerStubMaker(t, storageType, client))
 	conf := &remote_pb.RemoteConf{Name: "mystore", Type: storageType}
 	rs := NewFilerRemoteStorage()
 	rs.storageNameToConf[conf.Name] = conf
@@ -392,21 +407,35 @@ func TestMaybeLazyFetchFromRemote_PersistsParentDirectories(t *testing.T) {
 		Bucket: "mybucket",
 		Path:   "/",
 	})
-
 	store := newStubFilerStore()
-	f := newTestFiler(t, store, rs)
+	return newTestFiler(t, store, rs), store
+}
+
+func TestMaybeLazyFetchFromRemote_PersistsParentDirectories(t *testing.T) {
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/a/b/file.bin":  {RemoteMtime: 1700000000, RemoteSize: 1234},
+		"/a/b/other.bin": {RemoteMtime: 1700000000, RemoteSize: 5678},
+	}}
+	f, store := newPathStatFiler(t, "stub_lazy_parents", stub)
 
 	const filePath = "/buckets/mybucket/a/b/file.bin"
 	entry, err := f.maybeLazyFetchFromRemote(context.Background(), filePath)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	assert.Equal(t, 1, stub.statCalls, "parent directories must not be stat'ed on the remote")
+	assert.Equal(t, []string{"/a/b/file.bin", "/a", "/a/b"}, stub.statCalls, "each missing parent is stat'ed once")
 
 	for _, dir := range []string{"/buckets/mybucket/a", "/buckets/mybucket/a/b"} {
 		dirEntry := store.getEntry(dir)
 		require.NotNil(t, dirEntry, "parent %s not persisted", dir)
 		assert.True(t, dirEntry.IsDirectory(), "%s should be a directory", dir)
+		assert.Nil(t, dirEntry.Remote, "%s holds no remote object", dir)
 	}
+
+	// A sibling finds its parents in place and stats only itself.
+	stub.statCalls = nil
+	_, err = f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/a/b/other.bin")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a/b/other.bin"}, stub.statCalls)
 
 	// Once the content is cached, eviction walks down from the mount and must reach it.
 	stored := store.getEntry(filePath)
@@ -418,6 +447,55 @@ func TestMaybeLazyFetchFromRemote_PersistsParentDirectories(t *testing.T) {
 	evictable := f.ListEvictableRemoteEntries(context.Background(), []util.FullPath{"/buckets/mybucket"}, 0)
 	require.Len(t, evictable, 1)
 	assert.Equal(t, util.FullPath(filePath), evictable[0].FullPath)
+}
+
+func TestMaybeLazyFetchFromRemote_PromotesRemoteObjectAtParentKey(t *testing.T) {
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/reports":          {RemoteMtime: 1700000000, RemoteSize: 10},
+		"/reports/2026.csv": {RemoteMtime: 1700000000, RemoteSize: 20},
+	}}
+	f, store := newPathStatFiler(t, "stub_lazy_prefix_object", stub)
+
+	_, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/reports/2026.csv")
+	require.NoError(t, err)
+
+	parent := store.getEntry("/buckets/mybucket/reports")
+	require.NotNil(t, parent)
+	assert.True(t, parent.IsDirectory())
+	assert.Equal(t, []byte("true"), parent.Extended[s3_constants.SeaweedFSPrefixObject], "the remote object at the parent key must stay readable")
+	require.NotNil(t, parent.Remote)
+	assert.Equal(t, int64(10), parent.Remote.RemoteSize)
+}
+
+func TestDeleteEntryMetaAndData_EmptyFolderUnderMountKeepsRemotePrefix(t *testing.T) {
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/dir/unread.bin": {RemoteMtime: 1700000000, RemoteSize: 1},
+	}}
+	f, store := newPathStatFiler(t, "stub_lazy_empty_folder", stub)
+	dirPath := util.FullPath("/buckets/mybucket/dir")
+	putDirEntry(store, string(dirPath))
+
+	require.NoError(t, f.DeleteEntryMetaAndData(context.Background(), dirPath, false, false, false, false, nil, 0))
+
+	assert.Empty(t, stub.removeCalls, "an empty local folder must not remove its remote prefix")
+	assert.Nil(t, store.getEntry(string(dirPath)))
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/unread.bin")
+	require.NoError(t, err)
+	assert.NotNil(t, entry, "a metadata-only delete must not block lazy reads under the folder")
+}
+
+func TestDeleteEmptyParentDirectories_UnderMountKeepsRemotePrefix(t *testing.T) {
+	stub := &pathStatRemoteClient{}
+	f, store := newPathStatFiler(t, "stub_lazy_expired_parents", stub)
+	f.DirBucketsPath = "/buckets"
+	putDirEntry(store, "/buckets/mybucket/a")
+	putDirEntry(store, "/buckets/mybucket/a/b")
+
+	f.DeleteEmptyParentDirectories(context.Background(), "/buckets/mybucket/a/b", "/buckets")
+
+	assert.Empty(t, stub.removeCalls, "an empty local folder must not remove its remote prefix")
+	assert.Nil(t, store.getEntry("/buckets/mybucket/a/b"))
+	assert.Nil(t, store.getEntry("/buckets/mybucket/a"))
 }
 
 func TestIsUnderRemoteMount(t *testing.T) {

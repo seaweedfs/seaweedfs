@@ -187,6 +187,7 @@ func TestMaybeLazyFetchFromRemote_SyncOffsetReleasesTombstone(t *testing.T) {
 		},
 	}
 	f, store := newMountedTestFiler(t, storageType, stub, 0)
+	putDirEntry(store, "/buckets/mybucket/dir")
 
 	filePath := util.FullPath("/buckets/mybucket/dir/a.txt")
 	deleteTsNs := time.Now().UnixNano()
@@ -222,6 +223,7 @@ func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
 		},
 	}
 	f, store := newMountedTestFiler(t, storageType, stub, 0)
+	putDirEntry(store, "/buckets/mybucket/dir")
 
 	filePath := util.FullPath("/buckets/mybucket/dir/a.txt")
 	store.entries[string(filePath)] = &Entry{
@@ -252,6 +254,35 @@ func TestDeleteEntryMetaAndData_TombstonesPath(t *testing.T) {
 		},
 	})
 	entry, err = f.maybeLazyFetchFromRemote(context.Background(), filePath)
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, 1, stub.statCalls)
+}
+
+func TestOnMetadataChangeEvent_MetadataOnlyDeleteSkipsTombstone(t *testing.T) {
+	const storageType = "stub_tomb_metadata_only"
+	stub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 11},
+		},
+	}
+	f, store := newMountedTestFiler(t, storageType, stub, 0)
+	putDirEntry(store, "/buckets/mybucket/dir")
+
+	f.onMetadataChangeEvent(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		TsNs:      time.Now().UnixNano(),
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name:        "dir",
+				IsDirectory: true,
+				Extended:    map[string][]byte{ExtKeepRemoteObjectKey: []byte("true")},
+			},
+		},
+	})
+
+	// nothing is owed to the remote, so objects under the folder stay readable
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/dir/a.txt")
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	assert.Equal(t, 1, stub.statCalls)
