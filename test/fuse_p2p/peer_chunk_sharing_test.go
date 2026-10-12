@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package fuse_p2p
 
 import (
