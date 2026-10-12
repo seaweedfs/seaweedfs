@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod registry;
 pub mod senders;
 pub mod stream;
+pub mod token;
 
 /// Generated plugin.proto types.
 pub mod pb {

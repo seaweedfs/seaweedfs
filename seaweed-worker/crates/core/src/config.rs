@@ -17,6 +17,15 @@ pub struct WorkerOptions {
     /// section of security.toml. None means plaintext, which is the default the
     /// Go worker also takes when no certificates are configured.
     pub tls: Option<TlsOptions>,
+    /// The shared secret the admin stream requires when the cluster configures
+    /// `jwt.filer_signing.key`; mirrored from that config value. Empty means no
+    /// token is attached, which only works against admins that either bound
+    /// their worker listener to loopback or authenticate with mTLS instead.
+    pub signing_key: Option<String>,
+    /// Seconds the minted admin token lives, mirroring
+    /// `jwt.filer_signing.expires_after_seconds`. Zero mints a token without an
+    /// expiry, matching the Go default.
+    pub signing_key_expires_after_seconds: u64,
 }
 
 /// Certificates for the control stream. All three are required together: the
@@ -44,6 +53,8 @@ impl Default for WorkerOptions {
             max_detection_concurrency: 1,
             max_execution_concurrency: 1,
             tls: None,
+            signing_key: None,
+            signing_key_expires_after_seconds: 0,
         }
     }
 }
