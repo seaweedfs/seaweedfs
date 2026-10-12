@@ -399,6 +399,11 @@ func processUpdateEvent(
 			glog.V(0).Infof("keep %s: the pending rename moved on", remote_storage.FormatLocation(oldDest))
 			return nil
 		}
+		// the destination holds its own data now (cached, or rewritten), so a
+		// pending source the old entry read is no longer needed
+		if err := releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry); err != nil {
+			return err
+		}
 		glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 		if err := client.DeleteFile(oldDest); err != nil {
 			if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {

@@ -1552,6 +1552,23 @@ func TestPendingRenameSourceIsReleasedOnlyWhileUnchanged(t *testing.T) {
 		}
 	})
 
+	t.Run("a destination cached since releases the source too", func(t *testing.T) {
+		// c.jpg was cached before the sync reached the rename: it is no
+		// longer remote-only, and a.jpg is still left over
+		cached := &filer_pb.Entry{Name: "c.jpg", Content: []byte("data-a"), Attributes: &filer_pb.FuseAttributes{FileSize: 6}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6}}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b"), "/b/c.jpg": []byte("data-a")}, statETag: `"a"`}
+		event := &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{
+			OldEntry: pendingB(), NewParentPath: "/buckets/b", NewEntry: cached,
+		}}
+		filerClient := &pathFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/b/c.jpg": cached}}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); !slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the pending source released", got)
+		}
+	})
+
 	t.Run("a later rename the filer copied releases the source", func(t *testing.T) {
 		// b.jpg was renamed to c.jpg and the filer copied a.jpg there at once
 		copied := &filer_pb.Entry{Name: "c.jpg", Attributes: &filer_pb.FuseAttributes{FileSize: 6}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6}}
