@@ -253,9 +253,9 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	// POSIX: enforce sticky bit on the parent directory.
-	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode == fuse.EINTR {
+	if dirEntry, _, dirCode := wfs.maybeLoadEntry(ctx, dirFullPath); dirCode != fuse.OK {
 		return dirCode
-	} else if dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+	} else if dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
 		if entry != nil && entry.Attributes != nil {
 			targetUid = entry.Attributes.Uid
