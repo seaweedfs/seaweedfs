@@ -82,6 +82,21 @@ func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 	}
 }
 
+// CommitTsNs returns the newest commit timestamp known for path — the
+// recorded event time — and fallbackTsNs when none exists. Peers stamp
+// traversal entries with it so a bootstrap subscriber orders each entry on
+// the sender's commit clock rather than the entry's client-settable mtime.
+func (f *Filer) CommitTsNs(ctx context.Context, path util.FullPath, fallbackTsNs int64) int64 {
+	if f.Store == nil {
+		return fallbackTsNs
+	}
+	tsNs := fallbackTsNs
+	if recTs, found, err := f.kvReadTsNs(ctx, metaPathKey(metaPathTsPrefix, path)); err == nil && found {
+		tsNs = recTs
+	}
+	return tsNs
+}
+
 // noteCommittedEvent records the event's commit timestamp for every path it
 // touches: the source of a delete or rename, and the target of a create,
 // update, or rename. It runs after the local mutation commits while the

@@ -468,3 +468,107 @@ func TestReplaySerializesWithAncestorLock(t *testing.T) {
 		t.Fatal("stale replayed create resurrected a child of a locally deleted directory")
 	}
 }
+
+// Bootstrap ordering uses the sender's commit timestamp: a local commit
+// newer than the traversed entry keeps its state even when the peer entry's
+// mtime is far in the future.
+func TestBootstrapSkipsPeerEntryBehindLocalDelete(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+
+	f.notePathChange(path, now.UnixNano(), true)
+
+	entry := &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now.Add(time.Hour)}, // client-settable, must not win
+		Content:  []byte("stale peer entry"),
+	}
+	if err := f.applyTraversedEntry(context.Background(), entry, now.Add(-time.Minute).UnixNano()); err != nil {
+		t.Fatalf("applyTraversedEntry: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), path); err == nil {
+		t.Fatal("bootstrap resurrected a path newer local delete covered")
+	}
+}
+
+// The bug this guards: a peer entry committed recently but stamped with an
+// old client mtime must still apply over an absent-or-older local commit.
+func TestBootstrapAppliesPeerCommitNewerThanLocal(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+
+	entry := &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now.Add(-time.Hour)}, // old client-set mtime
+		Content:  []byte("fresh peer write"),
+	}
+	if err := f.applyTraversedEntry(context.Background(), entry, now.UnixNano()); err != nil {
+		t.Fatalf("applyTraversedEntry: %v", err)
+	}
+	got, err := store.FindEntry(context.Background(), path)
+	if err != nil {
+		t.Fatalf("peer entry with newer commit must bootstrap: %v", err)
+	}
+	if string(got.Content) != "fresh peer write" {
+		t.Fatalf("content = %q, want peer entry applied", got.Content)
+	}
+}
+
+// A bootstrap-applied entry records the sender's commit timestamp, so a
+// replayed event older than it — but newer than the entry's mtime — is
+// still skipped.
+func TestBootstrapAppliedCommitBlocksStaleReplay(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+
+	entry := &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now.Add(-time.Hour)},
+		Content:  []byte("fresh peer write"),
+	}
+	if err := f.applyTraversedEntry(context.Background(), entry, now.UnixNano()); err != nil {
+		t.Fatalf("applyTraversedEntry: %v", err)
+	}
+	if err := f.Replay(overwriteEvent("/dir", "file", now.Add(-time.Minute).UnixNano(), "stale replay")); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	got, _ := store.FindEntry(context.Background(), path)
+	if string(got.Content) != "fresh peer write" {
+		t.Fatalf("content = %q, stale replay must not overwrite the bootstrap entry", got.Content)
+	}
+}
+
+// An existing local entry is replaced only when the peer commit is newer —
+// not when its mtime happens to be.
+func TestBootstrapUpdatesExistingByCommitTime(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	now := time.Now()
+	path := util.NewFullPath("/dir", "file")
+
+	store.entries[string(path)] = &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now.Add(time.Hour)}, // future mtime, e.g. client-set
+		Content:  []byte("old local write"),
+	}
+	f.notePathChange(path, now.Add(-time.Minute).UnixNano(), false)
+
+	entry := &Entry{
+		FullPath: path,
+		Attr:     Attr{Mtime: now.Add(-time.Hour)},
+		Content:  []byte("newer peer commit"),
+	}
+	if err := f.applyTraversedEntry(context.Background(), entry, now.UnixNano()); err != nil {
+		t.Fatalf("applyTraversedEntry: %v", err)
+	}
+	got, _ := store.FindEntry(context.Background(), path)
+	if string(got.Content) != "newer peer commit" {
+		t.Fatalf("content = %q, newer peer commit must update despite the future local mtime", got.Content)
+	}
+}

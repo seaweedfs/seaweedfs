@@ -738,39 +738,18 @@ func (ma *MetaAggregator) traversePeerMetadata(ctx context.Context, f *Filer, pe
 			if resp.Entry == nil {
 				continue
 			}
-			fullpath := util.Join(resp.Directory, resp.Entry.Name)
 			entry := FromPbEntry(resp.Directory, resp.Entry)
-			unlock := f.lockReplayPaths(entry.FullPath, "")
-			// A local change committed after the peer entry's mtime wins —
-			// most importantly a delete, whose tombstone must not let this
-			// bootstrap resurrect the path.
-			localTsNs, tsErr := f.localCommitTsNs(ctx, entry.FullPath)
-			if tsErr != nil {
-				unlock()
-				return fmt.Errorf("check local state for %s: %w", fullpath, tsErr)
+			// Order on the sender's per-path commit timestamp, not the
+			// entry's mtime — mtime is client-settable and does not track
+			// when the peer committed the change. Peers that predate the
+			// field send 0 and fall back to mtime.
+			peerTsNs := resp.EntryTsNs
+			if peerTsNs == 0 {
+				peerTsNs = entry.Attr.Mtime.UnixNano()
 			}
-			if localTsNs > entry.Attr.Mtime.UnixNano() {
-				unlock()
-				continue
+			if applyErr := f.applyTraversedEntry(ctx, entry, peerTsNs); applyErr != nil {
+				return applyErr
 			}
-			if insertErr := f.Store.InsertEntry(ctx, entry); insertErr != nil {
-				// Entry may already exist (root dir, or partial previous bootstrap).
-				existing, findErr := f.Store.FindEntry(ctx, entry.FullPath)
-				if findErr != nil {
-					unlock()
-					return fmt.Errorf("insert entry %s: %w", fullpath, insertErr)
-				}
-				// Only overwrite if the peer's entry is newer.
-				if entry.Attr.Mtime.After(existing.Attr.Mtime) {
-					if updateErr := f.Store.UpdateEntry(ctx, entry); updateErr != nil {
-						unlock()
-						return fmt.Errorf("update entry %s: %w", fullpath, updateErr)
-					}
-				} else {
-					glog.V(1).Infof("skip older peer entry %s (peer mtime %v <= local mtime %v)", fullpath, entry.Attr.Mtime, existing.Attr.Mtime)
-				}
-			}
-			unlock()
 			count++
 			if count%10000 == 0 {
 				glog.V(0).Infof("synced %d entries from peer %s", count, peer)
@@ -779,6 +758,35 @@ func (ma *MetaAggregator) traversePeerMetadata(ctx context.Context, f *Filer, pe
 		glog.V(0).Infof("synced %d entries total from peer %s", count, peer)
 		return nil
 	})
+}
+
+// applyTraversedEntry merges one bootstrap entry under the path's replay
+// locks, keeping local state when its commit is newer than the sender's —
+// most importantly a delete, whose tombstone must not let the bootstrap
+// resurrect the path. An applied entry records the sender's commit time so a
+// later peer replay orders against it rather than the entry's mtime.
+func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs int64) error {
+	unlock := f.lockReplayPaths(entry.FullPath, "")
+	defer unlock()
+	localTsNs, err := f.localCommitTsNs(ctx, entry.FullPath)
+	if err != nil {
+		return fmt.Errorf("check local state for %s: %w", entry.FullPath, err)
+	}
+	if localTsNs >= peerTsNs {
+		return nil
+	}
+	if insertErr := f.Store.InsertEntry(ctx, entry); insertErr != nil {
+		// Entry already exists (root dir, or partial previous bootstrap);
+		// the lock kept the check above current, so the peer commit is newer.
+		if _, findErr := f.Store.FindEntry(ctx, entry.FullPath); findErr != nil {
+			return fmt.Errorf("insert entry %s: %w", entry.FullPath, insertErr)
+		}
+		if updateErr := f.Store.UpdateEntry(ctx, entry); updateErr != nil {
+			return fmt.Errorf("update entry %s: %w", entry.FullPath, updateErr)
+		}
+	}
+	f.notePathChange(entry.FullPath, peerTsNs, false)
+	return nil
 }
 
 func (ma *MetaAggregator) readFilerStoreSignature(ctx context.Context, peer pb.ServerAddress) (sig int32, err error) {

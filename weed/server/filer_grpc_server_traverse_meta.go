@@ -45,6 +45,7 @@ func (fs *FilerServer) TraverseBfsMetadata(req *filer_pb.TraverseBfsMetadataRequ
 		if err := stream.Send(&filer_pb.TraverseBfsMetadataResponse{
 			Directory: parent,
 			Entry:     entry.ToProtoEntry(),
+			EntryTsNs: fs.filer.CommitTsNs(ctx, entry.FullPath, entry.Mtime.UnixNano()),
 		}); err != nil {
 			return fmt.Errorf("send traverse bfs metadata response: %w", err)
 		}
