@@ -243,37 +243,49 @@ func (f *Filer) DeleteFromRemote(ctx context.Context, entry *Entry) error {
 // moves such an entry out of its mount, or onto a remote that cannot copy, is
 // refused, since it would delete the only copy of the content.
 func (f *Filer) CopyRemoteOnlyEntry(ctx context.Context, entry *Entry, oldPath, newPath util.FullPath) (*filer_pb.RemoteEntry, error) {
-	if f.RemoteStorage == nil || entry.IsDirectory() || !entry.IsInRemoteOnly() || len(entry.Content) > 0 {
-		return nil, nil
+	src, dst, copier, err := f.RemoteCopyLocations(ctx, entry, oldPath, newPath)
+	if err != nil || copier == nil {
+		return nil, err
 	}
-
-	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(oldPath)
-	if remoteLoc == nil {
-		return nil, nil
-	}
-	if newMountDir, _ := f.RemoteStorage.FindMountDirectory(newPath); newMountDir != mountDir {
-		return nil, fmt.Errorf("%s exists only on the remote of mount %s and cannot be renamed out of it; cache it first", oldPath, mountDir)
-	}
-
-	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
-	if !found {
-		return nil, fmt.Errorf("resolve remote storage client for %s: not found", oldPath)
-	}
-	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
-	if clientErr != nil {
-		return nil, fmt.Errorf("resolve remote storage client for %s: %w", oldPath, clientErr)
-	}
-	copier, ok := client.(remote_storage.RemoteStorageObjectCopier)
-	if !ok {
-		return nil, fmt.Errorf("%s exists only on the remote and remote storage type %s cannot copy it to the new name; cache it first", oldPath, remoteConf.Type)
-	}
-
-	src := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, oldPath)
-	dst := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, newPath)
 	remoteEntry, err := copier.CopyFile(src, dst)
 	if err != nil {
 		return nil, fmt.Errorf("copy remote %s to %s: %w", remote_storage.FormatLocation(src), remote_storage.FormatLocation(dst), err)
 	}
 	glog.V(3).InfofCtx(ctx, "CopyRemoteOnlyEntry: copied %s to %s", remote_storage.FormatLocation(src), remote_storage.FormatLocation(dst))
 	return remoteEntry, nil
+}
+
+// RemoteCopyLocations resolves the object locations a remote-only rename copy
+// of entry between oldPath and newPath would use, and the client able to copy
+// it. A nil copier means the entry needs no copy; an error means it needs one
+// that cannot be served, which a rename must refuse before committing.
+func (f *Filer) RemoteCopyLocations(ctx context.Context, entry *Entry, oldPath, newPath util.FullPath) (src, dst *remote_pb.RemoteStorageLocation, copier remote_storage.RemoteStorageObjectCopier, err error) {
+	if f.RemoteStorage == nil || entry.IsDirectory() || !entry.IsInRemoteOnly() || len(entry.Content) > 0 {
+		return nil, nil, nil, nil
+	}
+
+	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(oldPath)
+	if remoteLoc == nil {
+		return nil, nil, nil, nil
+	}
+	if newMountDir, _ := f.RemoteStorage.FindMountDirectory(newPath); newMountDir != mountDir {
+		return nil, nil, nil, fmt.Errorf("%s exists only on the remote of mount %s and cannot be renamed out of it; cache it first", oldPath, mountDir)
+	}
+
+	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
+	if !found {
+		return nil, nil, nil, fmt.Errorf("resolve remote storage client for %s: not found", oldPath)
+	}
+	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+	if clientErr != nil {
+		return nil, nil, nil, fmt.Errorf("resolve remote storage client for %s: %w", oldPath, clientErr)
+	}
+	copier, ok := client.(remote_storage.RemoteStorageObjectCopier)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("%s exists only on the remote and remote storage type %s cannot copy it to the new name; cache it first", oldPath, remoteConf.Type)
+	}
+
+	src = MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, oldPath)
+	dst = MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, newPath)
+	return src, dst, copier, nil
 }

@@ -153,22 +153,23 @@ func TestRenameRemoteOnlyEntryOverTargetKeepsTheCopy(t *testing.T) {
 	assert.Equal(t, `"copy"`, dst.Remote.RemoteETag)
 }
 
-func TestRenameRemoteOnlyEntryCopyFailureChangesNothing(t *testing.T) {
+func TestRenameRemoteOnlyEntryCopyFailureKeepsTheOldObject(t *testing.T) {
 	client := copyingRenameRemoteClient{&renameRemoteClient{copyErr: errors.New("copy refused")}}
 	server, store := newRenameRemoteTestServer(t, client)
 	store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101)
 	store.entries["/buckets/b/dst/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/dst/a.jpg", 202)
 
-	err := renameFile(server, "/buckets/b/src/a.jpg", "/buckets/b/dst/a.jpg")
-	require.ErrorContains(t, err, "copy refused")
+	require.NoError(t, renameFile(server, "/buckets/b/src/a.jpg", "/buckets/b/dst/a.jpg"))
 
+	// the copy runs after the commit over a remote-only target, so its
+	// failure cannot roll anything back: the entry still stamps the old
+	// object, which is kept for remote.sync to finish the copy
 	assert.Empty(t, client.recorded())
-	src, err := store.FindEntry(context.Background(), "/buckets/b/src/a.jpg")
-	require.NoError(t, err)
-	assert.Equal(t, `"orig"`, src.Remote.RemoteETag)
+	_, err := store.FindEntry(context.Background(), "/buckets/b/src/a.jpg")
+	assert.ErrorIs(t, err, filer_pb.ErrNotFound)
 	dst, err := store.FindEntry(context.Background(), "/buckets/b/dst/a.jpg")
 	require.NoError(t, err)
-	assert.Equal(t, uint64(202), dst.Attr.Inode)
+	assert.Equal(t, `"orig"`, dst.Remote.RemoteETag)
 }
 
 func TestRenameRemoteOnlyEntryWithoutCopierIsRefused(t *testing.T) {

@@ -60,7 +60,8 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 
 	var metadataEvents []metadataEvent
 	var pendingChunkDeletes []*filer_pb.FileChunk
-	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes)
+	var pendingRemoteCopies []*pendingRemoteCopy
+	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes, &pendingRemoteCopies)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -77,7 +78,14 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	if len(pendingChunkDeletes) > 0 {
 		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
-	for _, event := range metadataEvents {
+	fs.finishRemoteCopies(ctx, pendingRemoteCopies)
+	for i := range metadataEvents {
+		event := &metadataEvents[i]
+		for _, pending := range pendingRemoteCopies {
+			if pending.failed && event.oldEntry.FullPath == pending.oldPath {
+				event.deleteOldRemote = false
+			}
+		}
 		event.notify(fs.filer, ctx, req.Signatures)
 	}
 
@@ -127,7 +135,8 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 
 	var metadataEvents []metadataEvent
 	var pendingChunkDeletes []*filer_pb.FileChunk
-	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes)
+	var pendingRemoteCopies []*pendingRemoteCopy
+	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes, &pendingRemoteCopies)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -140,7 +149,14 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	if len(pendingChunkDeletes) > 0 {
 		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
-	for _, event := range metadataEvents {
+	fs.finishRemoteCopies(ctx, pendingRemoteCopies)
+	for i := range metadataEvents {
+		event := &metadataEvents[i]
+		for _, pending := range pendingRemoteCopies {
+			if pending.failed && event.oldEntry.FullPath == pending.oldPath {
+				event.deleteOldRemote = false
+			}
+		}
 		event.notify(fs.filer, ctx, req.Signatures)
 	}
 
@@ -154,6 +170,42 @@ type metadataEvent struct {
 	// the old entry's remote object is deleted once the rename has committed:
 	// it was copied to the new key, and a rename that fails must not lose it
 	deleteOldRemote bool
+}
+
+// pendingRemoteCopy is a remote-only rename over a remote-only target whose
+// copy runs after the commit: the store transaction cannot roll a remote
+// write back, so the new entry keeps the old key's stamp until the copy lands.
+type pendingRemoteCopy struct {
+	source  *filer.Entry
+	oldPath util.FullPath
+	newPath util.FullPath
+	failed  bool
+}
+
+// finishRemoteCopies runs the deferred remote copies after the commit. A
+// failure leaves the new entry pointing at the old key, whose object the
+// caller then keeps: remote.sync completes the copy the same way it does a
+// rename whose event it finds unfinished.
+func (fs *FilerServer) finishRemoteCopies(ctx context.Context, pendings []*pendingRemoteCopy) {
+	for _, pending := range pendings {
+		remoteEntry, err := fs.filer.CopyRemoteOnlyEntry(ctx, pending.source, pending.oldPath, pending.newPath)
+		if err != nil {
+			glog.WarningfCtx(ctx, "remote rename copy of %s: %v", pending.newPath, err)
+			pending.failed = true
+			continue
+		}
+		entry, findErr := fs.filer.FindEntry(ctx, pending.newPath)
+		if findErr != nil {
+			glog.WarningfCtx(ctx, "stamp remote rename copy of %s: %v", pending.newPath, findErr)
+			pending.failed = true
+			continue
+		}
+		entry.Remote = remoteEntry
+		if updateErr := fs.filer.UpdateEntry(ctx, entry, entry, false); updateErr != nil {
+			glog.WarningfCtx(ctx, "stamp remote rename copy of %s: %v", pending.newPath, updateErr)
+			pending.failed = true
+		}
+	}
 }
 
 func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signatures []int32) {
@@ -177,23 +229,23 @@ func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signature
 	f.NotifyUpdateEvent(ctx, event.oldEntry, event.newEntry, event.deleteChunks, false, signatures)
 }
 
-func (fs *FilerServer) moveEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk) error {
+func (fs *FilerServer) moveEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk, pendingRemoteCopies *[]*pendingRemoteCopy) error {
 
 	if err := fs.moveSelfEntry(ctx, stream, oldParent, entry, newParent, newName, func() error {
 		if entry.IsDirectory() {
-			if err := fs.moveFolderSubEntries(ctx, stream, oldParent, entry, newParent, newName, signatures, metadataEvents, pendingChunkDeletes); err != nil {
+			if err := fs.moveFolderSubEntries(ctx, stream, oldParent, entry, newParent, newName, signatures, metadataEvents, pendingChunkDeletes, pendingRemoteCopies); err != nil {
 				return err
 			}
 		}
 		return nil
-	}, signatures, skipTargetLookup, metadataEvents, pendingChunkDeletes); err != nil {
+	}, signatures, skipTargetLookup, metadataEvents, pendingChunkDeletes, pendingRemoteCopies); err != nil {
 		return fmt.Errorf("fail to move %s => %s: %v", oldParent.Child(entry.Name()), newParent.Child(newName), err)
 	}
 
 	return nil
 }
 
-func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk) error {
+func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk, pendingRemoteCopies *[]*pendingRemoteCopy) error {
 
 	currentDirPath := oldParent.Child(entry.Name())
 	newDirPath := newParent.Child(newName)
@@ -216,7 +268,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 			// println("processing", lastFileName)
 			newChildPath := newDirPath.Child(item.Name())
 			skipTarget := fs.filer.Store.SameActualStore(newDirPath, newChildPath)
-			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures, skipTarget, metadataEvents, pendingChunkDeletes)
+			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures, skipTarget, metadataEvents, pendingChunkDeletes, pendingRemoteCopies)
 			if err != nil {
 				return err
 			}
@@ -228,7 +280,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk) error {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk, pendingRemoteCopies *[]*pendingRemoteCopy) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
@@ -260,10 +312,26 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	}
 
 	// a remote-only entry is copied on the remote before anything changes:
-	// deleting the old entry deletes the old object
-	copiedRemote, copyErr := fs.filer.CopyRemoteOnlyEntry(ctx, entry, oldPath, newPath)
-	if copyErr != nil {
-		return copyErr
+	// deleting the old entry deletes the old object. Over a remote-only
+	// target the copy runs after the commit instead — it overwrites the
+	// target's only content, which a rolled-back commit cannot restore —
+	// and the new entry reads the old key until the copy stamps it.
+	deferredCopy := false
+	var copiedRemote *filer_pb.RemoteEntry
+	if existingTarget != nil && existingTarget.IsInRemoteOnly() && entry.IsInRemoteOnly() {
+		if _, _, copier, copyErr := fs.filer.RemoteCopyLocations(ctx, entry, oldPath, newPath); copyErr != nil {
+			return copyErr
+		} else if copier != nil {
+			deferredCopy = true
+			*pendingRemoteCopies = append(*pendingRemoteCopies, &pendingRemoteCopy{source: sourceEntry, oldPath: oldPath, newPath: newPath})
+		}
+	}
+	if !deferredCopy {
+		var copyErr error
+		copiedRemote, copyErr = fs.filer.CopyRemoteOnlyEntry(ctx, entry, oldPath, newPath)
+		if copyErr != nil {
+			return copyErr
+		}
 	}
 	remoteEntry := entry.Remote
 	if copiedRemote != nil {
@@ -272,8 +340,8 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	if existingTarget != nil {
 		targetCtx := filer.WithSuppressedMetadataEvents(ctx)
-		if copiedRemote != nil {
-			// the copy has replaced the target's object; keep it
+		if copiedRemote != nil || deferredCopy {
+			// the copy has replaced or still needs the target's object; keep it
 			targetCtx = filer.WithKeepRemoteObject(targetCtx)
 			existingTarget.Extended = maps.Clone(existingTarget.Extended)
 			if existingTarget.Extended == nil {
@@ -359,10 +427,10 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	*metadataEvents = append(*metadataEvents, metadataEvent{
 		oldEntry:        sourceEntry,
 		newEntry:        newEntry,
-		deleteOldRemote: copiedRemote != nil,
+		deleteOldRemote: copiedRemote != nil || deferredCopy,
 	})
 	selfEvent := len(*metadataEvents) - 1
-	keepOldRemote := copiedRemote != nil
+	keepOldRemote := copiedRemote != nil || deferredCopy
 
 	if moveFolderSubEntries != nil {
 		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
