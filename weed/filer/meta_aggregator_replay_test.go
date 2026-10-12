@@ -430,3 +430,41 @@ func TestMetaPathKeyFixedSizeForLongPaths(t *testing.T) {
 		}
 	}
 }
+
+// Exact-path locking alone lets a replayed child create slip between a local
+// ancestor delete's tombstone check and the sweep: replay locks every
+// ancestor too, so it waits for the delete's lock and then sees the
+// tombstone.
+func TestReplaySerializesWithAncestorLock(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+
+	now := time.Now()
+	child := util.NewFullPath("/dir", "file")
+	held := f.EntryLockTable.AcquireLock("test local delete", "/dir", util.ExclusiveLock)
+	f.notePathChange("/dir", now.UnixNano(), true)
+
+	createEvent := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "file", Content: []byte("stale resurrect")},
+		},
+		TsNs: now.Add(-time.Minute).UnixNano(),
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- f.Replay(createEvent)
+	}()
+	select {
+	case <-done:
+		t.Fatal("replay finished while the ancestor lock was still held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.EntryLockTable.ReleaseLock("/dir", held)
+	if err := <-done; err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), child); err == nil {
+		t.Fatal("stale replayed create resurrected a child of a locally deleted directory")
+	}
+}

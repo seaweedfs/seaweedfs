@@ -2,6 +2,8 @@ package filer
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -117,29 +119,45 @@ func (f *Filer) replayBlockedByLocal(ctx context.Context, path util.FullPath, ts
 
 // lockReplayPaths holds the shared entry locks for every path the event
 // touches, in the same sorted order the rename handler takes them.
+// lockReplayPaths takes the per-path entry locks for the event's paths and
+// every ancestor of them, in lexicographic order — parents sort before
+// children, the same ordering the local rename handler's two-path lock uses,
+// so lock acquisition is deadlock-free across operations. Ancestors are
+// included because the replay check consults ancestor delete records: a
+// local recursive delete or directory rename holds only the ancestor's lock,
+// and without contending on it a replay could reinsert a stale child after
+// its check. The root is never locked — it cannot be deleted, and an
+// exclusive root lock would serialize every replayed event.
 func (f *Filer) lockReplayPaths(oldPath, newPath util.FullPath) func() {
 	lt := f.EntryLockTable
 	if lt == nil {
 		return func() {}
 	}
-	if oldPath == "" {
-		oldPath = newPath
-		newPath = ""
+	var paths []util.FullPath
+	addWithAncestors := func(p util.FullPath) {
+		for p != "" && p != "/" {
+			paths = append(paths, p)
+			i := strings.LastIndexByte(string(p), '/')
+			if i <= 0 {
+				break
+			}
+			p = p[:i]
+		}
 	}
-	if oldPath == "" {
+	addWithAncestors(oldPath)
+	addWithAncestors(newPath)
+	if len(paths) == 0 {
 		return func() {}
 	}
-	firstPath, secondPath := oldPath, newPath
-	if secondPath != "" && secondPath < firstPath {
-		firstPath, secondPath = secondPath, firstPath
+	slices.Sort(paths)
+	paths = slices.Compact(paths)
+	locks := make([]*util.ActiveLock, len(paths))
+	for i, p := range paths {
+		locks[i] = lt.AcquireLock("MetaReplay", p, util.ExclusiveLock)
 	}
-	firstLock := lt.AcquireLock("MetaReplay", firstPath, util.ExclusiveLock)
-	if secondPath == "" || secondPath == firstPath {
-		return func() { lt.ReleaseLock(firstPath, firstLock) }
-	}
-	secondLock := lt.AcquireLock("MetaReplay", secondPath, util.ExclusiveLock)
 	return func() {
-		lt.ReleaseLock(secondPath, secondLock)
-		lt.ReleaseLock(firstPath, firstLock)
+		for i := len(paths) - 1; i >= 0; i-- {
+			lt.ReleaseLock(paths[i], locks[i])
+		}
 	}
 }
