@@ -127,9 +127,17 @@ func TestDirAssignRejectsUnknownPlacementBeforeGrowCount(t *testing.T) {
 	c.grow("c", 1)
 	vl := c.layout("c")
 
+	// A rack and data node that exist, but in a different data center: the
+	// requester named dc1, so these placements can never be served either.
+	c.ms.Topo.GetOrCreateDataCenter("dc2").GetOrCreateRack("rackX").
+		GetOrCreateDataNode("127.0.0.2", 8090, 18090, "127.0.0.2", "dnX", map[string]uint32{"": 1000})
+
 	for _, query := range []string{
 		"collection=c&replication=000&writableVolumeCount=30&rack=missing",
 		"collection=c&replication=000&writableVolumeCount=30&dataNode=missing",
+		"collection=c&replication=000&writableVolumeCount=30&dataCenter=dc1&rack=rackX",
+		"collection=c&replication=000&writableVolumeCount=30&dataCenter=dc1&dataNode=dnX",
+		"collection=c&replication=000&writableVolumeCount=30&dataCenter=dc1&rack=rack0&dataNode=dnX",
 	} {
 		w := httptest.NewRecorder()
 		c.ms.dirAssignHandler(w, httptest.NewRequest(http.MethodGet, "/dir/assign?"+query, nil))
@@ -137,10 +145,14 @@ func TestDirAssignRejectsUnknownPlacementBeforeGrowCount(t *testing.T) {
 	}
 	assert.Zero(t, vl.GetLastGrowCount())
 
-	_, err := c.ms.Assign(context.Background(), &master_pb.AssignRequest{
-		Count: 1, Collection: "c", Replication: "000", WritableVolumeCount: 30, Rack: "missing",
-	})
-	assert.Error(t, err)
+	for _, req := range []*master_pb.AssignRequest{
+		{Count: 1, Collection: "c", Replication: "000", WritableVolumeCount: 30, Rack: "missing"},
+		{Count: 1, Collection: "c", Replication: "000", WritableVolumeCount: 30, DataCenter: "dc1", Rack: "rackX"},
+		{Count: 1, Collection: "c", Replication: "000", WritableVolumeCount: 30, DataCenter: "dc1", Rack: "rack0", DataNode: "dnX"},
+	} {
+		_, err := c.ms.Assign(context.Background(), req)
+		assert.Error(t, err)
+	}
 	assert.Zero(t, vl.GetLastGrowCount())
 }
 

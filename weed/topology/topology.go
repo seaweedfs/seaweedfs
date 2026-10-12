@@ -585,13 +585,18 @@ func (t *Topology) DataCenterExists(dcName string) bool {
 	return dcName == "" || t.GetDataCenter(dcName) != nil
 }
 
-func (t *Topology) RackExists(rackName string) bool {
+// RackExists reports whether a rack with the id exists under dcName; an
+// empty dcName searches every data center, an empty rackName always matches.
+func (t *Topology) RackExists(dcName, rackName string) bool {
 	if rackName == "" {
 		return true
 	}
 	t.RLock()
 	defer t.RUnlock()
 	for _, c := range t.children {
+		if dcName != "" && string(c.Id()) != dcName {
+			continue
+		}
 		for _, r := range c.Children() {
 			if string(r.Id()) == rackName {
 				return true
@@ -601,14 +606,23 @@ func (t *Topology) RackExists(rackName string) bool {
 	return false
 }
 
-func (t *Topology) DataNodeExists(nodeId string) bool {
+// DataNodeExists reports whether a data node with the id exists under
+// dcName/rackName; empty parents search every data center and rack, an empty
+// nodeId always matches.
+func (t *Topology) DataNodeExists(dcName, rackName, nodeId string) bool {
 	if nodeId == "" {
 		return true
 	}
 	t.RLock()
 	defer t.RUnlock()
 	for _, c := range t.children {
+		if dcName != "" && string(c.Id()) != dcName {
+			continue
+		}
 		for _, r := range c.Children() {
+			if rackName != "" && string(r.Id()) != rackName {
+				continue
+			}
 			for _, dn := range r.Children() {
 				if string(dn.Id()) == nodeId {
 					return true

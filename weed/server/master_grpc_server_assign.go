@@ -92,10 +92,10 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if !ms.Topo.DataCenterExists(option.DataCenter) {
 		return nil, fmt.Errorf("data center %v not found in topology", option.DataCenter)
 	}
-	if !ms.Topo.RackExists(option.Rack) {
+	if !ms.Topo.RackExists(option.DataCenter, option.Rack) {
 		return nil, fmt.Errorf("rack %v not found in topology", option.Rack)
 	}
-	if !ms.Topo.DataNodeExists(option.DataNode) {
+	if !ms.Topo.DataNodeExists(option.DataCenter, option.Rack, option.DataNode) {
 		return nil, fmt.Errorf("data node %v not found in topology", option.DataNode)
 	}
 

@@ -190,13 +190,13 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
-	if !ms.Topo.RackExists(option.Rack) {
+	if !ms.Topo.RackExists(option.DataCenter, option.Rack) {
 		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
 			Error: fmt.Sprintf("rack %v not found in topology", option.Rack),
 		})
 		return
 	}
-	if !ms.Topo.DataNodeExists(option.DataNode) {
+	if !ms.Topo.DataNodeExists(option.DataCenter, option.Rack, option.DataNode) {
 		writeJsonQuiet(w, r, http.StatusBadRequest, operation.AssignResult{
 			Error: fmt.Sprintf("data node %v not found in topology", option.DataNode),
 		})
