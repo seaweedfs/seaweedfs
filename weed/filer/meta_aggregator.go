@@ -426,9 +426,20 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	*/
 
-	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
+	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse) error
 	lastPersistTime := time.Now()
 	lastTsNs := startFrom
+	// replayFloorTsNs is the earliest event this session gave up replaying.
+	// The persisted offset and the reconnect resume point must stay behind
+	// it so the event is redelivered on the next subscribe instead of being
+	// skipped forever.
+	var replayFloorTsNs int64
+	persistableTsNs := func(tsNs int64) int64 {
+		if replayFloorTsNs > 0 && replayFloorTsNs-1 < tsNs {
+			return replayFloorTsNs - 1
+		}
+		return tsNs
+	}
 
 	// Everything below derives from ctx, cancelled when the peer is removed
 	// or the aggregator shuts down, so no stage can block past its stop.
@@ -474,11 +485,12 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			return lastTsNs, fmt.Errorf("read offset for peer %s: %w", peer, err)
 		}
 		defer func(prevTsNs int64) {
-			if lastTsNs != prevTsNs && lastTsNs != lastPersistTime.UnixNano() {
-				if err := ma.updateOffset(f, peer, peerSignature, lastTsNs); err == nil {
-					glog.V(0).Infof("last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
+			saveTsNs := persistableTsNs(lastTsNs)
+			if saveTsNs != prevTsNs && lastTsNs != lastPersistTime.UnixNano() {
+				if err := ma.updateOffset(f, peer, peerSignature, saveTsNs); err == nil {
+					glog.V(0).Infof("last sync time with %s at %v (%d)", peer, time.Unix(0, saveTsNs), saveTsNs)
 				} else {
-					glog.Errorf("failed to save last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
+					glog.Errorf("failed to save last sync time with %s at %v (%d)", peer, time.Unix(0, saveTsNs), saveTsNs)
 				}
 			}
 		}(lastTsNs)
@@ -486,11 +498,23 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		glog.V(0).Infof("follow peer: %v, last %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
 		var counter int64
 		var synced bool
-		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) {
-			replicateMetadataChange(f, peer, event, stopChan)
+		maybeReplicateMetadataChange = func(event *filer_pb.SubscribeMetadataResponse) error {
+			if err := replicateMetadataChange(f, peer, event, stopChan); err != nil {
+				if errors.Is(err, errPeerSubscriptionStopped) {
+					return err
+				}
+				// A failed event becomes a barrier the persisted offset and
+				// the reconnect resume point cannot pass, while the stream
+				// keeps flowing: blocking on an event that can never replay
+				// would stall every later event from this peer.
+				if replayFloorTsNs == 0 || event.TsNs < replayFloorTsNs {
+					replayFloorTsNs = event.TsNs
+				}
+				return nil
+			}
 			counter++
 			if lastPersistTime.Add(time.Minute).Before(time.Now()) {
-				if err := ma.updateOffset(f, peer, peerSignature, event.TsNs); err == nil {
+				if err := ma.updateOffset(f, peer, peerSignature, persistableTsNs(event.TsNs)); err == nil {
 					if event.TsNs < time.Now().Add(-2*time.Minute).UnixNano() {
 						glog.V(0).Infof("sync with %s progressed to: %v %0.2f/sec", peer, time.Unix(0, event.TsNs), float64(counter)/60.0)
 					} else if !synced {
@@ -503,6 +527,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 					glog.V(0).Infof("failed to update offset for %v: %v", peer, err)
 				}
 			}
+			return nil
 		}
 	}
 
@@ -519,7 +544,9 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			return err
 		}
 		if maybeReplicateMetadataChange != nil {
-			maybeReplicateMetadataChange(event)
+			if err := maybeReplicateMetadataChange(event); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -640,26 +667,26 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			}
 		}
 	})
-	return lastTsNs, err
+	return persistableTsNs(lastTsNs), err
 }
 
 // replicateMetadataChange retries transient Replay failures with bounded
-// backoff. A failure that outlives the retry budget is counted and logged,
-// then skipped: blocking on an event that can never replay would stall every
-// later event from this peer, which is worse than one entry staying stale.
-// Retries stop when the subscription does, so shutdown is not held open by
-// retry sleeps.
-func replicateMetadataChange(f *Filer, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse, stopChan <-chan struct{}) {
+// backoff and reports the outcome. errPeerSubscriptionStopped is returned
+// when the subscription stops mid-retry so the caller aborts and the offset
+// save keeps the last completed event. A failure that outlives the retry
+// budget is counted and logged, then returned: the caller pins the peer's
+// offset at the event so a restart replays it rather than skipping it.
+func replicateMetadataChange(f *Filer, peer pb.ServerAddress, event *filer_pb.SubscribeMetadataResponse, stopChan <-chan struct{}) error {
 	waitTime := time.Second
 	var err error
 	for waitTime < util.RetryWaitTime {
 		select {
 		case <-stopChan:
-			return
+			return errPeerSubscriptionStopped
 		default:
 		}
 		if err = f.Replay(event); err == nil {
-			return
+			return nil
 		}
 		if !util.IsTransientError(err) {
 			break
@@ -667,7 +694,7 @@ func replicateMetadataChange(f *Filer, peer pb.ServerAddress, event *filer_pb.Su
 		glog.V(0).Infof("retry replicate metadata change from %s: %v", peer, err)
 		select {
 		case <-stopChan:
-			return
+			return errPeerSubscriptionStopped
 		case <-time.After(waitTime):
 		}
 		waitTime += waitTime / 2
@@ -678,6 +705,7 @@ func replicateMetadataChange(f *Filer, peer pb.ServerAddress, event *filer_pb.Su
 		name = event.GetEventNotification().GetOldEntry().GetName()
 	}
 	glog.Errorf("giving up replicating metadata change from %s for %s/%s (ts=%d): %v", peer, event.Directory, name, event.TsNs, err)
+	return err
 }
 
 // errPeerSubscriptionStopped ends event processing once the subscription's

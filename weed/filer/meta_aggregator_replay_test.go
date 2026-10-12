@@ -83,7 +83,9 @@ func TestReplicateMetadataChangeRetriesTransientFailure(t *testing.T) {
 	peer := pb.ServerAddress("peer-transient:1")
 	f := newReplayTestFiler(store)
 
-	replicateMetadataChange(f, peer, quotaChangeEvent("my-bucket", wantQuota), nil)
+	if err := replicateMetadataChange(f, peer, quotaChangeEvent("my-bucket", wantQuota), nil); err != nil {
+		t.Fatalf("replicateMetadataChange: %v", err)
+	}
 
 	inserted, err := store.FindEntry(context.Background(), util.NewFullPath("/buckets", "my-bucket"))
 	if err != nil {
@@ -110,7 +112,10 @@ func TestReplicateMetadataChangeGivesUpLoudlyOnPermanentFailure(t *testing.T) {
 
 	before := replayFailureCount(t, peer)
 
-	replicateMetadataChange(f, peer, quotaChangeEvent("poison-bucket", 65536<<20), nil)
+	err := replicateMetadataChange(f, peer, quotaChangeEvent("poison-bucket", 65536<<20), nil)
+	if err == nil {
+		t.Fatal("expected the exhausted replay error so the caller can pin the peer offset at the failed event")
+	}
 
 	if got := store.attemptCount(); got != 1 {
 		t.Fatalf("attempts = %d, want exactly 1: a non-transient error must fail fast, not retry", got)
@@ -262,7 +267,7 @@ func TestReplaySkipsCreateOlderThanLocalDelete(t *testing.T) {
 	path := util.NewFullPath("/dir", "file")
 
 	// The delete removed the entry; its commit record survives.
-	f.notePathChange(context.Background(), path, now.UnixNano(), true)
+	f.notePathChange(path, now.UnixNano(), true)
 
 	createEvent := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
@@ -287,7 +292,7 @@ func TestReplaySkipsCreateUnderDeletedAncestor(t *testing.T) {
 	f := newReplayTestFiler(store)
 	now := time.Now()
 
-	f.notePathChange(context.Background(), "/dir", now.UnixNano(), true)
+	f.notePathChange("/dir", now.UnixNano(), true)
 
 	createEvent := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/dir",
@@ -319,7 +324,7 @@ func TestReplayAppliesWhenCommitRecordIsOlderThanFutureMtime(t *testing.T) {
 		Content:  []byte("old destination"),
 	}
 	// The last committed change predates the event.
-	f.notePathChange(context.Background(), path, now.Add(-time.Minute).UnixNano(), false)
+	f.notePathChange(path, now.Add(-time.Minute).UnixNano(), false)
 
 	event := &filer_pb.SubscribeMetadataResponse{
 		Directory: "/a",
@@ -367,7 +372,7 @@ func TestReplaySerializesWithEntryLock(t *testing.T) {
 	// A local mutation holding the path lock; a replay started behind it
 	// sees the recorded commit and skips.
 	held := f.EntryLockTable.AcquireLock("test local write", path, util.ExclusiveLock)
-	f.notePathChange(context.Background(), path, now.UnixNano(), false)
+	f.notePathChange(path, now.UnixNano(), false)
 
 	done := make(chan error, 1)
 	go func() {
@@ -388,5 +393,40 @@ func TestReplaySerializesWithEntryLock(t *testing.T) {
 	}
 	if entry.Content != nil {
 		t.Fatalf("content = %q, want local entry kept", entry.Content)
+	}
+}
+
+// A closed stop channel must abort the retry loop with
+// errPeerSubscriptionStopped so the subscription tears down and the offset
+// save keeps the last completed event instead of skipping this one.
+func TestReplicateMetadataChangeAbortsOnStop(t *testing.T) {
+	store := &flakyReplayStore{
+		stubFilerStore: newStubFilerStore(),
+		failUntil:      1 << 30,
+		err:            errors.New("i/o timeout talking to store"),
+	}
+	peer := pb.ServerAddress("peer-stopped:1")
+	f := newReplayTestFiler(store)
+
+	stopChan := make(chan struct{})
+	close(stopChan)
+	err := replicateMetadataChange(f, peer, quotaChangeEvent("stuck-bucket", 1<<20), stopChan)
+	if !errors.Is(err, errPeerSubscriptionStopped) {
+		t.Fatalf("err = %v, want errPeerSubscriptionStopped", err)
+	}
+	if got := store.attemptCount(); got != 0 {
+		t.Fatalf("attempts = %d, want 0: a stopped subscription must not replay", got)
+	}
+}
+
+// Commit-record keys must stay small: SQL KV stores keep the key suffix in a
+// VARCHAR(766) column, so a raw path over ~578 bytes silently drops the
+// record (the insert fails and the fallback update touches no row).
+func TestMetaPathKeyFixedSizeForLongPaths(t *testing.T) {
+	path := util.NewFullPath("/", string(make([]rune, 600)))
+	for _, p := range []util.FullPath{"/a", path} {
+		if got := len(metaPathKey(metaPathTsPrefix, p)); got != len(metaPathTsPrefix)+16 {
+			t.Fatalf("metaPathKey(%d-byte path) = %d bytes, want %d", len(p), got, len(metaPathTsPrefix)+16)
+		}
 	}
 }

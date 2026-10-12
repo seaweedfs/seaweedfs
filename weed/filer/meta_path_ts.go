@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"strings"
 
@@ -24,10 +25,17 @@ const (
 	metaPathDelPrefix = "MpDl"
 )
 
+// metaPathKey hashes the path into a fixed-size key. SQL-backed KV stores
+// split the key at byte 8 and store the remainder base64-encoded in a
+// VARCHAR(766) name column: a raw path over ~578 bytes overflows it, the
+// KvPut insert fails, and the fallback update touches no row yet returns no
+// error — the commit record would never land and stale replay could restore
+// the path.
 func metaPathKey(prefix string, path util.FullPath) []byte {
-	key := make([]byte, len(prefix)+len(path))
+	sum := sha256.Sum256([]byte(path))
+	key := make([]byte, len(prefix)+16)
 	copy(key, prefix)
-	copy(key[len(prefix):], path)
+	copy(key[len(prefix):], sum[:16])
 	return key
 }
 
@@ -53,11 +61,15 @@ func (f *Filer) kvReadTsNs(ctx context.Context, key []byte) (tsNs int64, found b
 // put cannot regress an earlier local record; a higher peer record it may
 // overwrite was already newer under last-writer-wins ordering anyway. A
 // delete additionally writes a delete record the ancestor lookup consults.
-func (f *Filer) notePathChange(ctx context.Context, path util.FullPath, tsNs int64, deleted bool) {
+//
+// The write uses a fresh context: callers notify after CommitTransaction,
+// and SQL stores keep the already-committed *sql.Tx in the request context —
+// a record written through it would fail and the path would lose ordering.
+func (f *Filer) notePathChange(path util.FullPath, tsNs int64, deleted bool) {
 	if f.Store == nil {
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
+	ctx := context.Background()
 	value := make([]byte, 8)
 	util.Uint64toBytes(value, uint64(tsNs))
 	if err := f.Store.KvPut(ctx, metaPathKey(metaPathTsPrefix, path), value); err != nil {
@@ -76,7 +88,7 @@ func (f *Filer) notePathChange(ctx context.Context, path util.FullPath, tsNs int
 // caller still holds the path's entry lock (for filer-server mutations), so
 // a peer replay ordered by the same lock sees either the whole local change
 // or none of it.
-func (f *Filer) noteCommittedEvent(ctx context.Context, event *filer_pb.SubscribeMetadataResponse) {
+func (f *Filer) noteCommittedEvent(event *filer_pb.SubscribeMetadataResponse) {
 	message := event.EventNotification
 	if message == nil {
 		return
@@ -91,10 +103,10 @@ func (f *Filer) noteCommittedEvent(ctx context.Context, event *filer_pb.Subscrib
 	// A delete or a rename removes the source path; an update reports the
 	// same path on both sides and counts once.
 	if source != "" && source != target {
-		f.notePathChange(ctx, source, event.TsNs, true)
+		f.notePathChange(source, event.TsNs, true)
 	}
 	if target != "" {
-		f.notePathChange(ctx, target, event.TsNs, false)
+		f.notePathChange(target, event.TsNs, false)
 	}
 }
 

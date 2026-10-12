@@ -63,7 +63,7 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		}
 		// An update is not a delete: the entry still exists, so only the
 		// commit record is stamped.
-		f.notePathChange(ctx, oldPath, resp.TsNs, false)
+		f.notePathChange(oldPath, resp.TsNs, false)
 		return nil
 	}
 
@@ -77,7 +77,7 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 			if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 				return err
 			}
-			f.notePathChange(ctx, oldPath, resp.TsNs, true)
+			f.notePathChange(oldPath, resp.TsNs, true)
 		}
 	}
 
@@ -92,7 +92,7 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 			if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
-			f.notePathChange(ctx, newPath, resp.TsNs, false)
+			f.notePathChange(newPath, resp.TsNs, false)
 		}
 	}
 
