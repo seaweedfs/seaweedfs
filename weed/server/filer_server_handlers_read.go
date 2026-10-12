@@ -206,15 +206,18 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Every part of a multipart Range is prepared on its own, so the origin
 	// preflight below is memoized to one stat per request.
-	statOrigin := sync.OnceValue(func() error {
-		dir, name := entry.FullPath.DirAndName()
-		client, remoteLocation, err := fs.mountedRemoteClient(ctx, dir, name)
-		if err != nil {
+	statOriginAt := func(readDir, readName string) func() error {
+		return sync.OnceValue(func() error {
+			client, remoteLocation, err := fs.mountedRemoteClient(ctx, readDir, readName)
+			if err != nil {
+				return err
+			}
+			_, err = client.StatFile(remoteLocation)
 			return err
-		}
-		_, err = client.StatFile(remoteLocation)
-		return err
-	})
+		})
+	}
+	entryDir, entryName := entry.FullPath.DirAndName()
+	statOrigin := statOriginAt(fs.filer.RemoteReadPath(entry, entryDir, entryName))
 
 	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
@@ -230,13 +233,23 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
+			readDir, readName := fs.filer.RemoteReadPath(entry, dir, name)
 			var mountedLocation *remote_pb.RemoteStorageLocation
 			if fs.filer.RemoteStorage != nil {
 				_, mountedLocation = fs.filer.RemoteStorage.FindMountDirectory(entry.FullPath)
 			}
 			cacheWait := remote_storage.CacheWaitTimeout(entry.Remote.RemoteSize, mountedLocation)
 			if cacheWait <= 0 {
-				return fs.streamFromRemoteOnly(ctx, r, dir, name, offset, size, statOrigin)
+				streamFn, err := fs.streamFromRemoteOnly(ctx, r, readDir, readName, offset, size, statOrigin)
+				if errors.Is(err, filer_pb.ErrNotFound) && (readDir != dir || readName != name) {
+					// the pending copy finished and its source went away since
+					// the entry was read; serve what the entry names now
+					if fresh, findErr := fs.filer.FindEntry(ctx, entry.FullPath); findErr == nil {
+						freshDir, freshName := fs.filer.RemoteReadPath(fresh, dir, name)
+						return fs.streamFromRemoteOnly(ctx, r, freshDir, freshName, offset, size, statOriginAt(freshDir, freshName))
+					}
+				}
+				return streamFn, err
 			}
 			// Bounded wait: a large download outlasts any client timeout, so
 			// serve straight from the origin once the wait expires while the
@@ -264,7 +277,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				// when a later prepare fails; keep those on the 503 retry path.
 				if !strings.Contains(r.Header.Get("Range"), ",") {
 					glog.V(1).InfofCtx(ctx, "stream %s from remote while caching: %v", entry.FullPath, err)
-					if streamFn, remoteErr := fs.streamFromRemote(ctx, dir, name, offset, size); remoteErr == nil {
+					if streamFn, remoteErr := fs.streamFromRemote(ctx, readDir, readName, offset, size); remoteErr == nil {
 						return streamFn, nil
 					} else {
 						glog.WarningfCtx(ctx, "stream %s from remote: %v", entry.FullPath, remoteErr)

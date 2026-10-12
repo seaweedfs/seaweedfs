@@ -110,6 +110,14 @@ type RemoteStorageStreamReader interface {
 	ReadFileAsStream(ctx context.Context, loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (reader io.ReadCloser, err error)
 }
 
+// RemoteStorageObjectCopier is an optional interface for remote storage clients
+// that copy an object to another key within the storage, without the content
+// passing through the client. A rename of an entry whose content exists only
+// on the remote needs it.
+type RemoteStorageObjectCopier interface {
+	CopyFile(src *remote_pb.RemoteStorageLocation, dst *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error)
+}
+
 // CacheWaitTimeout is how long a read of an uncached remote-only object waits
 // for the local cache before serving another way: small files wait longer since
 // their cache completes quickly, large files fail fast for better TTFB. A mount

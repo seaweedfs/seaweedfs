@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -686,12 +687,20 @@ type recordingRemote struct {
 	// chunk ids of each written entry: which version of the file went up
 	writtenChunks [][]string
 	deleteErr     error
+	writeErr      error
 	// objects present on the remote, by path: StatFile and ReadFile answer
 	// from it, everything else is ErrRemoteObjectNotFound.
 	objects map[string][]byte
+	// statETag is the ETag StatFile reports for a present object, unless
+	// statETags names one for its path.
+	statETag  string
+	statETags map[string]string
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
+	if r.writeErr != nil {
+		return nil, r.writeErr
+	}
 	r.writes = append(r.writes, loc)
 	var ids []string
 	for _, c := range entry.GetChunks() {
@@ -714,7 +723,11 @@ func (r *recordingRemote) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer
 	if !ok {
 		return nil, remote_storage.ErrRemoteObjectNotFound
 	}
-	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body))}, nil
+	etag := r.statETag
+	if e, ok := r.statETags[loc.Path]; ok {
+		etag = e
+	}
+	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body)), RemoteETag: etag}, nil
 }
 
 func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) ([]byte, error) {
@@ -1008,7 +1021,7 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 
 	t.Run("absent object", func(t *testing.T) {
 		remote := &recordingRemote{deleteErr: remote_storage.ErrRemoteObjectNotFound}
-		if err := processDeleteEvent(remote, mountedDir, mountLoc, resp); err != nil {
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, resp); err != nil {
 			t.Fatalf("err = %v, want nil: deleting an absent object is complete", err)
 		}
 		if len(remote.deletes) != 1 || !proto.Equal(remote.deletes[0], wantDelete) {
@@ -1020,7 +1033,7 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 		marked := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
 		marked.EventNotification.OldEntry.Extended = map[string][]byte{filer.ExtKeepRemoteObjectKey: []byte("true")}
 		remote := &recordingRemote{}
-		if err := processDeleteEvent(remote, mountedDir, mountLoc, marked); err != nil {
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, marked); err != nil {
 			t.Fatalf("err = %v", err)
 		}
 		if len(remote.deletes) != 0 {
@@ -1028,9 +1041,108 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 		}
 	})
 
+	t.Run("a remote-only entry that took the path keeps the object", func(t *testing.T) {
+		// deleted, then a remote-only file renamed onto the path: the rename
+		// copied its content to this key before the sync got to the delete
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: &filer_pb.Entry{
+			Name:        "state.db.tmp",
+			Attributes:  &filer_pb.FuseAttributes{FileSize: 10},
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 10},
+		}}
+		if err := processDeleteEvent(filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("a replaced object is kept", func(t *testing.T) {
+		// the delete recorded the old object's etag; a rename copied another
+		// entry's content onto the key since, and it must not go with it
+		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 10}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("copied")}, statETag: `"copy"`}
+		filerClient := &stubFilerClient{entry: &filer_pb.Entry{Name: "state.db.tmp", Content: []byte("copied")}}
+		if err := processDeleteEvent(filerClient, remote, mountedDir, mountLoc, deleted); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("a changed object with no entry at the path yet is kept", func(t *testing.T) {
+		// a directory rename copies a child onto the key before its new entry
+		// becomes visible; the copy may be the content's only remaining home
+		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 10}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("copied")}, statETag: `"copy"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("an unchanged object still goes", func(t *testing.T) {
+		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 3}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("old")}, statETag: `"orig"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 1 {
+			t.Errorf("deletes = %+v, want one", remote.deletes)
+		}
+	})
+
+	t.Run("a copy that landed before its entry is kept", func(t *testing.T) {
+		// the deleted entry was never replicated, so its event records no
+		// stamp to match the fresh rename copy waiting for its filer entry
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("copied")}, statETag: `"copy"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("an unverifiable object is kept", func(t *testing.T) {
+		// the delete recorded an etag the live stat does not report; the
+		// object cannot be confirmed as the one the delete meant
+		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 3}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("old")}}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("an entry with local data at the path does not stop the delete", func(t *testing.T) {
+		remote := &recordingRemote{}
+		filerClient := &stubFilerClient{entry: &filer_pb.Entry{
+			Name:        "state.db.tmp",
+			Content:     []byte("local"),
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 10},
+		}}
+		if err := processDeleteEvent(filerClient, remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 1 {
+			t.Errorf("deletes = %+v, want one", remote.deletes)
+		}
+	})
+
 	t.Run("other failure still fails", func(t *testing.T) {
 		remote := &recordingRemote{deleteErr: errors.New("AccessDenied: Access Denied")}
-		if err := processDeleteEvent(remote, mountedDir, mountLoc, resp); err == nil {
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, resp); err == nil {
 			t.Fatal("err = nil, want the delete failure")
 		}
 	})
@@ -1281,7 +1393,7 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
 		remote := &recordingRemote{}
 		filerClient := &stubFilerClient{entry: current}
-		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, "")
+		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", renameSource{loc: wantDelete}, wantWrite, "", eventSource)
 		if err == nil || !strings.Contains(err.Error(), "neither") {
 			t.Errorf("err = %v, want the lost-content failure", err)
 		}
@@ -1292,9 +1404,9 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 
 	t.Run("uncached with the destination already synced: complete without a write", func(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
-		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/b.txt": []byte("payload")}}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload"), "/b/dir/b.txt": []byte("payload")}}
 		filerClient := &stubFilerClient{entry: current}
-		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, ""); err != nil {
+		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", renameSource{loc: wantDelete}, wantWrite, "", eventSource); err != nil {
 			t.Fatalf("err = %v, want nil: the destination object matches the entry's stamp", err)
 		}
 		if len(remote.writes) != 0 {
@@ -1304,6 +1416,228 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 			t.Errorf("deletes = %+v, want the old key deleted", remote.deletes)
 		}
 	})
+}
+
+func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
+	oldDest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/src/a.jpg"}
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/dst/a.jpg"}
+	pending := func() *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "a.jpg",
+			Attributes:  &filer_pb.FuseAttributes{FileSize: 4},
+			RemoteEntry: &filer_pb.RemoteEntry{RemoteETag: `"copy"`, RemoteSize: 4},
+			Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/src/a.jpg")},
+		}
+	}
+	objects := func() map[string][]byte {
+		return map[string][]byte{"/b/src/a.jpg": []byte("data"), "/b/dst/a.jpg": []byte("data")}
+	}
+
+	t.Run("stamped, then the source goes", func(t *testing.T) {
+		// the destination already holds the copy; the entry still reads the
+		// source until its stamp clears the marker
+		current := pending()
+		filerClient := &stubFilerClient{entry: current}
+		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
+		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", current, renameSource{path: "/buckets/b/src/a.jpg", loc: oldDest}, dest, ""); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if filerClient.updates != 1 {
+			t.Errorf("updates = %d, want the stamp that clears the marker", filerClient.updates)
+		}
+		if len(remote.deletes) != 1 || remote.deletes[0].Path != "/b/src/a.jpg" {
+			t.Errorf("deletes = %+v, want the source", remote.deletes)
+		}
+	})
+
+	t.Run("a marker still in place keeps the source", func(t *testing.T) {
+		// the stamp did not land: the filer still has the marker
+		filerClient := &stubFilerClient{entry: pending()}
+		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
+		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", pending(), renameSource{path: "/buckets/b/src/a.jpg", loc: oldDest}, dest, ""); err == nil {
+			t.Fatal("err = nil, want the event retried")
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none while the entry reads the source", remote.deletes)
+		}
+	})
+}
+
+// eventSource resolves a rename's source to the event's old key.
+func eventSource(_ *filer_pb.Entry, source renameSource) renameSource {
+	return source
+}
+
+func TestRenameOfAPendingEntryFollowsItsSource(t *testing.T) {
+	// A was renamed over B and B over C, both copies failing: C reads A's
+	// object through the marker, and B's key holds the old target's bytes
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+	remoteOnly := &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6}
+	pendingC := func() *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "c.jpg",
+			Attributes:  &filer_pb.FuseAttributes{FileSize: 6},
+			RemoteEntry: remoteOnly,
+			Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/a.jpg")},
+		}
+	}
+	event := func(oldName, newName string) *filer_pb.SubscribeMetadataResponse {
+		newEntry := pendingC()
+		newEntry.Name = newName
+		return &filer_pb.SubscribeMetadataResponse{
+			Directory: "/buckets/b",
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: oldName, RemoteEntry: remoteOnly},
+				NewParentPath: "/buckets/b",
+				NewEntry:      newEntry,
+			},
+		}
+	}
+	objects := func() map[string][]byte {
+		return map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b"), "/b/c.jpg": []byte("old-c")}
+	}
+
+	t.Run("the first rename leaves the source to the entry that moved on", func(t *testing.T) {
+		remote := &recordingRemote{objects: objects()}
+		filerClient := &stubFilerClient{} // nothing at b.jpg any more
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event("a.jpg", "b.jpg")); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.deletes) != 0 || len(remote.writes) != 0 {
+			t.Errorf("deletes = %+v, writes = %+v, want neither: c.jpg still reads a.jpg", remote.deletes, remote.writes)
+		}
+	})
+
+	t.Run("the second rename copies from the marker's source", func(t *testing.T) {
+		current := pendingC()
+		remote := &recordingRemote{objects: objects(), statETag: `"a"`}
+		filerClient := &stubFilerClient{entry: current}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event("b.jpg", "c.jpg")); err != nil {
+			t.Fatal(err)
+		}
+		if len(remote.written) != 1 || string(remote.written[0]) != "data-a" {
+			t.Errorf("written = %q, want a.jpg's content", remote.written)
+		}
+		if len(remote.deletes) != 1 || remote.deletes[0].Path != "/b/a.jpg" {
+			t.Errorf("deletes = %+v, want the source once the stamp cleared the marker", remote.deletes)
+		}
+	})
+}
+
+func TestPendingRenameSourceIsReleasedOnlyWhileUnchanged(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/"}
+	// b.jpg's copy failed after it replaced a target: it read a.jpg's object
+	pendingB := func() *filer_pb.Entry {
+		return &filer_pb.Entry{
+			Name:        "b.jpg",
+			RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6},
+			Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/a.jpg")},
+		}
+	}
+	deleted := func() *filer_pb.SubscribeMetadataResponse {
+		return &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{OldEntry: pendingB()}}
+	}
+	deletedPaths := func(r *recordingRemote) (paths []string) {
+		for _, d := range r.deletes {
+			paths = append(paths, d.Path)
+		}
+		return
+	}
+
+	t.Run("deleting the pending entry releases its source", func(t *testing.T) {
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a")}, statETag: `"a"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted()); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); !slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the source", got)
+		}
+	})
+
+	t.Run("a source replaced since is kept", func(t *testing.T) {
+		// another rename copied onto a.jpg before its entry became visible
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-d")}, statETag: `"d"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted()); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the replaced source kept", got)
+		}
+	})
+
+	t.Run("a destination cached since releases the source too", func(t *testing.T) {
+		// c.jpg was cached before the sync reached the rename: it is no
+		// longer remote-only, and a.jpg is still left over
+		cached := &filer_pb.Entry{Name: "c.jpg", Content: []byte("data-a"), Attributes: &filer_pb.FuseAttributes{FileSize: 6}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6}}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b"), "/b/c.jpg": []byte("data-a")}, statETag: `"a"`}
+		event := &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{
+			OldEntry: pendingB(), NewParentPath: "/buckets/b", NewEntry: cached,
+		}}
+		filerClient := &pathFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/b/c.jpg": cached}}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); !slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the pending source released", got)
+		}
+	})
+
+	t.Run("a cached entry still reading the source keeps it until its upload lands", func(t *testing.T) {
+		// c.jpg was cached through its marker; until the upload is stamped
+		// and the marker cleared, a.jpg is what remote.uncache would fall
+		// back to
+		marked := func() *filer_pb.Entry {
+			return &filer_pb.Entry{Name: "c.jpg", Content: []byte("data-a"), Attributes: &filer_pb.FuseAttributes{FileSize: 6},
+				RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6},
+				Extended:    map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/a.jpg")}}
+		}
+		for name, writeErr := range map[string]error{"upload fails": errors.New("upload failed"), "stamp does not land": nil} {
+			t.Run(name, func(t *testing.T) {
+				remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b")}, statETag: `"a"`, writeErr: writeErr}
+				event := &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{
+					OldEntry: pendingB(), NewParentPath: "/buckets/b", NewEntry: marked(),
+				}}
+				// the filer keeps the marker: the stub does not store updates
+				filerClient := &pathFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/b/c.jpg": marked()}}
+				_ = processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event)
+				if got := deletedPaths(remote); slices.Contains(got, "/b/a.jpg") {
+					t.Errorf("deletes = %v, want the source kept while the entry reads it", got)
+				}
+			})
+		}
+	})
+
+	t.Run("a later rename the filer copied releases the source", func(t *testing.T) {
+		// b.jpg was renamed to c.jpg and the filer copied a.jpg there at once
+		copied := &filer_pb.Entry{Name: "c.jpg", Attributes: &filer_pb.FuseAttributes{FileSize: 6}, RemoteEntry: &filer_pb.RemoteEntry{StorageName: "b2", RemoteETag: `"a"`, RemoteSize: 6}}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("old-b"), "/b/c.jpg": []byte("data-a")}, statETag: `"a"`}
+		event := &filer_pb.SubscribeMetadataResponse{Directory: "/buckets/b", EventNotification: &filer_pb.EventNotification{
+			OldEntry: pendingB(), NewParentPath: "/buckets/b", NewEntry: copied,
+		}}
+		filerClient := &pathFilerClient{entries: map[string]*filer_pb.Entry{"/buckets/b/c.jpg": copied}}
+		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event); err != nil {
+			t.Fatal(err)
+		}
+		if got := deletedPaths(remote); !slices.Contains(got, "/b/a.jpg") {
+			t.Errorf("deletes = %v, want the pending source released", got)
+		}
+	})
+}
+
+// pathFilerClient serves entries by path; a path it lacks is not found.
+type pathFilerClient struct {
+	stubFilerClient
+	entries map[string]*filer_pb.Entry
+}
+
+func (c *pathFilerClient) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: c.entries[req.Directory+"/"+req.Name]}, nil
+}
+
+func (c *pathFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c)
 }
 
 func TestShouldSendToRemote(t *testing.T) {
@@ -1381,5 +1715,39 @@ func TestMetadataOnlyUpdateRestampsSyncTs(t *testing.T) {
 	}
 	if shouldSendToRemote(filerClient.updated.Entry) {
 		t.Error("the restamped entry should read synced")
+	}
+}
+
+func TestCompleteRemoteOnlyRenameKeepsAReusedOldKey(t *testing.T) {
+	// A was renamed to B, then D to A before the sync got to the first
+	// rename: the object at A is now D's, and the only copy of it
+	oldDest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/a.jpg"}
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/b.jpg"}
+	current := &filer_pb.Entry{Name: "b.jpg", RemoteEntry: &filer_pb.RemoteEntry{RemoteETag: `"a"`, RemoteSize: 6}}
+	remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-d"), "/b/b.jpg": []byte("data-a")}, statETag: `"a"`}
+	remote.statETags = map[string]string{"/b/a.jpg": `"d"`}
+	filerClient := &stubFilerClient{entry: current}
+	if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b", current, renameSource{path: "/buckets/b/a.jpg", loc: oldDest}, dest, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 0 {
+		t.Errorf("deletes = %+v, want the reused key kept", remote.deletes)
+	}
+}
+
+func TestCompleteRemoteOnlyRenameRetryUsesTheSourceStamp(t *testing.T) {
+	// an earlier run copied a multipart source and stamped the entry with
+	// the copy's ETag, then failed to delete the source
+	oldDest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/a.jpg"}
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/b.jpg"}
+	current := &filer_pb.Entry{Name: "b.jpg", RemoteEntry: &filer_pb.RemoteEntry{RemoteETag: `"copy"`, RemoteSize: 6}}
+	remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-a"), "/b/b.jpg": []byte("data-a")},
+		statETags: map[string]string{"/b/a.jpg": `"a-2"`, "/b/b.jpg": `"copy"`}}
+	source := renameSource{path: "/buckets/b/a.jpg", loc: oldDest, stamp: &filer_pb.RemoteEntry{RemoteETag: `"a-2"`, RemoteSize: 6}}
+	if err := completeRemoteOnlyRename(&stubFilerClient{entry: current}, remote, "/buckets/b", current, source, dest, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/b/a.jpg" {
+		t.Errorf("deletes = %+v, want the unchanged source deleted on the retry", remote.deletes)
 	}
 }

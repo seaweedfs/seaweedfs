@@ -610,7 +610,7 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 			copyInput := &s3.CopyObjectInput{
 				Bucket:                  aws.String(loc.Bucket),
 				Key:                     aws.String(key),
-				CopySource:              aws.String(url.PathEscape(loc.Bucket + "/" + key)),
+				CopySource:              aws.String(s3CopySource(loc.Bucket, key)),
 				MetadataDirective:       aws.String(s3.MetadataDirectiveReplace),
 				Metadata:                headOut.Metadata,
 				ContentType:             headOut.ContentType,
@@ -663,6 +663,168 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 	}
 	return
 }
+
+// s3CopyPartSize is the smallest part a multipart copy uses; parts grow so
+// the largest object stays within the 10000-part limit
+const s3CopyPartSize = 512 * 1024 * 1024
+
+// CopyFile copies the object at src to dst on the server side, with a single
+// CopyObject up to the 5 GB limit and a multipart copy above it. The copy
+// keeps the source's metadata.
+func (s *s3RemoteStorageClient) CopyFile(src *remote_pb.RemoteStorageLocation, dst *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	srcKey, dstKey := src.Path[1:], dst.Path[1:]
+	headOut, err := s.conn.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(src.Bucket),
+		Key:    aws.String(srcKey),
+	})
+	if err != nil {
+		if reqErr, ok := err.(awserr.RequestFailure); ok && reqErr.StatusCode() == http.StatusNotFound {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat s3 %s/%s before copy: %w", src.Bucket, srcKey, err)
+	}
+	copySource := aws.String(s3CopySource(src.Bucket, srcKey))
+	var storageClass *string
+	if s.conf.S3StorageClass != "" {
+		storageClass = aws.String(s.conf.S3StorageClass)
+	}
+
+	if size := aws.Int64Value(headOut.ContentLength); size <= s3CopyObjectSizeLimit {
+		// a copy takes the bucket's default encryption unless told otherwise
+		if _, err = s.conn.CopyObject(&s3.CopyObjectInput{
+			Bucket:               aws.String(dst.Bucket),
+			Key:                  aws.String(dstKey),
+			CopySource:           copySource,
+			StorageClass:         storageClass,
+			ServerSideEncryption: headOut.ServerSideEncryption,
+			SSEKMSKeyId:          headOut.SSEKMSKeyId,
+		}); err != nil {
+			return nil, fmt.Errorf("copy s3 %s/%s to %s/%s: %w", src.Bucket, srcKey, dst.Bucket, dstKey, err)
+		}
+	} else if err = s.multipartCopy(headOut, src, copySource, size, dst.Bucket, dstKey, storageClass); err != nil {
+		return nil, fmt.Errorf("copy s3 %s/%s to %s/%s: %w", src.Bucket, srcKey, dst.Bucket, dstKey, err)
+	}
+
+	return s.readFileRemoteEntry(dst)
+}
+
+// s3CopySource escapes each segment of the copy source and keeps the slashes,
+// which every S3 implementation reads back
+func s3CopySource(bucket, key string) string {
+	segments := strings.Split(bucket+"/"+key, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
+// s3TaggingHeader encodes tags as the query string x-amz-tagging takes, with
+// spaces as %20: a + is read back as a space by some implementations and
+// literally by others
+func s3TaggingHeader(tagSet []*s3.Tag) string {
+	escape := func(s string) string {
+		return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+	}
+	pairs := make([]string, 0, len(tagSet))
+	for _, tag := range tagSet {
+		pairs = append(pairs, escape(aws.StringValue(tag.Key))+"="+escape(aws.StringValue(tag.Value)))
+	}
+	return strings.Join(pairs, "&")
+}
+
+// multipartCopy copies an object above the CopyObject limit part by part. A
+// multipart upload does not inherit the source's metadata or tags, so they are
+// carried over like CopyObject would: metadata from the source's HeadObject,
+// tags when the remote supports tagging.
+func (s *s3RemoteStorageClient) multipartCopy(headOut *s3.HeadObjectOutput, src *remote_pb.RemoteStorageLocation, copySource *string, size int64, bucket, key string, storageClass *string) error {
+	createInput := &s3.CreateMultipartUploadInput{
+		Bucket:                  aws.String(bucket),
+		Key:                     aws.String(key),
+		Metadata:                headOut.Metadata,
+		ContentType:             headOut.ContentType,
+		ContentEncoding:         headOut.ContentEncoding,
+		CacheControl:            headOut.CacheControl,
+		ContentDisposition:      headOut.ContentDisposition,
+		ContentLanguage:         headOut.ContentLanguage,
+		WebsiteRedirectLocation: headOut.WebsiteRedirectLocation,
+		ServerSideEncryption:    headOut.ServerSideEncryption,
+		SSEKMSKeyId:             headOut.SSEKMSKeyId,
+		StorageClass:            storageClass,
+	}
+	if headOut.Expires != nil {
+		if expires, parseErr := http.ParseTime(*headOut.Expires); parseErr == nil {
+			createInput.Expires = aws.Time(expires)
+		}
+	}
+	if s.conf.S3SupportTagging {
+		tagOut, tagErr := s.conn.GetObjectTagging(&s3.GetObjectTaggingInput{
+			Bucket: aws.String(src.Bucket),
+			Key:    aws.String(src.Path[1:]),
+		})
+		if tagErr != nil {
+			return fmt.Errorf("read tags: %w", tagErr)
+		}
+		if len(tagOut.TagSet) > 0 {
+			createInput.Tagging = aws.String(s3TaggingHeader(tagOut.TagSet))
+		}
+	}
+	createOut, err := s.conn.CreateMultipartUpload(createInput)
+	if err != nil {
+		return err
+	}
+
+	partSize := int64(s3CopyPartSize)
+	for partSize*10000 < size {
+		partSize *= 2
+	}
+	var parts []*s3.CompletedPart
+	for offset, partNumber := int64(0), int64(1); offset < size; offset, partNumber = offset+partSize, partNumber+1 {
+		partOut, partErr := s.conn.UploadPartCopy(&s3.UploadPartCopyInput{
+			Bucket:          aws.String(bucket),
+			Key:             aws.String(key),
+			UploadId:        createOut.UploadId,
+			PartNumber:      aws.Int64(partNumber),
+			CopySource:      copySource,
+			CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, min(offset+partSize, size)-1)),
+			// every part from the object the HeadObject saw, not a mix of
+			// versions if it is overwritten mid-copy
+			CopySourceIfMatch: headOut.ETag,
+		})
+		if partErr == nil && partOut.CopyPartResult == nil {
+			partErr = errors.New("no part result")
+		}
+		if partErr != nil {
+			s.abortMultipartUpload(bucket, key, createOut.UploadId)
+			return fmt.Errorf("copy part %d: %w", partNumber, partErr)
+		}
+		parts = append(parts, &s3.CompletedPart{
+			ETag:       partOut.CopyPartResult.ETag,
+			PartNumber: aws.Int64(partNumber),
+		})
+	}
+
+	if _, err = s.conn.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucket),
+		Key:             aws.String(key),
+		UploadId:        createOut.UploadId,
+		MultipartUpload: &s3.CompletedMultipartUpload{Parts: parts},
+	}); err != nil {
+		s.abortMultipartUpload(bucket, key, createOut.UploadId)
+		return err
+	}
+	return nil
+}
+
+func (s *s3RemoteStorageClient) abortMultipartUpload(bucket, key string, uploadId *string) {
+	if _, err := s.conn.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: uploadId,
+	}); err != nil {
+		glog.Warningf("abort multipart copy to s3 %s/%s: %v", bucket, key, err)
+	}
+}
+
 func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	_, err = s.conn.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(loc.Bucket),

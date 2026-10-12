@@ -96,7 +96,8 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 
 	glog.V(1).Infof("CacheRemoteObjectToLocalCluster: caching %s/%s (remote size: %d)", req.Directory, req.Name, entry.Remote.RemoteSize)
 
-	storageConf, remoteLocation, err := fs.resolveMountedRemote(ctx, req.Directory, req.Name)
+	readDir, readName := fs.filer.RemoteReadPath(entry, req.Directory, req.Name)
+	storageConf, remoteLocation, err := fs.resolveMountedRemote(ctx, readDir, readName)
 	if err != nil {
 		return nil, err
 	}
