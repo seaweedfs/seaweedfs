@@ -1069,13 +1069,39 @@ func TestDeleteEventAbsentRemoteObjectIsSuccess(t *testing.T) {
 
 	t.Run("an unchanged object still goes", func(t *testing.T) {
 		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
-		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 10}
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 3}
 		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("old")}, statETag: `"orig"`}
 		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
 			t.Fatalf("err = %v", err)
 		}
 		if len(remote.deletes) != 1 {
 			t.Errorf("deletes = %+v, want one", remote.deletes)
+		}
+	})
+
+	t.Run("a copy that landed before its entry is kept", func(t *testing.T) {
+		// the deleted entry was never replicated, so its event records no
+		// stamp to match the fresh rename copy waiting for its filer entry
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("copied")}, statETag: `"copy"`}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, resp); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
+		}
+	})
+
+	t.Run("an unverifiable object is kept", func(t *testing.T) {
+		// the delete recorded an etag the live stat does not report; the
+		// object cannot be confirmed as the one the delete meant
+		deleted := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+		deleted.EventNotification.OldEntry.RemoteEntry = &filer_pb.RemoteEntry{RemoteETag: `"orig"`, RemoteSize: 3}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/vol/state.db.tmp": []byte("old")}}
+		if err := processDeleteEvent(&stubFilerClient{}, remote, mountedDir, mountLoc, deleted); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if len(remote.deletes) != 0 {
+			t.Errorf("deletes = %+v, want none", remote.deletes)
 		}
 	})
 

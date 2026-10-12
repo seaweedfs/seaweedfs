@@ -236,6 +236,20 @@ func processDeleteEvent(
 	glog.V(2).Infof("delete: %+v", resp)
 	dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 	if !message.OldEntry.IsDirectory {
+		// The object at the key may have been replaced since the delete: a
+		// rename copies another entry's content onto it, a rewrite uploads
+		// over it, and a copy can land before its entry is visible. Delete
+		// only an object the event's stamp still describes.
+		if live, statErr := client.StatFile(dest); statErr == nil {
+			if oldRemote := message.OldEntry.GetRemoteEntry(); oldRemote == nil ||
+				!describes(oldRemote, live) ||
+				oldRemote.RemoteETag != "" && live.RemoteETag == "" {
+				glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))
+				return nil
+			}
+		} else if !errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
+			return statErr
+		}
 		current, err := currentEntry(filerSource, resp.Directory, message.OldEntry.Name)
 		if err != nil {
 			return err
@@ -243,23 +257,6 @@ func processDeleteEvent(
 		if isRemoteOnly(current) {
 			glog.V(0).Infof("keep %s: a remote-only entry has taken its path since", remote_storage.FormatLocation(dest))
 			return nil
-		}
-		// The object at the key may have been replaced since the delete: a
-		// rename copies another entry's content onto it, a rewrite uploads
-		// over it. Match the recorded etag before deleting so only the
-		// object the delete meant goes away. That holds with no entry at the
-		// path too: a rename copies before its new entry becomes visible. An
-		// upload that finished after the delete is kept the same way, which
-		// leaks that object rather than risking the only copy of a rename.
-		if oldETag := message.OldEntry.GetRemoteEntry().GetRemoteETag(); oldETag != "" {
-			if live, err := client.StatFile(dest); err == nil {
-				if live.RemoteETag != "" && live.RemoteETag != oldETag {
-					glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))
-					return nil
-				}
-			} else if !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
-				return err
-			}
 		}
 	}
 	if message.OldEntry.IsDirectory {
