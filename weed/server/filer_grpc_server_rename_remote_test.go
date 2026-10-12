@@ -413,3 +413,18 @@ func TestTaggingCannotSetThePendingSourceMarker(t *testing.T) {
 	assert.Equal(t, "2026", string(x.Extended["Seaweed-Album"]))
 	assert.Empty(t, x.Extended[filer.ExtRemoteRenameSourceKey], "only the filer sets the pending source")
 }
+
+func TestDeletingTagsKeepsThePendingSourceMarker(t *testing.T) {
+	server, store := newRenameRemoteTestServer(t, &renameRemoteClient{})
+	entry := remoteOnlyRenameEntry("/buckets/b/x.jpg", 101)
+	entry.Extended = map[string][]byte{"Seaweed-Album": []byte("2026"), filer.ExtRemoteRenameSourceKey: []byte("/buckets/b/src/x.jpg")}
+	store.entries["/buckets/b/x.jpg"] = entry
+
+	// no tag names: delete every tag
+	server.DeleteTaggingHandler(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/buckets/b/x.jpg?tagging", nil))
+
+	x, err := store.FindEntry(context.Background(), "/buckets/b/x.jpg")
+	require.NoError(t, err)
+	assert.Empty(t, x.Extended["Seaweed-Album"])
+	assert.Equal(t, "/buckets/b/src/x.jpg", string(x.Extended[filer.ExtRemoteRenameSourceKey]), "the marker is not a tag")
+}

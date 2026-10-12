@@ -691,8 +691,10 @@ type recordingRemote struct {
 	// objects present on the remote, by path: StatFile and ReadFile answer
 	// from it, everything else is ErrRemoteObjectNotFound.
 	objects map[string][]byte
-	// statETag is the ETag StatFile reports for a present object.
-	statETag string
+	// statETag is the ETag StatFile reports for a present object, unless
+	// statETags names one for its path.
+	statETag  string
+	statETags map[string]string
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
@@ -721,7 +723,11 @@ func (r *recordingRemote) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer
 	if !ok {
 		return nil, remote_storage.ErrRemoteObjectNotFound
 	}
-	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body)), RemoteETag: r.statETag}, nil
+	etag := r.statETag
+	if e, ok := r.statETags[loc.Path]; ok {
+		etag = e
+	}
+	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body)), RemoteETag: etag}, nil
 }
 
 func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) ([]byte, error) {
@@ -1387,7 +1393,7 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 1024})
 		remote := &recordingRemote{}
 		filerClient := &stubFilerClient{entry: current}
-		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, "", eventSource)
+		err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", renameSource{loc: wantDelete}, wantWrite, "", eventSource)
 		if err == nil || !strings.Contains(err.Error(), "neither") {
 			t.Errorf("err = %v, want the lost-content failure", err)
 		}
@@ -1398,9 +1404,9 @@ func TestSupersededRenameUploadsCurrentEntry(t *testing.T) {
 
 	t.Run("uncached with the destination already synced: complete without a write", func(t *testing.T) {
 		current := entryWith("b.txt", &filer_pb.RemoteEntry{StorageName: "gcs", RemoteMtime: 1786096669, RemoteSize: 7})
-		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/b.txt": []byte("payload")}}
+		remote := &recordingRemote{objects: map[string][]byte{"/b/dir/a.txt": []byte("payload"), "/b/dir/b.txt": []byte("payload")}}
 		filerClient := &stubFilerClient{entry: current}
-		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", wantDelete, wantWrite, "", eventSource); err != nil {
+		if err := uploadCurrentEntry(filerClient, filerClient, remote, "/buckets/b/dir", "b.txt", renameSource{loc: wantDelete}, wantWrite, "", eventSource); err != nil {
 			t.Fatalf("err = %v, want nil: the destination object matches the entry's stamp", err)
 		}
 		if len(remote.writes) != 0 {
@@ -1433,7 +1439,7 @@ func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
 		current := pending()
 		filerClient := &stubFilerClient{entry: current}
 		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
-		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", current, oldDest, dest, ""); err != nil {
+		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", current, renameSource{path: "/buckets/b/src/a.jpg", loc: oldDest}, dest, ""); err != nil {
 			t.Fatalf("err = %v", err)
 		}
 		if filerClient.updates != 1 {
@@ -1448,7 +1454,7 @@ func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
 		// the stamp did not land: the filer still has the marker
 		filerClient := &stubFilerClient{entry: pending()}
 		remote := &recordingRemote{objects: objects(), statETag: `"copy"`}
-		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", pending(), oldDest, dest, ""); err == nil {
+		if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b/dst", pending(), renameSource{path: "/buckets/b/src/a.jpg", loc: oldDest}, dest, ""); err == nil {
 			t.Fatal("err = nil, want the event retried")
 		}
 		if len(remote.deletes) != 0 {
@@ -1458,8 +1464,8 @@ func TestCompleteRemoteOnlyRenameClearsThePendingSourceFirst(t *testing.T) {
 }
 
 // eventSource resolves a rename's source to the event's old key.
-func eventSource(_ *filer_pb.Entry, oldDest *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {
-	return oldDest
+func eventSource(_ *filer_pb.Entry, source renameSource) renameSource {
+	return source
 }
 
 func TestRenameOfAPendingEntryFollowsItsSource(t *testing.T) {
@@ -1505,7 +1511,7 @@ func TestRenameOfAPendingEntryFollowsItsSource(t *testing.T) {
 
 	t.Run("the second rename copies from the marker's source", func(t *testing.T) {
 		current := pendingC()
-		remote := &recordingRemote{objects: objects()}
+		remote := &recordingRemote{objects: objects(), statETag: `"a"`}
 		filerClient := &stubFilerClient{entry: current}
 		if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, event("b.jpg", "c.jpg")); err != nil {
 			t.Fatal(err)
@@ -1709,5 +1715,22 @@ func TestMetadataOnlyUpdateRestampsSyncTs(t *testing.T) {
 	}
 	if shouldSendToRemote(filerClient.updated.Entry) {
 		t.Error("the restamped entry should read synced")
+	}
+}
+
+func TestCompleteRemoteOnlyRenameKeepsAReusedOldKey(t *testing.T) {
+	// A was renamed to B, then D to A before the sync got to the first
+	// rename: the object at A is now D's, and the only copy of it
+	oldDest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/a.jpg"}
+	dest := &remote_pb.RemoteStorageLocation{Name: "b2", Bucket: "bucket", Path: "/b/b.jpg"}
+	current := &filer_pb.Entry{Name: "b.jpg", RemoteEntry: &filer_pb.RemoteEntry{RemoteETag: `"a"`, RemoteSize: 6}}
+	remote := &recordingRemote{objects: map[string][]byte{"/b/a.jpg": []byte("data-d"), "/b/b.jpg": []byte("data-a")}, statETag: `"a"`}
+	remote.statETags = map[string]string{"/b/a.jpg": `"d"`}
+	filerClient := &stubFilerClient{entry: current}
+	if err := completeRemoteOnlyRename(filerClient, remote, "/buckets/b", current, renameSource{path: "/buckets/b/a.jpg", loc: oldDest}, dest, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.deletes) != 0 {
+		t.Errorf("deletes = %+v, want the reused key kept", remote.deletes)
 	}
 }
