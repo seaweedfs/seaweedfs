@@ -58,13 +58,16 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 			return err
 		}
+		// Record the commit before the insert too: if the insert fails and
+		// the event is retried later, the path sits deleted in between —
+		// without the record a stale peer create could resurrect it in the
+		// gap. The entry still exists afterward, so no delete record.
+		f.notePathChange(oldPath, resp.TsNs, false)
 		glog.V(4).Infof("creating %v", newPath)
 		newEntry := FromPbEntry(dir, message.NewEntry)
 		if err := f.Store.InsertEntry(ctx, newEntry); err != nil {
 			return err
 		}
-		// An update is not a delete: the entry still exists, so only the
-		// commit record is stamped.
 		f.notePathChange(oldPath, resp.TsNs, false)
 		return nil
 	}
