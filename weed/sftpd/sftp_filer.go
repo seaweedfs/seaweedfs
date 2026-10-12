@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -23,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
 
@@ -159,6 +161,14 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
+	// Without O_TRUNC the client writes into the existing file, so start from its current bytes.
+	if !r.Pflags().Trunc {
+		if err := fs.copyExistingContent(absPath, tmpFile); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			return nil, err
+		}
+	}
 
 	return &SeaweedSftpFileWriter{
 		fs:          *fs,
@@ -170,6 +180,75 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 		gid:         fs.user.Gid,
 		offset:      0,
 	}, nil
+}
+
+func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {
+	entry, err := fs.getEntry(absPath)
+	if err == os.ErrNotExist {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if entry.IsDirectory {
+		return nil
+	}
+	size := int64(filer.FileSize(entry))
+	remote := entry.GetRemoteEntry()
+	if len(entry.Content) == 0 && len(entry.GetChunks()) == 0 {
+		if remote != nil && remote.RemoteSize > 0 {
+			return fmt.Errorf("existing content of %s is not readable", absPath)
+		}
+		if size == 0 {
+			return nil
+		}
+		return writeZeros(dst, size)
+	}
+	if size == 0 {
+		return nil
+	}
+	if len(entry.Content) > 0 {
+		if _, err := dst.Write(entry.Content); err != nil {
+			return err
+		}
+		if remaining := size - int64(len(entry.Content)); remaining > 0 {
+			return writeZeros(dst, remaining)
+		}
+		return nil
+	}
+	streamFn, err := filer.PrepareStreamContent(lookupFileIdFn(filer.LookupFn(fs)), filer.JwtForVolumeServer, entry.GetChunks(), 0, size)
+	if err != nil {
+		return fmt.Errorf("read existing content of %s: %w", absPath, err)
+	}
+	if err := streamFn(dst); err != nil {
+		return fmt.Errorf("read existing content of %s: %w", absPath, err)
+	}
+	return nil
+}
+
+// lookupFileIdFn adapts a filer LookupFn to the chunk streamer's provider
+// interface. PrepareStreamContent fills unstored gaps with zeros, so a sparse
+// file's tail survives the copy.
+type lookupFileIdFn wdclient.LookupFileIdFunctionType
+
+func (fn lookupFileIdFn) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
+	return wdclient.LookupFileIdFunctionType(fn)
+}
+
+func writeZeros(w io.Writer, size int64) error {
+	zeros := make([]byte, 8192)
+	for size > 0 {
+		n := int64(len(zeros))
+		if size < n {
+			n = size
+		}
+		written, err := w.Write(zeros[:n])
+		size -= int64(written)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (fs *SftpServer) removeEntry(absPath string) error {

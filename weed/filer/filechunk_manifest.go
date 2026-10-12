@@ -458,11 +458,11 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 				localProcessed += writtenCount
 				totalWritten += writtenCount
 			})
-			if !shouldRetry {
-				break
-			}
 			if writeErr != nil {
 				err = writeErr
+				break
+			}
+			if !shouldRetry {
 				break
 			}
 			if err != nil {

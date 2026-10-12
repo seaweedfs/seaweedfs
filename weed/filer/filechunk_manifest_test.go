@@ -787,3 +787,23 @@ func TestFetchWholeChunkUsesProvidedFilerJwt(t *testing.T) {
 		return ""
 	}))
 }
+
+// A completed fetch whose destination write failed is a failed copy, not a
+// short success: the caller must see the write error, or a temp disk filling
+// mid-copy would still upload the truncated file.
+func TestRetriedStreamFetchChunkDataReportsWriteError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("0123456789"))
+	}))
+	t.Cleanup(srv.Close)
+
+	written, err := retriedStreamFetchChunkData(context.Background(), &failOnWrite{}, []string{srv.URL + "/5,abc"}, "", nil, false, true, 0, 0, nil)
+	assert.Error(t, err)
+	assert.Zero(t, written)
+}
+
+type failOnWrite struct{}
+
+func (w *failOnWrite) Write(p []byte) (int, error) {
+	return 0, fmt.Errorf("no space left")
+}
