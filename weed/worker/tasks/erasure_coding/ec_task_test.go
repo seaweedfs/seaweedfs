@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -216,6 +217,58 @@ func TestGenerateEcShardsLocallyUsesAdminGeneration(t *testing.T) {
 	require.True(t, found)
 	require.NotNil(t, vi.EcShardConfig)
 	require.Equal(t, adminGeneration, vi.EcShardConfig.EncodeTsNs, "fenced run must stamp the admin generation verbatim, not a local timestamp")
+}
+
+// A TTL volume encoded by the worker must carry the source's destroy time in
+// the EC .vif, or the EC volume never expires (expireAtSec stays 0).
+func TestGenerateEcShardsLocallyKeepsTtlExpiry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const volumeID = uint32(958)
+	_, err := grpcClient.AllocateVolume(ctx, &volume_server_pb.AllocateVolumeRequest{
+		VolumeId:    volumeID,
+		Replication: "000",
+		Ttl:         "1d",
+		Version:     uint32(needle.GetCurrentVersion()),
+	})
+	require.NoError(t, err)
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 2003, 0x6666FFFF)
+	resp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("payload-for-ttl-expiry"))
+	_ = framework.ReadAllAndClose(t, resp)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	task := NewErasureCodingTask(
+		"ec-ttl-expiry",
+		clusterHarness.VolumeServerAddress(),
+		volumeID,
+		"",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+
+	require.NoError(t, task.markReplicasReadonly(ctx))
+	localFiles, err := task.copyVolumeFilesToWorker(ctx, t.TempDir())
+	require.NoError(t, err)
+
+	shardFiles, err := task.generateEcShardsLocally(localFiles, t.TempDir())
+	require.NoError(t, err)
+
+	vi, _, found, err := volume_info.MaybeLoadVolumeInfo(shardFiles["vif"])
+	require.NoError(t, err)
+	require.True(t, found)
+	// The upload is the volume's last write: it expires a day after it.
+	expected := uint64(time.Now().Add(24 * time.Hour).Unix())
+	require.InDelta(t, expected, vi.ExpireAtSec, 60, "worker .vif must carry the TTL destroy time")
 }
 
 func compactVolumeOnce(t *testing.T, grpcClient volume_server_pb.VolumeServerClient, volumeID uint32) {
