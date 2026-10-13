@@ -242,6 +242,7 @@ func TestGenerateEcShardsLocallyKeepsTtlExpiry(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	beforeWrite := time.Now().Add(-time.Second) // AppendAtNs is truncated to seconds
 	httpClient := framework.NewHTTPClient()
 	fid := framework.NewFileID(volumeID, 2003, 0x6666FFFF)
 	resp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("payload-for-ttl-expiry"))
@@ -257,6 +258,14 @@ func TestGenerateEcShardsLocallyKeepsTtlExpiry(t *testing.T) {
 	)
 
 	require.NoError(t, task.markReplicasReadonly(ctx))
+
+	// The source's destroy time counts from the upload, its last write.
+	fileStatus, err := task.readSourceVolumeFileStatus(ctx)
+	require.NoError(t, err)
+	sourceExpireAtSec := fileStatus.GetVolumeInfo().GetExpireAtSec()
+	require.GreaterOrEqual(t, sourceExpireAtSec, uint64(beforeWrite.Add(24*time.Hour).Unix()))
+	require.LessOrEqual(t, sourceExpireAtSec, uint64(time.Now().Add(24*time.Hour).Unix()))
+
 	localFiles, err := task.copyVolumeFilesToWorker(ctx, t.TempDir())
 	require.NoError(t, err)
 
@@ -266,9 +275,7 @@ func TestGenerateEcShardsLocallyKeepsTtlExpiry(t *testing.T) {
 	vi, _, found, err := volume_info.MaybeLoadVolumeInfo(shardFiles["vif"])
 	require.NoError(t, err)
 	require.True(t, found)
-	// The upload is the volume's last write: it expires a day after it.
-	expected := uint64(time.Now().Add(24 * time.Hour).Unix())
-	require.InDelta(t, expected, vi.ExpireAtSec, 60, "worker .vif must carry the TTL destroy time")
+	require.Equal(t, sourceExpireAtSec, vi.ExpireAtSec, "worker .vif must carry the source's TTL destroy time, not restart it")
 }
 
 func compactVolumeOnce(t *testing.T, grpcClient volume_server_pb.VolumeServerClient, volumeID uint32) {
