@@ -376,6 +376,17 @@ The S3 endpoint is available at http://localhost:8333. For client
 configuration and IAM setup, see the project documentation or use the
 Admin UI (http://localhost:23646) to manage users and policies.
 
+Notes:
+- Flags are saved to <dir>/mini.options and applied again on the next
+  start to every flag that is not given on the command line. Removing a
+  flag, or passing it with its default value, does not restore the
+  default on the next start. Edit or delete mini.options instead.
+- The official Docker image ships /etc/seaweedfs/filer.toml, which keeps
+  the filer metadata in /data/filerldb2 regardless of -dir. If you set
+  -dir to another path, keep /data on a persistent volume as well.
+  Otherwise the metadata is lost when the container is recreated, and
+  buckets list no objects although the volume files are still in -dir.
+
 `,
 }
 
