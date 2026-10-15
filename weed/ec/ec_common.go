@@ -764,15 +764,20 @@ type ecBalancer struct {
 	// every disk-type bucket; see EcBalance.
 	migratingVolumeIds map[uint32]bool
 	// noReceiveTargets are node ids the planner may not pick as destinations;
-	// see EcBalance.
+	// noReceiveDisks narrows that to individual disks on a node: a server-side
+	// auto-pick refusal means no disk qualifies, but an explicit-disk refusal
+	// only convicts that disk. See EcBalance.
 	noReceiveTargets map[string]bool
+	noReceiveDisks   map[string]map[uint32]bool
 	// mu guards the execution journal written by concurrent move tasks.
 	mu sync.Mutex
-	// rejectedTargets collects the node ids that refused a copy this attempt;
-	// completedMoves records applied moves so a retry can replay them onto a
-	// stale-heartbeat snapshot; sawOtherErr marks any failure that is not a
-	// "no space left" refusal and makes the run non-retryable.
+	// rejectedTargets and rejectedDisks collect the destinations that refused a
+	// copy this attempt; completedMoves records applied moves so a retry can
+	// replay them onto a stale-heartbeat snapshot; sawOtherErr marks any
+	// failure that is not a "no space left" refusal and makes the run
+	// non-retryable.
 	rejectedTargets map[string]bool
+	rejectedDisks   map[string]map[uint32]bool
 	completedMoves  []ecbalancer.Move
 	sawOtherErr     bool
 	// plannedMoves is the move count of the last plan, for the empty-replan
@@ -820,6 +825,7 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 	// server's refusal is authoritative: re-collect the topology, mark the
 	// refusing targets no-receive, and plan again. They stay usable as sources.
 	noReceiveTargets := make(map[string]bool)
+	noReceiveDisks := make(map[string]map[uint32]bool)
 	var completed []ecbalancer.Move
 	var lastErr error
 	for {
@@ -845,11 +851,17 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 			allEcNodes = kept
 			totalFreeEcSlots -= excludedFreeSlots
 		}
-		// A no-receive node's slots cannot take a copy, so they do not count
-		// toward the free-space precheck.
+		// A refused destination's slots cannot take a copy, so they do not
+		// count toward the free-space precheck.
 		for _, en := range allEcNodes {
 			if noReceiveTargets[en.Info.Id] {
 				totalFreeEcSlots -= en.FreeEcSlot
+				continue
+			}
+			for diskId := range noReceiveDisks[en.Info.Id] {
+				if d := en.Disks[diskId]; d != nil {
+					totalFreeEcSlots -= d.FreeEcSlots
+				}
 			}
 		}
 
@@ -875,6 +887,7 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 			volumeIds:          volumeIdFilter,
 			migratingVolumeIds: migrating,
 			noReceiveTargets:   noReceiveTargets,
+			noReceiveDisks:     noReceiveDisks,
 		}
 
 		if len(collections) == 0 {
@@ -894,7 +907,7 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 		// Replan while the failed attempt surfaced newly-refusing targets; a node
 		// once marked can no longer be picked, so the loop terminates. Any other
 		// failure aborts instead of being hidden by the retry.
-		newRejects := ecb.mergeRejectedTargets(noReceiveTargets)
+		newRejects := ecb.mergeRejectedTargets(noReceiveTargets, noReceiveDisks)
 		if len(newRejects) == 0 || ecb.hasOtherError() {
 			return err
 		}
@@ -1010,15 +1023,30 @@ func addEcShard(en *EcNode, collection string, vid needle.VolumeId, shardId eras
 	d.EcShards[vid].Set(erasure_coding.NewShardInfo(shardId, 0))
 }
 
-// mergeRejectedTargets folds the targets this run saw refuse into noReceive and
-// returns the newly added ids; an empty result means no progress is possible.
-func (ecb *ecBalancer) mergeRejectedTargets(noReceive map[string]bool) (added []string) {
+// mergeRejectedTargets folds the destinations this run saw refuse into the
+// no-receive sets and returns the newly added ids; an empty result means no
+// progress is possible.
+func (ecb *ecBalancer) mergeRejectedTargets(noReceiveNodes map[string]bool, noReceiveDisks map[string]map[uint32]bool) (added []string) {
 	ecb.mu.Lock()
 	defer ecb.mu.Unlock()
 	for id := range ecb.rejectedTargets {
-		if !noReceive[id] {
-			noReceive[id] = true
+		if !noReceiveNodes[id] {
+			noReceiveNodes[id] = true
 			added = append(added, id)
+		}
+	}
+	for id, disks := range ecb.rejectedDisks {
+		if noReceiveNodes[id] {
+			continue
+		}
+		if noReceiveDisks[id] == nil {
+			noReceiveDisks[id] = make(map[uint32]bool)
+		}
+		for diskId := range disks {
+			if !noReceiveDisks[id][diskId] {
+				noReceiveDisks[id][diskId] = true
+				added = append(added, fmt.Sprintf("%s:disk%d", id, diskId))
+			}
 		}
 	}
 	sort.Strings(added)
@@ -1041,10 +1069,24 @@ func (ecb *ecBalancer) recordMoveResult(m ecbalancer.Move, err error) {
 	case err == nil:
 		ecb.completedMoves = append(ecb.completedMoves, m)
 	case m.TargetNode != "" && isNoSpaceLeftError(err):
-		if ecb.rejectedTargets == nil {
-			ecb.rejectedTargets = make(map[string]bool)
+		if m.TargetDisk > 0 {
+			// The refusal convicts only the named disk; the node's other
+			// disks may still have room.
+			if ecb.rejectedDisks == nil {
+				ecb.rejectedDisks = make(map[string]map[uint32]bool)
+			}
+			if ecb.rejectedDisks[m.TargetNode] == nil {
+				ecb.rejectedDisks[m.TargetNode] = make(map[uint32]bool)
+			}
+			ecb.rejectedDisks[m.TargetNode][m.TargetDisk] = true
+		} else {
+			// The server auto-picked and found no usable disk: the whole
+			// node is out.
+			if ecb.rejectedTargets == nil {
+				ecb.rejectedTargets = make(map[string]bool)
+			}
+			ecb.rejectedTargets[m.TargetNode] = true
 		}
-		ecb.rejectedTargets[m.TargetNode] = true
 	default:
 		ecb.sawOtherErr = true
 	}
@@ -1060,7 +1102,7 @@ func defaultECRatio(_ string) (int, int) {
 // balance plans EC shard moves with the shared planner and executes them. When
 // collections is empty all collections present are balanced.
 func (ecb *ecBalancer) balance(collections []string) error {
-	topo, volumeRatio, selected := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType, ecb.volumeIds, ecb.migratingVolumeIds, ecb.noReceiveTargets)
+	topo, volumeRatio, selected := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType, ecb.volumeIds, ecb.migratingVolumeIds, ecb.noReceiveTargets, ecb.noReceiveDisks)
 	if len(ecb.volumeIds) > 0 {
 		requested := make([]uint32, 0, len(ecb.volumeIds))
 		for vid := range ecb.volumeIds {
@@ -1116,7 +1158,7 @@ func (ecb *ecBalancer) balance(collections []string) error {
 // (0,0 when unreported, e.g. always in OSS), which Plan prefers over the
 // collection ratio for mixed-ratio clusters, and the set of volume ids that made
 // it into the topology.
-func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType, volumeIds map[uint32]bool, migratingVolumeIds map[uint32]bool, noReceiveTargets map[string]bool) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int), map[uint32]bool) {
+func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType, volumeIds map[uint32]bool, migratingVolumeIds map[uint32]bool, noReceiveTargets map[string]bool, noReceiveDisks map[string]map[uint32]bool) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int), map[uint32]bool) {
 	allowed := make(map[string]bool, len(collections))
 	for _, c := range collections {
 		allowed[c] = true
@@ -1141,6 +1183,9 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 		node.SetHost(pb.NewServerAddressFromDataNode(en.Info).ToHost())
 		for diskId, d := range en.Disks {
 			node.AddDisk(diskId, d.DiskType, d.FreeEcSlots, d.EcShardCount)
+			if noReceiveDisks[en.Info.Id][diskId] {
+				node.SetDiskNoReceive(diskId)
+			}
 		}
 		for diskTypeKey, diskInfo := range en.Info.DiskInfos {
 			if diskInfo == nil {
