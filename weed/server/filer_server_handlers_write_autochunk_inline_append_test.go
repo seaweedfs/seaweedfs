@@ -376,6 +376,12 @@ func TestFilerSaveInsideMultipartAppendRejected(t *testing.T) {
 		if _, _, err := fs.doPostAutoChunk(ctx, httptest.NewRecorder(), r, 4, r.ContentLength, &operation.StorageOption{SaveInside: true}); err == nil {
 			t.Fatal("saveInside append to chunk-backed entry succeeded")
 		}
+		recorder := httptest.NewRecorder()
+		r = saveInsideMultipartRequest(t, filePath+"?op=append", "append-target.txt", appendContent)
+		fs.autoChunk(ctx, recorder, r, r.ContentLength, &operation.StorageOption{SaveInside: true})
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("rejected saveInside append status = %d, want %d", recorder.Code, http.StatusBadRequest)
+		}
 		unchanged, err := f.FindEntry(ctx, util.FullPath(filePath))
 		if err != nil {
 			t.Fatalf("find entry after rejected append: %v", err)
@@ -405,6 +411,12 @@ func TestFilerSaveInsideMultipartAppendRejected(t *testing.T) {
 		r := saveInsideMultipartRequest(t, filePath+"?op=append", "append-target.txt", appendContent)
 		if _, _, err := fs.doPostAutoChunk(ctx, httptest.NewRecorder(), r, 4, r.ContentLength, &operation.StorageOption{SaveInside: true}); err == nil {
 			t.Fatal("saveInside append to inline entry succeeded")
+		}
+		recorder := httptest.NewRecorder()
+		r = saveInsideMultipartRequest(t, filePath+"?op=append", "append-target.txt", appendContent)
+		fs.autoChunk(ctx, recorder, r, r.ContentLength, &operation.StorageOption{SaveInside: true})
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("rejected saveInside append status = %d, want %d", recorder.Code, http.StatusBadRequest)
 		}
 		unchanged, err := f.FindEntry(ctx, util.FullPath(filePath))
 		if err != nil {

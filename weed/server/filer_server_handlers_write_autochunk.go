@@ -58,7 +58,10 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 			writeJsonError(w, r, util.HttpStatusCancelled, err)
 		case strings.HasSuffix(errStr, "is a file") || strings.HasSuffix(errStr, "already exists"):
 			writeJsonError(w, r, http.StatusConflict, err)
-		case errStr == constants.ErrMsgBadDigest:
+		case errStr == constants.ErrMsgBadDigest,
+			errStr == constants.ErrMsgAppendSaveInsideChunked,
+			errStr == constants.ErrMsgAppendInlineMode,
+			errStr == constants.ErrMsgOffsetWriteInline:
 			writeJsonError(w, r, http.StatusBadRequest, err)
 		default:
 			writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -304,7 +307,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			(isAppend && entry.FileSize == 0 && entry.Remote == nil && len(entry.HardLinkId) == 0 && len(entry.GetChunks()) == 0)
 		if isAppend && content != nil && !inlineCandidate {
 			if so.SaveInside {
-				replyerr = fmt.Errorf("append saved inside the entry to a chunked file is not supported")
+				replyerr = errors.New(constants.ErrMsgAppendSaveInsideChunked)
 				return
 			}
 			replyerr = fmt.Errorf("inline file changed while preparing append; retry the request")
@@ -314,11 +317,11 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		if inlineCandidate {
 			if isOffsetWrite {
 				// TODO: support inline offset writes separately from append semantics.
-				replyerr = fmt.Errorf("offset write to inline small file is not supported yet")
+				replyerr = errors.New(constants.ErrMsgOffsetWriteInline)
 				return
 			}
 			if !isAppend || so.SaveInside || entry.Remote != nil || len(entry.HardLinkId) != 0 || len(entry.GetChunks()) != 0 {
-				replyerr = fmt.Errorf("append to inline content with this storage mode is not supported")
+				replyerr = errors.New(constants.ErrMsgAppendInlineMode)
 				return
 			}
 			if entry.FileSize > uint64(len(entry.Content)) {
