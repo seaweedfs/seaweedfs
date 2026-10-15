@@ -766,10 +766,18 @@ type ecBalancer struct {
 	// noReceiveTargets are node ids the planner may not pick as destinations;
 	// see EcBalance.
 	noReceiveTargets map[string]bool
-	// rejectedTargets collects the node ids that refused a copy during this
-	// run's execution.
-	rejectedMu      sync.Mutex
+	// mu guards the execution journal written by concurrent move tasks.
+	mu sync.Mutex
+	// rejectedTargets collects the node ids that refused a copy this attempt;
+	// completedMoves records applied moves so a retry can replay them onto a
+	// stale-heartbeat snapshot; sawOtherErr marks any failure that is not a
+	// "no space left" refusal and makes the run non-retryable.
 	rejectedTargets map[string]bool
+	completedMoves  []ecbalancer.Move
+	sawOtherErr     bool
+	// plannedMoves is the move count of the last plan, for the empty-replan
+	// check in EcBalance.
+	plannedMoves int
 }
 
 // excludeNodes is a set of server addresses kept out of the balance as copy/move
@@ -812,6 +820,8 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 	// server's refusal is authoritative: re-collect the topology, mark the
 	// refusing targets no-receive, and plan again. They stay usable as sources.
 	noReceiveTargets := make(map[string]bool)
+	var completed []ecbalancer.Move
+	var lastErr error
 	for {
 		// collect all ec nodes
 		allEcNodes, totalFreeEcSlots, err := CollectEcNodesForDC(env, dc, diskType)
@@ -835,10 +845,24 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 			allEcNodes = kept
 			totalFreeEcSlots -= excludedFreeSlots
 		}
+		// A no-receive node's slots cannot take a copy, so they do not count
+		// toward the free-space precheck.
+		for _, en := range allEcNodes {
+			if noReceiveTargets[en.Info.Id] {
+				totalFreeEcSlots -= en.FreeEcSlot
+			}
+		}
 
 		if totalFreeEcSlots < 1 {
+			if lastErr != nil {
+				return fmt.Errorf("no receiving targets remain: %w", lastErr)
+			}
 			return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
 		}
+
+		// A fresh collection can still describe an applied move through a
+		// heartbeat that predates its source delete; replay the journal.
+		applyCompletedMoves(allEcNodes, completed, diskType)
 
 		ecb := &ecBalancer{
 			env:                env,
@@ -857,25 +881,71 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 			glog.V(1).Infof("WARNING: No collections to balance EC volumes across.\n")
 		}
 		err = ecb.balance(collections)
-		if err == nil || !applyBalancing {
+		if !applyBalancing {
 			return err
+		}
+		if err == nil {
+			if lastErr != nil && ecb.plannedMoves == 0 {
+				return fmt.Errorf("no receiving targets remain: %w", lastErr)
+			}
+			return nil
 		}
 
 		// Replan while the failed attempt surfaced newly-refusing targets; a node
-		// once marked can no longer be picked, so the loop terminates.
+		// once marked can no longer be picked, so the loop terminates. Any other
+		// failure aborts instead of being hidden by the retry.
 		newRejects := ecb.mergeRejectedTargets(noReceiveTargets)
-		if len(newRejects) == 0 {
+		if len(newRejects) == 0 || ecb.hasOtherError() {
 			return err
 		}
+		lastErr = err
+		completed = append(completed, ecb.completedMoves...)
 		fmt.Printf("ec.balance: %v reported no space left; re-collecting topology and re-planning without them as targets\n", newRejects)
 	}
+}
+
+// applyCompletedMoves replays already-applied moves onto a freshly collected
+// node list: heartbeats can lag, so the snapshot may still show a moved shard
+// on its deleted source or lack it on its mounted target.
+func applyCompletedMoves(ecNodes []*EcNode, moves []ecbalancer.Move, diskType types.DiskType) {
+	if len(moves) == 0 {
+		return
+	}
+	byID := make(map[string]*EcNode, len(ecNodes))
+	for _, en := range ecNodes {
+		byID[en.Info.Id] = en
+	}
+	for _, m := range moves {
+		vid := needle.VolumeId(m.VolumeID)
+		shardId := erasure_coding.ShardId(m.ShardID)
+		if src := byID[m.SourceNode]; src != nil {
+			src.DeleteEcVolumeShards(vid, []erasure_coding.ShardId{shardId})
+		}
+		if m.Phase == "dedup" {
+			continue
+		}
+		if dst := byID[m.TargetNode]; dst != nil && !ecNodeHasShard(dst, vid, shardId) {
+			dst.AddEcVolumeShards(vid, m.Collection, []erasure_coding.ShardId{shardId}, diskType)
+		}
+	}
+}
+
+func ecNodeHasShard(ecNode *EcNode, vid needle.VolumeId, shardId erasure_coding.ShardId) bool {
+	for _, diskInfo := range ecNode.Info.DiskInfos {
+		for _, eci := range diskInfo.EcShardInfos {
+			if needle.VolumeId(eci.Id) == vid && erasure_coding.ShardBits(eci.EcIndexBits).Has(shardId) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // mergeRejectedTargets folds the targets this run saw refuse into noReceive and
 // returns the newly added ids; an empty result means no progress is possible.
 func (ecb *ecBalancer) mergeRejectedTargets(noReceive map[string]bool) (added []string) {
-	ecb.rejectedMu.Lock()
-	defer ecb.rejectedMu.Unlock()
+	ecb.mu.Lock()
+	defer ecb.mu.Unlock()
 	for id := range ecb.rejectedTargets {
 		if !noReceive[id] {
 			noReceive[id] = true
@@ -884,6 +954,31 @@ func (ecb *ecBalancer) mergeRejectedTargets(noReceive map[string]bool) (added []
 	}
 	sort.Strings(added)
 	return
+}
+
+func (ecb *ecBalancer) hasOtherError() bool {
+	ecb.mu.Lock()
+	defer ecb.mu.Unlock()
+	return ecb.sawOtherErr
+}
+
+// recordMoveResult journals an apply-mode move outcome: a success is replayed
+// onto the next attempt's snapshot, a "no space left" marks the target
+// no-receive, and any other failure makes the run non-retryable.
+func (ecb *ecBalancer) recordMoveResult(m ecbalancer.Move, err error) {
+	ecb.mu.Lock()
+	defer ecb.mu.Unlock()
+	switch {
+	case err == nil:
+		ecb.completedMoves = append(ecb.completedMoves, m)
+	case m.TargetNode != "" && isNoSpaceLeftError(err):
+		if ecb.rejectedTargets == nil {
+			ecb.rejectedTargets = make(map[string]bool)
+		}
+		ecb.rejectedTargets[m.TargetNode] = true
+	default:
+		ecb.sawOtherErr = true
+	}
 }
 
 // defaultECRatio resolves a collection's EC data/parity counts, defaulting to
@@ -940,6 +1035,7 @@ func (ecb *ecBalancer) balance(collections []string) error {
 		}
 		fmt.Printf("planned %d ec shard move(s) and %d ec shard deletion(s)\n", len(moves)-deletions, deletions)
 	}
+	ecb.plannedMoves = len(moves)
 	return ecb.executeMoves(moves)
 }
 
@@ -1116,14 +1212,16 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 		// thing making this safe -- and the plan saying so is not evidence. A
 		// topology entry can name a location holding nothing, and deleting on
 		// that basis removes the last copy. Confirm the keep node has it.
-		if err := verifyEcShardOnKeepNode(grpcDialOption, m.Collection, vid, m.KeepNode, shardId); err != nil {
-			return err
-		}
+		err := verifyEcShardOnKeepNode(grpcDialOption, m.Collection, vid, m.KeepNode, shardId)
 		addr := pb.NewServerAddressFromDataNode(src.Info)
-		if err := UnmountEcShards(grpcDialOption, vid, addr, shardIds); err != nil {
-			return err
+		if err == nil {
+			err = UnmountEcShards(grpcDialOption, vid, addr, shardIds)
 		}
-		return SourceServerDeleteEcShards(grpcDialOption, m.Collection, vid, addr, shardIds)
+		if err == nil {
+			err = SourceServerDeleteEcShards(grpcDialOption, m.Collection, vid, addr, shardIds)
+		}
+		ecb.recordMoveResult(m, err)
+		return err
 	}
 
 	dst := byID[m.TargetNode]
@@ -1140,14 +1238,7 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 		return MoveMountedShardToEcNode(ecb.env, src, m.Collection, vid, shardId, dst, m.TargetDisk, false, ecb.diskType)
 	}
 	err := ecb.applyShardMoveRPC(src, dst, m.Collection, vid, shardId, m.TargetDisk)
-	if isNoSpaceLeftError(err) {
-		ecb.rejectedMu.Lock()
-		if ecb.rejectedTargets == nil {
-			ecb.rejectedTargets = make(map[string]bool)
-		}
-		ecb.rejectedTargets[m.TargetNode] = true
-		ecb.rejectedMu.Unlock()
-	}
+	ecb.recordMoveResult(m, err)
 	return err
 }
 

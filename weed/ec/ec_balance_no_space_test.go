@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -117,25 +118,10 @@ func startEcBalanceFakeServer(t *testing.T, vid uint32, present ...uint32) *ecBa
 	return f
 }
 
-// TestEcBalanceReplanAfterNoSpaceLeft reproduces seaweedfs/seaweedfs#11753:
-// the planner works from heartbeat free-slot counts that can disagree with the
-// volume server's own check, so a planned target can reject the copy with
-// "no space left" mid-run. The balance must re-plan without that node as a
-// target rather than fail the whole run.
-func TestEcBalanceReplanAfterNoSpaceLeft(t *testing.T) {
-	const vid = uint32(1)
-	var allShards []uint32
-	for sid := 0; sid < erasure_coding.DataShardsCount+erasure_coding.ParityShardsCount; sid++ {
-		allShards = append(allShards, uint32(sid))
-	}
-
-	full := startEcBalanceFakeServer(t, vid)
-	accept := startEcBalanceFakeServer(t, vid)
-	source := startEcBalanceFakeServer(t, vid, allShards...)
-	full.full = true
-
-	servers := []*ecBalanceFakeServer{source, full, accept}
-	fetchTopology := func(delay time.Duration) (*master_pb.TopologyInfo, uint64, error) {
+// fetchEcBalanceTopology builds a FetchTopology that reports the fake servers'
+// live shard inventory.
+func fetchEcBalanceTopology(servers []*ecBalanceFakeServer) func(delay time.Duration) (*master_pb.TopologyInfo, uint64, error) {
+	return func(delay time.Duration) (*master_pb.TopologyInfo, uint64, error) {
 		var nodes []*master_pb.DataNodeInfo
 		for _, f := range servers {
 			di := &master_pb.DiskInfo{Type: string(types.HardDriveType), MaxVolumeCount: 100}
@@ -172,10 +158,28 @@ func TestEcBalanceReplanAfterNoSpaceLeft(t *testing.T) {
 			}},
 		}, 0, nil
 	}
+}
+
+// TestEcBalanceReplanAfterNoSpaceLeft reproduces seaweedfs/seaweedfs#11753:
+// the planner works from heartbeat free-slot counts that can disagree with the
+// volume server's own check, so a planned target can reject the copy with
+// "no space left" mid-run. The balance must re-plan without that node as a
+// target rather than fail the whole run.
+func TestEcBalanceReplanAfterNoSpaceLeft(t *testing.T) {
+	const vid = uint32(1)
+	var allShards []uint32
+	for sid := 0; sid < erasure_coding.DataShardsCount+erasure_coding.ParityShardsCount; sid++ {
+		allShards = append(allShards, uint32(sid))
+	}
+
+	full := startEcBalanceFakeServer(t, vid)
+	accept := startEcBalanceFakeServer(t, vid)
+	source := startEcBalanceFakeServer(t, vid, allShards...)
+	full.full = true
 
 	env := &Env{
 		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-		FetchTopology:  fetchTopology,
+		FetchTopology:  fetchEcBalanceTopology([]*ecBalanceFakeServer{source, full, accept}),
 	}
 
 	err := EcBalance(env, []string{"c1"}, "", nil, types.HardDriveType, 3, 0, true, nil, nil, nil)
@@ -194,5 +198,90 @@ func TestEcBalanceReplanAfterNoSpaceLeft(t *testing.T) {
 	}
 	if source.shardCount(vid) == len(allShards) {
 		t.Fatalf("no shards were moved off the source")
+	}
+}
+
+// TestEcBalanceReplanAfterNoSpaceLeftStaleSnapshot serves the pre-move
+// topology on every collection after the first, simulating a master heartbeat
+// that lags the landed moves. The re-plan must replay its completed moves onto
+// the stale snapshot instead of re-moving shards off the deleted source.
+func TestEcBalanceReplanAfterNoSpaceLeftStaleSnapshot(t *testing.T) {
+	const vid = uint32(1)
+	var allShards []uint32
+	for sid := 0; sid < erasure_coding.DataShardsCount+erasure_coding.ParityShardsCount; sid++ {
+		allShards = append(allShards, uint32(sid))
+	}
+
+	full := startEcBalanceFakeServer(t, vid)
+	accept := startEcBalanceFakeServer(t, vid)
+	source := startEcBalanceFakeServer(t, vid, allShards...)
+	full.full = true
+
+	live := fetchEcBalanceTopology([]*ecBalanceFakeServer{source, full, accept})
+	var stale *master_pb.TopologyInfo
+	calls := 0
+	fetchTopology := func(delay time.Duration) (*master_pb.TopologyInfo, uint64, error) {
+		topo, size, err := live(delay)
+		if err != nil {
+			return nil, 0, err
+		}
+		calls++
+		if stale == nil {
+			stale = topo
+		}
+		if calls > 1 {
+			return stale, size, nil
+		}
+		return topo, size, nil
+	}
+
+	env := &Env{
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		FetchTopology:  fetchTopology,
+	}
+
+	err := EcBalance(env, []string{"c1"}, "", nil, types.HardDriveType, 3, 0, true, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("balance should re-plan around the full target, got: %v", err)
+	}
+	if calls < 2 {
+		t.Fatalf("expected a re-plan, topology collected %d time(s)", calls)
+	}
+	// Each shard lands on the accepting server exactly once; a stale re-plan
+	// would copy already-moved shards again.
+	if got, want := accept.copyCalls, accept.shardCount(vid); got != want {
+		t.Fatalf("accepting server saw %d copies for %d held shards: completed moves were re-planned", got, want)
+	}
+	total := source.shardCount(vid) + full.shardCount(vid) + accept.shardCount(vid)
+	if total != len(allShards) {
+		t.Fatalf("shards lost or duplicated: total %d, want %d", total, len(allShards))
+	}
+}
+
+// TestEcBalanceNoReceivingTargetFails surfaces the refusal when every
+// destination that could take a shard has rejected a copy, rather than
+// reporting success for a plan that moved nothing.
+func TestEcBalanceNoReceivingTargetFails(t *testing.T) {
+	const vid = uint32(1)
+	var allShards []uint32
+	for sid := 0; sid < erasure_coding.DataShardsCount+erasure_coding.ParityShardsCount; sid++ {
+		allShards = append(allShards, uint32(sid))
+	}
+
+	full := startEcBalanceFakeServer(t, vid)
+	source := startEcBalanceFakeServer(t, vid, allShards...)
+	full.full = true
+
+	env := &Env{
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		FetchTopology:  fetchEcBalanceTopology([]*ecBalanceFakeServer{source, full}),
+	}
+
+	err := EcBalance(env, []string{"c1"}, "", nil, types.HardDriveType, 3, 0, true, nil, nil, nil)
+	if err == nil {
+		t.Fatalf("balance with no receiving target should fail")
+	}
+	if !strings.Contains(err.Error(), "no space left") {
+		t.Fatalf("expected the refusal to surface, got: %v", err)
 	}
 }
