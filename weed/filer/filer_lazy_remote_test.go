@@ -495,6 +495,39 @@ func TestMaybeLazyFetchFromRemote_StatsEachParentOnce(t *testing.T) {
 		"a parent still missing after its own stat must not be re-stat'ed by the next lookup")
 }
 
+func TestMaybeLazyListFromRemote_PersistsParentDirectories(t *testing.T) {
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{}}
+	stub.listDirFn = func(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+		return visitFn("/", "file.bin", false, &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 1234})
+	}
+	f, store := newPathStatFiler(t, "stub_lazy_list_parents", stub)
+	f.RemoteStorage.mapDirectoryToRemoteStorage("/buckets/listmount", &remote_pb.RemoteStorageLocation{
+		Name:                   "mystore",
+		Bucket:                 "listmount",
+		Path:                   "/",
+		ListingCacheTtlSeconds: 300,
+	})
+
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/listmount/a/b"))
+
+	assert.Equal(t, []string{"/a"}, stub.statCalls, "each missing parent is stat'ed once")
+	for _, dir := range []string{"/buckets/listmount", "/buckets/listmount/a", "/buckets/listmount/a/b"} {
+		dirEntry := store.getEntry(dir)
+		require.NotNil(t, dirEntry, "%s not persisted", dir)
+		assert.True(t, dirEntry.IsDirectory(), "%s should be a directory", dir)
+	}
+
+	child := store.getEntry("/buckets/listmount/a/b/file.bin")
+	require.NotNil(t, child)
+	child.Chunks = []*filer_pb.FileChunk{{FileId: "1,01637037d6", Size: 1234}}
+	child.Remote.LastLocalSyncTsNs = time.Now().UnixNano()
+	require.NoError(t, store.UpdateEntry(context.Background(), child))
+
+	evictable := f.ListEvictableRemoteEntries(context.Background(), []util.FullPath{"/buckets/listmount"}, 0)
+	require.Len(t, evictable, 1)
+	assert.Equal(t, util.FullPath("/buckets/listmount/a/b/file.bin"), evictable[0].FullPath)
+}
+
 func TestDeleteEntryMetaAndData_EmptyFolderUnderMountKeepsRemotePrefix(t *testing.T) {
 	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
 		"/dir/unread.bin": {RemoteMtime: 1700000000, RemoteSize: 1},
