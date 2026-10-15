@@ -890,7 +890,7 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	parentDir, _ := dirPath.DirAndName()
 	if dirEntry, findErr := f.FindEntry(ctx, dirPath); findErr == nil {
-		if delErr := f.doDeleteEntryMetaAndData(ctx, dirEntry, false, false, nil); delErr == nil {
+		if delErr := f.doDeleteEntryMetaAndData(f.emptyFolderDeleteContext(ctx, dirPath), dirEntry, false, false, nil); delErr == nil {
 			// Successfully deleted, continue checking upwards
 			f.DeleteEmptyParentDirectories(ctx, util.FullPath(parentDir), stopAtPath)
 		} else {
