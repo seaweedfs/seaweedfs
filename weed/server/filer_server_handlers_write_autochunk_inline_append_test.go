@@ -270,6 +270,164 @@ func TestFilerInlineAppendMultipartPostStaysInline(t *testing.T) {
 	}
 }
 
+func TestFilerSaveInsideMultipartPostRecordsSize(t *testing.T) {
+	ctx := context.Background()
+	content := []byte(`{"identities":[]}`)
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	fs := &FilerServer{filer: f, option: &FilerOption{MaxMB: 1}}
+
+	var body bytes.Buffer
+	multipartWriter := multipart.NewWriter(&body)
+	part, err := multipartWriter.CreateFormFile("file", "identity.json")
+	if err != nil {
+		t.Fatalf("create multipart file part: %v", err)
+	}
+	if _, err = part.Write(content); err != nil {
+		t.Fatalf("write multipart file part: %v", err)
+	}
+	if err = multipartWriter.Close(); err != nil {
+		t.Fatalf("close multipart body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", &body)
+	r.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	result, requestMD5, err := fs.doPostAutoChunk(ctx, httptest.NewRecorder(), r, 4, int64(body.Len()), &operation.StorageOption{SaveInside: true})
+	if err != nil {
+		t.Fatalf("POST saveInside: %v", err)
+	}
+	if result == nil || result.Size != int64(len(content)) {
+		t.Fatalf("result = %#v, want size %d", result, len(content))
+	}
+	wantMD5 := md5.Sum(content)
+	if !bytes.Equal(requestMD5, wantMD5[:]) {
+		t.Fatalf("request MD5 = %x, want %x", requestMD5, wantMD5)
+	}
+	saved, err := f.FindEntry(ctx, "/identity.json")
+	if err != nil {
+		t.Fatalf("find saved entry: %v", err)
+	}
+	if !bytes.Equal(saved.Content, content) || saved.FileSize != uint64(len(content)) {
+		t.Fatalf("saved entry: content=%q size=%d, want %q size %d", saved.Content, saved.FileSize, content, len(content))
+	}
+	if !bytes.Equal(saved.Md5, wantMD5[:]) {
+		t.Fatalf("saved MD5 = %x, want %x", saved.Md5, wantMD5)
+	}
+}
+
+func saveInsideMultipartRequest(t *testing.T, target, fileName string, content []byte) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	multipartWriter := multipart.NewWriter(&body)
+	part, err := multipartWriter.CreateFormFile("file", fileName)
+	if err != nil {
+		t.Fatalf("create multipart file part: %v", err)
+	}
+	if _, err = part.Write(content); err != nil {
+		t.Fatalf("write multipart file part: %v", err)
+	}
+	if err = multipartWriter.Close(); err != nil {
+		t.Fatalf("close multipart body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, target, &body)
+	r.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	return r
+}
+
+func TestFilerSaveInsideMultipartPostRejectsBadDigest(t *testing.T) {
+	ctx := context.Background()
+	content := []byte(`{"identities":[]}`)
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	fs := &FilerServer{filer: f, option: &FilerOption{MaxMB: 1}}
+
+	r := saveInsideMultipartRequest(t, "/", "identity.json", content)
+	r.Header.Set("Content-Md5", util.Base64Encode([]byte("not the digest")))
+	if _, _, err := fs.doPostAutoChunk(ctx, httptest.NewRecorder(), r, 4, r.ContentLength, &operation.StorageOption{SaveInside: true}); err == nil || !strings.Contains(err.Error(), "Content-Md5") {
+		t.Fatalf("POST saveInside error = %v, want bad Content-MD5 error", err)
+	}
+	if _, err := f.FindEntry(ctx, "/identity.json"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("bad digest still saved the entry: %v", err)
+	}
+}
+
+func TestFilerSaveInsideMultipartAppendRejected(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/append-target.txt"
+	appendContent := []byte("new")
+
+	t.Run("chunk backed target", func(t *testing.T) {
+		oldChunk := &filer_pb.FileChunk{FileId: "1,00000001", Offset: 0, Size: 4}
+		store := newRenameTestStore()
+		f := newRenameTestFiler(t, store)
+		if err := store.InsertEntry(ctx, &filer.Entry{
+			FullPath: util.FullPath(filePath),
+			Attr: filer.Attr{
+				Mtime:    time.Unix(1, 0),
+				Crtime:   time.Unix(1, 0),
+				FileSize: 4,
+			},
+			Chunks: []*filer_pb.FileChunk{oldChunk},
+		}); err != nil {
+			t.Fatalf("insert chunk-backed entry: %v", err)
+		}
+
+		fs := &FilerServer{filer: f, option: &FilerOption{MaxMB: 1}}
+		r := saveInsideMultipartRequest(t, filePath+"?op=append", "append-target.txt", appendContent)
+		if _, _, err := fs.doPostAutoChunk(ctx, httptest.NewRecorder(), r, 4, r.ContentLength, &operation.StorageOption{SaveInside: true}); err == nil {
+			t.Fatal("saveInside append to chunk-backed entry succeeded")
+		}
+		recorder := httptest.NewRecorder()
+		r = saveInsideMultipartRequest(t, filePath+"?op=append", "append-target.txt", appendContent)
+		fs.autoChunk(ctx, recorder, r, r.ContentLength, &operation.StorageOption{SaveInside: true})
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("rejected saveInside append status = %d, want %d", recorder.Code, http.StatusBadRequest)
+		}
+		unchanged, err := f.FindEntry(ctx, util.FullPath(filePath))
+		if err != nil {
+			t.Fatalf("find entry after rejected append: %v", err)
+		}
+		if unchanged.FileSize != 4 || len(unchanged.Chunks) != 1 || len(unchanged.Content) != 0 {
+			t.Fatalf("rejected append changed entry: size=%d chunks=%d content=%q", unchanged.FileSize, len(unchanged.Chunks), unchanged.Content)
+		}
+	})
+
+	t.Run("inline target", func(t *testing.T) {
+		oldContent := []byte("old-")
+		store := newRenameTestStore()
+		f := newRenameTestFiler(t, store)
+		if err := store.InsertEntry(ctx, &filer.Entry{
+			FullPath: util.FullPath(filePath),
+			Attr: filer.Attr{
+				Mtime:    time.Unix(1, 0),
+				Crtime:   time.Unix(1, 0),
+				FileSize: uint64(len(oldContent)),
+			},
+			Content: append([]byte(nil), oldContent...),
+		}); err != nil {
+			t.Fatalf("insert inline entry: %v", err)
+		}
+
+		fs := &FilerServer{filer: f, option: &FilerOption{MaxMB: 1}}
+		r := saveInsideMultipartRequest(t, filePath+"?op=append", "append-target.txt", appendContent)
+		if _, _, err := fs.doPostAutoChunk(ctx, httptest.NewRecorder(), r, 4, r.ContentLength, &operation.StorageOption{SaveInside: true}); err == nil {
+			t.Fatal("saveInside append to inline entry succeeded")
+		}
+		recorder := httptest.NewRecorder()
+		r = saveInsideMultipartRequest(t, filePath+"?op=append", "append-target.txt", appendContent)
+		fs.autoChunk(ctx, recorder, r, r.ContentLength, &operation.StorageOption{SaveInside: true})
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("rejected saveInside append status = %d, want %d", recorder.Code, http.StatusBadRequest)
+		}
+		unchanged, err := f.FindEntry(ctx, util.FullPath(filePath))
+		if err != nil {
+			t.Fatalf("find entry after rejected append: %v", err)
+		}
+		if !bytes.Equal(unchanged.Content, oldContent) || unchanged.FileSize != uint64(len(oldContent)) {
+			t.Fatalf("rejected append changed entry: content=%q size=%d", unchanged.Content, unchanged.FileSize)
+		}
+	})
+}
+
 func TestFilerInlineOffsetWriteRemainsUnsupported(t *testing.T) {
 	ctx := context.Background()
 	const filePath = "/offset.txt"

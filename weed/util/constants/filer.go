@@ -7,6 +7,10 @@ const (
 	ErrMsgOperationNotPermitted = "operation not permitted"
 	ErrMsgBadDigest             = "The Content-Md5 you specified did not match what we received."
 	ErrMsgEntryNameTooLong      = "entry name too long"
+	// Unsupported write-mode combinations; deterministic client errors.
+	ErrMsgAppendSaveInsideChunked = "append saved inside the entry to a chunked file is not supported"
+	ErrMsgAppendInlineMode        = "append to inline content with this storage mode is not supported"
+	ErrMsgOffsetWriteInline       = "offset write to inline small file is not supported yet"
 	// Suffix appended to a path, e.g. "/buckets/b/foo/bar is a file"
 	ErrMsgIsAFile = " is a file"
 	// Prefix + suffix, e.g. "existing /buckets/b/foo is a directory"
