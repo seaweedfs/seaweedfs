@@ -12,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/ecbalancer"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -283,5 +285,75 @@ func TestEcBalanceNoReceivingTargetFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no space left") {
 		t.Fatalf("expected the refusal to surface, got: %v", err)
+	}
+}
+
+// TestApplyCompletedMovesReplaysDiskState checks that replaying a landed move
+// onto a stale snapshot carries the shard's disk attribution and the per-disk
+// slot accounting, so a re-plan does not treat the just-filled disk as empty.
+func TestApplyCompletedMovesReplaysDiskState(t *testing.T) {
+	const vid = uint32(1)
+
+	source := newEcNode("dc1", "r1", "dn1", 99)
+	source.Info.DiskInfos["hdd"] = &master_pb.DiskInfo{
+		Type: "hdd",
+		EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{
+			Id:          vid,
+			Collection:  "c1",
+			DiskId:      1,
+			DiskType:    "hdd",
+			EcIndexBits: uint32(erasure_coding.ShardBits(0).Set(5)),
+		}},
+	}
+	si := erasure_coding.NewShardsInfo()
+	si.Set(erasure_coding.NewShardInfo(5, 1))
+	source.Disks = map[uint32]*EcDisk{
+		1: {DiskId: 1, DiskType: "hdd", FreeEcSlots: 99, EcShardCount: 1, EcShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{1: si}},
+	}
+
+	target := newEcNode("dc1", "r1", "dn2", 100)
+	target.Disks = map[uint32]*EcDisk{
+		1: {DiskId: 1, DiskType: "hdd", FreeEcSlots: 10, EcShardCount: 0, EcShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
+		2: {DiskId: 2, DiskType: "hdd", FreeEcSlots: 10, EcShardCount: 0, EcShards: map[needle.VolumeId]*erasure_coding.ShardsInfo{}},
+	}
+
+	nodes := []*EcNode{source, target}
+	move := ecbalancer.Move{
+		VolumeID:   vid,
+		ShardID:    5,
+		Collection: "c1",
+		SourceNode: "dn1",
+		TargetNode: "dn2",
+		TargetDisk: 2,
+		Phase:      "within_rack",
+	}
+	applyCompletedMoves(nodes, []ecbalancer.Move{move}, types.HardDriveType)
+
+	if ecNodeHasShard(source, needle.VolumeId(vid), 5) {
+		t.Fatalf("source still holds shard 5")
+	}
+	if d := source.Disks[1]; d.EcShardCount != 0 || d.FreeEcSlots != 100 {
+		t.Fatalf("source disk counts not restored: %+v", d)
+	}
+	if !ecNodeHasShard(target, needle.VolumeId(vid), 5) {
+		t.Fatalf("target missing shard 5")
+	}
+	if d := target.Disks[2]; d.EcShardCount != 1 || d.FreeEcSlots != 9 {
+		t.Fatalf("target disk 2 not charged: %+v", d)
+	}
+	if d := target.Disks[1]; d.EcShardCount != 0 {
+		t.Fatalf("shard attributed to wrong disk: %+v", d)
+	}
+	if target.FreeEcSlot != 99 {
+		t.Fatalf("target free slots = %d, want 99", target.FreeEcSlot)
+	}
+
+	// Replaying again (or onto a fresher snapshot) must not double-count.
+	applyCompletedMoves(nodes, []ecbalancer.Move{move}, types.HardDriveType)
+	if d := target.Disks[2]; d.EcShardCount != 1 || d.FreeEcSlots != 9 {
+		t.Fatalf("double-applied move: %+v", d)
+	}
+	if target.FreeEcSlot != 99 {
+		t.Fatalf("target free slots = %d, want 99", target.FreeEcSlot)
 	}
 }

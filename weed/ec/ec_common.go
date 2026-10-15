@@ -919,13 +919,13 @@ func applyCompletedMoves(ecNodes []*EcNode, moves []ecbalancer.Move, diskType ty
 		vid := needle.VolumeId(m.VolumeID)
 		shardId := erasure_coding.ShardId(m.ShardID)
 		if src := byID[m.SourceNode]; src != nil {
-			src.DeleteEcVolumeShards(vid, []erasure_coding.ShardId{shardId})
+			removeEcShard(src, vid, shardId)
 		}
 		if m.Phase == "dedup" {
 			continue
 		}
 		if dst := byID[m.TargetNode]; dst != nil && !ecNodeHasShard(dst, vid, shardId) {
-			dst.AddEcVolumeShards(vid, m.Collection, []erasure_coding.ShardId{shardId}, diskType)
+			addEcShard(dst, m.Collection, vid, shardId, m.TargetDisk, diskType)
 		}
 	}
 }
@@ -939,6 +939,75 @@ func ecNodeHasShard(ecNode *EcNode, vid needle.VolumeId, shardId erasure_coding.
 		}
 	}
 	return false
+}
+
+// removeEcShard drops the shard from the node model, including the per-disk
+// bookkeeping of the disk that reported it.
+func removeEcShard(en *EcNode, vid needle.VolumeId, shardId erasure_coding.ShardId) {
+	for _, diskInfo := range en.Info.DiskInfos {
+		for _, eci := range diskInfo.EcShardInfos {
+			if needle.VolumeId(eci.Id) != vid || !erasure_coding.ShardBits(eci.EcIndexBits).Has(shardId) {
+				continue
+			}
+			if d := en.Disks[eci.DiskId]; d != nil {
+				if si := d.EcShards[vid]; si != nil {
+					si.Delete(shardId)
+				}
+				d.EcShardCount--
+				d.FreeEcSlots++
+			}
+		}
+	}
+	en.DeleteEcVolumeShards(vid, []erasure_coding.ShardId{shardId})
+}
+
+// addEcShard places the shard on the disk the move used when that disk is
+// known; otherwise (TargetDisk 0, server-picked) it falls back to the node's
+// disk-type bucket.
+func addEcShard(en *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, diskId uint32, diskType types.DiskType) {
+	d := en.Disks[diskId]
+	if diskId == 0 || d == nil {
+		en.AddEcVolumeShards(vid, collection, []erasure_coding.ShardId{shardId}, diskType)
+		return
+	}
+	diskInfo := en.Info.DiskInfos[string(diskType)]
+	if diskInfo == nil {
+		diskInfo = &master_pb.DiskInfo{Type: string(diskType)}
+		en.Info.DiskInfos[string(diskType)] = diskInfo
+	}
+	var eci *master_pb.VolumeEcShardInformationMessage
+	for _, e := range diskInfo.EcShardInfos {
+		if needle.VolumeId(e.Id) == vid && e.DiskId == diskId {
+			eci = e
+			break
+		}
+	}
+	if eci == nil {
+		eci = &master_pb.VolumeEcShardInformationMessage{
+			Id:         uint32(vid),
+			Collection: collection,
+			DiskId:     diskId,
+			DiskType:   string(diskType),
+		}
+		diskInfo.EcShardInfos = append(diskInfo.EcShardInfos, eci)
+	}
+	si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(eci)
+	before := si.Count()
+	si.Set(erasure_coding.NewShardInfo(shardId, 0))
+	eci.EcIndexBits = si.Bitmap()
+	eci.ShardSizes = si.SizesInt64()
+	added := si.Count() - before
+
+	en.FreeEcSlot -= added
+	d.EcShardCount += added
+	d.FreeEcSlots -= added
+	if d.EcShards == nil {
+		d.EcShards = make(map[needle.VolumeId]*erasure_coding.ShardsInfo)
+	}
+	if d.EcShards[vid] == nil {
+		d.EcShards[vid] = erasure_coding.NewShardsInfo()
+	}
+	d.EcShards[vid].Set(erasure_coding.NewShardInfo(shardId, 0))
 }
 
 // mergeRejectedTargets folds the targets this run saw refuse into noReceive and
