@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"io"
@@ -273,7 +274,7 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 	}
 	// most empty one is in the front
 	slices.SortFunc(otherNodes, func(a, b *Node) int {
-		return int(a.localVolumeRatio(maxVolumeCountFn) - b.localVolumeRatio(maxVolumeCountFn))
+		return cmp.Compare(a.localVolumeRatio(maxVolumeCountFn), b.localVolumeRatio(maxVolumeCountFn))
 	})
 	for i := 0; i < len(otherNodes); i++ {
 		emptyNode := otherNodes[i]
