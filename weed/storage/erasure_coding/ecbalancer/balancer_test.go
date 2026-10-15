@@ -967,9 +967,11 @@ func TestNoReceiveDiskLeavesSiblingsEligible(t *testing.T) {
 	src := topo.AddNode("n1", "dc1", "dc1:r1", 50)
 	src.AddShards(vid, "c", 0, bits(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
 	n2 := topo.AddNode("n2", "dc1", "dc1:r1", 50)
-	n2.AddDisk(1, "hdd", 50, 4)
-	n2.AddDisk(2, "hdd", 50, 0)
-	n2.AddShards(vid, "c", 1, bits(10, 11, 12, 13))
+	// The refused disk scores better (empty); without the noReceive check the
+	// picker would choose it again.
+	n2.AddDisk(1, "hdd", 50, 0)
+	n2.AddDisk(2, "hdd", 50, 50)
+	n2.AddShards(vid, "c", 2, bits(10, 11, 12, 13))
 	n2.SetDiskNoReceive(1)
 	topo.AddNode("n3", "dc1", "dc1:r1", 50)
 

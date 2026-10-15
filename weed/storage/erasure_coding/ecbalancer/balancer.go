@@ -1132,7 +1132,7 @@ func pickBestDiskOnNode(node *Node, vk volKey, diskType string, shardID, dataSha
 		if diskType != "" && d.diskType != diskType {
 			continue
 		}
-		if d.freeSlots <= 0 {
+		if d.freeSlots <= 0 || d.noReceive {
 			continue
 		}
 
