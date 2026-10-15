@@ -38,6 +38,10 @@ type Node struct {
 	rack string // composite rack key (e.g. "dc1:rack1")
 
 	freeSlots int
+	// noReceive marks a node that refused shards (e.g. answered "no space
+	// left"): it stays usable as a move source but is never picked as a target,
+	// regardless of what its freeSlots say.
+	noReceive bool
 	disks     map[uint32]*disk
 	shards    map[volKey]*volumeShards
 }
@@ -154,6 +158,13 @@ func (n *Node) SetHost(host string) {
 	if host != "" {
 		n.host = host
 	}
+}
+
+// SetNoReceive marks the node ineligible as a move destination. Use when the
+// node itself refused shards (e.g. answered "no space left") so the heartbeat's
+// free-slot count cannot be trusted; the node can still shed shards as a source.
+func (n *Node) SetNoReceive() {
+	n.noReceive = true
 }
 
 // AddDisk registers a physical disk. shardCount is the disk's total EC shard
@@ -296,7 +307,9 @@ func buildRacks(nodes map[string]*Node) map[string]*rack {
 			racks[n.rack] = r
 		}
 		r.nodes[n.id] = n
-		r.freeSlots += n.freeSlots
+		if !n.noReceive {
+			r.freeSlots += n.freeSlots
+		}
 	}
 	return racks
 }
@@ -440,6 +453,9 @@ func planRackTotalCap(vk volKey, racks map[string]*rack, rackShardCount map[stri
 			continue
 		}
 		for _, n := range r.nodes {
+			if n.noReceive {
+				continue
+			}
 			room[rk] += min(max(n.freeSlots, 0), max(rp.SameRackCount-volumeShardCount(n, vk), 0))
 		}
 	}
@@ -575,6 +591,9 @@ func pickBestNodeForVolumeOnDisk(nodes []*Node, vk volKey, rp *super_block.Repli
 // metadata is authoritative when present; without it the node's aggregate
 // stands in so the volume server's own disk selection can place the shard.
 func freeSlotsForType(n *Node, diskType string) int {
+	if n.noReceive {
+		return 0
+	}
 	if len(n.disks) == 0 {
 		return n.freeSlots
 	}
@@ -604,7 +623,7 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 	bestFree := -1
 	bestScore := -1
 	for _, node := range nodes {
-		if node.freeSlots <= 0 {
+		if node.noReceive || node.freeSlots <= 0 {
 			continue
 		}
 		count := volumeShardCount(node, vk)
@@ -909,7 +928,7 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					continue
 				}
 				util := float64(count) / float64(capacity)
-				if util < minUtil && node.freeSlots > 0 {
+				if util < minUtil && node.freeSlots > 0 && !node.noReceive {
 					minUtil, minCount, minNode = util, count, node
 				}
 				if util > maxUtil {

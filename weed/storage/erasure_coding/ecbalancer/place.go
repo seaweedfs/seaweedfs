@@ -444,6 +444,9 @@ func diskShardRoom(n *Node, d *disk, vk volKey, maxPerDisk int) int {
 // nodeShardRoom returns how many more shards of the volume the node's eligible
 // disks can take, bounded by the node's free slots.
 func nodeShardRoom(n *Node, vk volKey, eligible func(*disk) bool, maxPerDisk int) int {
+	if n.noReceive {
+		return 0
+	}
 	room := 0
 	for _, d := range n.disks {
 		if eligible(d) {

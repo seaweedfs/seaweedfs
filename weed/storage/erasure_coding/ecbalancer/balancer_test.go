@@ -926,3 +926,34 @@ func TestGlobalPrefersVolumeAbsentFromDestinationMachine(t *testing.T) {
 		t.Errorf("first global move is volume %d, want 200 (vol100 already on the destination machine)", moves[0].volumeID)
 	}
 }
+
+// TestNoReceiveNodeNeverTargeted: a node that refused a copy ("no space left")
+// must not be picked as a destination no matter how many free slots it reports,
+// but it still sheds its own over-cap shards as a source.
+func TestNoReceiveNodeNeverTargeted(t *testing.T) {
+	const vid = uint32(1)
+	topo := NewTopology()
+	src := topo.AddNode("n1", "dc1", "dc1:r1", 50)
+	src.AddShards(vid, "c", 0, bits(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+	full := topo.AddNode("n2", "dc1", "dc1:r1", 50)
+	full.AddShards(vid, "c", 0, bits(10, 11, 12, 13)) // all parity, over the 2/node cap
+	full.SetNoReceive()
+	topo.AddNode("n3", "dc1", "dc1:r1", 50)
+
+	moves := Plan(topo, Options{Ratio: ratio(10, 4)})
+	if len(moves) == 0 {
+		t.Fatal("expected moves off the over-cap nodes")
+	}
+	shed := false
+	for _, m := range moves {
+		if m.TargetNode == "n2" {
+			t.Fatalf("move targets the refusing node: %+v", m)
+		}
+		if m.SourceNode == "n2" {
+			shed = true
+		}
+	}
+	if !shed {
+		t.Error("the refusing node should still shed its over-cap shards as a source")
+	}
+}
