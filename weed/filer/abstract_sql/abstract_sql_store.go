@@ -390,6 +390,14 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	return doDeleteFolderChildren()
 }
 
+var likeEscaper = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_")
+
+// LikePattern escapes LIKE wildcards so the prefix matches literally;
+// '!' pairs with the ESCAPE '!' clause emitted by the SqlGenerators.
+func LikePattern(prefix string) string {
+	return likeEscaper.Replace(prefix) + "%"
+}
+
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
@@ -402,7 +410,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		sqlText = store.GetSqlListInclusive(bucket)
 	}
 
-	rows, err := db.QueryContext(ctx, sqlText, util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), prefix+"%", limit+1)
+	rows, err := db.QueryContext(ctx, sqlText, util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), LikePattern(prefix), limit+1)
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}

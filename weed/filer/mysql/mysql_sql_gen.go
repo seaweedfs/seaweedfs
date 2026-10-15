@@ -64,12 +64,12 @@ func (gen *SqlGenMysql) nameExpr() string {
 
 func (gen *SqlGenMysql) GetSqlListExclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s > ? AND `directory` = ? AND %s LIKE ? ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
+	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s > ? AND `directory` = ? AND %s LIKE ? ESCAPE '!' ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
 }
 
 func (gen *SqlGenMysql) GetSqlListInclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s >= ? AND `directory` = ? AND %s LIKE ? ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
+	return fmt.Sprintf("SELECT `name`, `meta` FROM `%s` WHERE `dirhash` = ? AND %s >= ? AND `directory` = ? AND %s LIKE ? ESCAPE '!' ORDER BY %s ASC LIMIT ?", tableName, name, name, name)
 }
 
 func (gen *SqlGenMysql) GetSqlCreateTable(tableName string) string {
