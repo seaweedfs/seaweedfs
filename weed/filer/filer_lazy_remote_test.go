@@ -483,6 +483,18 @@ func TestMaybeLazyFetchFromRemote_PromotesRemoteObjectAtParentKey(t *testing.T) 
 	assert.Equal(t, int64(10), parent.Remote.RemoteSize)
 }
 
+func TestMaybeLazyFetchFromRemote_StatsEachParentOnce(t *testing.T) {
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/a/b/c/file.bin": {RemoteMtime: 1700000000, RemoteSize: 1234},
+	}}
+	f, _ := newPathStatFiler(t, "stub_lazy_parent_stats", stub)
+
+	_, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/a/b/c/file.bin")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/a/b/c/file.bin", "/a", "/a/b", "/a/b/c"}, stub.statCalls,
+		"a parent still missing after its own stat must not be re-stat'ed by the next lookup")
+}
+
 func TestDeleteEntryMetaAndData_EmptyFolderUnderMountKeepsRemotePrefix(t *testing.T) {
 	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
 		"/dir/unread.bin": {RemoteMtime: 1700000000, RemoteSize: 1},

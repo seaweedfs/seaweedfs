@@ -18,6 +18,10 @@ import (
 
 type lazyFetchContextKey struct{}
 
+// lazyParentsContextKey marks a FindEntry issued while materializing missing
+// parents: that fetch's own parent walk would only re-stat the same gaps.
+type lazyParentsContextKey struct{}
+
 // maybeLazyFetchFromRemote is called by FindEntry when the store returns no
 // entry for p. If p is under a remote-storage mount, it stats the remote
 // object, builds a filer Entry from the result, and persists it via
@@ -127,7 +131,9 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 			glog.V(2).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s deleted during remote stat", p)
 			return lazyFetchResult{nil}, nil
 		}
-		f.fetchMissingRemoteParents(persistBaseCtx, mountDir, p)
+		if ctx.Value(lazyParentsContextKey{}) == nil {
+			f.fetchMissingRemoteParents(persistBaseCtx, mountDir, p)
+		}
 		saveErr := f.CreateEntry(persistCtx, entry, nil, false, false, nil, false, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
@@ -171,8 +177,9 @@ func (f *Filer) fetchMissingRemoteParents(ctx context.Context, mountDir, p util.
 		}
 		missing = append(missing, util.FullPath(dir))
 	}
+	parentCtx := context.WithValue(ctx, lazyParentsContextKey{}, true)
 	for i := len(missing) - 1; i >= 0; i-- {
-		f.FindEntry(ctx, missing[i])
+		f.FindEntry(parentCtx, missing[i])
 	}
 }
 
