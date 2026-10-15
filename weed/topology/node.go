@@ -322,7 +322,10 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	if n.inMaintenanceMode() {
 		return 0
 	}
-	t := n.getOrCreateDisk(option.DiskType)
+	t := n.diskUsages.getDisk(option.DiskType)
+	if t == nil {
+		return 0
+	}
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
 	freeVolumeSlotCount -= erasure_coding.VolumeSlots(atomic.LoadInt64(&t.ecShardCount))
 	return freeVolumeSlotCount
@@ -331,7 +334,10 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 // CapacityFor is the total registered volume slots for the option's disk type;
 // zero means no volume server has reported capacity for it yet.
 func (n *NodeImpl) CapacityFor(option *VolumeGrowOption) int64 {
-	t := n.getOrCreateDisk(option.DiskType)
+	t := n.diskUsages.getDisk(option.DiskType)
+	if t == nil {
+		return 0
+	}
 	return atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount)
 }
 

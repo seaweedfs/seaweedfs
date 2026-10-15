@@ -203,6 +203,16 @@ func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts 
 	return t
 }
 
+// getDisk returns the counters for diskType, or nil when none were ever
+// recorded. Read paths use it instead of getOrCreateDisk: an entry created
+// just to answer a capacity question is published by ToDiskInfo as an empty
+// disk (MaxVolumeCount 0) of a type the node does not have.
+func (du *DiskUsages) getDisk(diskType types.DiskType) *DiskUsageCounts {
+	du.RLock()
+	defer du.RUnlock()
+	return du.usages[diskType]
+}
+
 func (d *Disk) String() string {
 	d.RLock()
 	defer d.RUnlock()
