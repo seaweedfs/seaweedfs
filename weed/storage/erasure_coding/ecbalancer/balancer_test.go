@@ -957,3 +957,34 @@ func TestNoReceiveNodeNeverTargeted(t *testing.T) {
 		t.Error("the refusing node should still shed its over-cap shards as a source")
 	}
 }
+
+// TestNoReceiveDiskLeavesSiblingsEligible: an explicit-disk refusal marks only
+// that disk, not the node — the planner may still target the node's other
+// disks, but never the refused one.
+func TestNoReceiveDiskLeavesSiblingsEligible(t *testing.T) {
+	const vid = uint32(1)
+	topo := NewTopology()
+	src := topo.AddNode("n1", "dc1", "dc1:r1", 50)
+	src.AddShards(vid, "c", 0, bits(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+	n2 := topo.AddNode("n2", "dc1", "dc1:r1", 50)
+	n2.AddDisk(1, "hdd", 50, 4)
+	n2.AddDisk(2, "hdd", 50, 0)
+	n2.AddShards(vid, "c", 1, bits(10, 11, 12, 13))
+	n2.SetDiskNoReceive(1)
+	topo.AddNode("n3", "dc1", "dc1:r1", 50)
+
+	moves := Plan(topo, Options{Ratio: ratio(10, 4)})
+	targeted := false
+	for _, m := range moves {
+		if m.TargetNode != "n2" {
+			continue
+		}
+		targeted = true
+		if m.TargetDisk == 1 {
+			t.Fatalf("move targets the refused disk: %+v", m)
+		}
+	}
+	if !targeted {
+		t.Fatal("a node with one refused disk should still receive on its other disks")
+	}
+}

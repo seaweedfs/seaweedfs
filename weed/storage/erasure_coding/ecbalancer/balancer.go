@@ -51,7 +51,8 @@ type disk struct {
 	diskType   string
 	tags       []string // placement tags, for preferred-tag tiering
 	freeSlots  int
-	shardCount int // total EC shards on this disk across all volumes
+	shardCount int  // total EC shards on this disk across all volumes
+	noReceive  bool // this disk refused a shard; siblings may still receive
 }
 
 type volumeShards struct {
@@ -165,6 +166,32 @@ func (n *Node) SetHost(host string) {
 // free-slot count cannot be trusted; the node can still shed shards as a source.
 func (n *Node) SetNoReceive() {
 	n.noReceive = true
+}
+
+// SetDiskNoReceive marks one disk on the node ineligible as a move destination.
+// An explicit-disk copy can be refused while the node's other disks still have
+// room; a disk_id 0 refusal means the server searched every disk and is a
+// whole-node refusal (SetNoReceive) instead.
+func (n *Node) SetDiskNoReceive(diskID uint32) {
+	if d, ok := n.disks[diskID]; ok {
+		d.noReceive = true
+	}
+}
+
+// receiveSlots is the node's receiving capacity: its aggregate free slots with
+// refused disks subtracted, and 0 for a refused node. Slots a disk just
+// refused are phantom capacity whatever the snapshot reported.
+func (n *Node) receiveSlots() int {
+	if n.noReceive {
+		return 0
+	}
+	free := n.freeSlots
+	for _, d := range n.disks {
+		if d.noReceive {
+			free -= d.freeSlots
+		}
+	}
+	return max(free, 0)
 }
 
 // AddDisk registers a physical disk. shardCount is the disk's total EC shard
@@ -307,9 +334,7 @@ func buildRacks(nodes map[string]*Node) map[string]*rack {
 			racks[n.rack] = r
 		}
 		r.nodes[n.id] = n
-		if !n.noReceive {
-			r.freeSlots += n.freeSlots
-		}
+		r.freeSlots += n.receiveSlots()
 	}
 	return racks
 }
@@ -453,10 +478,7 @@ func planRackTotalCap(vk volKey, racks map[string]*rack, rackShardCount map[stri
 			continue
 		}
 		for _, n := range r.nodes {
-			if n.noReceive {
-				continue
-			}
-			room[rk] += min(max(n.freeSlots, 0), max(rp.SameRackCount-volumeShardCount(n, vk), 0))
+			room[rk] += min(n.receiveSlots(), max(rp.SameRackCount-volumeShardCount(n, vk), 0))
 		}
 	}
 	return rackTotalCap(sortedKeys(racks), nil, room, totalShards)
@@ -599,7 +621,7 @@ func freeSlotsForType(n *Node, diskType string) int {
 	}
 	free := 0
 	for _, d := range n.disks {
-		if d.freeSlots > 0 && (diskType == "" || d.diskType == diskType) {
+		if d.freeSlots > 0 && !d.noReceive && (diskType == "" || d.diskType == diskType) {
 			free += d.freeSlots
 		}
 	}
@@ -623,7 +645,7 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 	bestFree := -1
 	bestScore := -1
 	for _, node := range nodes {
-		if node.noReceive || node.freeSlots <= 0 {
+		if node.receiveSlots() <= 0 {
 			continue
 		}
 		count := volumeShardCount(node, vk)
@@ -928,7 +950,7 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					continue
 				}
 				util := float64(count) / float64(capacity)
-				if util < minUtil && node.freeSlots > 0 && !node.noReceive {
+				if util < minUtil && node.receiveSlots() > 0 {
 					minUtil, minCount, minNode = util, count, node
 				}
 				if util > maxUtil {
