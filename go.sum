@@ -527,8 +527,8 @@ github.com/go-redis/redis/v7 v7.4.1 h1:PASvf36gyUpr2zdOUS/9Zqc80GbM+9BDyiJSJDDOr
 github.com/go-redis/redis/v7 v7.4.1/go.mod h1:JDNMw23GTyLNC4GZu9njt15ctBQVn7xjRfnwdHj/Dcg=
 github.com/go-redis/redis/v8 v8.11.5 h1:AcZZR7igkdvfVmQTPnu9WE37LRrO/YrBH5zWyjDC0oI=
 github.com/go-redis/redis/v8 v8.11.5/go.mod h1:gREzHqY1hg6oD9ngVRbLStwAWKhA0FEgq8Jd4h5lpwo=
-github.com/go-redsync/redsync/v4 v4.17.0 h1:FFJ+uxZs44y4Sq10//IFKic9T94AYl+u3Sog98AHzBo=
-github.com/go-redsync/redsync/v4 v4.17.0/go.mod h1:CKVA6qwT07S/916i+Yd9h1/8YFQhCCpPYTQhvvYytJo=
+github.com/go-redsync/redsync/v4 v4.18.0 h1:DDM09PEhmNTf/vziolf2x6391y1hHxF5vQ4ytHl9xQc=
+github.com/go-redsync/redsync/v4 v4.18.0/go.mod h1:yuoqcQ55FS1VypSeVTMqFsJqTdWpEH5eA4MQGKJ9c4M=
 github.com/go-resty/resty/v2 v2.17.2 h1:FQW5oHYcIlkCNrMD2lloGScxcHJ0gkjshV3qcQAyHQk=
 github.com/go-resty/resty/v2 v2.17.2/go.mod h1:kCKZ3wWmwJaNc7S29BRtUhJwy7iqmn+2mLtQrOyQlVA=
 github.com/go-sql-driver/mysql v1.10.1 h1:arlSnNLq6a5yxGxV7qg9lF4j0C+KwD6NbQyKr9QL6ME=
@@ -1063,10 +1063,10 @@ github.com/rdleal/intervalst v1.5.0 h1:SEB9bCFz5IqD1yhfH1Wv8IBnY/JQxDplwkxHjT6ha
 github.com/rdleal/intervalst v1.5.0/go.mod h1:xO89Z6BC+LQDH+IPQQw/OESt5UADgFD41tYMUINGpxQ=
 github.com/redis/go-redis/v9 v9.22.0 h1:laDvpYXTJtZLloinw1fA5Kqd6HAEH2XKxOkG/PDq2F0=
 github.com/redis/go-redis/v9 v9.22.0/go.mod h1:y2g0Wj8rQvuK0ELM+oxSudcLtC09JScs98I/X9gRWY4=
-github.com/redis/rueidis v1.0.76 h1:RdDWuvlYBSp+bTrBvaXqJnNEL3VVzsnjo+0psPFgLc4=
-github.com/redis/rueidis v1.0.76/go.mod h1:UsfHPSbomB6QAVMk4iiFkzRy0nh9o7scDGa+SitvBY4=
-github.com/redis/rueidis/rueidiscompat v1.0.76 h1:7LikbiqCQqCsZXeZ+akgZMnjIV/J0VHih9PIX4gGZC4=
-github.com/redis/rueidis/rueidiscompat v1.0.76/go.mod h1:UatQQLVj4QMIsZtpvRWY28qm6r2d72idhcS+C/RM+Zg=
+github.com/redis/rueidis v1.0.77 h1:ZR41bgJcm7oRFb3aSDPrRhC0eonDSrPzjvvZvHIlNjM=
+github.com/redis/rueidis v1.0.77/go.mod h1:L8mnCQJJaSNL6I4pIR6Rz732HTGS9vmuXm0yT9dRvjo=
+github.com/redis/rueidis/rueidiscompat v1.0.77 h1:S1xiLQsFv8XQ46e0LelC8ihGqbDzVRocXXZLzVAeh64=
+github.com/redis/rueidis/rueidiscompat v1.0.77/go.mod h1:aXCvRVUTvTHZY0owHuz9JjveO1hyuzyDWrpJh8/E3Ds=
 github.com/rekby/fixenv v0.6.1 h1:jUFiSPpajT4WY2cYuc++7Y1zWrnCxnovGCIX72PZniM=
 github.com/rekby/fixenv v0.6.1/go.mod h1:/b5LRc06BYJtslRtHKxsPWFT/ySpHV+rWvzTg+XWk4c=
 github.com/relvacode/iso8601 v1.7.0 h1:BXy+V60stMP6cpswc+a93Mq3e65PfXCgDFfhvNNGrdo=
