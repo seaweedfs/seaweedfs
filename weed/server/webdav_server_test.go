@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"testing"
@@ -103,4 +104,29 @@ func TestWebDavFile_Read_ManifestResolveFailure(t *testing.T) {
 	n, err := f.Read(make([]byte, 16))
 	assert.Error(t, err)
 	assert.Equal(t, 0, n)
+}
+
+// Small files stored inline in the entry have no chunks to read from.
+func TestWebDavFile_Read_InlineContent(t *testing.T) {
+	content := []byte("hello inline")
+	entry := &filer_pb.Entry{
+		Name:       "small.txt",
+		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content))},
+		Content:    content,
+	}
+	filerAddr := startFakeWebDavFiler(t, &noVolumeFiler{})
+	fc := wdclient.NewFilerClient([]pb.ServerAddress{filerAddr}, grpc.WithTransportCredentials(insecure.NewCredentials()), "")
+	t.Cleanup(fc.Close)
+	f := &WebDavFile{fs: &WebDavFileSystem{filerClient: fc}, name: "/small.txt", entry: entry, ctx: context.Background()}
+
+	got, err := io.ReadAll(f)
+	assert.NoError(t, err)
+	assert.Equal(t, content, got)
+
+	_, err = f.Seek(6, io.SeekStart)
+	assert.NoError(t, err)
+	buf := make([]byte, 3)
+	n, err := f.Read(buf)
+	assert.NoError(t, err)
+	assert.Equal(t, "inl", string(buf[:n]))
 }

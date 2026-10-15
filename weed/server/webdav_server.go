@@ -570,6 +570,14 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	if fileSize == 0 {
 		return 0, io.EOF
 	}
+	if len(f.entry.Content) > 0 {
+		if f.off >= int64(len(f.entry.Content)) {
+			return 0, io.EOF
+		}
+		readSize = copy(p, f.entry.Content[f.off:])
+		f.off += int64(readSize)
+		return readSize, nil
+	}
 	if f.visibleIntervals == nil {
 		f.visibleIntervals, err = filer.NonOverlappingVisibleIntervals(f.ctx, f.fs.filerClient.GetLookupFileIdFunction(), f.entry.GetChunks(), 0, fileSize)
 		if err != nil {
