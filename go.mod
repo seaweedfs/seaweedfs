@@ -23,7 +23,7 @@ require (
 	github.com/facebookgo/stack v0.0.0-20160209184415-751773369052 // indirect
 	github.com/facebookgo/stats v0.0.0-20151006221625-1b76add642e4
 	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-redsync/redsync/v4 v4.18.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/go-zookeeper/zk v1.0.4 // indirect
@@ -116,7 +116,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.2
-	github.com/a-h/templ v0.3.1020
+	github.com/a-h/templ v0.3.1070
 	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
 	github.com/apache/iceberg-go v0.7.0
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
@@ -313,7 +313,7 @@ require (
 	github.com/ProtonMail/go-srp v0.0.7 // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/abbot/go-http-auth v0.4.0 // indirect
-	github.com/andybalholm/brotli v1.2.3 // indirect
+	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
