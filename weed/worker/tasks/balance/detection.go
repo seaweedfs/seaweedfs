@@ -113,7 +113,11 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 							continue
 						}
 						for diskTypeName, diskInfo := range node.DiskInfos {
-							if diskTypeName == diskType {
+							// An entry with no capacity and nothing on it is not a disk
+							// of this type: seeding it would offer the node as an empty
+							// destination and, with its zero max, switch every server
+							// to raw-count balancing.
+							if diskTypeName == diskType && !topology.IsEmptyDiskTypeEntry(diskInfo) {
 								serverVolumeCounts[node.Id] = 0
 								serverMaxVolumes[node.Id] += diskInfo.MaxVolumeCount
 								serverDiskTotalBytes[node.Id] += diskInfo.DiskTotalBytes
