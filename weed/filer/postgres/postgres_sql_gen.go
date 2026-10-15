@@ -77,12 +77,12 @@ func (gen *SqlGenPostgres) nameExpr() string {
 
 func (gen *SqlGenPostgres) GetSqlListExclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>$2 AND directory=$3 AND %s like $4 ESCAPE '!' ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlListInclusive(tableName string) string {
 	name := gen.nameExpr()
-	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>=$2 AND directory=$3 AND %s like $4 ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
+	return fmt.Sprintf(`SELECT NAME, meta FROM "%s" WHERE dirhash=$1 AND %s>=$2 AND directory=$3 AND %s like $4 ESCAPE '!' ORDER BY %s ASC LIMIT $5`, tableName, name, name, name)
 }
 
 func (gen *SqlGenPostgres) GetSqlCreateTable(tableName string) string {

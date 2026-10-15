@@ -62,6 +62,15 @@ func TestListSqlBinaryOrderingOnNonBinaryColumn(t *testing.T) {
 	}
 }
 
+func TestListSqlEscapesLikeWildcards(t *testing.T) {
+	gen := &SqlGenPostgres{}
+	for _, got := range []string{gen.GetSqlListExclusive("filemeta"), gen.GetSqlListInclusive("filemeta")} {
+		if !strings.Contains(got, "like $4 ESCAPE '!'") {
+			t.Fatalf("list query must declare the escape char matching LikePattern, got: %s", got)
+		}
+	}
+}
+
 func TestIsByteOrderedCollation(t *testing.T) {
 	byteOrdered := []string{"C", "POSIX", "c", "C.UTF-8", "C.utf8"}
 	for _, c := range byteOrdered {

@@ -65,6 +65,15 @@ func TestListSqlBinaryOrderingOnNonBinaryColumn(t *testing.T) {
 	}
 }
 
+func TestListSqlEscapesLikeWildcards(t *testing.T) {
+	gen := &SqlGenMysql{}
+	for _, got := range []string{gen.GetSqlListExclusive("filemeta"), gen.GetSqlListInclusive("filemeta")} {
+		if !strings.Contains(got, "LIKE ? ESCAPE '!'") {
+			t.Fatalf("list query must declare the escape char matching LikePattern, got: %s", got)
+		}
+	}
+}
+
 func TestIsBinaryCollation(t *testing.T) {
 	binary := []string{"", "binary", "utf8mb4_bin", "utf8mb3_bin", "latin1_bin", "UTF8MB4_BIN"}
 	for _, c := range binary {

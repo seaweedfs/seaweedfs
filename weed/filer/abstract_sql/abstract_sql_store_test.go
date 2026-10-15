@@ -52,6 +52,24 @@ func TestGetTxOrDBRealBucket(t *testing.T) {
 	}
 }
 
+func TestLikePattern(t *testing.T) {
+	cases := []struct {
+		prefix, want string
+	}{
+		{"", "%"},
+		{"plain", "plain%"},
+		{"call_03_KNl", "call!_03!_KNl%"},
+		{"100%", "100!%%"},
+		{"a!b", "a!!b%"},
+		{`a\b`, `a\b%`},
+	}
+	for _, c := range cases {
+		if got := LikePattern(c.prefix); got != c.want {
+			t.Errorf("LikePattern(%q) = %q, want %q", c.prefix, got, c.want)
+		}
+	}
+}
+
 func TestSplitPoolForKv(t *testing.T) {
 	cases := []struct {
 		maxOpen, mainOpen, kvOpen int
