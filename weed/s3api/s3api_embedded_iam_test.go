@@ -2160,6 +2160,43 @@ func TestEmbeddedIamGetActionsPrefixScopedResource(t *testing.T) {
 		"PutObject outside the allowed prefix should be denied")
 }
 
+// TestEmbeddedIamGetActionsMultipartListing covers issue #11738: the AWS
+// names for listing multipart uploads and parts were rejected as invalid
+// actions, so no inline policy could grant those operations.
+func TestEmbeddedIamGetActionsMultipartListing(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	policyDoc := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Action": ["s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts"],
+			"Resource": ["arn:aws:s3:::demo", "arn:aws:s3:::demo/*"]
+		}]
+	}`
+
+	policy, err := api.GetPolicyDocument(&policyDoc)
+	require.NoError(t, err)
+
+	actions, err := api.getActions(&policy)
+	require.NoError(t, err)
+
+	identity := &Identity{Name: "bob"}
+	for _, a := range actions {
+		identity.Actions = append(identity.Actions, Action(a))
+	}
+
+	// ListMultipartUploads and ListParts are routed under ACTION_READ.
+	assert.True(t, identity.CanDo(ACTION_READ, "demo", ""),
+		"list-multipart-uploads on the bucket should be authorized")
+	assert.True(t, identity.CanDo(ACTION_READ, "demo", "key"),
+		"list-parts on an object in the bucket should be authorized")
+	assert.False(t, identity.CanDo(ACTION_WRITE, "demo", "key"),
+		"a listing grant must not allow writes")
+	assert.False(t, identity.CanDo(ACTION_READ, "other", ""),
+		"the grant must stay scoped to the policy's bucket")
+}
+
 // TestEmbeddedIamPutUserPolicyAllResourceWildcard reproduces issue #9209:
 // an AWS-style policy using "Action":"s3:*" with a bare "Resource":"*" is
 // valid AWS IAM syntax (meaning "any resource") but was rejected with
