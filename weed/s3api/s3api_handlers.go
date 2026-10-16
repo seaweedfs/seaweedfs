@@ -141,6 +141,12 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 			return err
 		}
 
+		// fn consumed part of a response; a replay would stack a second copy
+		// onto whatever it accumulated, so surface the error unwrapped. The filer
+		// answered, so this also says nothing about its health.
+		if received {
+			return err
+		}
 		s3a.filerClient.RecordFilerFailure(filer)
 		// A preferred owner is often outside the static filer list, where the health
 		// tracking above no-ops; flag it so route-by-key reads skip it briefly.
@@ -148,11 +154,6 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 			s3a.markOwnerUnreachable(filer)
 		}
 		glog.V(2).Infof("WithFilerClient: filer %s failed: %v", filer, err)
-		// fn consumed part of a response; a replay would stack a second copy
-		// onto whatever it accumulated, so surface the error unwrapped.
-		if received {
-			return err
-		}
 		// A non-replayable fn that ran may have committed server-side; only a
 		// channel that never became ready proves nothing was sent.
 		if !replayable && fnRan {
