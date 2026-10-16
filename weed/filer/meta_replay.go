@@ -126,24 +126,45 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 // after the event stay — a newer local write wins over a delayed delete —
 // along with the directories that hold them.
 func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64) (bool, error) {
-	chunksByPath := make(map[util.FullPath][]*filer_pb.FileChunk)
-	kept, err := f.sweepReplayedFolder(ctx, dir, deleteChunks, tsNs, chunksByPath)
+	sweep := &folderSweep{chunksByPath: make(map[util.FullPath][]*filer_pb.FileChunk)}
+	kept, err := f.sweepReplayedFolder(ctx, dir, deleteChunks, tsNs, sweep)
 	// Flush what was collected even on error: the entries already deleted
 	// cannot be listed again on retry, so their chunks must be queued now.
-	for path, chunks := range chunksByPath {
-		f.DeleteChunks(ctx, path, chunks)
-	}
+	sweep.flush(ctx, f)
 	if err != nil {
 		return false, err
 	}
 	return kept, nil
 }
 
+// folderSweep accumulates the chunks of removed children for deletion. It
+// flushes in batches so a large subtree cannot hold every chunk reference in
+// memory at once, and so chunk queueing overlaps the listing work.
+type folderSweep struct {
+	chunksByPath map[util.FullPath][]*filer_pb.FileChunk
+	count        int
+}
+
+const folderSweepChunkBatch = 4096
+
+func (s *folderSweep) add(path util.FullPath, chunks []*filer_pb.FileChunk) {
+	s.chunksByPath[path] = append(s.chunksByPath[path], chunks...)
+	s.count += len(chunks)
+}
+
+func (s *folderSweep) flush(ctx context.Context, f *Filer) {
+	for path, chunks := range s.chunksByPath {
+		f.DeleteChunks(ctx, path, chunks)
+	}
+	s.chunksByPath = make(map[util.FullPath][]*filer_pb.FileChunk)
+	s.count = 0
+}
+
 // sweepReplayedFolder deletes every child of dir whose local commit is not
 // newer than the event, working subtree-first so nested entries go too.
 // It reports whether a newer descendant keeps dir alive — the caller then
 // keeps the dir entry itself.
-func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64, chunks map[util.FullPath][]*filer_pb.FileChunk) (kept bool, err error) {
+func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64, sweep *folderSweep) (kept bool, err error) {
 	lastFileName := ""
 	for {
 		entries, _, lerr := f.ListDirectoryEntries(ctx, dir, lastFileName, false, PaginationSize, "", "", "")
@@ -161,7 +182,7 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 				childKept = localTsNs > tsNs
 			}
 			if !childKept && sub.IsDirectory() {
-				childKept, err = f.sweepReplayedFolder(ctx, sub.FullPath, deleteChunks, tsNs, chunks)
+				childKept, err = f.sweepReplayedFolder(ctx, sub.FullPath, deleteChunks, tsNs, sweep)
 				if err != nil {
 					return false, err
 				}
@@ -180,7 +201,10 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 			// existing file to a directory without dropping them — so the
 			// entry's chunks are keyed to its own path whatever it is.
 			if deleteChunks && len(sub.HardLinkId) == 0 && len(sub.GetChunks()) > 0 {
-				chunks[sub.FullPath] = append(chunks[sub.FullPath], sub.GetChunks()...)
+				sweep.add(sub.FullPath, sub.GetChunks())
+				if sweep.count >= folderSweepChunkBatch {
+					sweep.flush(ctx, f)
+				}
 			}
 		}
 		if len(entries) < PaginationSize {
