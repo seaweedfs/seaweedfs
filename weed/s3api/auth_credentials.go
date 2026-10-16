@@ -3165,6 +3165,13 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 	}
 	glog.V(1).Infof("IAM: put group %s", group.Name)
 
+	// As for identity pushes, the wire proto lacks the group's runtime
+	// inline policy names.
+	config := &iam_pb.S3ApiConfiguration{Groups: []*iam_pb.Group{group}}
+	if err := iam.hydrateRuntimePolicies(context.Background(), config); err != nil {
+		return err
+	}
+
 	iam.m.Lock()
 	defer iam.m.Unlock()
 

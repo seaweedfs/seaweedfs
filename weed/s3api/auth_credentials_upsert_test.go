@@ -53,3 +53,28 @@ func TestUpsertIdentityKeepsInlinePolicyAuthorization(t *testing.T) {
 		s3a.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_WRITE, "bucket", "obj"),
 		"an identity pushed without its inline policy must not fall back to legacy Actions")
 }
+
+// The same applies to PutGroup pushes: the persisted group proto lacks the
+// group's runtime inline policy names.
+func TestPutGroupKeepsInlinePolicyAuthorization(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{{Name: "alice"}})
+	ctx := context.Background()
+
+	require.NoError(t, s3a.iam.credentialManager.CreateGroup(ctx,
+		&iam_pb.Group{Name: "devs", Members: []string{"alice"}}))
+	var doc policy_engine.PolicyDocument
+	require.NoError(t, doc.UnmarshalJSON([]byte(`{
+		"Version":"2012-10-17",
+		"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]
+	}`)))
+	require.NoError(t, s3a.iam.credentialManager.PutGroupInlinePolicy(ctx, "devs", "p", doc))
+	require.NoError(t, s3a.iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	pushed, err := s3a.iam.credentialManager.GetGroup(ctx, "devs")
+	require.NoError(t, err)
+	require.NoError(t, s3a.iam.PutGroup(pushed))
+
+	s3a.iam.m.RLock()
+	defer s3a.iam.m.RUnlock()
+	require.Contains(t, s3a.iam.groups["devs"].PolicyNames, inlineGroupPolicyRuntimeName("devs", "p"))
+}
