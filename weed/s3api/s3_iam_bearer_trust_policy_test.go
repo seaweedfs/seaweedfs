@@ -256,6 +256,8 @@ func TestOIDCBearerUserIDIsIssuerScoped(t *testing.T) {
 		"the token-supplied aws:userid must be overwritten with the verified (sub, iss) hash")
 	assert.Equal(t, "bearer-user", identity.Claims["sub"])
 	assert.Equal(t, server.URL, identity.Claims["iss"])
+	assert.Equal(t, server.URL, identity.Claims["seaweed:oidc-issuers"],
+		"the registered provider's issuer must be asserted as trusted for legacy-owner anchoring")
 
 	_, errCode = authenticate(sign(map[string]interface{}{"sub": ""}))
 	assert.Equal(t, s3err.ErrAccessDenied, errCode, "a token with no subject must not authenticate")

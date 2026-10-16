@@ -528,17 +528,28 @@ func (s3iam *S3IAMIntegration) trustedOIDCIssuers(ctx context.Context) []string 
 	if s3iam.iamManager == nil {
 		return nil
 	}
-	records, err := s3iam.iamManager.ListOIDCProviders(ctx)
-	if err != nil {
-		glog.V(2).Infof("trustedOIDCIssuers: %v", err)
-		return nil
-	}
-	seen := make(map[string]bool, len(records))
+	seen := make(map[string]bool)
 	var issuers []string
-	for _, rec := range records {
-		if rec.URL != "" && !seen[rec.URL] {
-			seen[rec.URL] = true
-			issuers = append(issuers, rec.URL)
+	// Configured identity providers registered with STS cover deployments
+	// whose OIDC setup lives in config rather than the provider store.
+	if stsService := s3iam.iamManager.GetSTSService(); stsService != nil {
+		for _, p := range stsService.GetProviders() {
+			if issuer, ok := p.(interface{ GetIssuer() string }); ok {
+				if iss := issuer.GetIssuer(); iss != "" && !seen[iss] {
+					seen[iss] = true
+					issuers = append(issuers, iss)
+				}
+			}
+		}
+	}
+	if records, err := s3iam.iamManager.ListOIDCProviders(ctx); err != nil {
+		glog.V(2).Infof("trustedOIDCIssuers: %v", err)
+	} else {
+		for _, rec := range records {
+			if rec.URL != "" && !seen[rec.URL] {
+				seen[rec.URL] = true
+				issuers = append(issuers, rec.URL)
+			}
 		}
 	}
 	return issuers
