@@ -215,6 +215,10 @@ func MapToIdentitiesAction(action string) string {
 		return "PutBucketPolicy"
 	case s3_constants.ACTION_DELETE_BUCKET_POLICY:
 		return "DeleteBucketPolicy"
+	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
+		return "ListBucketMultipartUploads"
+	case s3_constants.ACTION_LIST_PARTS:
+		return "ListMultipartUploadParts"
 	default:
 		return ""
 	}

@@ -2213,16 +2213,58 @@ func TestEmbeddedIamGetActionsMultipartListing(t *testing.T) {
 			assert.False(t, identity.CanDo(ACTION_LIST, "demo", ""),
 				"a listing grant must not allow ListObjects")
 
-			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			routed := func(url, object string) *http.Request {
+				return mux.SetURLVars(httptest.NewRequest(http.MethodGet, url, nil),
+					map[string]string{"bucket": "demo", "object": object})
+			}
+
+			req := routed(tc.url, tc.object)
 			assert.Equal(t, s3err.ErrNone, iam.VerifyActionPermission(req, identity, ACTION_READ, "demo", tc.object),
-				"the resolved listing action should be authorized")
+				"the listing action should be authorized")
 			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(req, identity, ACTION_READ, "other", tc.object),
 				"the grant must stay scoped to the policy's bucket")
 
-			getReq := httptest.NewRequest(http.MethodGet, "/demo/key", nil)
+			getReq := routed("/demo/key", "key")
 			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(getReq, identity, ACTION_READ, "demo", "key"),
 				"the grant must not authorize GetObject")
+
+			// Other ACTION_READ routes must not be authorized by a listing
+			// grant, whatever query parameters ride along.
+			policyReq := routed("/demo?policy", "")
+			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(policyReq, identity, ACTION_READ, "demo", ""),
+				"the grant must not authorize GetBucketPolicy")
 		})
+	}
+
+	grant := func(a string) *Identity { return &Identity{Name: "bob", Actions: []Action{Action(a)}} }
+	routed := func(url, object string) *http.Request {
+		return mux.SetURLVars(httptest.NewRequest(http.MethodGet, url, nil),
+			map[string]string{"bucket": "demo", "object": object})
+	}
+
+	// authRequestWithAuthType promotes ?prefix into the object for upload
+	// listings; the operation must still come from the route, not the prefix.
+	t.Run("upload listing with prefix", func(t *testing.T) {
+		req := routed("/demo?uploads&prefix=foo/", "")
+		assert.Equal(t, s3err.ErrNone,
+			iam.VerifyActionPermission(req, grant("ListBucketMultipartUploads:demo"), ACTION_READ, "demo", "foo/"))
+		assert.Equal(t, s3err.ErrAccessDenied,
+			iam.VerifyActionPermission(req, grant("ListMultipartUploadParts:demo"), ACTION_READ, "demo", "foo/"))
+	})
+
+	// The ?uploads route is registered before ?policy, so this reaches the
+	// upload listing handler and needs the upload listing grant.
+	t.Run("upload listing with extra subresource", func(t *testing.T) {
+		req := routed("/demo?policy&uploads", "")
+		assert.Equal(t, s3err.ErrNone,
+			iam.VerifyActionPermission(req, grant("ListBucketMultipartUploads:demo"), ACTION_READ, "demo", ""))
+		assert.Equal(t, s3err.ErrAccessDenied,
+			iam.VerifyActionPermission(req, grant("GetBucketPolicy:demo"), ACTION_READ, "demo", ""))
+	})
+
+	// Policies rebuilt from these grants must use valid action names.
+	for _, a := range []string{ACTION_LIST_MULTIPART_UPLOADS, ACTION_LIST_PARTS} {
+		assert.Equal(t, a, iamMapToIdentitiesAction(a))
 	}
 }
 
