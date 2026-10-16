@@ -79,3 +79,21 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 		assert.True(t, enabled, "Object Lock should be enabled when constant is used")
 	})
 }
+
+// Copied objects get their own retention from the request or the destination
+// bucket's default; the source's lock keys never carry into the destination
+// entry.
+func TestCopyDoesNotInheritLockKeys(t *testing.T) {
+	extended := map[string][]byte{
+		s3_constants.ExtObjectLockModeKey:     []byte("COMPLIANCE"),
+		s3_constants.ExtRetentionUntilDateKey: []byte("9999999999"),
+		s3_constants.ExtLegalHoldKey:          []byte("ON"),
+		s3_constants.ExtAmzOwnerKey:           []byte("owner"),
+		"custom-key":                          []byte("value"),
+	}
+	dropCopyLockKeys(extended)
+	assert.NotContains(t, extended, s3_constants.ExtObjectLockModeKey)
+	assert.NotContains(t, extended, s3_constants.ExtRetentionUntilDateKey)
+	assert.NotContains(t, extended, s3_constants.ExtLegalHoldKey)
+	assert.Equal(t, "value", string(extended["custom-key"]))
+}
