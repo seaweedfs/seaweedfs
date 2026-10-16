@@ -41,20 +41,22 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 	var reader io.Reader = r.Body
 	archiveName := path.Base(r.URL.Path)
 	if r.Method == http.MethodPost {
-		multipartReader, multipartReaderErr := r.MultipartReader()
-		if multipartReaderErr != nil {
-			writeJsonError(w, r, http.StatusBadRequest, multipartReaderErr)
-			return
-		}
-		part1, part1Err := multipartReader.NextPart()
-		if part1Err != nil {
-			writeJsonError(w, r, http.StatusBadRequest, part1Err)
-			return
-		}
-		defer part1.Close()
-		reader = part1
-		if fileName := part1.FileName(); fileName != "" {
-			archiveName = path.Base(fileName)
+		if mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); strings.HasPrefix(mediaType, "multipart/") {
+			multipartReader, multipartReaderErr := r.MultipartReader()
+			if multipartReaderErr != nil {
+				writeJsonError(w, r, http.StatusBadRequest, multipartReaderErr)
+				return
+			}
+			part1, part1Err := multipartReader.NextPart()
+			if part1Err != nil {
+				writeJsonError(w, r, http.StatusBadRequest, part1Err)
+				return
+			}
+			defer part1.Close()
+			reader = part1
+			if fileName := part1.FileName(); fileName != "" {
+				archiveName = path.Base(fileName)
+			}
 		}
 	}
 

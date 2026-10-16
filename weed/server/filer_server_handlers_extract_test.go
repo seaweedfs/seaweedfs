@@ -175,6 +175,27 @@ func TestExtractZipArchiveMemberLargerThanChunk(t *testing.T) {
 	}
 }
 
+func TestExtractZipArchiveRawPost(t *testing.T) {
+	fs, f := newExtractTestServer(t)
+	zipBytes := buildTestZip(t, map[string]string{"raw.txt": "raw"}, nil, nil)
+
+	r := httptest.NewRequest(http.MethodPost, "/dst/?extract=zip", bytes.NewReader(zipBytes))
+	r.Header.Set("Content-Type", "application/zip")
+	w := httptest.NewRecorder()
+	fs.PostHandler(w, r, int64(len(zipBytes)))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	entry, err := f.FindEntry(r.Context(), util.FullPath("/dst/raw.txt"))
+	if err != nil {
+		t.Fatalf("member missing: %v", err)
+	}
+	if string(entry.Content) != "raw" {
+		t.Fatalf("member content = %q", entry.Content)
+	}
+}
+
 func TestExtractZipArchiveMultipartPost(t *testing.T) {
 	fs, f := newExtractTestServer(t)
 	zipBytes := buildTestZip(t, map[string]string{"img/1.png": "png-bytes"}, nil, nil)
