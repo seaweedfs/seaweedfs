@@ -145,8 +145,9 @@ type FilerServer struct {
 	// outcomes of recently applied object transactions keyed by request_id, so
 	// a failover replay of the same transaction replays its outcome instead of
 	// re-applying its mutations over a newer entry
-	recentObjectTxnsMu sync.Mutex
-	recentObjectTxns   map[string]recentObjectTxn
+	recentObjectTxnsMu      sync.Mutex
+	recentObjectTxns        map[string]recentObjectTxn
+	recentObjectTxnsSweepAt time.Time
 
 	// credential manager for IAM operations
 	CredentialManager *credential.CredentialManager

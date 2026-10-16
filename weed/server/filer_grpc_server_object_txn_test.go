@@ -904,9 +904,12 @@ func TestObjectTransactionRequestIdDedupesReplay(t *testing.T) {
 	}
 }
 
-// A recorded application-level failure replays to the retried request.
+// A recorded application-level failure replays to the retried request even
+// after the world changes enough for the condition to pass, and its mutation
+// still does not run.
 func TestObjectTransactionRequestIdReplaysRecordedError(t *testing.T) {
-	fs, _ := newTxnTestServer(t, nil)
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(t, nil)
 
 	req := &filer_pb.ObjectTransactionRequest{
 		LockKey:   "/buckets/bkt/obj",
@@ -917,7 +920,11 @@ func TestObjectTransactionRequestIdReplaysRecordedError(t *testing.T) {
 		Mutations: []*filer_pb.ObjectMutation{{
 			Type:      filer_pb.ObjectMutation_PUT,
 			Directory: "/buckets/bkt",
-			Entry:     &filer_pb.Entry{Name: "obj"},
+			Entry: &filer_pb.Entry{
+				Name:       "obj",
+				Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 1},
+				Extended:   map[string][]byte{"etag": []byte("stale")},
+			},
 		}},
 	}
 
@@ -925,8 +932,33 @@ func TestObjectTransactionRequestIdReplaysRecordedError(t *testing.T) {
 	if err != nil || resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
 		t.Fatalf("precondition: err=%v code=%v", err, resp.GetErrorCode())
 	}
+
+	// another writer lands the object the precondition wanted
+	other := &filer_pb.ObjectTransactionRequest{
+		LockKey:   "/buckets/bkt/obj",
+		RequestId: "req-other",
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: "/buckets/bkt",
+			Entry: &filer_pb.Entry{
+				Name:       "obj",
+				Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 2},
+				Extended:   map[string][]byte{"etag": []byte("live")},
+			},
+		}},
+	}
+	respOther, err := fs.ObjectTransaction(context.Background(), other)
+	if err != nil || respOther.Error != "" {
+		t.Fatalf("other put: err=%v resp=%q", err, respOther.Error)
+	}
+
+	// the retry replays the recorded failure instead of re-evaluating and
+	// overwriting the live entry
 	resp2, err := fs.ObjectTransaction(context.Background(), req)
 	if err != nil || resp2.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
 		t.Fatalf("replayed precondition: err=%v code=%v", err, resp2.GetErrorCode())
+	}
+	if got := string(store.entries["/buckets/bkt/obj"].Extended["etag"]); got != "live" {
+		t.Fatalf("replayed transaction overwrote the live entry: etag = %q", got)
 	}
 }

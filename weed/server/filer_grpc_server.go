@@ -369,13 +369,13 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	// Under the same lock the first application committed with, a failover
 	// replay of the same request replays its recorded outcome instead of
 	// re-applying mutations over whatever superseded it.
-	if resp, found := fs.recentObjectTxn(req.RequestId); found {
+	if resp, found := fs.recentObjectTxn(req.RequestId, lockPath); found {
 		glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: replaying recorded outcome for request %s", req.LockKey, req.RequestId)
 		return resp, nil
 	}
 
 	resp := &filer_pb.ObjectTransactionResponse{}
-	defer func() { fs.rememberObjectTxn(req.RequestId, resp) }()
+	defer func() { fs.rememberObjectTxn(req.RequestId, lockPath, resp) }()
 
 	if conditionIsSet(req.Condition) {
 		// The condition is evaluated against condition_key when set (e.g. a
@@ -413,8 +413,9 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 }
 
 const (
-	recentObjectTxnTTL = 2 * time.Minute
-	recentObjectTxnCap = 10000
+	recentObjectTxnTTL         = 2 * time.Minute
+	recentObjectTxnSweepCap    = 10000
+	recentObjectTxnSweepPeriod = 30 * time.Second
 )
 
 type recentObjectTxn struct {
@@ -422,27 +423,34 @@ type recentObjectTxn struct {
 	expiresAt time.Time
 }
 
+// recentObjectTxnKey scopes an idempotency token to the transaction's lock
+// path, so a token reused on a different object cannot replay this outcome.
+func recentObjectTxnKey(requestID string, lockPath util.FullPath) string {
+	return requestID + "\x00" + string(lockPath)
+}
+
 // recentObjectTxn returns the recorded outcome of an already-applied request,
 // so a failover replay of the same ObjectTransaction does not re-apply it.
-func (fs *FilerServer) recentObjectTxn(requestID string) (*filer_pb.ObjectTransactionResponse, bool) {
+func (fs *FilerServer) recentObjectTxn(requestID string, lockPath util.FullPath) (*filer_pb.ObjectTransactionResponse, bool) {
 	if requestID == "" {
 		return nil, false
 	}
 	fs.recentObjectTxnsMu.Lock()
 	defer fs.recentObjectTxnsMu.Unlock()
 
-	txn, found := fs.recentObjectTxns[requestID]
+	key := recentObjectTxnKey(requestID, lockPath)
+	txn, found := fs.recentObjectTxns[key]
 	if !found {
 		return nil, false
 	}
 	if time.Now().After(txn.expiresAt) {
-		delete(fs.recentObjectTxns, requestID)
+		delete(fs.recentObjectTxns, key)
 		return nil, false
 	}
 	return txn.resp, true
 }
 
-func (fs *FilerServer) rememberObjectTxn(requestID string, resp *filer_pb.ObjectTransactionResponse) {
+func (fs *FilerServer) rememberObjectTxn(requestID string, lockPath util.FullPath, resp *filer_pb.ObjectTransactionResponse) {
 	if requestID == "" || resp == nil {
 		return
 	}
@@ -451,25 +459,22 @@ func (fs *FilerServer) rememberObjectTxn(requestID string, resp *filer_pb.Object
 	if fs.recentObjectTxns == nil {
 		fs.recentObjectTxns = make(map[string]recentObjectTxn)
 	}
-	if len(fs.recentObjectTxns) >= recentObjectTxnCap {
-		now := time.Now()
+	// A live record is never evicted early: a replay that misses re-applies the
+	// transaction. The sweep is amortized so a hot cache does not scan on every
+	// write; between sweeps the map may exceed the cap, still bounded by the
+	// insert rate over the TTL.
+	now := time.Now()
+	if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap && now.After(fs.recentObjectTxnsSweepAt) {
+		fs.recentObjectTxnsSweepAt = now.Add(recentObjectTxnSweepPeriod)
 		for id, txn := range fs.recentObjectTxns {
 			if now.After(txn.expiresAt) {
 				delete(fs.recentObjectTxns, id)
 			}
 		}
-		if len(fs.recentObjectTxns) >= recentObjectTxnCap {
-			// evict an arbitrary entry; losing a dedup record only degrades to
-			// the pre-dedup behavior
-			for id := range fs.recentObjectTxns {
-				delete(fs.recentObjectTxns, id)
-				break
-			}
-		}
 	}
-	fs.recentObjectTxns[requestID] = recentObjectTxn{
+	fs.recentObjectTxns[recentObjectTxnKey(requestID, lockPath)] = recentObjectTxn{
 		resp:      resp,
-		expiresAt: time.Now().Add(recentObjectTxnTTL),
+		expiresAt: now.Add(recentObjectTxnTTL),
 	}
 }
 
