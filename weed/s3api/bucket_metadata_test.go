@@ -176,6 +176,8 @@ func TestBuildBucketMetadata(t *testing.T) {
 }
 
 func TestGetBucketMetadata(t *testing.T) {
+	original := loadBucketMetadataFromFiler
+	t.Cleanup(func() { loadBucketMetadataFromFiler = original })
 	loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*BucketMetaData, error) {
 		time.Sleep(time.Second)
 		loadFilerBucketLock.Lock()
