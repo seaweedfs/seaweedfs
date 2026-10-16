@@ -1366,9 +1366,15 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 		return fmt.Errorf("upsert identity failed: empty identity name")
 	}
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
-	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+	config := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
-	}, false, false)
+	}
+	// The wire proto lacks runtime inline policy names; merging it raw would
+	// drop them until the next reload and authorize by flattened Actions.
+	if err := iam.hydrateRuntimePolicies(context.Background(), config); err != nil {
+		return err
+	}
+	return iam.MergeS3ApiConfiguration(config, false, false)
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.
