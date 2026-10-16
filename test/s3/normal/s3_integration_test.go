@@ -114,7 +114,7 @@ func TestS3Integration(t *testing.T) {
 // findAvailablePort finds an available port by binding to port 0
 
 // startMiniCluster starts a weed mini instance directly without exec.
-// Extra flags (e.g. "-s3.allowDeleteBucketNotEmpty=false") can be appended via extraArgs.
+// Extra flags can be appended via extraArgs.
 func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
 	// Allocate non-colliding ports (including gRPC offsets) for weed mini.
 	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Volume", "Filer", "S3"})
@@ -872,7 +872,7 @@ func TestS3DeleteBucketNotEmpty(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	cluster, err := startMiniCluster(t, "-s3.allowDeleteBucketNotEmpty=false")
+	cluster, err := startMiniCluster(t)
 	require.NoError(t, err)
 	defer cluster.Stop()
 
