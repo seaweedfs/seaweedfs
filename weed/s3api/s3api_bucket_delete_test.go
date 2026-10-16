@@ -162,7 +162,7 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 			wantHasUser: false,
 		},
 		{
-			name: "nested versions-named directories are internal",
+			name: "nested versions directory with stored versions counts",
 			entriesByDir: map[string][]*filer_pb.Entry{
 				"/buckets/b": {
 					{Name: "logs", IsDirectory: true},
@@ -173,6 +173,19 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 				"/buckets/b/logs/foo" + s3_constants.VersionsFolder: {
 					{Name: "v1", IsDirectory: false},
 				},
+			},
+			wantHasUser: true,
+		},
+		{
+			name: "nested versions directory left empty does not count",
+			entriesByDir: map[string][]*filer_pb.Entry{
+				"/buckets/b": {
+					{Name: "logs", IsDirectory: true},
+				},
+				"/buckets/b/logs": {
+					{Name: "foo" + s3_constants.VersionsFolder, IsDirectory: true},
+				},
+				"/buckets/b/logs/foo" + s3_constants.VersionsFolder: {},
 			},
 			wantHasUser: false,
 		},
