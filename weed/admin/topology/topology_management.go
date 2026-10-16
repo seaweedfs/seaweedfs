@@ -22,26 +22,28 @@ func isEmptyDiskTypeEntry(diskInfo *master_pb.DiskInfo) bool {
 		len(diskInfo.MaxVolumeCountByDisk) == 0
 }
 
-// IsShadowedEmptyDiskEntry reports whether node's DiskInfo of diskType is an
-// empty entry (no capacity, nothing on it) whose disk id is already used by
-// another of the node's DiskInfos that has capacity or data. Masters used to
-// publish such an entry for every disk type a capacity check had asked about,
-// on nodes without a disk of that type, always with DiskId 0. It is not a
-// disk: keyed by node and disk id it would replace the node's real disk, and
-// planners would take it for an empty destination of a type the node lacks.
-func IsShadowedEmptyDiskEntry(node *master_pb.DataNodeInfo, diskType string) bool {
+// IsPhantomDiskTypeEntry reports whether node's DiskInfo of diskType is an
+// empty entry (no capacity, nothing on it) on a node that has a disk of
+// another type with capacity or data. Masters used to publish such an entry
+// for every disk type a capacity check had asked about, on nodes without a
+// disk of that type. It is not a disk: keyed by node and disk id it would
+// replace or pose as the node's disk 0, and planners would take it for an
+// empty destination of a type the node lacks.
+//
+// The entry's disk id cannot tell it apart: a DiskInfo with no volumes, no EC
+// shards and no per-disk max is published with DiskId 0, whichever physical
+// disk it stands for. A real disk looks the same only while it offers no
+// volume slot -- low on space and empty, or auto-sized before its volume
+// server has learned the volume size limit -- and then it can neither take a
+// volume nor be placed on its own disk id. A node whose DiskInfos are all
+// empty keeps them: those are disks of unknown capacity.
+func IsPhantomDiskTypeEntry(node *master_pb.DataNodeInfo, diskType string) bool {
 	if node == nil || !isEmptyDiskTypeEntry(node.DiskInfos[diskType]) {
 		return false
 	}
-	diskID := node.DiskInfos[diskType].DiskId
 	for otherType, other := range node.DiskInfos {
-		if otherType == diskType || other == nil || isEmptyDiskTypeEntry(other) {
-			continue
-		}
-		for _, perDisk := range other.SplitByPhysicalDisk() {
-			if perDisk.DiskId == diskID {
-				return true
-			}
+		if otherType != diskType && other != nil && !isEmptyDiskTypeEntry(other) {
+			return true
 		}
 	}
 	return false
@@ -61,7 +63,7 @@ func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, node
 				// collapse into one entry. Count physical disks so the number
 				// matches the per-disk activeDisk map.
 				for diskType, diskInfo := range node.DiskInfos {
-					if IsShadowedEmptyDiskEntry(node, diskType) {
+					if IsPhantomDiskTypeEntry(node, diskType) {
 						continue
 					}
 					diskCount += len(diskInfo.SplitByPhysicalDisk())
@@ -123,7 +125,7 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 				// One activeDisk per physical disk_id: the master keys
 				// DiskInfos by disk type, so same-type disks must be split out.
 				for diskType, diskInfo := range nodeInfo.DiskInfos {
-					if IsShadowedEmptyDiskEntry(nodeInfo, diskType) {
+					if IsPhantomDiskTypeEntry(nodeInfo, diskType) {
 						continue
 					}
 					perDiskInfos := diskInfo.SplitByPhysicalDisk()

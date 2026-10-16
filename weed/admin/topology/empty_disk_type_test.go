@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -69,7 +70,7 @@ func TestUpdateTopologyIgnoresEmptyDiskTypeEntries(t *testing.T) {
 		}
 	}
 	if _, _, disks := CountTopologyResources(topo); disks != 3 {
-		t.Errorf("CountTopologyResources disks = %d, want 3 (a shadowed empty entry is not a disk)", disks)
+		t.Errorf("CountTopologyResources disks = %d, want 3 (a made-up empty entry is not a disk)", disks)
 	}
 }
 
@@ -105,5 +106,69 @@ func TestUpdateTopologyKeepsVolumesBehindEmptyDiskTypeEntries(t *testing.T) {
 		if len(locations) != 1 || locations[0].ServerID != "hdd-node" {
 			t.Fatalf("pass %d: volume 3 locations %+v, want it on hdd-node", i, locations)
 		}
+	}
+}
+
+// The made-up entry always carries DiskId 0, so it need not collide with a
+// real disk: here each node's only usable disk is location 1 (location 0 is
+// unavailable, so the volume server does not report it). The entry must still
+// not count as a disk, nor reach planners as an empty disk of unknown
+// capacity on a node that has no disk of its type.
+func TestUpdateTopologyIgnoresEmptyDiskTypeEntriesAtAnyDiskId(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		Id: "phantom_disk_types_no_collision",
+		DataCenterInfos: []*master_pb.DataCenterInfo{{
+			Id: "dc1",
+			RackInfos: []*master_pb.RackInfo{{
+				Id: "rack1",
+				DataNodeInfos: []*master_pb.DataNodeInfo{
+					{
+						Id:      "ssd-node",
+						Address: "ssd-node:8080",
+						DiskInfos: map[string]*master_pb.DiskInfo{
+							"ssd": {Type: "ssd", DiskId: 1, MaxVolumeCount: 200, VolumeCount: 1,
+								MaxVolumeCountByDisk: map[uint32]int64{1: 200},
+								VolumeInfos:          []*master_pb.VolumeInformationMessage{{Id: 7, DiskType: "ssd", DiskId: 1}}},
+							"": {Type: ""},
+						},
+					},
+					{
+						Id:      "hdd-node",
+						Address: "hdd-node:8080",
+						DiskInfos: map[string]*master_pb.DiskInfo{
+							"": {Type: "", DiskId: 1, MaxVolumeCount: 100, VolumeCount: 1,
+								MaxVolumeCountByDisk: map[uint32]int64{1: 100},
+								VolumeInfos:          []*master_pb.VolumeInformationMessage{{Id: 3, DiskId: 1}}},
+							"ssd": {Type: "ssd"},
+						},
+					},
+				},
+			}},
+		}},
+	}
+
+	at := NewActiveTopology(0)
+	for i := 0; i < 16; i++ {
+		if err := at.UpdateTopology(topo); err != nil {
+			t.Fatalf("UpdateTopology: %v", err)
+		}
+		for node, want := range map[string]string{"ssd-node": "ssd", "hdd-node": ""} {
+			disks := at.GetNodeDisks(node)
+			if len(disks) != 1 || disks[0].DiskType != want || disks[0].DiskID != 1 {
+				var got []string
+				for _, d := range disks {
+					got = append(got, fmt.Sprintf("%q@%d", d.DiskType, d.DiskID))
+				}
+				t.Fatalf("pass %d: %s disks %v, want only its real %q disk 1", i, node, got, want)
+			}
+		}
+	}
+	for _, disk := range at.GetDisksWithEffectiveCapacity(TaskTypeBalance, "", 1) {
+		if disk.DiskID == 0 {
+			t.Errorf("planners offered %s disk 0 (%q), which does not exist", disk.NodeID, disk.DiskType)
+		}
+	}
+	if _, _, disks := CountTopologyResources(topo); disks != 2 {
+		t.Errorf("CountTopologyResources disks = %d, want 2", disks)
 	}
 }
