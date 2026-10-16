@@ -238,22 +238,12 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 			// Prefer stable claims from JWT/STS identities. Only "sub" is guaranteed durable per OIDC;
 			// preferred_username is ergonomic but can rotate and may orphan ownership data, while email
 			// is explicitly excluded to avoid storing PII in metadata.
-			claimsField := val.FieldByName("Claims")
-			if claimsField.IsValid() && claimsField.Kind() == reflect.Map && !claimsField.IsNil() && claimsField.Type().Key().Kind() == reflect.String {
+			if claims := identityClaimsMap(val); claims != nil {
 				// aws:userid is the issuer-namespaced (sub, iss) hash; a bare
 				// sub or preferred_username collides across providers.
 				for _, claimKey := range []string{"aws:userid", "sub", "preferred_username"} {
-					claimVal := claimsField.MapIndex(reflect.ValueOf(claimKey))
-					if !claimVal.IsValid() {
-						continue
-					}
-					if claimVal.Kind() == reflect.Interface && !claimVal.IsNil() {
-						claimVal = claimVal.Elem()
-					}
-					if claimVal.Kind() == reflect.String {
-						if principal := normalizePrincipalID(claimVal.String()); principal != "" {
-							return principal
-						}
+					if principal := normalizePrincipalID(claimString(claims, claimKey)); principal != "" {
+						return principal
 					}
 				}
 			}
@@ -291,6 +281,46 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 		}
 	}
 	return h.accountID
+}
+
+// identityClaimsMap extracts the Claims map from an identity value, using
+// reflection to avoid an import cycle with the s3api identity type.
+func identityClaimsMap(val reflect.Value) map[string]interface{} {
+	claimsField := val.FieldByName("Claims")
+	if !claimsField.IsValid() || claimsField.Kind() != reflect.Map || claimsField.IsNil() || claimsField.Type().Key().Kind() != reflect.String {
+		return nil
+	}
+	claims, ok := claimsField.Interface().(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return claims
+}
+
+func claimString(claims map[string]interface{}, key string) string {
+	v, ok := claims[key]
+	if !ok || v == nil {
+		return ""
+	}
+	str, _ := v.(string)
+	return str
+}
+
+// principalIssuer returns the token issuer the auth layer asserted into the
+// identity's claims; it namespaces legacy owner checks in checkPermission.
+func (h *S3TablesHandler) principalIssuer(r *http.Request) string {
+	identityRaw := s3_constants.GetIdentityFromContext(r)
+	if identityRaw == nil {
+		return ""
+	}
+	val := reflect.ValueOf(identityRaw)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return ""
+	}
+	return claimString(identityClaimsMap(val), "iss")
 }
 
 // normalizePrincipalID collapses ARN and identity strings to a key that is stable within a single account.

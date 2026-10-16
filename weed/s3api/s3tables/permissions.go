@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -88,6 +89,9 @@ type PolicyContext struct {
 	KMSKeyArn       string
 	StorageClass    string
 	DefaultAllow    bool
+	// PrincipalIssuer is the caller's token issuer, used to match resources
+	// whose owner predates issuer-scoped account IDs.
+	PrincipalIssuer string
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -109,8 +113,11 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 
-	// Owner always has permission
-	if principal == owner {
+	// Owner always has permission. An owner written before issuer scoping
+	// holds a bare subject; it is re-anchored by hashing it under the
+	// caller's issuer, so the same (sub, iss) pair keeps its ownership while
+	// scoped owners stay issuer-isolated.
+	if principal == owner || (ctx != nil && sts.ComputeParentUser(owner, ctx.PrincipalIssuer) == principal) {
 		return true
 	}
 
@@ -145,7 +152,7 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 
 	for _, stmt := range policy.Statement {
 		// Check if principal matches
-		if !matchesPrincipal(stmt.Principal, principal) {
+		if !matchesCaller(stmt.Principal, principal, ctx) {
 			continue
 		}
 
@@ -223,6 +230,20 @@ func hasAdminAction(actions []string) bool {
 		}
 	}
 	return false
+}
+
+// matchesCaller matches a statement's Principal against the caller's scoped
+// principal or, for policies written before issuer scoping, a bare subject
+// that hashes to it under the caller's issuer.
+func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
+	if matchesPrincipal(principalSpec, principal) {
+		return true
+	}
+	if ctx == nil || ctx.PrincipalIssuer == "" {
+		return false
+	}
+	legacy, ok := principalSpec.(string)
+	return ok && sts.ComputeParentUser(legacy, ctx.PrincipalIssuer) == principal
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal

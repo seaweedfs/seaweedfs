@@ -3,6 +3,8 @@ package s3tables
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 )
 
 func TestMatchesActionPattern(t *testing.T) {
@@ -249,5 +251,32 @@ func TestCheckPermissionWithDefaultAllow(t *testing.T) {
 				t.Errorf("CheckPermissionWithContext() = %v, want %v (DefaultAllow=%v, Policy=%s)", result, tt.expected, tt.defaultAllow, tt.policy)
 			}
 		})
+	}
+}
+
+// Owners written before issuer scoping hold a bare subject; the same
+// (sub, iss) pair must still be recognized by hashing the stored subject
+// under the caller's issuer. Issuer-scoped owners written since remain
+// fully isolated.
+func TestCheckPermissionLegacyOwnerScopedToIssuer(t *testing.T) {
+	owner := "alice-sub"
+	principal := sts.ComputeParentUser(owner, "corp-idp")
+
+	if !CheckPermissionWithContext("GetTable", principal, owner, "", "arn", &PolicyContext{
+		PrincipalIssuer: "corp-idp",
+	}) {
+		t.Error("the same subject under the same issuer must keep ownership")
+	}
+
+	// A scoped owner is only ever claimed by its own hash: a same-named
+	// subject from another issuer cannot reach it.
+	if CheckPermissionWithContext("GetTable", sts.ComputeParentUser(owner, "evil-idp"), principal, "", "arn", &PolicyContext{
+		PrincipalIssuer: "evil-idp",
+	}) {
+		t.Error("a same-named subject from another issuer must not claim a scoped owner")
+	}
+
+	if CheckPermissionWithContext("GetTable", principal, owner, "", "arn", &PolicyContext{}) {
+		t.Error("legacy owner matching must not engage without an issuer")
 	}
 }

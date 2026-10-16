@@ -126,6 +126,12 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			return nil, s3err.ErrAccessDenied
 		}
 
+		// A token without a subject has no issuer-scoped principal; letting it
+		// through would make the client-supplied claims below stand in for one.
+		if identity.UserID == "" {
+			return nil, s3err.ErrAccessDenied
+		}
+
 		// Extract role from OIDC identity
 		if identity.RoleArn == "" {
 			return nil, s3err.ErrAccessDenied
@@ -162,12 +168,16 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		// Set critical claims explicitly, overwriting any from attributes to ensure correctness.
 		claims["sub"] = identity.UserID
 		claims["role"] = identity.RoleArn
+		claims["iss"] = identity.Issuer
 
 		// The bare sub collides across issuers; aws:userid carries the same
 		// (sub, iss) hash STS sessions already expose, so downstream ownership
-		// keys stay namespaced per identity provider.
+		// keys stay namespaced per identity provider. A claim the token itself
+		// supplies is always scrubbed, never adopted.
 		if parentUser := sts.ComputeParentUser(identity.UserID, identity.Issuer); parentUser != "" {
 			claims["aws:userid"] = parentUser
+		} else {
+			delete(claims, "aws:userid")
 		}
 
 		// Use real email address if available
