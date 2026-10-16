@@ -8,9 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -18,10 +21,12 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -112,6 +117,7 @@ type ambiguousPutFiler struct {
 
 	mu            sync.Mutex
 	entries       map[string]*filer_pb.Entry
+	txnCount      int
 	apply         bool
 	createErr     error
 	respError     string
@@ -161,6 +167,75 @@ func (f *ambiguousPutFiler) LookupDirectoryEntry(_ context.Context, req *filer_p
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: out}, nil
 	}
 	return &filer_pb.LookupDirectoryEntryResponse{}, nil
+}
+
+// ObjectTransaction applies the WriteCondition against the entry the condition
+// key names, the way a real filer evaluates it under the path lock, then
+// applies PUT mutations. Routed-write tests use it to catch a condition sent
+// for an entry the gateway's conditional check never looked at.
+func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.txnCount++
+	key := req.LockKey
+	if req.ConditionKey != "" {
+		key = req.ConditionKey
+	}
+	current := f.entries[key]
+	for _, clause := range req.GetCondition().GetClauses() {
+		var md5Hex string
+		if current != nil && current.Attributes != nil {
+			md5Hex = fmt.Sprintf("%x", current.Attributes.Md5)
+		}
+		ok := true
+		switch clause.Kind {
+		case filer_pb.WriteCondition_IF_NOT_EXISTS:
+			ok = current == nil
+		case filer_pb.WriteCondition_IF_EXISTS:
+			ok = current != nil
+		case filer_pb.WriteCondition_IF_ETAG_MATCH:
+			ok = current != nil && slices.Contains(clause.Etags, md5Hex)
+		case filer_pb.WriteCondition_IF_ETAG_NOT_MATCH:
+			ok = current == nil || !slices.Contains(clause.Etags, md5Hex)
+		}
+		if !ok {
+			return &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
+		}
+	}
+	for _, m := range req.Mutations {
+		if m.Type == filer_pb.ObjectMutation_PUT {
+			f.entries[m.Directory+"/"+m.Entry.Name] = proto.Clone(m.Entry).(*filer_pb.Entry)
+		}
+	}
+	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+func (f *ambiguousPutFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for fullPath, entry := range f.entries {
+		if path.Dir(fullPath) != req.Directory {
+			continue
+		}
+		if req.Prefix != "" && !strings.HasPrefix(entry.Name, req.Prefix) {
+			continue
+		}
+		if req.StartFromFileName != "" && (entry.Name < req.StartFromFileName ||
+			(entry.Name == req.StartFromFileName && !req.InclusiveStartFrom)) {
+			continue
+		}
+		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: proto.Clone(entry).(*filer_pb.Entry)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *ambiguousPutFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.entries[req.Directory+"/"+req.Entry.Name] = proto.Clone(req.Entry).(*filer_pb.Entry)
+	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
 func (f *ambiguousPutFiler) LookupVolume(_ context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
@@ -405,5 +480,60 @@ func TestFetchChunkDataDecryptsVolumeCipher(t *testing.T) {
 	plain.Close()
 	if !bytes.Equal(got, plaintext[5:9]) {
 		t.Fatalf("ranged plain read = %q, want %q", got, plaintext[5:9])
+	}
+}
+
+// A suspended-versioning overwrite resolves the conditional check against the
+// entry the read path serves (the latest version under .versions/), so the
+// write must not carry a routed WriteCondition: the filer would evaluate it
+// against the empty null-version slot and reject a matching If-Match.
+func TestSuspendedPutIfMatchStaysOffRoutedCondition(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume: volume,
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {
+				Name:        "b",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningSuspended)},
+			},
+			"/buckets/b/k.versions": {
+				Name:        "k.versions",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionIdKey:       []byte("v1"),
+					s3_constants.ExtLatestVersionFileNameKey: []byte("v_v1"),
+				},
+			},
+			"/buckets/b/k.versions/v_v1": {
+				Name:       "v_v1",
+				Attributes: &filer_pb.FuseAttributes{Md5: []byte{0xab, 0xc1, 0x23}, FileSize: 1},
+				Extended: map[string][]byte{
+					s3_constants.ExtETagKey:      []byte("abc123"),
+					s3_constants.ExtVersionIdKey: []byte("v1"),
+				},
+			},
+		},
+		apply: true,
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader("new"))
+	r.Header.Set(s3_constants.IfMatch, `"abc123"`)
+	_, code, _ := s3a.putSuspendedVersioningObject(r, "b", "k", r.Body, "")
+	if code != s3err.ErrNone {
+		t.Fatalf("suspended If-Match PUT = %v", code)
+	}
+	if filerImpl.entries["/buckets/b/k"] == nil {
+		t.Fatal("null-version entry was not created")
+	}
+	if filerImpl.txnCount != 0 {
+		t.Fatalf("conditional suspended write routed %d transaction(s)", filerImpl.txnCount)
 	}
 }
