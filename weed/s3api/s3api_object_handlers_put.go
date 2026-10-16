@@ -154,6 +154,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	defer dataReader.Close()
 
+	if isExtractZip(r) {
+		s3a.extractZipObject(w, r, bucket, object, dataReader)
+		return
+	}
+
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
 		// The filer mkdir below would implicitly create a missing bucket, so gate it
