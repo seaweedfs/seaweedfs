@@ -270,6 +270,9 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	} else if err != os.ErrNotExist {
 		return err
 	}
+	if err := fs.checkRenameKeepsAcl(absPath, absTarget); err != nil {
+		return err
+	}
 	oldDir, oldName := util.FullPath(absPath).DirAndName()
 	newDir, newName := util.FullPath(absTarget).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
@@ -279,6 +282,29 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 		})
 		return err
 	})
+}
+
+// checkRenameKeepsAcl denies a rename that would move an explicitly carved-out
+// path to a location where a more permissive ACL grants the user write or
+// delete access the carve-out had removed.
+func (fs *SftpServer) checkRenameKeepsAcl(absPath, absTarget string) error {
+	if fs.user == nil {
+		return nil
+	}
+	for p := range fs.user.Permissions {
+		cleaned := path.Clean(p)
+		if !pathWithin(absPath, cleaned) {
+			continue
+		}
+		relocated := path.Join(absTarget, strings.TrimPrefix(cleaned, absPath))
+		for _, perm := range []string{PermWrite, PermDelete} {
+			if !HasExplicitPermission(fs.user, cleaned, perm, false) && HasExplicitPermission(fs.user, relocated, perm, false) {
+				glog.V(0).Infof("permission denied for user %s: rename of %s to %s would drop the ACL on %s", fs.user.Username, absPath, absTarget, cleaned)
+				return os.ErrPermission
+			}
+		}
+	}
+	return nil
 }
 
 func (fs *SftpServer) setFileStatWithRequest(absPath string, r *sftp.Request) error {

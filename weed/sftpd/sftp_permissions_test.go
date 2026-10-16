@@ -186,6 +186,46 @@ func TestRenameEntryChecksTargetFile(t *testing.T) {
 	}
 }
 
+// Renaming a directory must not strand a more specific ACL configured under
+// it: after /sub moves to /sub2, /sub/ro.txt no longer matches its read-only
+// ACL, so the move is denied unless the destination grants no new access.
+func TestRenameEntryKeepsNestedAcl(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/home/alice":            {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub":        {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub/ro.txt": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice":            {"read", "write", "list", "delete", "rename"},
+				"/home/alice/sub/ro.txt": {"read", "list"},
+			},
+		},
+	}
+
+	if err := fs.renameEntry("/home/alice/sub", "/home/alice/sub2"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename that strands the /sub/ro.txt ACL to be denied, got %v", err)
+	}
+	delete(fs.user.Permissions, "/home/alice/sub/ro.txt")
+	if err := fs.renameEntry("/home/alice/sub", "/home/alice/sub2"); errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename without a nested carve-out to be allowed, got %v", err)
+	}
+}
+
 func TestCheckFilePermissionMissingAncestorsTerminates(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
