@@ -116,17 +116,29 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 		return nil
 	}
 
-	err := mover.MoveEcShards(ctx, volume_move.EcShardMove{
+	move := volume_move.EcShardMove{
 		VolumeId:   needle.VolumeId(params.VolumeId),
 		Collection: params.Collection,
 		ShardIds:   shardIds,
 		Source:     sourceAddr,
 		Target:     targetAddr,
 		TargetDisk: target.DiskId,
-	}, volume_move.EcMoveOptions{
+	}
+	opts := volume_move.EcMoveOptions{
 		IoBytePerSecond: ecParams.GetIoBytePerSecond(),
 		Progress:        t.reportProgress,
-	})
+	}
+	err := mover.MoveEcShards(ctx, move, opts)
+	// A "no space left" refusal to a pinned disk convicts only that disk;
+	// retry once letting the server pick any disk on the same node. The
+	// planner's node choice stands; only the intra-node disk defers to the
+	// server's live view. When the node is truly full, the retry fails with
+	// the same error.
+	if err != nil && target.DiskId > 0 && volume_move.IsNoSpaceLeftError(err) {
+		glog.Infof("EC balance: %s disk %d has no space left; retrying with server-picked disk", target.Node, target.DiskId)
+		move.TargetDisk = 0
+		err = mover.MoveEcShards(ctx, move, opts)
+	}
 	if err != nil {
 		return err
 	}
