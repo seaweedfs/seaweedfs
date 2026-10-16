@@ -1627,13 +1627,30 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 			if miniProgressBoard != nil {
 				miniProgressBoard.starting("Iceberg")
 			}
-			waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+			// Probe only when the catalog listener actually bound; otherwise the
+			// port may answer as an unrelated process and get advertised as the
+			// catalog.
+			if miniS3Options.icebergBound.Load() {
+				waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+			} else {
+				if miniProgressBoard != nil {
+					miniProgressBoard.failed("Iceberg")
+				}
+				glog.Warningf("Iceberg catalog on port %d did not start; see S3 startup log", *miniS3Options.portIceberg)
+			}
 		}
 		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
 			if miniProgressBoard != nil {
 				miniProgressBoard.starting("Lance")
 			}
-			waitForServiceReady("Lance", *miniS3Options.portLance, bindIp)
+			if miniS3Options.lanceBound.Load() {
+				waitForServiceReady("Lance", *miniS3Options.portLance, bindIp)
+			} else {
+				if miniProgressBoard != nil {
+					miniProgressBoard.failed("Lance")
+				}
+				glog.Warningf("Lance namespace server on port %d did not start; see S3 startup log", *miniS3Options.portLance)
+			}
 		}
 	}
 	if *miniEnableWebDAV {
@@ -1848,10 +1865,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		// the admin UI would otherwise print an endpoint nothing is listening on.
 		var icebergPort, lancePort int
 		if miniEnableS3 != nil && *miniEnableS3 {
-			if miniS3Options.portIceberg != nil {
+			if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 && miniS3Options.icebergBound.Load() {
 				icebergPort = *miniS3Options.portIceberg
 			}
-			if miniS3Options.portLance != nil {
+			if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 && miniS3Options.lanceBound.Load() {
 				lancePort = *miniS3Options.portLance
 			}
 		}
