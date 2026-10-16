@@ -1629,6 +1629,8 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrExistingObjectIsDirectory
 	case errors.Is(err, weed_server.ErrReadOnly):
 		return s3err.ErrAccessDenied
+	case errors.Is(err, filer_pb.ErrPreconditionFailed):
+		return s3err.ErrPreconditionFailed
 	}
 
 	// A transport failure leaves the outcome ambiguous — the write may have
