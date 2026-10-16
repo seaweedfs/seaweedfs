@@ -478,6 +478,10 @@ type putFinalize struct {
 	lockKey     string
 	mutations   []*filer_pb.ObjectMutation
 	afterCreate func(entry *filer_pb.Entry) s3err.ErrorCode
+	// conditionAltKey names the entry a routed WriteCondition falls back to
+	// when the write path is absent — a suspended-versioning write points it
+	// at the latest version so check and write stay under the filer lock
+	conditionAltKey string
 }
 
 const (
@@ -1010,15 +1014,19 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	routed := false
 	routedAmbiguous := false
 	var owner pb.ServerAddress
+	condAltKey := ""
+	if finalize != nil {
+		condAltKey = finalize.conditionAltKey
+	}
 	if owner = s3a.routableWriteOwner(bucket, object); owner != "" {
-		if cond, ok := routeWriteCondition(r, uniqueWritePath); ok {
+		if cond, ok := routeWriteCondition(r, uniqueWritePath && condAltKey == ""); ok {
 			// Routed mutations ride in the PUT's transaction (committing atomically),
 			// so lockKey is the object path they carry, not the version file path.
 			lockKey, finalizeMutations := filePath, []*filer_pb.ObjectMutation(nil)
 			if finalize != nil && len(finalize.mutations) > 0 {
 				lockKey, finalizeMutations = finalize.lockKey, finalize.mutations
 			}
-			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, "", finalizeMutations)
+			resp, err := s3a.routedPut(owner, s3a.objectRouteKey(bucket, object), lockKey, filePath, entry, cond, "", condAltKey, finalizeMutations)
 			switch {
 			case err != nil:
 				routedAmbiguous = true
@@ -1824,7 +1832,21 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// naming a marker that is gone, and the read path heals that by promoting an older
 	// version, republishing the deleted key. Best-effort, as a stale flag self-heals on
 	// the next list.
+	// A conditional suspended write checks "the null slot if present, else the
+	// latest version". Naming the pointed-at version as the fallback lets the
+	// routed transaction evaluate that rule under the filer lock instead of
+	// splitting check and write across a gateway lock that routed writes skip.
+	conditionAltKey := ""
+	if headers, headersErr := parseConditionalHeaders(r); headersErr == s3err.ErrNone && headers.isSet {
+		versionsPath := normalizedObject + s3_constants.VersionsFolder
+		if versionsEntry, verErr := s3a.getEntry(s3a.bucketDir(bucket), versionsPath); verErr == nil {
+			if name := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]); name != "" {
+				conditionAltKey = s3a.toFilerPath(bucket, versionsPath+"/"+name)
+			}
+		}
+	}
 	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, &putFinalize{
+		conditionAltKey: conditionAltKey,
 		afterCreate: func(entry *filer_pb.Entry) s3err.ErrorCode {
 			writtenETag := string(entry.Extended[s3_constants.ExtETagKey])
 			if err := s3a.finalizeSuspendedNullWrite("", bucket, normalizedObject, s3_constants.ExtETagKey, writtenETag); err != nil {

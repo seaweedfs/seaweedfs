@@ -118,6 +118,7 @@ type ambiguousPutFiler struct {
 	mu            sync.Mutex
 	entries       map[string]*filer_pb.Entry
 	txnCount      int
+	txnCheck      func(req *filer_pb.ObjectTransactionRequest)
 	apply         bool
 	createErr     error
 	respError     string
@@ -177,11 +178,18 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.txnCount++
+	if f.txnCheck != nil {
+		f.txnCheck(req)
+	}
 	key := req.LockKey
 	if req.ConditionKey != "" {
 		key = req.ConditionKey
 	}
 	current := f.entries[key]
+	if current == nil && req.ConditionAltKey != "" {
+		key = req.ConditionAltKey
+		current = f.entries[key]
+	}
 	for _, clause := range req.GetCondition().GetClauses() {
 		var md5Hex string
 		if current != nil && current.Attributes != nil {
@@ -484,10 +492,11 @@ func TestFetchChunkDataDecryptsVolumeCipher(t *testing.T) {
 }
 
 // A suspended-versioning overwrite resolves the conditional check against the
-// entry the read path serves (the latest version under .versions/), so the
-// write must not carry a routed WriteCondition: the filer would evaluate it
-// against the empty null-version slot and reject a matching If-Match.
-func TestSuspendedPutIfMatchStaysOffRoutedCondition(t *testing.T) {
+// entry the read path serves: the null slot when present, else the latest
+// version under .versions/. The routed transaction carries that version as the
+// condition's fallback key so check and write stay under the filer lock —
+// checking the empty null-version slot alone would reject a matching If-Match.
+func TestSuspendedPutIfMatchRoutesWithConditionAltKey(t *testing.T) {
 	volume := startFakeVolumeServer(t)
 	filerImpl := &ambiguousPutFiler{
 		volume: volume,
@@ -524,6 +533,12 @@ func TestSuspendedPutIfMatchStaysOffRoutedCondition(t *testing.T) {
 	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
 	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
 
+	filerImpl.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+		if req.ConditionAltKey != "/buckets/b/k.versions/v_v1" {
+			t.Fatalf("condition alt key = %q, want /buckets/b/k.versions/v_v1", req.ConditionAltKey)
+		}
+	}
+
 	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader("new"))
 	r.Header.Set(s3_constants.IfMatch, `"abc123"`)
 	_, code, _ := s3a.putSuspendedVersioningObject(r, "b", "k", r.Body, "")
@@ -533,7 +548,7 @@ func TestSuspendedPutIfMatchStaysOffRoutedCondition(t *testing.T) {
 	if filerImpl.entries["/buckets/b/k"] == nil {
 		t.Fatal("null-version entry was not created")
 	}
-	if filerImpl.txnCount != 0 {
-		t.Fatalf("conditional suspended write routed %d transaction(s)", filerImpl.txnCount)
+	if filerImpl.txnCount != 1 {
+		t.Fatalf("conditional suspended write should route one transaction, got %d", filerImpl.txnCount)
 	}
 }
