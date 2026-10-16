@@ -291,13 +291,11 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *mas
 			rv.vid, rv.remoteStorageName, uploadErr)
 	}
 
-	// step 6: clear the persisted readonly mark on the source so the .vif that
-	// replicates below is clean, then push the new .idx/.vif to every sibling so
-	// all replicas reference the new remote object; the last tiered replica goes
-	// last so the old shared object still has a holder until then
-	if err = markVolumeWritable(ctx, grpcDialOption, rv.vid, source, true, false); err != nil {
-		return fmt.Errorf("mark volume %d writable on %s: %v", rv.vid, tieredLocations[0].Url, err)
-	}
+	// step 6: push the new .idx/.vif to every sibling so all replicas reference
+	// the new remote object; the last tiered replica goes last so the old shared
+	// object still has a holder until then. Replicas stay frozen until every
+	// copy lands, so a delete cannot slip past a sibling's index snapshot; a
+	// copied readonly mark is inert on a remote-backed volume anyway.
 	syncErr := syncVolumeTierCompactReplicas(ctx, grpcDialOption, writer, rv, tieredLocations, localLocations)
 	if compactErr != nil {
 		return fmt.Errorf("compaction failed (%v), volume %d re-uploaded to %s without compaction (resync: %v)",
@@ -305,6 +303,12 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *mas
 	}
 	if syncErr != nil {
 		return syncErr
+	}
+
+	// step 7: unfreeze every replica, clearing the persisted readonly mark on
+	// each. Remote volumes refuse writes regardless; this re-enables deletes.
+	if err = markVolumeReplicasWritable(ctx, grpcDialOption, rv.vid, locations, true, false); err != nil {
+		return fmt.Errorf("unfreeze volume %d replicas: %v", rv.vid, err)
 	}
 
 	fmt.Fprintf(writer, "volume %d compacted and uploaded to %s successfully\n", rv.vid, rv.remoteStorageName)
