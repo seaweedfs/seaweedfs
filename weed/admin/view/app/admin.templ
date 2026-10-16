@@ -257,7 +257,7 @@ templ Admin(data dash.AdminData) {
                                                         <span class="text-muted">-</span>
                                                     } else {
                                                         <div class="d-flex align-items-center">
-                                                            <div class="progress flex-grow-1" style="height: 20px;">
+                                                            <div class="progress flex-grow-1" style="height: 20px; min-width: 48px;">
                                                                 <div class="progress-bar" role="progressbar"
                                                                      style={fmt.Sprintf("width: %d%%", tier.UsagePercent())}>
                                                                 </div>
@@ -448,7 +448,7 @@ templ Admin(data dash.AdminData) {
                                             <td>{vs.Rack}</td>
                                             <td>
                                                 <div class="d-flex align-items-center">
-                                                    <div class="progress flex-grow-1" style="height: 20px;">
+                                                    <div class="progress flex-grow-1" style="height: 20px; min-width: 48px;">
                                                         <div class="progress-bar" role="progressbar" 
                                                              style={fmt.Sprintf("width: %d%%", calculatePercent(vs.Volumes, vs.MaxVolumes))}>
                                                         </div>

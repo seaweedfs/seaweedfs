@@ -342,7 +342,7 @@ func Admin(data dash.AdminData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				} else {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<div class=\"d-flex align-items-center\"><div class=\"progress flex-grow-1\" style=\"height: 20px;\"><div class=\"progress-bar\" role=\"progressbar\" style=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<div class=\"d-flex align-items-center\"><div class=\"progress flex-grow-1\" style=\"height: 20px; min-width: 48px;\"><div class=\"progress-bar\" role=\"progressbar\" style=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -621,7 +621,7 @@ func Admin(data dash.AdminData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</td><td><div class=\"d-flex align-items-center\"><div class=\"progress flex-grow-1\" style=\"height: 20px;\"><div class=\"progress-bar\" role=\"progressbar\" style=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</td><td><div class=\"d-flex align-items-center\"><div class=\"progress flex-grow-1\" style=\"height: 20px; min-width: 48px;\"><div class=\"progress-bar\" role=\"progressbar\" style=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
