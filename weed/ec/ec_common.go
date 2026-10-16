@@ -1068,7 +1068,7 @@ func (ecb *ecBalancer) recordMoveResult(m ecbalancer.Move, err error) {
 	switch {
 	case err == nil:
 		ecb.completedMoves = append(ecb.completedMoves, m)
-	case m.TargetNode != "" && isNoSpaceLeftError(err):
+	case m.TargetNode != "" && volume_move.IsNoSpaceLeftError(err):
 		if m.TargetDisk > 0 {
 			// The refusal convicts only the named disk; the node's other
 			// disks may still have room.
@@ -1354,13 +1354,6 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 	err := ecb.applyShardMoveRPC(src, dst, m.Collection, vid, shardId, m.TargetDisk)
 	ecb.recordMoveResult(m, err)
 	return err
-}
-
-// isNoSpaceLeftError matches the volume server's refusal when no local disk can
-// take the copied shard ("no space left" from FindEcShardTargetLocation, and the
-// Rust server's same reply), however the move chain wraps it.
-func isNoSpaceLeftError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no space left")
 }
 
 // applyShardMoveRPC copies a shard to the destination disk, verifies the
