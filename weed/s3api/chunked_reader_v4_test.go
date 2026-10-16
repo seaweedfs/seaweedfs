@@ -137,7 +137,7 @@ func setupIam() IdentityAccessManagement {
 		hashCounters:      map[string]*int32{},
 		identityAnonymous: nil,
 		domain:            "",
-		isAuthEnabled:     false,
+		isAuthEnabled:     true,
 	}
 
 	iam.identities = append(iam.identities, &Identity{

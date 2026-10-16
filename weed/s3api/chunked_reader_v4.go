@@ -94,16 +94,20 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD' or 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER'
 	case streamingContentSHA256, streamingContentSHA256Trailer:
 		glog.V(3).Infof("streaming content sha256 (with trailer: %v)", contentSha256Header == streamingContentSHA256Trailer)
-		credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
-		if errCode != s3err.ErrNone {
-			return nil, errCode
+		// With IAM disabled there is no credential to verify against; leave
+		// cred nil so chunk signatures are decoded but not verified.
+		if iam.isEnabled() {
+			credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
+			if errCode != s3err.ErrNone {
+				return nil, errCode
+			}
 		}
 	case streamingUnsignedPayload:
 		glog.V(3).Infof("streaming unsigned payload")
 		// The seed signature is a SigV4 concept; recompute it only for SigV4-signed
 		// requests. JWT-bearer, presigned, and anonymous unsigned-streaming uploads
 		// carry no header seed, and verifyV4Signature would fail parsing them.
-		if isRequestSignatureV4(req) {
+		if iam.isEnabled() && isRequestSignatureV4(req) {
 			// We do not need to pass the seed signature to the Reader as each chunk is not signed,
 			// but we do compute it to verify the request's signature.
 			_, _, _, _, _, errCode = iam.calculateSeedSignature(req)
