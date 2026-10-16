@@ -642,10 +642,10 @@ func (h *S3TablesHandler) authorizeViewOp(r *http.Request, operation, principal,
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
 	}
-	resourceAllowed := CheckPermissionWithContext(operation, principal, resourceOwner, resourcePolicy, resourceARN, ctx)
 	bucketARN := h.generateTableBucketARN(bucketOwner, bucketName)
-	bucketAllowed := CheckPermissionWithContext(operation, principal, bucketOwner, bucketPolicy, bucketARN, ctx)
-	return resourceAllowed || bucketAllowed
+	return CheckTableOrBucketPermission(operation, principal,
+		resourceOwner, resourcePolicy, resourceARN,
+		bucketOwner, bucketPolicy, bucketARN, ctx)
 }
 
 // singleClient adapts a bound filer client to the FilerClient interface so the

@@ -107,7 +107,59 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 	return checkPermission(operation, principal, owner, resourcePolicy, resourceARN, ctx)
 }
 
+// CheckTableOrBucketPermission combines a table or namespace policy with its
+// table bucket's policy into one decision: a matching Deny on either policy
+// vetoes the request even when the other policy would allow it.
+func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, bucketOwner, bucketPolicy, bucketARN string, ctx *PolicyContext) bool {
+	if principal == "" {
+		return false
+	}
+	if principal == s3_constants.AccountAdminId {
+		return true
+	}
+	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) ||
+		matchesDenyStatement(operation, principal, bucketPolicy, bucketARN, ctx) {
+		return false
+	}
+	return checkPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, ctx) ||
+		checkPermission(operation, principal, bucketOwner, bucketPolicy, bucketARN, ctx)
+}
+
+// matchesDenyStatement reports whether the JSON policy carries a statement
+// matching this request with Effect Deny. Malformed policies return false;
+// the caller's normal evaluation still denies them.
+func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	if resourcePolicy == "" {
+		return false
+	}
+	fullAction := operation
+	if !strings.Contains(operation, ":") {
+		fullAction = "s3tables:" + operation
+	}
+	var policy PolicyDocument
+	if err := json.Unmarshal([]byte(resourcePolicy), &policy); err != nil {
+		return false
+	}
+	for _, stmt := range policy.Statement {
+		if stmt.Effect != "Deny" ||
+			!matchesPrincipal(stmt.Principal, principal) ||
+			!matchesAction(stmt.Action, fullAction) ||
+			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) ||
+			!matchesConditions(stmt.Condition, ctx) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+
+	// An explicit Deny in the resource policy vetoes owner and identity
+	// grants as well as allows within the same document.
+	if matchesDenyStatement(operation, principal, resourcePolicy, resourceARN, ctx) {
+		return false
+	}
 
 	// Owner always has permission
 	if principal == owner {

@@ -251,3 +251,47 @@ func TestCheckPermissionWithDefaultAllow(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckTableOrBucketPermissionDenyVeto(t *testing.T) {
+	tablePolicy := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Deny",
+			"Principal": "*",
+			"Action": "s3tables:DeleteTable",
+			"Resource": "*"
+		}]
+	}`
+	bucketAllow := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Principal": "*",
+			"Action": "s3tables:*",
+			"Resource": "*"
+		}]
+	}`
+	tableARN := "arn:aws:s3tables:us-east-1:acct:bucket/b/table/ns/t"
+	bucketARN := "arn:aws:s3tables:us-east-1:acct:bucket/b"
+	ctx := &PolicyContext{TableBucketName: "b", Namespace: "ns", TableName: "t"}
+
+	// A Deny on the table policy vetoes the bucket Allow.
+	if CheckTableOrBucketPermission("DeleteTable", "user123", "owner", tablePolicy, tableARN, "owner", bucketAllow, bucketARN, ctx) {
+		t.Error("table Deny should veto bucket Allow")
+	}
+
+	// The same Deny in the bucket policy vetoes a table Allow.
+	if CheckTableOrBucketPermission("DeleteTable", "user123", "owner", bucketAllow, tableARN, "owner", tablePolicy, bucketARN, ctx) {
+		t.Error("bucket Deny should veto table Allow")
+	}
+
+	// A table Deny also vetoes ownership of the table.
+	if CheckTableOrBucketPermission("DeleteTable", "owner", "owner", tablePolicy, tableARN, "owner", "", bucketARN, ctx) {
+		t.Error("table Deny should veto the owner grant")
+	}
+
+	// No Deny anywhere: either policy may allow.
+	if !CheckTableOrBucketPermission("DeleteTable", "user123", "other-owner", "", tableARN, "owner", bucketAllow, bucketARN, ctx) {
+		t.Error("bucket Allow should grant when no policy denies")
+	}
+}
