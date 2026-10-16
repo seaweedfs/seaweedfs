@@ -135,7 +135,10 @@ func (c *ecShardUnmounter) doShardsUnmount() error {
 		for _, ts := range liveShards {
 			if ts.ShardID == ps.ShardID {
 				if ps.NodeAddress == "" || ps.NodeAddress == ts.NodeAddress {
-					if result != nil {
+					// One node is one unmount target no matter how many of
+					// its disks hold the shard; ambiguity means the shard
+					// lives on more than one node.
+					if result != nil && result.NodeAddress != ts.NodeAddress {
 						return fmt.Errorf("shard %v is ambiguous", ps)
 					}
 					result = ts
