@@ -375,7 +375,16 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	}
 
 	resp := &filer_pb.ObjectTransactionResponse{}
-	defer func() { fs.rememberObjectTxn(req.RequestId, lockPath, resp) }()
+	// Only definitive outcomes are replayed: a mutation error may be transient
+	// or follow a partial apply, and a retry that re-runs the same (idempotent)
+	// mutations converges to the requested state instead of replaying a stale
+	// failure for the whole TTL.
+	record := true
+	defer func() {
+		if record {
+			fs.rememberObjectTxn(req.RequestId, lockPath, resp)
+		}
+	}()
 
 	if conditionIsSet(req.Condition) {
 		// The condition is evaluated against condition_key when set (e.g. a
@@ -387,8 +396,8 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
-			resp = nil // a lookup error decides nothing; a retry must re-run, not replay
-			return resp, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
+			record = false // a lookup error decides nothing; a retry must re-run, not replay
+			return nil, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
 		}
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
@@ -404,6 +413,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	for i, m := range req.Mutations {
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
+			record = false
 			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
 			return resp, nil
 		}
