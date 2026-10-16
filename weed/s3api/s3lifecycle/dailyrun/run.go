@@ -607,7 +607,11 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		startTsNs = runNow.Add(-maxTTL).UnixNano()
 	}
 
-	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
+	// Route only the rules replay serves. There can be walk-bound rules
+	// that are never due inside the retention window that would pin the
+	// cursor further back than it needs to be.
+	replayView := snap.ReplayView(retentionWindow)
+	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
 	// Fresh ctx: a wall-clock cap on the pass (the shell driver's
 	// -runtime) cancels the drain's, and saving with it would drop the
 	// cursor and re-replay from the same floor next pass.
