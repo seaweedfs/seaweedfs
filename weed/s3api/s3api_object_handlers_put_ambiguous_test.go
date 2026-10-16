@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -543,6 +544,67 @@ func TestPutToFilerRoutedAmbiguousEmptyPutKeepsNewerWrite(t *testing.T) {
 	}
 	if got := filerImpl.entries["/buckets/b/o"]; got == nil || len(got.Chunks) == 0 || got.Chunks[0].FileId != newer.Chunks[0].FileId {
 		t.Fatalf("the newer write's entry was clobbered: %+v", got)
+	}
+}
+
+// Chunk lists cannot prove a zero-byte PUT landed — an older empty object at
+// the same path compares equal too. A stored entry whose metadata differs from
+// this write's must not be claimed as its commit: it belongs to a different
+// request, so the outcome stays uncertain for the client to retry.
+func TestPutToFilerRoutedAmbiguousEmptyPutStaleMetadata(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume:     volume,
+		txnNoApply: true,
+		txnErr:     status.Error(codes.Unavailable, "response lost before commit"),
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b/o": {
+				Name:       "o",
+				Attributes: &filer_pb.FuseAttributes{Mime: "text/plain"},
+				Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte("\"d41d8cd98f00b204e9800998ecf8427e\"")},
+			},
+		},
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/o", nil)
+	_, code, _ := s3a.putToFiler(r, "/buckets/b/o", strings.NewReader(""), "b", "o", 1, 0, nil, false, "")
+	if code != s3err.ErrServiceUnavailable {
+		t.Fatalf("putToFiler returned %v, want refusal when the stored empty entry cannot be this write's", code)
+	}
+	if filerImpl.stores != 0 {
+		t.Fatalf("recovery committed over an unverifiable empty entry %d times", filerImpl.stores)
+	}
+	if got := filerImpl.entries["/buckets/b/o"]; got.GetAttributes().GetMime() != "text/plain" {
+		t.Fatalf("the older object's entry was replaced: %+v", got)
+	}
+}
+
+// The counterpart: when the routed zero-byte PUT did commit and only its
+// response was lost, the stored entry is this write's own — same metadata —
+// and recovery must still claim it rather than fail a successful write.
+func TestPutToFilerRoutedAmbiguousEmptyPutLanded(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		txnErr:  status.Error(codes.Unavailable, "response lost after commit"),
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/o", nil)
+	_, code, _ := s3a.putToFiler(r, "/buckets/b/o", strings.NewReader(""), "b", "o", 1, 0, nil, false, "")
+	if code != s3err.ErrNone {
+		t.Fatalf("putToFiler returned %v, want success — the stored empty entry is this write's own commit", code)
+	}
+	if filerImpl.stores != 0 {
+		t.Fatalf("recovery re-committed an entry that was already stored %d times", filerImpl.stores)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -1174,6 +1175,13 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 				glog.Warningf("putToFiler: ambiguous routed PUT for %s was superseded by another write; not committing stale entry", filePath)
 				return s3err.ErrServiceUnavailable
 			}
+			// An empty PUT carries no fids, so two chunkless entries compare
+			// equal even when the stored one predates this write; the request's
+			// metadata is the only evidence it is this write's own commit.
+			if len(uploaded) == 0 && !sameStoredEntry(existing, entry) {
+				glog.Warningf("putToFiler: ambiguous routed PUT for %s cannot prove an empty stored entry is its own; not claiming it", filePath)
+				return s3err.ErrServiceUnavailable
+			}
 			*entryCreated = true
 			if finalize != nil && finalize.afterCreate != nil {
 				if code := finalize.afterCreate(entry); code != s3err.ErrNone {
@@ -1368,6 +1376,18 @@ func sameFileChunks(a, b []*filer_pb.FileChunk) bool {
 		counts[k]--
 	}
 	return true
+}
+
+// sameStoredEntry distinguishes a write from an unrelated chunkless object at
+// the same path: a landed PUT stores the entry exactly as built, so mime,
+// size, md5, content, and the extended attributes it set are the evidence.
+func sameStoredEntry(existing, entry *filer_pb.Entry) bool {
+	a, b := existing.GetAttributes(), entry.GetAttributes()
+	return a.GetMime() == b.GetMime() &&
+		a.GetFileSize() == b.GetFileSize() &&
+		bytes.Equal(a.GetMd5(), b.GetMd5()) &&
+		bytes.Equal(existing.GetContent(), entry.GetContent()) &&
+		maps.EqualFunc(existing.GetExtended(), entry.GetExtended(), bytes.Equal)
 }
 
 // checksumAlgorithmMapping maps algorithm name strings to their enum and header name.
