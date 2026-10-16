@@ -376,9 +376,11 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			conditionPath = util.FullPath(req.ConditionKey)
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
-		if findErr == nil && current != nil && current.IsDirectory() {
+		if findErr == nil && current != nil && current.IsDirectory() && req.ConditionAltKey != "" {
 			// A directory is not the object: implicit directories can share a
-			// path with an S3 key, so treat it as an absent slot.
+			// path with an S3 key, so treat it as an absent slot. Only the
+			// alt-key callers want object-slot semantics; an explicit
+			// condition_key may legitimately name a directory.
 			current, findErr = nil, filer_pb.ErrNotFound
 		}
 		// The caller can name a fallback evaluated when the primary is absent —
