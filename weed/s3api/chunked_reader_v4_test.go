@@ -510,3 +510,25 @@ func TestSignedStreamingUploadWithoutIAM(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, chunkData, string(data))
 }
+
+// TestTrailerStreamingUploadWithoutIAM verifies that the trailer variant
+// (STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER) is also decoded when no
+// credentials are configured, and that the checksum trailer is still honored.
+func TestTrailerStreamingUploadWithoutIAM(t *testing.T) {
+	iam := IdentityAccessManagement{
+		identities:     []*Identity{},
+		accessKeyIdent: map[string]*Identity{},
+		isAuthEnabled:  false,
+	}
+	s3a := &S3ApiServer{iam: &iam}
+
+	req, expectedData := createTrailerStreamingRequest(t, true)
+
+	reader, errCode := getRequestDataReader(s3a, req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, reader)
+
+	data, err := io.ReadAll(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, expectedData, string(data))
+}
