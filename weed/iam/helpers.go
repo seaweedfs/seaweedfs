@@ -143,8 +143,8 @@ var baseS3ActionMap = map[string]string{
 	"UploadPart":              s3_constants.ACTION_WRITE,
 	"CompleteMultipartUpload": s3_constants.ACTION_WRITE,
 	"AbortMultipartUpload":    s3_constants.ACTION_WRITE,
-	"ListMultipartUploads":    s3_constants.ACTION_WRITE,
-	"ListParts":               s3_constants.ACTION_WRITE,
+	"ListMultipartUploads":    s3_constants.ACTION_LIST_MULTIPART_UPLOADS,
+	"ListParts":               s3_constants.ACTION_LIST_PARTS,
 	// AWS IAM names for the multipart listing operations get their own
 	// action names so a policy grant cannot widen into a general Read
 	// or Write grant; VerifyActionPermission matches them against the
