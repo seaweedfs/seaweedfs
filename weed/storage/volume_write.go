@@ -156,14 +156,19 @@ func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData 
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}
-	v.stopWorker()
-	var remoteErr error
 	storageName, storageKey := v.RemoteStorageNameKey()
 	if !keepRemoteData && v.HasRemoteFile() && storageName != "" && storageKey != "" {
 		if backendStorage, found := backend.BackendStorages[storageName]; found {
-			remoteErr = backendStorage.DeleteFile(storageKey)
+			if remoteErr := backendStorage.DeleteFile(storageKey); remoteErr != nil {
+				// Stop short of local cleanup: a failed remote delete must
+				// not strand a registered replica with no local files.
+				v.isCompactionInProgress.Store(false)
+				err = fmt.Errorf("volume %d remote object %s/%s delete failed: %w", v.Id, storageName, storageKey, remoteErr)
+				return
+			}
 		}
 	}
+	v.stopWorker()
 	// A regular volume and an EC volume for the same id share <base>.vif. When
 	// EC artefacts coexist on this disk (e.g. shards distributed onto a source
 	// replica before it is deleted), keep the .vif so removing the regular
@@ -172,9 +177,6 @@ func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData 
 	v.doClose()
 	removeVolumeFiles(v.DataFileName(), keepVif)
 	removeVolumeFiles(v.IndexFileName(), keepVif)
-	if remoteErr != nil {
-		err = fmt.Errorf("volume %d deleted locally but remote object %s/%s remains: %w", v.Id, storageName, storageKey, remoteErr)
-	}
 	return
 }
 
