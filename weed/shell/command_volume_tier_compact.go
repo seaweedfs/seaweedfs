@@ -9,10 +9,12 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/operation/volume_move"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 func init() {
@@ -112,7 +114,7 @@ func (c *commandVolumeTierCompact) Do(args []string, commandEnv *CommandEnv, wri
 
 	var failedCount int
 	for _, rv := range remoteVolumes {
-		if err = doVolumeTierCompact(commandEnv, writer, rv, *garbageThreshold, *concurrency); err != nil {
+		if err = doVolumeTierCompact(commandEnv, writer, topologyInfo, rv, *garbageThreshold, *concurrency); err != nil {
 			fmt.Fprintf(writer, "error compacting volume %d: %v\n", rv.vid, err)
 			failedCount++
 		}
@@ -199,11 +201,49 @@ func collectRemoteVolumesWithInfo(topoInfo *master_pb.TopologyInfo, collectionPa
 	return result, nil
 }
 
-func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolumeInfo, garbageThreshold float64, concurrency int) error {
+// collectVolumeTierCompactLocations returns the volume's tiered replicas first
+// followed by any local ones. Every tiered replica references the same remote
+// object, so the source is always a tiered replica and the last tiered replica
+// doubles as the one that can retire the old object after the resync.
+func collectVolumeTierCompactLocations(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string) (tiered, local []wdclient.Location) {
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, disk := range dn.DiskInfos {
+			for _, vi := range disk.VolumeInfos {
+				if needle.VolumeId(vi.Id) != vid || vi.Collection != collection {
+					continue
+				}
+				loc := wdclient.Location{
+					Url:        dn.Id,
+					PublicUrl:  dn.Id,
+					GrpcPort:   int(dn.GrpcPort),
+					DataCenter: string(dc),
+				}
+				if vi.RemoteStorageName != "" {
+					tiered = append(tiered, loc)
+				} else {
+					local = append(local, loc)
+				}
+			}
+		}
+	})
+	return
+}
+
+func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *master_pb.TopologyInfo, rv remoteVolumeInfo, garbageThreshold float64, concurrency int) error {
 	grpcDialOption := commandEnv.option.GrpcDialOption
+	ctx := context.Background()
+
+	tieredLocations, localLocations := collectVolumeTierCompactLocations(topoInfo, rv.vid, rv.collection)
+	if len(tieredLocations) == 0 {
+		return fmt.Errorf("volume %d has no remote replica", rv.vid)
+	}
+	source := tieredLocations[0].ServerAddress()
+	// all replicas of the volume: tiered ones share one remote object, and any
+	// local copy is re-pointed at the new object during the resync below
+	locations := append(append([]wdclient.Location{}, tieredLocations...), localLocations...)
 
 	// step 1: check garbage level
-	garbageRatio, err := checkVolumeGarbage(grpcDialOption, rv.vid, rv.serverAddress)
+	garbageRatio, err := checkVolumeGarbage(grpcDialOption, rv.vid, source)
 	if err != nil {
 		return fmt.Errorf("check garbage for volume %d: %v", rv.vid, err)
 	}
@@ -216,40 +256,112 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, rv remoteVolu
 
 	fmt.Fprintf(writer, "volume %d garbage ratio %.4f, starting compaction...\n", rv.vid, garbageRatio)
 
-	// step 2: download .dat from remote to local
-	// this deletes the remote file and reloads the volume as local, then re-uploads below
+	// step 2: freeze every replica. The mark is persisted because the download
+	// remounts the volume into a fresh in-memory state, and a local .dat with no
+	// persisted readonly flag would load writable while its siblings stay readonly.
+	if err = markVolumeReplicasWritable(ctx, grpcDialOption, rv.vid, locations, false, true); err != nil {
+		return fmt.Errorf("mark volume %d readonly: %v", rv.vid, err)
+	}
+
+	// step 3: download .dat from remote to local; the shared object stays while
+	// sibling replicas still reference it
 	fmt.Fprintf(writer, "  downloading volume %d from %s to local...\n", rv.vid, rv.remoteStorageName)
-	err = downloadDatFromRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, false, concurrency)
+	err = downloadDatFromRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, source, len(tieredLocations) > 1, concurrency)
 	if err != nil {
 		return fmt.Errorf("download volume %d from remote: %v", rv.vid, err)
 	}
 
-	// step 3: compact the local volume
-	fmt.Fprintf(writer, "  compacting volume %d...\n", rv.vid)
-	err = compactVolumeOnServer(grpcDialOption, writer, rv.vid, rv.serverAddress)
-	if err != nil {
-		// compaction failed, but volume is now local without remote reference
-		// upload the uncompacted volume back to restore cloud tier state
-		fmt.Fprintf(writer, "  compaction failed: %v\n", err)
+	// step 4: compact the local volume; on failure re-upload what is there so
+	// the replica returns to the tier and the resync below can still proceed
+	compactErr := compactVolumeOnServer(grpcDialOption, writer, rv.vid, source)
+	if compactErr != nil {
+		fmt.Fprintf(writer, "  compaction failed: %v\n", compactErr)
 		fmt.Fprintf(writer, "  re-uploading volume %d to %s without compaction...\n", rv.vid, rv.remoteStorageName)
-		uploadErr := uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, rv.remoteStorageName, false, concurrency)
-		if uploadErr != nil {
-			return fmt.Errorf("compaction failed (%v) and re-upload also failed (%v), volume %d remains local",
-				err, uploadErr, rv.vid)
-		}
-		return fmt.Errorf("compaction failed (%v), volume %d re-uploaded to %s without compaction",
-			err, rv.vid, rv.remoteStorageName)
 	}
 
-	// step 4: upload compacted volume back to remote
-	fmt.Fprintf(writer, "  uploading compacted volume %d to %s...\n", rv.vid, rv.remoteStorageName)
-	err = uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, rv.serverAddress, rv.remoteStorageName, false, concurrency)
-	if err != nil {
+	// step 5: upload the (possibly uncompacted) volume back to remote under a new key
+	fmt.Fprintf(writer, "  uploading volume %d to %s...\n", rv.vid, rv.remoteStorageName)
+	uploadErr := uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, source, rv.remoteStorageName, false, concurrency)
+	if uploadErr != nil {
+		if compactErr != nil {
+			return fmt.Errorf("compaction failed (%v) and re-upload also failed (%v), volume %d remains local",
+				compactErr, uploadErr, rv.vid)
+		}
 		return fmt.Errorf("upload compacted volume %d to %s: %v (volume remains local with compacted data)",
-			rv.vid, rv.remoteStorageName, err)
+			rv.vid, rv.remoteStorageName, uploadErr)
+	}
+
+	// step 6: clear the persisted readonly mark on the source so the .vif that
+	// replicates below is clean, then push the new .idx/.vif to every sibling so
+	// all replicas reference the new remote object; the last tiered replica goes
+	// last so the old shared object still has a holder until then
+	if err = markVolumeWritable(ctx, grpcDialOption, rv.vid, source, true, false); err != nil {
+		return fmt.Errorf("mark volume %d writable on %s: %v", rv.vid, tieredLocations[0].Url, err)
+	}
+	syncErr := syncVolumeTierCompactReplicas(ctx, grpcDialOption, writer, rv, tieredLocations, localLocations)
+	if compactErr != nil {
+		return fmt.Errorf("compaction failed (%v), volume %d re-uploaded to %s without compaction (resync: %v)",
+			compactErr, rv.vid, rv.remoteStorageName, syncErr)
+	}
+	if syncErr != nil {
+		return syncErr
 	}
 
 	fmt.Fprintf(writer, "volume %d compacted and uploaded to %s successfully\n", rv.vid, rv.remoteStorageName)
+	return nil
+}
+
+// planTierCompactResync orders the sibling resyncs. The last tiered replica is
+// held out as the deleter: it keeps the old shared object alive until every
+// other replica was re-pointed, then deletes it as the sole remaining holder
+// and is resynced last. A single-replica volume has no deleter: its download
+// already removed the object.
+func planTierCompactResync(tieredLocations, localLocations []wdclient.Location) (order, deleter []wdclient.Location) {
+	rest := append(append([]wdclient.Location{}, tieredLocations[1:]...), localLocations...)
+	if len(tieredLocations) > 1 {
+		last := tieredLocations[len(tieredLocations)-1]
+		for _, loc := range rest {
+			if loc.ServerAddress() == last.ServerAddress() {
+				deleter = append(deleter, loc)
+				continue
+			}
+			order = append(order, loc)
+		}
+		return
+	}
+	return rest, nil
+}
+
+func syncVolumeTierCompactReplicas(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, rv remoteVolumeInfo, tieredLocations, localLocations []wdclient.Location) error {
+	source := tieredLocations[0].ServerAddress()
+
+	resync := func(loc wdclient.Location) error {
+		fmt.Fprintf(writer, "  replicating volume %d metadata from %s to %s\n", rv.vid, tieredLocations[0].Url, loc.Url)
+		return replicateVolumeToServer(ctx, grpcDialOption, writer, rv.vid, source, loc.ServerAddress(), "", 0)
+	}
+
+	order, deleter := planTierCompactResync(tieredLocations, localLocations)
+	for _, loc := range order {
+		if err := resync(loc); err != nil {
+			return fmt.Errorf("replicate volume %d from %s to %s: %v", rv.vid, tieredLocations[0].Url, loc.Url, err)
+		}
+	}
+
+	if len(deleter) == 0 {
+		return nil
+	}
+
+	// the last tiered replica is the only remaining holder of the old shared
+	// object: deleting its copy retires the object, then the resync restores it
+	// on the new object
+	fmt.Fprintf(writer, "  removing old remote copy of volume %d on %s\n", rv.vid, deleter[0].Url)
+	mover := volume_move.NewMover(grpcDialOption)
+	if err := mover.DeleteVolume(ctx, rv.vid, deleter[0].ServerAddress(), false, false, false); err != nil {
+		return fmt.Errorf("delete old copy of volume %d on %s: %v", rv.vid, deleter[0].Url, err)
+	}
+	if err := resync(deleter[0]); err != nil {
+		return fmt.Errorf("replicate volume %d from %s to %s: %v", rv.vid, tieredLocations[0].Url, deleter[0].Url, err)
+	}
 	return nil
 }
 
