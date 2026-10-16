@@ -60,6 +60,16 @@ func TestDetection_IgnoresEmptyDiskTypeEntries(t *testing.T) {
 			if err := at.UpdateTopology(topo); err != nil {
 				t.Fatalf("UpdateTopology: %v", err)
 			}
+			for _, s := range servers {
+				disks := at.GetNodeDisks(s.id)
+				if len(disks) != 1 || disks[0].DiskType != s.diskType || disks[0].DiskID != realDiskID {
+					var got []string
+					for _, d := range disks {
+						got = append(got, fmt.Sprintf("%q@%d", d.DiskType, d.DiskID))
+					}
+					t.Fatalf("%s disks %v, want only its real %q disk %d", s.id, got, s.diskType, realDiskID)
+				}
+			}
 
 			cfg := &Config{BaseConfig: base.BaseConfig{Enabled: true}, ImbalanceThreshold: 0.20, MinServerCount: 2}
 			tasks, _, err := Detection(metrics, &types.ClusterInfo{ActiveTopology: at}, cfg, 10)
