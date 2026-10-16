@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -64,8 +65,9 @@ var (
 	miniS3Options     S3Options
 	miniWebDavOptions WebDavOption
 	miniAdminOptions  AdminOptions
-	// Track which port flags were explicitly passed on CLI before config file is applied
-	explicitPortFlags             map[string]bool
+	// Flags explicitly provided on the command line or via WEED_* env vars,
+	// captured before the saved options file is applied
+	explicitFlags                 map[string]bool
 	miniEnableWebDAV              *bool
 	miniEnableS3                  *bool
 	miniEnableAdminUI             *bool
@@ -823,8 +825,8 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPo
 // If the port is not available, it finds the next available port and updates the pointer
 // The reservedPorts map contains ports that should not be allocated (for gRPC collision avoidance)
 func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool, flagName string) error {
-	// Check if this port was explicitly specified by the user (from CLI, before config file was applied)
-	isExplicitPort := explicitPortFlags[flagName]
+	// Check if this port was explicitly specified by the user (from CLI or env, before the config file was applied)
+	isExplicitPort := explicitFlags[flagName]
 
 	if *portPtr == 0 {
 		return nil
@@ -1072,10 +1074,16 @@ func initializeGrpcPortsOnIP(bindIp string) {
 	}
 }
 
+// miniOptionsFilePath returns the path of the mini.options file under the
+// first -dir folder.
+func miniOptionsFilePath(dataFolder string) string {
+	return filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), "mini.options")
+}
+
 // loadMiniConfigurationFile reads the mini.options file and returns parsed options
 // File format: one option per line, without leading dash (e.g., "ip=127.0.0.1")
 func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
-	configFile := filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), "mini.options")
+	configFile := miniOptionsFilePath(dataFolder)
 
 	options := make(map[string]string)
 
@@ -1123,31 +1131,112 @@ func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
 	return options, nil
 }
 
-// applyConfigFileOptions sets command-line flags from loaded configuration file
-func applyConfigFileOptions(options map[string]string) {
-	for key, value := range options {
-		// Skip port flags that were explicitly passed on CLI
-		if explicitPortFlags[key] {
-			glog.V(2).Infof("Skipping config file option %s=%s (explicitly specified on command line)", key, value)
+// applyConfigFileOptions sets command-line flags from loaded configuration
+// file. Options for flags the user provided explicitly (command line or
+// WEED_* env var) are skipped, so passing a flag always wins over the saved
+// value — including passing it at its default value. Returns a map of the
+// applied keys to their display values (secrets redacted).
+func applyConfigFileOptions(options map[string]string) map[string]string {
+	keys := make([]string, 0, len(options))
+	for key := range options {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	applied := make(map[string]string)
+	for _, key := range keys {
+		value := options[key]
+		// Redact secrets (admin.password, admin.readOnlyPassword, ...) in
+		// logs and the startup message; only flag.Value.Set sees the value.
+		display := value
+		if isSensitiveOption(key) {
+			display = "*****"
+		}
+		if explicitFlags[key] {
+			glog.V(2).Infof("Skipping config file option %s=%s (explicitly specified)", key, display)
 			continue
 		}
-		// Set the flag value if it hasn't been explicitly set on command line
 		flag := cmdMini.Flag.Lookup(key)
-		if flag != nil {
-			// Only set if not already set (by command line)
-			if flag.Value.String() == flag.DefValue {
-				if err := flag.Value.Set(value); err != nil {
-					glog.Warningf("Failed to apply config file option: %s=%s: %v", key, value, err)
-				} else {
-					glog.V(2).Infof("Applied config file option: %s=%s", key, value)
+		if flag == nil {
+			continue
+		}
+		if err := flag.Value.Set(value); err != nil {
+			glog.Warningf("Failed to apply config file option: %s=%s: %v", key, display, err)
+			continue
+		}
+		glog.V(2).Infof("Applied config file option: %s=%s", key, display)
+		applied[key] = display
+	}
+	return applied
+}
+
+// isSensitiveOption reports whether a saved option holds a secret that must
+// not appear in logs or the startup message.
+func isSensitiveOption(key string) bool {
+	k := strings.ToLower(key)
+	return strings.Contains(k, "password") || strings.Contains(k, "secret") || strings.Contains(k, "token")
+}
+
+// warnIfFilerStoreOutsideDir warns when a filer.toml configures a local
+// filer store outside the -dir folders and the master meta folder. When a
+// filer.toml is found the filer skips defaultLevelDbDirectory, so metadata
+// can silently land on a path the volume data doesn't use — in a container
+// that path is lost on recreate unless it is persisted separately.
+func warnIfFilerStoreOutsideDir(dataFolders string, metaFolder string) {
+	if !util.LoadConfiguration("filer", false) {
+		return
+	}
+	v := util.GetViper()
+	folders := append(util.StringSplit(dataFolders, ","), metaFolder)
+	inside := func(storeDir string) bool {
+		// The filer stores open the configured dir verbatim, so absolutize it
+		// the same way (relative to the working directory) rather than
+		// expanding "~", which the store never expands.
+		resolved, err := filepath.Abs(storeDir)
+		if err != nil {
+			return false
+		}
+		for _, folder := range folders {
+			base, err := filepath.Abs(util.ResolvePath(folder))
+			if err != nil {
+				continue
+			}
+			// Resolve symlinks only when both sides exist, so a not-yet-
+			// created store dir under a symlinked -dir still compares
+			// lexically against the same spelling.
+			r, b := resolved, base
+			if er, err := filepath.EvalSymlinks(resolved); err == nil {
+				if eb, err := filepath.EvalSymlinks(base); err == nil {
+					r, b = er, eb
 				}
 			}
+			if rel, err := filepath.Rel(b, r); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+	// Local filer stores keep metadata under a "dir" key; check both the
+	// default store (leveldb2.enabled) and path-specific stores
+	// (leveldb2.<id>.enabled, keyed under <section>.location).
+	localStores := map[string]bool{"leveldb": true, "leveldb2": true, "leveldb3": true}
+	for _, key := range v.AllKeys() {
+		if !strings.HasSuffix(key, ".enabled") || !v.GetBool(key) {
+			continue
+		}
+		section := strings.TrimSuffix(key, ".enabled")
+		if !localStores[strings.Split(section, ".")[0]] {
+			continue
+		}
+		if storeDir := v.GetString(section + ".dir"); storeDir != "" && !inside(storeDir) {
+			glog.Warningf("filer store %s uses dir %s from filer.toml, outside -dir %s; persist that path or filer metadata will be lost when the container is recreated", section, storeDir, dataFolders)
 		}
 	}
 }
 
-// saveMiniConfiguration saves the current mini configuration to a file
-// The file format uses option=value format without leading dashes
+// saveMiniConfiguration writes values mini computed itself to mini.options.
+// Command-line flags are never saved, so a dropped flag cannot resurrect on
+// the next start; the file exists to pin environment-derived values.
 func saveMiniConfiguration(dataFolder string) error {
 	configDir := util.ResolvePath(util.StringSplit(dataFolder, ",")[0])
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -1159,29 +1248,15 @@ func saveMiniConfiguration(dataFolder string) error {
 
 	var sb strings.Builder
 	sb.WriteString("#!/bin/bash\n")
-	sb.WriteString("# Mini server configuration\n")
+	sb.WriteString("# Mini server auto-computed options\n")
 	sb.WriteString("# Format: option=value (no leading dash)\n")
-	sb.WriteString("# This file is loaded on startup if it exists\n\n")
+	sb.WriteString("# This file is loaded on startup if it exists\n")
+	sb.WriteString("# Command-line flags are not saved; only values mini computed itself.\n\n")
 
-	// Collect all flags that were explicitly passed (except "dir")
-	cmdMini.Flag.Visit(func(f *flag.Flag) {
-		// Skip the "dir" option - it's environment-specific
-		if f.Name == "dir" {
-			return
-		}
-		value := f.Value.String()
-		// Quote the value if it contains spaces
-		if strings.Contains(value, " ") {
-			sb.WriteString(fmt.Sprintf("%s=\"%s\"\n", f.Name, value))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s=%s\n", f.Name, value))
-		}
-	})
-
-	// Add auto-calculated volume size if it was computed
+	// Pin the auto-calculated volume size so it stays stable across restarts
+	// even as free disk space changes. Delete this line to force
+	// recalculation on the next startup.
 	if !isFlagPassed("master.volumeSizeLimitMB") && miniMasterOptions.volumeSizeLimitMB != nil {
-		sb.WriteString(fmt.Sprintf("\n# Auto-calculated volume size based on total disk capacity\n"))
-		sb.WriteString(fmt.Sprintf("# Delete this line to force recalculation on next startup\n"))
 		sb.WriteString(fmt.Sprintf("master.volumeSizeLimitMB=%d\n", *miniMasterOptions.volumeSizeLimitMB))
 	}
 
@@ -1203,21 +1278,32 @@ func runMini(cmd *Command, args []string) bool {
 	// can opt back into verbose output.
 	quietMiniLogs()
 
-	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
-	// This is necessary to distinguish user-specified ports from defaults or config file options
-	explicitPortFlags = make(map[string]bool)
-	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "s3.port.iceberg", "webdav.port", "admin.port", "s3.iam.readOnly"}
-	for _, flagName := range portFlagNames {
-		explicitPortFlags[flagName] = isFlagPassed(flagName)
-	}
+	// Capture which flags were explicitly provided on the command line or via
+	// WEED_* env vars BEFORE the saved options file is applied. Saved options
+	// only fill in flags the user did not provide this run, so passing a flag
+	// at its default value also resets a saved value.
+	explicitFlags = make(map[string]bool)
+	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		explicitFlags[f.Name] = true
+	})
 
-	// Load configuration from file if it exists
+	// Load configuration from file if it exists. Capture the path before
+	// applying: a saved "dir" option can change miniDataFolders.
+	optionsFile := miniOptionsFilePath(*miniDataFolders)
 	configOptions, err := loadMiniConfigurationFile(*miniDataFolders)
 	if err != nil {
 		glog.Warningf("Error loading configuration file: %v", err)
 	}
-	// Apply loaded options to flags (CLI flags will override these)
-	applyConfigFileOptions(configOptions)
+	// Apply loaded options to flags (explicitly provided flags win)
+	appliedOptions := applyConfigFileOptions(configOptions)
+	if len(appliedOptions) > 0 {
+		pairs := make([]string, 0, len(appliedOptions))
+		for k, v := range appliedOptions {
+			pairs = append(pairs, k+"="+v)
+		}
+		sort.Strings(pairs)
+		fmt.Printf("  Applying %d saved option(s) from %s: %s\n", len(appliedOptions), optionsFile, strings.Join(pairs, " "))
+	}
 
 	if *miniOptions.debug {
 		grace.StartDebugServer(*miniOptions.debugPort)
@@ -1346,10 +1432,14 @@ func runMini(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Meta Folder (-dir=\"%s\") Writable: %s", *miniMasterOptions.metaFolder, err)
 	}
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
+	warnIfFilerStoreOutsideDir(*miniDataFolders, *miniMasterOptions.metaFolder)
 
-	// Calculate and set optimal volume size limit based on available disk space
-	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
-	if !isFlagPassed("master.volumeSizeLimitMB") {
+	// Calculate and set optimal volume size limit based on available disk space.
+	// Skip when the user passed -master.volumeSizeLimitMB explicitly, and when
+	// the value was loaded from mini.options — file-applied flags are not in
+	// Visit, and the saved pin must survive restarts.
+	_, sizeLimitFromFile := appliedOptions["master.volumeSizeLimitMB"]
+	if !isFlagPassed("master.volumeSizeLimitMB") && !sizeLimitFromFile {
 		// User didn't override, use auto-calculated value
 		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation.
 		// miniDataFolders was already tilde-resolved at the top of runMini.
