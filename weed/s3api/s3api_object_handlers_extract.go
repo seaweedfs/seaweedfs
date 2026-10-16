@@ -79,7 +79,7 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 	}
 	scrubArchiveChecksums(r)
 
-	ra, size, cleanup, err := filer.SpoolZipReader(dataReader, r.ContentLength)
+	ra, size, cleanup, err := filer.SpoolZipReader(dataReader)
 	if err != nil {
 		if strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
@@ -154,6 +154,10 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 	}
 
 	for _, zf := range zr.File {
+		if ctxErr := r.Context().Err(); ctxErr != nil {
+			result.Errors = append(result.Errors, ctxErr.Error())
+			break
+		}
 		rel, ok := filer.SanitizeZipMemberName(zf)
 		if !ok {
 			result.Errors = append(result.Errors, zf.Name+": unsafe member name")
