@@ -75,6 +75,14 @@ func TestPutGroupKeepsInlinePolicyAuthorization(t *testing.T) {
 	require.NoError(t, s3a.iam.PutGroup(pushed))
 
 	s3a.iam.m.RLock()
-	defer s3a.iam.m.RUnlock()
 	require.Contains(t, s3a.iam.groups["devs"].PolicyNames, inlineGroupPolicyRuntimeName("devs", "p"))
+	s3a.iam.m.RUnlock()
+
+	ident := s3a.iam.lookupByIdentityName("alice")
+	require.NotNil(t, ident)
+	req, err := http.NewRequest(http.MethodGet, "http://s3/bucket/obj", nil)
+	require.NoError(t, err)
+	assert.Equal(t, s3err.ErrNone,
+		s3a.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_READ, "bucket", "obj"),
+		"a pushed group must keep its inline policy grant active")
 }

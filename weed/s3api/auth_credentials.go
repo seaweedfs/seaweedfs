@@ -1366,15 +1366,22 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 		return fmt.Errorf("upsert identity failed: empty identity name")
 	}
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
-	config := &iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{ident},
-	}
 	// The wire proto lacks runtime inline policy names; merging it raw would
 	// drop them until the next reload and authorize by flattened Actions.
-	if err := iam.hydrateRuntimePolicies(context.Background(), config); err != nil {
-		return err
+	if iam.credentialManager != nil {
+		if store, ok := iam.credentialManager.GetStore().(credential.InlinePolicyStore); ok {
+			policyNames, err := store.ListUserInlinePolicies(context.Background(), ident.Name)
+			if err != nil {
+				return err
+			}
+			for _, policyName := range policyNames {
+				ident.PolicyNames = appendUniquePolicyName(ident.PolicyNames, inlinePolicyRuntimeName(ident.Name, policyName))
+			}
+		}
 	}
-	return iam.MergeS3ApiConfiguration(config, false, false)
+	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{ident},
+	}, false, false)
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.
@@ -3167,9 +3174,16 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 
 	// As for identity pushes, the wire proto lacks the group's runtime
 	// inline policy names.
-	config := &iam_pb.S3ApiConfiguration{Groups: []*iam_pb.Group{group}}
-	if err := iam.hydrateRuntimePolicies(context.Background(), config); err != nil {
-		return err
+	if iam.credentialManager != nil {
+		if store, ok := iam.credentialManager.GetStore().(credential.GroupInlinePolicyStore); ok {
+			policyNames, err := store.ListGroupInlinePolicies(context.Background(), group.Name)
+			if err != nil {
+				return err
+			}
+			for _, policyName := range policyNames {
+				group.PolicyNames = appendUniquePolicyName(group.PolicyNames, inlineGroupPolicyRuntimeName(group.Name, policyName))
+			}
+		}
 	}
 
 	iam.m.Lock()
