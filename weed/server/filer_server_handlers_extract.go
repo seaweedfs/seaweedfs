@@ -154,27 +154,41 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 		writeMember(archiveName, io.NewSectionReader(ra, 0, size), time.Now(), mode)
 	}
 
-	for _, zf := range zr.File {
-		rel, ok := filer.SanitizeZipMemberName(zf)
-		if !ok {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: unsafe member name", zf.Name))
-			continue
+	// Directory members first so their stored metadata is not overwritten by
+	// parents auto-created for an earlier file member.
+	for _, dirsOnly := range []bool{true, false} {
+		for _, zf := range zr.File {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				result.Errors = append(result.Errors, ctxErr.Error())
+				writeJsonQuiet(w, r, http.StatusCreated, result)
+				return
+			}
+			rel, ok := filer.SanitizeZipMemberName(zf)
+			if !ok {
+				if !dirsOnly {
+					result.Errors = append(result.Errors, fmt.Sprintf("%s: unsafe member name", zf.Name))
+				}
+				continue
+			}
+			if zf.FileInfo().IsDir() != dirsOnly {
+				continue
+			}
+			if dirsOnly {
+				mkdirMember(rel, zf)
+				continue
+			}
+			memberReader, openErr := zf.Open()
+			if openErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, openErr))
+				continue
+			}
+			mode := os.FileMode(0660)
+			if perm := zf.Mode().Perm(); perm != 0 {
+				mode = perm
+			}
+			writeMember(rel, memberReader, zf.Modified, mode)
+			memberReader.Close()
 		}
-		if zf.FileInfo().IsDir() {
-			mkdirMember(rel, zf)
-			continue
-		}
-		memberReader, openErr := zf.Open()
-		if openErr != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, openErr))
-			continue
-		}
-		mode := os.FileMode(0660)
-		if perm := zf.Mode().Perm(); perm != 0 {
-			mode = perm
-		}
-		writeMember(rel, memberReader, zf.Modified, mode)
-		memberReader.Close()
 	}
 
 	writeJsonQuiet(w, r, http.StatusCreated, result)
