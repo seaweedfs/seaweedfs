@@ -121,8 +121,13 @@ func CheckTableOrBucketPermission(operation, principal, resourceOwner, resourceP
 		matchesDenyStatement(operation, principal, bucketPolicy, bucketARN, ctx) {
 		return false
 	}
-	return checkPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, ctx) ||
+	// Each side fails closed when its owner is unknown, matching
+	// CheckPermissionWithContext; an ownerless side contributes nothing.
+	resourceOK := resourceOwner != "" &&
+		checkPermission(operation, principal, resourceOwner, resourcePolicy, resourceARN, ctx)
+	bucketOK := bucketOwner != "" &&
 		checkPermission(operation, principal, bucketOwner, bucketPolicy, bucketARN, ctx)
+	return resourceOK || bucketOK
 }
 
 // matchesDenyStatement reports whether the JSON policy carries a statement

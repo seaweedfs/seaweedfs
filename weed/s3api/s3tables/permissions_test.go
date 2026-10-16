@@ -295,3 +295,32 @@ func TestCheckTableOrBucketPermissionDenyVeto(t *testing.T) {
 		t.Error("bucket Allow should grant when no policy denies")
 	}
 }
+
+func TestCheckTableOrBucketPermissionOwnerlessFailsClosed(t *testing.T) {
+	ctx := &PolicyContext{
+		IdentityActions: []string{"s3tables:*"},
+		DefaultAllow:    true,
+	}
+	allowPolicy := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}]}`
+
+	if CheckTableOrBucketPermission("GetTable", "user1",
+		"", "", "arn:aws:s3tables:t",
+		"", "", "arn:aws:s3tables:b", ctx) {
+		t.Error("identity actions and default allow must not reach an ownerless resource")
+	}
+
+	// With no identity or default grants in play, an ownerless resource
+	// side contributes nothing even when its own policy allows.
+	plainCtx := &PolicyContext{}
+	if CheckTableOrBucketPermission("GetTable", "user1",
+		"", allowPolicy, "arn:aws:s3tables:t",
+		"owner", "", "arn:aws:s3tables:b", plainCtx) {
+		t.Error("an ownerless resource side must not grant even via an explicit allow")
+	}
+
+	if !CheckTableOrBucketPermission("GetTable", "user1",
+		"", "", "arn:aws:s3tables:t",
+		"owner", allowPolicy, "arn:aws:s3tables:b", plainCtx) {
+		t.Error("the bucket side can still grant when its owner is set")
+	}
+}
