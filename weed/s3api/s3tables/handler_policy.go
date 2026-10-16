@@ -92,7 +92,7 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("PutTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, "", bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
@@ -171,7 +171,7 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, string(policy), bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
@@ -248,7 +248,7 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
@@ -348,7 +348,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("PutTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
@@ -457,7 +457,7 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
@@ -548,7 +548,7 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
@@ -646,7 +646,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("TagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
-			PrincipalIssuer: h.principalIssuer(r),
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			TableBucketTags: bucketTags,
 			RequestTags:     req.Tags,
@@ -767,7 +767,7 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("ListTagsForResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
-			PrincipalIssuer: h.principalIssuer(r),
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			TableBucketTags: bucketTags,
 			ResourceTags:    tags,
@@ -875,7 +875,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("UntagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
-			PrincipalIssuer: h.principalIssuer(r),
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			TableBucketTags: bucketTags,
 			TagKeys:         req.TagKeys,

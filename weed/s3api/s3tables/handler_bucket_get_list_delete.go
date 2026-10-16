@@ -70,7 +70,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllowFor(r),
@@ -193,7 +193,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name)
 				identityActions := getIdentityActions(r)
 				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-					PrincipalIssuer: h.principalIssuer(r),
+					TrustedIssuers:  h.trustedIssuers(r),
 					TableBucketName: entry.Entry.Name,
 					IdentityActions: identityActions,
 					DefaultAllow:    h.defaultAllowFor(r),
@@ -298,7 +298,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		principal := h.getAccountID(r)
 		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("DeleteTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			PrincipalIssuer: h.principalIssuer(r),
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			IdentityActions: identityActions,
 			DefaultAllow:    h.defaultAllowFor(r),

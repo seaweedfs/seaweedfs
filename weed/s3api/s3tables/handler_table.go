@@ -420,7 +420,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	tableAllowed := CheckPermissionWithContext("GetTable", accountID, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespace,
 		TableName:       tableName,
@@ -430,7 +430,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	bucketAllowed := CheckPermissionWithContext("GetTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespace,
 		TableName:       tableName,
@@ -563,7 +563,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
 			nsAllowed := CheckPermissionWithContext("ListTables", accountID, nsMeta.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
-				PrincipalIssuer: h.principalIssuer(r),
+				TrustedIssuers:  h.trustedIssuers(r),
 				TableBucketName: bucketName,
 				Namespace:       namespaceName,
 				TableBucketTags: bucketTags,
@@ -571,7 +571,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				DefaultAllow:    h.defaultAllowFor(r),
 			})
 			bucketAllowed := CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-				PrincipalIssuer: h.principalIssuer(r),
+				TrustedIssuers:  h.trustedIssuers(r),
 				TableBucketName: bucketName,
 				Namespace:       namespaceName,
 				TableBucketTags: bucketTags,
@@ -618,7 +618,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
 			if !CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-				PrincipalIssuer: h.principalIssuer(r),
+				TrustedIssuers:  h.trustedIssuers(r),
 				TableBucketName: bucketName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
@@ -956,7 +956,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	tableAllowed := CheckPermissionWithContext("DeleteTable", principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
@@ -966,7 +966,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	bucketAllowed := CheckPermissionWithContext("DeleteTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
@@ -1138,7 +1138,7 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 // cannot see the entry keeps the not-found veil.
 func (h *S3TablesHandler) canReadEntry(readOp, principal, tableOwner, bucketOwner, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespace, name string, bucketTags, tableTags map[string]string, identityActions []string, r *http.Request) bool {
 	ctx := &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespace,
 		TableName:       name,
@@ -1320,7 +1320,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	tableAllowed := CheckPermissionWithContext(kind.renameOp, principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       srcNamespace,
 		TableName:       srcName,
@@ -1330,7 +1330,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	bucketAllowed := CheckPermissionWithContext(kind.renameOp, principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       srcNamespace,
 		TableName:       srcName,
@@ -1395,7 +1395,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	// caller move tables into namespaces they don't control). Denials report the
 	// same not-found as a missing destination namespace.
 	destNamespaceAllowed := CheckPermissionWithContext(kind.createOp, principal, destNamespaceMetadata.OwnerAccountID, destNamespacePolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       destNamespace,
 		TableName:       destName,
@@ -1404,7 +1404,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	destBucketAllowed := CheckPermissionWithContext(kind.createOp, principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       destNamespace,
 		TableName:       destName,
@@ -1608,7 +1608,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	identityActions := getIdentityActions(r)
 
 	tableAllowed := CheckPermissionWithContext("UpdateTable", principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
@@ -1618,7 +1618,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		DefaultAllow:    h.defaultAllowFor(r),
 	})
 	bucketAllowed := CheckPermissionWithContext("UpdateTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
@@ -1823,7 +1823,7 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	policyContext := &PolicyContext{
-		PrincipalIssuer: h.principalIssuer(r),
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,

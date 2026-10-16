@@ -306,21 +306,21 @@ func claimString(claims map[string]interface{}, key string) string {
 	return str
 }
 
-// principalIssuer returns the token issuer the auth layer asserted into the
-// identity's claims; it namespaces legacy owner checks in checkPermission.
-func (h *S3TablesHandler) principalIssuer(r *http.Request) string {
+// trustedIssuers returns the OIDC issuers the auth layer asserted into the
+// identity's claims; they re-anchor legacy owner checks in checkPermission.
+func (h *S3TablesHandler) trustedIssuers(r *http.Request) []string {
 	identityRaw := s3_constants.GetIdentityFromContext(r)
 	if identityRaw == nil {
-		return ""
+		return nil
 	}
 	val := reflect.ValueOf(identityRaw)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
 	}
 	if val.Kind() != reflect.Struct {
-		return ""
+		return nil
 	}
-	return claimString(identityClaimsMap(val), "iss")
+	return strings.Fields(claimString(identityClaimsMap(val), "seaweed:oidc-issuers"))
 }
 
 // normalizePrincipalID collapses ARN and identity strings to a key that is stable within a single account.

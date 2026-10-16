@@ -89,9 +89,11 @@ type PolicyContext struct {
 	KMSKeyArn       string
 	StorageClass    string
 	DefaultAllow    bool
-	// PrincipalIssuer is the caller's token issuer, used to match resources
-	// whose owner predates issuer-scoped account IDs.
-	PrincipalIssuer string
+	// TrustedIssuers lists the OIDC issuers the deployment is configured to
+	// trust, used to re-anchor owners/principals written before issuer-scoped
+	// account IDs. A bare subject is only resolvable when exactly one issuer
+	// is configured; more than one leaves it ambiguous, so it must not match.
+	TrustedIssuers []string
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -113,11 +115,8 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 
-	// Owner always has permission. An owner written before issuer scoping
-	// holds a bare subject; it is re-anchored by hashing it under the
-	// caller's issuer, so the same (sub, iss) pair keeps its ownership while
-	// scoped owners stay issuer-isolated.
-	if principal == owner || (ctx != nil && sts.ComputeParentUser(owner, ctx.PrincipalIssuer) == principal) {
+	// Owner always has permission.
+	if principal == owner || matchesLegacySubject(owner, principal, ctx) {
 		return true
 	}
 
@@ -234,16 +233,26 @@ func hasAdminAction(actions []string) bool {
 
 // matchesCaller matches a statement's Principal against the caller's scoped
 // principal or, for policies written before issuer scoping, a bare subject
-// that hashes to it under the caller's issuer.
+// that resolves to it under the deployment's single trusted issuer.
 func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
 	if matchesPrincipal(principalSpec, principal) {
 		return true
 	}
-	if ctx == nil || ctx.PrincipalIssuer == "" {
+	legacy, ok := principalSpec.(string)
+	return ok && matchesLegacySubject(legacy, principal, ctx)
+}
+
+// matchesLegacySubject reports whether a bare subject stored before issuer
+// scoping belongs to the caller. Re-anchoring is only sound when exactly one
+// OIDC issuer is configured: the stored subject is hashed under that issuer
+// and compared to the caller's scoped principal. With multiple issuers a bare
+// subject is ambiguous — matching it under the caller's own issuer would let
+// a same-sub identity from any configured issuer claim it.
+func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
+	if ctx == nil || len(ctx.TrustedIssuers) != 1 {
 		return false
 	}
-	legacy, ok := principalSpec.(string)
-	return ok && sts.ComputeParentUser(legacy, ctx.PrincipalIssuer) == principal
+	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal

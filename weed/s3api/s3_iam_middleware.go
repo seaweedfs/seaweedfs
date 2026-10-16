@@ -179,6 +179,11 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		} else {
 			delete(claims, "aws:userid")
 		}
+		if issuers := s3iam.trustedOIDCIssuers(ctx); len(issuers) > 0 {
+			claims["seaweed:oidc-issuers"] = strings.Join(issuers, " ")
+		} else {
+			delete(claims, "seaweed:oidc-issuers")
+		}
 
 		// Use real email address if available
 		emailAddress := identity.UserID + "@oidc.local"
@@ -512,6 +517,31 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 		Groups:      externalIdentity.Groups,
 		Attributes:  externalIdentity.Attributes,
 	}, nil
+}
+
+// trustedOIDCIssuers returns the issuer URLs of the OIDC providers the
+// deployment is configured to trust. It is what a legacy (pre-scoping) bare
+// subject can be re-anchored to: exactly one issuer makes the mapping
+// unambiguous; anything else leaves it unknown, which callers must treat as
+// fail-closed rather than guessing from the caller's issuer.
+func (s3iam *S3IAMIntegration) trustedOIDCIssuers(ctx context.Context) []string {
+	if s3iam.iamManager == nil {
+		return nil
+	}
+	records, err := s3iam.iamManager.ListOIDCProviders(ctx)
+	if err != nil {
+		glog.V(2).Infof("trustedOIDCIssuers: %v", err)
+		return nil
+	}
+	seen := make(map[string]bool, len(records))
+	var issuers []string
+	for _, rec := range records {
+		if rec.URL != "" && !seen[rec.URL] {
+			seen[rec.URL] = true
+			issuers = append(issuers, rec.URL)
+		}
+	}
+	return issuers
 }
 
 // selectPrimaryRole simply picks the first role from the list
