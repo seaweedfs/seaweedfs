@@ -38,6 +38,10 @@ type Node struct {
 	rack string // composite rack key (e.g. "dc1:rack1")
 
 	freeSlots int
+	// noReceive marks a node that refused shards (e.g. answered "no space
+	// left"): it stays usable as a move source but is never picked as a target,
+	// regardless of what its freeSlots say.
+	noReceive bool
 	disks     map[uint32]*disk
 	shards    map[volKey]*volumeShards
 }
@@ -47,7 +51,8 @@ type disk struct {
 	diskType   string
 	tags       []string // placement tags, for preferred-tag tiering
 	freeSlots  int
-	shardCount int // total EC shards on this disk across all volumes
+	shardCount int  // total EC shards on this disk across all volumes
+	noReceive  bool // this disk refused a shard; siblings may still receive
 }
 
 type volumeShards struct {
@@ -154,6 +159,39 @@ func (n *Node) SetHost(host string) {
 	if host != "" {
 		n.host = host
 	}
+}
+
+// SetNoReceive marks the node ineligible as a move destination. Use when the
+// node itself refused shards (e.g. answered "no space left") so the heartbeat's
+// free-slot count cannot be trusted; the node can still shed shards as a source.
+func (n *Node) SetNoReceive() {
+	n.noReceive = true
+}
+
+// SetDiskNoReceive marks one disk on the node ineligible as a move destination.
+// An explicit-disk copy can be refused while the node's other disks still have
+// room; a disk_id 0 refusal means the server searched every disk and is a
+// whole-node refusal (SetNoReceive) instead.
+func (n *Node) SetDiskNoReceive(diskID uint32) {
+	if d, ok := n.disks[diskID]; ok {
+		d.noReceive = true
+	}
+}
+
+// receiveSlots is the node's receiving capacity: its aggregate free slots with
+// refused disks subtracted, and 0 for a refused node. Slots a disk just
+// refused are phantom capacity whatever the snapshot reported.
+func (n *Node) receiveSlots() int {
+	if n.noReceive {
+		return 0
+	}
+	free := n.freeSlots
+	for _, d := range n.disks {
+		if d.noReceive {
+			free -= d.freeSlots
+		}
+	}
+	return max(free, 0)
 }
 
 // AddDisk registers a physical disk. shardCount is the disk's total EC shard
@@ -296,7 +334,7 @@ func buildRacks(nodes map[string]*Node) map[string]*rack {
 			racks[n.rack] = r
 		}
 		r.nodes[n.id] = n
-		r.freeSlots += n.freeSlots
+		r.freeSlots += n.receiveSlots()
 	}
 	return racks
 }
@@ -440,7 +478,7 @@ func planRackTotalCap(vk volKey, racks map[string]*rack, rackShardCount map[stri
 			continue
 		}
 		for _, n := range r.nodes {
-			room[rk] += min(max(n.freeSlots, 0), max(rp.SameRackCount-volumeShardCount(n, vk), 0))
+			room[rk] += min(n.receiveSlots(), max(rp.SameRackCount-volumeShardCount(n, vk), 0))
 		}
 	}
 	return rackTotalCap(sortedKeys(racks), nil, room, totalShards)
@@ -575,12 +613,15 @@ func pickBestNodeForVolumeOnDisk(nodes []*Node, vk volKey, rp *super_block.Repli
 // metadata is authoritative when present; without it the node's aggregate
 // stands in so the volume server's own disk selection can place the shard.
 func freeSlotsForType(n *Node, diskType string) int {
+	if n.noReceive {
+		return 0
+	}
 	if len(n.disks) == 0 {
 		return n.freeSlots
 	}
 	free := 0
 	for _, d := range n.disks {
-		if d.freeSlots > 0 && (diskType == "" || d.diskType == diskType) {
+		if d.freeSlots > 0 && !d.noReceive && (diskType == "" || d.diskType == diskType) {
 			free += d.freeSlots
 		}
 	}
@@ -604,7 +645,7 @@ func pickBestNodeForVolume(nodes []*Node, vk volKey, rp *super_block.ReplicaPlac
 	bestFree := -1
 	bestScore := -1
 	for _, node := range nodes {
-		if node.freeSlots <= 0 {
+		if node.receiveSlots() <= 0 {
 			continue
 		}
 		count := volumeShardCount(node, vk)
@@ -909,7 +950,7 @@ func detectGlobalImbalance(nodes map[string]*Node, racks map[string]*rack, diskT
 					continue
 				}
 				util := float64(count) / float64(capacity)
-				if util < minUtil && node.freeSlots > 0 {
+				if util < minUtil && node.receiveSlots() > 0 {
 					minUtil, minCount, minNode = util, count, node
 				}
 				if util > maxUtil {
@@ -1091,7 +1132,7 @@ func pickBestDiskOnNode(node *Node, vk volKey, diskType string, shardID, dataSha
 		if diskType != "" && d.diskType != diskType {
 			continue
 		}
-		if d.freeSlots <= 0 {
+		if d.freeSlots <= 0 || d.noReceive {
 			continue
 		}
 

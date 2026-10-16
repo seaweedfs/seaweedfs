@@ -430,6 +430,9 @@ func rackTotalCap(rackKeys []string, held, room map[string]int, totalShards int)
 // its free slots, bounded by the per-disk durability cap (maxPerDisk shards of
 // one volume per disk; <= 0 disables it).
 func diskShardRoom(n *Node, d *disk, vk volKey, maxPerDisk int) int {
+	if d.noReceive {
+		return 0
+	}
 	room := d.freeSlots
 	if maxPerDisk > 0 {
 		held := 0
@@ -444,13 +447,16 @@ func diskShardRoom(n *Node, d *disk, vk volKey, maxPerDisk int) int {
 // nodeShardRoom returns how many more shards of the volume the node's eligible
 // disks can take, bounded by the node's free slots.
 func nodeShardRoom(n *Node, vk volKey, eligible func(*disk) bool, maxPerDisk int) int {
+	if n.noReceive {
+		return 0
+	}
 	room := 0
 	for _, d := range n.disks {
 		if eligible(d) {
 			room += diskShardRoom(n, d, vk, maxPerDisk)
 		}
 	}
-	return max(min(room, n.freeSlots), 0)
+	return max(min(room, n.receiveSlots()), 0)
 }
 
 // rackShardRoom returns how many more shards of the volume the rack can take.
@@ -532,7 +538,7 @@ func pickBestDiskEligible(node *Node, vk volKey, eligible func(*disk) bool, pref
 	bestPreferred := false
 	for _, diskID := range sortedDiskKeys(node.disks) {
 		d := node.disks[diskID]
-		if !eligible(d) || d.freeSlots <= 0 {
+		if !eligible(d) || d.freeSlots <= 0 || d.noReceive {
 			continue
 		}
 		existingShards := 0

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -200,6 +201,14 @@ func (m *Mover) DeleteEcShards(ctx context.Context, volumeId needle.VolumeId, co
 		})
 		return deleteErr
 	})
+}
+
+// IsNoSpaceLeftError matches the volume server's refusal when no local disk
+// can take the copied shard ("no space left" from FindEcShardTargetLocation,
+// an ENOSPC writing to a caller-pinned disk, and the Rust server's same
+// reply), however the move chain wraps it.
+func IsNoSpaceLeftError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no space left")
 }
 
 // RemoveEcShards unmounts then deletes shards in place — the dedup path for a

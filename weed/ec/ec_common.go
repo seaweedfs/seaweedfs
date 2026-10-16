@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -762,6 +763,26 @@ type ecBalancer struct {
 	// migratingVolumeIds are mid-encode volumes whose shards are ingested from
 	// every disk-type bucket; see EcBalance.
 	migratingVolumeIds map[uint32]bool
+	// noReceiveTargets are node ids the planner may not pick as destinations;
+	// noReceiveDisks narrows that to individual disks on a node: a server-side
+	// auto-pick refusal means no disk qualifies, but an explicit-disk refusal
+	// only convicts that disk. See EcBalance.
+	noReceiveTargets map[string]bool
+	noReceiveDisks   map[string]map[uint32]bool
+	// mu guards the execution journal written by concurrent move tasks.
+	mu sync.Mutex
+	// rejectedTargets and rejectedDisks collect the destinations that refused a
+	// copy this attempt; completedMoves records applied moves so a retry can
+	// replay them onto a stale-heartbeat snapshot; sawOtherErr marks any
+	// failure that is not a "no space left" refusal and makes the run
+	// non-retryable.
+	rejectedTargets map[string]bool
+	rejectedDisks   map[string]map[uint32]bool
+	completedMoves  []ecbalancer.Move
+	sawOtherErr     bool
+	// plannedMoves is the move count of the last plan, for the empty-replan
+	// check in EcBalance.
+	plannedMoves int
 }
 
 // excludeNodes is a set of server addresses kept out of the balance as copy/move
@@ -782,32 +803,6 @@ type ecBalancer struct {
 // so a plain ec.balance -diskType=X never drags deliberately tiered shards of
 // other types onto X disks.
 func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, ioBytePerSecond int64, applyBalancing bool, excludeNodes map[pb.ServerAddress]struct{}, volumeIds []needle.VolumeId, migratingVolumeIds []needle.VolumeId) (err error) {
-	// collect all ec nodes
-	allEcNodes, totalFreeEcSlots, err := CollectEcNodesForDC(env, dc, diskType)
-	if err != nil {
-		return err
-	}
-
-	// Drop excluded nodes (and the slots they contribute) before planning so they
-	// can be neither a target nor a source for any move this balance plans.
-	if len(excludeNodes) > 0 {
-		kept := allEcNodes[:0]
-		var excludedFreeSlots int
-		for _, en := range allEcNodes {
-			if _, skip := excludeNodes[pb.NewServerAddressFromDataNode(en.Info)]; skip {
-				excludedFreeSlots += en.FreeEcSlot
-				glog.V(0).Infof("EC balance excluding node %s: skipped as unreachable by the encode orphan sweep", en.Info.Id)
-				continue
-			}
-			kept = append(kept, en)
-		}
-		allEcNodes = kept
-		totalFreeEcSlots -= excludedFreeSlots
-	}
-
-	if totalFreeEcSlots < 1 {
-		return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
-	}
 
 	var volumeIdFilter map[uint32]bool
 	if len(volumeIds) > 0 {
@@ -824,22 +819,277 @@ func EcBalance(env *Env, collections []string, dc string, ecReplicaPlacement *su
 		}
 	}
 
-	ecb := &ecBalancer{
-		env:                env,
-		ecNodes:            allEcNodes,
-		replicaPlacement:   ecReplicaPlacement,
-		applyBalancing:     applyBalancing,
-		maxParallelization: maxParallelization,
-		ioBytePerSecond:    ioBytePerSecond,
-		diskType:           diskType,
-		volumeIds:          volumeIdFilter,
-		migratingVolumeIds: migrating,
-	}
+	// The planner's free-slot numbers come from heartbeat snapshots that can lag
+	// the volume server's own accounting, so a planned target can refuse a copy
+	// with "no space left" while shards move concurrently (issue #11753). The
+	// server's refusal is authoritative: re-collect the topology, mark the
+	// refusing targets no-receive, and plan again. They stay usable as sources.
+	noReceiveTargets := make(map[string]bool)
+	noReceiveDisks := make(map[string]map[uint32]bool)
+	var completed []ecbalancer.Move
+	var lastErr error
+	for {
+		// collect all ec nodes
+		allEcNodes, totalFreeEcSlots, err := CollectEcNodesForDC(env, dc, diskType)
+		if err != nil {
+			return err
+		}
 
-	if len(collections) == 0 {
-		glog.V(1).Infof("WARNING: No collections to balance EC volumes across.\n")
+		// Drop excluded nodes (and the slots they contribute) before planning so they
+		// can be neither a target nor a source for any move this balance plans.
+		if len(excludeNodes) > 0 {
+			kept := allEcNodes[:0]
+			var excludedFreeSlots int
+			for _, en := range allEcNodes {
+				if _, skip := excludeNodes[pb.NewServerAddressFromDataNode(en.Info)]; skip {
+					excludedFreeSlots += en.FreeEcSlot
+					glog.V(0).Infof("EC balance excluding node %s: skipped as unreachable by the encode orphan sweep", en.Info.Id)
+					continue
+				}
+				kept = append(kept, en)
+			}
+			allEcNodes = kept
+			totalFreeEcSlots -= excludedFreeSlots
+		}
+		// A refused destination's slots cannot take a copy, so they do not
+		// count toward the free-space precheck.
+		for _, en := range allEcNodes {
+			if noReceiveTargets[en.Info.Id] {
+				totalFreeEcSlots -= en.FreeEcSlot
+				continue
+			}
+			for diskId := range noReceiveDisks[en.Info.Id] {
+				if d := en.Disks[diskId]; d != nil {
+					totalFreeEcSlots -= d.FreeEcSlots
+				}
+			}
+		}
+
+		if totalFreeEcSlots < 1 {
+			if lastErr != nil {
+				return fmt.Errorf("no receiving targets remain: %w", lastErr)
+			}
+			return fmt.Errorf("no free ec shard slots. only %d left", totalFreeEcSlots)
+		}
+
+		// A fresh collection can still describe an applied move through a
+		// heartbeat that predates its source delete; replay the journal.
+		applyCompletedMoves(allEcNodes, completed, diskType)
+
+		ecb := &ecBalancer{
+			env:                env,
+			ecNodes:            allEcNodes,
+			replicaPlacement:   ecReplicaPlacement,
+			applyBalancing:     applyBalancing,
+			maxParallelization: maxParallelization,
+			ioBytePerSecond:    ioBytePerSecond,
+			diskType:           diskType,
+			volumeIds:          volumeIdFilter,
+			migratingVolumeIds: migrating,
+			noReceiveTargets:   noReceiveTargets,
+			noReceiveDisks:     noReceiveDisks,
+		}
+
+		if len(collections) == 0 {
+			glog.V(1).Infof("WARNING: No collections to balance EC volumes across.\n")
+		}
+		err = ecb.balance(collections)
+		if !applyBalancing {
+			return err
+		}
+		if err == nil {
+			if lastErr != nil && ecb.plannedMoves == 0 {
+				return fmt.Errorf("no receiving targets remain: %w", lastErr)
+			}
+			return nil
+		}
+
+		// Replan while the failed attempt surfaced newly-refusing targets; a node
+		// once marked can no longer be picked, so the loop terminates. Any other
+		// failure aborts instead of being hidden by the retry.
+		newRejects := ecb.mergeRejectedTargets(noReceiveTargets, noReceiveDisks)
+		if len(newRejects) == 0 || ecb.hasOtherError() {
+			return err
+		}
+		lastErr = err
+		completed = append(completed, ecb.completedMoves...)
+		fmt.Printf("ec.balance: %v reported no space left; re-collecting topology and re-planning without them as targets\n", newRejects)
 	}
-	return ecb.balance(collections)
+}
+
+// applyCompletedMoves replays already-applied moves onto a freshly collected
+// node list: heartbeats can lag, so the snapshot may still show a moved shard
+// on its deleted source or lack it on its mounted target.
+func applyCompletedMoves(ecNodes []*EcNode, moves []ecbalancer.Move, diskType types.DiskType) {
+	if len(moves) == 0 {
+		return
+	}
+	byID := make(map[string]*EcNode, len(ecNodes))
+	for _, en := range ecNodes {
+		byID[en.Info.Id] = en
+	}
+	for _, m := range moves {
+		vid := needle.VolumeId(m.VolumeID)
+		shardId := erasure_coding.ShardId(m.ShardID)
+		if src := byID[m.SourceNode]; src != nil {
+			removeEcShard(src, vid, shardId)
+		}
+		if m.Phase == "dedup" {
+			continue
+		}
+		if dst := byID[m.TargetNode]; dst != nil && !ecNodeHasShard(dst, vid, shardId) {
+			addEcShard(dst, m.Collection, vid, shardId, m.TargetDisk, diskType)
+		}
+	}
+}
+
+func ecNodeHasShard(ecNode *EcNode, vid needle.VolumeId, shardId erasure_coding.ShardId) bool {
+	for _, diskInfo := range ecNode.Info.DiskInfos {
+		for _, eci := range diskInfo.EcShardInfos {
+			if needle.VolumeId(eci.Id) == vid && erasure_coding.ShardBits(eci.EcIndexBits).Has(shardId) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// removeEcShard drops the shard from the node model, including the per-disk
+// bookkeeping of the disk that reported it.
+func removeEcShard(en *EcNode, vid needle.VolumeId, shardId erasure_coding.ShardId) {
+	for _, diskInfo := range en.Info.DiskInfos {
+		for _, eci := range diskInfo.EcShardInfos {
+			if needle.VolumeId(eci.Id) != vid || !erasure_coding.ShardBits(eci.EcIndexBits).Has(shardId) {
+				continue
+			}
+			if d := en.Disks[eci.DiskId]; d != nil {
+				if si := d.EcShards[vid]; si != nil {
+					si.Delete(shardId)
+				}
+				d.EcShardCount--
+				d.FreeEcSlots++
+			}
+		}
+	}
+	en.DeleteEcVolumeShards(vid, []erasure_coding.ShardId{shardId})
+}
+
+// addEcShard places the shard on the disk the move used when that disk is
+// known; otherwise (TargetDisk 0, server-picked) it falls back to the node's
+// disk-type bucket.
+func addEcShard(en *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, diskId uint32, diskType types.DiskType) {
+	d := en.Disks[diskId]
+	if diskId == 0 || d == nil {
+		en.AddEcVolumeShards(vid, collection, []erasure_coding.ShardId{shardId}, diskType)
+		return
+	}
+	diskInfo := en.Info.DiskInfos[string(diskType)]
+	if diskInfo == nil {
+		diskInfo = &master_pb.DiskInfo{Type: string(diskType)}
+		en.Info.DiskInfos[string(diskType)] = diskInfo
+	}
+	var eci *master_pb.VolumeEcShardInformationMessage
+	for _, e := range diskInfo.EcShardInfos {
+		if needle.VolumeId(e.Id) == vid && e.DiskId == diskId {
+			eci = e
+			break
+		}
+	}
+	if eci == nil {
+		eci = &master_pb.VolumeEcShardInformationMessage{
+			Id:         uint32(vid),
+			Collection: collection,
+			DiskId:     diskId,
+			DiskType:   string(diskType),
+		}
+		diskInfo.EcShardInfos = append(diskInfo.EcShardInfos, eci)
+	}
+	si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(eci)
+	before := si.Count()
+	si.Set(erasure_coding.NewShardInfo(shardId, 0))
+	eci.EcIndexBits = si.Bitmap()
+	eci.ShardSizes = si.SizesInt64()
+	added := si.Count() - before
+
+	en.FreeEcSlot -= added
+	d.EcShardCount += added
+	d.FreeEcSlots -= added
+	if d.EcShards == nil {
+		d.EcShards = make(map[needle.VolumeId]*erasure_coding.ShardsInfo)
+	}
+	if d.EcShards[vid] == nil {
+		d.EcShards[vid] = erasure_coding.NewShardsInfo()
+	}
+	d.EcShards[vid].Set(erasure_coding.NewShardInfo(shardId, 0))
+}
+
+// mergeRejectedTargets folds the destinations this run saw refuse into the
+// no-receive sets and returns the newly added ids; an empty result means no
+// progress is possible.
+func (ecb *ecBalancer) mergeRejectedTargets(noReceiveNodes map[string]bool, noReceiveDisks map[string]map[uint32]bool) (added []string) {
+	ecb.mu.Lock()
+	defer ecb.mu.Unlock()
+	for id := range ecb.rejectedTargets {
+		if !noReceiveNodes[id] {
+			noReceiveNodes[id] = true
+			added = append(added, id)
+		}
+	}
+	for id, disks := range ecb.rejectedDisks {
+		if noReceiveNodes[id] {
+			continue
+		}
+		if noReceiveDisks[id] == nil {
+			noReceiveDisks[id] = make(map[uint32]bool)
+		}
+		for diskId := range disks {
+			if !noReceiveDisks[id][diskId] {
+				noReceiveDisks[id][diskId] = true
+				added = append(added, fmt.Sprintf("%s:disk%d", id, diskId))
+			}
+		}
+	}
+	sort.Strings(added)
+	return
+}
+
+func (ecb *ecBalancer) hasOtherError() bool {
+	ecb.mu.Lock()
+	defer ecb.mu.Unlock()
+	return ecb.sawOtherErr
+}
+
+// recordMoveResult journals an apply-mode move outcome: a success is replayed
+// onto the next attempt's snapshot, a "no space left" marks the target
+// no-receive, and any other failure makes the run non-retryable.
+func (ecb *ecBalancer) recordMoveResult(m ecbalancer.Move, err error) {
+	ecb.mu.Lock()
+	defer ecb.mu.Unlock()
+	switch {
+	case err == nil:
+		ecb.completedMoves = append(ecb.completedMoves, m)
+	case m.TargetNode != "" && volume_move.IsNoSpaceLeftError(err):
+		if m.TargetDisk > 0 {
+			// The refusal convicts only the named disk; the node's other
+			// disks may still have room.
+			if ecb.rejectedDisks == nil {
+				ecb.rejectedDisks = make(map[string]map[uint32]bool)
+			}
+			if ecb.rejectedDisks[m.TargetNode] == nil {
+				ecb.rejectedDisks[m.TargetNode] = make(map[uint32]bool)
+			}
+			ecb.rejectedDisks[m.TargetNode][m.TargetDisk] = true
+		} else {
+			// The server auto-picked and found no usable disk: the whole
+			// node is out.
+			if ecb.rejectedTargets == nil {
+				ecb.rejectedTargets = make(map[string]bool)
+			}
+			ecb.rejectedTargets[m.TargetNode] = true
+		}
+	default:
+		ecb.sawOtherErr = true
+	}
 }
 
 // defaultECRatio resolves a collection's EC data/parity counts, defaulting to
@@ -852,7 +1102,7 @@ func defaultECRatio(_ string) (int, int) {
 // balance plans EC shard moves with the shared planner and executes them. When
 // collections is empty all collections present are balanced.
 func (ecb *ecBalancer) balance(collections []string) error {
-	topo, volumeRatio, selected := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType, ecb.volumeIds, ecb.migratingVolumeIds)
+	topo, volumeRatio, selected := toBalancerTopology(ecb.ecNodes, collections, ecb.diskType, ecb.volumeIds, ecb.migratingVolumeIds, ecb.noReceiveTargets, ecb.noReceiveDisks)
 	if len(ecb.volumeIds) > 0 {
 		requested := make([]uint32, 0, len(ecb.volumeIds))
 		for vid := range ecb.volumeIds {
@@ -896,6 +1146,7 @@ func (ecb *ecBalancer) balance(collections []string) error {
 		}
 		fmt.Printf("planned %d ec shard move(s) and %d ec shard deletion(s)\n", len(moves)-deletions, deletions)
 	}
+	ecb.plannedMoves = len(moves)
 	return ecb.executeMoves(moves)
 }
 
@@ -907,7 +1158,7 @@ func (ecb *ecBalancer) balance(collections []string) error {
 // (0,0 when unreported, e.g. always in OSS), which Plan prefers over the
 // collection ratio for mixed-ratio clusters, and the set of volume ids that made
 // it into the topology.
-func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType, volumeIds map[uint32]bool, migratingVolumeIds map[uint32]bool) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int), map[uint32]bool) {
+func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.DiskType, volumeIds map[uint32]bool, migratingVolumeIds map[uint32]bool, noReceiveTargets map[string]bool, noReceiveDisks map[string]map[uint32]bool) (*ecbalancer.Topology, func(collection string, vid uint32) (int, int), map[uint32]bool) {
 	allowed := make(map[string]bool, len(collections))
 	for _, c := range collections {
 		allowed[c] = true
@@ -924,11 +1175,17 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 	for _, en := range ecNodes {
 		rackKey := string(en.DC) + ":" + string(en.Rack)
 		node := topo.AddNode(en.Info.Id, string(en.DC), rackKey, en.FreeEcSlot)
+		if noReceiveTargets[en.Info.Id] {
+			node.SetNoReceive()
+		}
 		// Group by physical machine (host) so shards spread across machines, not just
 		// nodes; the id stays the node identity used for moves.
 		node.SetHost(pb.NewServerAddressFromDataNode(en.Info).ToHost())
 		for diskId, d := range en.Disks {
 			node.AddDisk(diskId, d.DiskType, d.FreeEcSlots, d.EcShardCount)
+			if noReceiveDisks[en.Info.Id][diskId] {
+				node.SetDiskNoReceive(diskId)
+			}
 		}
 		for diskTypeKey, diskInfo := range en.Info.DiskInfos {
 			if diskInfo == nil {
@@ -1069,14 +1326,16 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 		// thing making this safe -- and the plan saying so is not evidence. A
 		// topology entry can name a location holding nothing, and deleting on
 		// that basis removes the last copy. Confirm the keep node has it.
-		if err := verifyEcShardOnKeepNode(grpcDialOption, m.Collection, vid, m.KeepNode, shardId); err != nil {
-			return err
-		}
+		err := verifyEcShardOnKeepNode(grpcDialOption, m.Collection, vid, m.KeepNode, shardId)
 		addr := pb.NewServerAddressFromDataNode(src.Info)
-		if err := UnmountEcShards(grpcDialOption, vid, addr, shardIds); err != nil {
-			return err
+		if err == nil {
+			err = UnmountEcShards(grpcDialOption, vid, addr, shardIds)
 		}
-		return SourceServerDeleteEcShards(grpcDialOption, m.Collection, vid, addr, shardIds)
+		if err == nil {
+			err = SourceServerDeleteEcShards(grpcDialOption, m.Collection, vid, addr, shardIds)
+		}
+		ecb.recordMoveResult(m, err)
+		return err
 	}
 
 	dst := byID[m.TargetNode]
@@ -1092,7 +1351,9 @@ func (ecb *ecBalancer) executeMove(byID map[string]*EcNode, m ecbalancer.Move) e
 		// Dry-run: update the in-memory model only.
 		return MoveMountedShardToEcNode(ecb.env, src, m.Collection, vid, shardId, dst, m.TargetDisk, false, ecb.diskType)
 	}
-	return ecb.applyShardMoveRPC(src, dst, m.Collection, vid, shardId, m.TargetDisk)
+	err := ecb.applyShardMoveRPC(src, dst, m.Collection, vid, shardId, m.TargetDisk)
+	ecb.recordMoveResult(m, err)
+	return err
 }
 
 // applyShardMoveRPC copies a shard to the destination disk, verifies the
