@@ -37,7 +37,7 @@ func isExtractZip(r *http.Request) bool {
 // extractZipArchive writes a posted archive's members as individual entries
 // under the target directory, like AWS Snowball's auto-extract. The archive
 // itself is only stored when ?extract.keep=true.
-func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWriter, r *http.Request, contentLength int64, so *operation.StorageOption) {
+func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	var reader io.Reader = r.Body
 	archiveName := path.Base(r.URL.Path)
 	if r.Method == http.MethodPost {
@@ -88,16 +88,58 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 	}
 	chunkSize := 1024 * 1024 * maxMB
 
+	// Members may land under storage rules different from the request path;
+	// resolve options per destination, keeping the request's explicit overrides.
+	memberStorageOption := func(destPath string) (*operation.StorageOption, error) {
+		memberSO, detectErr := fs.detectStorageOption0(ctx, destPath,
+			query.Get("collection"),
+			query.Get("replication"),
+			query.Get("ttl"),
+			query.Get("disk"),
+			query.Get("fsync"),
+			query.Get("dataCenter"),
+			query.Get("rack"),
+			query.Get("dataNode"),
+			query.Get("saveInside"),
+		)
+		if detectErr != nil {
+			return nil, detectErr
+		}
+		if memberSO.DiskType == "" {
+			memberSO.DiskType = fs.option.DiskType
+		}
+		if strings.HasPrefix(destPath, "/etc") {
+			memberSO.SaveInside = true
+		}
+		return memberSO, nil
+	}
+
 	result := &FilerExtractResult{Name: archiveName}
 	writeMember := func(rel string, memberReader io.Reader, mtime time.Time, mode os.FileMode) {
 		destPath := root + "/" + rel
-		memberResult, memberErr := fs.saveExtractedEntry(ctx, destPath, memberReader, path.Base(rel), chunkSize, so, mtime, mode)
+		memberSO, soErr := memberStorageOption(destPath)
+		if soErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, soErr))
+			return
+		}
+		memberResult, memberErr := fs.saveExtractedEntry(ctx, destPath, memberReader, path.Base(rel), chunkSize, memberSO, mtime, mode)
 		if memberErr != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, memberErr))
 			return
 		}
 		memberResult.Name = rel
 		result.Extracted = append(result.Extracted, memberResult)
+	}
+	mkdirMember := func(rel string, zf *zip.File) {
+		destPath := root + "/" + rel
+		memberSO, soErr := memberStorageOption(destPath)
+		if soErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, soErr))
+			return
+		}
+		if dirErr := fs.mkdirExtracted(ctx, destPath, zf, memberSO); dirErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, dirErr))
+		}
 	}
 
 	if query.Get("extract.keep") == "true" && archiveName != "." && archiveName != "/" {
@@ -117,9 +159,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 			continue
 		}
 		if zf.FileInfo().IsDir() {
-			if dirErr := fs.mkdirExtracted(ctx, root+"/"+rel, zf, so); dirErr != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, dirErr))
-			}
+			mkdirMember(rel, zf)
 			continue
 		}
 		memberReader, openErr := zf.Open()
