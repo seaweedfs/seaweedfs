@@ -333,10 +333,11 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *mas
 }
 
 // planTierCompactResync orders the sibling resyncs. The last tiered replica is
-// held out as the deleter: it keeps the old shared object alive until every
-// other replica was re-pointed, then deletes it as the sole remaining holder
-// and is resynced last. A single-replica volume has no deleter: its download
-// already removed the object.
+// held out for last: the resync retires a remote object only once its final
+// holder is re-pointed, so processing the old object's expected last holder at
+// the end keeps it alive for every sibling still referencing it. A
+// single-replica volume has no such holder: its download already removed the
+// object.
 func planTierCompactResync(tieredLocations, localLocations []wdclient.Location) (order, deleter []wdclient.Location) {
 	rest := append(append([]wdclient.Location{}, tieredLocations[1:]...), localLocations...)
 	if len(tieredLocations) > 1 {
@@ -355,6 +356,7 @@ func planTierCompactResync(tieredLocations, localLocations []wdclient.Location) 
 
 func syncVolumeTierCompactReplicas(ctx context.Context, grpcDialOption grpc.DialOption, writer io.Writer, rv remoteVolumeInfo, tieredLocations, localLocations []wdclient.Location) error {
 	source := tieredLocations[0].ServerAddress()
+	mover := volume_move.NewMover(grpcDialOption)
 
 	resync := func(loc wdclient.Location) error {
 		fmt.Fprintf(writer, "  replicating volume %d metadata from %s to %s\n", rv.vid, tieredLocations[0].Url, loc.Url)
@@ -362,28 +364,99 @@ func syncVolumeTierCompactReplicas(ctx context.Context, grpcDialOption grpc.Dial
 	}
 
 	order, deleter := planTierCompactResync(tieredLocations, localLocations)
-	for _, loc := range order {
+
+	// Every replica's current remote objects, so a resynced-over replica can
+	// retire an object once it is the last holder — covers the shared object
+	// and any object a previous interrupted run left referenced. The source
+	// counts as a holder of the new object so a replica already sharing it is
+	// never mistaken for the last holder.
+	allLocations := append(append([]wdclient.Location{}, tieredLocations...), localLocations...)
+	holders, readErr := readRemoteObjectHolders(ctx, grpcDialOption, rv.vid, allLocations)
+	if readErr != nil {
+		// Fall back to the explicit last-replica deleter when a replica's
+		// remote files cannot be read.
+		for _, loc := range order {
+			if err := resync(loc); err != nil {
+				return fmt.Errorf("replicate volume %d from %s to %s: %v", rv.vid, tieredLocations[0].Url, loc.Url, err)
+			}
+		}
+		if len(deleter) == 0 {
+			return nil
+		}
+		fmt.Fprintf(writer, "  removing old remote copy of volume %d on %s\n", rv.vid, deleter[0].Url)
+		if err := mover.DeleteVolume(ctx, rv.vid, deleter[0].ServerAddress(), false, false, false); err != nil {
+			return fmt.Errorf("delete old copy of volume %d on %s: %v", rv.vid, deleter[0].Url, err)
+		}
+		return resync(deleter[0])
+	}
+
+	for _, loc := range append(append([]wdclient.Location{}, order...), deleter...) {
+		files := holders.files[loc.ServerAddress()]
+		soleHolder := len(files) > 0
+		for _, f := range files {
+			if holders.count[remoteFileKey(f)] > 1 {
+				soleHolder = false
+				break
+			}
+		}
+		if soleHolder {
+			// This replica is the only holder of its remote objects: removing
+			// its copy retires them, and the resync restores the replica on the
+			// new object.
+			fmt.Fprintf(writer, "  removing old remote copy of volume %d on %s\n", rv.vid, loc.Url)
+			if err := mover.DeleteVolume(ctx, rv.vid, loc.ServerAddress(), false, false, false); err != nil {
+				return fmt.Errorf("delete old copy of volume %d on %s: %v", rv.vid, loc.Url, err)
+			}
+		}
+		for _, f := range files {
+			holders.count[remoteFileKey(f)]--
+		}
 		if err := resync(loc); err != nil {
 			return fmt.Errorf("replicate volume %d from %s to %s: %v", rv.vid, tieredLocations[0].Url, loc.Url, err)
 		}
 	}
-
-	if len(deleter) == 0 {
-		return nil
-	}
-
-	// the last tiered replica is the only remaining holder of the old shared
-	// object: deleting its copy retires the object, then the resync restores it
-	// on the new object
-	fmt.Fprintf(writer, "  removing old remote copy of volume %d on %s\n", rv.vid, deleter[0].Url)
-	mover := volume_move.NewMover(grpcDialOption)
-	if err := mover.DeleteVolume(ctx, rv.vid, deleter[0].ServerAddress(), false, false, false); err != nil {
-		return fmt.Errorf("delete old copy of volume %d on %s: %v", rv.vid, deleter[0].Url, err)
-	}
-	if err := resync(deleter[0]); err != nil {
-		return fmt.Errorf("replicate volume %d from %s to %s: %v", rv.vid, tieredLocations[0].Url, deleter[0].Url, err)
-	}
 	return nil
+}
+
+// remoteObjectHolders reads every replica's remote file list and counts how
+// many replicas reference each remote object.
+type remoteObjectHolders struct {
+	files map[pb.ServerAddress][]*volume_server_pb.RemoteFile
+	count map[string]int
+}
+
+func remoteFileKey(f *volume_server_pb.RemoteFile) string {
+	return f.BackendType + "/" + f.BackendId + "/" + f.Key
+}
+
+func readRemoteObjectHolders(ctx context.Context, grpcDialOption grpc.DialOption, vid needle.VolumeId, locations []wdclient.Location) (*remoteObjectHolders, error) {
+	h := &remoteObjectHolders{
+		files: make(map[pb.ServerAddress][]*volume_server_pb.RemoteFile),
+		count: make(map[string]int),
+	}
+	for _, loc := range locations {
+		addr := loc.ServerAddress()
+		err := operation.WithVolumeServerClient(false, addr, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			resp, reqErr := client.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{
+				VolumeId: uint32(vid),
+			})
+			if reqErr != nil {
+				return reqErr
+			}
+			if resp == nil || resp.VolumeInfo == nil {
+				return fmt.Errorf("volume %d status has no remote file info", vid)
+			}
+			h.files[addr] = resp.VolumeInfo.GetFiles()
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range h.files[addr] {
+			h.count[remoteFileKey(f)]++
+		}
+	}
+	return h, nil
 }
 
 func checkVolumeGarbage(grpcDialOption grpc.DialOption, vid needle.VolumeId, server pb.ServerAddress) (float64, error) {
