@@ -123,13 +123,13 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 // after the event stay — a newer local write wins over a delayed delete —
 // along with the directories that hold them.
 func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64) (bool, error) {
-	var chunksToDelete []*filer_pb.FileChunk
-	kept, err := f.sweepReplayedFolder(ctx, dir, deleteChunks, tsNs, &chunksToDelete)
+	chunksByPath := make(map[util.FullPath][]*filer_pb.FileChunk)
+	kept, err := f.sweepReplayedFolder(ctx, dir, deleteChunks, tsNs, chunksByPath)
 	if err != nil {
 		return false, err
 	}
-	if len(chunksToDelete) > 0 {
-		f.DeleteChunks(ctx, dir, chunksToDelete)
+	for path, chunks := range chunksByPath {
+		f.DeleteChunks(ctx, path, chunks)
 	}
 	return kept, nil
 }
@@ -138,7 +138,7 @@ func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullP
 // newer than the event, working subtree-first so nested entries go too.
 // It reports whether a newer descendant keeps dir alive — the caller then
 // keeps the dir entry itself.
-func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64, chunks *[]*filer_pb.FileChunk) (kept bool, err error) {
+func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64, chunks map[util.FullPath][]*filer_pb.FileChunk) (kept bool, err error) {
 	lastFileName := ""
 	for {
 		entries, _, lerr := f.ListDirectoryEntries(ctx, dir, lastFileName, false, PaginationSize, "", "", "")
@@ -166,9 +166,12 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 				continue
 			}
 			// hard-linked chunks are owned by the shared inode record; the
-			// origin's own events decide their deletion
-			if deleteChunks && !sub.IsDirectory() && len(sub.HardLinkId) == 0 {
-				*chunks = append(*chunks, sub.GetChunks()...)
+			// origin's own events decide their deletion. A directory entry
+			// can still carry chunks of its own — an S3 child promotes an
+			// existing file to a directory without dropping them — so the
+			// entry's chunks are keyed to its own path whatever it is.
+			if deleteChunks && len(sub.HardLinkId) == 0 && len(sub.GetChunks()) > 0 {
+				chunks[sub.FullPath] = append(chunks[sub.FullPath], sub.GetChunks()...)
 			}
 			if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
 				return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
