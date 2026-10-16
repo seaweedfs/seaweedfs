@@ -79,19 +79,24 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 			return err
 		}
 		if !newer {
-			glog.V(4).Infof("deleting %v", oldPath)
 			// A directory delete on the origin removed the whole subtree, but
 			// only the directory's own key replicates. Sweep local children the
 			// origin never listed, or they orphan under a missing parent.
+			keepDir := false
 			if message.OldEntry.IsDirectory {
-				if err := f.deleteReplayedFolderChildren(ctx, oldPath, message.DeleteChunks); err != nil {
+				var err error
+				keepDir, err = f.deleteReplayedFolderChildren(ctx, oldPath, message.DeleteChunks, resp.TsNs)
+				if err != nil {
 					return err
 				}
 			}
-			if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
-				return err
+			if !keepDir {
+				glog.V(4).Infof("deleting %v", oldPath)
+				if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
+					return err
+				}
+				f.notePathChange(oldPath, resp.TsNs, true)
 			}
-			f.notePathChange(oldPath, resp.TsNs, true)
 		}
 	}
 
@@ -113,48 +118,68 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 	return nil
 }
 
-// deleteReplayedFolderChildren removes every local entry under dir, and the
-// chunks of children whose deletes the origin emitted with chunk deletion on.
-// Children the origin also knew about get their own delete events, so the
-// sweep only needs the prefix delete; the listing just collects chunk ids.
-func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, deleteChunks bool) error {
+// deleteReplayedFolderChildren removes local entries under dir, and queues
+// the chunks of removed files for deletion. Children this filer committed
+// after the event stay — a newer local write wins over a delayed delete —
+// along with the directories that hold them.
+func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64) (bool, error) {
 	var chunksToDelete []*filer_pb.FileChunk
-	if deleteChunks {
-		if err := f.collectFolderChunks(ctx, dir, &chunksToDelete); err != nil {
-			return err
-		}
-	}
-	if err := f.Store.DeleteFolderChildren(ctx, dir); err != nil {
-		return fmt.Errorf("delete folder children %s: %w", dir, err)
+	kept, err := f.sweepReplayedFolder(ctx, dir, deleteChunks, tsNs, &chunksToDelete)
+	if err != nil {
+		return false, err
 	}
 	if len(chunksToDelete) > 0 {
 		f.DeleteChunks(ctx, dir, chunksToDelete)
 	}
-	return nil
+	return kept, nil
 }
 
-func (f *Filer) collectFolderChunks(ctx context.Context, dir util.FullPath, chunks *[]*filer_pb.FileChunk) error {
+// sweepReplayedFolder deletes every child of dir whose local commit is not
+// newer than the event, working subtree-first so nested entries go too.
+// It reports whether a newer descendant keeps dir alive — the caller then
+// keeps the dir entry itself.
+func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64, chunks *[]*filer_pb.FileChunk) (kept bool, err error) {
 	lastFileName := ""
 	for {
-		entries, _, err := f.ListDirectoryEntries(ctx, dir, lastFileName, false, PaginationSize, "", "", "")
-		if err != nil {
-			return fmt.Errorf("list folder %s: %w", dir, err)
+		entries, _, lerr := f.ListDirectoryEntries(ctx, dir, lastFileName, false, PaginationSize, "", "", "")
+		if lerr != nil {
+			return false, fmt.Errorf("list folder %s: %w", dir, lerr)
 		}
 		for _, sub := range entries {
 			lastFileName = sub.Name()
-			if sub.IsDirectory() {
-				if err := f.collectFolderChunks(ctx, sub.FullPath, chunks); err != nil {
-					return err
+			childKept := false
+			if tsNs > 0 {
+				localTsNs, tsErr := f.localCommitTsNs(ctx, sub.FullPath)
+				if tsErr != nil {
+					return false, tsErr
 				}
-			} else {
+				childKept = localTsNs > tsNs
+			}
+			if !childKept && sub.IsDirectory() {
+				childKept, err = f.sweepReplayedFolder(ctx, sub.FullPath, deleteChunks, tsNs, chunks)
+				if err != nil {
+					return false, err
+				}
+			}
+			if childKept {
+				kept = true
+				continue
+			}
+			// hard-linked chunks are owned by the shared inode record; the
+			// origin's own events decide their deletion
+			if deleteChunks && !sub.IsDirectory() && len(sub.HardLinkId) == 0 {
 				*chunks = append(*chunks, sub.GetChunks()...)
 			}
+			if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
+				return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
+			}
+			f.notePathChange(sub.FullPath, tsNs, true)
 		}
 		if len(entries) < PaginationSize {
 			break
 		}
 	}
-	return nil
+	return kept, nil
 }
 
 // replayBlockedByLocal reports whether the local store already holds a

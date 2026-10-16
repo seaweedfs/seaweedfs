@@ -783,3 +783,47 @@ func TestReplayFileDeleteKeepsSiblingEntries(t *testing.T) {
 		t.Fatalf("expected sibling kept, got %v", err)
 	}
 }
+
+func TestReplayDirectoryDeleteKeepsNewerChildren(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	eventTs := time.Now().UnixNano()
+	put := func(path string, isDir bool, mtime time.Time) {
+		e := &Entry{FullPath: util.FullPath(path), Attr: Attr{Mtime: mtime}}
+		if isDir {
+			e.Attr.Mode = os.ModeDir
+		}
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatalf("insert %s: %v", path, err)
+		}
+	}
+	old := time.Unix(1600000000, 0)
+	newer := time.Unix(0, eventTs).Add(time.Second)
+	put("/d", true, old)
+	put("/d/old.txt", false, old)
+	put("/d/sub", true, old)
+	put("/d/sub/newer.txt", false, newer)
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: eventTs,
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if _, err := store.FindEntry(ctx, "/d/old.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("older child should be swept, got %v", err)
+	}
+	for _, path := range []string{"/d", "/d/sub", "/d/sub/newer.txt"} {
+		if _, err := store.FindEntry(ctx, util.FullPath(path)); err != nil {
+			t.Fatalf("newer child and its ancestors should survive: %s: %v", path, err)
+		}
+	}
+}
