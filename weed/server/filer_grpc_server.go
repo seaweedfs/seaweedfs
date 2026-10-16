@@ -343,6 +343,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			ConditionKey:       req.ConditionKey,
 			RouteKey:           req.RouteKey,
 			IsMoved:            true,
+			ConditionAltKey:    req.ConditionAltKey,
 		}
 		var resp *filer_pb.ObjectTransactionResponse
 		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(owner pb.ServerAddress) error {
@@ -374,6 +375,13 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			conditionPath = util.FullPath(req.ConditionKey)
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
+		// The caller can name a fallback entry evaluated when the primary is
+		// absent — a suspended-versioning write checks "the null slot if
+		// present, else the latest version" atomically under this lock.
+		if findErr == filer_pb.ErrNotFound && req.ConditionAltKey != "" {
+			conditionPath = util.FullPath(req.ConditionAltKey)
+			current, findErr = fs.filer.FindEntry(ctx, conditionPath)
+		}
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
 			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
 		}
