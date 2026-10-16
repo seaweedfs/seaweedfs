@@ -1869,7 +1869,7 @@ jobs:
           echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.15.0
+        uses: helm/kind-action@v1.15.1
 
       - name: Verify volume resize hook security contexts
         run: |
