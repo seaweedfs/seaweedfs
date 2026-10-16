@@ -375,10 +375,12 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	}
 
 	resp := &filer_pb.ObjectTransactionResponse{}
-	// Only definitive outcomes are replayed: a mutation error may be transient
-	// or follow a partial apply, and a retry that re-runs the same (idempotent)
-	// mutations converges to the requested state instead of replaying a stale
-	// failure for the whole TTL.
+	// Outcomes are replayed rather than re-run: a mutation error may follow a
+	// partial apply, and a retry that re-runs could write the stale mutation
+	// over whatever superseded it, while replaying the recorded failure at
+	// least matches what the first attempt reported. The one exception is the
+	// condition lookup below: it fails before any mutation runs, so the retry
+	// must re-evaluate rather than replay an empty outcome.
 	record := true
 	defer func() {
 		if record {
@@ -413,7 +415,6 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	for i, m := range req.Mutations {
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
-			record = false
 			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
 			return resp, nil
 		}
