@@ -60,11 +60,40 @@ func newExtractTestServer(t *testing.T) (*FilerServer, *filer.Filer) {
 
 func TestExtractZipArchivePut(t *testing.T) {
 	fs, f := newExtractTestServer(t)
-	zipBytes := buildTestZip(t,
-		map[string]string{"a/b.txt": "hello", "c.png": "\x89png"},
-		[]string{"empty/"},
-		[]string{"../evil.txt"},
-	)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	dirHeader := &zip.FileHeader{Name: "empty/", Method: zip.Store, Modified: time.Unix(1700000000, 0)}
+	dirHeader.SetMode(0755 | 1<<31)
+	if _, err := zw.CreateHeader(dirHeader); err != nil {
+		t.Fatal(err)
+	}
+	fileHeader := &zip.FileHeader{Name: "a/b.txt", Modified: time.Unix(1600000000, 0)}
+	fileHeader.SetMode(0600)
+	fw, err := zw.CreateHeader(fileHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	pngW, err := zw.Create("c.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pngW.Write([]byte("\x89png")); err != nil {
+		t.Fatal(err)
+	}
+	evil, err := zw.Create("../evil.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := evil.Write([]byte("evil")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zipBytes := buf.Bytes()
 
 	r := httptest.NewRequest(http.MethodPut, "/dst/archive.zip?extract=zip", bytes.NewReader(zipBytes))
 	w := httptest.NewRecorder()
@@ -91,13 +120,19 @@ func TestExtractZipArchivePut(t *testing.T) {
 	if string(entry.Content) != "hello" {
 		t.Fatalf("member content = %q", entry.Content)
 	}
-	if entry.Mtime.Unix() != 1700000000 && !entry.Mtime.IsZero() {
-		// zip.Create stamps Modified with the current time; just check it is set
+	if entry.Mtime.Unix() != 1600000000 {
+		t.Fatalf("member mtime = %v, want %v", entry.Mtime, time.Unix(1600000000, 0))
+	}
+	if entry.Mode.Perm() != 0600 {
+		t.Fatalf("member mode = %v, want 0600", entry.Mode.Perm())
 	}
 
 	dirEntry, err := f.FindEntry(r.Context(), util.FullPath("/dst/empty"))
 	if err != nil || !dirEntry.IsDirectory() {
 		t.Fatalf("dir member missing: %v %+v", err, dirEntry)
+	}
+	if dirEntry.Mtime.Unix() != 1700000000 {
+		t.Fatalf("dir mtime = %v, want %v", dirEntry.Mtime, time.Unix(1700000000, 0))
 	}
 	if _, err := f.FindEntry(r.Context(), util.FullPath("/dst/archive.zip")); err == nil {
 		t.Fatal("archive should not be stored without extract.keep")
