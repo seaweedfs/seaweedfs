@@ -259,8 +259,20 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *mas
 	// step 2: freeze every replica. The mark is persisted because the download
 	// remounts the volume into a fresh in-memory state, and a local .dat with no
 	// persisted readonly flag would load writable while its siblings stay readonly.
-	if err = markVolumeReplicasWritable(ctx, grpcDialOption, rv.vid, locations, false, true); err != nil {
+	frozen, err := markVolumeReplicasWritable(ctx, grpcDialOption, rv.vid, locations, false, true)
+	if err != nil {
+		// nothing changed yet: thaw the replicas already marked
+		if _, thawErr := markVolumeReplicasWritable(ctx, grpcDialOption, rv.vid, frozen, true, false); thawErr != nil {
+			return fmt.Errorf("mark volume %d readonly: %v (thawing the %d marked replicas also failed: %v)",
+				rv.vid, err, len(frozen), thawErr)
+		}
 		return fmt.Errorf("mark volume %d readonly: %v", rv.vid, err)
+	}
+	// Past this point a failure keeps every replica frozen on purpose: a replica
+	// mid-transition may hold divergent data, and thawing it would expose that.
+	// Re-running volume.tier.compact completes the resync and releases the marks.
+	stillFrozen := func(stageErr error) error {
+		return fmt.Errorf("%v (volume %d replicas stay readonly; rerun volume.tier.compact to resume)", stageErr, rv.vid)
 	}
 
 	// step 3: download .dat from remote to local; the shared object stays while
@@ -268,7 +280,7 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *mas
 	fmt.Fprintf(writer, "  downloading volume %d from %s to local...\n", rv.vid, rv.remoteStorageName)
 	err = downloadDatFromRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, source, len(tieredLocations) > 1, concurrency)
 	if err != nil {
-		return fmt.Errorf("download volume %d from remote: %v", rv.vid, err)
+		return stillFrozen(fmt.Errorf("download volume %d from remote: %v", rv.vid, err))
 	}
 
 	// step 4: compact the local volume; on failure re-upload what is there so
@@ -284,11 +296,11 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *mas
 	uploadErr := uploadDatToRemoteTier(grpcDialOption, writer, rv.vid, rv.collection, source, rv.remoteStorageName, false, concurrency)
 	if uploadErr != nil {
 		if compactErr != nil {
-			return fmt.Errorf("compaction failed (%v) and re-upload also failed (%v), volume %d remains local",
-				compactErr, uploadErr, rv.vid)
+			return stillFrozen(fmt.Errorf("compaction failed (%v) and re-upload also failed (%v), volume %d remains local",
+				compactErr, uploadErr, rv.vid))
 		}
-		return fmt.Errorf("upload compacted volume %d to %s: %v (volume remains local with compacted data)",
-			rv.vid, rv.remoteStorageName, uploadErr)
+		return stillFrozen(fmt.Errorf("upload compacted volume %d to %s: %v (volume remains local with compacted data)",
+			rv.vid, rv.remoteStorageName, uploadErr))
 	}
 
 	// step 6: push the new .idx/.vif to every sibling so all replicas reference
@@ -298,17 +310,22 @@ func doVolumeTierCompact(commandEnv *CommandEnv, writer io.Writer, topoInfo *mas
 	// copied readonly mark is inert on a remote-backed volume anyway.
 	syncErr := syncVolumeTierCompactReplicas(ctx, grpcDialOption, writer, rv, tieredLocations, localLocations)
 	if compactErr != nil {
-		return fmt.Errorf("compaction failed (%v), volume %d re-uploaded to %s without compaction (resync: %v)",
-			compactErr, rv.vid, rv.remoteStorageName, syncErr)
+		if syncErr != nil {
+			return stillFrozen(fmt.Errorf("compaction failed (%v), volume %d re-uploaded without compaction but resync failed: %v",
+				compactErr, rv.vid, syncErr))
+		}
+		return fmt.Errorf("compaction failed (%v), volume %d re-uploaded to %s without compaction",
+			compactErr, rv.vid, rv.remoteStorageName)
 	}
 	if syncErr != nil {
-		return syncErr
+		return stillFrozen(syncErr)
 	}
 
 	// step 7: unfreeze every replica, clearing the persisted readonly mark on
 	// each. Remote volumes refuse writes regardless; this re-enables deletes.
-	if err = markVolumeReplicasWritable(ctx, grpcDialOption, rv.vid, locations, true, false); err != nil {
-		return fmt.Errorf("unfreeze volume %d replicas: %v", rv.vid, err)
+	thawed, err := markVolumeReplicasWritable(ctx, grpcDialOption, rv.vid, locations, true, false)
+	if err != nil {
+		return fmt.Errorf("unfreeze volume %d replicas: %v (%d of %d released)", rv.vid, err, len(thawed), len(locations))
 	}
 
 	fmt.Fprintf(writer, "volume %d compacted and uploaded to %s successfully\n", rv.vid, rv.remoteStorageName)
