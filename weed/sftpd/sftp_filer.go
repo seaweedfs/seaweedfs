@@ -263,12 +263,13 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
 		return err
 	}
-	if _, err := fs.getEntry(absTarget); err == nil {
+	// Overwriting a target needs delete access on it. The check does not wait
+	// on an existence lookup: a protected target created after such a lookup
+	// would otherwise be overwritten.
+	if path.Clean(absPath) != path.Clean(absTarget) {
 		if err := fs.checkFilePermission(absTarget, "delete"); err != nil {
 			return err
 		}
-	} else if err != os.ErrNotExist {
-		return err
 	}
 	if err := fs.checkRenameKeepsAcl(absPath, absTarget); err != nil {
 		return err
@@ -284,22 +285,45 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	})
 }
 
-// checkRenameKeepsAcl denies a rename that would move an explicitly carved-out
-// path to a location where a more permissive ACL grants the user write or
-// delete access the carve-out had removed.
+// checkRenameKeepsAcl denies a rename that would move entries to locations
+// where ACLs grant the user write or delete access the source side lacked.
+// It compares the moved root and every configured ACL path under either the
+// source or the target (mapped back to the source) so both inherited
+// restrictions and deeper destination grants are caught.
 func (fs *SftpServer) checkRenameKeepsAcl(absPath, absTarget string) error {
-	if fs.user == nil {
+	if fs.user == nil || fs.user.Username == "root" || fs.user.Uid == 0 {
 		return nil
 	}
+	type aclPair struct{ src, dst string }
+	pairs := []aclPair{{absPath, absTarget}}
+	seen := map[string]bool{absPath: true}
 	for p := range fs.user.Permissions {
 		cleaned := path.Clean(p)
-		if !pathWithin(absPath, cleaned) {
+		var src string
+		switch {
+		case pathWithin(absPath, cleaned):
+			src = cleaned
+		case pathWithin(absTarget, cleaned):
+			src = path.Join(absPath, strings.TrimPrefix(cleaned, absTarget))
+		default:
 			continue
 		}
-		relocated := path.Join(absTarget, strings.TrimPrefix(cleaned, absPath))
+		if seen[src] {
+			continue
+		}
+		seen[src] = true
+		// A rule only protects an entry that actually moves; a path reserved
+		// for a missing child must not block the rename.
+		if _, err := fs.getEntry(src); err != nil {
+			continue
+		}
+		relocated := path.Join(absTarget, strings.TrimPrefix(src, absPath))
+		pairs = append(pairs, aclPair{src, relocated})
+	}
+	for _, pair := range pairs {
 		for _, perm := range []string{PermWrite, PermDelete} {
-			if !HasExplicitPermission(fs.user, cleaned, perm, false) && HasExplicitPermission(fs.user, relocated, perm, false) {
-				glog.V(0).Infof("permission denied for user %s: rename of %s to %s would drop the ACL on %s", fs.user.Username, absPath, absTarget, cleaned)
+			if !HasExplicitPermission(fs.user, pair.src, perm, false) && HasExplicitPermission(fs.user, pair.dst, perm, false) {
+				glog.V(0).Infof("permission denied for user %s: rename of %s to %s would drop the ACL on %s", fs.user.Username, absPath, absTarget, pair.src)
 				return os.ErrPermission
 			}
 		}

@@ -169,8 +169,6 @@ func TestRenameEntryChecksTargetFile(t *testing.T) {
 		},
 	}
 
-	// the fake filer has no AtomicRenameEntry, so an authorized rename fails
-	// with a gRPC error; a denied one fails with os.ErrPermission
 	renameDenied := func(src, dst string) bool {
 		return errors.Is(fs.renameEntry(src, dst), os.ErrPermission)
 	}
@@ -178,11 +176,14 @@ func TestRenameEntryChecksTargetFile(t *testing.T) {
 	if !renameDenied("/home/alice/own.txt", "/home/alice/locked.txt") {
 		t.Error("expected rename over a read-only file to be denied")
 	}
-	if renameDenied("/home/alice/own.txt", "/home/alice/ok.txt") {
-		t.Error("expected rename over a writable file to be allowed")
+	if err := fs.renameEntry("/home/alice/own.txt", "/home/alice/ok.txt"); err != nil {
+		t.Errorf("expected rename over a writable file to succeed, got %v", err)
 	}
-	if renameDenied("/home/alice/own.txt", "/home/alice/new.txt") {
-		t.Error("expected rename onto a new path in a writable dir to be allowed")
+	if err := fs.renameEntry("/home/alice/ok.txt", "/home/alice/new.txt"); err != nil {
+		t.Errorf("expected rename onto a new path in a writable dir to succeed, got %v", err)
+	}
+	if err := fs.renameEntry("/home/alice/new.txt", "/home/alice/new.txt"); err != nil {
+		t.Errorf("expected a no-op rename to skip the target delete check, got %v", err)
 	}
 }
 
@@ -221,8 +222,8 @@ func TestRenameEntryKeepsNestedAcl(t *testing.T) {
 		t.Errorf("expected rename that strands the /sub/ro.txt ACL to be denied, got %v", err)
 	}
 	delete(fs.user.Permissions, "/home/alice/sub/ro.txt")
-	if err := fs.renameEntry("/home/alice/sub", "/home/alice/sub2"); errors.Is(err, os.ErrPermission) {
-		t.Errorf("expected rename without a nested carve-out to be allowed, got %v", err)
+	if err := fs.renameEntry("/home/alice/sub", "/home/alice/sub2"); err != nil {
+		t.Errorf("expected rename without a nested carve-out to succeed, got %v", err)
 	}
 }
 
@@ -258,4 +259,65 @@ func (f *permissionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
 	}
 	return nil, status.Error(codes.NotFound, "no entry is found")
+}
+
+func (f *permissionTestFiler) AtomicRenameEntry(_ context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
+	oldKey := req.OldDirectory + "/" + req.OldName
+	entry, ok := f.entries[oldKey]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no entry is found")
+	}
+	delete(f.entries, oldKey)
+	f.entries[req.NewDirectory+"/"+req.NewName] = entry
+	return &filer_pb.AtomicRenameEntryResponse{}, nil
+}
+
+// checkRenameKeepsAcl also compares the moved root (inherited restrictions) and
+// ACL paths configured under the destination (deeper grants), while configured
+// paths without a real entry do not block the rename.
+func TestRenameEntryKeepsInheritedAndDestinationAcl(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/home/alice":                  {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/restricted":       {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/restricted/sub":   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub":              {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub/locked":       {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub/locked/secret": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		"/home/alice/sub3":             {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice":                  {"read", "write", "list", "delete", "rename"},
+				"/home/alice/restricted":       {"read", "list", "rename"},
+				"/home/alice/sub/locked":       {"read", "list"},
+				"/home/alice/sub2/locked":      {"read", "list"},
+				"/home/alice/sub2/locked/secret": {"read", "write", "list", "delete"},
+				"/home/alice/sub3/ghost.txt":   {"read", "list"},
+			},
+		},
+	}
+
+	if err := fs.renameEntry("/home/alice/restricted/sub", "/home/alice/sub5"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename escaping the inherited restricted ACL to be denied, got %v", err)
+	}
+	if err := fs.renameEntry("/home/alice/sub", "/home/alice/sub2"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename into a deeper destination grant to be denied, got %v", err)
+	}
+	if err := fs.renameEntry("/home/alice/sub3", "/home/alice/sub4"); err != nil {
+		t.Errorf("expected rename with a missing reserved ACL child to succeed, got %v", err)
+	}
 }
