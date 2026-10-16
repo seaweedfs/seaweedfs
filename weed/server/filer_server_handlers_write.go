@@ -141,6 +141,8 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		fs.move(ctx, w, r, so)
 	} else if query.Has("cp.from") {
 		fs.copy(ctx, w, r, so)
+	} else if isExtractZip(r) {
+		fs.extractZipArchive(ctx, w, r, contentLength, so)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
 	}
