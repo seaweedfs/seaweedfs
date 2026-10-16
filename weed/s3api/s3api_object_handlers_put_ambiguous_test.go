@@ -512,6 +512,40 @@ func TestPutToFilerRoutedRecoveryLosesRace(t *testing.T) {
 	}
 }
 
+// Same incident, but the ambiguous PUT wrote a zero-byte object: recovery must
+// still run — an unconditional fallback would overwrite the newer write even
+// though there were no chunks to verify.
+func TestPutToFilerRoutedAmbiguousEmptyPutKeepsNewerWrite(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	newer := &filer_pb.Entry{
+		Name:       "o",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 11},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,00000000000000bb0000000b", Size: 11}},
+	}
+	filerImpl := &ambiguousPutFiler{
+		volume:    volume,
+		entries:   map[string]*filer_pb.Entry{},
+		supersede: newer,
+		txnErr:    status.Error(codes.Unavailable, "owner restarted mid-write"),
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/o", nil)
+	_, code, _ := s3a.putToFiler(r, "/buckets/b/o", strings.NewReader(""), "b", "o", 1, 0, nil, false, "")
+	if code != s3err.ErrServiceUnavailable {
+		t.Fatalf("putToFiler returned %v, want refusal once a newer write is found", code)
+	}
+	if filerImpl.stores != 0 {
+		t.Fatalf("recovery re-committed the stale entry %d times", filerImpl.stores)
+	}
+	if got := filerImpl.entries["/buckets/b/o"]; got == nil || len(got.Chunks) == 0 || got.Chunks[0].FileId != newer.Chunks[0].FileId {
+		t.Fatalf("the newer write's entry was clobbered: %+v", got)
+	}
+}
+
 // A volume-encrypted chunk must be decrypted before SSE decryption sees it:
 // fetchChunkData feeds ciphered chunks through the cipher-aware read path and
 // slices plaintext space, while plain chunks keep streaming range reads.

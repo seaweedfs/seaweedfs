@@ -1045,7 +1045,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 	if !routed {
 		createFn := func() s3err.ErrorCode { return createUnderLock(nil) }
-		if routedAmbiguous && len(chunkResult.FileChunks) > 0 {
+		if routedAmbiguous {
 			createFn = func() s3err.ErrorCode {
 				return s3a.createAfterAmbiguousRoute(filePath, bucket, object, owner, entry, chunkResult.FileChunks, finalize, &entryCreated, s3a.uploadedChunksExist, createUnderLock)
 			}
