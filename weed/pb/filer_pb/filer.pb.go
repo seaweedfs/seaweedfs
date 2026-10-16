@@ -1814,6 +1814,7 @@ type ObjectTransactionRequest struct {
 	ConditionKey       string                 `protobuf:"bytes,6,opt,name=condition_key,json=conditionKey,proto3" json:"condition_key,omitempty"` // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
 	RouteKey           string                 `protobuf:"bytes,7,opt,name=route_key,json=routeKey,proto3" json:"route_key,omitempty"`             // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
 	IsMoved            bool                   `protobuf:"varint,8,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`               // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
+	RequestId          string                 `protobuf:"bytes,9,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`          // idempotency token: the owner records the outcome and replays it on a retried request instead of re-applying
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1902,6 +1903,13 @@ func (x *ObjectTransactionRequest) GetIsMoved() bool {
 		return x.IsMoved
 	}
 	return false
+}
+
+func (x *ObjectTransactionRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
 }
 
 type ObjectTransactionResponse struct {
@@ -7433,7 +7441,7 @@ const file_filer_proto_rawDesc = "" +
 	"\fexclude_name\x18\t \x01(\tR\vexcludeName\x1a?\n" +
 	"\x11CopyExtendedEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd5\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf4\x02\n" +
 	"\x18ObjectTransactionRequest\x12\x19\n" +
 	"\block_key\x18\x01 \x01(\tR\alockKey\x126\n" +
 	"\tcondition\x18\x02 \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x126\n" +
@@ -7444,7 +7452,9 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x12#\n" +
 	"\rcondition_key\x18\x06 \x01(\tR\fconditionKey\x12\x1b\n" +
 	"\troute_key\x18\a \x01(\tR\brouteKey\x12\x19\n" +
-	"\bis_moved\x18\b \x01(\bR\aisMoved\"f\n" +
+	"\bis_moved\x18\b \x01(\bR\aisMoved\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\t \x01(\tR\trequestId\"f\n" +
 	"\x19ObjectTransactionResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x123\n" +
 	"\n" +
