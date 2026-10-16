@@ -464,12 +464,19 @@ func (fs *FilerServer) rememberObjectTxn(requestID string, lockPath util.FullPat
 	// write; between sweeps the map may exceed the cap, still bounded by the
 	// insert rate over the TTL.
 	now := time.Now()
-	if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap && now.After(fs.recentObjectTxnsSweepAt) {
-		fs.recentObjectTxnsSweepAt = now.Add(recentObjectTxnSweepPeriod)
-		for id, txn := range fs.recentObjectTxns {
-			if now.After(txn.expiresAt) {
-				delete(fs.recentObjectTxns, id)
+	if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap {
+		if now.After(fs.recentObjectTxnsSweepAt) {
+			fs.recentObjectTxnsSweepAt = now.Add(recentObjectTxnSweepPeriod)
+			for id, txn := range fs.recentObjectTxns {
+				if now.After(txn.expiresAt) {
+					delete(fs.recentObjectTxns, id)
+				}
 			}
+		}
+		if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap {
+			// Full of unexpired records: drop the new one rather than evict
+			// an outcome a replay may still need.
+			return
 		}
 	}
 	fs.recentObjectTxns[recentObjectTxnKey(requestID, lockPath)] = recentObjectTxn{

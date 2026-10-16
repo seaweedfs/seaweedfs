@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"testing"
@@ -960,5 +961,28 @@ func TestObjectTransactionRequestIdReplaysRecordedError(t *testing.T) {
 	}
 	if got := string(store.entries["/buckets/bkt/obj"].Extended["etag"]); got != "live" {
 		t.Fatalf("replayed transaction overwrote the live entry: etag = %q", got)
+	}
+}
+
+// At capacity the cache drops new recordings rather than evicting a live
+// outcome a replay may still need.
+func TestObjectTransactionReplayCacheDropsNewAtCap(t *testing.T) {
+	fs, _ := newTxnTestServer(t, nil)
+	path := util.FullPath("/buckets/bkt/obj")
+	resp := &filer_pb.ObjectTransactionResponse{}
+
+	for i := 0; i < recentObjectTxnSweepCap; i++ {
+		fs.rememberObjectTxn(fmt.Sprintf("req-%d", i), path, resp)
+	}
+	fs.rememberObjectTxn("req-overflow", path, resp)
+
+	if _, found := fs.recentObjectTxn("req-0", path); !found {
+		t.Fatal("a live record was evicted to admit a new one")
+	}
+	if _, found := fs.recentObjectTxn("req-overflow", path); found {
+		t.Fatal("overflow record was recorded instead of dropped")
+	}
+	if len(fs.recentObjectTxns) > recentObjectTxnSweepCap {
+		t.Fatalf("cache exceeded cap: %d", len(fs.recentObjectTxns))
 	}
 }
