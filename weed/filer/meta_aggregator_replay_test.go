@@ -827,3 +827,54 @@ func TestReplayDirectoryDeleteKeepsNewerChildren(t *testing.T) {
 		}
 	}
 }
+
+// A directory kept for newer descendants still records the delete: a stale
+// create replayed later for another child must be fenced by it.
+func TestReplayKeptDirectoryDeleteFencesStaleCreates(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	eventTs := time.Now().UnixNano()
+	old := time.Unix(1600000000, 0)
+	newer := time.Unix(0, eventTs).Add(time.Second)
+	put := func(path string, isDir bool, mtime time.Time) {
+		e := &Entry{FullPath: util.FullPath(path), Attr: Attr{Mtime: mtime}}
+		if isDir {
+			e.Attr.Mode = os.ModeDir
+		}
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatalf("insert %s: %v", path, err)
+		}
+	}
+	put("/d", true, old)
+	put("/d/newer.txt", false, newer)
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "d", IsDirectory: true},
+		},
+		TsNs: eventTs,
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/d"); err != nil {
+		t.Fatalf("newer child should keep the directory: %v", err)
+	}
+
+	stale := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/d",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "late.txt"},
+		},
+		TsNs: eventTs - int64(time.Minute),
+	}
+	if err := f.Replay(stale); err != nil {
+		t.Fatalf("replay stale create: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/d/late.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatal("stale create resurrected a child under a directory the origin deleted")
+	}
+}

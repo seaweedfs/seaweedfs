@@ -95,8 +95,11 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 				if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 					return err
 				}
-				f.notePathChange(oldPath, resp.TsNs, true)
 			}
+			// The origin deleted the directory even when a newer descendant
+			// keeps its entry here — recording the delete fences stale child
+			// creates that would otherwise resurrect under it.
+			f.notePathChange(oldPath, resp.TsNs, true)
 		}
 	}
 
@@ -125,11 +128,13 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64) (bool, error) {
 	chunksByPath := make(map[util.FullPath][]*filer_pb.FileChunk)
 	kept, err := f.sweepReplayedFolder(ctx, dir, deleteChunks, tsNs, chunksByPath)
-	if err != nil {
-		return false, err
-	}
+	// Flush what was collected even on error: the entries already deleted
+	// cannot be listed again on retry, so their chunks must be queued now.
 	for path, chunks := range chunksByPath {
 		f.DeleteChunks(ctx, path, chunks)
+	}
+	if err != nil {
+		return false, err
 	}
 	return kept, nil
 }
@@ -165,6 +170,10 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 				kept = true
 				continue
 			}
+			if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
+				return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
+			}
+			f.notePathChange(sub.FullPath, tsNs, true)
 			// hard-linked chunks are owned by the shared inode record; the
 			// origin's own events decide their deletion. A directory entry
 			// can still carry chunks of its own — an S3 child promotes an
@@ -173,10 +182,6 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 			if deleteChunks && len(sub.HardLinkId) == 0 && len(sub.GetChunks()) > 0 {
 				chunks[sub.FullPath] = append(chunks[sub.FullPath], sub.GetChunks()...)
 			}
-			if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
-				return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
-			}
-			f.notePathChange(sub.FullPath, tsNs, true)
 		}
 		if len(entries) < PaginationSize {
 			break
