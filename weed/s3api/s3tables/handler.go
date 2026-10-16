@@ -240,7 +240,9 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 			// is explicitly excluded to avoid storing PII in metadata.
 			claimsField := val.FieldByName("Claims")
 			if claimsField.IsValid() && claimsField.Kind() == reflect.Map && !claimsField.IsNil() && claimsField.Type().Key().Kind() == reflect.String {
-				for _, claimKey := range []string{"sub", "preferred_username"} {
+				// aws:userid is the issuer-namespaced (sub, iss) hash; a bare
+				// sub or preferred_username collides across providers.
+				for _, claimKey := range []string{"aws:userid", "sub", "preferred_username"} {
 					claimVal := claimsField.MapIndex(reflect.ValueOf(claimKey))
 					if !claimVal.IsValid() {
 						continue

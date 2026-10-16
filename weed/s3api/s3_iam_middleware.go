@@ -163,6 +163,13 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		claims["sub"] = identity.UserID
 		claims["role"] = identity.RoleArn
 
+		// The bare sub collides across issuers; aws:userid carries the same
+		// (sub, iss) hash STS sessions already expose, so downstream ownership
+		// keys stay namespaced per identity provider.
+		if parentUser := sts.ComputeParentUser(identity.UserID, identity.Issuer); parentUser != "" {
+			claims["aws:userid"] = parentUser
+		}
+
 		// Use real email address if available
 		emailAddress := identity.UserID + "@oidc.local"
 		if identity.Email != "" {
@@ -425,6 +432,7 @@ type OIDCIdentity struct {
 	UserID      string
 	RoleArn     string
 	Provider    string
+	Issuer      string
 	Email       string
 	DisplayName string
 	Groups      []string
@@ -488,6 +496,7 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 		UserID:      externalIdentity.UserID,
 		RoleArn:     roleArn,
 		Provider:    fmt.Sprintf("%T", provider), // Use provider type as identifier
+		Issuer:      externalIdentity.Issuer,
 		Email:       externalIdentity.Email,
 		DisplayName: externalIdentity.DisplayName,
 		Groups:      externalIdentity.Groups,
