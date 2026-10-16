@@ -157,12 +157,11 @@ func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData 
 		return
 	}
 	v.stopWorker()
-	if !keepRemoteData {
-		storageName, storageKey := v.RemoteStorageNameKey()
-		if v.HasRemoteFile() && storageName != "" && storageKey != "" {
-			if backendStorage, found := backend.BackendStorages[storageName]; found {
-				backendStorage.DeleteFile(storageKey)
-			}
+	var remoteErr error
+	storageName, storageKey := v.RemoteStorageNameKey()
+	if !keepRemoteData && v.HasRemoteFile() && storageName != "" && storageKey != "" {
+		if backendStorage, found := backend.BackendStorages[storageName]; found {
+			remoteErr = backendStorage.DeleteFile(storageKey)
 		}
 	}
 	// A regular volume and an EC volume for the same id share <base>.vif. When
@@ -173,6 +172,9 @@ func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData 
 	v.doClose()
 	removeVolumeFiles(v.DataFileName(), keepVif)
 	removeVolumeFiles(v.IndexFileName(), keepVif)
+	if remoteErr != nil {
+		err = fmt.Errorf("volume %d deleted locally but remote object %s/%s remains: %w", v.Id, storageName, storageKey, remoteErr)
+	}
 	return
 }
 
