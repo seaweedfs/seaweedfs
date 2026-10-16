@@ -187,8 +187,18 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 	}
 	current := f.entries[key]
 	if current == nil && req.ConditionAltKey != "" {
-		key = req.ConditionAltKey
-		current = f.entries[key]
+		// Mirrors the filer's fallback: the alt key is the object's .versions
+		// directory and the entry under test is the one its latest pointer
+		// names; a delete marker resolves to absent.
+		if versionsEntry := f.entries[req.ConditionAltKey]; versionsEntry != nil {
+			if latest := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]); latest != "" {
+				key = req.ConditionAltKey + "/" + latest
+				current = f.entries[key]
+				if current != nil && string(current.Extended[s3_constants.ExtDeleteMarkerKey]) == "true" {
+					current = nil
+				}
+			}
+		}
 	}
 	for _, clause := range req.GetCondition().GetClauses() {
 		var md5Hex string
@@ -534,8 +544,8 @@ func TestSuspendedPutIfMatchRoutesWithConditionAltKey(t *testing.T) {
 	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
 
 	filerImpl.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
-		if req.ConditionAltKey != "/buckets/b/k.versions/v_v1" {
-			t.Fatalf("condition alt key = %q, want /buckets/b/k.versions/v_v1", req.ConditionAltKey)
+		if req.ConditionAltKey != "/buckets/b/k.versions" {
+			t.Fatalf("condition alt key = %q, want /buckets/b/k.versions", req.ConditionAltKey)
 		}
 	}
 
@@ -550,5 +560,55 @@ func TestSuspendedPutIfMatchRoutesWithConditionAltKey(t *testing.T) {
 	}
 	if filerImpl.txnCount != 1 {
 		t.Fatalf("conditional suspended write should route one transaction, got %d", filerImpl.txnCount)
+	}
+}
+
+// When the latest version is a delete marker, a suspended If-None-Match: *
+// write must treat the object as absent — the fallback resolves a tombstone
+// to "no current version", not an existing one.
+func TestSuspendedPutIfNoneMatchWithDeleteMarkerLatest(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume: volume,
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {
+				Name:        "b",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningSuspended)},
+			},
+			"/buckets/b/k.versions": {
+				Name:        "k.versions",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionFileNameKey: []byte("v_v1"),
+				},
+			},
+			"/buckets/b/k.versions/v_v1": {
+				Name:       "v_v1",
+				Attributes: &filer_pb.FuseAttributes{FileSize: 0},
+				Extended: map[string][]byte{
+					s3_constants.ExtVersionIdKey:    []byte("v1"),
+					s3_constants.ExtDeleteMarkerKey: []byte("true"),
+				},
+			},
+		},
+		apply: true,
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader("new"))
+	r.Header.Set(s3_constants.IfNoneMatch, "*")
+	_, code, _ := s3a.putSuspendedVersioningObject(r, "b", "k", r.Body, "")
+	if code != s3err.ErrNone {
+		t.Fatalf("suspended If-None-Match PUT over a delete-marker latest = %v, want success", code)
+	}
+	if filerImpl.entries["/buckets/b/k"] == nil {
+		t.Fatal("null-version entry was not created")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -375,12 +376,14 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			conditionPath = util.FullPath(req.ConditionKey)
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
-		// The caller can name a fallback entry evaluated when the primary is
-		// absent — a suspended-versioning write checks "the null slot if
-		// present, else the latest version" atomically under this lock.
+		// The caller can name a fallback evaluated when the primary is absent —
+		// a suspended-versioning write checks "the null slot if present, else
+		// the latest version" atomically under this lock. condition_alt_key is
+		// the object's .versions directory, and the latest it resolves to is
+		// read from the pointer maintained by the same lock, so a concurrent
+		// version delete cannot move which entry the condition sees.
 		if findErr == filer_pb.ErrNotFound && req.ConditionAltKey != "" {
-			conditionPath = util.FullPath(req.ConditionAltKey)
-			current, findErr = fs.filer.FindEntry(ctx, conditionPath)
+			current, conditionPath, findErr = fs.latestVersionedConditionEntry(ctx, util.FullPath(req.ConditionAltKey))
 		}
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
 			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
@@ -405,6 +408,38 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	}
 
 	return &filer_pb.ObjectTransactionResponse{}, nil
+}
+
+// latestVersionedConditionEntry resolves the object a conditional write should
+// be checked against inside a .versions directory: the entry the latest-version
+// pointer names, or nothing when the pointer names a delete marker — a
+// tombstone is not a current version. A missing pointer or a pointer to a file
+// that is gone means the metadata cannot answer the question, which reports an
+// error rather than guessing at either branch.
+func (fs *FilerServer) latestVersionedConditionEntry(ctx context.Context, versionsDir util.FullPath) (*filer.Entry, util.FullPath, error) {
+	versionsEntry, err := fs.filer.FindEntry(ctx, versionsDir)
+	if err == filer_pb.ErrNotFound || versionsEntry == nil {
+		return nil, versionsDir, filer_pb.ErrNotFound
+	}
+	if err != nil {
+		return nil, versionsDir, err
+	}
+	latestName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+	if latestName == "" {
+		return nil, versionsDir, fmt.Errorf("%s has no latest-version pointer", versionsDir)
+	}
+	latestPath := util.NewFullPath(string(versionsDir), latestName)
+	entry, err := fs.filer.FindEntry(ctx, latestPath)
+	if err == filer_pb.ErrNotFound {
+		return nil, latestPath, fmt.Errorf("latest-version pointer %s names a missing entry", latestPath)
+	}
+	if err != nil {
+		return nil, latestPath, err
+	}
+	if string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true" {
+		return nil, latestPath, filer_pb.ErrNotFound
+	}
+	return entry, latestPath, nil
 }
 
 // ObjectTransactionBatch applies several object transactions in one round trip,

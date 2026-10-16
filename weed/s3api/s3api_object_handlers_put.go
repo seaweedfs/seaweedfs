@@ -1838,12 +1838,10 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// splitting check and write across a gateway lock that routed writes skip.
 	conditionAltKey := ""
 	if headers, headersErr := parseConditionalHeaders(r); headersErr == s3err.ErrNone && headers.isSet {
-		versionsPath := normalizedObject + s3_constants.VersionsFolder
-		if versionsEntry, verErr := s3a.getEntry(s3a.bucketDir(bucket), versionsPath); verErr == nil {
-			if name := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey]); name != "" {
-				conditionAltKey = s3a.toFilerPath(bucket, versionsPath+"/"+name)
-			}
-		}
+		// The filer resolves the latest pointer under the same lock that
+		// serializes the write, so the condition cannot read a version a
+		// concurrent delete has already displaced.
+		conditionAltKey = s3a.toFilerPath(bucket, normalizedObject+s3_constants.VersionsFolder)
 	}
 	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, normalizedObject, 1, 0, &putFinalize{
 		conditionAltKey: conditionAltKey,
