@@ -343,15 +343,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				updatedEntry = cloneProtoEntry(rawEntry)
 			}
 			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
-			if dstVersioningState == s3_constants.VersioningEnabled {
-				// A versioned destination writes a fresh version, so retention
-				// comes from the copy headers or the bucket default, not the
-				// source version. Unversioned self-copies update the same
-				// object and keep its lock state.
-				dropCopyLockKeys(updatedEntry.Extended)
-				if errCode := s3a.applyCopyObjectLockHeaders(r, dstBucket, dstObject, updatedEntry); errCode != s3err.ErrNone {
-					return errCode
-				}
+			// The update keeps the object's existing lock state, but request
+			// lock headers still need validating so a disallowed combination
+			// is rejected rather than silently ignored.
+			if errCode := s3a.applyCopyObjectLockHeaders(r, dstBucket, dstObject, updatedEntry); errCode != s3err.ErrNone {
+				return errCode
 			}
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
@@ -619,14 +615,6 @@ func isCopyLockKey(key string) bool {
 		return true
 	}
 	return false
-}
-
-func dropCopyLockKeys(extended map[string][]byte) {
-	for k := range extended {
-		if isCopyLockKey(k) {
-			delete(extended, k)
-		}
-	}
 }
 
 // applyCopyObjectLockHeaders resolves the copied object's retention: explicit

@@ -84,16 +84,15 @@ func TestVeeamObjectLockBugFix(t *testing.T) {
 // bucket's default; the source's lock keys never carry into the destination
 // entry.
 func TestCopyDoesNotInheritLockKeys(t *testing.T) {
-	extended := map[string][]byte{
-		s3_constants.ExtObjectLockModeKey:     []byte("COMPLIANCE"),
-		s3_constants.ExtRetentionUntilDateKey: []byte("9999999999"),
-		s3_constants.ExtLegalHoldKey:          []byte("ON"),
-		s3_constants.ExtAmzOwnerKey:           []byte("owner"),
-		"custom-key":                          []byte("value"),
+	// The destination-Extended copy loop filters on isCopyLockKey, so
+	// retention and legal hold never carry over from the source entry.
+	for _, key := range []string{
+		s3_constants.ExtObjectLockModeKey,
+		s3_constants.ExtRetentionUntilDateKey,
+		s3_constants.ExtLegalHoldKey,
+	} {
+		assert.True(t, isCopyLockKey(key), "%s must be filtered from a copy destination", key)
 	}
-	dropCopyLockKeys(extended)
-	assert.NotContains(t, extended, s3_constants.ExtObjectLockModeKey)
-	assert.NotContains(t, extended, s3_constants.ExtRetentionUntilDateKey)
-	assert.NotContains(t, extended, s3_constants.ExtLegalHoldKey)
-	assert.Equal(t, "value", string(extended["custom-key"]))
+	assert.False(t, isCopyLockKey(s3_constants.ExtAmzOwnerKey))
+	assert.False(t, isCopyLockKey("custom-key"))
 }
