@@ -47,7 +47,7 @@ func TestSanitizeZipMemberName(t *testing.T) {
 
 func TestSpoolZipReaderMemory(t *testing.T) {
 	data := []byte(strings.Repeat("x", 1024))
-	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data), int64(len(data)))
+	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("spool: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSpoolZipReaderMemory(t *testing.T) {
 
 func TestSpoolZipReaderTempFile(t *testing.T) {
 	data := bytes.Repeat([]byte("y"), zipSpoolMemoryLimit+1)
-	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data), int64(len(data)))
+	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("spool: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestSpoolZipReaderRoundTrip(t *testing.T) {
 	w.Write([]byte("hello"))
 	zw.Close()
 
-	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		t.Fatalf("spool: %v", err)
 	}

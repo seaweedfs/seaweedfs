@@ -20,17 +20,17 @@ const (
 
 // SpoolZipReader buffers r into a seekable source for zip.NewReader: memory for
 // small archives, a temp file otherwise. The returned cleanup releases it.
-func SpoolZipReader(r io.Reader, size int64) (ra io.ReaderAt, n int64, cleanup func(), err error) {
+func SpoolZipReader(r io.Reader) (ra io.ReaderAt, n int64, cleanup func(), err error) {
 	nop := func() {}
-	if size >= 0 && size <= zipSpoolMemoryLimit {
-		var buf []byte
-		if buf, err = io.ReadAll(r); err != nil {
-			return nil, 0, nop, err
-		}
-		return bytes.NewReader(buf), int64(len(buf)), nop, nil
+	head, err := io.ReadAll(io.LimitReader(r, zipSpoolMemoryLimit+1))
+	if err != nil {
+		return nil, 0, nop, err
 	}
-	var f *os.File
-	if f, err = os.CreateTemp("", "seaweedfs-extract-*.zip"); err != nil {
+	if int64(len(head)) <= zipSpoolMemoryLimit {
+		return bytes.NewReader(head), int64(len(head)), nop, nil
+	}
+	f, err := os.CreateTemp("", "seaweedfs-extract-*.zip")
+	if err != nil {
 		return nil, 0, nop, err
 	}
 	cleanup = func() {
@@ -38,7 +38,16 @@ func SpoolZipReader(r io.Reader, size int64) (ra io.ReaderAt, n int64, cleanup f
 		f.Close()
 		os.Remove(name)
 	}
-	if n, err = io.Copy(f, r); err != nil {
+	if _, err = f.Write(head); err == nil {
+		var rest int64
+		if rest, err = io.Copy(f, io.LimitReader(r, ZipExtractMaxBytes+1)); err == nil {
+			n = int64(len(head)) + rest
+		}
+	}
+	if err == nil && n > ZipExtractMaxBytes {
+		err = fmt.Errorf("zip archive exceeds %d bytes", ZipExtractMaxBytes)
+	}
+	if err != nil {
 		cleanup()
 		return nil, 0, nop, err
 	}

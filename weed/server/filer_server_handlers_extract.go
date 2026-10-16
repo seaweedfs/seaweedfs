@@ -58,7 +58,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 		}
 	}
 
-	ra, size, cleanup, err := filer.SpoolZipReader(reader, contentLength)
+	ra, size, cleanup, err := filer.SpoolZipReader(reader)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read input: %w", err))
 		return
