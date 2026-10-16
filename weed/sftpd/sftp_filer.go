@@ -263,6 +263,13 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
 		return err
 	}
+	if _, err := fs.getEntry(absTarget); err == nil {
+		if err := fs.checkFilePermission(absTarget, "delete"); err != nil {
+			return err
+		}
+	} else if err != os.ErrNotExist {
+		return err
+	}
 	oldDir, oldName := util.FullPath(absPath).DirAndName()
 	newDir, newName := util.FullPath(absTarget).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {

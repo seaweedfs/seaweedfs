@@ -2,6 +2,7 @@ package sftpd
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"testing"
@@ -133,6 +134,55 @@ func TestNewFileWriterChecksTargetFile(t *testing.T) {
 	delete(filer.entries, "/home/alice/nested/ok.f")
 	if err := write("/gone/deeper.txt"); err != nil {
 		t.Errorf("expected write when ancestors resolve to the writable dir, got %v", err)
+	}
+}
+
+// renameEntry must honor a more specific ACL on an existing target: renaming
+// over a read-only file deletes it, so it requires delete permission on the
+// target file itself, not only write permission on the target directory.
+func TestRenameEntryChecksTargetFile(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/home/alice":            {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/own.txt":    {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		"/home/alice/ok.txt":     {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		"/home/alice/locked.txt": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice":            {"read", "write", "list", "delete", "rename"},
+				"/home/alice/locked.txt": {"read", "list"},
+			},
+		},
+	}
+
+	// the fake filer has no AtomicRenameEntry, so an authorized rename fails
+	// with a gRPC error; a denied one fails with os.ErrPermission
+	renameDenied := func(src, dst string) bool {
+		return errors.Is(fs.renameEntry(src, dst), os.ErrPermission)
+	}
+
+	if !renameDenied("/home/alice/own.txt", "/home/alice/locked.txt") {
+		t.Error("expected rename over a read-only file to be denied")
+	}
+	if renameDenied("/home/alice/own.txt", "/home/alice/ok.txt") {
+		t.Error("expected rename over a writable file to be allowed")
+	}
+	if renameDenied("/home/alice/own.txt", "/home/alice/new.txt") {
+		t.Error("expected rename onto a new path in a writable dir to be allowed")
 	}
 }
 
