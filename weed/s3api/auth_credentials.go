@@ -1366,8 +1366,16 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 		return fmt.Errorf("upsert identity failed: empty identity name")
 	}
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{ident},
+	}
 	// The wire proto lacks runtime inline policy names; merging it raw would
 	// drop them until the next reload and authorize by flattened Actions.
+	// Reattach the names and their documents, scoped to this identity: a name
+	// without its document would deny requests the policy allows until the
+	// next reload. Inline runtime names are only ever populated from this
+	// store (managed policies propagate on the PutPolicy channel), so a store
+	// read cannot install a document older than the committed one.
 	if iam.credentialManager != nil {
 		if store, ok := iam.credentialManager.GetStore().(credential.InlinePolicyStore); ok {
 			policyNames, err := store.ListUserInlinePolicies(context.Background(), ident.Name)
@@ -1375,13 +1383,30 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 				return err
 			}
 			for _, policyName := range policyNames {
-				ident.PolicyNames = appendUniquePolicyName(ident.PolicyNames, inlinePolicyRuntimeName(ident.Name, policyName))
+				runtimeName := inlinePolicyRuntimeName(ident.Name, policyName)
+				ident.PolicyNames = appendUniquePolicyName(ident.PolicyNames, runtimeName)
+				doc, err := store.GetUserInlinePolicy(context.Background(), ident.Name, policyName)
+				if err != nil {
+					return err
+				}
+				if doc == nil {
+					continue
+				}
+				content, err := json.Marshal(doc)
+				if err != nil {
+					return fmt.Errorf("failed to marshal inline policy %q for user %q: %w", policyName, ident.Name, err)
+				}
+				config.Policies = append(config.Policies, &iam_pb.Policy{Name: runtimeName, Content: string(content)})
 			}
 		}
 	}
-	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{ident},
-	}, false, false)
+	if err := iam.MergeS3ApiConfiguration(config, false, false); err != nil {
+		return err
+	}
+	if len(config.Policies) > 0 {
+		iam.resyncIAMManagerPolicies()
+	}
+	return nil
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.
@@ -3173,7 +3198,9 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 	glog.V(1).Infof("IAM: put group %s", group.Name)
 
 	// As for identity pushes, the wire proto lacks the group's runtime
-	// inline policy names.
+	// inline policy names; reattach them with their documents, scoped to
+	// this group.
+	var inlinePolicies []*iam_pb.Policy
 	if iam.credentialManager != nil {
 		if store, ok := iam.credentialManager.GetStore().(credential.GroupInlinePolicyStore); ok {
 			policyNames, err := store.ListGroupInlinePolicies(context.Background(), group.Name)
@@ -3181,13 +3208,25 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 				return err
 			}
 			for _, policyName := range policyNames {
-				group.PolicyNames = appendUniquePolicyName(group.PolicyNames, inlineGroupPolicyRuntimeName(group.Name, policyName))
+				runtimeName := inlineGroupPolicyRuntimeName(group.Name, policyName)
+				group.PolicyNames = appendUniquePolicyName(group.PolicyNames, runtimeName)
+				doc, err := store.GetGroupInlinePolicy(context.Background(), group.Name, policyName)
+				if err != nil {
+					return err
+				}
+				if doc == nil {
+					continue
+				}
+				content, err := json.Marshal(doc)
+				if err != nil {
+					return fmt.Errorf("failed to marshal inline policy %q for group %q: %w", policyName, group.Name, err)
+				}
+				inlinePolicies = append(inlinePolicies, &iam_pb.Policy{Name: runtimeName, Content: string(content)})
 			}
 		}
 	}
 
 	iam.m.Lock()
-	defer iam.m.Unlock()
 
 	// Remove old reverse index entries for this group
 	if old, ok := iam.groups[group.Name]; ok && !old.Disabled {
@@ -3205,6 +3244,20 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 		}
 	}
 
+	if len(inlinePolicies) > 0 {
+		if iam.policies == nil {
+			iam.policies = make(map[string]*iam_pb.Policy)
+		}
+		for _, policy := range inlinePolicies {
+			iam.policies[policy.Name] = policy
+		}
+		iam.rebuildIAMPolicyEngineLocked()
+	}
+	iam.m.Unlock()
+
+	if len(inlinePolicies) > 0 {
+		iam.resyncIAMManagerPolicies()
+	}
 	return nil
 }
 

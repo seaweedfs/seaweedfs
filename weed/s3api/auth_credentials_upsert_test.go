@@ -17,6 +17,8 @@ import (
 // inline policy flattened into Actions but not its runtime policy name. The
 // upsert must keep the identity on the attached-policy route; otherwise its
 // coarse "Write:bucket" action authorizes deletes the policy never granted.
+// The push must also install the policy document itself: the inline policy
+// here is never loaded by a full reload, so only the push can supply it.
 func TestUpsertIdentityKeepsInlinePolicyAuthorization(t *testing.T) {
 	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{{
 		Name:        "writer",
@@ -35,7 +37,6 @@ func TestUpsertIdentityKeepsInlinePolicyAuthorization(t *testing.T) {
 		}]
 	}`)))
 	require.NoError(t, s3a.iam.credentialManager.PutUserInlinePolicy(ctx, "writer", "writer", doc))
-	require.NoError(t, s3a.iam.LoadS3ApiConfigurationFromCredentialManager())
 
 	pushed, err := s3a.iam.credentialManager.GetUser(ctx, "writer")
 	require.NoError(t, err)
@@ -47,15 +48,68 @@ func TestUpsertIdentityKeepsInlinePolicyAuthorization(t *testing.T) {
 	require.NotNil(t, ident)
 	require.Contains(t, ident.PolicyNames, inlinePolicyRuntimeName("writer", "writer"))
 
-	req, err := http.NewRequest(http.MethodDelete, "http://s3/bucket/obj", nil)
+	_, err = s3a.iam.GetPolicy(inlinePolicyRuntimeName("writer", "writer"))
+	require.NoError(t, err, "the push must install the inline policy document, not just its name")
+
+	req, err := http.NewRequest(http.MethodGet, "http://s3/bucket/obj", nil)
+	require.NoError(t, err)
+	assert.Equal(t, s3err.ErrNone,
+		s3a.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_READ, "bucket", "obj"),
+		"an allowed request must succeed through the pushed inline policy")
+
+	req, err = http.NewRequest(http.MethodDelete, "http://s3/bucket/obj", nil)
 	require.NoError(t, err)
 	assert.Equal(t, s3err.ErrAccessDenied,
 		s3a.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_WRITE, "bucket", "obj"),
 		"an identity pushed without its inline policy must not fall back to legacy Actions")
 }
 
+// A pushed identity must also refresh a cached inline policy document that has
+// since been replaced in the store; otherwise the stale allow keeps
+// authorizing requests the new policy revoked.
+func TestUpsertIdentityRefreshesInlinePolicyDocument(t *testing.T) {
+	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{{
+		Name:        "writer",
+		Credentials: []*iam_pb.Credential{{AccessKey: "AKW", SecretKey: "secret"}},
+		Actions:     []string{"Read:bucket", "Write:bucket", "List:bucket"},
+	}})
+	ctx := context.Background()
+
+	var doc policy_engine.PolicyDocument
+	require.NoError(t, doc.UnmarshalJSON([]byte(`{
+		"Version":"2012-10-17",
+		"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]
+	}`)))
+	require.NoError(t, s3a.iam.credentialManager.PutUserInlinePolicy(ctx, "writer", "writer", doc))
+	require.NoError(t, s3a.iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	ident := s3a.iam.lookupByIdentityName("writer")
+	require.NotNil(t, ident)
+	req, err := http.NewRequest(http.MethodGet, "http://s3/bucket/obj", nil)
+	require.NoError(t, err)
+	require.Equal(t, s3err.ErrNone,
+		s3a.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_READ, "bucket", "obj"))
+
+	require.NoError(t, doc.UnmarshalJSON([]byte(`{
+		"Version":"2012-10-17",
+		"Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"*"}]
+	}`)))
+	require.NoError(t, s3a.iam.credentialManager.PutUserInlinePolicy(ctx, "writer", "writer", doc))
+
+	pushed, err := s3a.iam.credentialManager.GetUser(ctx, "writer")
+	require.NoError(t, err)
+	require.NoError(t, s3a.iam.UpsertIdentity(pushed))
+
+	ident = s3a.iam.lookupByIdentityName("writer")
+	require.NotNil(t, ident)
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.iam.VerifyActionPermission(req, ident, s3_constants.ACTION_READ, "bucket", "obj"),
+		"a push must replace the stale cached document, not keep the old allow")
+}
+
 // The same applies to PutGroup pushes: the persisted group proto lacks the
-// group's runtime inline policy names.
+// group's runtime inline policy names, and the inline document is never
+// loaded by a full reload here, so only the push can supply it.
 func TestPutGroupKeepsInlinePolicyAuthorization(t *testing.T) {
 	s3a := newTestS3ApiServerWithMemoryIAM(t, []*iam_pb.Identity{{Name: "alice"}})
 	ctx := context.Background()
@@ -68,7 +122,6 @@ func TestPutGroupKeepsInlinePolicyAuthorization(t *testing.T) {
 		"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]
 	}`)))
 	require.NoError(t, s3a.iam.credentialManager.PutGroupInlinePolicy(ctx, "devs", "p", doc))
-	require.NoError(t, s3a.iam.LoadS3ApiConfigurationFromCredentialManager())
 
 	pushed, err := s3a.iam.credentialManager.GetGroup(ctx, "devs")
 	require.NoError(t, err)
@@ -77,6 +130,9 @@ func TestPutGroupKeepsInlinePolicyAuthorization(t *testing.T) {
 	s3a.iam.m.RLock()
 	require.Contains(t, s3a.iam.groups["devs"].PolicyNames, inlineGroupPolicyRuntimeName("devs", "p"))
 	s3a.iam.m.RUnlock()
+
+	_, err = s3a.iam.GetPolicy(inlineGroupPolicyRuntimeName("devs", "p"))
+	require.NoError(t, err, "the push must install the group's inline policy document")
 
 	ident := s3a.iam.lookupByIdentityName("alice")
 	require.NotNil(t, ident)
