@@ -2160,21 +2160,30 @@ func TestEmbeddedIamGetActionsPrefixScopedResource(t *testing.T) {
 		"PutObject outside the allowed prefix should be denied")
 }
 
-// TestEmbeddedIamGetActionsMultipartListing covers issue #11738: the AWS
-// names for listing multipart uploads and parts were rejected as invalid
-// actions, so no inline policy could grant those operations.
+// TestEmbeddedIamGetActionsMultipartListing covers the AWS names for
+// listing multipart uploads and parts: they grant only the named listing
+// operation, never a general Read on the bucket.
 func TestEmbeddedIamGetActionsMultipartListing(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 
 	// Check each action on its own so a correct mapping for one cannot hide
 	// a wrong mapping for the other.
-	for _, action := range []string{"s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts"} {
-		t.Run(action, func(t *testing.T) {
+	for _, tc := range []struct {
+		policyAction string
+		grant        string
+		url          string
+		object       string
+	}{
+		{"s3:ListBucketMultipartUploads", "ListBucketMultipartUploads:demo", "/demo?uploads", ""},
+		{"s3:ListMultipartUploadParts", "ListMultipartUploadParts:demo", "/demo/key?uploadId=u1", "key"},
+	} {
+		t.Run(tc.policyAction, func(t *testing.T) {
 			policyDoc := `{
 				"Version": "2012-10-17",
 				"Statement": [{
 					"Effect": "Allow",
-					"Action": ["` + action + `"],
+					"Action": ["` + tc.policyAction + `"],
 					"Resource": ["arn:aws:s3:::demo", "arn:aws:s3:::demo/*"]
 				}]
 			}`
@@ -2184,9 +2193,10 @@ func TestEmbeddedIamGetActionsMultipartListing(t *testing.T) {
 
 			actions, err := api.getActions(&policy)
 			require.NoError(t, err)
+			require.NotEmpty(t, actions)
 			for _, a := range actions {
-				assert.True(t, strings.HasPrefix(a, ACTION_READ+":"),
-					"%s should only grant Read, got %q", action, a)
+				assert.Equal(t, tc.grant, a,
+					"%s should only grant its own listing operation", tc.policyAction)
 			}
 
 			identity := &Identity{Name: "bob"}
@@ -2194,17 +2204,24 @@ func TestEmbeddedIamGetActionsMultipartListing(t *testing.T) {
 				identity.Actions = append(identity.Actions, Action(a))
 			}
 
-			// ListMultipartUploads and ListParts are routed under ACTION_READ.
-			assert.True(t, identity.CanDo(ACTION_READ, "demo", ""),
-				"list-multipart-uploads on the bucket should be authorized")
-			assert.True(t, identity.CanDo(ACTION_READ, "demo", "key"),
-				"list-parts on an object in the bucket should be authorized")
+			// The listing routes are gated on ACTION_READ, but the grant must
+			// not authorize object reads or anything else.
+			assert.False(t, identity.CanDo(ACTION_READ, "demo", "key"),
+				"a listing grant must not allow object reads")
 			assert.False(t, identity.CanDo(ACTION_WRITE, "demo", "key"),
 				"a listing grant must not allow writes")
 			assert.False(t, identity.CanDo(ACTION_LIST, "demo", ""),
 				"a listing grant must not allow ListObjects")
-			assert.False(t, identity.CanDo(ACTION_READ, "other", ""),
+
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			assert.Equal(t, s3err.ErrNone, iam.VerifyActionPermission(req, identity, ACTION_READ, "demo", tc.object),
+				"the resolved listing action should be authorized")
+			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(req, identity, ACTION_READ, "other", tc.object),
 				"the grant must stay scoped to the policy's bucket")
+
+			getReq := httptest.NewRequest(http.MethodGet, "/demo/key", nil)
+			assert.Equal(t, s3err.ErrAccessDenied, iam.VerifyActionPermission(getReq, identity, ACTION_READ, "demo", "key"),
+				"the grant must not authorize GetObject")
 		})
 	}
 }

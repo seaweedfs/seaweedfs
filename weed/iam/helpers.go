@@ -145,10 +145,12 @@ var baseS3ActionMap = map[string]string{
 	"AbortMultipartUpload":    s3_constants.ACTION_WRITE,
 	"ListMultipartUploads":    s3_constants.ACTION_WRITE,
 	"ListParts":               s3_constants.ACTION_WRITE,
-	// AWS IAM names for the multipart listing operations. Their routes are
-	// registered under ACTION_READ, so that is what they must grant.
-	"ListBucketMultipartUploads": s3_constants.ACTION_READ,
-	"ListMultipartUploadParts":   s3_constants.ACTION_READ,
+	// AWS IAM names for the multipart listing operations get their own
+	// action names so a policy grant cannot widen into a general Read
+	// or Write grant; VerifyActionPermission matches them against the
+	// resolved request action.
+	"ListBucketMultipartUploads": s3_constants.ACTION_LIST_MULTIPART_UPLOADS,
+	"ListMultipartUploadParts":   s3_constants.ACTION_LIST_PARTS,
 	// Retention and legal hold operations
 	"GetObjectRetention":        s3_constants.ACTION_GET_OBJECT_RETENTION,
 	"PutObjectRetention":        s3_constants.ACTION_PUT_OBJECT_RETENTION,

@@ -2826,7 +2826,12 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 		}
 	case authorizeViaLegacyActions:
 		if !identity.CanDo(action, bucket, object) {
-			return s3err.ErrAccessDenied
+			// Routes are gated on coarse actions, but a grant may name the
+			// resolved operation itself (e.g. listing multipart uploads).
+			resolved := Action(strings.TrimPrefix(ResolveS3Action(r, string(action), bucket, object), "s3:"))
+			if resolved == "" || resolved == action || !identity.CanDo(resolved, bucket, object) {
+				return s3err.ErrAccessDenied
+			}
 		}
 		return s3err.ErrNone
 	default:
