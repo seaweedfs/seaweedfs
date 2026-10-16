@@ -143,6 +143,38 @@ func TestExtractZipArchiveNotAZip(t *testing.T) {
 	}
 }
 
+// A member larger than chunkSize must not take the inline fast path when
+// SaveToFilerLimit exceeds chunkSize — the first chunk is not the whole member.
+func TestExtractZipArchiveMemberLargerThanChunk(t *testing.T) {
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	fs, _ := newInlineAppendUploadServer(t, f, 4<<20, 1) // inline limit exceeds the 1 MiB chunkSize
+	member := bytes.Repeat([]byte("z"), (1<<20)+1)
+	zipBytes := buildTestZip(t, map[string]string{"big.bin": string(member)}, nil, nil)
+
+	r := httptest.NewRequest(http.MethodPut, "/dst/pack.zip?extract=zip", bytes.NewReader(zipBytes))
+	w := httptest.NewRecorder()
+	fs.PostHandler(w, r, int64(len(zipBytes)))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	var result FilerExtractResult
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("member errors: %v", result.Errors)
+	}
+	entry, err := f.FindEntry(r.Context(), util.FullPath("/dst/big.bin"))
+	if err != nil {
+		t.Fatalf("member missing: %v", err)
+	}
+	if int64(entry.Attr.FileSize) != int64(len(member)) {
+		t.Fatalf("member stored truncated: %d bytes, want %d", entry.Attr.FileSize, len(member))
+	}
+}
+
 func TestExtractZipArchiveMultipartPost(t *testing.T) {
 	fs, f := newExtractTestServer(t)
 	zipBytes := buildTestZip(t, map[string]string{"img/1.png": "png-bytes"}, nil, nil)
