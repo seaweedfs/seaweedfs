@@ -536,6 +536,7 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 	resp.DiskType = string(v.DiskType())
 	resp.VolumeInfo = v.GetVolumeInfo()
 	resp.Version = uint32(v.Version())
+	resp.ExpireAtSec = v.ExpireAtSec()
 	return resp, nil
 }
 

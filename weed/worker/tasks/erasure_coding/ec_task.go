@@ -56,6 +56,10 @@ type ErasureCodingTask struct {
 	// re-delete and remove the now-EC .vif those servers share.
 	emptyReplicasDeleted map[string]bool
 
+	// expireAtSec is the source volume's TTL expiry read with the file copy;
+	// it goes into the .vif so the EC volume honors the collection's TTL.
+	expireAtSec uint64
+
 	// encodedBlockSize is the shard block layout WriteEcFiles actually encoded
 	// with, read back off the EC context. Every holder must report serving the
 	// same one before the source volume may be deleted.
@@ -512,6 +516,7 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(ctx context.Context, workDir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source volume file status: %w", err)
 	}
+	t.expireAtSec = fileStatus.GetExpireAtSec()
 
 	t.GetLogger().WithFields(map[string]interface{}{
 		"volume_id":           t.volumeID,
@@ -749,6 +754,7 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 	volumeInfo := &volume_server_pb.VolumeInfo{
 		Version:       uint32(needle.GetCurrentVersion()),
 		EcShardConfig: ecShardConfig,
+		ExpireAtSec:   t.expireAtSec,
 	}
 	// The decoder resolves the shard block layout from the encode-time .dat
 	// size; without it, decoding falls back to inferring the layout from the
