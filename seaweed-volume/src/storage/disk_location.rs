@@ -650,11 +650,13 @@ impl DiskLocation {
 
         for vid in vids {
             if let Some(mut v) = self.volumes.remove(&vid) {
-                crate::metrics::VOLUME_GAUGE
-                    .with_label_values(&[&v.collection, "volume"])
-                    .dec();
                 if let Err(e) = v.destroy(false, false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
+                    self.volumes.insert(vid, v);
+                } else {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&v.collection, "volume"])
+                        .dec();
                 }
             }
         }
