@@ -739,6 +739,13 @@ func (s3a *S3ApiServer) recheckPolicyForKeyWithLookup(r *http.Request, method, b
 	if errCode != s3err.ErrNone || !checked {
 		return s3err.ErrAccessDenied
 	}
+	// A bucket-policy Allow never overrides an explicit Deny in the caller's
+	// own attached or session policies — the first phase applied that veto,
+	// so the tag-aware recheck must too.
+	identity, _ := GetIdentityFromContext(r).(*Identity)
+	if s3a.iam != nil && s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(keyReq, identity, Action(action), bucket, object) {
+		return s3err.ErrAccessDenied
+	}
 	return s3err.ErrNone
 }
 
