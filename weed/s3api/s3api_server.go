@@ -28,6 +28,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -697,10 +698,48 @@ func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, b
 	target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 	dir, name := target.DirAndName()
 	entry, err := s3a.getEntry(dir, name)
-	if err != nil || entry == nil {
+	if err != nil {
+		// The tag conditions cannot be evaluated without the entry; failing
+		// open would let a tag-gated Deny slip through a transient miss.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return s3err.ErrNone
+		}
+		glog.Errorf("%s: recheck lookup for %s/%s failed: %v", handlerName, bucket, object, err)
+		return s3err.ErrInternalError
+	}
+	if entry == nil {
 		return s3err.ErrNone
 	}
 	return s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, handlerName)
+}
+
+// recheckPolicyForKeyWithLookup re-decides a first-phase deny on one key for a
+// synthesized method, resolving the entry the way the read path does (versions
+// included) so s3:ExistingObjectTag conditions see the object's real tags.
+// Unlike the deny-side rechecks, an indeterminate result does not grant: the
+// caller reports the original verdict either way, so only a statement that
+// matches with tags in hand can turn a deny into an allow, and a missed lookup
+// never widens access or reveals whether the key exists.
+func (s3a *S3ApiServer) recheckPolicyForKeyWithLookup(r *http.Request, method, bucket, object, versionId, action, handlerName string) s3err.ErrorCode {
+	if s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket) {
+		return s3err.ErrAccessDenied
+	}
+	versioningState, err := s3a.getVersioningState(bucket)
+	if err != nil {
+		glog.Errorf("%s: recheck versioning state for %s: %v", handlerName, bucket, err)
+		return s3err.ErrAccessDenied
+	}
+	entry, err := s3a.resolveCopySourceEntry(bucket, object, versionId, versioningState)
+	entry = prefixObjectSource(entry)
+	if err != nil || entry == nil {
+		return s3err.ErrAccessDenied
+	}
+	keyReq := objectKeyPolicyRequest(r, method, bucket, object, versionId)
+	errCode, checked := s3a.checkPolicyWithEntry(keyReq, bucket, object, action, "", entry.Extended)
+	if errCode != s3err.ErrNone || !checked {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
 }
 
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
