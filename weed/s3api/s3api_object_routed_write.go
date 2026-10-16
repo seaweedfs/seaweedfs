@@ -156,6 +156,10 @@ func singleStrongETag(v string) (string, bool) {
 // restarted filer's stale ring address (e.g. a rolled K8s pod's old IP) can't hang
 // the write. The reached filer forwards to the real owner by route_key, keeping its
 // per-path lock authoritative. Mirrors getObjectEntryRoutedByKey on the read path.
+// The transaction is not replayable: it fails over only over a channel that
+// never came up, never past a possibly-committed attempt — a lost response is
+// ambiguous and re-sending could re-apply mutations over a write that landed in
+// between. The caller resolves that ambiguity (e.g. createAfterAmbiguousRoute).
 func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
 	var resp *filer_pb.ObjectTransactionResponse
 	txn := func(client filer_pb.SeaweedFilerClient) error {
@@ -173,7 +177,7 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 	if s3a.ownerRecentlyUnreachable(owner) {
 		preferred = ""
 	}
-	err := s3a.withFilerClientFailover(context.Background(), preferred, false, txn)
+	err := s3a.withFilerClientFailover(context.Background(), preferred, false, false, txn)
 	return resp, err
 }
 
@@ -337,7 +341,7 @@ func (s3a *S3ApiServer) routedSelfCopy(ctx context.Context, owner pb.ServerAddre
 	if s3a.filerClient == nil {
 		err = pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, update)
 	} else {
-		err = s3a.withFilerClientFailover(ctx, owner, false, update)
+		err = s3a.withFilerClientFailover(ctx, owner, false, false, update)
 	}
 	if err != nil {
 		return err
