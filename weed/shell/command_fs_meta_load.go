@@ -96,9 +96,27 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 		waitChan := make(chan struct{}, *concurrency)
 		defer close(waitChan)
 		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var loadErr error
+		getErr := func() error {
+			mu.Lock()
+			defer mu.Unlock()
+			return loadErr
+		}
+		setErr := func(e error) {
+			mu.Lock()
+			if loadErr == nil {
+				loadErr = e
+			}
+			mu.Unlock()
+		}
 
 		for {
 			if _, err := io.ReadFull(dst, sizeBuf); err != nil {
+				wg.Wait()
+				if loadErr := getErr(); loadErr != nil {
+					return loadErr
+				}
 				if err == io.EOF {
 					return nil
 				}
@@ -110,11 +128,13 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 			data := make([]byte, int(size))
 
 			if _, err := io.ReadFull(dst, data); err != nil {
+				wg.Wait()
 				return err
 			}
 
 			fullEntry := &filer_pb.FullEntry{}
 			if err = proto.Unmarshal(data, fullEntry); err != nil {
+				wg.Wait()
 				return err
 			}
 
@@ -139,6 +159,9 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 			fullEntry.Entry.Name = strings.ReplaceAll(fullEntry.Entry.Name, "/", "x")
 			if fullEntry.Entry.IsDirectory {
 				wg.Wait()
+				if loadErr := getErr(); loadErr != nil {
+					return loadErr
+				}
 				if errEntry := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 					Directory: fullEntry.Dir,
 					Entry:     fullEntry.Entry,
@@ -154,13 +177,14 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 						Directory: entry.Dir,
 						Entry:     entry.Entry,
 					}); errEntry != nil {
-						err = errEntry
+						setErr(errEntry)
 					}
 					defer wg.Done()
 					<-waitChan
 				}(fullEntry)
-				if err != nil {
-					return err
+				if loadErr := getErr(); loadErr != nil {
+					wg.Wait()
+					return loadErr
 				}
 				fileCount++
 			}
