@@ -142,6 +142,12 @@ type FilerServer struct {
 	recentCopyRequestsMu sync.Mutex
 	recentCopyRequests   map[string]recentCopyRequest
 
+	// outcomes of recently applied object transactions keyed by request_id, so
+	// a failover replay of the same transaction replays its outcome instead of
+	// re-applying its mutations over a newer entry
+	recentObjectTxnsMu sync.Mutex
+	recentObjectTxns   map[string]recentObjectTxn
+
 	// credential manager for IAM operations
 	CredentialManager *credential.CredentialManager
 
@@ -236,6 +242,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		subscribers:           make(map[int32]*metadataSubscriber),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		recentCopyRequests:    make(map[string]recentCopyRequest),
+		recentObjectTxns:      make(map[string]recentObjectTxn),
 		CredentialManager:     option.CredentialManager,
 		entryLockTable:        util.NewLockTable[util.FullPath](),
 		posixLocks:            posixlock.NewManager(),

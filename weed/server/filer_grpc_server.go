@@ -343,6 +343,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			ConditionKey:       req.ConditionKey,
 			RouteKey:           req.RouteKey,
 			IsMoved:            true,
+			RequestId:          req.RequestId,
 		}
 		var resp *filer_pb.ObjectTransactionResponse
 		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(owner pb.ServerAddress) error {
@@ -365,6 +366,17 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	pathLock := fs.entryLockTable.AcquireLock("ObjectTransaction", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
+	// Under the same lock the first application committed with, a failover
+	// replay of the same request replays its recorded outcome instead of
+	// re-applying mutations over whatever superseded it.
+	if resp, found := fs.recentObjectTxn(req.RequestId); found {
+		glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: replaying recorded outcome for request %s", req.LockKey, req.RequestId)
+		return resp, nil
+	}
+
+	resp := &filer_pb.ObjectTransactionResponse{}
+	defer func() { fs.rememberObjectTxn(req.RequestId, resp) }()
+
 	if conditionIsSet(req.Condition) {
 		// The condition is evaluated against condition_key when set (e.g. a
 		// version entry whose WORM guards gate the delete), while the lock stays
@@ -375,28 +387,90 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
-			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
+			resp = nil // a lookup error decides nothing; a retry must re-run, not replay
+			return resp, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
 		}
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
 		}
 		if !writeConditionSatisfied(req.Condition, current) {
 			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", conditionPath)
-			return &filer_pb.ObjectTransactionResponse{
-				Error:     "precondition failed",
-				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
-			}, nil
+			resp.Error = "precondition failed"
+			resp.ErrorCode = filer_pb.FilerError_PRECONDITION_FAILED
+			return resp, nil
 		}
 	}
 
 	for i, m := range req.Mutations {
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
-			return &filer_pb.ObjectTransactionResponse{Error: fmt.Sprintf("mutation %d: %v", i, err)}, nil
+			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
+			return resp, nil
 		}
 	}
 
-	return &filer_pb.ObjectTransactionResponse{}, nil
+	return resp, nil
+}
+
+const (
+	recentObjectTxnTTL = 2 * time.Minute
+	recentObjectTxnCap = 10000
+)
+
+type recentObjectTxn struct {
+	resp      *filer_pb.ObjectTransactionResponse
+	expiresAt time.Time
+}
+
+// recentObjectTxn returns the recorded outcome of an already-applied request,
+// so a failover replay of the same ObjectTransaction does not re-apply it.
+func (fs *FilerServer) recentObjectTxn(requestID string) (*filer_pb.ObjectTransactionResponse, bool) {
+	if requestID == "" {
+		return nil, false
+	}
+	fs.recentObjectTxnsMu.Lock()
+	defer fs.recentObjectTxnsMu.Unlock()
+
+	txn, found := fs.recentObjectTxns[requestID]
+	if !found {
+		return nil, false
+	}
+	if time.Now().After(txn.expiresAt) {
+		delete(fs.recentObjectTxns, requestID)
+		return nil, false
+	}
+	return txn.resp, true
+}
+
+func (fs *FilerServer) rememberObjectTxn(requestID string, resp *filer_pb.ObjectTransactionResponse) {
+	if requestID == "" || resp == nil {
+		return
+	}
+	fs.recentObjectTxnsMu.Lock()
+	defer fs.recentObjectTxnsMu.Unlock()
+	if fs.recentObjectTxns == nil {
+		fs.recentObjectTxns = make(map[string]recentObjectTxn)
+	}
+	if len(fs.recentObjectTxns) >= recentObjectTxnCap {
+		now := time.Now()
+		for id, txn := range fs.recentObjectTxns {
+			if now.After(txn.expiresAt) {
+				delete(fs.recentObjectTxns, id)
+			}
+		}
+		if len(fs.recentObjectTxns) >= recentObjectTxnCap {
+			// evict an arbitrary entry; losing a dedup record only degrades to
+			// the pre-dedup behavior
+			for id := range fs.recentObjectTxns {
+				delete(fs.recentObjectTxns, id)
+				break
+			}
+		}
+	}
+	fs.recentObjectTxns[requestID] = recentObjectTxn{
+		resp:      resp,
+		expiresAt: time.Now().Add(recentObjectTxnTTL),
+	}
 }
 
 // ObjectTransactionBatch applies several object transactions in one round trip,
