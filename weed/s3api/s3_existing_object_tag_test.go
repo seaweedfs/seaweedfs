@@ -257,3 +257,54 @@ func TestHasPolicyForBucket(t *testing.T) {
 	// No longer has policy
 	assert.False(t, engine.HasPolicyForBucket("test-bucket"))
 }
+
+// TestRecheckCopySourcePolicy verifies that a tag-conditioned Deny on
+// s3:GetObject also blocks CopyObject-style reads of the source object. The
+// destination request keeps its PUT method while the policy is evaluated
+// against a synthesized GET on the source key.
+func TestRecheckCopySourcePolicy(t *testing.T) {
+	s3a := &S3ApiServer{
+		policyEngine: NewBucketPolicyEngine(),
+	}
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::src-bucket", "arn:aws:s3:::src-bucket/*", "arn:aws:s3:::dst-bucket", "arn:aws:s3:::dst-bucket/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::src-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/status": ["private"]
+					}
+				}
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("src-bucket", policyJSON))
+
+	identity := &Identity{Name: "denied-user", PrincipalArn: "arn:aws:iam::123456789012:user/denied"}
+
+	req := httptest.NewRequest(http.MethodPut, "/dst-bucket/dst-key", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), identity))
+
+	privateEntry := map[string][]byte{
+		s3_constants.AmzObjectTaggingPrefix + "status": []byte("private"),
+	}
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckCopySourcePolicy(req, "src-bucket", "src-key", "", privateEntry, "test"))
+
+	publicEntry := map[string][]byte{
+		s3_constants.AmzObjectTaggingPrefix + "status": []byte("public"),
+	}
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckCopySourcePolicy(req, "src-bucket", "src-key", "", publicEntry, "test"))
+}

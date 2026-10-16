@@ -243,6 +243,11 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES, entry.Extended, "GetObjectAttributesHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Build response with only requested attributes
 	resp := &GetObjectAttributesResponse{}
 

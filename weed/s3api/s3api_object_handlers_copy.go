@@ -238,6 +238,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Cache remote-only sources before copying; otherwise the copy path below
 	// writes a destination with FileSize > 0 but no chunks/content.
 	if entry.IsInRemoteOnly() {
@@ -997,6 +1002,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectPartHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}

@@ -675,6 +675,34 @@ func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, ob
 	return errCode
 }
 
+// recheckCopySourcePolicy repeats the source object's policy check once its
+// entry is fetched, so conditions on the object's existing tags apply to a
+// CopyObject / UploadPartCopy / RenameObject source the same way they do to a
+// plain GET. The synthesized GET keeps the destination's request shape (PUT,
+// partNumber, ...) from resolving a different action.
+func (s3a *S3ApiServer) recheckCopySourcePolicy(r *http.Request, bucket, object, versionId string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
+	keyReq := objectKeyPolicyRequest(r, http.MethodGet, bucket, object, versionId)
+	return s3a.recheckPolicyWithObjectEntry(keyReq, bucket, object, string(ACTION_READ), objectEntry, handlerName)
+}
+
+// recheckTagConditionedPolicyWithLookup repeats policy evaluation with the
+// object's entry in hand so s3:ExistingObjectTag conditions apply to tagging
+// writes that did not otherwise fetch the entry. It only does the extra
+// lookup when the bucket has a policy; entry misses return ErrNone because
+// the handler reports its own NoSuchKey.
+func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, bucket, object, action, handlerName string) s3err.ErrorCode {
+	if s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket) {
+		return s3err.ErrNone
+	}
+	target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
+	dir, name := target.DirAndName()
+	entry, err := s3a.getEntry(dir, name)
+	if err != nil || entry == nil {
+		return s3err.ErrNone
+	}
+	return s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, handlerName)
+}
+
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
 // A domain is considered path-style if:
 //  1. It contains a dot (has subdomains)

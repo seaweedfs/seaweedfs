@@ -115,6 +115,9 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 		if srcErrCode != s3err.ErrNone {
 			return srcErrCode
 		}
+		if errCode := s3a.recheckCopySourcePolicy(r, bucket, srcObject, "", entry.Extended, "RenameObjectHandler"); errCode != s3err.ErrNone {
+			return errCode
+		}
 		if errCode := validateSourceConditionalHeaders(r, entry, renameSourceConditionalHeaders); errCode != s3err.ErrNone {
 			return errCode
 		}
