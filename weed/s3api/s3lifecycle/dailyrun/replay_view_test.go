@@ -47,9 +47,9 @@ func TestRunShard_WalkBoundRuleDoesNotPinCursor(t *testing.T) {
 		}}
 	}
 	events := make(chan *reader.Event, 3)
-	events <- put("short/a", 7*24*time.Hour)
-	events <- put("long/a", 6*24*time.Hour)
-	last := put("short/b", 5*24*time.Hour)
+	events <- put("short/a", s3lifecycle.DaysToDuration(7))
+	events <- put("long/a", s3lifecycle.DaysToDuration(6))
+	last := put("short/b", s3lifecycle.DaysToDuration(5))
 	events <- last
 	close(events)
 	client := &recordingClient{}
