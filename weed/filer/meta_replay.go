@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -79,6 +80,14 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		}
 		if !newer {
 			glog.V(4).Infof("deleting %v", oldPath)
+			// A directory delete on the origin removed the whole subtree, but
+			// only the directory's own key replicates. Sweep local children the
+			// origin never listed, or they orphan under a missing parent.
+			if message.OldEntry.IsDirectory {
+				if err := f.deleteReplayedFolderChildren(ctx, oldPath, message.DeleteChunks); err != nil {
+					return err
+				}
+			}
 			if err := f.Store.DeleteEntry(ctx, oldPath); err != nil {
 				return err
 			}
@@ -101,6 +110,50 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 		}
 	}
 
+	return nil
+}
+
+// deleteReplayedFolderChildren removes every local entry under dir, and the
+// chunks of children whose deletes the origin emitted with chunk deletion on.
+// Children the origin also knew about get their own delete events, so the
+// sweep only needs the prefix delete; the listing just collects chunk ids.
+func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, deleteChunks bool) error {
+	var chunksToDelete []*filer_pb.FileChunk
+	if deleteChunks {
+		if err := f.collectFolderChunks(ctx, dir, &chunksToDelete); err != nil {
+			return err
+		}
+	}
+	if err := f.Store.DeleteFolderChildren(ctx, dir); err != nil {
+		return fmt.Errorf("delete folder children %s: %w", dir, err)
+	}
+	if len(chunksToDelete) > 0 {
+		f.DeleteChunks(ctx, dir, chunksToDelete)
+	}
+	return nil
+}
+
+func (f *Filer) collectFolderChunks(ctx context.Context, dir util.FullPath, chunks *[]*filer_pb.FileChunk) error {
+	lastFileName := ""
+	for {
+		entries, _, err := f.ListDirectoryEntries(ctx, dir, lastFileName, false, PaginationSize, "", "", "")
+		if err != nil {
+			return fmt.Errorf("list folder %s: %w", dir, err)
+		}
+		for _, sub := range entries {
+			lastFileName = sub.Name()
+			if sub.IsDirectory() {
+				if err := f.collectFolderChunks(ctx, sub.FullPath, chunks); err != nil {
+					return err
+				}
+			} else {
+				*chunks = append(*chunks, sub.GetChunks()...)
+			}
+		}
+		if len(entries) < PaginationSize {
+			break
+		}
+	}
 	return nil
 }
 
