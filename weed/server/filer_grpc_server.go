@@ -376,6 +376,11 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			conditionPath = util.FullPath(req.ConditionKey)
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
+		if findErr == nil && current != nil && current.IsDirectory() {
+			// A directory is not the object: implicit directories can share a
+			// path with an S3 key, so treat it as an absent slot.
+			current, findErr = nil, filer_pb.ErrNotFound
+		}
 		// The caller can name a fallback evaluated when the primary is absent —
 		// a suspended-versioning write checks "the null slot if present, else
 		// the latest version" atomically under this lock. condition_alt_key is
@@ -418,11 +423,11 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 // error rather than guessing at either branch.
 func (fs *FilerServer) latestVersionedConditionEntry(ctx context.Context, versionsDir util.FullPath) (*filer.Entry, util.FullPath, error) {
 	versionsEntry, err := fs.filer.FindEntry(ctx, versionsDir)
-	if err == filer_pb.ErrNotFound || versionsEntry == nil {
-		return nil, versionsDir, filer_pb.ErrNotFound
-	}
 	if err != nil {
 		return nil, versionsDir, err
+	}
+	if versionsEntry == nil {
+		return nil, versionsDir, filer_pb.ErrNotFound
 	}
 	latestName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
 	if latestName == "" {
