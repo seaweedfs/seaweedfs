@@ -2166,35 +2166,47 @@ func TestEmbeddedIamGetActionsPrefixScopedResource(t *testing.T) {
 func TestEmbeddedIamGetActionsMultipartListing(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
 
-	policyDoc := `{
-		"Version": "2012-10-17",
-		"Statement": [{
-			"Effect": "Allow",
-			"Action": ["s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts"],
-			"Resource": ["arn:aws:s3:::demo", "arn:aws:s3:::demo/*"]
-		}]
-	}`
+	// Check each action on its own so a correct mapping for one cannot hide
+	// a wrong mapping for the other.
+	for _, action := range []string{"s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts"} {
+		t.Run(action, func(t *testing.T) {
+			policyDoc := `{
+				"Version": "2012-10-17",
+				"Statement": [{
+					"Effect": "Allow",
+					"Action": ["` + action + `"],
+					"Resource": ["arn:aws:s3:::demo", "arn:aws:s3:::demo/*"]
+				}]
+			}`
 
-	policy, err := api.GetPolicyDocument(&policyDoc)
-	require.NoError(t, err)
+			policy, err := api.GetPolicyDocument(&policyDoc)
+			require.NoError(t, err)
 
-	actions, err := api.getActions(&policy)
-	require.NoError(t, err)
+			actions, err := api.getActions(&policy)
+			require.NoError(t, err)
+			for _, a := range actions {
+				assert.True(t, strings.HasPrefix(a, ACTION_READ+":"),
+					"%s should only grant Read, got %q", action, a)
+			}
 
-	identity := &Identity{Name: "bob"}
-	for _, a := range actions {
-		identity.Actions = append(identity.Actions, Action(a))
+			identity := &Identity{Name: "bob"}
+			for _, a := range actions {
+				identity.Actions = append(identity.Actions, Action(a))
+			}
+
+			// ListMultipartUploads and ListParts are routed under ACTION_READ.
+			assert.True(t, identity.CanDo(ACTION_READ, "demo", ""),
+				"list-multipart-uploads on the bucket should be authorized")
+			assert.True(t, identity.CanDo(ACTION_READ, "demo", "key"),
+				"list-parts on an object in the bucket should be authorized")
+			assert.False(t, identity.CanDo(ACTION_WRITE, "demo", "key"),
+				"a listing grant must not allow writes")
+			assert.False(t, identity.CanDo(ACTION_LIST, "demo", ""),
+				"a listing grant must not allow ListObjects")
+			assert.False(t, identity.CanDo(ACTION_READ, "other", ""),
+				"the grant must stay scoped to the policy's bucket")
+		})
 	}
-
-	// ListMultipartUploads and ListParts are routed under ACTION_READ.
-	assert.True(t, identity.CanDo(ACTION_READ, "demo", ""),
-		"list-multipart-uploads on the bucket should be authorized")
-	assert.True(t, identity.CanDo(ACTION_READ, "demo", "key"),
-		"list-parts on an object in the bucket should be authorized")
-	assert.False(t, identity.CanDo(ACTION_WRITE, "demo", "key"),
-		"a listing grant must not allow writes")
-	assert.False(t, identity.CanDo(ACTION_READ, "other", ""),
-		"the grant must stay scoped to the policy's bucket")
 }
 
 // TestEmbeddedIamPutUserPolicyAllResourceWildcard reproduces issue #9209:
