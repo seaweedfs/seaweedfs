@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -98,6 +99,13 @@ func TestCheckZipLimits(t *testing.T) {
 	big.File[0].UncompressedSize64 = uint64(ZipExtractMaxBytes) + 1
 	if err := CheckZipLimits(big); err == nil {
 		t.Fatal("expected total size limit error")
+	}
+
+	overflow := &zip.Reader{File: []*zip.File{{}, {}}}
+	overflow.File[0].UncompressedSize64 = math.MaxUint64
+	overflow.File[1].UncompressedSize64 = math.MaxUint64
+	if err := CheckZipLimits(overflow); err == nil {
+		t.Fatal("expected total size overflow error")
 	}
 
 	ok := &zip.Reader{File: []*zip.File{{}, {}}}

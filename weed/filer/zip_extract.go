@@ -61,10 +61,10 @@ func CheckZipLimits(zr *zip.Reader) error {
 	}
 	var total uint64
 	for _, f := range zr.File {
-		total += f.UncompressedSize64
-		if total > uint64(ZipExtractMaxBytes) {
+		if f.UncompressedSize64 > uint64(ZipExtractMaxBytes)-total {
 			return fmt.Errorf("zip archive uncompressed size exceeds %d bytes", ZipExtractMaxBytes)
 		}
+		total += f.UncompressedSize64
 	}
 	return nil
 }
