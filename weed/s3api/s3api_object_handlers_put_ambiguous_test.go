@@ -546,6 +546,51 @@ func TestPutToFilerRoutedAmbiguousEmptyPutKeepsNewerWrite(t *testing.T) {
 	}
 }
 
+// A conditional recovery create is itself ambiguous once sent: if it commits
+// and the response is lost, replaying it on another filer can resurrect an
+// entry whose chunks a delete already reclaimed. The create must not fail over
+// past a sent attempt — the committed copy is confirmed instead.
+func TestPutToFilerRecoveryCreateNotReplayed(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	// The owner filer's transaction error flags it unreachable, so the
+	// recovery create goes to the healthy failover filer first — which commits
+	// it and loses the response.
+	filerA := &ambiguousPutFiler{
+		volume:     volume,
+		entries:    map[string]*filer_pb.Entry{},
+		txnNoApply: true,
+		txnErr:     status.Error(codes.Unavailable, "response lost"),
+	}
+	filerB := &ambiguousPutFiler{
+		volume:    volume,
+		entries:   map[string]*filer_pb.Entry{},
+		apply:     true,
+		createErr: status.Error(codes.Unavailable, "response lost after commit"),
+	}
+	addrA := startFakeFiler(t, filerA)
+	addrB := startFakeFiler(t, filerB)
+	s3a := newPutTestServer(t, addrA, addrB)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addrA)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addrA}, 1)
+
+	_, code := putTestObject(t, s3a)
+	if code != s3err.ErrNone {
+		t.Fatalf("putToFiler returned %v — the committed create should be confirmed, not replayed", code)
+	}
+	if len(filerA.conds) != 0 {
+		t.Fatal("conditional recovery create was replayed on a second filer")
+	}
+	if filerB.stores != 1 {
+		t.Fatalf("the failover filer stored the entry %d times, want once", filerB.stores)
+	}
+	if got := filerB.entries["/buckets/b/o"]; got == nil || len(got.Chunks) != 1 {
+		t.Fatalf("the committed entry is missing on the failover filer: %+v", got)
+	}
+	if deleted := volume.deleted(); len(deleted) != 0 {
+		t.Fatalf("chunks under a live entry were deleted: %v", deleted)
+	}
+}
+
 // A volume-encrypted chunk must be decrypted before SSE decryption sees it:
 // fetchChunkData feeds ciphered chunks through the cipher-aware read path and
 // slices plaintext space, while plain chunks keep streaming range reads.

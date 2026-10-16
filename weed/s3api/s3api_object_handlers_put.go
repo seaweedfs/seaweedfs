@@ -967,7 +967,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		return s3a.checkConditionalHeaders(r, bucket, object)
 	}
 	createUnderLock := func(cond *filer_pb.WriteCondition) s3err.ErrorCode {
-		createErr = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		create := func(client filer_pb.SeaweedFilerClient) error {
 			req := &filer_pb.CreateEntryRequest{
 				Directory: path.Dir(filePath),
 				Entry:     entry,
@@ -986,7 +986,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				return err
 			}
 			return nil
-		})
+		}
+		// A conditional create must not be replayed once possibly sent: a lost
+		// commit followed by a delete lets the replayed IF_NOT_EXISTS pass and
+		// recreates an entry whose chunks the delete already reclaimed.
+		if s3a.filerClient != nil {
+			createErr = s3a.withFilerClientFailover(context.Background(), "", false, cond == nil, create)
+		} else {
+			createErr = s3a.withFilerClient(context.Background(), false, create)
+		}
 		if createErr != nil {
 			return filerErrorToS3Error(createErr)
 		}
