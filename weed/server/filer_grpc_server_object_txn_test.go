@@ -3,7 +3,9 @@ package weed_server
 import (
 	"context"
 	"net"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -850,5 +852,112 @@ func TestObjectTransactionForwardsToOwner(t *testing.T) {
 	}
 	if _, ok := selfStore.entries["/buckets/b/obj"]; ok {
 		t.Errorf("non-owner must forward, not apply locally")
+	}
+}
+
+// A suspended-versioning conditional write falls back to the latest version
+// under the transaction lock: a real latest satisfies existence checks, and a
+// delete marker reads as absent.
+func TestObjectTransactionConditionFallbackResolvesLatestPointer(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	seed := func(latestName, marker string) map[string]*filer.Entry {
+		entries := map[string]*filer.Entry{
+			"/buckets/bkt/obj/.versions": {
+				Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755},
+				Extended: map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte(latestName)},
+			},
+		}
+		ext := map[string][]byte{s3_constants.ExtETagKey: []byte("abc")}
+		if marker != "" {
+			ext[s3_constants.ExtDeleteMarkerKey] = []byte(marker)
+		}
+		entries["/buckets/bkt/obj/.versions/"+latestName] = &filer.Entry{
+			Attr:     filer.Attr{Inode: 3, Mtime: now, Crtime: now, Mode: 0644},
+			Extended: ext,
+		}
+		return entries
+	}
+	req := func() *filer_pb.ObjectTransactionRequest {
+		return &filer_pb.ObjectTransactionRequest{
+			LockKey:         "/buckets/bkt/obj",
+			ConditionAltKey: "/buckets/bkt/obj/.versions",
+			Condition: &filer_pb.WriteCondition{
+				Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}},
+			},
+			Mutations: []*filer_pb.ObjectMutation{{
+				Type:      filer_pb.ObjectMutation_PUT,
+				Directory: "/buckets/bkt",
+				Entry:     &filer_pb.Entry{Name: "obj", Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 9}},
+			}},
+		}
+	}
+
+	fs, store := newTxnTestServer(t, seed("v_live", ""))
+	resp, err := fs.ObjectTransaction(context.Background(), req())
+	if err != nil || resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("latest version present: err=%v code=%v, want precondition failed", err, resp.GetErrorCode())
+	}
+
+	fs, store = newTxnTestServer(t, seed("v_gone", "true"))
+	resp, err = fs.ObjectTransaction(context.Background(), req())
+	if err != nil || resp.Error != "" {
+		t.Fatalf("delete-marker latest: err=%v resp=%q, want applied", err, resp.Error)
+	}
+	if store.entries["/buckets/bkt/obj"] == nil {
+		t.Fatal("mutation did not apply over a delete-marker latest")
+	}
+}
+
+// A bare directory at the object path — left over when /bkt/obj/child was
+// created — is not the object, so the condition must fall back to the
+// .versions resolution instead of counting the directory as an existing key.
+func TestObjectTransactionConditionIgnoresDirectory(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	seed := func(marker string) map[string]*filer.Entry {
+		return map[string]*filer.Entry{
+			"/buckets/bkt/obj": {
+				Attr: filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0755 | os.ModeDir},
+			},
+			"/buckets/bkt/obj/.versions": {
+				Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755},
+				Extended: map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v1")},
+			},
+			"/buckets/bkt/obj/.versions/v1": {
+				Attr:     filer.Attr{Inode: 3, Mtime: now, Crtime: now, Mode: 0644},
+				Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc"), s3_constants.ExtDeleteMarkerKey: []byte(marker)},
+			},
+		}
+	}
+	req := &filer_pb.ObjectTransactionRequest{
+		LockKey:         "/buckets/bkt/obj",
+		ConditionAltKey: "/buckets/bkt/obj/.versions",
+		Condition: &filer_pb.WriteCondition{
+			Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}},
+		},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: "/buckets/bkt",
+			Entry:     &filer_pb.Entry{Name: "obj", Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 9}},
+		}},
+	}
+
+	fs, _ := newTxnTestServer(t, seed("true"))
+	resp, err := fs.ObjectTransaction(context.Background(), req)
+	if err != nil {
+		t.Fatalf("directory at key with delete-marker latest: %v", err)
+	}
+	// The condition must pass so the write reaches the type-conflict path;
+	// the directory itself rejects the PUT, which is the caller's business.
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("condition must not fail on a bare directory: resp=%q", resp.Error)
+	}
+	if !strings.Contains(resp.Error, "is a directory") {
+		t.Fatalf("want the dir/file type-conflict error, got %q", resp.Error)
+	}
+
+	fs, _ = newTxnTestServer(t, seed(""))
+	resp, err = fs.ObjectTransaction(context.Background(), req)
+	if err != nil || resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("directory at key with live latest: err=%v code=%v, want precondition failed", err, resp.GetErrorCode())
 	}
 }
