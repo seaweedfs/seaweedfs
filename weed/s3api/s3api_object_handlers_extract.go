@@ -2,8 +2,12 @@ package s3api
 
 import (
 	"archive/zip"
+	"bytes"
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"hash"
 	"io"
 	"mime"
 	"net/http"
@@ -77,9 +81,35 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		s3err.WriteErrorResponse(w, r, aclCode)
 		return
 	}
-	scrubArchiveChecksums(r)
 
-	ra, size, cleanup, err := filer.SpoolZipReader(dataReader)
+	// Checksums describing the archive body are verified while it spools, then
+	// scrubbed so members are validated against their own bytes instead.
+	requestQuery := parseRequestQuery(r)
+	archiveMd5 := r.Header.Get("Content-Md5")
+	var archiveMd5Hash hash.Hash
+	if archiveMd5 != "" {
+		archiveMd5Hash = md5.New()
+		dataReader = io.TeeReader(dataReader, archiveMd5Hash)
+	}
+	archiveChecksumAlgo, archiveChecksumHeader, checksumCode := detectRequestedChecksumAlgorithmQ(r, requestQuery)
+	if checksumCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, checksumCode)
+		return
+	}
+	var archiveChecksumHash hash.Hash
+	expectedArchiveChecksum := ""
+	if archiveChecksumAlgo != ChecksumAlgorithmNone {
+		if archiveChecksumHash = getCheckSumWriter(archiveChecksumAlgo); archiveChecksumHash != nil {
+			dataReader = io.TeeReader(dataReader, archiveChecksumHash)
+		}
+		expectedArchiveChecksum = lookupHeaderOrQuery(r, requestQuery, archiveChecksumHeader)
+	}
+	scrubArchiveChecksums(r)
+	// Content-Encoding describes the archive body on the wire; the members it
+	// fans out to are stored as-is.
+	r.Header.Del("Content-Encoding")
+
+	ra, size, cleanup, err := filer.SpoolZipReader(dataReader, 0)
 	if err != nil {
 		if strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
@@ -89,6 +119,10 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	defer cleanup()
+	if errCode := verifyArchiveChecksums(archiveMd5, archiveMd5Hash, expectedArchiveChecksum, archiveChecksumHash); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	zr, err := zip.NewReader(ra, size)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
@@ -108,7 +142,14 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		root = ""
 	}
 
-	governanceBypass := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
+	objectLockEnabled, lockErr := s3a.isObjectLockEnabled(bucket)
+	if lockErr != nil && !errors.Is(lockErr, filer_pb.ErrNotFound) {
+		glog.Errorf("extractZipObject: object lock state for bucket %s: %v", bucket, lockErr)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
 	result := &extractZipResult{}
 
 	join := func(rel string) string {
@@ -117,16 +158,33 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		}
 		return root + "/" + rel
 	}
-	writeMember := func(rel string, memberReader io.Reader, memberSize int64) {
-		memberKey := join(rel)
-		if !versioningConfigured {
-			if lockErr := s3a.enforceObjectLockProtections(r, bucket, memberKey, "", governanceBypass); lockErr != nil {
-				result.Errors = append(result.Errors, memberKey+": "+s3err.GetAPIError(s3err.ErrAccessDenied).Code)
-				return
-			}
+	// authorizeMember applies to a member key the same checks a standalone
+	// PutObject of that key would face: IAM, table layout, bucket policy,
+	// object-lock header permissions, and existing-entry protections.
+	authorizeMember := func(memberKey string) s3err.ErrorCode {
+		if code := s3a.iam.AuthorizeObjectWrite(r, identity, bucket, memberKey); code != s3err.ErrNone {
+			return code
+		}
+		if err := s3a.validateTableBucketObjectPath(bucket, memberKey); err != nil {
+			return s3err.ErrAccessDenied
 		}
 		if code, _ := s3a.checkPolicyWithEntry(r, bucket, memberKey, string(s3_constants.ACTION_WRITE), "", nil); code != s3err.ErrNone {
-			result.Errors = append(result.Errors, memberKey+": "+s3err.GetAPIError(code).Code)
+			return code
+		}
+		if err := s3a.validateObjectLockHeaders(r, bucket, memberKey, objectLockEnabled); err != nil {
+			return mapValidationErrorToS3Error(err)
+		}
+		if !versioningConfigured {
+			if lockErr := s3a.enforceObjectLockProtections(r, bucket, memberKey, "", s3a.evaluateGovernanceBypassRequest(r, bucket, memberKey)); lockErr != nil {
+				return s3err.ErrAccessDenied
+			}
+		}
+		return s3err.ErrNone
+	}
+	writeMember := func(rel string, memberReader io.Reader, memberSize int64) {
+		memberKey := join(rel)
+		if authCode := authorizeMember(memberKey); authCode != s3err.ErrNone {
+			result.Errors = append(result.Errors, memberKey+": "+s3err.GetAPIError(authCode).Code)
 			return
 		}
 		memberContentType := mime.TypeByExtension(path.Ext(memberKey))
@@ -144,13 +202,51 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 			etag, errCode, _ = s3a.putSuspendedVersioningObject(r, bucket, memberKey, memberReader, memberContentType)
 		default:
 			filePath := s3a.toFilerPath(bucket, memberKey)
-			etag, errCode, _ = s3a.putToFiler(r, filePath, memberReader, bucket, memberKey, 1, 0, nil, false, "")
+			lifecycleTTLSec := s3a.lifecycleTTLForObjectWrite(bucket, memberKey, memberSize)
+			etag, errCode, _ = s3a.putToFiler(r, filePath, memberReader, bucket, memberKey, 1, lifecycleTTLSec, nil, false, "")
 		}
 		if errCode != s3err.ErrNone {
 			result.Errors = append(result.Errors, memberKey+": "+s3err.GetAPIError(errCode).Code)
 			return
 		}
 		result.Extracted = append(result.Extracted, &extractMemberResult{Name: memberKey, Size: memberSize, ETag: etag})
+	}
+	mkdirMember := func(memberKey string) {
+		if authCode := authorizeMember(memberKey); authCode != s3err.ErrNone {
+			result.Errors = append(result.Errors, memberKey+": "+s3err.GetAPIError(authCode).Code)
+			return
+		}
+		dirPath := s3a.toFilerPath(bucket, memberKey)
+		dirName, entryName := path.Dir(dirPath), path.Base(dirPath)
+		// mkdir replaces an existing marker outright, so a lock recorded on the
+		// entry itself is checked under the same lock the replacement takes,
+		// mirroring the explicit-directory branch of PutObjectHandler.
+		markerCode := s3a.withObjectWriteLock(bucket, memberKey, func() s3err.ErrorCode {
+			if !objectLockEnabled {
+				return s3err.ErrNone
+			}
+			existing, existErr := s3a.getEntry(dirName, entryName)
+			if existErr != nil {
+				return s3err.ErrNone
+			}
+			if lockErr := s3a.enforceObjectLockOnEntry(existing, bucket, memberKey, "", s3a.evaluateGovernanceBypassRequest(r, bucket, memberKey)); lockErr != nil {
+				return s3err.ErrAccessDenied
+			}
+			return s3err.ErrNone
+		}, func() s3err.ErrorCode {
+			mkErr := s3a.mkdir(dirName, entryName, func(entry *filer_pb.Entry) {
+				entry.Attributes.Mime = s3_constants.FolderMimeType
+				s3a.setObjectOwnerFromRequest(r, bucket, entry)
+				applyPutObjectACL(r, entry)
+				if lockErr := s3a.extractObjectLockMetadataFromRequest(r, entry); lockErr != nil {
+					glog.Errorf("extractZipObject: object lock metadata for %s/%s: %v", bucket, memberKey, lockErr)
+				}
+			})
+			return filerErrorToS3Error(mkErr)
+		})
+		if markerCode != s3err.ErrNone {
+			result.Errors = append(result.Errors, memberKey+": "+s3err.GetAPIError(markerCode).Code)
+		}
 	}
 
 	for _, zf := range zr.File {
@@ -164,15 +260,7 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 			continue
 		}
 		if zf.FileInfo().IsDir() {
-			dirPath := s3a.toFilerPath(bucket, join(rel))
-			mkErr := s3a.mkdir(path.Dir(dirPath), path.Base(dirPath), func(entry *filer_pb.Entry) {
-				entry.Attributes.Mime = s3_constants.FolderMimeType
-				s3a.setObjectOwnerFromRequest(r, bucket, entry)
-				applyPutObjectACL(r, entry)
-			})
-			if mkErr != nil {
-				result.Errors = append(result.Errors, join(rel)+": "+mkErr.Error())
-			}
+			mkdirMember(join(rel))
 			continue
 		}
 		memberReader, openErr := zf.Open()
@@ -188,6 +276,27 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(result)
+}
+
+// verifyArchiveChecksums compares the archive's supplied Content-Md5 and
+// x-amz-checksum-* values against the bytes consumed while spooling. A nil
+// hash means the client supplied nothing to check.
+func verifyArchiveChecksums(expectedMd5 string, md5Hash hash.Hash, expectedChecksum string, checksumHash hash.Hash) s3err.ErrorCode {
+	if md5Hash != nil {
+		expected, err := base64.StdEncoding.DecodeString(expectedMd5)
+		if err != nil {
+			return s3err.ErrInvalidDigest
+		}
+		if sum := md5Hash.Sum(nil); !bytes.Equal(expected, sum) {
+			return s3err.ErrBadDigest
+		}
+	}
+	if checksumHash != nil && expectedChecksum != "" {
+		if sum := base64.StdEncoding.EncodeToString(checksumHash.Sum(nil)); expectedChecksum != sum {
+			return s3err.ErrBadDigest
+		}
+	}
+	return s3err.ErrNone
 }
 
 // scrubArchiveChecksums removes request checksums that describe the archive

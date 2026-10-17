@@ -3,6 +3,8 @@ package s3api
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -112,6 +114,47 @@ func TestExtractZipPutObject(t *testing.T) {
 	}
 	if _, ok := filerImpl.entries["/buckets/b/dir/archive.zip"]; ok {
 		t.Fatal("archive object itself should not be stored")
+	}
+}
+
+func TestExtractZipPutObjectArchiveChecksum(t *testing.T) {
+	s3a, filerImpl := newExtractTestServer(t)
+
+	body := makeZipArchive(t, map[string]string{"a.txt": "hello"})
+	md5sum := md5.Sum(body)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/dir/archive.zip", bytes.NewReader(body))
+	r.Header.Set(s3_constants.SeaweedFSExtract, "zip")
+	r.Header.Set("Content-Md5", base64.StdEncoding.EncodeToString(md5sum[:]))
+	r.Header.Set(s3_constants.AmzChecksumSHA256, base64.StdEncoding.EncodeToString([]byte("not-the-sha256")))
+	rec := httptest.NewRecorder()
+	s3a.extractZipObject(rec, r, "b", "dir/archive.zip", r.Body)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if len(filerImpl.entries) != 0 {
+		t.Fatalf("entries created despite checksum mismatch: %v", filerImpl.entries)
+	}
+}
+
+func TestExtractZipPutObjectGoodArchiveMd5(t *testing.T) {
+	s3a, filerImpl := newExtractTestServer(t)
+
+	body := makeZipArchive(t, map[string]string{"a.txt": "hello"})
+	md5sum := md5.Sum(body)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/dir/archive.zip", bytes.NewReader(body))
+	r.Header.Set(s3_constants.SeaweedFSExtract, "zip")
+	r.Header.Set("Content-Md5", base64.StdEncoding.EncodeToString(md5sum[:]))
+	rec := httptest.NewRecorder()
+	s3a.extractZipObject(rec, r, "b", "dir/archive.zip", r.Body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := filerImpl.entries["/buckets/b/dir/a.txt"]; !ok {
+		t.Fatalf("member not created; entries: %v", filerImpl.entries)
 	}
 }
 
