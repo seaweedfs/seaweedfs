@@ -152,11 +152,7 @@ func PromotedHash(s *Snapshot, retentionWindow time.Duration) [32]byte {
 		if !isReplayKind(k.ActionKind) {
 			continue
 		}
-		ttl := effectiveTTL(a)
-		// Mirror RulesForShard's partition predicate exactly: a replay
-		// kind lands in walk when ttl is 0 (malformed) or ttl >
-		// retentionWindow. PromotedHash hashes that walk-bound subset.
-		if ttl > 0 && ttl <= retentionWindow {
+		if !isPromoted(a, retentionWindow) {
 			continue
 		}
 		items = append(items, hashItem{key: k, action: a})

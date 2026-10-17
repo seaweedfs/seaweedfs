@@ -54,6 +54,7 @@ type CompiledAction struct {
 	Delay              time.Duration
 	PredicateSensitive bool
 	Mode               RuleMode
+	bootstrapComplete  bool
 	engineState        atomic.Uint32
 }
 
