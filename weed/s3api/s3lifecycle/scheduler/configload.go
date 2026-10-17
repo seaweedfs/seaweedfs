@@ -82,14 +82,17 @@ func LoadCompileInputs(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 }
 
 // IsBucketVersioned returns true when the bucket's filer entry has the
-// versioning extended attribute set to Enabled or Suspended.
+// versioning extended attribute set to Enabled or Suspended, or when
+// Object Lock is on: lock requires versioning, so the gateway writes
+// version siblings even if the versioning attribute is absent.
 func IsBucketVersioned(entry *filer_pb.Entry) bool {
-	v, ok := entry.Extended[s3_constants.ExtVersioningKey]
-	if !ok {
-		return false
+	if v, ok := entry.Extended[s3_constants.ExtVersioningKey]; ok {
+		s := strings.ToLower(strings.TrimSpace(string(v)))
+		if s == "enabled" || s == "suspended" {
+			return true
+		}
 	}
-	s := strings.ToLower(strings.TrimSpace(string(v)))
-	return s == "enabled" || s == "suspended"
+	return string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]) == s3_constants.ObjectLockEnabled
 }
 
 // AllActivePriorStates seeds every compiled action as bootstrap-complete +
