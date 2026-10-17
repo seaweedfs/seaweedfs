@@ -443,6 +443,12 @@ func validate(cfg Config) error {
 	if cfg.SubscriptionReceiveTimeout < 0 {
 		return fmt.Errorf("daily_run: negative SubscriptionReceiveTimeout %v (0 = default %v)", cfg.SubscriptionReceiveTimeout, defaultSubscriptionReceiveTimeout)
 	}
+	// A declared retention window promotes long-TTL rules to the walk
+	// view; without a walker they lose their only dispatch path while
+	// the drain cursor still advances past their events.
+	if cfg.RetentionWindow > 0 && cfg.Walker == nil {
+		return errors.New("daily_run: RetentionWindow requires Walker (promoted rules would be silently skipped)")
+	}
 	for _, sh := range cfg.Shards {
 		if sh < 0 || sh >= s3lifecycle.ShardCount {
 			return fmt.Errorf("daily_run: shard %d out of [0, %d)", sh, s3lifecycle.ShardCount)
@@ -607,7 +613,10 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		startTsNs = runNow.Add(-maxTTL).UnixNano()
 	}
 
-	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
+	// Walk-bound rules are never due inside the retention window; keep them
+	// out of the drain so their matches don't pin the cursor.
+	replayView := snap.ReplayView(retentionWindow)
+	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
 	// Fresh ctx: a wall-clock cap on the pass (the shell driver's
 	// -runtime) cancels the drain's, and saving with it would drop the
 	// cursor and re-replay from the same floor next pass.
