@@ -228,8 +228,8 @@ test-with-server: start-server
 # Test with different configurations
 test-versioning-with-configs: check-deps
 	@echo "Testing with different S3 configurations..."
-	@echo "Testing with empty folder allowed..."
-	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
+	@echo "Testing with delete bucket not empty allowed..."
+	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=true > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config1.pid ]; then kill -TERM $$(cat weed-config1.pid) 2>/dev/null || true; rm -f weed-config1.pid; fi

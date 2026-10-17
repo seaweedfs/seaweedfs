@@ -3,6 +3,8 @@ package s3tables
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 )
 
 func TestMatchesActionPattern(t *testing.T) {
@@ -249,5 +251,109 @@ func TestCheckPermissionWithDefaultAllow(t *testing.T) {
 				t.Errorf("CheckPermissionWithContext() = %v, want %v (DefaultAllow=%v, Policy=%s)", result, tt.expected, tt.defaultAllow, tt.policy)
 			}
 		})
+	}
+}
+
+func TestCheckTableOrBucketPermissionDenyVeto(t *testing.T) {
+	tablePolicy := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Deny",
+			"Principal": "*",
+			"Action": "s3tables:DeleteTable",
+			"Resource": "*"
+		}]
+	}`
+	bucketAllow := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Principal": "*",
+			"Action": "s3tables:*",
+			"Resource": "*"
+		}]
+	}`
+	tableARN := "arn:aws:s3tables:us-east-1:acct:bucket/b/table/ns/t"
+	bucketARN := "arn:aws:s3tables:us-east-1:acct:bucket/b"
+	ctx := &PolicyContext{TableBucketName: "b", Namespace: "ns", TableName: "t"}
+
+	// A Deny on the table policy vetoes the bucket Allow.
+	if CheckTableOrBucketPermission("DeleteTable", "user123", "owner", tablePolicy, tableARN, "owner", bucketAllow, bucketARN, ctx) {
+		t.Error("table Deny should veto bucket Allow")
+	}
+
+	// The same Deny in the bucket policy vetoes a table Allow.
+	if CheckTableOrBucketPermission("DeleteTable", "user123", "owner", bucketAllow, tableARN, "owner", tablePolicy, bucketARN, ctx) {
+		t.Error("bucket Deny should veto table Allow")
+	}
+
+	// A table Deny also vetoes ownership of the table.
+	if CheckTableOrBucketPermission("DeleteTable", "owner", "owner", tablePolicy, tableARN, "owner", "", bucketARN, ctx) {
+		t.Error("table Deny should veto the owner grant")
+	}
+
+	// No Deny anywhere: either policy may allow.
+	if !CheckTableOrBucketPermission("DeleteTable", "user123", "other-owner", "", tableARN, "owner", bucketAllow, bucketARN, ctx) {
+		t.Error("bucket Allow should grant when no policy denies")
+	}
+}
+
+func TestCheckTableOrBucketPermissionOwnerlessFailsClosed(t *testing.T) {
+	ctx := &PolicyContext{
+		IdentityActions: []string{"s3tables:*"},
+		DefaultAllow:    true,
+	}
+	allowPolicy := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}]}`
+
+	if CheckTableOrBucketPermission("GetTable", "user1",
+		"", "", "arn:aws:s3tables:t",
+		"", "", "arn:aws:s3tables:b", ctx) {
+		t.Error("identity actions and default allow must not reach an ownerless resource")
+	}
+
+	// With no identity or default grants in play, an ownerless resource
+	// side contributes nothing even when its own policy allows.
+	plainCtx := &PolicyContext{}
+	if CheckTableOrBucketPermission("GetTable", "user1",
+		"", allowPolicy, "arn:aws:s3tables:t",
+		"owner", "", "arn:aws:s3tables:b", plainCtx) {
+		t.Error("an ownerless resource side must not grant even via an explicit allow")
+	}
+
+	if !CheckTableOrBucketPermission("GetTable", "user1",
+		"", "", "arn:aws:s3tables:t",
+		"owner", allowPolicy, "arn:aws:s3tables:b", plainCtx) {
+		t.Error("the bucket side can still grant when its owner is set")
+	}
+}
+
+// Owners written before issuer scoping hold a bare subject. Re-anchoring it
+// is only unambiguous when exactly one OIDC issuer is configured; under two
+// or more issuers a bare subject could belong to either, so it must not
+// match anyone.
+func TestCheckPermissionLegacyOwnerScopedToIssuer(t *testing.T) {
+	owner := "alice-sub"
+	principal := sts.ComputeParentUser(owner, "corp-idp")
+
+	if !CheckPermissionWithContext("GetTable", principal, owner, "", "arn", &PolicyContext{
+		TrustedIssuers: []string{"corp-idp"},
+	}) {
+		t.Error("single-issuer deployments must keep recognizing the legacy owner")
+	}
+
+	if CheckPermissionWithContext("GetTable", principal, owner, "", "arn", &PolicyContext{
+		TrustedIssuers: []string{"corp-idp", "evil-idp"},
+	}) {
+		t.Error("a bare subject is ambiguous across multiple issuers and must not match")
+	}
+
+	if CheckPermissionWithContext("GetTable", sts.ComputeParentUser(owner, "evil-idp"), owner, "", "arn", &PolicyContext{
+		TrustedIssuers: []string{"corp-idp", "evil-idp"},
+	}) {
+		t.Error("a same-sub caller from another issuer must not claim the legacy owner")
+	}
+
+	if CheckPermissionWithContext("GetTable", principal, owner, "", "arn", &PolicyContext{}) {
+		t.Error("legacy owner matching must not engage without a trusted issuer")
 	}
 }
