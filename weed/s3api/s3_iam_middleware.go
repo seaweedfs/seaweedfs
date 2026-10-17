@@ -524,6 +524,14 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 // subject can be re-anchored to: exactly one issuer makes the mapping
 // unambiguous; anything else leaves it unknown, which callers must treat as
 // fail-closed rather than guessing from the caller's issuer.
+//
+// The list is only safe while complete. Without a provider store the
+// registered providers are the whole set — there is nowhere an issuer could
+// hide. With a store, a failed listing leaves the real set unknown, and
+// passing the registered subset off as complete could collapse a
+// multi-issuer deployment to a single issuer: the one shape a bare subject
+// re-anchors under, so a caller from that issuer could claim a stored
+// subject that belongs to a provider hidden behind the error. Fail closed.
 func (s3iam *S3IAMIntegration) trustedOIDCIssuers(ctx context.Context) []string {
 	if s3iam.iamManager == nil {
 		return nil
@@ -542,14 +550,18 @@ func (s3iam *S3IAMIntegration) trustedOIDCIssuers(ctx context.Context) []string 
 			}
 		}
 	}
-	if records, err := s3iam.iamManager.ListOIDCProviders(ctx); err != nil {
+	if s3iam.iamManager.GetOIDCProviderStore() == nil {
+		return issuers
+	}
+	records, err := s3iam.iamManager.ListOIDCProviders(ctx)
+	if err != nil {
 		glog.V(2).Infof("trustedOIDCIssuers: %v", err)
-	} else {
-		for _, rec := range records {
-			if rec.URL != "" && !seen[rec.URL] {
-				seen[rec.URL] = true
-				issuers = append(issuers, rec.URL)
-			}
+		return nil
+	}
+	for _, rec := range records {
+		if rec.URL != "" && !seen[rec.URL] {
+			seen[rec.URL] = true
+			issuers = append(issuers, rec.URL)
 		}
 	}
 	return issuers

@@ -6,8 +6,10 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -261,4 +263,46 @@ func TestOIDCBearerUserIDIsIssuerScoped(t *testing.T) {
 
 	_, errCode = authenticate(sign(map[string]interface{}{"sub": ""}))
 	assert.Equal(t, s3err.ErrAccessDenied, errCode, "a token with no subject must not authenticate")
+}
+
+// flakyListOIDCStore fails ListProviders on demand, standing in for a
+// filer-backed provider store that cannot be read.
+type flakyListOIDCStore struct {
+	integration.OIDCProviderStore
+	fail atomic.Bool
+}
+
+func (s *flakyListOIDCStore) ListProviders(ctx context.Context, filerAddress string) ([]*integration.OIDCProviderRecord, error) {
+	if s.fail.Load() {
+		return nil, fmt.Errorf("list OIDC providers: simulated outage")
+	}
+	return s.OIDCProviderStore.ListProviders(ctx, filerAddress)
+}
+
+// A failed store listing must not pass the registered providers off as the
+// complete trusted set: hidden issuers could shrink the reported set to one
+// entry, the only shape under which a legacy bare subject re-anchors.
+func TestTrustedOIDCIssuersFailsClosedOnStoreError(t *testing.T) {
+	ctx := context.Background()
+
+	iamManager := integration.NewIAMManager()
+	s3iam := NewS3IAMIntegration(iamManager, "")
+
+	// No provider store at all: registered providers are the complete set —
+	// there is nowhere an issuer could hide behind a listing failure.
+	assert.Empty(t, s3iam.trustedOIDCIssuers(ctx))
+
+	mem := integration.NewMemoryOIDCProviderStore()
+	require.NoError(t, mem.StoreProvider(ctx, "", &integration.OIDCProviderRecord{
+		ARN: "arn:aws:iam::111122223333:oidc-provider/idp.example.com",
+		URL: "https://idp.example.com",
+	}))
+	store := &flakyListOIDCStore{OIDCProviderStore: mem}
+	iamManager.SetOIDCProviderStore(store)
+
+	assert.Equal(t, []string{"https://idp.example.com"}, s3iam.trustedOIDCIssuers(ctx))
+
+	store.fail.Store(true)
+	assert.Empty(t, s3iam.trustedOIDCIssuers(ctx),
+		"a failed listing must report no trusted issuers, not the partial registered set")
 }
