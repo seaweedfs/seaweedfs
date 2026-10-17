@@ -1083,6 +1083,10 @@ filer:
     #     anonymousRead: false
     createBucketsHook:
       resources: {}
+      # nodeSelector and tolerations fall back to filer's when unset
+      nodeSelector: ""
+      tolerations: ""
+      affinity: ""
 
 s3:
   enabled: false
@@ -1305,6 +1309,10 @@ s3:
 
   createBucketsHook:
     resources: {}
+    # nodeSelector and tolerations fall back to filer's when unset
+    nodeSelector: ""
+    tolerations: ""
+    affinity: ""
 
   ingress:
     enabled: false
@@ -1927,6 +1935,10 @@ allInOne:
     #     anonymousRead: false
     createBucketsHook:
       resources: {}
+      # nodeSelector and tolerations fall back to allInOne's when unset
+      nodeSelector: ""
+      tolerations: ""
+      affinity: ""
 
   # SFTP server configuration
   # Note: Most parameters below default to null, which means they inherit from
