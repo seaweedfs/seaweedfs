@@ -168,6 +168,7 @@ func TestGenerateEcShardsLocallyStampsEncodeIdentity(t *testing.T) {
 	require.Greater(t, vi.EcShardConfig.DataShards, uint32(0))
 	require.Greater(t, vi.EcShardConfig.ParityShards, uint32(0))
 	require.NotZero(t, vi.EcShardConfig.EncodeTsNs, "worker-encoded .vif must carry an encode identity")
+	require.Zero(t, vi.ExpireAtSec, "a source with no TTL must not gain an expiry")
 }
 
 // A fenced run must stamp the admin-issued generation (t.encodeTsNs) verbatim into
@@ -216,6 +217,56 @@ func TestGenerateEcShardsLocallyUsesAdminGeneration(t *testing.T) {
 	require.True(t, found)
 	require.NotNil(t, vi.EcShardConfig)
 	require.Equal(t, adminGeneration, vi.EcShardConfig.EncodeTsNs, "fenced run must stamp the admin generation verbatim, not a local timestamp")
+}
+
+// The worker-written .vif must carry the source volume's TTL expiry, or the EC
+// volume never becomes eligible for deletion while the shell ec.encode path does.
+func TestGenerateEcShardsLocallyCarriesExpiry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(958)
+	framework.AllocateVolumeWithTTL(t, grpcClient, volumeID, "", "10m")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 4001, 0x6666FFFF)
+	resp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("payload-for-ec-expiry"))
+	_ = framework.ReadAllAndClose(t, resp)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	task := NewErasureCodingTask(
+		"ec-carry-expiry",
+		clusterHarness.VolumeServerAddress(),
+		volumeID,
+		"",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	require.NoError(t, task.markReplicasReadonly(ctx))
+
+	fileStatus, err := task.readSourceVolumeFileStatus(ctx)
+	require.NoError(t, err)
+	want := fileStatus.GetExpireAtSec()
+	require.NotZero(t, want, "a TTL'd source must report a nonzero expiry")
+
+	localFiles, err := task.copyVolumeFilesToWorker(ctx, t.TempDir())
+	require.NoError(t, err)
+
+	shardFiles, err := task.generateEcShardsLocally(localFiles, t.TempDir())
+	require.NoError(t, err)
+
+	vi, _, found, err := volume_info.MaybeLoadVolumeInfo(shardFiles["vif"])
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, want, vi.ExpireAtSec, "worker .vif must carry the source volume's TTL expiry")
 }
 
 func compactVolumeOnce(t *testing.T, grpcClient volume_server_pb.VolumeServerClient, volumeID uint32) {

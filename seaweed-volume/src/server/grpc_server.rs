@@ -2032,6 +2032,7 @@ impl VolumeServer for VolumeGrpcService {
                 disk_type: store.locations[loc_idx].disk_type.to_string(),
                 volume_info: Some(vol.volume_info().clone()),
                 version: vol.version().0 as u32,
+                expire_at_sec: vol.expire_at_sec(),
             },
         ))
     }
