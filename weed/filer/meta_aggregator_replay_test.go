@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -706,5 +707,174 @@ func TestPendingDeleteRecordKeepsItsTime(t *testing.T) {
 	}
 	if ts, found, err := f.kvReadTsNs(context.Background(), metaPathKey(metaPathDelPrefix, path)); err != nil || !found || ts != 100 {
 		t.Fatalf("MpDl = %v, %v, %v; want 100", ts, found, err)
+	}
+}
+
+// A replayed directory delete must remove the local subtree too: the origin
+// only emits the directory's own key, and children the peer holds that the
+// origin never listed would orphan under the missing parent.
+func TestReplayDirectoryDeleteSweepsLocalChildren(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	put := func(path string, isDir bool) {
+		e := &Entry{FullPath: util.FullPath(path)}
+		if isDir {
+			e.Attr.Mode = os.ModeDir
+		}
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatalf("insert %s: %v", path, err)
+		}
+	}
+	put("/d", true)
+	put("/d/a.txt", false)
+	put("/d/sub", true)
+	put("/d/sub/nested.txt", false)
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	for _, path := range []string{"/d", "/d/a.txt", "/d/sub", "/d/sub/nested.txt"} {
+		if _, err := store.FindEntry(ctx, util.FullPath(path)); !errors.Is(err, filer_pb.ErrNotFound) {
+			t.Fatalf("expected %s gone after replayed directory delete, got %v", path, err)
+		}
+	}
+}
+
+func TestReplayFileDeleteKeepsSiblingEntries(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	dir := &Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir}}
+	if err := store.InsertEntry(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"gone.txt", "kept.txt"} {
+		if err := store.InsertEntry(ctx, &Entry{FullPath: util.NewFullPath("/d", name)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/d",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "gone.txt"},
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/d/gone.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("expected deleted file gone, got %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/d/kept.txt"); err != nil {
+		t.Fatalf("expected sibling kept, got %v", err)
+	}
+}
+
+func TestReplayDirectoryDeleteKeepsNewerChildren(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	eventTs := time.Now().UnixNano()
+	put := func(path string, isDir bool, mtime time.Time) {
+		e := &Entry{FullPath: util.FullPath(path), Attr: Attr{Mtime: mtime}}
+		if isDir {
+			e.Attr.Mode = os.ModeDir
+		}
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatalf("insert %s: %v", path, err)
+		}
+	}
+	old := time.Unix(1600000000, 0)
+	newer := time.Unix(0, eventTs).Add(time.Second)
+	put("/d", true, old)
+	put("/d/old.txt", false, old)
+	put("/d/sub", true, old)
+	put("/d/sub/newer.txt", false, newer)
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: eventTs,
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if _, err := store.FindEntry(ctx, "/d/old.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("older child should be swept, got %v", err)
+	}
+	for _, path := range []string{"/d", "/d/sub", "/d/sub/newer.txt"} {
+		if _, err := store.FindEntry(ctx, util.FullPath(path)); err != nil {
+			t.Fatalf("newer child and its ancestors should survive: %s: %v", path, err)
+		}
+	}
+}
+
+// A directory kept for newer descendants still records the delete: a stale
+// create replayed later for another child must be fenced by it.
+func TestReplayKeptDirectoryDeleteFencesStaleCreates(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	eventTs := time.Now().UnixNano()
+	old := time.Unix(1600000000, 0)
+	newer := time.Unix(0, eventTs).Add(time.Second)
+	put := func(path string, isDir bool, mtime time.Time) {
+		e := &Entry{FullPath: util.FullPath(path), Attr: Attr{Mtime: mtime}}
+		if isDir {
+			e.Attr.Mode = os.ModeDir
+		}
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatalf("insert %s: %v", path, err)
+		}
+	}
+	put("/d", true, old)
+	put("/d/newer.txt", false, newer)
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "d", IsDirectory: true},
+		},
+		TsNs: eventTs,
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/d"); err != nil {
+		t.Fatalf("newer child should keep the directory: %v", err)
+	}
+
+	stale := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/d",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{Name: "late.txt"},
+		},
+		TsNs: eventTs - int64(time.Minute),
+	}
+	if err := f.Replay(stale); err != nil {
+		t.Fatalf("replay stale create: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/d/late.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatal("stale create resurrected a child under a directory the origin deleted")
 	}
 }

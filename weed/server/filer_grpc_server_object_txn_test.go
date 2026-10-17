@@ -2,8 +2,11 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -850,5 +853,245 @@ func TestObjectTransactionForwardsToOwner(t *testing.T) {
 	}
 	if _, ok := selfStore.entries["/buckets/b/obj"]; ok {
 		t.Errorf("non-owner must forward, not apply locally")
+	}
+}
+
+// A failover replay carries the same request_id. Under the path lock the owner
+// replays the recorded outcome instead of re-applying the mutations over a
+// newer entry.
+func TestObjectTransactionRequestIdDedupesReplay(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(t, nil)
+
+	put := func(etag string) *filer_pb.ObjectMutation {
+		return &filer_pb.ObjectMutation{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: "/buckets/bkt",
+			Entry: &filer_pb.Entry{
+				Name:       "obj",
+				Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 1},
+				Extended:   map[string][]byte{"etag": []byte(etag)},
+			},
+		}
+	}
+	txn := func(requestID, etag string) *filer_pb.ObjectTransactionRequest {
+		return &filer_pb.ObjectTransactionRequest{
+			LockKey:   "/buckets/bkt/obj",
+			RequestId: requestID,
+			Mutations: []*filer_pb.ObjectMutation{put(etag)},
+		}
+	}
+
+	respA, err := fs.ObjectTransaction(context.Background(), txn("req-a", "A"))
+	if err != nil || respA.Error != "" {
+		t.Fatalf("first put: err=%v resp=%q", err, respA.Error)
+	}
+
+	// a newer writer lands the same path
+	respB, err := fs.ObjectTransaction(context.Background(), txn("req-b", "B"))
+	if err != nil || respB.Error != "" {
+		t.Fatalf("second put: err=%v resp=%q", err, respB.Error)
+	}
+
+	// the replayed request replays A's outcome; the stored entry stays B
+	respReplay, err := fs.ObjectTransaction(context.Background(), txn("req-a", "A"))
+	if err != nil || respReplay.Error != "" {
+		t.Fatalf("replayed put: err=%v resp=%q", err, respReplay.Error)
+	}
+	entry := store.entries["/buckets/bkt/obj"]
+	if entry == nil {
+		t.Fatal("entry missing after replay")
+	}
+	if got := string(entry.Extended["etag"]); got != "B" {
+		t.Fatalf("replayed transaction re-applied the stale entry: etag = %q, want B", got)
+	}
+}
+
+// A recorded application-level failure replays to the retried request even
+// after the world changes enough for the condition to pass, and its mutation
+// still does not run.
+func TestObjectTransactionRequestIdReplaysRecordedError(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	fs, store := newTxnTestServer(t, nil)
+
+	req := &filer_pb.ObjectTransactionRequest{
+		LockKey:   "/buckets/bkt/obj",
+		RequestId: "req-fail",
+		Condition: &filer_pb.WriteCondition{
+			Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_EXISTS}},
+		},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: "/buckets/bkt",
+			Entry: &filer_pb.Entry{
+				Name:       "obj",
+				Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 1},
+				Extended:   map[string][]byte{"etag": []byte("stale")},
+			},
+		}},
+	}
+
+	resp, err := fs.ObjectTransaction(context.Background(), req)
+	if err != nil || resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("precondition: err=%v code=%v", err, resp.GetErrorCode())
+	}
+
+	// another writer lands the object the precondition wanted
+	other := &filer_pb.ObjectTransactionRequest{
+		LockKey:   "/buckets/bkt/obj",
+		RequestId: "req-other",
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: "/buckets/bkt",
+			Entry: &filer_pb.Entry{
+				Name:       "obj",
+				Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 2},
+				Extended:   map[string][]byte{"etag": []byte("live")},
+			},
+		}},
+	}
+	respOther, err := fs.ObjectTransaction(context.Background(), other)
+	if err != nil || respOther.Error != "" {
+		t.Fatalf("other put: err=%v resp=%q", err, respOther.Error)
+	}
+
+	// the retry replays the recorded failure instead of re-evaluating and
+	// overwriting the live entry
+	resp2, err := fs.ObjectTransaction(context.Background(), req)
+	if err != nil || resp2.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("replayed precondition: err=%v code=%v", err, resp2.GetErrorCode())
+	}
+	if got := string(store.entries["/buckets/bkt/obj"].Extended["etag"]); got != "live" {
+		t.Fatalf("replayed transaction overwrote the live entry: etag = %q", got)
+	}
+}
+
+// At capacity the cache drops new recordings rather than evicting a live
+// outcome a replay may still need.
+func TestObjectTransactionReplayCacheDropsNewAtCap(t *testing.T) {
+	fs, _ := newTxnTestServer(t, nil)
+	path := util.FullPath("/buckets/bkt/obj")
+	resp := &filer_pb.ObjectTransactionResponse{}
+
+	for i := 0; i < recentObjectTxnSweepCap; i++ {
+		fs.rememberObjectTxn(fmt.Sprintf("req-%d", i), path, resp)
+	}
+	fs.rememberObjectTxn("req-overflow", path, resp)
+
+	if _, found := fs.recentObjectTxn("req-0", path); !found {
+		t.Fatal("a live record was evicted to admit a new one")
+	}
+	if _, found := fs.recentObjectTxn("req-overflow", path); found {
+		t.Fatal("overflow record was recorded instead of dropped")
+	}
+	if len(fs.recentObjectTxns) > recentObjectTxnSweepCap {
+		t.Fatalf("cache exceeded cap: %d", len(fs.recentObjectTxns))
+	}
+}
+
+// A suspended-versioning conditional write falls back to the latest version
+// under the transaction lock: a real latest satisfies existence checks, and a
+// delete marker reads as absent.
+func TestObjectTransactionConditionFallbackResolvesLatestPointer(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	seed := func(latestName, marker string) map[string]*filer.Entry {
+		entries := map[string]*filer.Entry{
+			"/buckets/bkt/obj/.versions": {
+				Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755},
+				Extended: map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte(latestName)},
+			},
+		}
+		ext := map[string][]byte{s3_constants.ExtETagKey: []byte("abc")}
+		if marker != "" {
+			ext[s3_constants.ExtDeleteMarkerKey] = []byte(marker)
+		}
+		entries["/buckets/bkt/obj/.versions/"+latestName] = &filer.Entry{
+			Attr:     filer.Attr{Inode: 3, Mtime: now, Crtime: now, Mode: 0644},
+			Extended: ext,
+		}
+		return entries
+	}
+	req := func() *filer_pb.ObjectTransactionRequest {
+		return &filer_pb.ObjectTransactionRequest{
+			LockKey:         "/buckets/bkt/obj",
+			ConditionAltKey: "/buckets/bkt/obj/.versions",
+			Condition: &filer_pb.WriteCondition{
+				Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}},
+			},
+			Mutations: []*filer_pb.ObjectMutation{{
+				Type:      filer_pb.ObjectMutation_PUT,
+				Directory: "/buckets/bkt",
+				Entry:     &filer_pb.Entry{Name: "obj", Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 9}},
+			}},
+		}
+	}
+
+	fs, store := newTxnTestServer(t, seed("v_live", ""))
+	resp, err := fs.ObjectTransaction(context.Background(), req())
+	if err != nil || resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("latest version present: err=%v code=%v, want precondition failed", err, resp.GetErrorCode())
+	}
+
+	fs, store = newTxnTestServer(t, seed("v_gone", "true"))
+	resp, err = fs.ObjectTransaction(context.Background(), req())
+	if err != nil || resp.Error != "" {
+		t.Fatalf("delete-marker latest: err=%v resp=%q, want applied", err, resp.Error)
+	}
+	if store.entries["/buckets/bkt/obj"] == nil {
+		t.Fatal("mutation did not apply over a delete-marker latest")
+	}
+}
+
+// A bare directory at the object path — left over when /bkt/obj/child was
+// created — is not the object, so the condition must fall back to the
+// .versions resolution instead of counting the directory as an existing key.
+func TestObjectTransactionConditionIgnoresDirectory(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	seed := func(marker string) map[string]*filer.Entry {
+		return map[string]*filer.Entry{
+			"/buckets/bkt/obj": {
+				Attr: filer.Attr{Inode: 1, Mtime: now, Crtime: now, Mode: 0755 | os.ModeDir},
+			},
+			"/buckets/bkt/obj/.versions": {
+				Attr:     filer.Attr{Inode: 2, Mtime: now, Crtime: now, Mode: 0755},
+				Extended: map[string][]byte{s3_constants.ExtLatestVersionFileNameKey: []byte("v1")},
+			},
+			"/buckets/bkt/obj/.versions/v1": {
+				Attr:     filer.Attr{Inode: 3, Mtime: now, Crtime: now, Mode: 0644},
+				Extended: map[string][]byte{s3_constants.ExtETagKey: []byte("abc"), s3_constants.ExtDeleteMarkerKey: []byte(marker)},
+			},
+		}
+	}
+	req := &filer_pb.ObjectTransactionRequest{
+		LockKey:         "/buckets/bkt/obj",
+		ConditionAltKey: "/buckets/bkt/obj/.versions",
+		Condition: &filer_pb.WriteCondition{
+			Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}},
+		},
+		Mutations: []*filer_pb.ObjectMutation{{
+			Type:      filer_pb.ObjectMutation_PUT,
+			Directory: "/buckets/bkt",
+			Entry:     &filer_pb.Entry{Name: "obj", Attributes: &filer_pb.FuseAttributes{Mtime: now.Unix(), FileMode: 0644, Inode: 9}},
+		}},
+	}
+
+	fs, _ := newTxnTestServer(t, seed("true"))
+	resp, err := fs.ObjectTransaction(context.Background(), req)
+	if err != nil {
+		t.Fatalf("directory at key with delete-marker latest: %v", err)
+	}
+	// The condition must pass so the write reaches the type-conflict path;
+	// the directory itself rejects the PUT, which is the caller's business.
+	if resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("condition must not fail on a bare directory: resp=%q", resp.Error)
+	}
+	if !strings.Contains(resp.Error, "is a directory") {
+		t.Fatalf("want the dir/file type-conflict error, got %q", resp.Error)
+	}
+
+	fs, _ = newTxnTestServer(t, seed(""))
+	resp, err = fs.ObjectTransaction(context.Background(), req)
+	if err != nil || resp.ErrorCode != filer_pb.FilerError_PRECONDITION_FAILED {
+		t.Fatalf("directory at key with live latest: err=%v code=%v, want precondition failed", err, resp.GetErrorCode())
 	}
 }

@@ -149,13 +149,16 @@ func markVolumeReplicaWritable(ctx context.Context, grpcDialOption grpc.DialOpti
 	return markVolumeWritable(ctx, grpcDialOption, volumeId, location.ServerAddress(), writable, persist)
 }
 
-func markVolumeReplicasWritable(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, locations []wdclient.Location, writable, persist bool) error {
+// markVolumeReplicasWritable marks each replica and returns the ones that
+// took the mark, so a caller can roll back or report a partial operation.
+func markVolumeReplicasWritable(ctx context.Context, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, locations []wdclient.Location, writable, persist bool) (marked []wdclient.Location, err error) {
 	for _, location := range locations {
-		if err := markVolumeReplicaWritable(ctx, grpcDialOption, volumeId, location, writable, persist); err != nil {
-			return err
+		if err = markVolumeReplicaWritable(ctx, grpcDialOption, volumeId, location, writable, persist); err != nil {
+			return
 		}
+		marked = append(marked, location)
 	}
-	return nil
+	return
 }
 
 // replicateVolumeToServer copies a volume from sourceAddress to targetAddress via the VolumeCopy gRPC stream.

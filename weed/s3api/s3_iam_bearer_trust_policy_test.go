@@ -6,8 +6,10 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -147,4 +149,160 @@ func TestOIDCBearerEnforcesRoleTrustPolicy(t *testing.T) {
 	identity, errCode = authenticate(signJWT("trusted-group"))
 	require.Equal(t, s3err.ErrNone, errCode)
 	assert.Equal(t, "arn:aws:iam::role/BearerTrustedRole", identity.Principal)
+}
+
+// An OIDC bearer token's aws:userid claim is server-asserted from the
+// verified (sub, iss) pair: a token-supplied value is overwritten, and a
+// token without a subject is rejected outright.
+func TestOIDCBearerUserIDIsIssuerScoped(t *testing.T) {
+	ctx := context.Background()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	jwks := map[string]interface{}{
+		"keys": []map[string]interface{}{{
+			"kty": "RSA",
+			"kid": "bearer-test-key",
+			"use": "sig",
+			"alg": "RS256",
+			"n":   base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+			"e":   "AQAB",
+		}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/jwks" {
+			json.NewEncoder(w).Encode(jwks)
+		}
+	}))
+	defer server.Close()
+
+	provider := oidc.NewOIDCProvider("test-oidc")
+	require.NoError(t, provider.Initialize(&oidc.OIDCConfig{
+		Issuer:   server.URL,
+		ClientID: "test-client",
+		JWKSUri:  server.URL + "/jwks",
+		RoleMapping: &providers.RoleMapping{
+			Rules: []providers.MappingRule{
+				{Claim: "groups", Value: "trusted-group", Role: "arn:aws:iam::role/BearerTrustedRole"},
+			},
+		},
+	}))
+
+	iamManager := integration.NewIAMManager()
+	require.NoError(t, iamManager.Initialize(&integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{DefaultEffect: "Deny", StoreType: "memory"},
+		Roles:  &integration.RoleStoreConfig{StoreType: "memory"},
+	}, func() string { return "localhost:8888" }))
+	require.NoError(t, iamManager.RegisterIdentityProvider(provider))
+	require.NoError(t, iamManager.CreatePolicy(ctx, "", "BearerTestPolicy", &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect:   "Allow",
+			Action:   []string{"s3:*"},
+			Resource: []string{"arn:aws:s3:::*", "arn:aws:s3:::*/*"},
+		}},
+	}))
+	require.NoError(t, iamManager.CreateRole(ctx, "", "BearerTrustedRole", &integration.RoleDefinition{
+		RoleName: "BearerTrustedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{{
+				Effect:    "Allow",
+				Principal: map[string]interface{}{"Federated": "test-oidc"},
+				Action:    []string{"sts:AssumeRoleWithWebIdentity"},
+			}},
+		},
+		AttachedPolicies: []string{"BearerTestPolicy"},
+	}))
+
+	sign := func(extra map[string]interface{}) string {
+		claims := jwt.MapClaims{
+			"iss":    server.URL,
+			"aud":    "test-client",
+			"exp":    time.Now().Add(time.Hour).Unix(),
+			"iat":    time.Now().Unix(),
+			"groups": []string{"trusted-group"},
+		}
+		for k, v := range extra {
+			claims[k] = v
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		token.Header["kid"] = "bearer-test-key"
+		signed, err := token.SignedString(key)
+		require.NoError(t, err)
+		return signed
+	}
+
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
+	authenticate := func(token string) (*IAMIdentity, s3err.ErrorCode) {
+		req := httptest.NewRequest("GET", "/test-bucket/test-object", http.NoBody)
+		req.Header.Set("Authorization", "Bearer "+token)
+		return s3iam.AuthenticateJWT(ctx, req)
+	}
+
+	identity, errCode := authenticate(sign(map[string]interface{}{
+		"sub":        "bearer-user",
+		"aws:userid": "admin",
+	}))
+	require.Equal(t, s3err.ErrNone, errCode)
+	assert.Equal(t,
+		sts.ComputeParentUser("bearer-user", server.URL),
+		identity.Claims["aws:userid"],
+		"the token-supplied aws:userid must be overwritten with the verified (sub, iss) hash")
+	assert.Equal(t, "bearer-user", identity.Claims["sub"])
+	assert.Equal(t, server.URL, identity.Claims["iss"])
+	assert.Equal(t, server.URL, identity.Claims["seaweed:oidc-issuers"],
+		"the registered provider's issuer must be asserted as trusted for legacy-owner anchoring")
+
+	_, errCode = authenticate(sign(map[string]interface{}{"sub": ""}))
+	assert.Equal(t, s3err.ErrAccessDenied, errCode, "a token with no subject must not authenticate")
+}
+
+// flakyListOIDCStore fails ListProviders on demand, standing in for a
+// filer-backed provider store that cannot be read.
+type flakyListOIDCStore struct {
+	integration.OIDCProviderStore
+	fail atomic.Bool
+}
+
+func (s *flakyListOIDCStore) ListProviders(ctx context.Context, filerAddress string) ([]*integration.OIDCProviderRecord, error) {
+	if s.fail.Load() {
+		return nil, fmt.Errorf("list OIDC providers: simulated outage")
+	}
+	return s.OIDCProviderStore.ListProviders(ctx, filerAddress)
+}
+
+// A failed store listing must not pass the registered providers off as the
+// complete trusted set: hidden issuers could shrink the reported set to one
+// entry, the only shape under which a legacy bare subject re-anchors.
+func TestTrustedOIDCIssuersFailsClosedOnStoreError(t *testing.T) {
+	ctx := context.Background()
+
+	iamManager := integration.NewIAMManager()
+	s3iam := NewS3IAMIntegration(iamManager, "")
+
+	// No provider store at all: registered providers are the complete set —
+	// there is nowhere an issuer could hide behind a listing failure.
+	assert.Empty(t, s3iam.trustedOIDCIssuers(ctx))
+
+	mem := integration.NewMemoryOIDCProviderStore()
+	require.NoError(t, mem.StoreProvider(ctx, "", &integration.OIDCProviderRecord{
+		ARN: "arn:aws:iam::111122223333:oidc-provider/idp.example.com",
+		URL: "https://idp.example.com",
+	}))
+	store := &flakyListOIDCStore{OIDCProviderStore: mem}
+	iamManager.SetOIDCProviderStore(store)
+
+	assert.Equal(t, []string{"https://idp.example.com"}, s3iam.trustedOIDCIssuers(ctx))
+
+	store.fail.Store(true)
+	assert.Empty(t, s3iam.trustedOIDCIssuers(ctx),
+		"a failed listing must report no trusted issuers, not the partial registered set")
 }
