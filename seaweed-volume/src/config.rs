@@ -125,6 +125,11 @@ pub struct Cli {
     #[arg(long = "maintenanceMBps", default_value_t = 0)]
     pub maintenance_mb_per_second: u32,
 
+    /// Limit how many vacuum commits run at once on this server; queued
+    /// commits hold no volume lock. 0 means unlimited.
+    #[arg(long = "compactionMaxParallelCommits", default_value_t = 0)]
+    pub max_parallel_vacuum_commits: usize,
+
     /// Limit file size to avoid out of memory.
     #[arg(long = "fileSizeLimitMB", default_value_t = 256)]
     pub file_size_limit_mb: u32,
@@ -263,6 +268,8 @@ pub struct VolumeServerConfig {
     pub mem_profile: String,
     pub compaction_byte_per_second: i64,
     pub maintenance_byte_per_second: i64,
+    /// Max concurrent vacuum commits; 0 means unlimited.
+    pub max_parallel_vacuum_commits: usize,
     pub file_size_limit_bytes: i64,
     pub concurrent_upload_limit: i64,
     pub concurrent_download_limit: i64,
@@ -927,6 +934,7 @@ fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
         mem_profile: cli.mem_profile,
         compaction_byte_per_second: cli.compaction_mb_per_second as i64 * 1024 * 1024,
         maintenance_byte_per_second: cli.maintenance_mb_per_second as i64 * 1024 * 1024,
+        max_parallel_vacuum_commits: cli.max_parallel_vacuum_commits,
         file_size_limit_bytes: cli.file_size_limit_mb as i64 * 1024 * 1024,
         concurrent_upload_limit: cli.concurrent_upload_limit_mb as i64 * 1024 * 1024,
         concurrent_download_limit: cli.concurrent_download_limit_mb as i64 * 1024 * 1024,

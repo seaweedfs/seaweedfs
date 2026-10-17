@@ -53,6 +53,29 @@ fn needle_not_found(needle_id: NeedleId) -> Status {
     Status::not_found(format!("needle not found {}", needle_id.0))
 }
 
+/// Deadline from the caller's `grpc-timeout` header (TimeoutValue +
+/// H|M|S|m|u|n unit, per the gRPC-over-HTTP2 spec). Tonic's GrpcTimeout layer
+/// drops an over-deadline handler future anyway; parsing it here lets a queued
+/// vacuum commit refuse politely instead of being dropped mid-wait.
+fn grpc_timeout_deadline<T>(request: &Request<T>) -> Option<tokio::time::Instant> {
+    let value = request.metadata().get("grpc-timeout")?.to_str().ok()?;
+    let (digits, unit) = value.split_at(value.len().checked_sub(1)?);
+    if digits.len() > 8 {
+        return None;
+    }
+    let n: u64 = digits.parse().ok()?;
+    let dur = match unit {
+        "H" => std::time::Duration::from_secs(n * 60 * 60),
+        "M" => std::time::Duration::from_secs(n * 60),
+        "S" => std::time::Duration::from_secs(n),
+        "m" => std::time::Duration::from_millis(n),
+        "u" => std::time::Duration::from_micros(n),
+        "n" => std::time::Duration::from_nanos(n),
+        _ => return None,
+    };
+    Some(tokio::time::Instant::now() + dur)
+}
+
 fn unix_now_seconds() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1262,7 +1285,11 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::VacuumVolumeCommitResponse>, Status> {
         self.check_grpc_admin_auth(&request)?;
         self.state.check_maintenance()?;
+        let deadline = grpc_timeout_deadline(&request);
         let vid = VolumeId(request.into_inner().volume_id);
+
+        let _permit = self.state.acquire_vacuum_commit_slot(deadline).await?;
+        self.state.check_maintenance()?;
 
         // Match Go's store_vacuum.go CommitCompactVolume: skip commit if stopping
         if *self.state.is_stopping.read().unwrap() {
@@ -7347,6 +7374,8 @@ mod tests {
             rack: String::new(),
             file_size_limit_bytes: 0,
             maintenance_byte_per_second: 0,
+            vacuum_commit_slots: None,
+            vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
             is_heartbeating: std::sync::atomic::AtomicBool::new(true),
             has_master: false,
             pre_stop_seconds: 0,
@@ -7461,6 +7490,8 @@ mod tests {
             rack: String::new(),
             file_size_limit_bytes: 0,
             maintenance_byte_per_second: 0,
+            vacuum_commit_slots: None,
+            vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
             is_heartbeating: std::sync::atomic::AtomicBool::new(true),
             has_master: false,
             pre_stop_seconds: 0,
@@ -7569,6 +7600,271 @@ mod tests {
         assert!(
             err.message().contains("4242"),
             "the message must still name the volume: {err:?}"
+        );
+    }
+
+    fn make_commit_limited_service(
+        collection: &str,
+        max_parallel_commits: usize,
+    ) -> (VolumeGrpcService, TempDir) {
+        let (mut service, tmp) = make_local_service_with_volume(collection, None);
+        if max_parallel_commits > 0 {
+            Arc::get_mut(&mut service.state)
+                .unwrap()
+                .vacuum_commit_slots = Some(tokio::sync::Semaphore::new(max_parallel_commits));
+        }
+        (service, tmp)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn test_vacuum_commit_slots_bound_concurrent_commits() {
+        async fn peak_holders(limit: usize) -> i32 {
+            let (service, _tmp) = make_commit_limited_service("bound_commits", limit);
+            let current = Arc::new(std::sync::atomic::AtomicI32::new(0));
+            let peak = Arc::new(std::sync::atomic::AtomicI32::new(0));
+            let mut workers = Vec::new();
+            for _ in 0..8 {
+                let state = service.state.clone();
+                let current = current.clone();
+                let peak = peak.clone();
+                workers.push(tokio::spawn(async move {
+                    let Ok(Some(_permit)) = state.acquire_vacuum_commit_slot(None).await else {
+                        return;
+                    };
+                    let n = current.fetch_add(1, Ordering::Relaxed) + 1;
+                    peak.fetch_max(n, Ordering::Relaxed);
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    current.fetch_sub(1, Ordering::Relaxed);
+                }));
+            }
+            for w in workers {
+                w.await.unwrap();
+            }
+            peak.load(Ordering::Relaxed)
+        }
+        assert_eq!(peak_holders(1).await, 1);
+        assert!(peak_holders(3).await <= 3);
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_commit_slots_unlimited_by_default() {
+        let (service, _tmp) = make_commit_limited_service("unlimited_commits", 0);
+        for i in 0..8 {
+            service
+                .state
+                .acquire_vacuum_commit_slot(Some(
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                ))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("acquisition {i} must not wait when no limit is configured: {e}")
+                });
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_commit_slot_not_granted_to_expired_deadline() {
+        let (service, _tmp) = make_commit_limited_service("expired_commit", 1);
+        let slots = service.state.vacuum_commit_slots.as_ref().unwrap();
+        let past = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
+        for _ in 0..100 {
+            let err = service
+                .state
+                .acquire_vacuum_commit_slot(Some(past))
+                .await
+                .expect_err("an expired deadline must not get a slot");
+            assert_eq!(err.code(), tonic::Code::DeadlineExceeded);
+            assert_eq!(
+                slots.available_permits(),
+                1,
+                "a refused acquisition must not keep the slot"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_vacuum_commit_deadline_while_queued() {
+        let (service, _tmp) = make_commit_limited_service("queued_deadline", 1);
+        let state = service.state.clone();
+        let held = state
+            .vacuum_commit_slots
+            .as_ref()
+            .unwrap()
+            .acquire()
+            .await
+            .unwrap();
+
+        let mut request =
+            Request::new(volume_server_pb::VacuumVolumeCommitRequest { volume_id: 1 });
+        request
+            .metadata_mut()
+            .insert("grpc-timeout", "20m".parse().unwrap());
+        let err = service
+            .vacuum_volume_commit(request)
+            .await
+            .expect_err("the queued commit must expire at its deadline");
+        assert_eq!(err.code(), tonic::Code::DeadlineExceeded);
+        assert_eq!(
+            state
+                .vacuum_commit_slots
+                .as_ref()
+                .unwrap()
+                .available_permits(),
+            0,
+            "a refused commit must not consume the held slot"
+        );
+        drop(held);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_queued_vacuum_commit_holds_no_store_lock() {
+        let (service, _tmp) = make_commit_limited_service("no_lock_commit", 1);
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .compact_volume(VolumeId(1), 0, 0, |_| true)
+            .unwrap();
+        let state = service.state.clone();
+        let held = state
+            .vacuum_commit_slots
+            .as_ref()
+            .unwrap()
+            .acquire()
+            .await
+            .unwrap();
+
+        let committed = tokio::spawn(async move {
+            service
+                .vacuum_volume_commit(Request::new(volume_server_pb::VacuumVolumeCommitRequest {
+                    volume_id: 1,
+                }))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while state.vacuum_commits_waiting.load(Ordering::Relaxed) == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the commit must pass the entry checks and wait for a slot");
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(_guard) = state.store.try_read() {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("store read blocked behind a queued commit");
+
+        drop(held);
+        tokio::time::timeout(std::time::Duration::from_secs(5), committed)
+            .await
+            .expect("queued commit did not run after the slot freed")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            state
+                .vacuum_commit_slots
+                .as_ref()
+                .unwrap()
+                .available_permits(),
+            1,
+            "the commit must return its slot"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_vacuum_commit_releases_slot_on_error() {
+        let (service, _tmp) = make_commit_limited_service("commit_err", 1);
+        service
+            .vacuum_volume_commit(Request::new(volume_server_pb::VacuumVolumeCommitRequest {
+                volume_id: 42,
+            }))
+            .await
+            .expect_err("committing an unknown volume must fail");
+        assert_eq!(
+            service
+                .state
+                .vacuum_commit_slots
+                .as_ref()
+                .unwrap()
+                .available_permits(),
+            1,
+            "a failed commit must return its slot"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_queued_vacuum_commit_does_not_start_in_maintenance() {
+        let (service, _tmp) = make_commit_limited_service("maint_commit", 1);
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .compact_volume(VolumeId(1), 0, 0, |_| true)
+            .unwrap();
+        let revision_before = {
+            let store = service.state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            v.super_block.compaction_revision
+        };
+        let state = service.state.clone();
+        let held = state
+            .vacuum_commit_slots
+            .as_ref()
+            .unwrap()
+            .acquire()
+            .await
+            .unwrap();
+
+        let committed = tokio::spawn(async move {
+            service
+                .vacuum_volume_commit(Request::new(volume_server_pb::VacuumVolumeCommitRequest {
+                    volume_id: 1,
+                }))
+                .await
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while state.vacuum_commits_waiting.load(Ordering::Relaxed) == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the commit must pass the entry maintenance check and wait for a slot"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+
+        state.maintenance.store(true, Ordering::Relaxed);
+        drop(held);
+
+        let err = tokio::time::timeout(std::time::Duration::from_secs(5), committed)
+            .await
+            .expect("queued commit did not return after the slot freed")
+            .unwrap()
+            .expect_err("a queued commit must not run in maintenance mode");
+        assert!(err.message().contains("maintenance mode"));
+        let revision_after = {
+            let store = state.store.read().unwrap();
+            let (_, v) = store.find_volume(VolumeId(1)).unwrap();
+            v.super_block.compaction_revision
+        };
+        assert_eq!(
+            revision_before, revision_after,
+            "the volume must not be committed"
+        );
+        assert_eq!(
+            state
+                .vacuum_commit_slots
+                .as_ref()
+                .unwrap()
+                .available_permits(),
+            1,
+            "the refused commit must return its slot"
         );
     }
 
@@ -9628,6 +9924,8 @@ mod tests {
             rack: String::new(),
             file_size_limit_bytes: 0,
             maintenance_byte_per_second: 0,
+            vacuum_commit_slots: None,
+            vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
             is_heartbeating: std::sync::atomic::AtomicBool::new(true),
             has_master: false,
             pre_stop_seconds: 0,
@@ -11462,6 +11760,8 @@ mod tests {
             rack: String::new(),
             file_size_limit_bytes: 0,
             maintenance_byte_per_second: 0,
+            vacuum_commit_slots: None,
+            vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
             is_heartbeating: std::sync::atomic::AtomicBool::new(true),
             has_master: false,
             pre_stop_seconds: 0,

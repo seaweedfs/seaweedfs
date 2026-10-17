@@ -63,6 +63,12 @@ pub struct VolumeServerState {
     pub file_size_limit_bytes: i64,
     /// Default IO rate limit for maintenance copy/replication work.
     pub maintenance_byte_per_second: i64,
+    /// Bounds concurrent vacuum commits; None means unlimited. Queued commits
+    /// wait on the semaphore, not on the store lock, so reads keep flowing.
+    /// Mirrors Go's `vacuumCommitSlots`.
+    pub vacuum_commit_slots: Option<tokio::sync::Semaphore>,
+    /// Vacuum commits currently waiting for a slot.
+    pub vacuum_commits_waiting: AtomicU32,
     /// Whether the server is connected to master (heartbeat active).
     pub is_heartbeating: AtomicBool,
     /// Whether master addresses are configured.
@@ -142,6 +148,40 @@ impl VolumeServerState {
             )));
         }
         Ok(())
+    }
+
+    /// Wait for a vacuum commit slot without touching the store lock; the wait
+    /// counts against the caller's `grpc-timeout`. An already-expired deadline
+    /// is refused even when a slot is free, matching Go's post-acquire
+    /// `ctx.Err()` check in `acquireVacuumCommitSlot`.
+    pub async fn acquire_vacuum_commit_slot(
+        &self,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Option<tokio::sync::SemaphorePermit<'_>>, tonic::Status> {
+        let Some(slots) = &self.vacuum_commit_slots else {
+            return Ok(None);
+        };
+        self.vacuum_commits_waiting.fetch_add(1, Ordering::Relaxed);
+        let acquired = match deadline {
+            Some(d) => match tokio::time::timeout_at(d, slots.acquire()).await {
+                Ok(permit) => permit.map_err(|e| tonic::Status::internal(e.to_string())),
+                Err(_) => Err(tonic::Status::deadline_exceeded(
+                    "timed out waiting for a vacuum commit slot",
+                )),
+            },
+            None => slots
+                .acquire()
+                .await
+                .map_err(|e| tonic::Status::internal(e.to_string())),
+        };
+        self.vacuum_commits_waiting.fetch_sub(1, Ordering::Relaxed);
+        let permit = acquired?;
+        if deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+            return Err(tonic::Status::deadline_exceeded(
+                "timed out waiting for a vacuum commit slot",
+            ));
+        }
+        Ok(Some(permit))
     }
 
     /// Build the seed master set from a list of raw `host:port[.grpcPort]`
