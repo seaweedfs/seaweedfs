@@ -82,6 +82,20 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	objectLockEnabled, lockErr := s3a.isObjectLockEnabled(bucket)
+	if lockErr != nil && !errors.Is(lockErr, filer_pb.ErrNotFound) {
+		glog.Errorf("extractZipObject: object lock state for bucket %s: %v", bucket, lockErr)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	// Malformed or unauthorized lock headers fail the request outright, the
+	// same as a standalone PutObject; per-member permission re-checks happen in
+	// authorizeMember.
+	if vErr := s3a.validateObjectLockHeaders(r, bucket, object, objectLockEnabled); vErr != nil {
+		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(vErr))
+		return
+	}
+
 	// Checksums describing the archive body are verified while it spools, then
 	// scrubbed so members are validated against their own bytes instead.
 	requestQuery := parseRequestQuery(r)
@@ -143,13 +157,6 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 	}
 
 	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
-	objectLockEnabled, lockErr := s3a.isObjectLockEnabled(bucket)
-	if lockErr != nil && !errors.Is(lockErr, filer_pb.ErrNotFound) {
-		glog.Errorf("extractZipObject: object lock state for bucket %s: %v", bucket, lockErr)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
 	result := &extractZipResult{}
 
 	join := func(rel string) string {
@@ -171,8 +178,17 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		if code, _ := s3a.checkPolicyWithEntry(r, bucket, memberKey, string(s3_constants.ACTION_WRITE), "", nil); code != s3err.ErrNone {
 			return code
 		}
-		if err := s3a.validateObjectLockHeaders(r, bucket, memberKey, objectLockEnabled); err != nil {
-			return mapValidationErrorToS3Error(err)
+		// Lock headers validated for the request still need the dedicated
+		// permissions against the member's own key.
+		if r.Header.Get(s3_constants.AmzObjectLockMode) != "" || r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate) != "" {
+			if !s3a.checkObjectLockHeaderPermission(r, bucket, memberKey, s3_constants.ACTION_PUT_OBJECT_RETENTION) {
+				return s3err.ErrAccessDenied
+			}
+		}
+		if r.Header.Get(s3_constants.AmzObjectLockLegalHold) != "" {
+			if !s3a.checkObjectLockHeaderPermission(r, bucket, memberKey, s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD) {
+				return s3err.ErrAccessDenied
+			}
 		}
 		if !versioningConfigured {
 			if lockErr := s3a.enforceObjectLockProtections(r, bucket, memberKey, "", s3a.evaluateGovernanceBypassRequest(r, bucket, memberKey)); lockErr != nil {
