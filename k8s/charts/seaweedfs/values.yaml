@@ -437,6 +437,10 @@ volume:
   resizeHook:
     enabled: true
     image: alpine/k8s:1.28.4
+    # nodeSelector and tolerations fall back to the volume server's when unset
+    nodeSelector: ""
+    tolerations: ""
+    affinity: ""
 
   # idx (the volume index) may use a separate PERSISTENT volume:
   #
