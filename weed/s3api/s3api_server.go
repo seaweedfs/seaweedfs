@@ -28,6 +28,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_lifecycle_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -673,6 +674,79 @@ func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, ob
 	principal := buildPrincipalARN(identity, r)
 	errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, action, principal, objectEntry)
 	return errCode
+}
+
+// recheckCopySourcePolicy repeats the source object's policy check once its
+// entry is fetched, so conditions on the object's existing tags apply to a
+// CopyObject / UploadPartCopy / RenameObject source the same way they do to a
+// plain GET. The synthesized GET keeps the destination's request shape (PUT,
+// partNumber, ...) from resolving a different action.
+func (s3a *S3ApiServer) recheckCopySourcePolicy(r *http.Request, bucket, object, versionId string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
+	keyReq := objectKeyPolicyRequest(r, http.MethodGet, bucket, object, versionId)
+	return s3a.recheckPolicyWithObjectEntry(keyReq, bucket, object, string(ACTION_READ), objectEntry, handlerName)
+}
+
+// recheckTagConditionedPolicyWithLookup repeats policy evaluation with the
+// object's entry in hand so s3:ExistingObjectTag conditions apply to tagging
+// writes that did not otherwise fetch the entry. It only does the extra
+// lookup when the bucket has a policy; entry misses return ErrNone because
+// the handler reports its own NoSuchKey.
+func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, bucket, object, action, handlerName string) s3err.ErrorCode {
+	if s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket) {
+		return s3err.ErrNone
+	}
+	target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
+	dir, name := target.DirAndName()
+	entry, err := s3a.getEntry(dir, name)
+	if err != nil {
+		// The tag conditions cannot be evaluated without the entry; failing
+		// open would let a tag-gated Deny slip through a transient miss.
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return s3err.ErrNone
+		}
+		glog.Errorf("%s: recheck lookup for %s/%s failed: %v", handlerName, bucket, object, err)
+		return s3err.ErrInternalError
+	}
+	if entry == nil {
+		return s3err.ErrNone
+	}
+	return s3a.recheckPolicyWithObjectEntry(r, bucket, object, action, entry.Extended, handlerName)
+}
+
+// recheckPolicyForKeyWithLookup re-decides a first-phase deny on one key for a
+// synthesized method, resolving the entry the way the read path does (versions
+// included) so s3:ExistingObjectTag conditions see the object's real tags.
+// Unlike the deny-side rechecks, an indeterminate result does not grant: the
+// caller reports the original verdict either way, so only a statement that
+// matches with tags in hand can turn a deny into an allow, and a missed lookup
+// never widens access or reveals whether the key exists.
+func (s3a *S3ApiServer) recheckPolicyForKeyWithLookup(r *http.Request, method, bucket, object, versionId, action, handlerName string) s3err.ErrorCode {
+	if s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket) {
+		return s3err.ErrAccessDenied
+	}
+	versioningState, err := s3a.getVersioningState(bucket)
+	if err != nil {
+		glog.Errorf("%s: recheck versioning state for %s: %v", handlerName, bucket, err)
+		return s3err.ErrAccessDenied
+	}
+	entry, err := s3a.resolveCopySourceEntry(bucket, object, versionId, versioningState)
+	entry = prefixObjectSource(entry)
+	if err != nil || entry == nil {
+		return s3err.ErrAccessDenied
+	}
+	keyReq := objectKeyPolicyRequest(r, method, bucket, object, versionId)
+	errCode, checked := s3a.checkPolicyWithEntry(keyReq, bucket, object, action, "", entry.Extended)
+	if errCode != s3err.ErrNone || !checked {
+		return s3err.ErrAccessDenied
+	}
+	// A bucket-policy Allow never overrides an explicit Deny in the caller's
+	// own attached or session policies — the first phase applied that veto,
+	// so the tag-aware recheck must too.
+	identity, _ := GetIdentityFromContext(r).(*Identity)
+	if s3a.iam != nil && s3a.iam.isActionExplicitlyDeniedByApplicablePolicies(keyReq, identity, Action(action), bucket, object) {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
 }
 
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.

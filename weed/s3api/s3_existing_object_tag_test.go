@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -256,4 +259,113 @@ func TestHasPolicyForBucket(t *testing.T) {
 
 	// No longer has policy
 	assert.False(t, engine.HasPolicyForBucket("test-bucket"))
+}
+
+// TestRecheckCopySourcePolicy verifies that a tag-conditioned Deny on
+// s3:GetObject also blocks CopyObject-style reads of the source object. The
+// destination request keeps its PUT method while the policy is evaluated
+// against a synthesized GET on the source key.
+func TestRecheckCopySourcePolicy(t *testing.T) {
+	s3a := &S3ApiServer{
+		policyEngine: NewBucketPolicyEngine(),
+	}
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::src-bucket", "arn:aws:s3:::src-bucket/*", "arn:aws:s3:::dst-bucket", "arn:aws:s3:::dst-bucket/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::src-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/status": ["private"]
+					}
+				}
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("src-bucket", policyJSON))
+
+	identity := &Identity{Name: "denied-user", PrincipalArn: "arn:aws:iam::123456789012:user/denied"}
+
+	req := httptest.NewRequest(http.MethodPut, "/dst-bucket/dst-key", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), identity))
+
+	privateEntry := map[string][]byte{
+		s3_constants.AmzObjectTaggingPrefix + "status": []byte("private"),
+	}
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckCopySourcePolicy(req, "src-bucket", "src-key", "", privateEntry, "test"))
+
+	publicEntry := map[string][]byte{
+		s3_constants.AmzObjectTaggingPrefix + "status": []byte("public"),
+	}
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckCopySourcePolicy(req, "src-bucket", "src-key", "", publicEntry, "test"))
+}
+
+// A source read whose only grant is conditioned on s3:ExistingObjectTag denies
+// in the tagless first phase; the deferred lookup recheck must still grant it
+// when the resolved entry's tags satisfy the Allow, and keep denying when they
+// do not. The same recheck with a synthesized DELETE is what a rename applies
+// to the source removal.
+func TestRecheckPolicyForKeyWithLookup(t *testing.T) {
+	filerImpl := &ambiguousPutFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/src-bucket/src-key": {
+				Name: "src-key",
+				Extended: map[string][]byte{
+					s3_constants.AmzObjectTaggingPrefix + "status": []byte("public"),
+				},
+			},
+		},
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	s3a.policyEngine = NewBucketPolicyEngine()
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("src-bucket", &BucketConfig{Name: "src-bucket"})
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::src-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/status": ["public"]
+					}
+				}
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("src-bucket", policyJSON))
+
+	identity := &Identity{Name: "tagged-user", PrincipalArn: "arn:aws:iam::123456789012:user/tagged"}
+	req := httptest.NewRequest(http.MethodPut, "/dst-bucket/dst-key", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), identity))
+
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckPolicyForKeyWithLookup(req, http.MethodGet, "src-bucket", "src-key", "", string(s3_constants.ACTION_READ), "test"),
+		"a tag-conditioned Allow on the resolved entry must still grant the read")
+
+	filerImpl.entries["/buckets/src-bucket/src-key"].Extended[s3_constants.AmzObjectTaggingPrefix+"status"] = []byte("private")
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckPolicyForKeyWithLookup(req, http.MethodGet, "src-bucket", "src-key", "", string(s3_constants.ACTION_READ), "test"),
+		"non-matching tags must keep the first-phase deny")
+
+	// Without a policy on the bucket the recheck must not widen anything.
+	require.NoError(t, s3a.policyEngine.engine.DeleteBucketPolicy("src-bucket"))
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckPolicyForKeyWithLookup(req, http.MethodGet, "src-bucket", "src-key", "", string(s3_constants.ACTION_READ), "test"))
 }

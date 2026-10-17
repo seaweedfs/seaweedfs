@@ -77,8 +77,14 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 	// is what the request URL names. The source arrives in a header and loses
 	// its key, so it needs both read and delete permission checked here.
 	if errCode := s3a.authorizeRenameSource(r, bucket, srcObject); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
+		// Same tag-conditioned-Allow deferral as the copy path: the first
+		// phase ran without the source's tags, so a tag-gated Allow can still
+		// grant both the read and the delete the rename performs.
+		if s3a.recheckPolicyForKeyWithLookup(r, http.MethodGet, bucket, srcObject, "", string(s3_constants.ACTION_READ), "RenameObjectHandler") != s3err.ErrNone ||
+			s3a.recheckPolicyForKeyWithLookup(r, http.MethodDelete, bucket, srcObject, "", string(s3_constants.ACTION_WRITE), "RenameObjectHandler") != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	versioningState, err := s3a.getVersioningState(bucket)
@@ -114,6 +120,14 @@ func (s3a *S3ApiServer) RenameObjectHandler(w http.ResponseWriter, r *http.Reque
 		}
 		if srcErrCode != s3err.ErrNone {
 			return srcErrCode
+		}
+		if errCode := s3a.recheckCopySourcePolicy(r, bucket, srcObject, "", entry.Extended, "RenameObjectHandler"); errCode != s3err.ErrNone {
+			return errCode
+		}
+		// The rename also deletes the source; a tag-gated Deny on the delete
+		// applies the same way it does to a direct DELETE.
+		if errCode := s3a.recheckPolicyWithObjectEntry(objectKeyPolicyRequest(r, http.MethodDelete, bucket, srcObject, ""), bucket, srcObject, string(s3_constants.ACTION_WRITE), entry.Extended, "RenameObjectHandler"); errCode != s3err.ErrNone {
+			return errCode
 		}
 		if errCode := validateSourceConditionalHeaders(r, entry, renameSourceConditionalHeaders); errCode != s3err.ErrNone {
 			return errCode
