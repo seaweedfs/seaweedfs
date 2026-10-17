@@ -41,7 +41,7 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func(*filer_pb.WriteCondition) s3err.ErrorCode { ran = true; return s3err.ErrNone })
 		if code != s3err.ErrNone || !entryCreated {
 			t.Fatalf("code=%v entryCreated=%v", code, entryCreated)
 		}
@@ -55,7 +55,7 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func(*filer_pb.WriteCondition) s3err.ErrorCode { ran = true; return s3err.ErrNone })
 		if code != s3err.ErrServiceUnavailable {
 			t.Fatalf("code = %v, want ServiceUnavailable", code)
 		}
@@ -65,13 +65,23 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 	})
 
 	t.Run("stored entry is a directory, chunks alive — lock path answers", func(t *testing.T) {
-		f := &fakeLookupFiler{entry: &filer_pb.Entry{Name: "o", IsDirectory: true}}
+		dir := &filer_pb.Entry{Name: "o", IsDirectory: true}
+		f := &fakeLookupFiler{entry: dir}
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrExistingObjectIsDirectory })
+		var gotCond *filer_pb.WriteCondition
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func(cond *filer_pb.WriteCondition) s3err.ErrorCode {
+			ran = true
+			gotCond = cond
+			return s3err.ErrExistingObjectIsDirectory
+		})
 		if code != s3err.ErrExistingObjectIsDirectory || !ran {
 			t.Fatalf("code=%v ran=%v — a directory conflict with live chunks must reach createUnderLock, which maps it", code, ran)
+		}
+		c := oneClause(t, gotCond)
+		if c.Kind != filer_pb.WriteCondition_IF_ENTRY_EQUAL || !c.ExpectedEntry.IsDirectory {
+			t.Fatalf("directory retry carried %+v, want an IF_ENTRY_EQUAL pin on the directory", c)
 		}
 	})
 
@@ -83,7 +93,7 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksDead, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksDead, func(*filer_pb.WriteCondition) s3err.ErrorCode { ran = true; return s3err.ErrNone })
 		if code != s3err.ErrServiceUnavailable || ran {
 			t.Fatalf("code=%v ran=%v — re-committed over a directory with possibly-deleted chunks", code, ran)
 		}
@@ -95,20 +105,24 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		s3a := ambiguousRouteServer(t, deadAddr, matchAddr)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", deadAddr, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", deadAddr, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func(*filer_pb.WriteCondition) s3err.ErrorCode { ran = true; return s3err.ErrNone })
 		if code != s3err.ErrServiceUnavailable || entryCreated || ran {
 			t.Fatalf("code=%v entryCreated=%v ran=%v — a match behind an unresolved lookup must not finalize", code, entryCreated, ran)
 		}
 	})
 
-	t.Run("entry proven absent, chunks alive — normal create proceeds", func(t *testing.T) {
+	t.Run("entry proven absent, chunks alive — conditional create proceeds", func(t *testing.T) {
 		f := &fakeLookupFiler{}
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		var gotCond *filer_pb.WriteCondition
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func(cond *filer_pb.WriteCondition) s3err.ErrorCode { ran = true; gotCond = cond; return s3err.ErrNone })
 		if code != s3err.ErrNone || !ran {
 			t.Fatalf("code=%v ran=%v — proven-absent entry did not reach createUnderLock", code, ran)
+		}
+		if c := oneClause(t, gotCond); c.Kind != filer_pb.WriteCondition_IF_NOT_EXISTS {
+			t.Fatalf("absent-entry create carried %+v, want IF_NOT_EXISTS", c)
 		}
 	})
 
@@ -117,7 +131,7 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksDead, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksDead, func(*filer_pb.WriteCondition) s3err.ErrorCode { ran = true; return s3err.ErrNone })
 		if code != s3err.ErrServiceUnavailable || ran {
 			t.Fatalf("code=%v ran=%v — re-committed an entry over possibly-deleted chunks", code, ran)
 		}
@@ -128,7 +142,7 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		s3a, owner := newS3a(t, f)
 		entryCreated := false
 		ran := false
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, nil, &entryCreated, chunksAlive, func(*filer_pb.WriteCondition) s3err.ErrorCode { ran = true; return s3err.ErrNone })
 		if code != s3err.ErrServiceUnavailable || ran {
 			t.Fatalf("code=%v ran=%v — uncertain state still committed", code, ran)
 		}
@@ -140,7 +154,7 @@ func TestCreateAfterAmbiguousRoute(t *testing.T) {
 		entryCreated := false
 		ran := false
 		finalize := &putFinalize{afterCreate: func(*filer_pb.Entry) s3err.ErrorCode { return s3err.ErrInternalError }}
-		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, finalize, &entryCreated, chunksAlive, func() s3err.ErrorCode { ran = true; return s3err.ErrNone })
+		code := s3a.createAfterAmbiguousRoute(filePath, "b", "o", owner, &filer_pb.Entry{Name: "o"}, uploaded, finalize, &entryCreated, chunksAlive, func(*filer_pb.WriteCondition) s3err.ErrorCode { ran = true; return s3err.ErrNone })
 		if code != s3err.ErrInternalError || ran {
 			t.Fatalf("code=%v ran=%v", code, ran)
 		}

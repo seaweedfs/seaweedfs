@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -30,7 +32,7 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 func (s3a *S3ApiServer) withFilerClient(ctx context.Context, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	// Use filerClient for proper connection management and failover
 	if s3a.filerClient != nil {
-		return s3a.withFilerClientFailover(ctx, "", streamingMode, fn)
+		return s3a.withFilerClientFailover(ctx, "", streamingMode, true, fn)
 	}
 
 	// Fallback to direct connection if filerClient not initialized
@@ -56,7 +58,14 @@ func (s3a *S3ApiServer) withFilerClient(ctx context.Context, streamingMode bool,
 // caller decides whether a clean-slate retry is safe. ctx is the budget bounding
 // fn's own calls; it is only read, to tell a filer's failure apart from the
 // caller running out of time.
-func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred pb.ServerAddress, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+//
+// replayable=false is for requests that must not be re-sent once possibly
+// applied (a committed transaction whose response was lost is
+// indistinguishable from one that never arrived): such fn runs only on a
+// channel that just proved ready, and any error it returns ends the walk —
+// moving to the next filer is reserved for channels that never got ready, the
+// one failure mode that provably sent nothing.
+func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred pb.ServerAddress, streamingMode bool, replayable bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	currentFiler := s3a.filerClient.GetCurrentFiler()
 
 	candidates := make([]pb.ServerAddress, 0, 2+len(s3a.option.Filers))
@@ -99,10 +108,15 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 	var lastErr error
 	for _, filer := range ordered {
 		received := false
+		fnRan := false
 		// Background, not ctx: WithGrpcClient's context only decides whether an
 		// error invalidates the shared connection, and that call is fn's to make,
 		// with the context fn's own RPC ran on.
 		err := pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
+			if !replayable && !filerConnReady(ctx, grpcConnection) {
+				return errFilerConnNotReady
+			}
+			fnRan = true
 			return fn(filer_pb.NewSeaweedFilerClient(receiveTrackingConn{ClientConnInterface: grpcConnection, received: &received}))
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 
@@ -127,6 +141,12 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 			return err
 		}
 
+		// fn consumed part of a response; a replay would stack a second copy
+		// onto whatever it accumulated, so surface the error unwrapped. The filer
+		// answered, so this also says nothing about its health.
+		if received {
+			return err
+		}
 		s3a.filerClient.RecordFilerFailure(filer)
 		// A preferred owner is often outside the static filer list, where the health
 		// tracking above no-ops; flag it so route-by-key reads skip it briefly.
@@ -134,9 +154,9 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 			s3a.markOwnerUnreachable(filer)
 		}
 		glog.V(2).Infof("WithFilerClient: filer %s failed: %v", filer, err)
-		// fn consumed part of a response; a replay would stack a second copy
-		// onto whatever it accumulated, so surface the error unwrapped.
-		if received {
+		// A non-replayable fn that ran may have committed server-side; only a
+		// channel that never became ready proves nothing was sent.
+		if !replayable && fnRan {
 			return err
 		}
 		lastErr = err
@@ -146,6 +166,32 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 		lastErr = fmt.Errorf("no filer available")
 	}
 	return fmt.Errorf("all filers failed, last error: %w", lastErr)
+}
+
+// errFilerConnNotReady marks a candidate whose channel never became usable, so
+// the request was provably never sent and the walk may continue.
+var errFilerConnNotReady = errors.New("filer connection not ready")
+
+// filerConnReadyWait bounds how long a candidate gets to bring its channel up
+// before the walk tries the next filer.
+const filerConnReadyWait = 2 * time.Second
+
+func filerConnReady(ctx context.Context, conn *grpc.ClientConn) bool {
+	readyCtx, cancel := context.WithTimeout(ctx, filerConnReadyWait)
+	defer cancel()
+	conn.Connect()
+	for {
+		s := conn.GetState()
+		if s == connectivity.Ready {
+			return true
+		}
+		if s == connectivity.TransientFailure || s == connectivity.Shutdown {
+			return false
+		}
+		if !conn.WaitForStateChange(readyCtx, s) {
+			return false
+		}
+	}
 }
 
 // receiveTrackingConn flags *received once a unary reply or a streamed message
