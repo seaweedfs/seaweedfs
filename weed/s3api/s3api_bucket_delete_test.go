@@ -152,7 +152,7 @@ func TestBucketHasUserObjects_EmptyDirectories(t *testing.T) {
 			wantHasUser: true,
 		},
 		{
-			name: "bucket with only reserved folders (.uploads, *.versions)",
+			name: "empty *.versions folder and .uploads do not count",
 			entriesByDir: map[string][]*filer_pb.Entry{
 				"/buckets/b": {
 					{Name: s3_constants.MultipartUploadsFolder, IsDirectory: true},
