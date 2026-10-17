@@ -5006,13 +5006,12 @@ impl Volume {
                 .get(&storage_name);
             if let Some(backend) = backend {
                 if let Err(e) = backend.delete_file_blocking(&storage_key) {
-                    warn!(
-                        volume_id = self.id.0,
-                        storage_name,
-                        storage_key,
-                        error = %e,
-                        "failed to delete remote tier file during destroy"
-                    );
+                    // Stop short of local cleanup: a failed remote delete must
+                    // not strand a registered replica with no local files.
+                    return Err(VolumeError::Io(io::Error::other(format!(
+                        "volume {} remote object {}/{} delete failed: {}",
+                        self.id, storage_name, storage_key, e
+                    ))));
                 }
             } else {
                 warn!(
