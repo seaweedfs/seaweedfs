@@ -9,6 +9,36 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
+// isEmptyDiskTypeEntry reports a DiskInfo with no capacity and nothing on it.
+func isEmptyDiskTypeEntry(diskInfo *master_pb.DiskInfo) bool {
+	return diskInfo != nil &&
+		diskInfo.MaxVolumeCount <= 0 &&
+		diskInfo.VolumeCount == 0 &&
+		diskInfo.RemoteVolumeCount == 0 &&
+		len(diskInfo.VolumeInfos) == 0 &&
+		len(diskInfo.EcShardInfos) == 0 &&
+		len(diskInfo.MaxVolumeCountByDisk) == 0
+}
+
+// IsPhantomDiskTypeEntry reports whether node's DiskInfo of diskType is an
+// empty entry on a node that has a disk of another type with capacity or
+// data. Masters used to publish such an entry for every disk type a capacity
+// check had asked about; keyed by node and disk id it can replace or pose as
+// a real disk and be offered to planners as an empty destination of a type
+// the node lacks. A node whose entries are all empty keeps them, as disks of
+// unknown capacity.
+func IsPhantomDiskTypeEntry(node *master_pb.DataNodeInfo, diskType string) bool {
+	if node == nil || !isEmptyDiskTypeEntry(node.DiskInfos[diskType]) {
+		return false
+	}
+	for otherType, other := range node.DiskInfos {
+		if otherType != diskType && other != nil && !isEmptyDiskTypeEntry(other) {
+			return true
+		}
+	}
+	return false
+}
+
 // CountTopologyResources counts datacenters, nodes, and disks in topology info
 func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, nodeCount, diskCount int) {
 	if topologyInfo == nil {
@@ -22,7 +52,10 @@ func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, node
 				// DiskInfos is keyed by disk type, so same-type physical disks
 				// collapse into one entry. Count physical disks so the number
 				// matches the per-disk activeDisk map.
-				for _, diskInfo := range node.DiskInfos {
+				for diskType, diskInfo := range node.DiskInfos {
+					if IsPhantomDiskTypeEntry(node, diskType) {
+						continue
+					}
 					diskCount += len(diskInfo.SplitByPhysicalDisk())
 				}
 			}
@@ -82,6 +115,9 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 				// One activeDisk per physical disk_id: the master keys
 				// DiskInfos by disk type, so same-type disks must be split out.
 				for diskType, diskInfo := range nodeInfo.DiskInfos {
+					if IsPhantomDiskTypeEntry(nodeInfo, diskType) {
+						continue
+					}
 					perDiskInfos := diskInfo.SplitByPhysicalDisk()
 					for _, perDisk := range perDiskInfos {
 						disk := &activeDisk{

@@ -113,7 +113,9 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 							continue
 						}
 						for diskTypeName, diskInfo := range node.DiskInfos {
-							if diskTypeName == diskType {
+							// An empty entry on a node whose real disks are of
+							// another type is not a disk of this type.
+							if diskTypeName == diskType && !topology.IsPhantomDiskTypeEntry(node, diskTypeName) {
 								serverVolumeCounts[node.Id] = 0
 								serverMaxVolumes[node.Id] += diskInfo.MaxVolumeCount
 								serverDiskTotalBytes[node.Id] += diskInfo.DiskTotalBytes
