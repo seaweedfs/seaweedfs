@@ -84,7 +84,7 @@ func TestRunShard_WalkerThrottle(t *testing.T) {
 			calls := 0
 			cfg := Config{
 				Persister: p,
-				Walker: func(_ context.Context, _ *engine.Snapshot, _ int) error {
+				Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
 					calls++
 					return nil
 				},
@@ -127,7 +127,7 @@ func TestRunShard_WalkerThrottle(t *testing.T) {
 			close(closedEvents)
 
 			// Pass 1.
-			require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, closedEvents))
+			require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, closedEvents, nil))
 			afterPass1, _, _ := p.Load(context.Background(), 0)
 			require.Equal(t, 1, calls, "pass 1 must fire the walker (cold-start anchor)")
 			require.Equal(t, runNow.UnixNano(), afterPass1.LastWalkedNs)
@@ -136,7 +136,7 @@ func TestRunShard_WalkerThrottle(t *testing.T) {
 			runNow2 := runNow.Add(tc.secondPassAfter)
 			closedEvents2 := make(chan *readerEventAlias)
 			close(closedEvents2)
-			require.NoError(t, runShard(context.Background(), cfg, snap, runNow2, 0, closedEvents2))
+			require.NoError(t, runShard(context.Background(), cfg, snap, runNow2, 0, closedEvents2, nil))
 			afterPass2, _, _ := p.Load(context.Background(), 0)
 			assert.Equal(t, tc.wantTotalCalls, calls, "walker calls after 2 passes")
 			if tc.wantSecondAdvNs {
@@ -221,7 +221,7 @@ func TestRunShard_ColdStartDoesNotDoubleWalk(t *testing.T) {
 	calls := 0
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, _ *engine.Snapshot, _ int) error {
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
 			calls++
 			return nil
 		},
@@ -231,7 +231,7 @@ func TestRunShard_ColdStartDoesNotDoubleWalk(t *testing.T) {
 
 	closedEvents := make(chan *readerEventAlias)
 	close(closedEvents)
-	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, closedEvents))
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, closedEvents, nil))
 
 	assert.Equal(t, 1, calls, "cold-start walker must fire exactly once per pass even with interval=0")
 }
@@ -256,14 +256,14 @@ func TestRunShard_RecoveryWalkerSetsLastWalkedAnchor(t *testing.T) {
 	calls := 0
 	cfg := Config{
 		Persister: p,
-		Walker: func(_ context.Context, _ *engine.Snapshot, _ int) error {
+		Walker: func(_ context.Context, _ *engine.Snapshot, _ []int) error {
 			calls++
 			return nil
 		},
 		WalkerInterval: time.Hour,
 	}
 	runNow := time.Unix(1_700_000_000, 0).UTC()
-	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 5, nil))
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 5, nil, nil))
 
 	require.Equal(t, 1, calls, "recovery branch fires the walker unconditionally")
 	got, ok, _ := p.Load(context.Background(), 5)
