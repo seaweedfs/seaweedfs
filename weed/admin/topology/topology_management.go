@@ -9,9 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
-// isEmptyDiskTypeEntry reports a DiskInfo that offers no capacity and holds
-// nothing. On its own that is an empty disk of unknown capacity, which
-// planners may still use (see GetDisksWithEffectiveCapacity).
+// isEmptyDiskTypeEntry reports a DiskInfo with no capacity and nothing on it.
 func isEmptyDiskTypeEntry(diskInfo *master_pb.DiskInfo) bool {
 	return diskInfo != nil &&
 		diskInfo.MaxVolumeCount <= 0 &&
@@ -23,20 +21,12 @@ func isEmptyDiskTypeEntry(diskInfo *master_pb.DiskInfo) bool {
 }
 
 // IsPhantomDiskTypeEntry reports whether node's DiskInfo of diskType is an
-// empty entry (no capacity, nothing on it) on a node that has a disk of
-// another type with capacity or data. Masters used to publish such an entry
-// for every disk type a capacity check had asked about, on nodes without a
-// disk of that type. It is not a disk: keyed by node and disk id it would
-// replace or pose as the node's disk 0, and planners would take it for an
-// empty destination of a type the node lacks.
-//
-// The entry's disk id cannot tell it apart: a DiskInfo with no volumes, no EC
-// shards and no per-disk max is published with DiskId 0, whichever physical
-// disk it stands for. A real disk looks the same only while it offers no
-// volume slot -- low on space and empty, or auto-sized before its volume
-// server has learned the volume size limit -- and then it can neither take a
-// volume nor be placed on its own disk id. A node whose DiskInfos are all
-// empty keeps them: those are disks of unknown capacity.
+// empty entry on a node that has a disk of another type with capacity or
+// data. Masters used to publish such an entry for every disk type a capacity
+// check had asked about; keyed by node and disk id it can replace or pose as
+// a real disk and be offered to planners as an empty destination of a type
+// the node lacks. A node whose entries are all empty keeps them, as disks of
+// unknown capacity.
 func IsPhantomDiskTypeEntry(node *master_pb.DataNodeInfo, diskType string) bool {
 	if node == nil || !isEmptyDiskTypeEntry(node.DiskInfos[diskType]) {
 		return false

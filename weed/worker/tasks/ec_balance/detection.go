@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -195,6 +196,9 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 
 				for diskType, diskInfo := range dn.DiskInfos {
 					if filterByDiskType && diskType != wantDiskType {
+						continue
+					}
+					if topology.IsPhantomDiskTypeEntry(dn, diskType) {
 						continue
 					}
 					hasMatchingDisk = true

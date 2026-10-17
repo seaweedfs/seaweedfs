@@ -505,7 +505,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 					for _, rack := range dc.RackInfos {
 						for _, node := range rack.DataNodeInfos {
 							for diskTypeName := range node.DiskInfos {
-								if diskTypeName == diskType {
+								if diskTypeName == diskType && !topology.IsPhantomDiskTypeEntry(node, diskTypeName) {
 									serverVolumeCounts[node.Id] = 0
 								}
 							}
@@ -853,6 +853,9 @@ func checkMoveDiskType(topologyInfo *master_pb.TopologyInfo, volumeID uint32, so
 				if isTarget {
 					targetFound = true
 					for diskType := range node.DiskInfos {
+						if topology.IsPhantomDiskTypeEntry(node, diskType) {
+							continue
+						}
 						targetDiskTypes[string(types.ToDiskType(diskType))] = true
 					}
 				}

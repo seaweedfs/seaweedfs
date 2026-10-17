@@ -68,4 +68,9 @@ func TestCapacityQueriesDoNotCreateDiskTypes(t *testing.T) {
 	}
 	check("hdd node", hddNode, "")
 	check("ssd node", ssdNode, "ssd")
+
+	// A usage entry created by a pre-fix capacity walk has no disk child: the
+	// node stops advertising it without waiting for a restart.
+	hddNode.diskUsages.getOrCreateDisk(types.SsdType)
+	check("hdd node", hddNode, "")
 }

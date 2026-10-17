@@ -432,9 +432,21 @@ func (dn *DataNode) ToDataNodeInfo(filter VolumeFilter) *master_pb.DataNodeInfo 
 		diskInfo.Type = diskType
 	}
 
+	reported := make(map[string]bool)
 	for _, c := range dn.Children() {
 		disk := c.(*Disk)
+		reported[string(disk.Id())] = true
 		m.DiskInfos[string(disk.Id())] = disk.ToDiskInfo(filter)
+	}
+	// A zeroed usage counter with no disk child was only ever created by a
+	// capacity query, not by anything the server reported: drop it so the
+	// node does not advertise a disk type it does not have.
+	for diskType := range m.DiskInfos {
+		if !reported[diskType] {
+			if u := dn.diskUsages.getDisk(types.ToDiskType(diskType)); u != nil && u.snapshot() == (DiskUsageCounts{}) {
+				delete(m.DiskInfos, diskType)
+			}
+		}
 	}
 
 	dn.RLock()
