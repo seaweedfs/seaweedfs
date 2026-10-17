@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -157,6 +158,11 @@ func singleStrongETag(v string) (string, bool) {
 // the write. The reached filer forwards to the real owner by route_key, keeping its
 // per-path lock authoritative. Mirrors getObjectEntryRoutedByKey on the read path.
 func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.ObjectTransactionRequest) (*filer_pb.ObjectTransactionResponse, error) {
+	// One id per logical transaction: failover retries reuse it so the owner
+	// replays the recorded outcome instead of re-applying the mutations.
+	if req.RequestId == "" {
+		req.RequestId = uuid.NewString()
+	}
 	var resp *filer_pb.ObjectTransactionResponse
 	txn := func(client filer_pb.SeaweedFilerClient) error {
 		var e error

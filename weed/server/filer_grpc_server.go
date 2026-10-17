@@ -344,6 +344,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			ConditionKey:       req.ConditionKey,
 			RouteKey:           req.RouteKey,
 			IsMoved:            true,
+			RequestId:          req.RequestId,
 			ConditionAltKey:    req.ConditionAltKey,
 		}
 		var resp *filer_pb.ObjectTransactionResponse
@@ -366,6 +367,28 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	lockPath := util.FullPath(req.LockKey)
 	pathLock := fs.entryLockTable.AcquireLock("ObjectTransaction", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
+
+	// Under the same lock the first application committed with, a failover
+	// replay of the same request replays its recorded outcome instead of
+	// re-applying mutations over whatever superseded it.
+	if resp, found := fs.recentObjectTxn(req.RequestId, lockPath); found {
+		glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: replaying recorded outcome for request %s", req.LockKey, req.RequestId)
+		return resp, nil
+	}
+
+	resp := &filer_pb.ObjectTransactionResponse{}
+	// Outcomes are replayed rather than re-run: a mutation error may follow a
+	// partial apply, and a retry that re-runs could write the stale mutation
+	// over whatever superseded it, while replaying the recorded failure at
+	// least matches what the first attempt reported. The one exception is the
+	// condition lookup below: it fails before any mutation runs, so the retry
+	// must re-evaluate rather than replay an empty outcome.
+	record := true
+	defer func() {
+		if record {
+			fs.rememberObjectTxn(req.RequestId, lockPath, resp)
+		}
+	}()
 
 	if conditionIsSet(req.Condition) {
 		// The condition is evaluated against condition_key when set (e.g. a
@@ -393,28 +416,102 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			current, conditionPath, findErr = fs.latestVersionedConditionEntry(ctx, util.FullPath(req.ConditionAltKey))
 		}
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
-			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
+			record = false // a lookup error decides nothing; a retry must re-run, not replay
+			return nil, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
 		}
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
 		}
 		if !writeConditionSatisfied(req.Condition, current) {
 			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", conditionPath)
-			return &filer_pb.ObjectTransactionResponse{
-				Error:     "precondition failed",
-				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
-			}, nil
+			resp.Error = "precondition failed"
+			resp.ErrorCode = filer_pb.FilerError_PRECONDITION_FAILED
+			return resp, nil
 		}
 	}
 
 	for i, m := range req.Mutations {
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
-			return &filer_pb.ObjectTransactionResponse{Error: fmt.Sprintf("mutation %d: %v", i, err)}, nil
+			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
+			return resp, nil
 		}
 	}
 
-	return &filer_pb.ObjectTransactionResponse{}, nil
+	return resp, nil
+}
+
+const (
+	recentObjectTxnTTL         = 2 * time.Minute
+	recentObjectTxnSweepCap    = 10000
+	recentObjectTxnSweepPeriod = 30 * time.Second
+)
+
+type recentObjectTxn struct {
+	resp      *filer_pb.ObjectTransactionResponse
+	expiresAt time.Time
+}
+
+// recentObjectTxnKey scopes an idempotency token to the transaction's lock
+// path, so a token reused on a different object cannot replay this outcome.
+func recentObjectTxnKey(requestID string, lockPath util.FullPath) string {
+	return requestID + "\x00" + string(lockPath)
+}
+
+// recentObjectTxn returns the recorded outcome of an already-applied request,
+// so a failover replay of the same ObjectTransaction does not re-apply it.
+func (fs *FilerServer) recentObjectTxn(requestID string, lockPath util.FullPath) (*filer_pb.ObjectTransactionResponse, bool) {
+	if requestID == "" {
+		return nil, false
+	}
+	fs.recentObjectTxnsMu.Lock()
+	defer fs.recentObjectTxnsMu.Unlock()
+
+	key := recentObjectTxnKey(requestID, lockPath)
+	txn, found := fs.recentObjectTxns[key]
+	if !found {
+		return nil, false
+	}
+	if time.Now().After(txn.expiresAt) {
+		delete(fs.recentObjectTxns, key)
+		return nil, false
+	}
+	return txn.resp, true
+}
+
+func (fs *FilerServer) rememberObjectTxn(requestID string, lockPath util.FullPath, resp *filer_pb.ObjectTransactionResponse) {
+	if requestID == "" || resp == nil {
+		return
+	}
+	fs.recentObjectTxnsMu.Lock()
+	defer fs.recentObjectTxnsMu.Unlock()
+	if fs.recentObjectTxns == nil {
+		fs.recentObjectTxns = make(map[string]recentObjectTxn)
+	}
+	// A live record is never evicted early: a replay that misses re-applies the
+	// transaction. The sweep is amortized so a hot cache does not scan on every
+	// write; between sweeps the map may exceed the cap, still bounded by the
+	// insert rate over the TTL.
+	now := time.Now()
+	if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap {
+		if now.After(fs.recentObjectTxnsSweepAt) {
+			fs.recentObjectTxnsSweepAt = now.Add(recentObjectTxnSweepPeriod)
+			for id, txn := range fs.recentObjectTxns {
+				if now.After(txn.expiresAt) {
+					delete(fs.recentObjectTxns, id)
+				}
+			}
+		}
+		if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap {
+			// Full of unexpired records: drop the new one rather than evict
+			// an outcome a replay may still need.
+			return
+		}
+	}
+	fs.recentObjectTxns[recentObjectTxnKey(requestID, lockPath)] = recentObjectTxn{
+		resp:      resp,
+		expiresAt: now.Add(recentObjectTxnTTL),
+	}
 }
 
 // latestVersionedConditionEntry resolves the object a conditional write should

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -1155,6 +1156,7 @@ func (s *AdminServer) SetBucketLifecycle(bucketName string, rules []BucketLifecy
 		bucketPath := filerConfig.BucketsPath + "/" + bucketName
 		resp, err := client.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
 			LockKey:   bucketPath,
+			RequestId: uuid.NewString(),
 			RouteKey:  s3_constants.ObjectWriteRouteKeyPrefix + bucketPath,
 			Mutations: []*filer_pb.ObjectMutation{bucketLifecycleMutation(filerConfig.BucketsPath, bucketName, lifecycleXML)},
 		})
