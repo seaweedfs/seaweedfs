@@ -41,9 +41,9 @@ func TestGetRequestDataReader_ChunkedEncodingWithoutIAM(t *testing.T) {
 		{
 			name:          "StreamingSignedWithoutIAM",
 			contentSha256: "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
-			expectedError: s3err.ErrAuthNotSetup,
-			shouldProcess: false,
-			description:   "Streaming signed requests should fail when IAM is disabled",
+			expectedError: s3err.ErrNone,
+			shouldProcess: true,
+			description:   "Streaming signed requests are decoded when IAM is disabled; signatures are skipped since there is nothing to verify them against",
 		},
 		{
 			name:          "StreamingUnsignedWithoutIAM",
