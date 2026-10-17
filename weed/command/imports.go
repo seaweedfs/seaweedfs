@@ -19,6 +19,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/etcd"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/hbase"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/keeper"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb3"
