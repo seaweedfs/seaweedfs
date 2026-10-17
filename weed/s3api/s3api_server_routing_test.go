@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,9 +13,14 @@ import (
 	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // routingTestAccessKey/routingTestSecretKey are the credentials seeded into
@@ -205,50 +211,80 @@ func TestRouting_AuthenticatedIAM(t *testing.T) {
 	assert.Contains(t, []int{http.StatusBadRequest, http.StatusForbidden}, rr.Code, "Should route to IAM handler (400/403 due to invalid signature)")
 }
 
-// setupRoutingTestServerWithCreator seeds a non-admin identity (creator) that
-// holds only the iam:CreateServiceAccount action, plus a victim identity, so a
-// SigV4-signed CreateServiceAccount request can exercise UnifiedPostHandler's
-// authorization against the ParentUser target.
+// setupRoutingTestServerWithCreator seeds two non-admin identities holding
+// iam:CreateServiceAccount — creator with the coarse (unscoped) action,
+// keymaker with a policy scoped to the team-parent identity ARN — plus a
+// victim identity, so SigV4-signed CreateServiceAccount requests can exercise
+// UnifiedPostHandler's authorization against the ParentUser target.
 func setupRoutingTestServerWithCreator(t *testing.T) *S3ApiServer {
 	s3a := setupRoutingTestServer(t)
 	const creatorAK, creatorSK = "creator-ak", "creator-sk"
-	creator := &Identity{
-		Name:     "creator",
-		Actions:  []Action{Action("iam:CreateServiceAccount")},
-		IsStatic: true,
-		Credentials: []*Credential{{
-			AccessKey: creatorAK,
-			SecretKey: creatorSK,
-		}},
+	const keymakerAK, keymakerSK = "keymaker-ak", "keymaker-sk"
+
+	// Policy-bearing identities route through the IAM integration; wire one
+	// with a Deny default, as a real deployment configures it.
+	mgr := integration.NewIAMManager()
+	require.NoError(t, mgr.Initialize(&integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test",
+			SigningKey:       []byte("test-signing-key-32-characters!!"),
+			AccountId:        "111122223333",
+		},
+		Policy: &policy.PolicyEngineConfig{DefaultEffect: "Deny", StoreType: "memory"},
+		Roles:  &integration.RoleStoreConfig{StoreType: "memory"},
+	}, func() string { return "localhost:8888" }))
+	s3a.iam.SetIAMIntegration(NewS3IAMIntegration(mgr, ""))
+
+	// Scoped to the parent identity's ARN in the account-less shape this
+	// authorization used historically, so arn:aws:iam:::* wildcard grants
+	// keep matching.
+	const zonePolicy = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:CreateServiceAccount"],"Resource":["arn:aws:iam:::user/team-parent"]}]}`
+	require.NoError(t, s3a.iam.PutPolicy("CreateSvcAcctZonePolicy", zonePolicy))
+	// Store and memory must agree: SigV4 authentication reads the in-memory
+	// maps, the CreateServiceAccount handler re-reads the credential store,
+	// and a successful creation reloads memory from the store — anything
+	// seeded only in memory (identities, the policy) would vanish after the
+	// first request.
+	idents := []*iam_pb.Identity{
+		{Name: "creator", Actions: []string{"iam:CreateServiceAccount"},
+			Credentials: []*iam_pb.Credential{{AccessKey: creatorAK, SecretKey: creatorSK}}},
+		{Name: "keymaker", PolicyNames: []string{"CreateSvcAcctZonePolicy"},
+			Credentials: []*iam_pb.Credential{{AccessKey: keymakerAK, SecretKey: keymakerSK}}},
+		{Name: "victim"},
+		{Name: "team-parent"},
 	}
-	victim := &Identity{Name: "victim", IsStatic: true}
-	s3a.iam.m.Lock()
-	s3a.iam.identities = append(s3a.iam.identities, creator, victim)
-	s3a.iam.accessKeyIdent[creatorAK] = creator
-	s3a.iam.nameToIdentity["creator"] = creator
-	s3a.iam.nameToIdentity["victim"] = victim
-	s3a.iam.m.Unlock()
+	require.NoError(t, s3a.credentialManager.SaveConfiguration(context.Background(), &iam_pb.S3ApiConfiguration{
+		Identities: idents,
+		Policies:   []*iam_pb.Policy{{Name: "CreateSvcAcctZonePolicy", Content: zonePolicy}},
+	}))
+	for _, ident := range idents {
+		require.NoError(t, s3a.iam.UpsertIdentity(ident))
+	}
 	s3a.cb = NewCircuitBreaker(s3a.option)
 	return s3a
 }
 
-// TestRouting_CreateServiceAccountBindsParentUser verifies that on the S3-port
-// IAM route a non-admin holding iam:CreateServiceAccount cannot mint a service
-// account for another identity (ParentUser=victim), and can for itself.
-func TestRouting_CreateServiceAccountBindsParentUser(t *testing.T) {
+// TestRouting_CreateServiceAccountParentUserScopedByPolicy verifies that on
+// the S3-port IAM route a non-admin holding iam:CreateServiceAccount targets
+// the identities its grant covers: the coarse action is unscoped (like a
+// wildcard resource), a policy scoped to one parent identity's ARN confines
+// the grant to that parent.
+func TestRouting_CreateServiceAccountParentUserScopedByPolicy(t *testing.T) {
 	router := mux.NewRouter()
 	s3a := setupRoutingTestServerWithCreator(t)
 	s3a.registerRouter(router)
 
-	signCreator := func(t *testing.T, req *http.Request, body string) {
+	sign := func(t *testing.T, req *http.Request, body, ak, sk string) {
 		t.Helper()
-		creds := credentials.NewStaticCredentials("creator-ak", "creator-sk", "")
+		creds := credentials.NewStaticCredentials(ak, sk, "")
 		if _, err := v4.NewSigner(creds).Sign(req, strings.NewReader(body), "iam", "us-east-1", time.Now()); err != nil {
 			t.Fatalf("sign request: %v", err)
 		}
 	}
 
-	makeReq := func(parentUser string) *http.Request {
+	makeReq := func(parentUser, ak, sk string) *http.Request {
 		data := url.Values{}
 		data.Set("Action", "CreateServiceAccount")
 		data.Set("Version", "2010-05-08")
@@ -256,19 +292,30 @@ func TestRouting_CreateServiceAccountBindsParentUser(t *testing.T) {
 		body := data.Encode()
 		req, _ := http.NewRequest("POST", "http://localhost/", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		signCreator(t, req, body)
+		sign(t, req, body, ak, sk)
 		return req
 	}
 
-	// Targeting another identity must be denied at authorization.
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, makeReq("victim"))
-	assert.Equal(t, http.StatusForbidden, rr.Code, "cross-identity ParentUser must be denied; got body=%s", rr.Body.String())
+	serve := func(req *http.Request) *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		return rr
+	}
 
-	// Targeting self must pass authorization (handler may still error, but not 403).
-	rr2 := httptest.NewRecorder()
-	router.ServeHTTP(rr2, makeReq("creator"))
-	assert.NotEqual(t, http.StatusForbidden, rr2.Code, "self ParentUser must pass authorization; got body=%s", rr2.Body.String())
+	// Coarse (unscoped) action: any target passes authorization and the
+	// service account is actually created.
+	rr := serve(makeReq("victim", "creator-ak", "creator-sk"))
+	assert.Equal(t, http.StatusOK, rr.Code, "coarse grant is unscoped; got body=%s", rr.Body.String())
+
+	// Scoped policy: the named parent passes (200), any other identity is denied.
+	rr2 := serve(makeReq("team-parent", "keymaker-ak", "keymaker-sk"))
+	assert.Equal(t, http.StatusOK, rr2.Code, "scoped grant must cover its named parent; got body=%s", rr2.Body.String())
+
+	rr3 := serve(makeReq("victim", "keymaker-ak", "keymaker-sk"))
+	assert.Equal(t, http.StatusForbidden, rr3.Code, "target outside the scoped grant must be denied; got body=%s", rr3.Body.String())
+
+	rr4 := serve(makeReq("keymaker", "keymaker-ak", "keymaker-sk"))
+	assert.Equal(t, http.StatusForbidden, rr4.Code, "even self is denied when the scoped grant does not name it; got body=%s", rr4.Body.String())
 }
 
 // TestRouting_IAMMatcherLogic verifies the iamMatcher correctly distinguishes auth types
