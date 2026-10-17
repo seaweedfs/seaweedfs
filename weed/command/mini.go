@@ -1407,7 +1407,6 @@ func runMini(cmd *Command, args []string) bool {
 
 	miniFilerOptions.dataCenter = miniDataCenter
 	miniFilerOptions.rack = miniRack
-	miniS3Options.dataCenter = miniDataCenter
 	miniFilerOptions.disableHttp = miniDisableHttp
 	miniMasterOptions.disableHttp = miniDisableHttp
 
