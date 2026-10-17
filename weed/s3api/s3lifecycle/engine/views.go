@@ -59,6 +59,7 @@ func cloneAction(src *CompiledAction, mode RuleMode, active bool) *CompiledActio
 		Delay:              src.Delay,
 		PredicateSensitive: src.PredicateSensitive,
 		Mode:               mode,
+		bootstrapComplete:  src.bootstrapComplete,
 	}
 	if active {
 		dst.markActive()
@@ -220,14 +221,13 @@ func (s *Snapshot) RulesForShard(shardID int, retentionWindow time.Duration) (re
 // with a not-yet-due match, so one promoted match would pin the cursor
 // until that object comes due; the walk view serves them instead.
 //
-// Replay-kind clones force ModeEventDriven for the same reason as
-// RulesForShard's replay partition — router.Route gates on it and a
-// persistent prior.Mode = ModeScanOnly must not lock a rule out of replay
-// once retention covers its TTL. ScanOnly also reactivates the clone: the
-// base deactivates it because its bootstrap rendezvous completed under a
-// demoted mode. Every other action keeps the base's active bit — the drain
-// must not dispatch rules whose bootstrap hasn't completed. Walk-bound
-// kinds are shared by pointer; disabled actions stay out.
+// Actions are shared with the base by pointer so a MarkActive flip stays
+// observable mid-drain. The exception is a replay-kind action still
+// carrying ModeScanOnly: it is cloned as ModeEventDriven and reactivated
+// when its bootstrap rendezvous already completed, for the same reason
+// RulesForShard rewrites the mode — router.Route gates on event_driven,
+// and scan_only is a retention verdict, not a bootstrap state. Disabled
+// actions stay out.
 //
 // Returns nil when every action is promoted or disabled.
 func (s *Snapshot) ReplayView(retentionWindow time.Duration) *Snapshot {
@@ -243,8 +243,10 @@ func (s *Snapshot) ReplayView(retentionWindow time.Duration) *Snapshot {
 			if isPromoted(a, retentionWindow) {
 				continue
 			}
-			actions[key] = cloneAction(a, ModeEventDriven, a.IsActive() || a.Mode == ModeScanOnly)
-			continue
+			if a.Mode == ModeScanOnly {
+				actions[key] = cloneAction(a, ModeEventDriven, a.IsActive() || a.bootstrapComplete)
+				continue
+			}
 		}
 		actions[key] = a
 	}

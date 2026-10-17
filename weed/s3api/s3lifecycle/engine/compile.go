@@ -80,6 +80,7 @@ func (e *Engine) Compile(inputs []CompileInput, opts CompileOptions) *Snapshot {
 					Delay:              s3lifecycle.MinTriggerAge(rule, kind),
 					PredicateSensitive: rulePredicateSensitive(rule),
 					Mode:               mode,
+					bootstrapComplete:  prior.BootstrapComplete,
 				}
 				if active {
 					ca.markActive()

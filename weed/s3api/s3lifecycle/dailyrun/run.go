@@ -443,6 +443,12 @@ func validate(cfg Config) error {
 	if cfg.SubscriptionReceiveTimeout < 0 {
 		return fmt.Errorf("daily_run: negative SubscriptionReceiveTimeout %v (0 = default %v)", cfg.SubscriptionReceiveTimeout, defaultSubscriptionReceiveTimeout)
 	}
+	// A declared retention window promotes long-TTL rules to the walk
+	// view; without a walker they lose their only dispatch path while
+	// the drain cursor still advances past their events.
+	if cfg.RetentionWindow > 0 && cfg.Walker == nil {
+		return errors.New("daily_run: RetentionWindow requires Walker (promoted rules would be silently skipped)")
+	}
 	for _, sh := range cfg.Shards {
 		if sh < 0 || sh >= s3lifecycle.ShardCount {
 			return fmt.Errorf("daily_run: shard %d out of [0, %d)", sh, s3lifecycle.ShardCount)
