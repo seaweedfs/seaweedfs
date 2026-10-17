@@ -521,8 +521,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // bucketHasUserObjects checks whether a bucket contains any user objects.
-// Empty directories left behind by deleted objects and internal folders
-// (.uploads, *.versions) do not count as user objects.
+// Empty directories left behind by deleted objects and the .uploads staging
+// folder do not count as user objects; stored versions inside a <key>.versions
+// directory do.
 func (s3a *S3ApiServer) bucketHasUserObjects(bucket string) (bool, error) {
 	return s3a.dirHasUserObjects(s3a.option.BucketsPath + "/" + bucket)
 }
@@ -556,9 +557,10 @@ func (s3a *S3ApiServer) dirHasUserObjects(root string) (bool, error) {
 				if entry.IsDirectoryKeyObject() {
 					return true, nil
 				}
-				// Internal folders are skipped by object listing at every level,
-				// so a directory with a reserved name never counts.
-				if isReservedDirectoryName(entry.Name) {
+				// Multipart staging folders are invisible to object listing at
+				// every level, so they never count. A <key>.versions directory
+				// is descended into since it may still hold stored versions.
+				if entry.Name == s3_constants.MultipartUploadsFolder {
 					continue
 				}
 				dirs = append(dirs, dir+"/"+entry.Name)
