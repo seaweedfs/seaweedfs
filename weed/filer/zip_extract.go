@@ -22,8 +22,14 @@ const (
 	// the TUS default max upload size.
 	ZipExtractMaxArchiveBytes = int64(5) << 30 // 5 GiB
 
-	zipSpoolMemoryLimit = 32 << 20 // 32 MiB; larger archives spool to a temp file
 )
+
+// zipSpoolMemoryLimit caps how much of one archive is buffered in memory
+// before the spool falls through to a temp file. It is a var rather than a
+// const so tests can shrink it: exercising the temp-file path with the real
+// 32 MiB threshold allocates hundreds of MiB, which tips the 32-bit test
+// binary over its 4 GiB address space.
+var zipSpoolMemoryLimit int64 = 32 << 20 // 32 MiB
 
 // ErrZipTooLarge marks a spool failure caused by the archive exceeding the
 // caller's size limit, so handlers can answer 4xx instead of 5xx.
