@@ -10,7 +10,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -55,8 +57,9 @@ func (s *fakeFilerStream) RecvMsg(any) error { return nil }
 type fakeFiler struct {
 	filer_pb.SeaweedFilerClient
 
-	mu   sync.Mutex
-	tree map[string][]*filer_pb.Entry
+	mu        sync.Mutex
+	tree      map[string][]*filer_pb.Entry
+	listCalls int
 }
 
 func (c *fakeFiler) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -73,6 +76,7 @@ func (c *fakeFiler) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupD
 func (c *fakeFiler) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.listCalls++
 	src := c.tree[in.Directory]
 	// Mirror the filer: sort by name, honor StartFromFileName exclusive,
 	// cap at Limit. listAll's pagination loop depends on these.
@@ -117,7 +121,7 @@ func TestFilerListFunc_EmitsFlatFiles(t *testing.T) {
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
 		"/buckets/bkt": {file("a.txt", mtime, 10), file("b.txt", mtime, 20)},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []string
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = append(got, e.Path)
@@ -135,7 +139,7 @@ func TestFilerListFunc_PropagatesTagsOnFlatFiles(t *testing.T) {
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
 		"/buckets/bkt": {tagged},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got *bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = e
@@ -152,7 +156,7 @@ func TestFilerListFunc_RecursesIntoSubdirs(t *testing.T) {
 		"/buckets/bkt/logs":      {dir("2026"), file("a.log", mtime, 5)},
 		"/buckets/bkt/logs/2026": {file("b.log", mtime, 7)},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var paths []string
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		paths = append(paths, e.Path)
@@ -179,7 +183,7 @@ func TestFilerListFunc_MPUInitEmitsWithDestKey(t *testing.T) {
 			mpuDir,
 		},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []*bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = append(got, e)
@@ -212,7 +216,7 @@ func TestFilerListFunc_MPUInitWithoutDestKeyIsSkipped(t *testing.T) {
 			mpuDir,
 		},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var paths []string
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		paths = append(paths, e.Path)
@@ -254,7 +258,7 @@ func TestFilerListFunc_VersionedExpansionMarksLatestByPointer(t *testing.T) {
 		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "v2")},
 		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []*bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = append(got, e)
@@ -291,7 +295,7 @@ func TestFilerListFunc_VersionedExpansionStalePointerFallsBackToNewestSibling(t 
 		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "v_GHOST")},
 		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []*bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = append(got, e)
@@ -319,7 +323,7 @@ func TestFilerListFunc_VersionedExpansionNoPointerNewestSiblingWins(t *testing.T
 		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "")},
 		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []*bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = append(got, e)
@@ -349,7 +353,7 @@ func TestFilerListFunc_VersionedExpansionExplicitNullIsLatestWhenPointerMissing(
 			fileWithExt("v1", t1, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")}),
 		},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []*bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = append(got, e)
@@ -396,7 +400,7 @@ func TestFilerListFunc_VersionedExpansionExplicitNullBeatsNewerSiblingWhenPointe
 			fileWithExt("v1", tV1, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")}),
 		},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []*bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = append(got, e)
@@ -424,7 +428,7 @@ func TestFilerListFunc_VersionsDirWithoutMarkersRecursesAsRegular(t *testing.T) 
 			file("inner.txt", mtime, 1),
 		},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var paths []string
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		paths = append(paths, e.Path)
@@ -445,7 +449,7 @@ func TestFilerListFunc_VersionedDeleteMarkerPropagates(t *testing.T) {
 		"/buckets/bkt": {versionsDir("foo"+s3_constants.VersionsFolder, "v1")},
 		"/buckets/bkt/foo" + s3_constants.VersionsFolder: versions,
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got *bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = e
@@ -461,7 +465,7 @@ func TestFilerListFunc_HonorsStart(t *testing.T) {
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
 		"/buckets/bkt": {file("a", mtime, 1), file("b", mtime, 1), file("c", mtime, 1)},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got []string
 	require.NoError(t, listFn(context.Background(), "bkt", "a", func(e *bootstrap.Entry) error {
 		got = append(got, e.Path)
@@ -471,8 +475,77 @@ func TestFilerListFunc_HonorsStart(t *testing.T) {
 }
 
 func TestFilerListFunc_NilClient(t *testing.T) {
-	listFn := FilerListFunc(nil, "/buckets")
+	listFn := FilerListFunc(nil, "/buckets", nil)
 	require.Error(t, listFn(context.Background(), "bkt", "", func(*bootstrap.Entry) error { return nil }))
+}
+
+func snapshotForBucketRuleVersioned(t *testing.T, bucket string, days int, versioned bool) *engine.Snapshot {
+	t.Helper()
+	e := engine.New()
+	e.Compile([]engine.CompileInput{
+		{Bucket: bucket, Versioned: versioned, Rules: []*s3lifecycle.Rule{
+			{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: days},
+		}},
+	}, engine.CompileOptions{})
+	snap := e.Snapshot()
+	for _, a := range snap.AllActions() {
+		snap.MarkActive(a.Key)
+	}
+	return snap
+}
+
+func TestFilerListFunc_SkipsVersionsPrePassOnNonVersionedBucket(t *testing.T) {
+	// The .versions/ pre-pass costs one listing per directory. On a
+	// never-versioned bucket it can only find user folders, so the
+	// whole pass is wasted; per directory the walk should list once.
+	mtime := time.Now()
+	newFiler := func() *fakeFiler {
+		return &fakeFiler{tree: map[string][]*filer_pb.Entry{
+			"/buckets/bkt":      {dir("logs"), file("root.txt", mtime, 1)},
+			"/buckets/bkt/logs": {file("a.log", mtime, 5)},
+		}}
+	}
+
+	unversioned := newFiler()
+	listFn := FilerListFunc(unversioned, "/buckets", snapshotForBucketRuleVersioned(t, "bkt", 7, false))
+	var paths []string
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		paths = append(paths, e.Path)
+		return nil
+	}))
+	sort.Strings(paths)
+	assert.Equal(t, []string{"logs/a.log", "root.txt"}, paths)
+	assert.Equal(t, 2, unversioned.listCalls, "non-versioned bucket must list each dir once")
+
+	versioned := newFiler()
+	listFn = FilerListFunc(versioned, "/buckets", snapshotForBucketRuleVersioned(t, "bkt", 7, true))
+	paths = nil
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		paths = append(paths, e.Path)
+		return nil
+	}))
+	sort.Strings(paths)
+	assert.Equal(t, []string{"logs/a.log", "root.txt"}, paths)
+	assert.Equal(t, 4, versioned.listCalls, "versioned bucket still pays the .versions/ pre-pass per dir")
+}
+
+func TestFilerListFunc_VersionsNamedUserDirOnNonVersionedBucket(t *testing.T) {
+	// On a never-versioned bucket a *-suffixed .versions folder is a
+	// coincidence: real user objects inside must still surface.
+	mtime := time.Now()
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {versionsDir("user"+s3_constants.VersionsFolder, "")},
+		"/buckets/bkt/user" + s3_constants.VersionsFolder: {
+			file("inner.txt", mtime, 1),
+		},
+	}}
+	listFn := FilerListFunc(client, "/buckets", snapshotForBucketRuleVersioned(t, "bkt", 7, false))
+	var paths []string
+	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		paths = append(paths, e.Path)
+		return nil
+	}))
+	assert.Equal(t, []string{"user" + s3_constants.VersionsFolder + "/inner.txt"}, paths)
 }
 
 func TestFilerListFunc_AttributesPropagate(t *testing.T) {
@@ -480,7 +553,7 @@ func TestFilerListFunc_AttributesPropagate(t *testing.T) {
 	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
 		"/buckets/bkt": {file("obj", mtime, 4096)},
 	}}
-	listFn := FilerListFunc(client, "/buckets")
+	listFn := FilerListFunc(client, "/buckets", nil)
 	var got *bootstrap.Entry
 	require.NoError(t, listFn(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
 		got = e

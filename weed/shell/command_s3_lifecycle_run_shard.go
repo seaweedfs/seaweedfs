@@ -117,7 +117,6 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 			defer cancel()
 		}
 		client := &lifecycleClientCallable{c: rpcClient}
-		listFn := dailyrun.FilerListFunc(filerClient, bucketsPath)
 		walkerDispatch := &dailyrun.WalkerDispatcher{Client: client}
 
 		fmt.Fprintf(writer, "running shards %s (event budget=%d, runtime=%s, refresh=%s)…\n",
@@ -167,7 +166,8 @@ func (c *commandS3LifecycleRunShard) Do(args []string, env *CommandEnv, writer i
 				}
 			}
 			walker := dailyrun.WalkerFunc(func(walkCtx context.Context, view *engine.Snapshot, shards []int) error {
-				return dailyrun.WalkBuckets(walkCtx, view, shards, buckets, listFn, walkerDispatch)
+				return dailyrun.WalkBuckets(walkCtx, view, shards, buckets,
+					dailyrun.FilerListFunc(filerClient, bucketsPath, view), walkerDispatch)
 			})
 			return dailyrun.Run(passCtx, dailyrun.Config{
 				Shards:      shards,

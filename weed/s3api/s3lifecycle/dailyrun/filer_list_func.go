@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/bootstrap"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -31,40 +32,49 @@ func init() { listPageSize.Store(1024) }
 // MPU init records at .uploads/<id> with ExtMultipartObjectKey set
 // are emitted whole with IsMPUInit=true and DestKey carrying the
 // user's intended path.
-func FilerListFunc(client filer_pb.SeaweedFilerClient, bucketsPath string) bootstrap.ListFunc {
+//
+// view supplies per-bucket state: a bucket that never had versioning
+// enabled skips the .versions/ pre-pass entirely. A nil view assumes
+// the worst (versioned), preserving the two-pass behavior.
+func FilerListFunc(client filer_pb.SeaweedFilerClient, bucketsPath string, view *engine.Snapshot) bootstrap.ListFunc {
 	return func(ctx context.Context, bucket, start string, cb func(*bootstrap.Entry) error) error {
 		if client == nil {
 			return fmt.Errorf("FilerListFunc: nil client")
 		}
 		root := strings.TrimSuffix(bucketsPath, "/") + "/" + bucket
-		return walkBucketTree(ctx, client, root, root, start, cb)
+		versioned := view == nil || view.BucketVersioned(bucket)
+		return walkBucketTree(ctx, client, root, root, start, versioned, cb)
 	}
 }
 
 // walkBucketTree recurses through dir in two passes per level. Pass 1
 // expands `.versions/` dirs (populating skipBare with the bare null-
-// version keys that pass 2 must suppress). Pass 2 emits regular files
-// and recurses into non-special subdirectories.
+// version keys that pass 2 must suppress) and only runs when the bucket
+// is versioned — on a never-versioned bucket it would re-list every
+// directory and find nothing. Pass 2 emits regular files and recurses
+// into non-special subdirectories.
 //
 // The two-pass shape mirrors scheduler/bootstrap.go's walkBucketDir
 // (see that file's comment for why `.versions/` has to be processed
 // before its bare sibling).
-func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot, start string, cb func(*bootstrap.Entry) error) error {
+func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot, start string, versioned bool, cb func(*bootstrap.Entry) error) error {
 	skipBare := map[string]bool{}
 
 	// Pass 1: .versions/ dirs only.
-	if err := listAll(ctx, client, dir, func(e *filer_pb.Entry) error {
-		if e == nil || e.Attributes == nil {
-			return nil
+	if versioned {
+		if err := listAll(ctx, client, dir, func(e *filer_pb.Entry) error {
+			if e == nil || e.Attributes == nil {
+				return nil
+			}
+			if !e.IsDirectory || !isVersionsDir(e) {
+				return nil
+			}
+			full := dir + "/" + e.Name
+			key := strings.TrimPrefix(full, bucketRoot+"/")
+			return expandVersionsDir(ctx, client, bucketRoot, key, e, start, skipBare, versioned, cb)
+		}); err != nil {
+			return err
 		}
-		if !e.IsDirectory || !isVersionsDir(e) {
-			return nil
-		}
-		full := dir + "/" + e.Name
-		key := strings.TrimPrefix(full, bucketRoot+"/")
-		return expandVersionsDir(ctx, client, bucketRoot, key, e, start, skipBare, cb)
-	}); err != nil {
-		return err
 	}
 
 	// Pass 2: everything else.
@@ -72,11 +82,16 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 		if e == nil || e.Attributes == nil {
 			return nil
 		}
-		if e.IsDirectory && isVersionsDir(e) {
-			return nil
-		}
 		full := dir + "/" + e.Name
 		key := strings.TrimPrefix(full, bucketRoot+"/")
+		if e.IsDirectory && isVersionsDir(e) {
+			if versioned {
+				return nil // handled in pass 1
+			}
+			// No versioning on this bucket: a *-suffixed user folder
+			// holds ordinary objects, not version files.
+			return walkBucketTree(ctx, client, full, bucketRoot, start, false, cb)
+		}
 		if e.IsDirectory {
 			if isMPUInitDir(key, e) {
 				if start != "" && key <= start {
@@ -91,7 +106,7 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 					Size:      int64(e.Attributes.FileSize),
 				})
 			}
-			return walkBucketTree(ctx, client, full, bucketRoot, start, cb)
+			return walkBucketTree(ctx, client, full, bucketRoot, start, versioned, cb)
 		}
 		if skipBare[key] {
 			return nil
@@ -135,7 +150,7 @@ type versionItem struct {
 // resume after a mid-expansion failure rewalks the whole sibling
 // group. Acceptable today because Phase 4b doesn't persist a
 // Checkpoint between runs (start is always "" via runShard).
-func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketRoot, versionsKey string, versionsEntry *filer_pb.Entry, start string, skipBare map[string]bool, cb func(*bootstrap.Entry) error) error {
+func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketRoot, versionsKey string, versionsEntry *filer_pb.Entry, start string, skipBare map[string]bool, versioned bool, cb func(*bootstrap.Entry) error) error {
 	logical := strings.TrimSuffix(versionsKey, s3_constants.VersionsFolder)
 	if logical == "" {
 		return nil
@@ -160,7 +175,7 @@ func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 		// Coincidentally-named user folder, or an empty `.versions`
 		// container. Treat it as a regular subdirectory so user-named
 		// files inside still surface.
-		return walkBucketTree(ctx, client, versionsDir, bucketRoot, start, cb)
+		return walkBucketTree(ctx, client, versionsDir, bucketRoot, start, versioned, cb)
 	}
 	if nullEntry, nullKey, explicit, ok := lookupNullVersion(ctx, client, bucketRoot, logical); ok {
 		items = append(items, versionItem{
