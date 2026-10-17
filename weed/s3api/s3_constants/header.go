@@ -331,6 +331,7 @@ const (
 	contextKeyPrincipalArn        contextKey = "s3-principal-arn"
 	contextKeyIdentityClaim       contextKey = "s3-identity-claim"
 	contextKeyIgnoredSessionToken contextKey = "s3-ignored-session-token"
+	contextKeyOriginalRequestPath contextKey = "s3-original-request-path"
 )
 
 // identityHolder is a mutable container for the authenticated identity name,
@@ -449,6 +450,26 @@ func GetIdentityClaimFromContext(r *http.Request) string {
 		if claim := h.identityClaim.Load(); claim != nil {
 			return *claim
 		}
+	}
+	return ""
+}
+
+// SetOriginalRequestPathInContext records the path a client actually sent
+// before an internal rewrite (e.g. the Iceberg catalog collapsing a doubled
+// /v1 prefix). SigV4 verification must run against this path: the client
+// signed the URI it requested, not the normalized path it was routed with.
+func SetOriginalRequestPathInContext(ctx context.Context, path string) context.Context {
+	if path == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyOriginalRequestPath, path)
+}
+
+// GetOriginalRequestPathFromContext returns the pre-rewrite request path
+// recorded by SetOriginalRequestPathInContext, or "" when unset.
+func GetOriginalRequestPathFromContext(r *http.Request) string {
+	if path, ok := r.Context().Value(contextKeyOriginalRequestPath).(string); ok {
+		return path
 	}
 	return ""
 }
