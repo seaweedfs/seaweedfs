@@ -36,6 +36,7 @@ type localDirBackend struct {
 
 	mu      sync.Mutex
 	deletes []string // history of DeleteFile keys, for assertions
+	failDel bool     // when set, DeleteFile reports an error without deleting
 }
 
 func newLocalDirBackend(t *testing.T) *localDirBackend {
@@ -97,9 +98,18 @@ func (b *localDirBackend) DownloadFile(fileName string, key string, fn func(prog
 
 func (b *localDirBackend) DeleteFile(key string) error {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.deletes = append(b.deletes, key)
-	b.mu.Unlock()
+	if b.failDel {
+		return fmt.Errorf("injected remote delete failure for %s", key)
+	}
 	return os.Remove(filepath.Join(b.root, key))
+}
+
+func (b *localDirBackend) failDeletes(fail bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failDel = fail
 }
 
 func (b *localDirBackend) deleteHistory() []string {
@@ -367,6 +377,34 @@ func TestRemoteTier_RealDelete_RemovesRemoteObject(t *testing.T) {
 
 	require.False(t, b.objectExists(key), "Destroy(keepRemoteData=false) must delete remote object")
 	require.Equal(t, []string{key}, b.deleteHistory())
+}
+
+// TestRemoteTier_FailedRemoteDelete_KeepsLocalVolume locks in the failure
+// ordering: a backend delete error must abort Destroy before local files are
+// removed, leaving the registered replica fully intact and retryable.
+func TestRemoteTier_FailedRemoteDelete_KeepsLocalVolume(t *testing.T) {
+	b := newLocalDirBackend(t)
+	registerTestBackend(t, b)
+
+	dir := t.TempDir()
+	const vid = needle.VolumeId(34)
+	_, key := tierUpVolume(t, dir, vid, b)
+	require.True(t, b.objectExists(key))
+
+	v := reloadVolume(t, dir, vid)
+	require.True(t, v.HasRemoteFile())
+
+	b.failDeletes(true)
+	err := v.Destroy(false, false, false)
+	require.Error(t, err, "Destroy must surface the remote delete failure")
+
+	require.True(t, util.FileExists(filepath.Join(dir, "34.idx")), "local .idx must survive a failed remote delete")
+	require.True(t, util.FileExists(filepath.Join(dir, "34.vif")), "local .vif must survive a failed remote delete")
+	require.True(t, b.objectExists(key), "remote object must survive a failed remote delete")
+
+	b.failDeletes(false)
+	require.NoError(t, v.Destroy(false, false, false), "retry must succeed once the backend recovers")
+	require.False(t, b.objectExists(key))
 }
 
 // TestRemoteTier_Vacuum_DoesNotDeleteRemote runs the compact paths against a

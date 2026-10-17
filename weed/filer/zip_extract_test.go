@@ -48,7 +48,7 @@ func TestSanitizeZipMemberName(t *testing.T) {
 
 func TestSpoolZipReaderMemory(t *testing.T) {
 	data := []byte(strings.Repeat("x", 1024))
-	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data))
+	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data), 0)
 	if err != nil {
 		t.Fatalf("spool: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSpoolZipReaderMemory(t *testing.T) {
 
 func TestSpoolZipReaderTempFile(t *testing.T) {
 	data := bytes.Repeat([]byte("y"), zipSpoolMemoryLimit+1)
-	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data))
+	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(data), 0)
 	if err != nil {
 		t.Fatalf("spool: %v", err)
 	}
@@ -83,6 +83,18 @@ func TestSpoolZipReaderTempFile(t *testing.T) {
 	}
 	if n != int64(len(data)) {
 		t.Fatalf("size = %d, want %d", n, len(data))
+	}
+}
+
+func TestSpoolZipReaderLimit(t *testing.T) {
+	data := []byte(strings.Repeat("x", 2048))
+	if _, _, _, err := SpoolZipReader(bytes.NewReader(data), 1024); err == nil {
+		t.Fatal("expected limit error for in-memory archive")
+	}
+	if _, _, cleanup, err := SpoolZipReader(bytes.NewReader(bytes.Repeat([]byte("y"), zipSpoolMemoryLimit+1024)), zipSpoolMemoryLimit+512); err == nil {
+		t.Fatal("expected limit error for spooled archive")
+	} else {
+		cleanup()
 	}
 }
 
@@ -121,7 +133,7 @@ func TestSpoolZipReaderRoundTrip(t *testing.T) {
 	w.Write([]byte("hello"))
 	zw.Close()
 
-	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(buf.Bytes()))
+	ra, n, cleanup, err := SpoolZipReader(bytes.NewReader(buf.Bytes()), 0)
 	if err != nil {
 		t.Fatalf("spool: %v", err)
 	}

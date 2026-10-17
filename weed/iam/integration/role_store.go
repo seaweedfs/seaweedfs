@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/karlseguin/ccache/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
@@ -380,8 +381,9 @@ func (f *FilerRoleStore) UpdateRole(ctx context.Context, filerAddress string, ro
 func (f *FilerRoleStore) deleteRoleEntryIfUnchanged(ctx context.Context, client filer_pb.SeaweedFilerClient, entry *filer_pb.Entry) (bool, error) {
 	fullPath := f.basePath + "/" + entry.Name
 	resp, err := client.ObjectTransaction(ctx, &filer_pb.ObjectTransactionRequest{
-		LockKey:  fullPath,
-		RouteKey: s3_constants.ObjectWriteRouteKeyPrefix + fullPath,
+		LockKey:   fullPath,
+		RequestId: uuid.NewString(),
+		RouteKey:  s3_constants.ObjectWriteRouteKeyPrefix + fullPath,
 		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
 			Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: entry,
 		}}},

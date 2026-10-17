@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,16 +16,29 @@ const (
 	// ZipExtractMaxBytes bounds the total uncompressed bytes one archive may declare.
 	ZipExtractMaxBytes = int64(1) << 40 // 1 TiB
 
+	// ZipExtractMaxArchiveBytes bounds the compressed bytes one archive may
+	// spool to local disk when the caller passes no tighter limit. It matches
+	// the TUS default max upload size.
+	ZipExtractMaxArchiveBytes = int64(5) << 30 // 5 GiB
+
 	zipSpoolMemoryLimit = 32 << 20 // 32 MiB; larger archives spool to a temp file
 )
 
 // SpoolZipReader buffers r into a seekable source for zip.NewReader: memory for
-// small archives, a temp file otherwise. The returned cleanup releases it.
-func SpoolZipReader(r io.Reader) (ra io.ReaderAt, n int64, cleanup func(), err error) {
+// small archives, a temp file otherwise. At most maxArchiveBytes are buffered;
+// a non-positive limit falls back to ZipExtractMaxArchiveBytes. The returned
+// cleanup releases the spool.
+func SpoolZipReader(r io.Reader, maxArchiveBytes int64) (ra io.ReaderAt, n int64, cleanup func(), err error) {
 	nop := func() {}
+	if maxArchiveBytes <= 0 {
+		maxArchiveBytes = ZipExtractMaxArchiveBytes
+	}
 	head, err := io.ReadAll(io.LimitReader(r, zipSpoolMemoryLimit+1))
 	if err != nil {
 		return nil, 0, nop, err
+	}
+	if int64(len(head)) > maxArchiveBytes {
+		return nil, 0, nop, fmt.Errorf("zip archive exceeds %d bytes", maxArchiveBytes)
 	}
 	if int64(len(head)) <= zipSpoolMemoryLimit {
 		return bytes.NewReader(head), int64(len(head)), nop, nil
@@ -40,12 +54,14 @@ func SpoolZipReader(r io.Reader) (ra io.ReaderAt, n int64, cleanup func(), err e
 	}
 	if _, err = f.Write(head); err == nil {
 		var rest int64
-		if rest, err = io.Copy(f, io.LimitReader(r, ZipExtractMaxBytes+1)); err == nil {
+		// One byte past the limit so an oversized archive errors out instead
+		// of being silently truncated.
+		if rest, err = io.Copy(f, io.LimitReader(r, maxArchiveBytes+1-int64(len(head)))); err == nil {
 			n = int64(len(head)) + rest
 		}
 	}
-	if err == nil && n > ZipExtractMaxBytes {
-		err = fmt.Errorf("zip archive exceeds %d bytes", ZipExtractMaxBytes)
+	if err == nil && n > maxArchiveBytes {
+		err = fmt.Errorf("zip archive exceeds %d bytes", maxArchiveBytes)
 	}
 	if err != nil {
 		cleanup()
@@ -85,6 +101,12 @@ func SanitizeZipMemberName(f *zip.File) (name string, ok bool) {
 		if seg == "" || seg == "." || seg == ".." || strings.ContainsRune(seg, '\x00') {
 			return "", false
 		}
+	}
+	// filepath.IsLocal is the check static analysis recognizes: no element may
+	// be "." or "..", the path may not be absolute or empty, and on Windows it
+	// may not be a reserved name.
+	if !filepath.IsLocal(name) {
+		return "", false
 	}
 	return name, true
 }

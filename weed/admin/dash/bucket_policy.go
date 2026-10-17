@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -126,6 +127,7 @@ func (s *AdminServer) writeBucketPolicy(bucketName string, policyJSON []byte) er
 		bucketPath := filerConfig.BucketsPath + "/" + bucketName
 		resp, err := client.ObjectTransaction(context.Background(), &filer_pb.ObjectTransactionRequest{
 			LockKey:   bucketPath,
+			RequestId: uuid.NewString(),
 			RouteKey:  s3_constants.ObjectWriteRouteKeyPrefix + bucketPath,
 			Mutations: []*filer_pb.ObjectMutation{bucketPolicyMutation(filerConfig.BucketsPath, bucketName, policyJSON)},
 		})

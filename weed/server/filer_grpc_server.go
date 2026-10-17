@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -343,6 +344,8 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			ConditionKey:       req.ConditionKey,
 			RouteKey:           req.RouteKey,
 			IsMoved:            true,
+			RequestId:          req.RequestId,
+			ConditionAltKey:    req.ConditionAltKey,
 		}
 		var resp *filer_pb.ObjectTransactionResponse
 		handled, err := fs.forwardToWriteOwner(ctx, req.RouteKey, func(owner pb.ServerAddress) error {
@@ -365,6 +368,28 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	pathLock := fs.entryLockTable.AcquireLock("ObjectTransaction", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
 
+	// Under the same lock the first application committed with, a failover
+	// replay of the same request replays its recorded outcome instead of
+	// re-applying mutations over whatever superseded it.
+	if resp, found := fs.recentObjectTxn(req.RequestId, lockPath); found {
+		glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: replaying recorded outcome for request %s", req.LockKey, req.RequestId)
+		return resp, nil
+	}
+
+	resp := &filer_pb.ObjectTransactionResponse{}
+	// Outcomes are replayed rather than re-run: a mutation error may follow a
+	// partial apply, and a retry that re-runs could write the stale mutation
+	// over whatever superseded it, while replaying the recorded failure at
+	// least matches what the first attempt reported. The one exception is the
+	// condition lookup below: it fails before any mutation runs, so the retry
+	// must re-evaluate rather than replay an empty outcome.
+	record := true
+	defer func() {
+		if record {
+			fs.rememberObjectTxn(req.RequestId, lockPath, resp)
+		}
+	}()
+
 	if conditionIsSet(req.Condition) {
 		// The condition is evaluated against condition_key when set (e.g. a
 		// version entry whose WORM guards gate the delete), while the lock stays
@@ -374,29 +399,151 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			conditionPath = util.FullPath(req.ConditionKey)
 		}
 		current, findErr := fs.filer.FindEntry(ctx, conditionPath)
+		if findErr == nil && current != nil && current.IsDirectory() && req.ConditionAltKey != "" {
+			// A directory is not the object: implicit directories can share a
+			// path with an S3 key, so treat it as an absent slot. Only the
+			// alt-key callers want object-slot semantics; an explicit
+			// condition_key may legitimately name a directory.
+			current, findErr = nil, filer_pb.ErrNotFound
+		}
+		// The caller can name a fallback evaluated when the primary is absent —
+		// a suspended-versioning write checks "the null slot if present, else
+		// the latest version" atomically under this lock. condition_alt_key is
+		// the object's .versions directory, and the latest it resolves to is
+		// read from the pointer maintained by the same lock, so a concurrent
+		// version delete cannot move which entry the condition sees.
+		if findErr == filer_pb.ErrNotFound && req.ConditionAltKey != "" {
+			current, conditionPath, findErr = fs.latestVersionedConditionEntry(ctx, util.FullPath(req.ConditionAltKey))
+		}
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
-			return &filer_pb.ObjectTransactionResponse{}, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
+			record = false // a lookup error decides nothing; a retry must re-run, not replay
+			return nil, fmt.Errorf("ObjectTransaction condition %s: %w", conditionPath, findErr)
 		}
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
 		}
 		if !writeConditionSatisfied(req.Condition, current) {
 			glog.V(3).InfofCtx(ctx, "ObjectTransaction %s: precondition failed", conditionPath)
-			return &filer_pb.ObjectTransactionResponse{
-				Error:     "precondition failed",
-				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
-			}, nil
+			resp.Error = "precondition failed"
+			resp.ErrorCode = filer_pb.FilerError_PRECONDITION_FAILED
+			return resp, nil
 		}
 	}
 
 	for i, m := range req.Mutations {
 		if err := fs.applyObjectMutation(ctx, m, req.IsFromOtherCluster, req.Signatures); err != nil {
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s mutation %d (%v): %v", lockPath, i, m.Type, err)
-			return &filer_pb.ObjectTransactionResponse{Error: fmt.Sprintf("mutation %d: %v", i, err)}, nil
+			resp.Error = fmt.Sprintf("mutation %d: %v", i, err)
+			return resp, nil
 		}
 	}
 
-	return &filer_pb.ObjectTransactionResponse{}, nil
+	return resp, nil
+}
+
+const (
+	recentObjectTxnTTL         = 2 * time.Minute
+	recentObjectTxnSweepCap    = 10000
+	recentObjectTxnSweepPeriod = 30 * time.Second
+)
+
+type recentObjectTxn struct {
+	resp      *filer_pb.ObjectTransactionResponse
+	expiresAt time.Time
+}
+
+// recentObjectTxnKey scopes an idempotency token to the transaction's lock
+// path, so a token reused on a different object cannot replay this outcome.
+func recentObjectTxnKey(requestID string, lockPath util.FullPath) string {
+	return requestID + "\x00" + string(lockPath)
+}
+
+// recentObjectTxn returns the recorded outcome of an already-applied request,
+// so a failover replay of the same ObjectTransaction does not re-apply it.
+func (fs *FilerServer) recentObjectTxn(requestID string, lockPath util.FullPath) (*filer_pb.ObjectTransactionResponse, bool) {
+	if requestID == "" {
+		return nil, false
+	}
+	fs.recentObjectTxnsMu.Lock()
+	defer fs.recentObjectTxnsMu.Unlock()
+
+	key := recentObjectTxnKey(requestID, lockPath)
+	txn, found := fs.recentObjectTxns[key]
+	if !found {
+		return nil, false
+	}
+	if time.Now().After(txn.expiresAt) {
+		delete(fs.recentObjectTxns, key)
+		return nil, false
+	}
+	return txn.resp, true
+}
+
+func (fs *FilerServer) rememberObjectTxn(requestID string, lockPath util.FullPath, resp *filer_pb.ObjectTransactionResponse) {
+	if requestID == "" || resp == nil {
+		return
+	}
+	fs.recentObjectTxnsMu.Lock()
+	defer fs.recentObjectTxnsMu.Unlock()
+	if fs.recentObjectTxns == nil {
+		fs.recentObjectTxns = make(map[string]recentObjectTxn)
+	}
+	// A live record is never evicted early: a replay that misses re-applies the
+	// transaction. The sweep is amortized so a hot cache does not scan on every
+	// write; between sweeps the map may exceed the cap, still bounded by the
+	// insert rate over the TTL.
+	now := time.Now()
+	if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap {
+		if now.After(fs.recentObjectTxnsSweepAt) {
+			fs.recentObjectTxnsSweepAt = now.Add(recentObjectTxnSweepPeriod)
+			for id, txn := range fs.recentObjectTxns {
+				if now.After(txn.expiresAt) {
+					delete(fs.recentObjectTxns, id)
+				}
+			}
+		}
+		if len(fs.recentObjectTxns) >= recentObjectTxnSweepCap {
+			// Full of unexpired records: drop the new one rather than evict
+			// an outcome a replay may still need.
+			return
+		}
+	}
+	fs.recentObjectTxns[recentObjectTxnKey(requestID, lockPath)] = recentObjectTxn{
+		resp:      resp,
+		expiresAt: now.Add(recentObjectTxnTTL),
+	}
+}
+
+// latestVersionedConditionEntry resolves the object a conditional write should
+// be checked against inside a .versions directory: the entry the latest-version
+// pointer names, or nothing when the pointer names a delete marker — a
+// tombstone is not a current version. A missing pointer or a pointer to a file
+// that is gone means the metadata cannot answer the question, which reports an
+// error rather than guessing at either branch.
+func (fs *FilerServer) latestVersionedConditionEntry(ctx context.Context, versionsDir util.FullPath) (*filer.Entry, util.FullPath, error) {
+	versionsEntry, err := fs.filer.FindEntry(ctx, versionsDir)
+	if err != nil {
+		return nil, versionsDir, err
+	}
+	if versionsEntry == nil {
+		return nil, versionsDir, filer_pb.ErrNotFound
+	}
+	latestName := string(versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+	if latestName == "" {
+		return nil, versionsDir, fmt.Errorf("%s has no latest-version pointer", versionsDir)
+	}
+	latestPath := util.NewFullPath(string(versionsDir), latestName)
+	entry, err := fs.filer.FindEntry(ctx, latestPath)
+	if err == filer_pb.ErrNotFound {
+		return nil, latestPath, fmt.Errorf("latest-version pointer %s names a missing entry", latestPath)
+	}
+	if err != nil {
+		return nil, latestPath, err
+	}
+	if string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true" {
+		return nil, latestPath, filer_pb.ErrNotFound
+	}
+	return entry, latestPath, nil
 }
 
 // ObjectTransactionBatch applies several object transactions in one round trip,

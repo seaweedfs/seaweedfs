@@ -202,10 +202,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// CopyObject requires s3:GetObject on the source in addition to s3:PutObject
 	// on the destination. The Auth middleware only checked the destination, so
-	// verify the source explicitly here.
+	// verify the source explicitly here. A first-phase deny decided without
+	// object tags can still flip on a tag-conditioned Allow, so when a bucket
+	// policy exists the tag-aware recheck gets the last word.
 	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
+		if s3a.recheckPolicyForKeyWithLookup(r, http.MethodGet, srcBucket, srcObject, srcVersionId, string(s3_constants.ACTION_READ), "CopyObjectHandler") != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	// A copy creates destination ownership and grants independently of the
@@ -234,6 +238,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 	entry = prefixObjectSource(entry)
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
@@ -343,6 +352,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				updatedEntry = cloneProtoEntry(rawEntry)
 			}
 			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
+			// The update keeps the object's existing lock state, but request
+			// lock headers still need validating so a disallowed combination
+			// is rejected rather than silently ignored.
+			if errCode := s3a.applyCopyObjectLockHeaders(r, dstBucket, dstObject, updatedEntry); errCode != s3err.ErrNone {
+				return errCode
+			}
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
@@ -446,6 +461,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		if k == s3_constants.ExtAmzOwnerKey || k == s3_constants.ExtAmzAclKey {
 			continue
 		}
+		// Retention and legal hold are destination settings, not object
+		// metadata: the copy takes its own lock headers or the destination
+		// bucket's default instead.
+		if isCopyLockKey(k) {
+			continue
+		}
 		// Skip encryption-specific headers that might conflict with destination encryption type
 		skipHeader := false
 
@@ -481,6 +502,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	// mergeCopyMetadata drops stale managed keys before applying the new set,
 	// so REPLACE doesn't leak source values through the merge, as on self-copies.
 	dstEntry.Extended = mergeCopyMetadata(dstEntry.Extended, processedMetadata)
+
+	if errCode := s3a.applyCopyObjectLockHeaders(r, dstBucket, dstObject, dstEntry); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// For zero-size files or files without chunks, handle inline content
 	// This includes encrypted inline files that need decryption/re-encryption
@@ -588,6 +614,39 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 // all need the chunks copied for real, as does any copy to a different key.
 func copyReplacesSourceEntry(sameDestination bool, dstVersioningState, srcVersionId string) bool {
 	return sameDestination && dstVersioningState == "" && srcVersionId == ""
+}
+
+// isCopyLockKey marks the extended attributes that carry object lock state; a
+// copy never inherits them from the source.
+func isCopyLockKey(key string) bool {
+	switch key {
+	case s3_constants.ExtObjectLockModeKey, s3_constants.ExtRetentionUntilDateKey, s3_constants.ExtLegalHoldKey:
+		return true
+	}
+	return false
+}
+
+// applyCopyObjectLockHeaders resolves the copied object's retention: explicit
+// copy-request lock headers win, then the destination bucket's default, and
+// the source's own retention never carries over.
+func (s3a *S3ApiServer) applyCopyObjectLockHeaders(r *http.Request, dstBucket, dstObject string, dstEntry *filer_pb.Entry) s3err.ErrorCode {
+	objectLockEnabled, lockErr := s3a.isObjectLockEnabled(dstBucket)
+	if lockErr != nil && !errors.Is(lockErr, filer_pb.ErrNotFound) {
+		glog.Errorf("CopyObjectHandler: failed to check object lock for bucket %s: %v", dstBucket, lockErr)
+		return s3err.ErrInternalError
+	}
+	if validationErr := s3a.validateObjectLockHeaders(r, dstBucket, dstObject, objectLockEnabled); validationErr != nil {
+		glog.V(2).Infof("CopyObjectHandler: object lock header validation failed for %s/%s: %v", dstBucket, dstObject, validationErr)
+		return mapValidationErrorToS3Error(validationErr)
+	}
+	if !objectLockEnabled {
+		return s3err.ErrNone
+	}
+	if err := s3a.extractObjectLockMetadataFromRequest(r, dstEntry); err != nil {
+		glog.Errorf("CopyObjectHandler: failed to extract object lock metadata for %s/%s: %v", dstBucket, dstObject, err)
+		return mapValidationErrorToS3Error(err)
+	}
+	return s3err.ErrNone
 }
 
 func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
@@ -931,8 +990,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// UploadPartCopy requires s3:GetObject on the source. The Auth middleware
 	// only verified s3:PutObject (s3:UploadPart) on the destination.
 	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
+		if s3a.recheckPolicyForKeyWithLookup(r, http.MethodGet, srcBucket, srcObject, srcVersionId, string(s3_constants.ACTION_READ), "CopyObjectPartHandler") != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	partIDString := r.URL.Query().Get("partNumber")
@@ -997,6 +1058,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectPartHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
