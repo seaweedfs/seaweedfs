@@ -3,6 +3,7 @@ package filer
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,10 @@ const (
 	zipSpoolMemoryLimit = 32 << 20 // 32 MiB; larger archives spool to a temp file
 )
 
+// ErrZipTooLarge marks a spool failure caused by the archive exceeding the
+// caller's size limit, so handlers can answer 4xx instead of 5xx.
+var ErrZipTooLarge = errors.New("zip archive too large")
+
 // SpoolZipReader buffers r into a seekable source for zip.NewReader: memory for
 // small archives, a temp file otherwise. At most maxArchiveBytes are buffered;
 // a non-positive limit falls back to ZipExtractMaxArchiveBytes. The returned
@@ -38,7 +43,7 @@ func SpoolZipReader(r io.Reader, maxArchiveBytes int64) (ra io.ReaderAt, n int64
 		return nil, 0, nop, err
 	}
 	if int64(len(head)) > maxArchiveBytes {
-		return nil, 0, nop, fmt.Errorf("zip archive exceeds %d bytes", maxArchiveBytes)
+		return nil, 0, nop, fmt.Errorf("%w: exceeds %d bytes", ErrZipTooLarge, maxArchiveBytes)
 	}
 	if int64(len(head)) <= zipSpoolMemoryLimit {
 		return bytes.NewReader(head), int64(len(head)), nop, nil
@@ -61,7 +66,7 @@ func SpoolZipReader(r io.Reader, maxArchiveBytes int64) (ra io.ReaderAt, n int64
 		}
 	}
 	if err == nil && n > maxArchiveBytes {
-		err = fmt.Errorf("zip archive exceeds %d bytes", maxArchiveBytes)
+		err = fmt.Errorf("%w: exceeds %d bytes", ErrZipTooLarge, maxArchiveBytes)
 	}
 	if err != nil {
 		cleanup()
