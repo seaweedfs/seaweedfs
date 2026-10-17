@@ -59,6 +59,8 @@ const (
 
 	SeaweedFSUploadId                = "X-Seaweedfs-Upload-Id"
 	SeaweedFSExtract                 = "X-Seaweedfs-Extract"
+	SeaweedFSExtractedCount          = "X-Seaweedfs-Extracted-Count"
+	AmzMetaSnowballAutoExtract       = "X-Amz-Meta-Snowball-Auto-Extract"
 	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"
 	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
 	SeaweedFSExpiresS3               = "X-Seaweedfs-Expires-S3"
