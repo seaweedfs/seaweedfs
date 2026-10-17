@@ -48,7 +48,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 	volMarkCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volMarkCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volMarkCommand.String("node", "", "the volume server <host>:<port>")
-	collection := volMarkCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; \"_default\" for the collection with no name")
+	collection := volMarkCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; \""+CollectionDefault+"\" for the collection with no name")
 	writable := volMarkCommand.Bool("writable", false, "volume mark writable")
 	readonly := volMarkCommand.Bool("readonly", false, "volume mark readonly")
 	readonlyCanDelete := volMarkCommand.Bool("readonlyCanDelete", false, "volume mark readonly but still accepting deletes")

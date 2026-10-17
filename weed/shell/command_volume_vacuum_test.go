@@ -108,12 +108,12 @@ func TestVacuumRequestsForPattern(t *testing.T) {
 
 	// The unnamed collection resolves to per-volume requests — no Collection
 	// value selects it alone, and read-only volumes stay skipped.
-	reqs, err = vacuumRequestsForPattern(topo, mustMatcher(t, "_default"))
+	reqs, err = vacuumRequestsForPattern(topo, mustMatcher(t, CollectionDefault))
 	if err != nil {
-		t.Fatalf("_default: %v", err)
+		t.Fatalf("%s: %v", CollectionDefault, err)
 	}
 	if len(reqs) != 1 || reqs[0].VolumeId != 2 || reqs[0].Collection != "" {
-		t.Fatalf("_default: got %v, want one per-volume request for volume 2", reqs)
+		t.Fatalf("%s: got %v, want one per-volume request for volume 2", CollectionDefault, reqs)
 	}
 
 	// A filter hitting nothing is an error, not a silent no-op.
@@ -140,7 +140,7 @@ func TestVacuumRequestsForVolumeIds(t *testing.T) {
 	}
 
 	// The unnamed collection sends a volume-id-only request.
-	reqs, err = vacuumRequestsForVolumeIds(topo, mustMatcher(t, "_default"), []uint32{2})
+	reqs, err = vacuumRequestsForVolumeIds(topo, mustMatcher(t, CollectionDefault), []uint32{2})
 	if err != nil {
 		t.Fatalf("vid 2 in default: %v", err)
 	}

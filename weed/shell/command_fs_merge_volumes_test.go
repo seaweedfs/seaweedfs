@@ -246,9 +246,9 @@ func TestCreateMergePlan_CollectionFilter(t *testing.T) {
 	}
 
 	// "_default" merges only the unnamed-collection volumes.
-	plan, err := newCmd().createMergePlan("_default", nil, 0)
+	plan, err := newCmd().createMergePlan(CollectionDefault, nil, 0)
 	if err != nil {
-		t.Fatalf("_default: %v", err)
+		t.Fatalf("%s: %v", CollectionDefault, err)
 	}
 	if got := plan.targets[needle.VolumeId(1)]; len(got) != 1 || got[0] != needle.VolumeId(2) {
 		t.Fatalf("expected 1->2, got %v", plan.targets)

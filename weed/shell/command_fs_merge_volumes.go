@@ -67,7 +67,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	dirArg := fsMergeVolumesCommand.String("dir", "/", "base directory to find and update files")
 	fromVolumeArg := fsMergeVolumesCommand.Uint("fromVolumeId", 0, "move chunks with this volume id")
 	toVolumeArg := fsMergeVolumesCommand.String("toVolumeId", "", "change chunks to this volume id, or distribute across a comma-separated list of volume ids")
-	collectionArg := fsMergeVolumesCommand.String("collection", "*", "comma-separated collection names, wildcards, or regex patterns; \"_default\" for the collection with no name")
+	collectionArg := fsMergeVolumesCommand.String("collection", "*", "comma-separated collection names, wildcards, or regex patterns; \""+CollectionDefault+"\" for the collection with no name")
 	apply := fsMergeVolumesCommand.Bool("apply", false, "applying the metadata changes")
 	if err = fsMergeVolumesCommand.Parse(args); err != nil {
 		return err

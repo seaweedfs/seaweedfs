@@ -67,7 +67,7 @@ func (c *commandVolumeTierMove) Help() string {
 
 	Note:
 		-collectionPattern is a comma-separated list of collection names, with "*" and "?"
-		wildcards, and regex patterns. Use "_default" to match only the default collection
+		wildcards, and regex patterns. Use "` + CollectionDefault + `" to match only the default collection
 		(volumes with no collection name). An empty pattern matches all collections.
 
 `

@@ -62,7 +62,7 @@ func (c *commandEcEncode) Help() string {
 	  - Several collections: ec.encode -collection="mybucket,otherbucket"
 	  - Match by prefix: ec.encode -collection="bucket*"
 	  - Match all collections: ec.encode -collection="*"
-	  - The empty-named collection: ec.encode -collection="_default"
+	  - The empty-named collection: ec.encode -collection="` + CollectionDefault + `"
 
 	Options:
 	  -verbose: show detailed reasons why volumes are not selected for encoding

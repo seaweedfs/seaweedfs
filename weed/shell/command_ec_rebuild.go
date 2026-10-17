@@ -74,7 +74,7 @@ func (c *commandEcRebuild) HasTag(CommandTag) bool {
 func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fixCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := fixCommand.String("collection", "EACH_COLLECTION", "comma-separated collection names, wildcards, or regex patterns, \"_default\" for the collection with no name, or \"EACH_COLLECTION\" for each collection")
+	collection := fixCommand.String("collection", string(wildcard.CollectionFilterEach), "comma-separated collection names, wildcards, or regex patterns, \""+CollectionDefault+"\" for the collection with no name, or \""+string(wildcard.CollectionFilterEach)+"\" for each collection")
 	volumeIdsStr := fixCommand.String("volumeIds", "", "optional comma-separated list of volume ID to process; defaults to all volumes in the collection")
 	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")

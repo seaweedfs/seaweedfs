@@ -44,7 +44,7 @@ func (c *commandEcBalance) HasTag(CommandTag) bool {
 
 func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := balanceCommand.String("collection", "EACH_COLLECTION", "comma-separated collection names, wildcards, or regex patterns, \"_default\" for the collection with no name, or \"EACH_COLLECTION\" for each collection")
+	collection := balanceCommand.String("collection", string(wildcard.CollectionFilterEach), "comma-separated collection names, wildcards, or regex patterns, \""+CollectionDefault+"\" for the collection with no name, or \""+string(wildcard.CollectionFilterEach)+"\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	diskTypeStr := balanceCommand.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)")

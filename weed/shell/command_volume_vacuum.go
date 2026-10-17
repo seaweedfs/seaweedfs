@@ -44,7 +44,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
-	collection := volumeVacuumCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \"_default\" the collection with no name")
+	collection := volumeVacuumCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \""+CollectionDefault+"\" the collection with no name")
 	volumeIds := volumeVacuumCommand.String("volumeId", "", "comma-separated list of volume IDs")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return nil

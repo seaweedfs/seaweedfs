@@ -63,7 +63,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	fsConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	locationPrefix := fsConfigureCommand.String("locationPrefix", "", "path prefix, required to update the path-specific configuration")
-	collection := fsConfigureCommand.String("collection", "", "assign writes to this collection; \"_default\" for the collection with no name")
+	collection := fsConfigureCommand.String("collection", "", "assign writes to this collection; \""+CollectionDefault+"\" for the collection with no name")
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
 	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl (e.g., 1m, 1h, 1d, 1w, 1y)")
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
