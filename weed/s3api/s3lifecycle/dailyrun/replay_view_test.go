@@ -17,14 +17,20 @@ import (
 // 30-day expiration rule and an 8-day retention window. The 30-day rule is
 // walk-bound, so its object's PUT must not hold the replay cursor back; the
 // cursor advances past it and the due 3-day objects on both sides dispatch.
+// The 3-day rule also carries a durable scan_only mode: the replay view
+// must rehabilitate it to event_driven the way RulesForShard does.
 func TestRunShard_WalkBoundRuleDoesNotPinCursor(t *testing.T) {
+	shortRule := &s3lifecycle.Rule{ID: "short", Status: s3lifecycle.StatusEnabled, Prefix: "short/", ExpirationDays: 3}
+	longRule := &s3lifecycle.Rule{ID: "long", Status: s3lifecycle.StatusEnabled, Prefix: "long/", ExpirationDays: 30}
 	e := engine.New()
 	e.Compile([]engine.CompileInput{
-		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
-			{ID: "short", Status: s3lifecycle.StatusEnabled, Prefix: "short/", ExpirationDays: 3},
-			{ID: "long", Status: s3lifecycle.StatusEnabled, Prefix: "long/", ExpirationDays: 30},
-		}},
-	}, engine.CompileOptions{})
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{shortRule, longRule}},
+	}, engine.CompileOptions{PriorStates: map[s3lifecycle.ActionKey]engine.PriorState{
+		{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(shortRule), ActionKind: s3lifecycle.ActionKindExpirationDays}: {
+			BootstrapComplete: true, Mode: engine.ModeScanOnly},
+		{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(longRule), ActionKind: s3lifecycle.ActionKindExpirationDays}: {
+			BootstrapComplete: true},
+	}})
 	snap := e.Snapshot()
 	for _, a := range snap.AllActions() {
 		snap.MarkActive(a.Key)

@@ -58,7 +58,8 @@ runShard(ctx, cfg, snap, runNow, shardID, events):
         lastWalkedNs = runNow.UnixNano()
 
     startTsNs = !found ? runNow - maxTTL : persisted.TsNs           // steady state honors cursor
-    lastOK, _, drainErr = drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
+    replayView = snap.ReplayView(retentionWindow)                   // minus walk-bound rules
+    lastOK, _, drainErr = drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
     save cursor (TsNs = lastOK, rsh, promoted, lastWalkedNs)
 ```
 
@@ -78,6 +79,7 @@ Walker invocations — three call sites, distinct conditions:
 // In engine:
 func (e *Engine) Snapshot() *Snapshot
 func (s *Snapshot) RulesForShard(shardID int, retentionWindow time.Duration) (replay, walk *Snapshot)
+func (s *Snapshot) ReplayView(retentionWindow time.Duration) *Snapshot
 func RecoveryView(s *Snapshot) *Snapshot
 func ReplayContentHash(s *Snapshot) [32]byte
 func PromotedHash(s *Snapshot, retentionWindow time.Duration) [32]byte
@@ -99,6 +101,7 @@ Shared-by-pointer with the base: `Rule` definitions, predicate maps, `RuleHash` 
 | View | Clone settings | Why |
 |---|---|---|
 | `replay` | `active = true`, `Mode = ModeEventDriven` | `router.Route` requires `ModeEventDriven`. Forced regardless of `prior.Mode`. |
+| `replayView` | `active` preserved, `Mode = ModeEventDriven` | The drain's routing set: `replay` partition minus promoted rules, but without force-activating pre-bootstrap actions. Walk-bound kinds are shared by pointer. |
 | `walk` | `active = true`, `Mode` preserved | Walker accepts any non-`ModeDisabled` Mode. |
 | `recovery` | `active = true`, `Mode` preserved | Walker iterates all action clones. |
 

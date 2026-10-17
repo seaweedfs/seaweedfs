@@ -146,14 +146,11 @@ func effectiveTTL(a *CompiledAction) time.Duration {
 }
 
 // isPromoted reports whether a replay-kind action belongs to the walk
-// partition for retentionWindow: its TTL exceeds the window, so the meta-log
-// no longer holds the events that would make it due.
-//
-// retentionWindow == 0 means "no retention info supplied": the caller should
-// treat the partition as walk-only to stay safe. Moving every rule into
-// replay without retention proof would defeat the scan_only protection.
-// ttl == 0 is a malformed rule (kind says replay but no TTL): also promoted
-// so the walker can decide.
+// partition for retentionWindow. retentionWindow == 0 means "no retention
+// info supplied": treat the partition as walk-only — promoting every rule
+// into replay without retention proof would defeat the scan_only
+// protection. ttl == 0 is a malformed rule (kind says replay but no TTL):
+// also promoted so the walker can decide.
 func isPromoted(a *CompiledAction, retentionWindow time.Duration) bool {
 	ttl := effectiveTTL(a)
 	return ttl <= 0 || ttl > retentionWindow
@@ -218,26 +215,35 @@ func (s *Snapshot) RulesForShard(shardID int, retentionWindow time.Duration) (re
 
 // ReplayView returns the snapshot the meta-log drain routes events against:
 // the base snapshot minus the replay-kind actions promoted to the walk
-// partition for retentionWindow. The remaining actions are shared with the
-// base by pointer, so their compiled Mode and activation are unchanged.
+// partition for retentionWindow. Promoted matches are never due within the
+// replay window, and the drain holds a shard's cursor at the first event
+// with a not-yet-due match, so one promoted match would pin the cursor
+// until that object comes due; the walk view serves them instead.
 //
-// The drain must not see promoted actions. Their matches are never due
-// within the replay window, and the drain holds a shard's cursor at the
-// first event with a not-yet-due match, so a single promoted match would
-// pin the cursor until that object comes due. The walk view serves those
-// actions instead.
+// Replay-kind clones force ModeEventDriven for the same reason as
+// RulesForShard's replay partition — router.Route gates on it and a
+// persistent prior.Mode = ModeScanOnly must not lock a rule out of replay
+// once retention covers its TTL. ScanOnly also reactivates the clone: the
+// base deactivates it because its bootstrap rendezvous completed under a
+// demoted mode. Every other action keeps the base's active bit — the drain
+// must not dispatch rules whose bootstrap hasn't completed. Walk-bound
+// kinds are shared by pointer; disabled actions stay out.
 //
-// Returns nil when every action is promoted.
+// Returns nil when every action is promoted or disabled.
 func (s *Snapshot) ReplayView(retentionWindow time.Duration) *Snapshot {
 	if s == nil {
 		return nil
 	}
 	actions := map[s3lifecycle.ActionKey]*CompiledAction{}
 	for key, a := range s.actions {
-		if a == nil {
+		if a == nil || a.Mode == ModeDisabled {
 			continue
 		}
-		if isReplayKind(key.ActionKind) && isPromoted(a, retentionWindow) {
+		if isReplayKind(key.ActionKind) {
+			if isPromoted(a, retentionWindow) {
+				continue
+			}
+			actions[key] = cloneAction(a, ModeEventDriven, a.IsActive() || a.Mode == ModeScanOnly)
 			continue
 		}
 		actions[key] = a

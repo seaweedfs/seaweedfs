@@ -235,6 +235,60 @@ func TestRulesForShard_ZeroRetentionRoutesAllReplayKindsToWalk(t *testing.T) {
 	assert.Len(t, walk.actions, 1)
 }
 
+func TestReplayView_PartitionAndScanOnlyRehabilitation(t *testing.T) {
+	short := &s3lifecycle.Rule{ID: "short", Status: s3lifecycle.StatusEnabled, ExpirationDays: 3}
+	long := &s3lifecycle.Rule{ID: "long", Status: s3lifecycle.StatusEnabled, ExpirationDays: 30}
+	date := &s3lifecycle.Rule{ID: "date", Status: s3lifecycle.StatusEnabled, ExpirationDate: time.Now().Add(48 * time.Hour)}
+	off := &s3lifecycle.Rule{ID: "off", Status: s3lifecycle.StatusDisabled, ExpirationDays: 7}
+	pending := &s3lifecycle.Rule{ID: "pending", Status: s3lifecycle.StatusEnabled, ExpirationDays: 5}
+	shortKey := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(short), ActionKind: s3lifecycle.ActionKindExpirationDays}
+	longKey := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(long), ActionKind: s3lifecycle.ActionKindExpirationDays}
+	pendingKey := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(pending), ActionKind: s3lifecycle.ActionKindExpirationDays}
+	snap := New().Compile(
+		[]CompileInput{{Bucket: "b1", Rules: []*s3lifecycle.Rule{short, long, date, off, pending}}},
+		CompileOptions{PriorStates: map[s3lifecycle.ActionKey]PriorState{
+			shortKey: {BootstrapComplete: true, Mode: ModeScanOnly},
+			longKey:  {BootstrapComplete: true},
+		}},
+	)
+
+	rv := snap.ReplayView(s3lifecycle.DaysToDuration(8))
+	require.NotNil(t, rv)
+
+	// The 30d rule is promoted to walk; the drain must not route it.
+	assert.Nil(t, rv.actions[longKey])
+	// Disabled rules stay out entirely.
+	assert.Len(t, rv.actions, 3)
+	// ScanOnly lock-in rehabilitates to event_driven; the base is untouched.
+	clone := rv.actions[shortKey]
+	require.NotNil(t, clone)
+	assert.Equal(t, ModeEventDriven, clone.Mode)
+	assert.True(t, clone.IsActive())
+	assert.Equal(t, ModeScanOnly, snap.actions[shortKey].Mode)
+	// Pre-bootstrap actions keep active=false; the drain must not activate
+	// them the way RulesForShard does.
+	pendingClone := rv.actions[pendingKey]
+	require.NotNil(t, pendingClone)
+	assert.False(t, pendingClone.IsActive())
+	// Walk-bound kinds share the base pointer, Mode preserved.
+	dateKey := s3lifecycle.ActionKey{Bucket: "b1", RuleHash: s3lifecycle.RuleHash(date), ActionKind: s3lifecycle.ActionKindExpirationDate}
+	assert.Same(t, snap.actions[dateKey], rv.actions[dateKey])
+	assert.Equal(t, ModeScanAtDate, rv.actions[dateKey].Mode)
+}
+
+func TestReplayView_AllPromotedReturnsNil(t *testing.T) {
+	rule := &s3lifecycle.Rule{ID: "long", Status: s3lifecycle.StatusEnabled, ExpirationDays: 90}
+	snap := buildSnapshotForViews(t, "b1", rule)
+	assert.Nil(t, snap.ReplayView(s3lifecycle.DaysToDuration(8)))
+	assert.Nil(t, snap.ReplayView(0))
+	assert.Nil(t, snap.ReplayView(0))
+}
+
+func TestReplayView_NilSnapshot(t *testing.T) {
+	var s *Snapshot
+	assert.Nil(t, s.ReplayView(0))
+}
+
 func TestRecoveryView_ActivatesEveryNonDisabledAction(t *testing.T) {
 	// Base snapshot has no PriorState → event-driven actions land inactive
 	// (pre-BootstrapComplete). Recovery view must clone them with active=
