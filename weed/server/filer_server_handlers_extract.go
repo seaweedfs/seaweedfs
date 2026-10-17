@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -62,7 +63,11 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 
 	ra, size, cleanup, err := filer.SpoolZipReader(reader, fs.option.TusMaxSize)
 	if err != nil {
-		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read input: %w", err))
+		code := http.StatusInternalServerError
+		if errors.Is(err, filer.ErrZipTooLarge) {
+			code = http.StatusRequestEntityTooLarge
+		}
+		writeJsonError(w, r, code, fmt.Errorf("read input: %w", err))
 		return
 	}
 	defer cleanup()
@@ -121,14 +126,14 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 	}
 
 	result := &FilerExtractResult{Name: archiveName}
-	writeMember := func(rel string, memberReader io.Reader, mtime time.Time, mode os.FileMode) {
+	writeMember := func(rel string, memberReader io.Reader, memberSize int64, mtime time.Time, mode os.FileMode) {
 		destPath := root + "/" + rel
 		memberSO, soErr := memberStorageOption(ruleRoot+"/"+rel, destPath)
 		if soErr != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, soErr))
 			return
 		}
-		memberResult, memberErr := fs.saveExtractedEntry(ctx, destPath, memberReader, path.Base(rel), chunkSize, memberSO, mtime, mode)
+		memberResult, memberErr := fs.saveExtractedEntry(ctx, destPath, memberReader, memberSize, path.Base(rel), chunkSize, memberSO, mtime, mode)
 		if memberErr != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, memberErr))
 			return
@@ -155,7 +160,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 				mode = os.FileMode(parsed)
 			}
 		}
-		writeMember(archiveName, io.NewSectionReader(ra, 0, size), time.Now(), mode)
+		writeMember(archiveName, io.NewSectionReader(ra, 0, size), size, time.Now(), mode)
 	}
 
 	// Directory members first so their stored metadata is not overwritten by
@@ -190,7 +195,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 			if perm := zf.Mode().Perm(); perm != 0 {
 				mode = perm
 			}
-			writeMember(rel, memberReader, zf.Modified, mode)
+			writeMember(rel, memberReader, int64(zf.UncompressedSize64), zf.Modified, mode)
 			memberReader.Close()
 		}
 	}
@@ -233,7 +238,7 @@ func (fs *FilerServer) mkdirExtracted(ctx context.Context, destPath string, zf *
 	}, nil, false, false, nil, false, so.MaxFileNameLength)
 }
 
-func (fs *FilerServer) saveExtractedEntry(ctx context.Context, destPath string, reader io.Reader, fileName string, chunkSize int32, so *operation.StorageOption, mtime time.Time, mode os.FileMode) (*FilerPostResult, error) {
+func (fs *FilerServer) saveExtractedEntry(ctx context.Context, destPath string, reader io.Reader, memberSize int64, fileName string, chunkSize int32, so *operation.StorageOption, mtime time.Time, mode os.FileMode) (*FilerPostResult, error) {
 	if fs.filer.FilerConf.MatchStorageRule(destPath).ReadOnly {
 		return nil, ErrReadOnly
 	}
@@ -249,6 +254,45 @@ func (fs *FilerServer) saveExtractedEntry(ctx context.Context, destPath string, 
 	}
 
 	contentType := mime.TypeByExtension(path.Ext(fileName))
+
+	// saveInside stores members as inline entry content like a normal
+	// multipart upload; the declared size keeps a corrupt archive from
+	// buffering more than it advertised.
+	if so.SaveInside {
+		if memberSize < 0 || memberSize > filer.ZipExtractMaxBytes {
+			return nil, fmt.Errorf("zip member %s size %d out of bounds", fileName, memberSize)
+		}
+		var buf bytes.Buffer
+		if _, err := buf.ReadFrom(io.LimitReader(reader, memberSize+1)); err != nil {
+			return nil, fmt.Errorf("read member: %w", err)
+		}
+		if int64(buf.Len()) > memberSize {
+			return nil, fmt.Errorf("zip member %s is larger than its declared size", fileName)
+		}
+		if mtime.IsZero() {
+			mtime = time.Now()
+		}
+		entry := &filer.Entry{
+			FullPath: util.FullPath(destPath),
+			Attr: filer.Attr{
+				Mtime:    mtime,
+				Crtime:   time.Now(),
+				Mode:     mode,
+				Uid:      OS_UID,
+				Gid:      OS_GID,
+				TtlSec:   so.TtlSeconds,
+				Mime:     contentType,
+				Md5:      util.Md5(buf.Bytes()),
+				FileSize: uint64(buf.Len()),
+			},
+			Content: buf.Bytes(),
+		}
+		if err := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, false, so.MaxFileNameLength); err != nil {
+			return nil, err
+		}
+		return &FilerPostResult{Name: fileName, Size: int64(buf.Len())}, nil
+	}
+
 	fileChunks, md5Hash, chunkOffset, uploadErr, smallContent := fs.uploadReaderToChunks(ctx, nil, reader, 0, chunkSize, fileName, contentType, false, so)
 	if uploadErr != nil {
 		return nil, uploadErr
