@@ -61,6 +61,18 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		return nil, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 	}
 
+	// The check runs under the rename path locks, which CreateEntry on the same
+	// filer also takes, so a target created concurrently cannot slip through.
+	if req.FailIfTargetExists && newParent.Child(req.NewName) != oldParent.Child(req.OldName) {
+		if _, findErr := fs.filer.FindEntry(ctx, newParent.Child(req.NewName)); findErr == nil {
+			fs.filer.RollbackTransaction(ctx)
+			return nil, fmt.Errorf("%s/%s: %w", req.NewDirectory, req.NewName, filer_pb.ErrEntryAlreadyExists)
+		} else if findErr != filer_pb.ErrNotFound {
+			fs.filer.RollbackTransaction(ctx)
+			return nil, findErr
+		}
+	}
+
 	var metadataEvents []metadataEvent
 	var pendingChunkDeletes []*filer_pb.FileChunk
 	var pendingRemoteCopies []*pendingRemoteCopy

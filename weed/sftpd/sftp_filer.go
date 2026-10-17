@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -263,15 +264,146 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
 		return err
 	}
+	requireAbsentTarget := false
+	if path.Clean(absPath) != path.Clean(absTarget) {
+		var err error
+		requireAbsentTarget, err = fs.checkRenameTargetDelete(absTarget, targetDir)
+		if err != nil {
+			return err
+		}
+	}
+	if err := fs.checkRenameKeepsAcl(absPath, absTarget); err != nil {
+		return err
+	}
 	oldDir, oldName := util.FullPath(absPath).DirAndName()
 	newDir, newName := util.FullPath(absTarget).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: oldDir, OldName: oldName,
 			NewDirectory: newDir, NewName: newName,
+			// A target the user may not delete must stay absent: the filer
+			// checks it again under the rename locks, where a create cannot
+			// slip in.
+			FailIfTargetExists: requireAbsentTarget,
 		})
 		return err
 	})
+}
+
+// checkRenameTargetDelete enforces delete access where a rename can destroy an
+// entry. Overwriting an existing target deletes it, so it needs delete access
+// on the target itself. A name that does not exist yet needs no delete check
+// unless a configured ACL restricts that name itself: enforcing such an ACL
+// even while the entry is absent keeps a concurrent create from slipping a
+// protected target under the rename. When the target name simply inherits its
+// directory's ACL and the user could not delete an entry there, the rename is
+// still allowed for a new name but the caller is told to require the target to
+// stay absent, so the filer rejects the overwrite of one created in the gap.
+// Lookup failures other than not-found fail closed.
+func (fs *SftpServer) checkRenameTargetDelete(absTarget, targetDir string) (requireAbsentTarget bool, err error) {
+	if _, err := fs.getEntry(absTarget); err == nil {
+		return false, fs.checkFilePermission(absTarget, "delete")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if fs.user == nil || fs.user.Username == "root" || fs.user.Uid == 0 {
+		return false, nil
+	}
+	if matchingAclPrefix(fs.user, absTarget) != matchingAclPrefix(fs.user, targetDir) {
+		if !HasExplicitPermission(fs.user, absTarget, PermDelete, false) {
+			glog.V(0).Infof("permission denied for user %s: rename target %s carries a delete-protected ACL", fs.user.Username, absTarget)
+			return false, os.ErrPermission
+		}
+		return false, nil
+	}
+	if err := fs.checkFilePermission(absTarget, "delete"); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
+// matchingAclPrefix returns the longest configured ACL path that applies to p,
+// or "" when no configured path covers it.
+func matchingAclPrefix(user *user.User, p string) string {
+	best := ""
+	for aclPath := range user.Permissions {
+		cleaned := path.Clean(aclPath)
+		if pathWithin(cleaned, p) && len(cleaned) > len(best) {
+			best = cleaned
+		}
+	}
+	return best
+}
+
+// checkRenameKeepsAcl denies a rename that would move entries to locations
+// where ACLs grant the user read, list, write, or delete access the source
+// side lacked. It compares the moved root and every configured ACL path under
+// either the source or the target (mapped back to the source) so both
+// inherited restrictions and deeper destination grants are caught.
+func (fs *SftpServer) checkRenameKeepsAcl(absPath, absTarget string) error {
+	if fs.user == nil || fs.user.Username == "root" || fs.user.Uid == 0 {
+		return nil
+	}
+	type aclPair struct {
+		src, dst string
+		isDir    bool
+	}
+	srcEntry, err := fs.getEntry(absPath)
+	if err != nil {
+		return err
+	}
+	pairs := []aclPair{{absPath, absTarget, srcEntry.IsDirectory}}
+	seen := map[string]bool{absPath: true}
+	for p := range fs.user.Permissions {
+		cleaned := path.Clean(p)
+		var src string
+		switch {
+		case pathWithin(absPath, cleaned):
+			src = cleaned
+		case pathWithin(absTarget, cleaned):
+			src = path.Join(absPath, strings.TrimPrefix(cleaned, absTarget))
+		default:
+			continue
+		}
+		if seen[src] {
+			continue
+		}
+		seen[src] = true
+		// A rule only protects an entry that actually moves; a path reserved
+		// for a missing child must not block the rename. A lookup error is not
+		// proof that the child is missing, so only os.ErrNotExist may skip.
+		entry, err := fs.getEntry(src)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		relocated := path.Join(absTarget, strings.TrimPrefix(src, absPath))
+		pairs = append(pairs, aclPair{src, relocated, entry.IsDirectory})
+	}
+	for _, pair := range pairs {
+		// A moved directory carries file children whose ACLs resolve with
+		// isDirectory=false, where list no longer counts as read. Comparing
+		// only the directory shape would miss children gaining read, so a
+		// directory is checked in the file shape too.
+		shapes := []bool{pair.isDir}
+		if pair.isDir {
+			shapes = append(shapes, false)
+		}
+		for _, isDir := range shapes {
+			for _, perm := range []string{PermRead, PermList, PermWrite, PermDelete} {
+				if !HasExplicitPermission(fs.user, pair.src, perm, isDir) && HasExplicitPermission(fs.user, pair.dst, perm, isDir) {
+					glog.V(0).Infof("permission denied for user %s: rename of %s to %s would drop the ACL on %s", fs.user.Username, absPath, absTarget, pair.src)
+					return os.ErrPermission
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (fs *SftpServer) setFileStatWithRequest(absPath string, r *sftp.Request) error {
