@@ -264,8 +264,11 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
 		return err
 	}
+	requireAbsentTarget := false
 	if path.Clean(absPath) != path.Clean(absTarget) {
-		if err := fs.checkRenameTargetDelete(absTarget, targetDir); err != nil {
+		var err error
+		requireAbsentTarget, err = fs.checkRenameTargetDelete(absTarget, targetDir)
+		if err != nil {
 			return err
 		}
 	}
@@ -278,6 +281,10 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: oldDir, OldName: oldName,
 			NewDirectory: newDir, NewName: newName,
+			// A target the user may not delete must stay absent: the filer
+			// checks it again under the rename locks, where a create cannot
+			// slip in.
+			FailIfTargetExists: requireAbsentTarget,
 		})
 		return err
 	})
@@ -288,25 +295,34 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 // on the target itself. A name that does not exist yet needs no delete check
 // unless a configured ACL restricts that name itself: enforcing such an ACL
 // even while the entry is absent keeps a concurrent create from slipping a
-// protected target under the rename. Lookup failures other than not-found fail
-// closed.
-func (fs *SftpServer) checkRenameTargetDelete(absTarget, targetDir string) error {
+// protected target under the rename. When the target name simply inherits its
+// directory's ACL and the user could not delete an entry there, the rename is
+// still allowed for a new name but the caller is told to require the target to
+// stay absent, so the filer rejects the overwrite of one created in the gap.
+// Lookup failures other than not-found fail closed.
+func (fs *SftpServer) checkRenameTargetDelete(absTarget, targetDir string) (requireAbsentTarget bool, err error) {
 	if _, err := fs.getEntry(absTarget); err == nil {
-		return fs.checkFilePermission(absTarget, "delete")
+		return false, fs.checkFilePermission(absTarget, "delete")
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return false, err
 	}
 	if fs.user == nil || fs.user.Username == "root" || fs.user.Uid == 0 {
-		return nil
+		return false, nil
 	}
-	if matchingAclPrefix(fs.user, absTarget) == matchingAclPrefix(fs.user, targetDir) {
-		return nil
+	if matchingAclPrefix(fs.user, absTarget) != matchingAclPrefix(fs.user, targetDir) {
+		if !HasExplicitPermission(fs.user, absTarget, PermDelete, false) {
+			glog.V(0).Infof("permission denied for user %s: rename target %s carries a delete-protected ACL", fs.user.Username, absTarget)
+			return false, os.ErrPermission
+		}
+		return false, nil
 	}
-	if !HasExplicitPermission(fs.user, absTarget, PermDelete, false) {
-		glog.V(0).Infof("permission denied for user %s: rename target %s carries a delete-protected ACL", fs.user.Username, absTarget)
-		return os.ErrPermission
+	if err := fs.checkFilePermission(absTarget, "delete"); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return true, nil
+		}
+		return false, err
 	}
-	return nil
+	return false, nil
 }
 
 // matchingAclPrefix returns the longest configured ACL path that applies to p,
@@ -370,10 +386,20 @@ func (fs *SftpServer) checkRenameKeepsAcl(absPath, absTarget string) error {
 		pairs = append(pairs, aclPair{src, relocated, entry.IsDirectory})
 	}
 	for _, pair := range pairs {
-		for _, perm := range []string{PermRead, PermList, PermWrite, PermDelete} {
-			if !HasExplicitPermission(fs.user, pair.src, perm, pair.isDir) && HasExplicitPermission(fs.user, pair.dst, perm, pair.isDir) {
-				glog.V(0).Infof("permission denied for user %s: rename of %s to %s would drop the ACL on %s", fs.user.Username, absPath, absTarget, pair.src)
-				return os.ErrPermission
+		// A moved directory carries file children whose ACLs resolve with
+		// isDirectory=false, where list no longer counts as read. Comparing
+		// only the directory shape would miss children gaining read, so a
+		// directory is checked in the file shape too.
+		shapes := []bool{pair.isDir}
+		if pair.isDir {
+			shapes = append(shapes, false)
+		}
+		for _, isDir := range shapes {
+			for _, perm := range []string{PermRead, PermList, PermWrite, PermDelete} {
+				if !HasExplicitPermission(fs.user, pair.src, perm, isDir) && HasExplicitPermission(fs.user, pair.dst, perm, isDir) {
+					glog.V(0).Infof("permission denied for user %s: rename of %s to %s would drop the ACL on %s", fs.user.Username, absPath, absTarget, pair.src)
+					return os.ErrPermission
+				}
 			}
 		}
 	}
