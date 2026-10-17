@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -87,6 +88,14 @@ type S3Options struct {
 	// its HTTP/gRPC servers once the ctx is cancelled, in addition to on
 	// interrupt. Used by weed mini to orchestrate an ordered shutdown.
 	shutdownCtx context.Context
+
+	// icebergBound/lanceBound record whether the auxiliary catalog listeners
+	// bound their ports. The aux binds happen before the S3 listener serves,
+	// so once the S3 port answers these are final; mini reads them to probe
+	// and advertise only catalogs that are actually running instead of
+	// whatever process may hold the configured port.
+	icebergBound atomic.Bool
+	lanceBound   atomic.Bool
 }
 
 func init() {
@@ -399,12 +408,16 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	// Start Iceberg REST Catalog server if enabled
 	if *s3opt.portIceberg > 0 {
-		httpServers = append(httpServers, s3opt.startIcebergServer(s3ApiServer))
+		if httpS := s3opt.startIcebergServer(s3ApiServer); httpS != nil {
+			httpServers = append(httpServers, httpS)
+		}
 	}
 
 	// Start Lance Namespace server if enabled
 	if s3opt.portLance != nil && *s3opt.portLance > 0 {
-		httpServers = append(httpServers, s3opt.startLanceServer(s3ApiServer))
+		if httpS := s3opt.startLanceServer(s3ApiServer); httpS != nil {
+			httpServers = append(httpServers, httpS)
+		}
 	}
 
 	if runtime.GOOS != "windows" {
@@ -601,8 +614,12 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) *http
 	icebergListener, icebergLocalListener, err := util.NewIpAndLocalListeners(
 		*s3opt.bindIp, *s3opt.portIceberg, time.Duration(*s3opt.idleTimeout)*time.Second)
 	if err != nil {
-		glog.Fatalf("Iceberg REST Catalog listener on %s error: %v", listenAddress, err)
+		// The catalog is auxiliary to the S3 gateway; a port conflict must not
+		// take the whole server down.
+		glog.Errorf("Iceberg REST Catalog listener on %s error: %v", listenAddress, err)
+		return nil
 	}
+	s3opt.icebergBound.Store(true)
 
 	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
 
@@ -617,7 +634,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) *http
 	}
 	go func() {
 		if err := httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
-			glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
+			glog.Errorf("Iceberg REST Catalog Server Fail to serve: %v", err)
 		}
 	}()
 	return httpS
@@ -643,8 +660,10 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) *http.S
 	lanceListener, lanceLocalListener, err := util.NewIpAndLocalListeners(
 		*s3opt.bindIp, *s3opt.portLance, time.Duration(*s3opt.idleTimeout)*time.Second)
 	if err != nil {
-		glog.Fatalf("Lance Namespace listener on %s error: %v", listenAddress, err)
+		glog.Errorf("Lance Namespace listener on %s error: %v", listenAddress, err)
+		return nil
 	}
+	s3opt.lanceBound.Store(true)
 
 	glog.V(0).Infof("Start Lance Namespace Server at http://%s", listenAddress)
 
@@ -658,7 +677,7 @@ func (s3opt *S3Options) startLanceServer(s3ApiServer *s3api.S3ApiServer) *http.S
 	}
 	go func() {
 		if err := httpS.Serve(lanceListener); err != nil && err != http.ErrServerClosed {
-			glog.Fatalf("Lance Namespace Server Fail to serve: %v", err)
+			glog.Errorf("Lance Namespace Server Fail to serve: %v", err)
 		}
 	}()
 	return httpS
