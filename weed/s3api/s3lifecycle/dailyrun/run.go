@@ -196,6 +196,18 @@ func Run(ctx context.Context, cfg Config) error {
 	wg.Wait()
 	close(errCh)
 
+	// Join every planned walk. A shard that exits early (cursor load
+	// failure, ctx cancel) never awaits pw.done, but planWalks already
+	// started the goroutine — Run must not return while it still lists
+	// or dispatches against connections the caller is about to close.
+	seenWalks := map[*pendingWalk]bool{}
+	for _, pw := range walks {
+		if !seenWalks[pw] {
+			seenWalks[pw] = true
+			<-pw.done
+		}
+	}
+
 	// Tear down the shared subscription. cancelRead unblocks both the
 	// reader's gRPC stream and the fan-out's send loop; we wait on both
 	// so their goroutines don't outlive Run.

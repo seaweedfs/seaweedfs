@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -167,4 +168,65 @@ func TestRun_SharedWalkErrorFailsCoveredShards(t *testing.T) {
 	err := Run(context.Background(), cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "walk boom")
+}
+
+// countingPersister fails Load after the first failAfter calls: call 1
+// feeds planWalks, the failing call 2 is runShard's authoritative read.
+type countingPersister struct {
+	inner     CursorPersister
+	calls     atomic.Int32
+	failAfter int32
+}
+
+func (p *countingPersister) Load(ctx context.Context, shardID int) (Cursor, bool, error) {
+	if p.calls.Add(1) > p.failAfter {
+		return Cursor{}, false, errors.New("transient load failure")
+	}
+	return p.inner.Load(ctx, shardID)
+}
+
+func (p *countingPersister) Save(ctx context.Context, shardID int, c Cursor) error {
+	return p.inner.Save(ctx, shardID, c)
+}
+
+// A shard whose second cursor load fails exits runShard without
+// awaiting the planned walk it was grouped into. The walk goroutine is
+// already running — Run must still join it, or the handler tears down
+// the filer connection while the walk is mid-listing.
+func TestRun_JoinsPlannedWalkWhenShardExitsEarly(t *testing.T) {
+	e := engine.New()
+	e.Compile([]engine.CompileInput{
+		{Bucket: "b1", Rules: []*s3lifecycle.Rule{
+			{ID: "r", Status: s3lifecycle.StatusEnabled,
+				ExpirationDate: time.Now().Add(24 * time.Hour)},
+		}},
+	}, engine.CompileOptions{})
+
+	walkStarted := make(chan struct{})
+	walkRelease := make(chan struct{})
+	cfg := Config{
+		Shards:      []int{0},
+		BucketsPath: "/buckets",
+		Engine:      e,
+		FilerClient: stubFilerClient{},
+		Client:      stubLifecycleClient{},
+		Persister:   &countingPersister{inner: newMemPersister(), failAfter: 1},
+		Lister:      stubSiblingLister{},
+		Walker: func(context.Context, *engine.Snapshot, []int) error {
+			close(walkStarted)
+			<-walkRelease
+			return nil
+		},
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- Run(context.Background(), cfg) }()
+
+	<-walkStarted
+	select {
+	case <-runDone:
+		t.Fatal("Run returned while the planned walk was still running")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(walkRelease)
+	require.Error(t, <-runDone)
 }
