@@ -2921,14 +2921,18 @@ func (x *DeleteEntryResponse) GetMetadataEvent() *SubscribeMetadataResponse {
 }
 
 type AtomicRenameEntryRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OldDirectory  string                 `protobuf:"bytes,1,opt,name=old_directory,json=oldDirectory,proto3" json:"old_directory,omitempty"`
-	OldName       string                 `protobuf:"bytes,2,opt,name=old_name,json=oldName,proto3" json:"old_name,omitempty"`
-	NewDirectory  string                 `protobuf:"bytes,3,opt,name=new_directory,json=newDirectory,proto3" json:"new_directory,omitempty"`
-	NewName       string                 `protobuf:"bytes,4,opt,name=new_name,json=newName,proto3" json:"new_name,omitempty"`
-	Signatures    []int32                `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	OldDirectory string                 `protobuf:"bytes,1,opt,name=old_directory,json=oldDirectory,proto3" json:"old_directory,omitempty"`
+	OldName      string                 `protobuf:"bytes,2,opt,name=old_name,json=oldName,proto3" json:"old_name,omitempty"`
+	NewDirectory string                 `protobuf:"bytes,3,opt,name=new_directory,json=newDirectory,proto3" json:"new_directory,omitempty"`
+	NewName      string                 `protobuf:"bytes,4,opt,name=new_name,json=newName,proto3" json:"new_name,omitempty"`
+	Signatures   []int32                `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
+	// When true, the rename fails with ErrEntryAlreadyExists if the target
+	// already exists. Lets a caller that authorized the rename without delete
+	// access on an absent target stay safe if one is created concurrently.
+	FailIfTargetExists bool `protobuf:"varint,6,opt,name=fail_if_target_exists,json=failIfTargetExists,proto3" json:"fail_if_target_exists,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AtomicRenameEntryRequest) Reset() {
@@ -2994,6 +2998,13 @@ func (x *AtomicRenameEntryRequest) GetSignatures() []int32 {
 		return x.Signatures
 	}
 	return nil
+}
+
+func (x *AtomicRenameEntryRequest) GetFailIfTargetExists() bool {
+	if x != nil {
+		return x.FailIfTargetExists
+	}
+	return false
 }
 
 type AtomicRenameEntryResponse struct {
@@ -7544,7 +7555,7 @@ const file_filer_proto_rawDesc = "" +
 	" \x01(\bR\x10keepRemoteObject\"w\n" +
 	"\x13DeleteEntryResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12J\n" +
-	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\xba\x01\n" +
+	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\xed\x01\n" +
 	"\x18AtomicRenameEntryRequest\x12#\n" +
 	"\rold_directory\x18\x01 \x01(\tR\foldDirectory\x12\x19\n" +
 	"\bold_name\x18\x02 \x01(\tR\aoldName\x12#\n" +
@@ -7552,7 +7563,8 @@ const file_filer_proto_rawDesc = "" +
 	"\bnew_name\x18\x04 \x01(\tR\anewName\x12\x1e\n" +
 	"\n" +
 	"signatures\x18\x05 \x03(\x05R\n" +
-	"signatures\"\x1b\n" +
+	"signatures\x121\n" +
+	"\x15fail_if_target_exists\x18\x06 \x01(\bR\x12failIfTargetExists\"\x1b\n" +
 	"\x19AtomicRenameEntryResponse\"\xba\x01\n" +
 	"\x18StreamRenameEntryRequest\x12#\n" +
 	"\rold_directory\x18\x01 \x01(\tR\foldDirectory\x12\x19\n" +
