@@ -1486,16 +1486,6 @@ func (s3a *S3ApiServer) streamRangeToClient(w io.Writer, r *http.Request, reader
 	return cw.written, nil
 }
 
-// Shared HTTP client for volume server requests (connection pooling)
-var volumeServerHTTPClient = &http.Client{
-	Timeout: 5 * time.Minute,
-	Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-	},
-}
-
 // createLookupFileIdFunction creates a reusable lookup function for resolving volume URLs
 // Uses FilerClient's vidMap cache to eliminate per-chunk gRPC overhead
 func (s3a *S3ApiServer) createLookupFileIdFunction() func(context.Context, string) ([]string, error) {
@@ -2198,8 +2188,12 @@ func (s3a *S3ApiServer) readChunkRange(ctx context.Context, fileId string, offse
 		return nil, fmt.Errorf("failed to lookup chunk %s: %w", fileId, err)
 	}
 
-	// Use the first URL (already contains complete URL with fileId)
-	chunkUrl := urlStrings[0]
+	// Use the first URL (already contains complete URL with fileId). The lookup returns http:// URLs; when
+	// [https.client] is configured the volume servers only speak TLS, so take the global client's scheme.
+	chunkUrl, err := util_http.NormalizeUrl(urlStrings[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize chunk URL %s: %w", fileId, err)
+	}
 
 	// Generate JWT for volume server authentication (uses config loaded once at startup)
 	jwt := filer.JwtForVolumeServer(fileId)
@@ -2220,8 +2214,9 @@ func (s3a *S3ApiServer) readChunkRange(ctx context.Context, fileId string, offse
 		req.Header.Set("Authorization", security.BearerPrefix+jwt)
 	}
 
-	// Use shared HTTP client with connection pooling
-	resp, err := volumeServerHTTPClient.Do(req)
+	// Use the global HTTP client: it carries the [https.client] TLS configuration (CA and client
+	// certificate) that HTTPS volume servers require; a bare http.Client cannot reach them.
+	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch chunk: %w", err)
 	}
