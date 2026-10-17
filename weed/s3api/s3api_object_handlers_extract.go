@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -125,7 +126,9 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 
 	ra, size, cleanup, err := filer.SpoolZipReader(dataReader, 0)
 	if err != nil {
-		if strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch) {
+		if errors.Is(err, filer.ErrZipTooLarge) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooLarge)
+		} else if strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
 		} else {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -207,19 +210,25 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		if memberContentType == "" {
 			memberContentType = "application/octet-stream"
 		}
-		r.Header.Set("Content-Type", memberContentType)
-		r.ContentLength = memberSize
+		// Write helpers read the object from route vars, e.g. for the SSE-KMS
+		// encryption context ARN; point them at the member, not the archive.
+		memberReq := mux.SetURLVars(r, map[string]string{
+			"bucket": bucket,
+			"object": memberKey,
+		})
+		memberReq.Header.Set("Content-Type", memberContentType)
+		memberReq.ContentLength = memberSize
 		var etag string
 		var errCode s3err.ErrorCode
 		switch versioningState {
 		case s3_constants.VersioningEnabled:
-			_, etag, errCode, _ = s3a.putVersionedObject(r, bucket, memberKey, memberReader, memberContentType)
+			_, etag, errCode, _ = s3a.putVersionedObject(memberReq, bucket, memberKey, memberReader, memberContentType)
 		case s3_constants.VersioningSuspended:
-			etag, errCode, _ = s3a.putSuspendedVersioningObject(r, bucket, memberKey, memberReader, memberContentType)
+			etag, errCode, _ = s3a.putSuspendedVersioningObject(memberReq, bucket, memberKey, memberReader, memberContentType)
 		default:
 			filePath := s3a.toFilerPath(bucket, memberKey)
 			lifecycleTTLSec := s3a.lifecycleTTLForObjectWrite(bucket, memberKey, memberSize)
-			etag, errCode, _ = s3a.putToFiler(r, filePath, memberReader, bucket, memberKey, 1, lifecycleTTLSec, nil, false, "")
+			etag, errCode, _ = s3a.putToFiler(memberReq, filePath, memberReader, bucket, memberKey, 1, lifecycleTTLSec, nil, false, "")
 		}
 		if errCode != s3err.ErrNone {
 			result.Errors = append(result.Errors, memberKey+": "+s3err.GetAPIError(errCode).Code)
