@@ -60,7 +60,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 		}
 	}
 
-	ra, size, cleanup, err := filer.SpoolZipReader(reader)
+	ra, size, cleanup, err := filer.SpoolZipReader(reader, fs.option.TusMaxSize)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("read input: %w", err))
 		return
@@ -83,17 +83,21 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 	root = strings.TrimSuffix(root, "/")
 
 	query := r.URL.Query()
-	parsedMaxMB, _ := strconv.ParseInt(query.Get("maxMB"), 10, 32)
-	maxMB := int32(parsedMaxMB)
-	if maxMB <= 0 && fs.option.MaxMB > 0 {
-		maxMB = int32(fs.option.MaxMB)
+	chunkSize := fs.requestChunkSize(query)
+
+	// x-seaweedfs-destination picks storage rules for a logical destination
+	// while members land under the request path, mirroring PostHandler. The
+	// actual write path keeps its own read-only enforcement in
+	// saveExtractedEntry and mkdirExtracted.
+	ruleRoot := root
+	if headerDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); headerDestination != "" {
+		ruleRoot = strings.TrimSuffix(headerDestination, "/")
 	}
-	chunkSize := 1024 * 1024 * maxMB
 
 	// Members may land under storage rules different from the request path;
 	// resolve options per destination, keeping the request's explicit overrides.
-	memberStorageOption := func(destPath string) (*operation.StorageOption, error) {
-		memberSO, detectErr := fs.detectStorageOption0(ctx, destPath,
+	memberStorageOption := func(rulePath, writePath string) (*operation.StorageOption, error) {
+		memberSO, detectErr := fs.detectStorageOption0(ctx, rulePath,
 			query.Get("collection"),
 			query.Get("replication"),
 			query.Get("ttl"),
@@ -110,7 +114,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 		if memberSO.DiskType == "" {
 			memberSO.DiskType = fs.option.DiskType
 		}
-		if strings.HasPrefix(destPath, "/etc") {
+		if strings.HasPrefix(writePath, "/etc") {
 			memberSO.SaveInside = true
 		}
 		return memberSO, nil
@@ -119,7 +123,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 	result := &FilerExtractResult{Name: archiveName}
 	writeMember := func(rel string, memberReader io.Reader, mtime time.Time, mode os.FileMode) {
 		destPath := root + "/" + rel
-		memberSO, soErr := memberStorageOption(destPath)
+		memberSO, soErr := memberStorageOption(ruleRoot+"/"+rel, destPath)
 		if soErr != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, soErr))
 			return
@@ -134,7 +138,7 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 	}
 	mkdirMember := func(rel string, zf *zip.File) {
 		destPath := root + "/" + rel
-		memberSO, soErr := memberStorageOption(destPath)
+		memberSO, soErr := memberStorageOption(ruleRoot+"/"+rel, destPath)
 		if soErr != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", rel, soErr))
 			return
@@ -195,6 +199,9 @@ func (fs *FilerServer) extractZipArchive(ctx context.Context, w http.ResponseWri
 }
 
 func (fs *FilerServer) mkdirExtracted(ctx context.Context, destPath string, zf *zip.File, so *operation.StorageOption) error {
+	if fs.filer.FilerConf.MatchStorageRule(destPath).ReadOnly {
+		return ErrReadOnly
+	}
 	existing, findErr := fs.filer.FindEntry(ctx, util.FullPath(destPath))
 	if findErr == nil {
 		if existing.IsDirectory() {
