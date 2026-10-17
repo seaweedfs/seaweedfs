@@ -251,11 +251,16 @@ func TestCheckFilePermissionMissingAncestorsTerminates(t *testing.T) {
 
 type permissionTestFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	entries map[string]*filer_pb.Entry
+	entries   map[string]*filer_pb.Entry
+	lookupErr map[string]error
 }
 
 func (f *permissionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
-	if entry, ok := f.entries[req.Directory+"/"+req.Name]; ok {
+	key := req.Directory + "/" + req.Name
+	if err, ok := f.lookupErr[key]; ok {
+		return nil, err
+	}
+	if entry, ok := f.entries[key]; ok {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
 	}
 	return nil, status.Error(codes.NotFound, "no entry is found")
@@ -281,13 +286,13 @@ func TestRenameEntryKeepsInheritedAndDestinationAcl(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
-		"/home/alice":                  {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
-		"/home/alice/restricted":       {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
-		"/home/alice/restricted/sub":   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
-		"/home/alice/sub":              {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
-		"/home/alice/sub/locked":       {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice":                   {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/restricted":        {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/restricted/sub":    {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub":               {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub/locked":        {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
 		"/home/alice/sub/locked/secret": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
-		"/home/alice/sub3":             {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/sub3":              {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
 	}}
 	grpcServer := grpc.NewServer()
 	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
@@ -301,12 +306,12 @@ func TestRenameEntryKeepsInheritedAndDestinationAcl(t *testing.T) {
 		user: &user.User{
 			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
 			Permissions: map[string][]string{
-				"/home/alice":                  {"read", "write", "list", "delete", "rename"},
-				"/home/alice/restricted":       {"read", "list", "rename"},
-				"/home/alice/sub/locked":       {"read", "list"},
-				"/home/alice/sub2/locked":      {"read", "list"},
+				"/home/alice":                    {"read", "write", "list", "delete", "rename"},
+				"/home/alice/restricted":         {"read", "list", "rename"},
+				"/home/alice/sub/locked":         {"read", "list"},
+				"/home/alice/sub2/locked":        {"read", "list"},
 				"/home/alice/sub2/locked/secret": {"read", "write", "list", "delete"},
-				"/home/alice/sub3/ghost.txt":   {"read", "list"},
+				"/home/alice/sub3/ghost.txt":     {"read", "list"},
 			},
 		},
 	}
@@ -319,5 +324,135 @@ func TestRenameEntryKeepsInheritedAndDestinationAcl(t *testing.T) {
 	}
 	if err := fs.renameEntry("/home/alice/sub3", "/home/alice/sub4"); err != nil {
 		t.Errorf("expected rename with a missing reserved ACL child to succeed, got %v", err)
+	}
+}
+
+// A rename onto a name that does not exist needs no delete access unless a
+// configured ACL restricts that name itself. Without the scoped check a user
+// holding write+rename but not delete could no longer move files to new names.
+func TestRenameEntryNewNameNeedsNoDelete(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/home/alice":               {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/own.txt":       {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		"/home/alice/existing.txt":  {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		"/home/alice/removable.txt": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice":               {"read", "write", "list", "rename"},
+				"/home/alice/reserved.txt":  {"read", "list"},
+				"/home/alice/managed.txt":   {"read", "write", "list", "delete"},
+				"/home/alice/removable.txt": {"read", "write", "list", "delete", "rename"},
+			},
+		},
+	}
+
+	if err := fs.renameEntry("/home/alice/own.txt", "/home/alice/new.txt"); err != nil {
+		t.Errorf("expected rename to a new name without delete access to succeed, got %v", err)
+	}
+	if err := fs.renameEntry("/home/alice/new.txt", "/home/alice/existing.txt"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename over an existing file without delete access to be denied, got %v", err)
+	}
+	if err := fs.renameEntry("/home/alice/new.txt", "/home/alice/reserved.txt"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename onto a delete-protected configured name to be denied, got %v", err)
+	}
+	if err := fs.renameEntry("/home/alice/removable.txt", "/home/alice/managed.txt"); err != nil {
+		t.Errorf("expected rename onto a configured name that grants delete to succeed, got %v", err)
+	}
+}
+
+// checkRenameKeepsAcl fails closed: a lookup error on a configured ACL path is
+// not proof that the entry is missing, so it must stop the rename instead of
+// skipping the comparison.
+func TestRenameEntryFailsClosedOnLookupError(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/home/alice":            {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+			"/home/alice/sub":        {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+			"/home/alice/sub/ro.txt": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+		},
+		lookupErr: map[string]error{
+			"/home/alice/sub/ro.txt": status.Error(codes.Unavailable, "filer unavailable"),
+		},
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice":            {"read", "write", "list", "delete", "rename"},
+				"/home/alice/sub/ro.txt": {"read", "list"},
+			},
+		},
+	}
+
+	err = fs.renameEntry("/home/alice/sub", "/home/alice/sub2")
+	if err == nil || errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename to fail closed on a lookup error, got %v", err)
+	}
+	delete(filer.lookupErr, "/home/alice/sub/ro.txt")
+	if err := fs.renameEntry("/home/alice/sub", "/home/alice/sub2"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected the stranded ACL check to deny the rename once the lookup succeeds, got %v", err)
+	}
+}
+
+// A rename must not grant access the source side lacked, including read and
+// directory listing: moving a subtree whose ACL withholds read/list into a
+// readable destination would expose its contents.
+func TestRenameEntryKeepsReadAndListAcl(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &permissionTestFiler{entries: map[string]*filer_pb.Entry{
+		"/home/alice":              {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/noread":       {IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0755}},
+		"/home/alice/noread/f.txt": {Attributes: &filer_pb.FuseAttributes{Uid: 1000, FileMode: 0644}},
+	}}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	fs := &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username: "alice", Uid: 1000, Gid: 1000, HomeDir: "/home/alice",
+			Permissions: map[string][]string{
+				"/home/alice":        {"read", "write", "list", "delete", "rename"},
+				"/home/alice/noread": {"write", "delete", "rename"},
+			},
+		},
+	}
+
+	if err := fs.renameEntry("/home/alice/noread", "/home/alice/visible"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("expected rename that grants read/list on the moved directory to be denied, got %v", err)
 	}
 }
