@@ -113,8 +113,9 @@ type IdentityAccessManagement struct {
 	// reloadCh coalesces failed-reload retries handled by reloadRetryLoop
 	reloadCh chan struct{}
 
-	// reloadMu serializes configuration loads end-to-end (store snapshot
-	// through commit) so an older snapshot cannot overwrite a newer one
+	// reloadMu serializes configuration loads and pushes end-to-end (store
+	// snapshot through commit) so an older snapshot cannot overwrite a newer
+	// one
 	reloadMu sync.Mutex
 }
 
@@ -1027,10 +1028,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	for k, v := range iam.nameToIdentity {
 		nameToIdentity[k] = v
 	}
-	policies := make(map[string]*iam_pb.Policy)
-	for k, v := range iam.policies {
-		policies[k] = v
-	}
 	accounts := make(map[string]*Account)
 	for k, v := range iam.accounts {
 		accounts[k] = v
@@ -1246,22 +1243,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
 	}
 
-	for _, policy := range config.Policies {
-		policies[policy.Name] = policy
-	}
-	// full snapshot: drop dynamic policies the store no longer has
-	if isFullState {
-		presentPolicies := make(map[string]bool, len(config.Policies))
-		for _, policy := range config.Policies {
-			presentPolicies[policy.Name] = true
-		}
-		for name := range policies {
-			if !staticPolicies[name] && !presentPolicies[name] {
-				delete(policies, name)
-			}
-		}
-	}
-
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
@@ -1270,7 +1251,28 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.emailAccount = emailAccount
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
-	iam.policies = policies
+
+	// Apply policy changes to the live map rather than swapping in a snapshot
+	// taken before this merge prepared: a policy committed in the meantime (a
+	// pushed inline document or a PutPolicy update) must not be discarded.
+	if iam.policies == nil {
+		iam.policies = make(map[string]*iam_pb.Policy)
+	}
+	for _, policy := range config.Policies {
+		iam.policies[policy.Name] = policy
+	}
+	// full snapshot: drop dynamic policies the store no longer has
+	if isFullState {
+		presentPolicies := make(map[string]bool, len(config.Policies))
+		for _, policy := range config.Policies {
+			presentPolicies[policy.Name] = true
+		}
+		for name := range iam.policies {
+			if !staticPolicies[name] && !presentPolicies[name] {
+				delete(iam.policies, name)
+			}
+		}
+	}
 
 	// Groups: a full snapshot is authoritative even when empty (last group
 	// deleted); partial updates pass nil Groups and preserve existing state.
@@ -1366,6 +1368,12 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 		return fmt.Errorf("upsert identity failed: empty identity name")
 	}
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
+	// Serialize the store reads below with the merge that publishes them:
+	// reloadMu already gives full reloads the same snapshot-through-commit
+	// ordering, so a document read here cannot overwrite a newer copy that a
+	// concurrent push or reload committed in the meantime.
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
 	config := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
 	}
@@ -1373,9 +1381,7 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 	// drop them until the next reload and authorize by flattened Actions.
 	// Reattach the names and their documents, scoped to this identity: a name
 	// without its document would deny requests the policy allows until the
-	// next reload. Inline runtime names are only ever populated from this
-	// store (managed policies propagate on the PutPolicy channel), so a store
-	// read cannot install a document older than the committed one.
+	// next reload.
 	if iam.credentialManager != nil {
 		if store, ok := iam.credentialManager.GetStore().(credential.InlinePolicyStore); ok {
 			policyNames, err := store.ListUserInlinePolicies(context.Background(), ident.Name)
@@ -3196,6 +3202,12 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 		return fmt.Errorf("put group failed: empty group name")
 	}
 	glog.V(1).Infof("IAM: put group %s", group.Name)
+
+	// Serialize the store reads below with their installation under iam.m:
+	// the same reloadMu ordering that identity pushes and full reloads use,
+	// so a document read here cannot overwrite a newer committed copy.
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
 
 	// As for identity pushes, the wire proto lacks the group's runtime
 	// inline policy names; reattach them with their documents, scoped to
