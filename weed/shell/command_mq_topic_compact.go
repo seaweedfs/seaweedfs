@@ -2,6 +2,7 @@ package shell
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"time"
 
@@ -46,7 +47,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	topicName := mqCommand.String("topic", "", "topic name")
 	timeAgo := mqCommand.Duration("timeAgo", 2*time.Minute, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 	replication := mqCommand.String("replication", "", "replication type")
-	collection := mqCommand.String("collection", "", "optional collection name; \""+CollectionDefault+"\" for the collection with no name")
+	collection := mqCommand.String("collection", "", "optional collection name")
 	dataCenter := mqCommand.String("dataCenter", "", "optional data center name")
 	diskType := mqCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	maxMB := mqCommand.Int("maxMB", 4, "split files larger than the limit")
@@ -55,9 +56,16 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		return err
 	}
 
+	// The AssignVolumeRequest collection falls back to the path rule and the
+	// filer default when empty, so the empty-named collection cannot be
+	// requested explicitly.
+	if *collection == CollectionDefault {
+		return fmt.Errorf("%s is not a usable collection name here; omit -collection to inherit the configured collection", CollectionDefault)
+	}
+
 	storagePreference := &operation.StoragePreference{
 		Replication: *replication,
-		Collection:  resolveCollectionName(*collection),
+		Collection:  *collection,
 		DataCenter:  *dataCenter,
 		DiskType:    *diskType,
 		MaxMB:       *maxMB,

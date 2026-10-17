@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"io"
 	"reflect"
 	"testing"
 
@@ -73,19 +74,20 @@ func mustMatcher(t *testing.T, filter string) *wildcard.CollectionMatcher {
 }
 
 func TestVacuumRequestsForPattern(t *testing.T) {
-	topo := vacuumTestTopology(
-		vacuumTestNode(
-			&master_pb.VolumeInformationMessage{Id: 1, Collection: "a", Size: 100},
-			&master_pb.VolumeInformationMessage{Id: 2, Collection: "", Size: 100},
-			// read-only volumes stay out of the unnamed-collection sweep, the
-			// same as the server skips them on a named-collection sweep
-			&master_pb.VolumeInformationMessage{Id: 3, Collection: "", Size: 100, ReadOnly: true},
-			&master_pb.VolumeInformationMessage{Id: 4, Collection: "b", Size: 100},
-		),
+	node := vacuumTestNode(
+		&master_pb.VolumeInformationMessage{Id: 1, Collection: "a", Size: 100},
+		&master_pb.VolumeInformationMessage{Id: 2, Collection: "", Size: 100},
+		// read-only volumes stay out of the unnamed-collection sweep, the
+		// same as the server skips them on a named-collection sweep — the
+		// unreachable address keeps the low-disk probe a fast miss
+		&master_pb.VolumeInformationMessage{Id: 3, Collection: "", Size: 100, ReadOnly: true},
+		&master_pb.VolumeInformationMessage{Id: 4, Collection: "b", Size: 100},
 	)
+	node.Id = "localhost:1"
+	topo := vacuumTestTopology(node)
 
 	// A named collection sweeps as a single collection-scoped request.
-	reqs, err := vacuumRequestsForPattern(topo, mustMatcher(t, "a"))
+	reqs, err := vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, "a"))
 	if err != nil {
 		t.Fatalf("pattern a: %v", err)
 	}
@@ -94,7 +96,7 @@ func TestVacuumRequestsForPattern(t *testing.T) {
 	}
 
 	// Patterns cover several named collections.
-	reqs, err = vacuumRequestsForPattern(topo, mustMatcher(t, "a,b"))
+	reqs, err = vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, "a,b"))
 	if err != nil {
 		t.Fatalf("pattern a,b: %v", err)
 	}
@@ -107,8 +109,9 @@ func TestVacuumRequestsForPattern(t *testing.T) {
 	}
 
 	// The unnamed collection resolves to per-volume requests — no Collection
-	// value selects it alone, and read-only volumes stay skipped.
-	reqs, err = vacuumRequestsForPattern(topo, mustMatcher(t, CollectionDefault))
+	// value selects it alone, and the read-only volume is skipped because the
+	// probe cannot confirm low disk space.
+	reqs, err = vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, CollectionDefault))
 	if err != nil {
 		t.Fatalf("%s: %v", CollectionDefault, err)
 	}
@@ -117,7 +120,7 @@ func TestVacuumRequestsForPattern(t *testing.T) {
 	}
 
 	// A filter hitting nothing is an error, not a silent no-op.
-	if _, err = vacuumRequestsForPattern(topo, mustMatcher(t, "missing")); err == nil {
+	if _, err = vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, "missing")); err == nil {
 		t.Fatal("expected an error for a filter matching no collection")
 	}
 }

@@ -57,6 +57,7 @@ type commandVolumeFsck struct {
 	bucketsPath               string
 	collection                *string
 	collectionMatcher         *wildcard.CollectionMatcher
+	knownVolumeIds            map[uint32]bool
 	volumeIds                 map[uint32]bool
 	scopedFilerPath           string
 	tempFolder                string
@@ -174,6 +175,16 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
 	if err != nil {
 		return fmt.Errorf("failed to collect all volume locations: %w", err)
+	}
+
+	// Every volume the master knows about, before any filtering: a filer
+	// entry pointing at a volume that was filtered out of this run is
+	// excluded, not missing — it must never be reported or purged.
+	c.knownVolumeIds = make(map[uint32]bool)
+	for _, vidMap := range dataNodeVolumeIdToVInfo {
+		for vid := range vidMap {
+			c.knownVolumeIds[vid] = true
+		}
 	}
 
 	// If the operator specified -volumeId, reject unknown ids up front instead
@@ -380,6 +391,11 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 						if _, ok := c.volumeIds[i.vid]; !ok {
 							continue
 						}
+					}
+					// A volume the master knows but this run filtered out is not a
+					// missing volume: its files are healthy and stay untouched.
+					if c.knownVolumeIds[i.vid] {
+						continue
 					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
@@ -972,37 +988,11 @@ func (c *commandVolumeFsck) getCollectFilerFilePath() string {
 
 func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo) string {
 	if *c.collection != "" {
-		// A single matched collection still scopes the walk to its bucket dir.
-		// Anything broader — a list, a pattern, or the unnamed collection whose
-		// chunks can be referenced from anywhere — walks the whole tree.
-		collections := make(map[string]struct{})
-		for _, vidMap := range dataNodeVolumeIdToVInfo {
-			for _, vinfo := range vidMap {
-				if c.collectionMatcher.Matches(vinfo.collection) {
-					collections[vinfo.collection] = struct{}{}
-				}
-				if len(collections) > 1 {
-					return "/"
-				}
-			}
-		}
-		if len(collections) != 1 {
-			return "/"
-		}
-		var collection string
-		for col := range collections {
-			collection = col
-		}
-		if collection == "" {
-			return "/"
-		}
-		// Falling back to "/" on a missing bucket dir widens the walk, which is
-		// slower but never reports live chunks as orphans.
-		exists, err := c.bucketDirExists(collection)
-		if err != nil || !exists {
-			return "/"
-		}
-		return fmt.Sprintf("%s/%s", c.bucketsPath, collection)
+		// fs.configure can bind a collection to any path prefix, so files
+		// referencing the filtered volumes may live anywhere. A bucket-dir
+		// walk could miss them and report their live chunks as orphans;
+		// only a full walk is safe for a collection filter.
+		return "/"
 	}
 	if len(c.volumeIds) == 0 {
 		return "/"

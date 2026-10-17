@@ -99,26 +99,9 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return err
 	}
 
-	collectionNames, err := ListCollectionNames(commandEnv, false, true)
+	collections, err := resolveEcCollections(commandEnv, *collection)
 	if err != nil {
 		return err
-	}
-	var collections []string
-	if *collection == string(wildcard.CollectionFilterEach) {
-		collections = collectionNames
-	} else {
-		collectionMatcher, err := compileCollectionPattern(*collection)
-		if err != nil {
-			return fmt.Errorf("invalid collection pattern %q: %w", *collection, err)
-		}
-		for _, name := range collectionNames {
-			if collectionMatcher.Matches(name) {
-				collections = append(collections, name)
-			}
-		}
-		if len(collections) == 0 {
-			return fmt.Errorf("no collections match %q", *collection)
-		}
 	}
 
 	var volumeIds []needle.VolumeId

@@ -9,9 +9,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
+	"google.golang.org/grpc"
 )
 
 func init() {
@@ -138,7 +143,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 		if *volumeIds != "" {
 			requests, err = vacuumRequestsForVolumeIds(topo, collectionMatcher, volumeIdInts)
 		} else {
-			requests, err = vacuumRequestsForPattern(topo, collectionMatcher)
+			requests, err = vacuumRequestsForPattern(commandEnv.option.GrpcDialOption, writer, topo, collectionMatcher)
 		}
 		if err != nil {
 			return err
@@ -159,13 +164,21 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	return nil
 }
 
+// vidReplica pairs a volume replica's read-only state with the server that
+// reports it, so the unnamed-collection sweep can reproduce the master's
+// low-disk-space exception client-side.
+type vidReplica struct {
+	server   pb.ServerAddress
+	readOnly bool
+}
+
 // vacuumRequestsForPattern resolves a collection filter to the sweep requests
 // that cover it: one per matched named collection, which keeps the server's
-// read-only skip, plus one per writable volume in the unnamed collection —
-// the per-volume form is the only way to scope the RPC to it.
-func vacuumRequestsForPattern(topo *master_pb.TopologyInfo, collectionMatcher *wildcard.CollectionMatcher) ([]*master_pb.VacuumVolumeRequest, error) {
+// read-only skip, plus per-volume requests for the unnamed collection — no
+// Collection value scopes the RPC to it alone.
+func vacuumRequestsForPattern(grpcDialOption grpc.DialOption, writer io.Writer, topo *master_pb.TopologyInfo, collectionMatcher *wildcard.CollectionMatcher) ([]*master_pb.VacuumVolumeRequest, error) {
 	collections := make(map[string]bool)
-	readOnly := make(map[uint32]bool)
+	defaultReplicas := make(map[uint32][]vidReplica)
 	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
 		for _, disk := range dn.DiskInfos {
 			for _, v := range disk.VolumeInfos {
@@ -173,8 +186,11 @@ func vacuumRequestsForPattern(topo *master_pb.TopologyInfo, collectionMatcher *w
 					continue
 				}
 				collections[v.Collection] = true
-				if v.ReadOnly {
-					readOnly[v.Id] = true
+				if v.Collection == "" {
+					defaultReplicas[v.Id] = append(defaultReplicas[v.Id], vidReplica{
+						server:   pb.NewServerAddressFromDataNode(dn),
+						readOnly: v.ReadOnly,
+					})
 				}
 			}
 		}
@@ -184,29 +200,60 @@ func vacuumRequestsForPattern(topo *master_pb.TopologyInfo, collectionMatcher *w
 	}
 
 	var requests []*master_pb.VacuumVolumeRequest
-	// The volume ids the unnamed-collection request must hit, since no
-	// Collection value scopes to it alone.
-	var defaultVids []uint32
 	for name := range collections {
 		if name != "" {
 			requests = append(requests, &master_pb.VacuumVolumeRequest{Collection: name})
+		}
+	}
+	// The unnamed collection has no scoping name, so each of its volumes gets
+	// a per-volume request — which also vacuums any other collection sharing
+	// the id. A volume whose every replica is read-only is skipped unless a
+	// replica reports low disk space, the sweep's own exception.
+	var defaultVids []uint32
+	for vid, replicas := range defaultReplicas {
+		writable := false
+		for _, r := range replicas {
+			if !r.readOnly {
+				writable = true
+				break
+			}
+		}
+		if !writable && !anyReplicaDiskSpaceLow(grpcDialOption, replicas, vid, writer) {
 			continue
 		}
-		eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
-			for _, disk := range dn.DiskInfos {
-				for _, v := range disk.VolumeInfos {
-					if v.Collection == "" && !readOnly[v.Id] && !slices.Contains(defaultVids, v.Id) {
-						defaultVids = append(defaultVids, v.Id)
-					}
-				}
-			}
-		})
+		defaultVids = append(defaultVids, vid)
 	}
 	sort.Slice(defaultVids, func(i, j int) bool { return defaultVids[i] < defaultVids[j] })
 	for _, vid := range defaultVids {
 		requests = append(requests, &master_pb.VacuumVolumeRequest{VolumeId: vid})
 	}
 	return requests, nil
+}
+
+// anyReplicaDiskSpaceLow probes read-only replicas for the low-disk condition
+// under which the master's sweep still vacuums a read-only volume.
+func anyReplicaDiskSpaceLow(grpcDialOption grpc.DialOption, replicas []vidReplica, vid uint32, writer io.Writer) bool {
+	for _, r := range replicas {
+		diskSpaceLow := false
+		err := operation.WithVolumeServerClient(false, r.server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			resp, checkErr := client.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{VolumeId: vid})
+			if checkErr != nil {
+				return checkErr
+			}
+			diskSpaceLow = resp.DiskSpaceLow
+			return nil
+		})
+		if err != nil {
+			fmt.Fprintf(writer, "volume %d on %s: cannot check disk space: %v\n", vid, r.server, err)
+			continue
+		}
+		if diskSpaceLow {
+			return true
+		}
+	}
+	return false
 }
 
 // vacuumRequestsForVolumeIds scopes each requested volume to the collections
