@@ -203,7 +203,7 @@ func collapseDoubledV1Middleware(router *mux.Router) mux.MiddlewareFunc {
 				return
 			}
 			for path == "/v1/v1" || strings.HasPrefix(path, "/v1/v1/") {
-				path = "/v1" + path[len("/v1/v1"):]
+				path = path[len("/v1"):]
 			}
 			signedPath := r.URL.EscapedPath()
 			if signedPath == "" {
