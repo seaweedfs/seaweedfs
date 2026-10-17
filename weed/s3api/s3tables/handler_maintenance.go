@@ -349,6 +349,7 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
 	if !CheckPermissionWithContext(operation, principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		IdentityActions: getIdentityActions(r),
 		DefaultAllow:    h.defaultAllowFor(r),
@@ -385,6 +386,7 @@ func (h *S3TablesHandler) authorizeMaintenanceTable(r *http.Request, filerClient
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
 	if !CheckPermissionWithContext(operation, principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,

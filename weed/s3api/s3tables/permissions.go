@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -88,6 +89,11 @@ type PolicyContext struct {
 	KMSKeyArn       string
 	StorageClass    string
 	DefaultAllow    bool
+	// TrustedIssuers lists the OIDC issuers the deployment is configured to
+	// trust, used to re-anchor owners/principals written before issuer-scoped
+	// account IDs. A bare subject is only resolvable when exactly one issuer
+	// is configured; more than one leaves it ambiguous, so it must not match.
+	TrustedIssuers []string
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -147,7 +153,7 @@ func matchesDenyStatement(operation, principal, resourcePolicy, resourceARN stri
 	}
 	for _, stmt := range policy.Statement {
 		if stmt.Effect != "Deny" ||
-			!matchesPrincipal(stmt.Principal, principal) ||
+			!matchesCaller(stmt.Principal, principal, ctx) ||
 			!matchesAction(stmt.Action, fullAction) ||
 			(resourceARN != "" && !matchesResource(stmt.Resource, resourceARN)) ||
 			!matchesConditions(stmt.Condition, ctx) {
@@ -166,8 +172,8 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 		return false
 	}
 
-	// Owner always has permission
-	if principal == owner {
+	// Owner always has permission.
+	if principal == owner || matchesLegacySubject(owner, principal, ctx) {
 		return true
 	}
 
@@ -202,7 +208,7 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 
 	for _, stmt := range policy.Statement {
 		// Check if principal matches
-		if !matchesPrincipal(stmt.Principal, principal) {
+		if !matchesCaller(stmt.Principal, principal, ctx) {
 			continue
 		}
 
@@ -280,6 +286,30 @@ func hasAdminAction(actions []string) bool {
 		}
 	}
 	return false
+}
+
+// matchesCaller matches a statement's Principal against the caller's scoped
+// principal or, for policies written before issuer scoping, a bare subject
+// that resolves to it under the deployment's single trusted issuer.
+func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyContext) bool {
+	if matchesPrincipal(principalSpec, principal) {
+		return true
+	}
+	legacy, ok := principalSpec.(string)
+	return ok && matchesLegacySubject(legacy, principal, ctx)
+}
+
+// matchesLegacySubject reports whether a bare subject stored before issuer
+// scoping belongs to the caller. Re-anchoring is only sound when exactly one
+// OIDC issuer is configured: the stored subject is hashed under that issuer
+// and compared to the caller's scoped principal. With multiple issuers a bare
+// subject is ambiguous — matching it under the caller's own issuer would let
+// a same-sub identity from any configured issuer claim it.
+func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
+	if ctx == nil || len(ctx.TrustedIssuers) != 1 {
+		return false
+	}
+	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal

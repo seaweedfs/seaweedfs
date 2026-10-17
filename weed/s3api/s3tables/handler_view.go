@@ -635,6 +635,7 @@ func (h *S3TablesHandler) loadAuthContext(r *http.Request, filerClient FilerClie
 func (h *S3TablesHandler) authorizeViewOp(r *http.Request, operation, principal, resourceOwner, bucketOwner, resourcePolicy, bucketPolicy, resourceARN, bucketName, namespace, viewName string, bucketTags map[string]string) bool {
 	identityActions := getIdentityActions(r)
 	ctx := &PolicyContext{
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespace,
 		TableName:       viewName,

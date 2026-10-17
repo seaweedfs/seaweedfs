@@ -2916,16 +2916,12 @@ func (iam *IdentityAccessManagement) bucketsNamedByAttachedPolicies(r *http.Requ
 // its query describe. versionId, when set, and the STS session token ride along
 // for policy conditions. Returns ErrNone when auth is disabled (checked by the
 // callers) or the identity is an admin.
-func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, identity *Identity, method string, action Action, bucket, objectKey, versionId string) s3err.ErrorCode {
-	if identity == nil {
-		return s3err.ErrAccessDenied
-	}
-	if identity.isAdmin() {
-		return s3err.ErrNone
-	}
-
-	// Shallow copy: authorization only reads headers, so sharing the header map
-	// with the original request is safe, and this can run once per key.
+// objectKeyPolicyRequest synthesizes a <method> /<bucket>/<objectKey> request
+// for policy evaluation against a key the real URL does not name. The query is
+// built from scratch so a param on the real request (delete, uploadId,
+// partNumber, ...) cannot steer ResolveS3Action off the intended action; the
+// STS token and versionId ride along for policy conditions.
+func objectKeyPolicyRequest(r *http.Request, method, bucket, objectKey, versionId string) *http.Request {
 	keyReq := new(http.Request)
 	*keyReq = *r
 	keyURL := &url.URL{
@@ -2933,9 +2929,6 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 		Host:   r.URL.Host,
 		Path:   "/" + bucket + "/" + objectKey,
 	}
-	// Build the query from scratch so a param on the real request (delete,
-	// uploadId, partNumber, ...) cannot steer ResolveS3Action off the intended
-	// action; keep the STS token and per-key versionId for policy conditions.
 	keyQuery := make(url.Values)
 	if versionId != "" {
 		keyQuery.Set("versionId", versionId)
@@ -2954,6 +2947,18 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 	keyReq.Body = nil
 	keyReq.GetBody = nil
 	keyReq.ContentLength = 0
+	return keyReq
+}
+
+func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, identity *Identity, method string, action Action, bucket, objectKey, versionId string) s3err.ErrorCode {
+	if identity == nil {
+		return s3err.ErrAccessDenied
+	}
+	if identity.isAdmin() {
+		return s3err.ErrNone
+	}
+
+	keyReq := objectKeyPolicyRequest(r, method, bucket, objectKey, versionId)
 
 	if iam.policyEngine != nil {
 		principal := buildPrincipalARN(identity, keyReq)

@@ -202,10 +202,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// CopyObject requires s3:GetObject on the source in addition to s3:PutObject
 	// on the destination. The Auth middleware only checked the destination, so
-	// verify the source explicitly here.
+	// verify the source explicitly here. A first-phase deny decided without
+	// object tags can still flip on a tag-conditioned Allow, so when a bucket
+	// policy exists the tag-aware recheck gets the last word.
 	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
+		if s3a.recheckPolicyForKeyWithLookup(r, http.MethodGet, srcBucket, srcObject, srcVersionId, string(s3_constants.ACTION_READ), "CopyObjectHandler") != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	// A copy creates destination ownership and grants independently of the
@@ -234,6 +238,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 	entry = prefixObjectSource(entry)
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
@@ -931,8 +940,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// UploadPartCopy requires s3:GetObject on the source. The Auth middleware
 	// only verified s3:PutObject (s3:UploadPart) on the destination.
 	if errCode := s3a.authorizeCopySource(r, srcBucket, srcObject, srcVersionId); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
+		if s3a.recheckPolicyForKeyWithLookup(r, http.MethodGet, srcBucket, srcObject, srcVersionId, string(s3_constants.ACTION_READ), "CopyObjectPartHandler") != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	partIDString := r.URL.Query().Get("partNumber")
@@ -997,6 +1008,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	if errCode := classifyCopySourceError(entry, err); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if errCode := s3a.recheckCopySourcePolicy(r, srcBucket, srcObject, srcVersionId, entry.Extended, "CopyObjectPartHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}

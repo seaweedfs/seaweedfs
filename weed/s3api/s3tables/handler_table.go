@@ -422,6 +422,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	allowed := CheckTableOrBucketPermission("GetTable", accountID,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			Namespace:       namespace,
 			TableName:       tableName,
@@ -556,6 +557,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if !CheckTableOrBucketPermission("ListTables", accountID,
 				nsMeta.OwnerAccountID, namespacePolicy, bucketARN,
 				bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+					TrustedIssuers:  h.trustedIssuers(r),
 					TableBucketName: bucketName,
 					Namespace:       namespaceName,
 					TableBucketTags: bucketTags,
@@ -601,6 +603,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
 			if !CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+				TrustedIssuers:  h.trustedIssuers(r),
 				TableBucketName: bucketName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
@@ -940,6 +943,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	allowed := CheckTableOrBucketPermission("DeleteTable", principal,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			Namespace:       namespaceName,
 			TableName:       tableName,
@@ -1111,6 +1115,7 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 // cannot see the entry keeps the not-found veil.
 func (h *S3TablesHandler) canReadEntry(readOp, principal, tableOwner, bucketOwner, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespace, name string, bucketTags, tableTags map[string]string, identityActions []string, r *http.Request) bool {
 	ctx := &PolicyContext{
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespace,
 		TableName:       name,
@@ -1295,6 +1300,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	allowed := CheckTableOrBucketPermission(kind.renameOp, principal,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			Namespace:       srcNamespace,
 			TableName:       srcName,
@@ -1361,6 +1367,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	if !CheckTableOrBucketPermission(kind.createOp, principal,
 		destNamespaceMetadata.OwnerAccountID, destNamespacePolicy, bucketARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			Namespace:       destNamespace,
 			TableName:       destName,
@@ -1565,6 +1572,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	allowed := CheckTableOrBucketPermission("UpdateTable", principal,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TrustedIssuers:  h.trustedIssuers(r),
 			TableBucketName: bucketName,
 			Namespace:       namespaceName,
 			TableName:       tableName,
@@ -1769,6 +1777,7 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	policyContext := &PolicyContext{
+		TrustedIssuers:  h.trustedIssuers(r),
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
