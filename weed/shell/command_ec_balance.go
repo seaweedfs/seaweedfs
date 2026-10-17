@@ -2,11 +2,13 @@ package shell
 
 import (
 	"flag"
+	"fmt"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func init() {
@@ -42,7 +44,7 @@ func (c *commandEcBalance) HasTag(CommandTag) bool {
 
 func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
+	collection := balanceCommand.String("collection", "EACH_COLLECTION", "comma-separated collection names, wildcards, or regex patterns, \"_default\" for the collection with no name, or \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	diskTypeStr := balanceCommand.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)")
@@ -71,14 +73,26 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
+	collectionNames, err := ListCollectionNames(commandEnv, false, true)
+	if err != nil {
+		return err
+	}
 	var collections []string
-	if *collection == "EACH_COLLECTION" {
-		collections, err = ListCollectionNames(commandEnv, false, true)
-		if err != nil {
-			return err
-		}
+	if *collection == string(wildcard.CollectionFilterEach) {
+		collections = collectionNames
 	} else {
-		collections = append(collections, *collection)
+		collectionMatcher, err := compileCollectionPattern(*collection)
+		if err != nil {
+			return fmt.Errorf("invalid collection pattern %q: %w", *collection, err)
+		}
+		for _, name := range collectionNames {
+			if collectionMatcher.Matches(name) {
+				collections = append(collections, name)
+			}
+		}
+		if len(collections) == 0 {
+			return fmt.Errorf("no collections match %q", *collection)
+		}
 	}
 	glog.V(1).Infof("balanceEcVolumes collections %+v\n", len(collections))
 

@@ -126,6 +126,39 @@ func (c *commandVolumeTierCompact) Do(args []string, commandEnv *CommandEnv, wri
 	return nil
 }
 
+// findVolumeCollection resolves the collection a volume actually lives in,
+// honoring the -collection filter: an empty pattern matches any collection, a
+// non-empty one compiles like the rest of the tier commands. The volume server
+// verifies the collection name on tier requests, so callers need the real
+// name, not the pattern.
+func findVolumeCollection(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collectionPattern string) (collection string, found bool, err error) {
+	var matchesCollection func(string) bool
+	if collectionPattern != "" {
+		collectionMatcher, compileErr := compileCollectionPattern(collectionPattern)
+		if compileErr != nil {
+			return "", false, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, compileErr)
+		}
+		matchesCollection = collectionMatcher.Matches
+	} else {
+		matchesCollection = func(string) bool { return true }
+	}
+
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if found {
+			return
+		}
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				if needle.VolumeId(v.Id) == vid && matchesCollection(v.Collection) {
+					collection, found = v.Collection, true
+					return
+				}
+			}
+		}
+	})
+	return
+}
+
 func findRemoteVolumeInTopology(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collectionPattern string) (remoteVolumeInfo, bool, error) {
 	var matchesCollection func(string) bool
 	if collectionPattern != "" {

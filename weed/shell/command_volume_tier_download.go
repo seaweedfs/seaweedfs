@@ -80,7 +80,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doVolumeTierDownload(commandEnv, writer, *collection, vid, *concurrency)
+		return doVolumeTierDownload(commandEnv, writer, topologyInfo, *collection, vid, *concurrency)
 	}
 
 	// apply to all volumes in the collection
@@ -91,7 +91,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 	}
 	fmt.Printf("tier download volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doVolumeTierDownload(commandEnv, writer, *collection, vid, *concurrency); err != nil {
+		if err = doVolumeTierDownload(commandEnv, writer, topologyInfo, *collection, vid, *concurrency); err != nil {
 			return err
 		}
 	}
@@ -124,11 +124,21 @@ func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, collectionPattern st
 	return
 }
 
-func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, concurrency int) (err error) {
+func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, topoInfo *master_pb.TopologyInfo, collectionPattern string, vid needle.VolumeId, concurrency int) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
+	}
+
+	// The volume server verifies the request's collection against the volume's
+	// own, so the pattern must resolve to the actual collection here.
+	collection, found, err := findVolumeCollection(topoInfo, vid, collectionPattern)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("volume %d not found in collections matching %q", vid, collectionPattern)
 	}
 
 	// All replicas point at the same remote object; only the final download may delete

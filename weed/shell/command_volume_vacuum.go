@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func init() {
@@ -42,10 +44,15 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
-	collection := volumeVacuumCommand.String("collection", "", "vacuum this collection")
+	collection := volumeVacuumCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \"_default\" the collection with no name")
 	volumeIds := volumeVacuumCommand.String("volumeId", "", "comma-separated list of volume IDs")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	collectionMatcher, err := wildcard.CompileCollectionMatcher(*collection)
+	if err != nil {
+		return fmt.Errorf("invalid collection pattern %q: %w", *collection, err)
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
@@ -107,19 +114,41 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	} else if topo != nil {
 		// The sweep says nothing about the volumes it leaves alone, so an
 		// operator on a full disk sees the command return and nothing change.
-		if skipped := readOnlyVolumesAboveThreshold(topo, *collection, *garbageThreshold); len(skipped) > 0 {
+		if skipped := readOnlyVolumesAboveThreshold(topo, collectionMatcher, *garbageThreshold); len(skipped) > 0 {
 			fmt.Fprintf(writer, "%d read-only volume(s) hold garbage above %g and are skipped by the sweep: %v\n", len(skipped), *garbageThreshold, skipped)
 			fmt.Fprintf(writer, "vacuum them explicitly with -volumeId\n")
 		}
 	}
 
-	for _, volumeId := range volumeIdInts {
-		err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
-			_, err = client.VacuumVolume(context.Background(), &master_pb.VacuumVolumeRequest{
-				GarbageThreshold: float32(*garbageThreshold),
-				VolumeId:         volumeId,
-				Collection:       *collection,
+	// The VacuumVolume RPC takes one exact collection name per call and reads
+	// "" as "all collections", so a filter has to be resolved here: one request
+	// per matched named collection, and per-volume requests for the unnamed
+	// collection, which no Collection value selects on its own.
+	var requests []*master_pb.VacuumVolumeRequest
+	if collectionMatcher == nil {
+		for _, volumeId := range volumeIdInts {
+			requests = append(requests, &master_pb.VacuumVolumeRequest{
+				VolumeId: volumeId,
 			})
+		}
+	} else {
+		if topo == nil {
+			return fmt.Errorf("cannot resolve collection pattern %q: topology unavailable", *collection)
+		}
+		if *volumeIds != "" {
+			requests, err = vacuumRequestsForVolumeIds(topo, collectionMatcher, volumeIdInts)
+		} else {
+			requests, err = vacuumRequestsForPattern(topo, collectionMatcher)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, req := range requests {
+		req.GarbageThreshold = float32(*garbageThreshold)
+		err = commandEnv.MasterClient.WithClient(context.Background(), false, func(client master_pb.SeaweedClient) error {
+			_, err = client.VacuumVolume(context.Background(), req)
 			return err
 		})
 		if err != nil {
@@ -130,6 +159,97 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	return nil
 }
 
+// vacuumRequestsForPattern resolves a collection filter to the sweep requests
+// that cover it: one per matched named collection, which keeps the server's
+// read-only skip, plus one per writable volume in the unnamed collection —
+// the per-volume form is the only way to scope the RPC to it.
+func vacuumRequestsForPattern(topo *master_pb.TopologyInfo, collectionMatcher *wildcard.CollectionMatcher) ([]*master_pb.VacuumVolumeRequest, error) {
+	collections := make(map[string]bool)
+	readOnly := make(map[uint32]bool)
+	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
+		for _, disk := range dn.DiskInfos {
+			for _, v := range disk.VolumeInfos {
+				if !collectionMatcher.Matches(v.Collection) {
+					continue
+				}
+				collections[v.Collection] = true
+				if v.ReadOnly {
+					readOnly[v.Id] = true
+				}
+			}
+		}
+	})
+	if len(collections) == 0 {
+		return nil, fmt.Errorf("no volumes found in collections matching the filter")
+	}
+
+	var requests []*master_pb.VacuumVolumeRequest
+	// The volume ids the unnamed-collection request must hit, since no
+	// Collection value scopes to it alone.
+	var defaultVids []uint32
+	for name := range collections {
+		if name != "" {
+			requests = append(requests, &master_pb.VacuumVolumeRequest{Collection: name})
+			continue
+		}
+		eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
+			for _, disk := range dn.DiskInfos {
+				for _, v := range disk.VolumeInfos {
+					if v.Collection == "" && !readOnly[v.Id] && !slices.Contains(defaultVids, v.Id) {
+						defaultVids = append(defaultVids, v.Id)
+					}
+				}
+			}
+		})
+	}
+	sort.Slice(defaultVids, func(i, j int) bool { return defaultVids[i] < defaultVids[j] })
+	for _, vid := range defaultVids {
+		requests = append(requests, &master_pb.VacuumVolumeRequest{VolumeId: vid})
+	}
+	return requests, nil
+}
+
+// vacuumRequestsForVolumeIds scopes each requested volume to the collections
+// it lives in that the filter matches, so -volumeId and a pattern narrow each
+// other the same way the server narrows an exact -collection name.
+func vacuumRequestsForVolumeIds(topo *master_pb.TopologyInfo, collectionMatcher *wildcard.CollectionMatcher, volumeIdInts []uint32) ([]*master_pb.VacuumVolumeRequest, error) {
+	collectionsByVid := make(map[uint32]map[string]bool)
+	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
+		for _, disk := range dn.DiskInfos {
+			for _, v := range disk.VolumeInfos {
+				if collectionsByVid[v.Id] == nil {
+					collectionsByVid[v.Id] = make(map[string]bool)
+				}
+				collectionsByVid[v.Id][v.Collection] = true
+			}
+		}
+	})
+
+	var requests []*master_pb.VacuumVolumeRequest
+	for _, vid := range volumeIdInts {
+		var matched []string
+		for name := range collectionsByVid[vid] {
+			if collectionMatcher.Matches(name) {
+				matched = append(matched, name)
+			}
+		}
+		if len(matched) == 0 {
+			return nil, fmt.Errorf("volume %d is not in a collection matching the filter", vid)
+		}
+		// The unnamed collection has no scoping name; a volume-id-only request
+		// covers it (and any other collection the id is shared into).
+		if slices.Contains(matched, "") {
+			requests = append(requests, &master_pb.VacuumVolumeRequest{VolumeId: vid})
+			continue
+		}
+		sort.Strings(matched)
+		for _, name := range matched {
+			requests = append(requests, &master_pb.VacuumVolumeRequest{VolumeId: vid, Collection: name})
+		}
+	}
+	return requests, nil
+}
+
 // readOnlyVolumesAboveThreshold lists the volumes a sweep leaves alone: any
 // replica read-only (that is what the sweep checks), in the collection when one
 // is given, and some replica with a garbage ratio at or above the threshold.
@@ -138,13 +258,13 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 // it can only understate, and a converted index that reports deletes without
 // their sizes is left out because its ratio is not knowable here. This is a
 // hint; the volume server's own check decides.
-func readOnlyVolumesAboveThreshold(topo *master_pb.TopologyInfo, collection string, garbageThreshold float64) []uint32 {
+func readOnlyVolumesAboveThreshold(topo *master_pb.TopologyInfo, collectionMatcher *wildcard.CollectionMatcher, garbageThreshold float64) []uint32 {
 	readOnly := make(map[uint32]bool)
 	garbage := make(map[uint32]float64) // the highest ratio any replica reports
 	eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
 		for _, disk := range dn.DiskInfos {
 			for _, v := range disk.VolumeInfos {
-				if collection != "" && v.Collection != collection {
+				if !collectionMatcher.Matches(v.Collection) {
 					continue
 				}
 				if v.ReadOnly {

@@ -34,6 +34,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -55,6 +56,7 @@ type commandVolumeFsck struct {
 	writer                    io.Writer
 	bucketsPath               string
 	collection                *string
+	collectionMatcher         *wildcard.CollectionMatcher
 	volumeIds                 map[uint32]bool
 	scopedFilerPath           string
 	tempFolder                string
@@ -109,7 +111,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.verbose = fsckCommand.Bool("v", false, "verbose mode")
 	c.skipEcVolumes = fsckCommand.Bool("skipEcVolumes", false, "skip erasure coded volumes")
 	c.findMissingChunksInFiler = fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
-	c.collection = fsckCommand.String("collection", "", "the collection name")
+	c.collection = fsckCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \"_default\" the collection with no name")
 	volumeIds := fsckCommand.String("volumeId", "", "comma separated the volume id")
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
@@ -146,6 +148,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	c.env = commandEnv
 	c.writer = writer
+
+	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*c.collection); err != nil {
+		return fmt.Errorf("invalid collection pattern %q: %w", *c.collection, err)
+	}
 
 	c.bucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
@@ -222,7 +228,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 						continue
 					}
 				}
-				if *c.collection != "" && vinfo.collection != *c.collection {
+				if !c.collectionMatcher.Matches(vinfo.collection) {
 					delete(volumeIdToVInfo, volumeId)
 					continue
 				}
@@ -966,7 +972,37 @@ func (c *commandVolumeFsck) getCollectFilerFilePath() string {
 
 func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo) string {
 	if *c.collection != "" {
-		return fmt.Sprintf("%s/%s", c.bucketsPath, *c.collection)
+		// A single matched collection still scopes the walk to its bucket dir.
+		// Anything broader — a list, a pattern, or the unnamed collection whose
+		// chunks can be referenced from anywhere — walks the whole tree.
+		collections := make(map[string]struct{})
+		for _, vidMap := range dataNodeVolumeIdToVInfo {
+			for _, vinfo := range vidMap {
+				if c.collectionMatcher.Matches(vinfo.collection) {
+					collections[vinfo.collection] = struct{}{}
+				}
+				if len(collections) > 1 {
+					return "/"
+				}
+			}
+		}
+		if len(collections) != 1 {
+			return "/"
+		}
+		var collection string
+		for col := range collections {
+			collection = col
+		}
+		if collection == "" {
+			return "/"
+		}
+		// Falling back to "/" on a missing bucket dir widens the walk, which is
+		// slower but never reports live chunks as orphans.
+		exists, err := c.bucketDirExists(collection)
+		if err != nil || !exists {
+			return "/"
+		}
+		return fmt.Sprintf("%s/%s", c.bucketsPath, collection)
 	}
 	if len(c.volumeIds) == 0 {
 		return "/"

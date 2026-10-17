@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/ec"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func init() {
@@ -73,7 +74,7 @@ func (c *commandEcRebuild) HasTag(CommandTag) bool {
 func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fixCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := fixCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
+	collection := fixCommand.String("collection", "EACH_COLLECTION", "comma-separated collection names, wildcards, or regex patterns, \"_default\" for the collection with no name, or \"EACH_COLLECTION\" for each collection")
 	volumeIdsStr := fixCommand.String("volumeIds", "", "optional comma-separated list of volume ID to process; defaults to all volumes in the collection")
 	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
@@ -98,14 +99,26 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return err
 	}
 
+	collectionNames, err := ListCollectionNames(commandEnv, false, true)
+	if err != nil {
+		return err
+	}
 	var collections []string
-	if *collection == "EACH_COLLECTION" {
-		collections, err = ListCollectionNames(commandEnv, false, true)
-		if err != nil {
-			return err
-		}
+	if *collection == string(wildcard.CollectionFilterEach) {
+		collections = collectionNames
 	} else {
-		collections = []string{*collection}
+		collectionMatcher, err := compileCollectionPattern(*collection)
+		if err != nil {
+			return fmt.Errorf("invalid collection pattern %q: %w", *collection, err)
+		}
+		for _, name := range collectionNames {
+			if collectionMatcher.Matches(name) {
+				collections = append(collections, name)
+			}
+		}
+		if len(collections) == 0 {
+			return fmt.Errorf("no collections match %q", *collection)
+		}
 	}
 
 	var volumeIds []needle.VolumeId

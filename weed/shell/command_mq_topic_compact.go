@@ -46,7 +46,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 	topicName := mqCommand.String("topic", "", "topic name")
 	timeAgo := mqCommand.Duration("timeAgo", 2*time.Minute, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 	replication := mqCommand.String("replication", "", "replication type")
-	collection := mqCommand.String("collection", "", "optional collection name")
+	collection := mqCommand.String("collection", "", "optional collection name; \"_default\" for the collection with no name")
 	dataCenter := mqCommand.String("dataCenter", "", "optional data center name")
 	diskType := mqCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	maxMB := mqCommand.Int("maxMB", 4, "split files larger than the limit")
@@ -57,7 +57,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 
 	storagePreference := &operation.StoragePreference{
 		Replication: *replication,
-		Collection:  *collection,
+		Collection:  resolveCollectionName(*collection),
 		DataCenter:  *dataCenter,
 		DiskType:    *diskType,
 		MaxMB:       *maxMB,

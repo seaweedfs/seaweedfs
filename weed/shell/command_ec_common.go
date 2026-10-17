@@ -142,10 +142,10 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	return ec.EcBalance(commandEnv.ecEnv(), collections, dc, ecReplicaPlacement, diskType, maxParallelization, ioBytePerSecond, applyBalancing, excludeNodes, volumeIds, nil)
 }
 
-// compileCollectionPattern compiles the -collection value shared by the ec and
-// tier commands: a comma-separated list of collection names, wildcards, and
-// regex patterns. An empty value matches the empty-named collection only, the
-// same as CollectionDefault.
+// compileCollectionPattern compiles the -collection value shared by commands
+// where an empty value means the collection with no name: a comma-separated
+// list of collection names, wildcards, and regex patterns, or CollectionDefault
+// for the empty-named collection.
 func compileCollectionPattern(pattern string) (*wildcard.CollectionMatcher, error) {
 	if strings.TrimSpace(pattern) == "" {
 		pattern = CollectionDefault
