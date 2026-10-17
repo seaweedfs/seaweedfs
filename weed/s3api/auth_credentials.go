@@ -1813,6 +1813,27 @@ func isBucketListingRequest(r *http.Request, action Action) bool {
 	return object == "" || object == "/"
 }
 
+// multipartListingAction returns the scoped action for a request the router
+// sends to ListObjectPartsHandler or ListMultipartUploadsHandler, or "" for
+// any other request. It follows the route order in s3api_server.go and reads
+// the object from the route vars, so a ?prefix promoted into the
+// authorization object, or extra subresource parameters such as ?policy, do
+// not change which operation the grant has to name.
+func multipartListingAction(r *http.Request, action Action) Action {
+	if action != s3_constants.ACTION_READ || r == nil || r.Method != http.MethodGet || r.URL == nil {
+		return ""
+	}
+	query := r.URL.Query()
+	_, object := s3_constants.GetBucketAndObject(r)
+	if object != "" && object != "/" && query.Has("uploadId") {
+		return s3_constants.ACTION_LIST_PARTS
+	}
+	if query.Has("uploads") {
+		return s3_constants.ACTION_LIST_MULTIPART_UPLOADS
+	}
+	return ""
+}
+
 // authRequestWithAuthType authenticates and then authorizes a request for a given action.
 func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
 	identity, s3Err, reqAuthType := iam.authenticateRequestInternal(r)
@@ -2826,7 +2847,12 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 		}
 	case authorizeViaLegacyActions:
 		if !identity.CanDo(action, bucket, object) {
-			return s3err.ErrAccessDenied
+			// The multipart listing routes are gated on ACTION_READ, but a
+			// grant may name the listing operation itself.
+			listing := multipartListingAction(r, action)
+			if listing == "" || !identity.CanDo(listing, bucket, object) {
+				return s3err.ErrAccessDenied
+			}
 		}
 		return s3err.ErrNone
 	default:
