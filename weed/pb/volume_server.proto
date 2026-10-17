@@ -573,6 +573,7 @@ message ReadVolumeFileStatusResponse {
     string disk_type = 9;
     VolumeInfo volume_info = 10;
     uint32 version = 11;
+    uint64 expire_at_sec = 12; // TTL expiry counted from the last write; 0 when the volume never expires
 }
 
 message DiskStatus {
