@@ -189,7 +189,7 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 // object path plus a RECOMPUTE_LATEST finalize, so the version's PUT and its
 // .versions pointer flip commit atomically (the recompute scans .versions/ after
 // the PUT and sees the new version).
-func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, filePath string, entry *filer_pb.Entry, cond *filer_pb.WriteCondition, conditionKey string, finalize []*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
+func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, filePath string, entry *filer_pb.Entry, cond *filer_pb.WriteCondition, conditionKey, conditionAltKey string, finalize []*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
 	mutations := make([]*filer_pb.ObjectMutation, 0, 1+len(finalize))
 	mutations = append(mutations, &filer_pb.ObjectMutation{
 		Type:      filer_pb.ObjectMutation_PUT,
@@ -198,11 +198,12 @@ func (s3a *S3ApiServer) routedPut(owner pb.ServerAddress, routeKey, lockKey, fil
 	})
 	mutations = append(mutations, finalize...)
 	return s3a.objectTxnOnFiler(owner, &filer_pb.ObjectTransactionRequest{
-		LockKey:      lockKey,
-		RouteKey:     routeKey,
-		Condition:    cond,
-		ConditionKey: conditionKey,
-		Mutations:    mutations,
+		LockKey:         lockKey,
+		RouteKey:        routeKey,
+		Condition:       cond,
+		ConditionKey:    conditionKey,
+		ConditionAltKey: conditionAltKey,
+		Mutations:       mutations,
 	})
 }
 
@@ -233,7 +234,7 @@ func (s3a *S3ApiServer) routedMkFile(owner pb.ServerAddress, routeKey, parentDir
 		cond, conditionKey = removal.condition, removal.conditionKey
 		finalize = []*filer_pb.ObjectMutation{removal.mutation}
 	}
-	resp, err := s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, conditionKey, finalize)
+	resp, err := s3a.routedPut(owner, routeKey, filePath, filePath, entry, cond, conditionKey, "", finalize)
 	if err != nil {
 		return err
 	}

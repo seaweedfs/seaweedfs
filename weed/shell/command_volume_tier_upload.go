@@ -153,7 +153,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("volume %d not found in collection %s", vid, collection)
 	}
 
-	err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, existingLocations, false, false)
+	_, err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, existingLocations, false, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, existingLocations[0].Url, err)
 	}

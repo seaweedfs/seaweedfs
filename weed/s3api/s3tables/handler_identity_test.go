@@ -171,3 +171,18 @@ func TestGetAccountIDNormalizesAccountIDARN(t *testing.T) {
 
 	assert.Equal(t, "bob", h.getAccountID(req), "expected ARN account ID to be normalized to the suffix")
 }
+
+func TestGetAccountIDPrefersIssuerScopedUserID(t *testing.T) {
+	h := NewS3TablesHandler()
+	id := &testIdentity{
+		Claims: map[string]interface{}{
+			"aws:userid":         "issuerA-hash",
+			"sub":                "alice-sub",
+			"preferred_username": "alice",
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), id))
+
+	assert.Equal(t, "issuerA-hash", h.getAccountID(req), "aws:userid should win over a bare sub")
+}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -252,4 +253,90 @@ func TestCollectRemoteVolumesWithInfoInvalidPattern(t *testing.T) {
 
 	_, err := collectRemoteVolumesWithInfo(topo, "[invalid")
 	assert.Error(t, err)
+}
+
+func buildTestTopologyWithReplicas() *master_pb.TopologyInfo {
+	mkDn := func(id string, volumes ...*master_pb.VolumeInformationMessage) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			Id:       id,
+			GrpcPort: 18080,
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"": {VolumeInfos: volumes},
+			},
+		}
+	}
+	remote := func(vid uint32) *master_pb.VolumeInformationMessage {
+		return &master_pb.VolumeInformationMessage{
+			Id:                vid,
+			Collection:        "col1",
+			RemoteStorageName: "s3.default",
+			RemoteStorageKey:  "col1/vid.dat",
+		}
+	}
+	local := func(vid uint32) *master_pb.VolumeInformationMessage {
+		return &master_pb.VolumeInformationMessage{Id: vid, Collection: "col1"}
+	}
+	return &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							mkDn("n1:8080", remote(1)),
+							mkDn("n2:8080", remote(1), local(2)),
+							mkDn("n3:8080", remote(1)),
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestCollectVolumeTierCompactLocations(t *testing.T) {
+	topo := buildTestTopologyWithReplicas()
+
+	tiered, local := collectVolumeTierCompactLocations(topo, needle.VolumeId(1), "col1")
+	assert.Equal(t, 3, len(tiered))
+	assert.Equal(t, 0, len(local))
+
+	tiered, local = collectVolumeTierCompactLocations(topo, needle.VolumeId(2), "col1")
+	assert.Equal(t, 0, len(tiered))
+	assert.Equal(t, 1, len(local))
+
+	// a different collection or volume id matches nothing
+	tiered, local = collectVolumeTierCompactLocations(topo, needle.VolumeId(1), "other")
+	assert.Equal(t, 0, len(tiered))
+	assert.Equal(t, 0, len(local))
+}
+
+func TestPlanTierCompactResync(t *testing.T) {
+	loc := func(url string) wdclient.Location {
+		return wdclient.Location{Url: url, GrpcPort: 1}
+	}
+	urls := func(locs []wdclient.Location) (out []string) {
+		for _, l := range locs {
+			out = append(out, l.Url)
+		}
+		return
+	}
+
+	// single replica: nothing to resync, nothing to delete (its download
+	// already removed the object)
+	order, deleter := planTierCompactResync([]wdclient.Location{loc("a")}, nil)
+	assert.Empty(t, order)
+	assert.Empty(t, deleter)
+
+	// two tiered replicas: the sibling is the last holder and goes last
+	order, deleter = planTierCompactResync([]wdclient.Location{loc("a"), loc("b")}, nil)
+	assert.Empty(t, order)
+	assert.Equal(t, []string{"b"}, urls(deleter))
+
+	// three tiered replicas plus one local copy: middle replicas resync in
+	// order, the last tiered replica deletes and is resynced last
+	order, deleter = planTierCompactResync(
+		[]wdclient.Location{loc("a"), loc("b"), loc("c")},
+		[]wdclient.Location{loc("d")})
+	assert.Equal(t, []string{"b", "d"}, urls(order))
+	assert.Equal(t, []string{"c"}, urls(deleter))
 }
