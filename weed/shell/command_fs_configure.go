@@ -90,6 +90,12 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	if *locationPrefix != "" {
 		infoAboutSimulationMode(writer, *apply, "-apply")
+		// A path rule cannot express "the collection with no name": an empty
+		// Collection means "unset" and merges as inherit, so the keyword would
+		// be silently ignored.
+		if *collection == CollectionDefault {
+			return fmt.Errorf("path rules cannot select the collection with no name; omit -collection to inherit")
+		}
 		locConf := &filer_pb.FilerConf_PathConf{
 			LocationPrefix:           *locationPrefix,
 			Collection:               *collection,

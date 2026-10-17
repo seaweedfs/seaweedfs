@@ -122,7 +122,7 @@ func TestCollectVolumeMarkTargetsByCollectionRejectsEmptyCollection(t *testing.T
 
 func TestCollectVolumeMarkTargetsByCollectionReportsMissingCollection(t *testing.T) {
 	_, err := collectVolumeMarkTargetsByCollection(&master_pb.TopologyInfo{}, "missing")
-	if err == nil || !strings.Contains(err.Error(), "collection missing has no volumes") {
+	if err == nil || !strings.Contains(err.Error(), "no volumes match collection missing") {
 		t.Fatalf("expected missing collection error, got %v", err)
 	}
 }

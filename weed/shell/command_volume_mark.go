@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -47,7 +48,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 	volMarkCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volMarkCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volMarkCommand.String("node", "", "the volume server <host>:<port>")
-	collection := volMarkCommand.String("collection", "", "the collection name")
+	collection := volMarkCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; \""+CollectionDefault+"\" for the collection with no name")
 	writable := volMarkCommand.Bool("writable", false, "volume mark writable")
 	readonly := volMarkCommand.Bool("readonly", false, "volume mark readonly")
 	readonlyCanDelete := volMarkCommand.Bool("readonlyCanDelete", false, "volume mark readonly but still accepting deletes")
@@ -137,11 +138,9 @@ func collectVolumeMarkTargetsByCollection(topoInfo *master_pb.TopologyInfo, coll
 	if collection == "" {
 		return nil, fmt.Errorf("collection is required")
 	}
-
-	// _default targets volumes that belong to no named collection.
-	matchCollection := collection
-	if matchCollection == CollectionDefault {
-		matchCollection = ""
+	collectionMatcher, err := wildcard.CompileCollectionMatcher(collection)
+	if err != nil {
+		return nil, fmt.Errorf("invalid collection pattern %q: %w", collection, err)
 	}
 
 	var targets []volumeMarkTarget
@@ -152,7 +151,7 @@ func collectVolumeMarkTargetsByCollection(topoInfo *master_pb.TopologyInfo, coll
 		sourceVolumeServer := pb.NewServerAddressFromDataNode(dn)
 		for _, diskInfo := range dn.GetDiskInfos() {
 			for _, v := range diskInfo.GetVolumeInfos() {
-				if v.GetCollection() == matchCollection {
+				if collectionMatcher.Matches(v.GetCollection()) {
 					targets = append(targets, volumeMarkTarget{
 						volumeId:           needle.VolumeId(v.GetId()),
 						sourceVolumeServer: sourceVolumeServer,
@@ -162,7 +161,7 @@ func collectVolumeMarkTargetsByCollection(topoInfo *master_pb.TopologyInfo, coll
 		}
 	})
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("collection %s has no volumes", collection)
+		return nil, fmt.Errorf("no volumes match collection %s", collection)
 	}
 	return targets, nil
 }

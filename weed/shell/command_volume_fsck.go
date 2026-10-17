@@ -34,6 +34,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -55,6 +56,8 @@ type commandVolumeFsck struct {
 	writer                    io.Writer
 	bucketsPath               string
 	collection                *string
+	collectionMatcher         *wildcard.CollectionMatcher
+	knownVolumeIds            map[uint32]bool
 	volumeIds                 map[uint32]bool
 	scopedFilerPath           string
 	tempFolder                string
@@ -109,7 +112,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.verbose = fsckCommand.Bool("v", false, "verbose mode")
 	c.skipEcVolumes = fsckCommand.Bool("skipEcVolumes", false, "skip erasure coded volumes")
 	c.findMissingChunksInFiler = fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
-	c.collection = fsckCommand.String("collection", "", "the collection name")
+	c.collection = fsckCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \""+CollectionDefault+"\" the collection with no name")
 	volumeIds := fsckCommand.String("volumeId", "", "comma separated the volume id")
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer. Currently this only works with default filerGroup.")
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
@@ -147,6 +150,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.env = commandEnv
 	c.writer = writer
 
+	if c.collectionMatcher, err = wildcard.CompileCollectionMatcher(*c.collection); err != nil {
+		return fmt.Errorf("invalid collection pattern %q: %w", *c.collection, err)
+	}
+
 	c.bucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
 		return fmt.Errorf("read filer buckets path: %w", err)
@@ -168,6 +175,16 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
 	if err != nil {
 		return fmt.Errorf("failed to collect all volume locations: %w", err)
+	}
+
+	// Every volume the master knows about, before any filtering: a filer
+	// entry pointing at a volume that was filtered out of this run is
+	// excluded, not missing — it must never be reported or purged.
+	c.knownVolumeIds = make(map[uint32]bool)
+	for _, vidMap := range dataNodeVolumeIdToVInfo {
+		for vid := range vidMap {
+			c.knownVolumeIds[vid] = true
+		}
 	}
 
 	// If the operator specified -volumeId, reject unknown ids up front instead
@@ -222,7 +239,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 						continue
 					}
 				}
-				if *c.collection != "" && vinfo.collection != *c.collection {
+				if !c.collectionMatcher.Matches(vinfo.collection) {
 					delete(volumeIdToVInfo, volumeId)
 					continue
 				}
@@ -374,6 +391,11 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 						if _, ok := c.volumeIds[i.vid]; !ok {
 							continue
 						}
+					}
+					// A volume the master knows but this run filtered out is not a
+					// missing volume: its files are healthy and stay untouched.
+					if c.knownVolumeIds[i.vid] {
+						continue
 					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
@@ -966,7 +988,11 @@ func (c *commandVolumeFsck) getCollectFilerFilePath() string {
 
 func (c *commandVolumeFsck) resolveScopedFilerPath(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo) string {
 	if *c.collection != "" {
-		return fmt.Sprintf("%s/%s", c.bucketsPath, *c.collection)
+		// fs.configure can bind a collection to any path prefix, so files
+		// referencing the filtered volumes may live anywhere. A bucket-dir
+		// walk could miss them and report their live chunks as orphans;
+		// only a full walk is safe for a collection filter.
+		return "/"
 	}
 	if len(c.volumeIds) == 0 {
 		return "/"

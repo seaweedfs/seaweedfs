@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"golang.org/x/exp/maps"
 	"google.golang.org/protobuf/proto"
@@ -66,7 +67,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	dirArg := fsMergeVolumesCommand.String("dir", "/", "base directory to find and update files")
 	fromVolumeArg := fsMergeVolumesCommand.Uint("fromVolumeId", 0, "move chunks with this volume id")
 	toVolumeArg := fsMergeVolumesCommand.String("toVolumeId", "", "change chunks to this volume id, or distribute across a comma-separated list of volume ids")
-	collectionArg := fsMergeVolumesCommand.String("collection", "*", "Name of collection to merge")
+	collectionArg := fsMergeVolumesCommand.String("collection", "*", "comma-separated collection names, wildcards, or regex patterns; \""+CollectionDefault+"\" for the collection with no name")
 	apply := fsMergeVolumesCommand.Bool("apply", false, "applying the metadata changes")
 	if err = fsMergeVolumesCommand.Parse(args); err != nil {
 		return err
@@ -532,12 +533,17 @@ func parseTargetVolumeIds(arg string) ([]needle.VolumeId, error) {
 }
 
 func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeIds []needle.VolumeId, fromVolumeId needle.VolumeId) (*mergePlan, error) {
+	collectionMatcher, err := compileCollectionPattern(collection)
+	if err != nil {
+		return nil, fmt.Errorf("invalid collection pattern %q: %w", collection, err)
+	}
+
 	// When the user names both endpoints, honor that exact direction. The
 	// heuristic below only ever merges a smaller volume into a larger one, so
 	// an explicit "merge larger into smaller" request would otherwise yield an
 	// empty plan and silently do nothing.
 	if fromVolumeId != 0 && len(toVolumeIds) > 0 {
-		return c.createDirectedMergePlan(collection, fromVolumeId, toVolumeIds)
+		return c.createDirectedMergePlan(collectionMatcher, collection, fromVolumeId, toVolumeIds)
 	}
 
 	plan := newMergePlan(c.volumeSizeLimit)
@@ -549,7 +555,7 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeIds [
 	l := len(volumeIds)
 	for i := 0; i < l; i++ {
 		volume := c.volumes[volumeIds[i]]
-		if volume.GetReadOnly() || c.getVolumeSize(volume) == 0 || (collection != "*" && collection != volume.GetCollection()) {
+		if volume.GetReadOnly() || c.getVolumeSize(volume) == 0 || !collectionMatcher.Matches(volume.GetCollection()) {
 
 			if fromVolumeId != 0 && volumeIds[i] == fromVolumeId || slices.Contains(toVolumeIds, volumeIds[i]) {
 				if volume.GetReadOnly() {
@@ -607,7 +613,7 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeIds [
 
 // createDirectedMergePlan honors the exact direction the user named, skipping
 // the heuristic planner's smaller-into-larger ordering.
-func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from needle.VolumeId, toIds []needle.VolumeId) (*mergePlan, error) {
+func (c *commandFsMergeVolumes) createDirectedMergePlan(collectionMatcher *wildcard.CollectionMatcher, collection string, from needle.VolumeId, toIds []needle.VolumeId) (*mergePlan, error) {
 	if slices.Contains(toIds, from) {
 		return nil, fmt.Errorf("no volume id changes, %d is both source and target", from)
 	}
@@ -619,8 +625,8 @@ func (c *commandFsMergeVolumes) createDirectedMergePlan(collection string, from 
 		if volume.GetReadOnly() {
 			return nil, fmt.Errorf("volume %d is readonly", vid)
 		}
-		if collection != "*" && collection != volume.GetCollection() {
-			return nil, fmt.Errorf("volume %d is not in collection %q", vid, collection)
+		if !collectionMatcher.Matches(volume.GetCollection()) {
+			return nil, fmt.Errorf("volume %d does not match collection filter %q", vid, collection)
 		}
 		// Merging into an empty target is valid (e.g. a freshly vacuumed
 		// volume); only an empty source has nothing to move.

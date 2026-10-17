@@ -1,10 +1,12 @@
 package shell
 
 import (
+	"io"
 	"reflect"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func vacuumTestTopology(nodes ...*master_pb.DataNodeInfo) *master_pb.TopologyInfo {
@@ -42,17 +44,115 @@ func TestReadOnlyVolumesAboveThreshold(t *testing.T) {
 		vacuumTestNode(readOnlyHalfGarbage, readOnlyOtherCollection, mixedWritableReplica),
 	)
 
-	got := readOnlyVolumesAboveThreshold(topo, "a", 0.3)
+	matcherA, err := wildcard.CompileCollectionMatcher("a")
+	if err != nil {
+		t.Fatalf("compile matcher: %v", err)
+	}
+
+	got := readOnlyVolumesAboveThreshold(topo, matcherA, 0.3)
 	if want := []uint32{1, 6, 7}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("collection a, threshold 0.3: got %v, want %v", got, want)
 	}
 
-	got = readOnlyVolumesAboveThreshold(topo, "", 0.3)
+	got = readOnlyVolumesAboveThreshold(topo, nil, 0.3)
 	if want := []uint32{1, 4, 6, 7}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("all collections, threshold 0.3: got %v, want %v", got, want)
 	}
 
-	if got := readOnlyVolumesAboveThreshold(topo, "a", 0.95); len(got) != 0 {
+	if got := readOnlyVolumesAboveThreshold(topo, matcherA, 0.95); len(got) != 0 {
 		t.Fatalf("threshold 0.95: got %v, want none", got)
+	}
+}
+
+func mustMatcher(t *testing.T, filter string) *wildcard.CollectionMatcher {
+	t.Helper()
+	m, err := wildcard.CompileCollectionMatcher(filter)
+	if err != nil {
+		t.Fatalf("compile %q: %v", filter, err)
+	}
+	return m
+}
+
+func TestVacuumRequestsForPattern(t *testing.T) {
+	node := vacuumTestNode(
+		&master_pb.VolumeInformationMessage{Id: 1, Collection: "a", Size: 100},
+		&master_pb.VolumeInformationMessage{Id: 2, Collection: "", Size: 100},
+		// read-only volumes stay out of the unnamed-collection sweep, the
+		// same as the server skips them on a named-collection sweep — the
+		// unreachable address keeps the low-disk probe a fast miss
+		&master_pb.VolumeInformationMessage{Id: 3, Collection: "", Size: 100, ReadOnly: true},
+		&master_pb.VolumeInformationMessage{Id: 4, Collection: "b", Size: 100},
+	)
+	node.Id = "localhost:1"
+	topo := vacuumTestTopology(node)
+
+	// A named collection sweeps as a single collection-scoped request.
+	reqs, err := vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, "a"))
+	if err != nil {
+		t.Fatalf("pattern a: %v", err)
+	}
+	if len(reqs) != 1 || reqs[0].Collection != "a" || reqs[0].VolumeId != 0 {
+		t.Fatalf("pattern a: got %v, want one collection-a sweep request", reqs)
+	}
+
+	// Patterns cover several named collections.
+	reqs, err = vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, "a,b"))
+	if err != nil {
+		t.Fatalf("pattern a,b: %v", err)
+	}
+	names := map[string]bool{}
+	for _, r := range reqs {
+		names[r.Collection] = true
+	}
+	if len(reqs) != 2 || !names["a"] || !names["b"] {
+		t.Fatalf("pattern a,b: got %v, want sweeps for a and b", reqs)
+	}
+
+	// The unnamed collection resolves to per-volume requests — no Collection
+	// value selects it alone, and the read-only volume is skipped because the
+	// probe cannot confirm low disk space.
+	reqs, err = vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, CollectionDefault))
+	if err != nil {
+		t.Fatalf("%s: %v", CollectionDefault, err)
+	}
+	if len(reqs) != 1 || reqs[0].VolumeId != 2 || reqs[0].Collection != "" {
+		t.Fatalf("%s: got %v, want one per-volume request for volume 2", CollectionDefault, reqs)
+	}
+
+	// A filter hitting nothing is an error, not a silent no-op.
+	if _, err = vacuumRequestsForPattern(nil, io.Discard, topo, mustMatcher(t, "missing")); err == nil {
+		t.Fatal("expected an error for a filter matching no collection")
+	}
+}
+
+func TestVacuumRequestsForVolumeIds(t *testing.T) {
+	topo := vacuumTestTopology(
+		vacuumTestNode(
+			&master_pb.VolumeInformationMessage{Id: 1, Collection: "a"},
+			&master_pb.VolumeInformationMessage{Id: 2, Collection: ""},
+		),
+	)
+
+	// A matching name scopes the request to that collection.
+	reqs, err := vacuumRequestsForVolumeIds(topo, mustMatcher(t, "a"), []uint32{1})
+	if err != nil {
+		t.Fatalf("vid 1 in a: %v", err)
+	}
+	if len(reqs) != 1 || reqs[0].VolumeId != 1 || reqs[0].Collection != "a" {
+		t.Fatalf("vid 1 in a: got %v, want {VolumeId:1, Collection:a}", reqs)
+	}
+
+	// The unnamed collection sends a volume-id-only request.
+	reqs, err = vacuumRequestsForVolumeIds(topo, mustMatcher(t, CollectionDefault), []uint32{2})
+	if err != nil {
+		t.Fatalf("vid 2 in default: %v", err)
+	}
+	if len(reqs) != 1 || reqs[0].VolumeId != 2 || reqs[0].Collection != "" {
+		t.Fatalf("vid 2 in default: got %v, want {VolumeId:2}", reqs)
+	}
+
+	// A volume outside the filter is an error.
+	if _, err = vacuumRequestsForVolumeIds(topo, mustMatcher(t, "a"), []uint32{2}); err == nil {
+		t.Fatal("expected an error for a volume outside the filter")
 	}
 }
