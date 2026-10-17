@@ -126,6 +126,12 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			return nil, s3err.ErrAccessDenied
 		}
 
+		// A token without a subject has no issuer-scoped principal; letting it
+		// through would make the client-supplied claims below stand in for one.
+		if identity.UserID == "" {
+			return nil, s3err.ErrAccessDenied
+		}
+
 		// Extract role from OIDC identity
 		if identity.RoleArn == "" {
 			return nil, s3err.ErrAccessDenied
@@ -162,6 +168,22 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		// Set critical claims explicitly, overwriting any from attributes to ensure correctness.
 		claims["sub"] = identity.UserID
 		claims["role"] = identity.RoleArn
+		claims["iss"] = identity.Issuer
+
+		// The bare sub collides across issuers; aws:userid carries the same
+		// (sub, iss) hash STS sessions already expose, so downstream ownership
+		// keys stay namespaced per identity provider. A claim the token itself
+		// supplies is always scrubbed, never adopted.
+		if parentUser := sts.ComputeParentUser(identity.UserID, identity.Issuer); parentUser != "" {
+			claims["aws:userid"] = parentUser
+		} else {
+			delete(claims, "aws:userid")
+		}
+		if issuers := s3iam.trustedOIDCIssuers(ctx); len(issuers) > 0 {
+			claims["seaweed:oidc-issuers"] = strings.Join(issuers, " ")
+		} else {
+			delete(claims, "seaweed:oidc-issuers")
+		}
 
 		// Use real email address if available
 		emailAddress := identity.UserID + "@oidc.local"
@@ -425,6 +447,7 @@ type OIDCIdentity struct {
 	UserID      string
 	RoleArn     string
 	Provider    string
+	Issuer      string
 	Email       string
 	DisplayName string
 	Groups      []string
@@ -488,11 +511,60 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 		UserID:      externalIdentity.UserID,
 		RoleArn:     roleArn,
 		Provider:    fmt.Sprintf("%T", provider), // Use provider type as identifier
+		Issuer:      externalIdentity.Issuer,
 		Email:       externalIdentity.Email,
 		DisplayName: externalIdentity.DisplayName,
 		Groups:      externalIdentity.Groups,
 		Attributes:  externalIdentity.Attributes,
 	}, nil
+}
+
+// trustedOIDCIssuers returns the issuer URLs of the OIDC providers the
+// deployment is configured to trust. It is what a legacy (pre-scoping) bare
+// subject can be re-anchored to: exactly one issuer makes the mapping
+// unambiguous; anything else leaves it unknown, which callers must treat as
+// fail-closed rather than guessing from the caller's issuer.
+//
+// The list is only safe while complete. Without a provider store the
+// registered providers are the whole set — there is nowhere an issuer could
+// hide. With a store, a failed listing leaves the real set unknown, and
+// passing the registered subset off as complete could collapse a
+// multi-issuer deployment to a single issuer: the one shape a bare subject
+// re-anchors under, so a caller from that issuer could claim a stored
+// subject that belongs to a provider hidden behind the error. Fail closed.
+func (s3iam *S3IAMIntegration) trustedOIDCIssuers(ctx context.Context) []string {
+	if s3iam.iamManager == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var issuers []string
+	// Configured identity providers registered with STS cover deployments
+	// whose OIDC setup lives in config rather than the provider store.
+	if stsService := s3iam.iamManager.GetSTSService(); stsService != nil {
+		for _, p := range stsService.GetProviders() {
+			if issuer, ok := p.(interface{ GetIssuer() string }); ok {
+				if iss := issuer.GetIssuer(); iss != "" && !seen[iss] {
+					seen[iss] = true
+					issuers = append(issuers, iss)
+				}
+			}
+		}
+	}
+	if s3iam.iamManager.GetOIDCProviderStore() == nil {
+		return issuers
+	}
+	records, err := s3iam.iamManager.ListOIDCProviders(ctx)
+	if err != nil {
+		glog.V(2).Infof("trustedOIDCIssuers: %v", err)
+		return nil
+	}
+	for _, rec := range records {
+		if rec.URL != "" && !seen[rec.URL] {
+			seen[rec.URL] = true
+			issuers = append(issuers, rec.URL)
+		}
+	}
+	return issuers
 }
 
 // selectPrimaryRole simply picks the first role from the list
