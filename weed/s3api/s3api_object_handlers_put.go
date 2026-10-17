@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -19,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pquerna/cachecontrol/cacheobject"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -842,6 +842,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Store ETag in Extended attribute for future retrieval (e.g. multipart parts)
 	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
+	// Stamp this write's identity: an ambiguously committed PUT is told apart
+	// from an identical older object by it during recovery, which chunk identity
+	// cannot do for a chunkless (empty) object.
+	entry.Extended[s3_constants.SeaweedFSWriteId] = []byte(uuid.NewString())
+
 	// Store additional checksum if one was computed
 	checksumBase64 := ""
 	if checksumHash != nil && checksumHeaderName != "" {
@@ -961,6 +966,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	var createErr error
 	var rollbackErr error
 	entryCreated := false
+	var owner pb.ServerAddress
 	preconditionFn := func() s3err.ErrorCode {
 		if object == "" {
 			return s3err.ErrNone
@@ -991,7 +997,19 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		// A conditional create must not be replayed once possibly sent: a lost
 		// commit followed by a delete lets the replayed IF_NOT_EXISTS pass and
 		// recreates an entry whose chunks the delete already reclaimed.
-		if s3a.filerClient != nil {
+		if cond != nil && owner != "" {
+			// The condition and the routed write serialize on the owner's
+			// per-path lock. Failover cannot preserve that: another filer's lock
+			// is a different boundary, and its forwarding is only correct when
+			// its ring view agrees — exactly what is not guaranteed after an
+			// ambiguous write. The create goes to the owner alone; an
+			// unreachable owner leaves the outcome uncertain.
+			createErr = pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, create)
+			switch status.Code(createErr) {
+			case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
+				s3a.markOwnerUnreachable(owner)
+			}
+		} else if s3a.filerClient != nil {
 			createErr = s3a.withFilerClientFailover(context.Background(), "", false, cond == nil, create)
 		} else {
 			createErr = s3a.withFilerClient(context.Background(), false, create)
@@ -1019,7 +1037,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	var createCode s3err.ErrorCode
 	routed := false
 	routedAmbiguous := false
-	var owner pb.ServerAddress
 	if owner = s3a.routableWriteOwner(bucket, object); owner != "" {
 		if cond, ok := routeWriteCondition(r, uniqueWritePath); ok {
 			// Routed mutations ride in the PUT's transaction (committing atomically),
@@ -1128,9 +1145,10 @@ const createLookupTimeout = 10 * time.Second
 // superseded the commit, and its old-chunk cleanup may have deleted this
 // entry's chunks — committing would write back a stale entry pointing at dead
 // needles, so the request fails for the client to retry with a fresh upload.
-// Unresolvable lookups fail the same way; only a proven-absent entry or a
-// directory conflict with verifiably-live chunks falls through to the normal
-// create.
+// Unresolvable lookups fail the same way; only a proven-absent entry with
+// verifiably-live chunks or a directory conflict with them falls through to
+// the normal create — an empty upload has nothing to verify, so neither the
+// absent nor the lookalike-entry outcome is provable for it.
 func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object string, owner pb.ServerAddress, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize, entryCreated *bool, chunksExist func(ctx context.Context, chunks []*filer_pb.FileChunk) bool, createUnderLock func(cond *filer_pb.WriteCondition) s3err.ErrorCode) s3err.ErrorCode {
 	dir, name := path.Dir(filePath), path.Base(filePath)
 	lookupCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
@@ -1176,8 +1194,8 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 				return s3err.ErrServiceUnavailable
 			}
 			// An empty PUT carries no fids, so two chunkless entries compare
-			// equal even when the stored one predates this write; the request's
-			// metadata is the only evidence it is this write's own commit.
+			// equal even when the stored one predates this write; only this
+			// write's stamped id proves the entry is its own commit.
 			if len(uploaded) == 0 && !sameStoredEntry(existing, entry) {
 				glog.Warningf("putToFiler: ambiguous routed PUT for %s cannot prove an empty stored entry is its own; not claiming it", filePath)
 				return s3err.ErrServiceUnavailable
@@ -1197,6 +1215,14 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 		}
 		if uncertain {
 			glog.Warningf("putToFiler: cannot confirm what ambiguous routed PUT for %s committed; not re-applying entry", filePath)
+			return s3err.ErrServiceUnavailable
+		}
+		// An absent entry cannot prove an empty PUT never committed — the routed
+		// create may have landed and a delete already reclaimed it — and there
+		// are no chunks to verify either way. IF_NOT_EXISTS would recreate an
+		// object a delete already removed, so the outcome stays uncertain.
+		if len(uploaded) == 0 {
+			glog.Warningf("putToFiler: ambiguous routed PUT for %s left no entry and no chunks to verify; not re-applying entry", filePath)
 			return s3err.ErrServiceUnavailable
 		}
 		if !chunksExist(lookupCtx, uploaded) {
@@ -1297,11 +1323,16 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, ent
 			return s3err.ErrNone
 		}
 		if len(uploaded) == 0 {
-			return s3err.ErrNone
-		}
-		resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
-		if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
-			return s3err.ErrNone
+			// No chunks to compare; only this write's stamped id proves the
+			// entry is its own commit rather than an identical older object.
+			if !sameStoredEntry(existing, entry) {
+				return s3err.ErrNone
+			}
+		} else {
+			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
+				return s3err.ErrNone
+			}
 		}
 		glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
 		if finalize == nil || finalize.afterCreate == nil {
@@ -1378,16 +1409,14 @@ func sameFileChunks(a, b []*filer_pb.FileChunk) bool {
 	return true
 }
 
-// sameStoredEntry distinguishes a write from an unrelated chunkless object at
-// the same path: a landed PUT stores the entry exactly as built, so mime,
-// size, md5, content, and the extended attributes it set are the evidence.
+// sameStoredEntry reports whether the stored entry is this write's own
+// commit. Matching metadata cannot say so — an identical older object carries
+// the same fields — but the write id putToFiler stamps into every entry does:
+// the filer stores Extended verbatim, so the id rides the commit and a lookup
+// reads it back. An entry without this write's id cannot be claimed.
 func sameStoredEntry(existing, entry *filer_pb.Entry) bool {
-	a, b := existing.GetAttributes(), entry.GetAttributes()
-	return a.GetMime() == b.GetMime() &&
-		a.GetFileSize() == b.GetFileSize() &&
-		bytes.Equal(a.GetMd5(), b.GetMd5()) &&
-		bytes.Equal(existing.GetContent(), entry.GetContent()) &&
-		maps.EqualFunc(existing.GetExtended(), entry.GetExtended(), bytes.Equal)
+	id := entry.GetExtended()[s3_constants.SeaweedFSWriteId]
+	return len(id) > 0 && bytes.Equal(existing.GetExtended()[s3_constants.SeaweedFSWriteId], id)
 }
 
 // checksumAlgorithmMapping maps algorithm name strings to their enum and header name.

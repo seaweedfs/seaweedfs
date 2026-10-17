@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"fmt"
 	"io"
 	"net"
@@ -142,7 +143,10 @@ type ambiguousPutFiler struct {
 	txnNoApply bool
 	// beforeCreate runs inside CreateEntry's lock, before the condition is
 	// evaluated, letting a test land a racing write at the worst moment.
+	// beforeLookup runs inside LookupDirectoryEntry, letting a test delete a
+	// just-committed entry before recovery reads it.
 	beforeCreate func()
+	beforeLookup func()
 	stores       int
 	conds        []*filer_pb.WriteCondition
 }
@@ -237,6 +241,9 @@ func putConditionSatisfied(cond *filer_pb.WriteCondition, current *filer_pb.Entr
 func (f *ambiguousPutFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeLookup != nil {
+		f.beforeLookup()
+	}
 	if f.lookupErr != nil && req.Directory+"/"+req.Name == f.lookupFailKey {
 		return nil, f.lookupErr
 	}
@@ -584,8 +591,9 @@ func TestPutToFilerRoutedAmbiguousEmptyPutStaleMetadata(t *testing.T) {
 }
 
 // The counterpart: when the routed zero-byte PUT did commit and only its
-// response was lost, the stored entry is this write's own — same metadata —
-// and recovery must still claim it rather than fail a successful write.
+// response was lost, the stored entry is this write's own — it carries this
+// write's stamped id — and recovery must still claim it rather than fail a
+// successful write.
 func TestPutToFilerRoutedAmbiguousEmptyPutLanded(t *testing.T) {
 	volume := startFakeVolumeServer(t)
 	filerImpl := &ambiguousPutFiler{
@@ -610,24 +618,27 @@ func TestPutToFilerRoutedAmbiguousEmptyPutLanded(t *testing.T) {
 
 // A conditional recovery create is itself ambiguous once sent: if it commits
 // and the response is lost, replaying it on another filer can resurrect an
-// entry whose chunks a delete already reclaimed. The create must not fail over
-// past a sent attempt — the committed copy is confirmed instead.
+// entry whose chunks a delete already reclaimed. It also serializes with
+// routed writes only under the owner's per-path lock, so it is sent to the
+// owner alone — never failed over — and a possibly-committed attempt is
+// confirmed by lookup instead.
 func TestPutToFilerRecoveryCreateNotReplayed(t *testing.T) {
 	volume := startFakeVolumeServer(t)
-	// The owner filer's transaction error flags it unreachable, so the
-	// recovery create goes to the healthy failover filer first — which commits
-	// it and loses the response.
+	// The owner commits the conditional create and loses the response. The
+	// healthy failover filer must never see it: the committed copy on the
+	// owner is confirmed instead of re-sent elsewhere.
 	filerA := &ambiguousPutFiler{
 		volume:     volume,
 		entries:    map[string]*filer_pb.Entry{},
+		apply:      true,
+		createErr:  status.Error(codes.Unavailable, "response lost after commit"),
 		txnNoApply: true,
 		txnErr:     status.Error(codes.Unavailable, "response lost"),
 	}
 	filerB := &ambiguousPutFiler{
-		volume:    volume,
-		entries:   map[string]*filer_pb.Entry{},
-		apply:     true,
-		createErr: status.Error(codes.Unavailable, "response lost after commit"),
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		apply:   true,
 	}
 	addrA := startFakeFiler(t, filerA)
 	addrB := startFakeFiler(t, filerB)
@@ -639,17 +650,160 @@ func TestPutToFilerRecoveryCreateNotReplayed(t *testing.T) {
 	if code != s3err.ErrNone {
 		t.Fatalf("putToFiler returned %v — the committed create should be confirmed, not replayed", code)
 	}
-	if len(filerA.conds) != 0 {
-		t.Fatal("conditional recovery create was replayed on a second filer")
+	if filerA.stores != 1 {
+		t.Fatalf("the owner stored the entry %d times, want once", filerA.stores)
 	}
-	if filerB.stores != 1 {
-		t.Fatalf("the failover filer stored the entry %d times, want once", filerB.stores)
+	if filerB.stores != 0 || len(filerB.conds) != 0 {
+		t.Fatalf("the recovery create reached a failover filer: stores=%d conds=%d", filerB.stores, len(filerB.conds))
 	}
-	if got := filerB.entries["/buckets/b/o"]; got == nil || len(got.Chunks) != 1 {
-		t.Fatalf("the committed entry is missing on the failover filer: %+v", got)
+	if got := filerA.entries["/buckets/b/o"]; got == nil || len(got.Chunks) != 1 {
+		t.Fatalf("the committed entry is missing on the owner: %+v", got)
 	}
 	if deleted := volume.deleted(); len(deleted) != 0 {
 		t.Fatalf("chunks under a live entry were deleted: %v", deleted)
+	}
+}
+
+// The conditional recovery create serializes with routed writes only under the
+// owner's per-path lock, so it goes to the owner alone — a failover filer's
+// lock is a different serialization boundary.
+func TestPutToFilerRoutedRecoveryCreateStaysOnOwner(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerA := &ambiguousPutFiler{
+		volume:     volume,
+		entries:    map[string]*filer_pb.Entry{},
+		apply:      true,
+		txnNoApply: true,
+		txnErr:     status.Error(codes.Unavailable, "response lost"),
+	}
+	filerB := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		apply:   true,
+	}
+	addrA := startFakeFiler(t, filerA)
+	addrB := startFakeFiler(t, filerB)
+	s3a := newPutTestServer(t, addrA, addrB)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addrA)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addrA}, 1)
+
+	_, code := putTestObject(t, s3a)
+	if code != s3err.ErrNone {
+		t.Fatalf("putToFiler returned %v — the conditional create should commit on the owner", code)
+	}
+	if filerA.stores != 1 {
+		t.Fatalf("the owner stored the entry %d times, want once", filerA.stores)
+	}
+	if len(filerA.conds) != 1 || filerA.conds[0].GetClauses()[0].GetKind() != filer_pb.WriteCondition_IF_NOT_EXISTS {
+		t.Fatalf("recovery create carried %+v, want one IF_NOT_EXISTS", filerA.conds)
+	}
+	if filerB.stores != 0 || len(filerB.conds) != 0 {
+		t.Fatalf("the conditional create failed over to another filer: stores=%d conds=%d", filerB.stores, len(filerB.conds))
+	}
+}
+
+// When the owner cannot accept the recovery create, the outcome is uncertain —
+// not a failover create under a different filer's lock.
+func TestPutToFilerRoutedRecoveryOwnerDownIsUncertain(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerA := &ambiguousPutFiler{
+		volume:     volume,
+		entries:    map[string]*filer_pb.Entry{},
+		createErr:  status.Error(codes.Unavailable, "connection refused"),
+		txnNoApply: true,
+		txnErr:     status.Error(codes.Unavailable, "response lost"),
+	}
+	filerB := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		apply:   true,
+	}
+	addrA := startFakeFiler(t, filerA)
+	addrB := startFakeFiler(t, filerB)
+	s3a := newPutTestServer(t, addrA, addrB)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addrA)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addrA}, 1)
+
+	_, code := putTestObject(t, s3a)
+	if code != s3err.ErrServiceUnavailable {
+		t.Fatalf("putToFiler returned %v, want an uncertain result when the owner cannot take the create", code)
+	}
+	if filerB.stores != 0 || len(filerB.conds) != 0 {
+		t.Fatalf("the conditional create failed over to another filer: stores=%d conds=%d", filerB.stores, len(filerB.conds))
+	}
+	if deleted := volume.deleted(); len(deleted) == 0 {
+		t.Fatal("orphaned chunks were not deleted")
+	}
+}
+
+// An absent entry cannot prove an empty PUT never committed — the routed
+// create may have landed and a delete already removed it. Recovery must not
+// recreate the object: the outcome is uncertain, not an IF_NOT_EXISTS create.
+func TestPutToFilerRoutedAmbiguousEmptyPutAbsentNotRecreated(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		txnErr:  status.Error(codes.Unavailable, "response lost after commit"),
+	}
+	// The committed empty object is deleted before recovery looks it up.
+	filerImpl.beforeLookup = func() {
+		delete(filerImpl.entries, "/buckets/b/o")
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/o", nil)
+	_, code, _ := s3a.putToFiler(r, "/buckets/b/o", strings.NewReader(""), "b", "o", 1, 0, nil, false, "")
+	if code != s3err.ErrServiceUnavailable {
+		t.Fatalf("putToFiler returned %v, want an uncertain result for an unverifiable empty PUT", code)
+	}
+	if filerImpl.stores != 0 {
+		t.Fatalf("recovery recreated an object a delete may have removed %d times", filerImpl.stores)
+	}
+	if got := filerImpl.entries["/buckets/b/o"]; got != nil {
+		t.Fatalf("the deleted object was resurrected: %+v", got)
+	}
+}
+
+// Matching metadata alone cannot pass an older empty object off as this PUT's
+// commit: a foreign write id marks it as a different write, so the outcome
+// stays uncertain for the client to retry.
+func TestPutToFilerRoutedAmbiguousEmptyPutForeignWriteId(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	emptyMd5 := md5.Sum(nil)
+	filerImpl := &ambiguousPutFiler{
+		volume:     volume,
+		txnNoApply: true,
+		txnErr:     status.Error(codes.Unavailable, "response lost before commit"),
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b/o": {
+				Name:       "o",
+				Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream", Md5: emptyMd5[:]},
+				Extended: map[string][]byte{
+					s3_constants.ExtETagKey:       []byte("\"d41d8cd98f00b204e9800998ecf8427e\""),
+					s3_constants.SeaweedFSWriteId: []byte("another-write"),
+				},
+			},
+		},
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/o", nil)
+	_, code, _ := s3a.putToFiler(r, "/buckets/b/o", strings.NewReader(""), "b", "o", 1, 0, nil, false, "")
+	if code != s3err.ErrServiceUnavailable {
+		t.Fatalf("putToFiler returned %v, want refusal when the stored empty entry carries another write's id", code)
+	}
+	if filerImpl.stores != 0 {
+		t.Fatalf("recovery committed over an unverifiable empty entry %d times", filerImpl.stores)
+	}
+	if got := filerImpl.entries["/buckets/b/o"]; string(got.GetExtended()[s3_constants.SeaweedFSWriteId]) != "another-write" {
+		t.Fatalf("the older object's entry was replaced: %+v", got)
 	}
 }
 
