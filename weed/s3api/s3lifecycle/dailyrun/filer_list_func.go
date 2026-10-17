@@ -34,8 +34,10 @@ func init() { listPageSize.Store(1024) }
 // user's intended path.
 //
 // view supplies per-bucket state: a bucket that never had versioning
-// enabled skips the .versions/ pre-pass entirely. A nil view assumes
-// the worst (versioned), preserving the two-pass behavior.
+// enabled skips the .versions/ pre-pass entirely, and directories no
+// active rule prefix can reach are pruned rather than listed. A nil
+// view assumes the worst (versioned, unpruned), preserving the
+// two-pass behavior.
 func FilerListFunc(client filer_pb.SeaweedFilerClient, bucketsPath string, view *engine.Snapshot) bootstrap.ListFunc {
 	return func(ctx context.Context, bucket, start string, cb func(*bootstrap.Entry) error) error {
 		if client == nil {
@@ -43,7 +45,14 @@ func FilerListFunc(client filer_pb.SeaweedFilerClient, bucketsPath string, view 
 		}
 		root := strings.TrimSuffix(bucketsPath, "/") + "/" + bucket
 		versioned := view == nil || view.BucketVersioned(bucket)
-		return walkBucketTree(ctx, client, root, root, start, versioned, cb)
+		var prefixes []string
+		if view != nil {
+			prefixes = view.BucketPrefixes(bucket)
+			if len(prefixes) == 0 {
+				return nil // no active rule can match anything in this bucket
+			}
+		}
+		return walkBucketTree(ctx, client, root, root, start, versioned, prefixes, cb)
 	}
 }
 
@@ -54,10 +63,10 @@ func FilerListFunc(client filer_pb.SeaweedFilerClient, bucketsPath string, view 
 // directory and find nothing. Pass 2 emits regular files and recurses
 // into non-special subdirectories.
 //
-// The two-pass shape mirrors scheduler/bootstrap.go's walkBucketDir
-// (see that file's comment for why `.versions/` has to be processed
-// before its bare sibling).
-func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot, start string, versioned bool, cb func(*bootstrap.Entry) error) error {
+// `.versions/` dirs must be processed before their bare sibling so the
+// walk sees whether the bare entry is the null version of the same
+// logical object; hence the two passes on versioned buckets.
+func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, bucketRoot, start string, versioned bool, prefixes []string, cb func(*bootstrap.Entry) error) error {
 	skipBare := map[string]bool{}
 
 	// Pass 1: .versions/ dirs only.
@@ -71,7 +80,13 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 			}
 			full := dir + "/" + e.Name
 			key := strings.TrimPrefix(full, bucketRoot+"/")
-			return expandVersionsDir(ctx, client, bucketRoot, key, e, start, skipBare, versioned, cb)
+			// The emitted logical key ("foo") is a string-prefix of the
+			// dir key ("foo.versions"), so dirInRuleScope is conservative
+			// here too.
+			if !dirInRuleScope(prefixes, key) {
+				return nil
+			}
+			return expandVersionsDir(ctx, client, bucketRoot, key, e, start, skipBare, versioned, prefixes, cb)
 		}); err != nil {
 			return err
 		}
@@ -90,7 +105,10 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 			}
 			// No versioning on this bucket: a *-suffixed user folder
 			// holds ordinary objects, not version files.
-			return walkBucketTree(ctx, client, full, bucketRoot, start, false, cb)
+			if !dirInRuleScope(prefixes, key) {
+				return nil
+			}
+			return walkBucketTree(ctx, client, full, bucketRoot, start, false, prefixes, cb)
 		}
 		if e.IsDirectory {
 			if isMPUInitDir(key, e) {
@@ -106,7 +124,12 @@ func walkBucketTree(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 					Size:      int64(e.Attributes.FileSize),
 				})
 			}
-			return walkBucketTree(ctx, client, full, bucketRoot, start, versioned, cb)
+			// .uploads is exempt: an AbortMPU rule's prefix applies to
+			// DestKey (the user's path), never to ".uploads/<id>".
+			if key != s3_constants.MultipartUploadsFolder && !dirInRuleScope(prefixes, key) {
+				return nil
+			}
+			return walkBucketTree(ctx, client, full, bucketRoot, start, versioned, prefixes, cb)
 		}
 		if skipBare[key] {
 			return nil
@@ -150,7 +173,7 @@ type versionItem struct {
 // resume after a mid-expansion failure rewalks the whole sibling
 // group. Acceptable today because Phase 4b doesn't persist a
 // Checkpoint between runs (start is always "" via runShard).
-func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketRoot, versionsKey string, versionsEntry *filer_pb.Entry, start string, skipBare map[string]bool, versioned bool, cb func(*bootstrap.Entry) error) error {
+func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketRoot, versionsKey string, versionsEntry *filer_pb.Entry, start string, skipBare map[string]bool, versioned bool, prefixes []string, cb func(*bootstrap.Entry) error) error {
 	logical := strings.TrimSuffix(versionsKey, s3_constants.VersionsFolder)
 	if logical == "" {
 		return nil
@@ -175,7 +198,7 @@ func expandVersionsDir(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 		// Coincidentally-named user folder, or an empty `.versions`
 		// container. Treat it as a regular subdirectory so user-named
 		// files inside still surface.
-		return walkBucketTree(ctx, client, versionsDir, bucketRoot, start, versioned, cb)
+		return walkBucketTree(ctx, client, versionsDir, bucketRoot, start, versioned, prefixes, cb)
 	}
 	if nullEntry, nullKey, explicit, ok := lookupNullVersion(ctx, client, bucketRoot, logical); ok {
 		items = append(items, versionItem{
@@ -317,6 +340,22 @@ func listAll(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string
 		}
 		startFrom = lastName
 	}
+}
+
+// dirInRuleScope reports whether any active rule prefix could match an
+// object under dir key. Objects under dir/ carry keys starting "dir/",
+// so a prefix p can match iff p is a prefix of "dir/" or "dir/" is a
+// prefix of p. An empty prefixes list means "no constraint" (nil view).
+func dirInRuleScope(prefixes []string, key string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, p := range prefixes {
+		if p == "" || strings.HasPrefix(key+"/", p) || strings.HasPrefix(p, key+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isVersionsDir(entry *filer_pb.Entry) bool {

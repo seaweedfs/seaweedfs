@@ -480,12 +480,15 @@ func TestFilerListFunc_NilClient(t *testing.T) {
 }
 
 func snapshotForBucketRuleVersioned(t *testing.T, bucket string, days int, versioned bool) *engine.Snapshot {
+	return snapshotForBucketRules(t, bucket, versioned,
+		&s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: days})
+}
+
+func snapshotForBucketRules(t *testing.T, bucket string, versioned bool, rules ...*s3lifecycle.Rule) *engine.Snapshot {
 	t.Helper()
 	e := engine.New()
 	e.Compile([]engine.CompileInput{
-		{Bucket: bucket, Versioned: versioned, Rules: []*s3lifecycle.Rule{
-			{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: days},
-		}},
+		{Bucket: bucket, Versioned: versioned, Rules: rules},
 	}, engine.CompileOptions{})
 	snap := e.Snapshot()
 	for _, a := range snap.AllActions() {
@@ -565,4 +568,128 @@ func TestFilerListFunc_AttributesPropagate(t *testing.T) {
 	assert.Equal(t, int64(1234), got.ModTime.UnixNano()-mtime.Unix()*int64(time.Second))
 	assert.Equal(t, int64(4096), got.Size)
 	assert.True(t, got.IsLatest)
+}
+
+func TestDirInRuleScope(t *testing.T) {
+	cases := []struct {
+		prefixes []string
+		key      string
+		want     bool
+	}{
+		{nil, "any", true},                   // nil view: no constraint
+		{[]string{""}, "any", true},          // "" prefix matches all
+		{[]string{"logs/"}, "logs", true},    // dir holds the prefix
+		{[]string{"logs"}, "logs", true},     // exact
+		{[]string{"logs"}, "logs2", true},    // "logs" can match "logs2/x"
+		{[]string{"logs/"}, "logs2", false},  // "logs2/x" can't match "logs/"
+		{[]string{"tmp/deep/"}, "tmp", true}, // prefix descends into dir
+		{[]string{"tmp/deep/"}, "tmp/deep", true},
+		{[]string{"tmp/deep/"}, "tmp/dee", false},
+		{[]string{"tmp/deep/"}, "tmp/shallow", false},
+		{[]string{"a/", "b/"}, "b", true},
+		{[]string{"a/", "b/"}, "c", false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, dirInRuleScope(tc.prefixes, tc.key), "prefixes=%v key=%q", tc.prefixes, tc.key)
+	}
+}
+
+func TestFilerListFunc_PrunesDirsOutsideRulePrefixes(t *testing.T) {
+	// Dirs no active rule prefix can reach are never listed. Files are
+	// always emitted (prefix matching is walkEntry's job, downstream).
+	mtime := time.Now()
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {
+			dir("logs"), dir("tmp"), dir("other"), file("root.txt", mtime, 1),
+		},
+		"/buckets/bkt/logs":     {file("a.log", mtime, 1)},
+		"/buckets/bkt/tmp":      {dir("deep"), dir("shallow")},
+		"/buckets/bkt/tmp/deep": {file("d.txt", mtime, 1)},
+		"/buckets/bkt/other":    {file("o.txt", mtime, 1)},
+	}}
+	view := snapshotForBucketRules(t, "bkt", false,
+		&s3lifecycle.Rule{ID: "r1", Status: s3lifecycle.StatusEnabled, Prefix: "logs/", ExpirationDays: 1},
+		&s3lifecycle.Rule{ID: "r2", Status: s3lifecycle.StatusEnabled, Prefix: "tmp/deep/", ExpirationDays: 1},
+	)
+	var paths []string
+	require.NoError(t, FilerListFunc(client, "/buckets", view)(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		paths = append(paths, e.Path)
+		return nil
+	}))
+	sort.Strings(paths)
+	assert.Equal(t, []string{"logs/a.log", "root.txt", "tmp/deep/d.txt"}, paths)
+	assert.Equal(t, 4, client.listCalls, "bkt+logs+tmp+tmp/deep listed; other and tmp/shallow pruned")
+}
+
+func TestFilerListFunc_NoActiveActionsSkipsWalk(t *testing.T) {
+	// Every action inactive (e.g. bootstrap never completed): MatchPath
+	// could match nothing, so the whole bucket listing is wasted work.
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {file("a", time.Now(), 1)},
+	}}
+	e := engine.New()
+	e.Compile([]engine.CompileInput{{Bucket: "bkt", Rules: []*s3lifecycle.Rule{
+		{ID: "r", Status: s3lifecycle.StatusEnabled, ExpirationDays: 1},
+	}}}, engine.CompileOptions{})
+	var paths []string
+	require.NoError(t, FilerListFunc(client, "/buckets", e.Snapshot())(context.Background(), "bkt", "", func(en *bootstrap.Entry) error {
+		paths = append(paths, en.Path)
+		return nil
+	}))
+	assert.Empty(t, paths)
+	assert.Equal(t, 0, client.listCalls)
+}
+
+func TestFilerListFunc_UploadsDirExemptFromPruning(t *testing.T) {
+	// AbortMPU rules match DestKey (the user's key), never
+	// ".uploads/<id>", so the uploads container stays in scope even
+	// when all rule prefixes point elsewhere.
+	mtime := time.Now()
+	mpuDir := dir("up-1")
+	mpuDir.Extended = map[string][]byte{
+		s3_constants.ExtMultipartObjectKey: []byte("logs/big.bin"),
+	}
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {dir(s3_constants.MultipartUploadsFolder), dir("other")},
+		"/buckets/bkt/" + s3_constants.MultipartUploadsFolder: {mpuDir},
+		"/buckets/bkt/other": {file("o.txt", mtime, 1)},
+	}}
+	view := snapshotForBucketRules(t, "bkt", false,
+		&s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, Prefix: "logs/", AbortMPUDaysAfterInitiation: 3})
+	var paths []string
+	require.NoError(t, FilerListFunc(client, "/buckets", view)(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		paths = append(paths, e.Path)
+		return nil
+	}))
+	assert.Equal(t, []string{s3_constants.MultipartUploadsFolder + "/up-1"}, paths)
+}
+
+func TestFilerListFunc_PrunesVersionsDirsOutsidePrefixes(t *testing.T) {
+	// Versioned bucket: stray.versions is out of scope for prefix
+	// "data/" — its logical key "stray" can't match — so it is never
+	// listed. data.versions still expands to logical "data".
+	mtime := time.Now()
+	client := &fakeFiler{tree: map[string][]*filer_pb.Entry{
+		"/buckets/bkt": {
+			versionsDir("data"+s3_constants.VersionsFolder, "v1"),
+			versionsDir("stray"+s3_constants.VersionsFolder, "v1"),
+			dir("other"),
+		},
+		"/buckets/bkt/data" + s3_constants.VersionsFolder: {
+			fileWithExt("v1", mtime, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")}),
+		},
+		"/buckets/bkt/stray" + s3_constants.VersionsFolder: {
+			fileWithExt("v1", mtime, 1, map[string][]byte{s3_constants.ExtVersionIdKey: []byte("v1")}),
+		},
+		"/buckets/bkt/other": {file("x.txt", mtime, 1)},
+	}}
+	view := snapshotForBucketRules(t, "bkt", true,
+		&s3lifecycle.Rule{ID: "r", Status: s3lifecycle.StatusEnabled, Prefix: "data", ExpirationDays: 1})
+	var paths []string
+	require.NoError(t, FilerListFunc(client, "/buckets", view)(context.Background(), "bkt", "", func(e *bootstrap.Entry) error {
+		paths = append(paths, e.Path)
+		return nil
+	}))
+	assert.Equal(t, []string{"data"}, paths)
+	assert.Equal(t, 3, client.listCalls, "bkt twice + data.versions; stray.versions and other pruned")
 }
