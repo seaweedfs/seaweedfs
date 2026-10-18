@@ -35,6 +35,19 @@ func Describes(stamp, object *filer_pb.RemoteEntry) bool {
 	return stamp.RemoteETag == "" || object.RemoteETag == "" || stamp.RemoteETag == object.RemoteETag
 }
 
+// StillCurrent reports whether live can still be the object the stored stamp
+// described: not newer than the stamp, matching it on size, and not having
+// dropped an ETag the stamp carried.
+func StillCurrent(stamp, live *filer_pb.RemoteEntry) bool {
+	if live != nil && live.RemoteMtime > stamp.GetRemoteMtime() {
+		return false
+	}
+	if !Describes(stamp, live) {
+		return false
+	}
+	return stamp.GetRemoteETag() == "" || live.RemoteETag != ""
+}
+
 func parseBucketLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
 	loc = &remote_pb.RemoteStorageLocation{}
 	remote = strings.TrimSuffix(remote, slash)
@@ -125,6 +138,15 @@ type RemoteStorageStreamReader interface {
 // on the remote needs it.
 type RemoteStorageObjectCopier interface {
 	CopyFile(src *remote_pb.RemoteStorageLocation, dst *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error)
+}
+
+// RemoteStorageConditionalDeleter is an optional interface for remote storage
+// clients whose backend can delete an object only while it is still the one a
+// stat described, enforced with a backend version precondition (S3 and Azure:
+// ETag, GCS: generation). deleted is false without an error when the object
+// differs from stamp or changed between the stat and the delete.
+type RemoteStorageConditionalDeleter interface {
+	DeleteFileIfUnchanged(loc *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) (deleted bool, err error)
 }
 
 // CacheWaitTimeout is how long a read of an uncached remote-only object waits

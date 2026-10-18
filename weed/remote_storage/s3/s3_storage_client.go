@@ -833,6 +833,45 @@ func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation)
 	return
 }
 
+// DeleteFileIfUnchanged deletes the object only while it is still the one the
+// stat describes, enforced with the S3 conditional-delete If-Match header. A
+// replacement that lands between the stat and the delete fails the
+// precondition instead of being deleted.
+func (s *s3RemoteStorageClient) DeleteFileIfUnchanged(loc *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) (bool, error) {
+	live, err := s.StatFile(loc)
+	if err != nil {
+		if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	if !remote_storage.StillCurrent(stamp, live) {
+		return false, nil
+	}
+	if live.RemoteETag == "" {
+		return true, s.DeleteFile(loc)
+	}
+	req, _ := s.conn.DeleteObjectRequest(&s3.DeleteObjectInput{
+		Bucket: aws.String(loc.Bucket),
+		Key:    aws.String(loc.Path[1:]),
+	})
+	req.Handlers.Build.PushBack(func(r *request.Request) {
+		r.HTTPRequest.Header.Set("If-Match", live.RemoteETag)
+	})
+	if err := req.Send(); err != nil {
+		if reqErr, ok := err.(awserr.RequestFailure); ok {
+			switch reqErr.StatusCode() {
+			case http.StatusPreconditionFailed:
+				return false, nil
+			case http.StatusNotFound:
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("delete s3 %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return true, nil
+}
+
 func (s *s3RemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
 	resp, err := s.conn.ListBuckets(&s3.ListBucketsInput{})
 	if err != nil {

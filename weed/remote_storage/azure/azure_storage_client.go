@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -550,6 +551,45 @@ func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocat
 		return fmt.Errorf("azure delete %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	return
+}
+
+// DeleteFileIfUnchanged deletes the blob only while it is still the one the
+// stat describes, enforced with an If-Match ETag precondition. A replacement
+// that lands between the stat and the delete fails the precondition instead
+// of being deleted.
+func (az *azureRemoteStorageClient) DeleteFileIfUnchanged(loc *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) (bool, error) {
+	live, err := az.StatFile(loc)
+	if err != nil {
+		if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	if !remote_storage.StillCurrent(stamp, live) {
+		return false, nil
+	}
+	key := loc.Path[1:]
+	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key)
+	options := &blob.DeleteOptions{
+		DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
+	}
+	if live.RemoteETag != "" {
+		options.AccessConditions = &blob.AccessConditions{
+			ModifiedAccessConditions: &blob.ModifiedAccessConditions{
+				IfMatch: to.Ptr(azcore.ETag(live.RemoteETag)),
+			},
+		}
+	}
+	if _, err := blobClient.Delete(context.Background(), options); err != nil {
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return true, nil
+		}
+		if bloberror.HasCode(err, bloberror.ConditionNotMet) {
+			return false, nil
+		}
+		return false, fmt.Errorf("azure delete %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return true, nil
 }
 
 func (az *azureRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {

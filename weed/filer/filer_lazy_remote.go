@@ -273,6 +273,16 @@ func (f *Filer) maybeDeleteFromRemoteIfUnchanged(ctx context.Context, entry *Ent
 	if err != nil || client == nil {
 		return err
 	}
+	if deleter, ok := client.(remote_storage.RemoteStorageConditionalDeleter); ok {
+		deleted, delErr := deleter.DeleteFileIfUnchanged(objectLoc, entry.Remote)
+		if delErr != nil {
+			return fmt.Errorf("delete remote file %s: %w", entry.FullPath, delErr)
+		}
+		if !deleted {
+			glog.V(0).InfofCtx(ctx, "keep %s: the remote object changed since the delete", entry.FullPath)
+		}
+		return nil
+	}
 	live, statErr := client.StatFile(objectLoc)
 	if statErr != nil {
 		if errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
@@ -280,9 +290,7 @@ func (f *Filer) maybeDeleteFromRemoteIfUnchanged(ctx context.Context, entry *Ent
 		}
 		return fmt.Errorf("stat remote file %s: %w", entry.FullPath, statErr)
 	}
-	if live.RemoteMtime > entry.Remote.RemoteMtime ||
-		!remote_storage.Describes(entry.Remote, live) ||
-		entry.Remote.RemoteETag != "" && live.RemoteETag == "" {
+	if !remote_storage.StillCurrent(entry.Remote, live) {
 		glog.V(0).InfofCtx(ctx, "keep %s: the remote object changed since the delete", entry.FullPath)
 		return nil
 	}

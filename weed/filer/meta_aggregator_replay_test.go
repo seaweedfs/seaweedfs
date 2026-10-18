@@ -1158,6 +1158,115 @@ func TestReplayDirectoryDeleteKeepsReplacedRemoteObject(t *testing.T) {
 	}
 }
 
+// A backend offering a conditional delete must serve the sweep: the check and
+// the delete bind into one preconditioned request, so a replacement landing
+// between them cannot be deleted.
+func TestReplayDirectoryDeleteUsesConditionalRemoteDelete(t *testing.T) {
+	const storageType = "stub_replay_remote_cond"
+	stub := &stubConditionalRemoteClient{conditionalResult: true}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "condstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "condstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if len(stub.conditionalCalls) != 1 || stub.conditionalCalls[0].Path != "/d/f.txt" {
+		t.Fatalf("expected one conditional delete of /d/f.txt, got %v", stub.conditionalCalls)
+	}
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("an unconditional delete must not run beside the conditional one, got %v", stub.deleteCalls)
+	}
+}
+
+// A conditional delete reporting the object changed keeps the remote object
+// but still sweeps the local metadata: the entry the peer held is gone either
+// way.
+func TestReplayDirectoryDeleteKeepsChangedRemoteObject(t *testing.T) {
+	const storageType = "stub_replay_remote_cond_keep"
+	stub := &stubConditionalRemoteClient{conditionalResult: false}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "condkeepstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "condkeepstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("swept child should be gone, got %v", err)
+	}
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("a changed remote object must be kept, got %v", stub.deleteCalls)
+	}
+}
+
 // A failed remote delete aborts the sweep so the replication stream retries
 // instead of orphaning the object no other event will ever name.
 func TestReplayDirectoryDeleteFailsOnRemoteDeleteError(t *testing.T) {

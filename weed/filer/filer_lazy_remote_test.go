@@ -281,6 +281,21 @@ func (c *stubRemoteClient) ListBuckets() ([]*remote_storage.Bucket, error) { ret
 func (c *stubRemoteClient) CreateBucket(string) error                      { return nil }
 func (c *stubRemoteClient) DeleteBucket(string) error                      { return nil }
 
+// stubConditionalRemoteClient adds the optional conditional-delete interface:
+// callers binding stat and delete into one preconditioned request never reach
+// StatFile or DeleteFile.
+type stubConditionalRemoteClient struct {
+	stubRemoteClient
+	conditionalResult bool
+	conditionalErr    error
+	conditionalCalls  []*remote_pb.RemoteStorageLocation
+}
+
+func (c *stubConditionalRemoteClient) DeleteFileIfUnchanged(loc *remote_pb.RemoteStorageLocation, _ *filer_pb.RemoteEntry) (bool, error) {
+	c.conditionalCalls = append(c.conditionalCalls, loc)
+	return c.conditionalResult, c.conditionalErr
+}
+
 // --- stub RemoteStorageClientMaker ---
 
 type stubClientMaker struct {

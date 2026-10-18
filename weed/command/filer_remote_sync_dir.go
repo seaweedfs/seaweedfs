@@ -242,20 +242,6 @@ func processDeleteEvent(
 		if err := releasePendingSource(filerSource, client, mountedDir, remoteStorageMountLocation, message.OldEntry); err != nil {
 			return err
 		}
-		// The object at the key may have been replaced since the delete: a
-		// rename copies another entry's content onto it, a rewrite uploads
-		// over it, and a copy can land before its entry is visible. Delete
-		// only an object the event's stamp still describes.
-		if live, statErr := client.StatFile(dest); statErr == nil {
-			if oldRemote := message.OldEntry.GetRemoteEntry(); oldRemote == nil ||
-				!describes(oldRemote, live) ||
-				oldRemote.RemoteETag != "" && live.RemoteETag == "" {
-				glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))
-				return nil
-			}
-		} else if !errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
-			return statErr
-		}
 		current, err := currentEntry(filerSource, resp.Directory, message.OldEntry.Name)
 		if err != nil {
 			return err
@@ -269,8 +255,12 @@ func processDeleteEvent(
 		glog.V(0).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
 		return client.RemoveDirectory(dest)
 	}
+	// The object at the key may have been replaced since the delete: a rename
+	// copies another entry's content onto it, a rewrite uploads over it, and a
+	// copy can land before its entry is visible. Delete only an object the
+	// event's stamp still describes.
 	glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
-	return deleteRemoteFile(client, dest)
+	return deleteRemoteFileIfUnchanged(client, dest, message.OldEntry.GetRemoteEntry())
 }
 
 // releasePendingSource deletes the source a pending-rename marker on entry
@@ -293,19 +283,8 @@ func releasePendingSource(filerSource filer_pb.FilerClient, client remote_storag
 		glog.V(0).Infof("keep %s: a remote-only entry holds the pending rename's source", remote_storage.FormatLocation(srcDest))
 		return nil
 	}
-	live, err := client.StatFile(srcDest)
-	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if stamp := entry.GetRemoteEntry(); !describes(stamp, live) || stamp.RemoteETag != "" && live.RemoteETag == "" {
-		glog.V(0).Infof("keep %s: the pending rename's source changed since", remote_storage.FormatLocation(srcDest))
-		return nil
-	}
 	glog.V(0).Infof("delete %s, the source of a pending rename", remote_storage.FormatLocation(srcDest))
-	return deleteRemoteFile(client, srcDest)
+	return deleteRemoteFileIfUnchanged(client, srcDest, entry.GetRemoteEntry())
 }
 
 // deleteRemoteFile deletes the object and treats an already-absent object as
@@ -315,6 +294,32 @@ func deleteRemoteFile(client remote_storage.RemoteStorageClient, dest *remote_pb
 		return err
 	}
 	return nil
+}
+
+// deleteRemoteFileIfUnchanged deletes the object only while it is still the
+// one stamp describes. Backends offering a conditional delete bind the check
+// and the delete into one preconditioned request; the rest fall back to a
+// guarded stat-then-delete.
+func deleteRemoteFileIfUnchanged(client remote_storage.RemoteStorageClient, dest *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) error {
+	if deleter, ok := client.(remote_storage.RemoteStorageConditionalDeleter); ok {
+		deleted, err := deleter.DeleteFileIfUnchanged(dest, stamp)
+		if err != nil {
+			return err
+		}
+		if !deleted {
+			glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))
+		}
+		return nil
+	}
+	live, err := client.StatFile(dest)
+	if err != nil && !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return err
+	}
+	if err == nil && !remote_storage.StillCurrent(stamp, live) {
+		glog.V(0).Infof("keep %s: the object changed since the delete", remote_storage.FormatLocation(dest))
+		return nil
+	}
+	return deleteRemoteFile(client, dest)
 }
 
 func processUpdateEvent(
@@ -492,7 +497,7 @@ func completeRemoteOnlyRename(filerClient filer_pb.FilerClient, client remote_st
 		sourceStamp = proto.Clone(current.RemoteEntry).(*filer_pb.RemoteEntry)
 	}
 	if existing, err := client.StatFile(dest); err == nil {
-		if describes(current.RemoteEntry, existing) {
+		if remote_storage.Describes(current.RemoteEntry, existing) {
 			glog.V(0).Infof("%s already holds the renamed content", remote_storage.FormatLocation(dest))
 			if len(current.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
 				// reads still go to the source until the stamp clears the marker
@@ -550,26 +555,10 @@ func deleteRenameSource(filerClient filer_pb.FilerClient, client remote_storage.
 	if current != nil && len(current.Extended[filer.ExtRemoteRenameSourceKey]) > 0 {
 		return fmt.Errorf("%s still reads %s", util.NewFullPath(dir, name), remote_storage.FormatLocation(source.loc))
 	}
-	live, err := client.StatFile(source.loc)
-	if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
-		return nil
-	}
-	if err != nil {
+	if err := deleteRemoteFileIfUnchanged(client, source.loc, stamp); err != nil {
 		return err
 	}
-	if !describes(stamp, live) || stamp.GetRemoteETag() != "" && live.RemoteETag == "" {
-		glog.V(0).Infof("keep %s: it is no longer the renamed content", remote_storage.FormatLocation(source.loc))
-		return nil
-	}
-	return deleteRemoteFile(client, source.loc)
-}
-
-// describes reports whether the object a stat returned is the one the entry's
-// stamp describes: same size, and the same ETag when both sides carry one (a
-// copy written as one stream can legitimately carry a different ETag from a
-// multipart original).
-func describes(stamp, object *filer_pb.RemoteEntry) bool {
-	return remote_storage.Describes(stamp, object)
+	return nil
 }
 
 // openRemoteObject streams the object when the client can, and reads it whole
