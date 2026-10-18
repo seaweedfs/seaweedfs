@@ -26,6 +26,15 @@ func ParseLocationName(remote string) (locationName string) {
 	return
 }
 
+// Describes reports whether a stored remote entry's stamp still describes the
+// live remote object: same size, and equal ETags when both are known.
+func Describes(stamp, object *filer_pb.RemoteEntry) bool {
+	if stamp == nil || object == nil || stamp.RemoteSize != object.RemoteSize {
+		return false
+	}
+	return stamp.RemoteETag == "" || object.RemoteETag == "" || stamp.RemoteETag == object.RemoteETag
+}
+
 func parseBucketLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
 	loc = &remote_pb.RemoteStorageLocation{}
 	remote = strings.TrimSuffix(remote, slash)

@@ -569,10 +569,7 @@ func deleteRenameSource(filerClient filer_pb.FilerClient, client remote_storage.
 // copy written as one stream can legitimately carry a different ETag from a
 // multipart original).
 func describes(stamp, object *filer_pb.RemoteEntry) bool {
-	if stamp == nil || object == nil || stamp.RemoteSize != object.RemoteSize {
-		return false
-	}
-	return stamp.RemoteETag == "" || object.RemoteETag == "" || stamp.RemoteETag == object.RemoteETag
+	return remote_storage.Describes(stamp, object)
 }
 
 // openRemoteObject streams the object when the client can, and reads it whole

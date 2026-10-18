@@ -202,13 +202,31 @@ func (f *Filer) retractLazyRemoteEntry(ctx context.Context, entry *Entry) {
 	}
 }
 
-func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, error) {
-	if entry == nil || f.RemoteStorage == nil {
-		return false, nil
-	}
-
+// remoteStorageObject resolves the client and object location entry maps to
+// on its mounted remote storage; a nil client means the path is not mounted.
+func (f *Filer) remoteStorageObject(ctx context.Context, entry *Entry) (remote_storage.RemoteStorageClient, *remote_pb.RemoteStorageLocation, error) {
 	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(entry.FullPath)
 	if remoteLoc == nil {
+		return nil, nil, nil
+	}
+
+	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
+	if !found {
+		return nil, nil, fmt.Errorf("resolve remote storage client for %s: not found", entry.FullPath)
+	}
+	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
+	if clientErr != nil {
+		return nil, nil, fmt.Errorf("resolve remote storage client for %s: %w", entry.FullPath, clientErr)
+	}
+	if client == nil {
+		return nil, nil, fmt.Errorf("resolve remote storage client for %s: initialization failed", entry.FullPath)
+	}
+
+	return client, MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, entry.FullPath), nil
+}
+
+func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, error) {
+	if entry == nil || f.RemoteStorage == nil {
 		return false, nil
 	}
 
@@ -216,19 +234,10 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		return false, nil
 	}
 
-	remoteConf, found := f.RemoteStorage.GetRemoteStorageConf(remoteLoc.Name)
-	if !found {
-		return false, fmt.Errorf("resolve remote storage client for %s: not found", entry.FullPath)
+	client, objectLoc, err := f.remoteStorageObject(ctx, entry)
+	if err != nil || client == nil {
+		return false, err
 	}
-	client, clientErr := f.buildRemoteStorageClient(ctx, remoteConf)
-	if clientErr != nil {
-		return false, fmt.Errorf("resolve remote storage client for %s: %w", entry.FullPath, clientErr)
-	}
-	if client == nil {
-		return false, fmt.Errorf("resolve remote storage client for %s: initialization failed", entry.FullPath)
-	}
-
-	objectLoc := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, entry.FullPath)
 
 	if entry.IsDirectory() {
 		if err := client.RemoveDirectory(objectLoc); err != nil {
@@ -250,6 +259,37 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 
 	glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: deleted %s from remote", entry.FullPath)
 	return true, nil
+}
+
+// maybeDeleteFromRemoteIfUnchanged deletes the remote object only when it
+// still matches the entry's stamp — the same guard the write-back daemon's
+// processDeleteEvent applies, needed wherever a delete can land long after
+// another writer replaced the object.
+func (f *Filer) maybeDeleteFromRemoteIfUnchanged(ctx context.Context, entry *Entry) error {
+	if entry == nil || f.RemoteStorage == nil || entry.Remote == nil {
+		return nil
+	}
+	client, objectLoc, err := f.remoteStorageObject(ctx, entry)
+	if err != nil || client == nil {
+		return err
+	}
+	live, statErr := client.StatFile(objectLoc)
+	if statErr != nil {
+		if errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
+			return nil
+		}
+		return fmt.Errorf("stat remote file %s: %w", entry.FullPath, statErr)
+	}
+	if live.RemoteMtime > entry.Remote.RemoteMtime ||
+		!remote_storage.Describes(entry.Remote, live) ||
+		entry.Remote.RemoteETag != "" && live.RemoteETag == "" {
+		glog.V(0).InfofCtx(ctx, "keep %s: the remote object changed since the delete", entry.FullPath)
+		return nil
+	}
+	if err := client.DeleteFile(objectLoc); err != nil && !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		return fmt.Errorf("delete remote file %s: %w", entry.FullPath, err)
+	}
+	return nil
 }
 
 // DeleteFromRemote deletes the object, or for a directory every object, the

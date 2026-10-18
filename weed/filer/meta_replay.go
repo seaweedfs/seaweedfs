@@ -85,7 +85,7 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 			keepDir := false
 			if message.OldEntry.IsDirectory {
 				var err error
-				keepDir, err = f.deleteReplayedFolderChildren(ctx, oldPath, message.DeleteChunks, resp.TsNs)
+				keepDir, err = f.deleteReplayedFolderChildren(ctx, oldPath, message, resp.TsNs)
 				if err != nil {
 					return err
 				}
@@ -125,9 +125,9 @@ func (f *Filer) Replay(resp *filer_pb.SubscribeMetadataResponse) error {
 // the chunks of removed files for deletion. Children this filer committed
 // after the event stay — a newer local write wins over a delayed delete —
 // along with the directories that hold them.
-func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64) (bool, error) {
+func (f *Filer) deleteReplayedFolderChildren(ctx context.Context, dir util.FullPath, message *filer_pb.EventNotification, tsNs int64) (bool, error) {
 	sweep := &folderSweep{chunksByPath: make(map[util.FullPath][]*filer_pb.FileChunk)}
-	kept, err := f.sweepReplayedFolder(ctx, dir, deleteChunks, tsNs, sweep)
+	kept, err := f.sweepReplayedFolder(ctx, dir, message, tsNs, sweep)
 	// Flush what was collected even on error: the entries already deleted
 	// cannot be listed again on retry, so their chunks must be queued now.
 	sweep.flush(ctx, f)
@@ -164,7 +164,10 @@ func (s *folderSweep) flush(ctx context.Context, f *Filer) {
 // newer than the event, working subtree-first so nested entries go too.
 // It reports whether a newer descendant keeps dir alive — the caller then
 // keeps the dir entry itself.
-func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, deleteChunks bool, tsNs int64, sweep *folderSweep) (kept bool, err error) {
+func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, message *filer_pb.EventNotification, tsNs int64, sweep *folderSweep) (kept bool, err error) {
+	deleteChunks := message.DeleteChunks
+	keepRemote := IsMetadataOnlyDelete(message.OldEntry)
+	deleteRemote := !keepRemote && !message.GetIsFromOtherCluster()
 	lastFileName := ""
 	for {
 		entries, _, lerr := f.ListDirectoryEntries(ctx, dir, lastFileName, false, PaginationSize, "", "", "")
@@ -182,7 +185,7 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 				childKept = localTsNs > tsNs
 			}
 			if !childKept && sub.IsDirectory() {
-				childKept, err = f.sweepReplayedFolder(ctx, sub.FullPath, deleteChunks, tsNs, sweep)
+				childKept, err = f.sweepReplayedFolder(ctx, sub.FullPath, message, tsNs, sweep)
 				if err != nil {
 					return false, err
 				}
@@ -190,6 +193,16 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, dele
 			if childKept {
 				kept = true
 				continue
+			}
+			if !keepRemote && f.RemoteStorage != nil && f.remoteTombstones != nil {
+				if _, remoteLoc := f.RemoteStorage.FindMountDirectory(sub.FullPath); remoteLoc != nil {
+					f.remoteTombstones.addFromEvent(string(sub.FullPath), sub.IsDirectory(), tsNs)
+				}
+			}
+			if deleteRemote && !sub.IsDirectory() {
+				if remoteErr := f.maybeDeleteFromRemoteIfUnchanged(ctx, sub); remoteErr != nil {
+					return false, fmt.Errorf("remote delete %s: %w", sub.FullPath, remoteErr)
+				}
 			}
 			if derr := f.Store.DeleteEntry(ctx, sub.FullPath); derr != nil {
 				return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)

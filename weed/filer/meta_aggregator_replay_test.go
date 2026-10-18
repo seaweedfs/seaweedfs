@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -982,5 +983,230 @@ func TestReplayDirectoryDeleteKeepsSharedHardLinkChunks(t *testing.T) {
 	}
 	if got := f.pendingDeletionCount(); got != 0 {
 		t.Fatalf("pending deletions = %d, want 0 while a sibling link owns the chunks", got)
+	}
+}
+
+// A replayed directory delete must mirror the origin's remote cleanup: entries
+// the lagging peer alone still holds lose their remote objects too, and record
+// tombstones so lazy remote fetches cannot resurrect them.
+func TestReplayDirectoryDeleteSweepsRemoteObjects(t *testing.T) {
+	const storageType = "stub_replay_remote"
+	stub := &stubRemoteClient{
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "replaystore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "replaystore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	f.onMetadataChangeEvent(event)
+
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("swept child should be gone, got %v", err)
+	}
+	if len(stub.deleteCalls) != 1 || stub.deleteCalls[0].Path != "/d/f.txt" {
+		t.Fatalf("expected one remote delete of /d/f.txt, got %v", stub.deleteCalls)
+	}
+	if got := f.remoteTombstones.dirs["/buckets/mybucket/d"]; got != event.TsNs {
+		t.Fatalf("dir tombstone stamped %d, want the event ts %d", got, event.TsNs)
+	}
+}
+
+// A metadata-only delete keeps remote objects: the event's marker means the
+// remote tree stays authoritative, so the sweep must not touch it.
+func TestReplayDirectoryDeleteKeepRemoteObjects(t *testing.T) {
+	const storageType = "stub_replay_remote_keep"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "keepstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "keepstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name:        "d",
+				IsDirectory: true,
+				Extended:    map[string][]byte{ExtKeepRemoteObjectKey: []byte("true")},
+			},
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	f.onMetadataChangeEvent(event)
+
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("metadata-only delete must not touch remote objects, got %v", stub.deleteCalls)
+	}
+	if len(f.remoteTombstones.files)+len(f.remoteTombstones.dirs) != 0 {
+		t.Fatalf("metadata-only delete must not record tombstones, got %v", f.remoteTombstones.dirs)
+	}
+}
+
+// A delayed sweep must not erase an object another writer replaced since the
+// entry's stamp was recorded — the same guard the write-back daemon applies.
+func TestReplayDirectoryDeleteKeepsReplacedRemoteObject(t *testing.T) {
+	const storageType = "stub_replay_remote_replaced"
+	stub := &stubRemoteClient{
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000099, RemoteSize: 10},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "replacestore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "replacestore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("a replaced remote object must be kept, got %v", stub.deleteCalls)
+	}
+}
+
+// A failed remote delete aborts the sweep so the replication stream retries
+// instead of orphaning the object no other event will ever name.
+func TestReplayDirectoryDeleteFailsOnRemoteDeleteError(t *testing.T) {
+	const storageType = "stub_replay_remote_err"
+	stub := &stubRemoteClient{
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+		deleteErr:  errors.New("remote unavailable"),
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "errstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "errstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err == nil {
+		t.Fatal("a failed remote delete must fail the replay for retry")
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); err != nil {
+		t.Fatalf("the child must survive for the retry, got %v", err)
 	}
 }
