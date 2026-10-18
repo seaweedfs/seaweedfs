@@ -1039,18 +1039,29 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			}
 			if marker != "" && (entry.Name == marker || markerName == marker) {
 				// The marker excludes only the key it names. A directory under
-				// that name sorts its children after the marker, so in a
-				// recursive listing they must still be listed — the directory
-				// branch below walks the subtree from the start. Under a
-				// delimiter the same marker resumes a common prefix already
-				// emitted, so the entry keeps being skipped. A .versions dir
-				// named by the base key still folds into the marker key and
-				// skips, as does the parent the descent already walked.
+				// that name sorts its children after the marker, so a recursive
+				// listing still walks the subtree — from the start, and
+				// without emitting the directory's own key (a directory key
+				// object would repeat the excluded marker). Under a delimiter
+				// the same marker resumes a common prefix already emitted, so
+				// the entry keeps being skipped. A .versions dir named by the
+				// base key folds into the marker key and skips, as does the
+				// parent the descent already walked.
 				walkableMarkerDir := delimiter == "" && entry.IsDirectory && entry.Name == marker &&
 					!markerParentWalked && !strings.HasSuffix(entry.Name, s3_constants.VersionsFolder)
 				if !walkableMarkerDir {
 					continue
 				}
+				subNextMarker, subErr := s3a.doListFilerEntries(ctx, client, listDirectoryRequest{dir: dir + "/" + entry.Name, delimiter: delimiter, bucket: bucket}, cursor, eachEntryFn)
+				if subErr != nil {
+					err = fmt.Errorf("doListFilerEntries: %w", subErr)
+					return
+				}
+				nextMarker = entry.Name + "/" + subNextMarker
+				if cursor.isTruncated {
+					return
+				}
+				continue
 			}
 
 			// The .versions sibling of the key just emitted still decides that key's
