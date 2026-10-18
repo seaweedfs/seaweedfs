@@ -366,6 +366,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						if remoteEntry == nil {
 							remoteEntry = message.OldEntry.RemoteEntry
 						}
+						if live, statErr := client.StatFile(oldDest); statErr == nil {
+							remoteEntry = live
+						}
 						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 					} else {
 						newDest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), newRemoteStorageMountLocation)

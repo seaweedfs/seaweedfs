@@ -373,6 +373,11 @@ func processUpdateEvent(
 			if err := client.UpdateFileMetadata(dest, message.OldEntry, remoteWriteEntry(message.NewEntry, storageClass)); err != nil {
 				return err
 			}
+			// a metadata write can rewrite the object (S3 copies it in place
+			// for a Content-Encoding change), so restamp from the live object
+			if live, statErr := client.StatFile(dest); statErr == nil {
+				remoteEntry = live
+			}
 			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		glog.V(0).Infof("never replicated, uploading %s", remote_storage.FormatLocation(dest))
