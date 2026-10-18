@@ -60,6 +60,17 @@ func TestComputeParentUserEncoding(t *testing.T) {
 	}
 }
 
+func TestIsParentUserID(t *testing.T) {
+	if !IsParentUserID(ComputeParentUser("alice", "https://idp.example/")) {
+		t.Fatal("a ComputeParentUser result must be recognized")
+	}
+	for _, s := range []string{"", "alice", "admin", "arn:aws:iam::123:user/admin", "dGVzdA=="} {
+		if IsParentUserID(s) {
+			t.Fatalf("%q is not a scoped parent user id", s)
+		}
+	}
+}
+
 func TestSessionClaimsRoundTripParentUser(t *testing.T) {
 	parent := ComputeParentUser("alice", "https://idp.example/")
 	claims := NewSTSSessionClaims("sid-1", "issuer", time.Now().Add(time.Hour)).
