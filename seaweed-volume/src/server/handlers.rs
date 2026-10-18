@@ -5285,6 +5285,8 @@ mod tests {
             rack: String::new(),
             file_size_limit_bytes: 0,
             maintenance_byte_per_second: 0,
+            vacuum_commit_slots: None,
+            vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
             is_heartbeating: AtomicBool::new(false),
             has_master: false,
             pre_stop_seconds: 0,

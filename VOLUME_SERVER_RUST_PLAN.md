@@ -169,6 +169,7 @@ seaweed-volume/
    - `--memprofile`
    - `--compactionMBps` (default 0)
    - `--maintenanceMBps` (default 0)
+   - `--compactionMaxParallelCommits` (default 0)
    - `--fileSizeLimitMB` (default 256)
    - `--concurrentUploadLimitMB` (default 0)
    - `--concurrentDownloadLimitMB` (default 0)

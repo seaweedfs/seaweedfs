@@ -340,6 +340,14 @@ async fn run(
         rack: config.rack.clone(),
         file_size_limit_bytes: config.file_size_limit_bytes,
         maintenance_byte_per_second: config.maintenance_byte_per_second,
+        vacuum_commit_slots: if config.max_parallel_vacuum_commits > 0 {
+            Some(tokio::sync::Semaphore::new(
+                config.max_parallel_vacuum_commits,
+            ))
+        } else {
+            None
+        },
+        vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
         // Go sets isHeartbeating: true unconditionally at startup
         is_heartbeating: std::sync::atomic::AtomicBool::new(true),
         has_master: !config.masters.is_empty(),

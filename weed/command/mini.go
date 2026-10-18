@@ -407,7 +407,7 @@ var (
 	miniMetricsHttpIp               = cmdMini.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
-	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", false, "allow recursive deleting all entries along with bucket")
 	miniS3AutoCreateBucket          = cmdMini.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	miniBucket                      = cmdMini.Flag.String("bucket", "", "comma-separated S3 bucket names to create on startup if they do not already exist; leave empty to skip. Falls back to S3_BUCKET env var.")
 	miniTableBucket                 = cmdMini.Flag.String("tableBucket", "", "comma-separated S3 Tables buckets to create on startup if they do not already exist, each name[:FORMAT] with FORMAT one of ICEBERG (default) or LANCE, e.g. warehouse,vectors:LANCE; leave empty to skip. Falls back to S3_TABLE_BUCKET env var.")
@@ -501,6 +501,7 @@ func initMiniVolumeFlags() {
 	miniOptions.v.readMode = cmdMini.Flag.String("volume.readMode", "proxy", "[local|proxy|redirect] how to deal with non-local volume: 'not found|read in remote node|redirect volume location'.")
 	miniOptions.v.compactionMBPerSecond = cmdMini.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
 	miniOptions.v.maintenanceMBPerSecond = cmdMini.Flag.Int("volume.maintenanceMBps", 0, "limit maintenance IO rate in MB/s")
+	miniOptions.v.maxParallelVacuumCommits = cmdMini.Flag.Int("volume.compactionMaxParallelCommits", 0, "limit how many vacuum commits run at once on this server; queued commits hold no volume lock. 0 means unlimited")
 	miniOptions.v.fileSizeLimitMB = cmdMini.Flag.Int("volume.fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	miniOptions.v.ldbTimeout = cmdMini.Flag.Int64("volume.index.leveldbTimeout", 0, "alive time for leveldb")
 	miniOptions.v.concurrentUploadLimitMB = cmdMini.Flag.Int("volume.concurrentUploadLimitMB", 0, "limit total concurrent upload size")
@@ -1406,7 +1407,6 @@ func runMini(cmd *Command, args []string) bool {
 
 	miniFilerOptions.dataCenter = miniDataCenter
 	miniFilerOptions.rack = miniRack
-	miniS3Options.dataCenter = miniDataCenter
 	miniFilerOptions.disableHttp = miniDisableHttp
 	miniMasterOptions.disableHttp = miniDisableHttp
 
@@ -1627,13 +1627,30 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 			if miniProgressBoard != nil {
 				miniProgressBoard.starting("Iceberg")
 			}
-			waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+			// Probe only when the catalog listener actually bound; otherwise the
+			// port may answer as an unrelated process and get advertised as the
+			// catalog.
+			if miniS3Options.icebergBound.Load() {
+				waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+			} else {
+				if miniProgressBoard != nil {
+					miniProgressBoard.failed("Iceberg")
+				}
+				glog.Warningf("Iceberg catalog on port %d did not start; see S3 startup log", *miniS3Options.portIceberg)
+			}
 		}
 		if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 {
 			if miniProgressBoard != nil {
 				miniProgressBoard.starting("Lance")
 			}
-			waitForServiceReady("Lance", *miniS3Options.portLance, bindIp)
+			if miniS3Options.lanceBound.Load() {
+				waitForServiceReady("Lance", *miniS3Options.portLance, bindIp)
+			} else {
+				if miniProgressBoard != nil {
+					miniProgressBoard.failed("Lance")
+				}
+				glog.Warningf("Lance namespace server on port %d did not start; see S3 startup log", *miniS3Options.portLance)
+			}
 		}
 	}
 	if *miniEnableWebDAV {
@@ -1848,10 +1865,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		// the admin UI would otherwise print an endpoint nothing is listening on.
 		var icebergPort, lancePort int
 		if miniEnableS3 != nil && *miniEnableS3 {
-			if miniS3Options.portIceberg != nil {
+			if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 && miniS3Options.icebergBound.Load() {
 				icebergPort = *miniS3Options.portIceberg
 			}
-			if miniS3Options.portLance != nil {
+			if miniS3Options.portLance != nil && *miniS3Options.portLance > 0 && miniS3Options.lanceBound.Load() {
 				lancePort = *miniS3Options.portLance
 			}
 		}

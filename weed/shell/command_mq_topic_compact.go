@@ -2,6 +2,7 @@ package shell
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"time"
 
@@ -53,6 +54,13 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 
 	if err := mqCommand.Parse(args); err != nil {
 		return err
+	}
+
+	// The AssignVolumeRequest collection falls back to the path rule and the
+	// filer default when empty, so the empty-named collection cannot be
+	// requested explicitly.
+	if *collection == CollectionDefault {
+		return fmt.Errorf("%s is not a usable collection name here; omit -collection to inherit the configured collection", CollectionDefault)
 	}
 
 	storagePreference := &operation.StoragePreference{

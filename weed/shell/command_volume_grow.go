@@ -39,7 +39,7 @@ func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	growCount := volumeVacuumCommand.Uint("count", 2, "")
-	collection := volumeVacuumCommand.String("collection", "", "grow this collection")
+	collection := volumeVacuumCommand.String("collection", "", "grow this collection; \""+CollectionDefault+"\" for the collection with no name")
 	dataCenter := volumeVacuumCommand.String("dataCenter", "", "grow volumes only from the specified data center")
 	rack := volumeVacuumCommand.String("rack", "", "grow volumes only from the specified rack")
 	dataNode := volumeVacuumCommand.String("dataNode", "", "grow volumes only from the specified data node")
@@ -51,6 +51,7 @@ func (c *commandGrow) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	if *collection == "" {
 		return fmt.Errorf("collection option is required")
 	}
+	*collection = resolveCollectionName(*collection)
 	t, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err

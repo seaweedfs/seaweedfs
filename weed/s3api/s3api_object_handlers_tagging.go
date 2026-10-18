@@ -74,7 +74,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
-		tags, err := s3a.getTags(dir, name)
+		entry, err = s3a.getEntry(dir, name)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.Errorf("GetObjectTaggingHandler %s: %v", r.URL, err)
@@ -85,8 +85,10 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 			}
 			return
 		}
+	}
 
-		writeSuccessResponseXML(w, r, FromTags(tags))
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_GET_OBJECT_TAGGING, entry.Extended, "GetObjectTaggingHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -183,6 +185,11 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, s3_constants.S3_ACTION_PUT_OBJECT_TAGGING, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+
 		if err = s3a.setTags(dir, name, tags); err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.Errorf("PutObjectTaggingHandler setTags %s: %v", r.URL, err)
@@ -196,6 +203,11 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 		w.WriteHeader(http.StatusOK)
 		s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
+		return
+	}
+
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_PUT_OBJECT_TAGGING, entry.Extended, "PutObjectTaggingHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -301,6 +313,11 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+
 		err := s3a.rmTags(dir, name)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
@@ -315,6 +332,11 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 		w.WriteHeader(http.StatusNoContent)
 		s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
+		return
+	}
+
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING, entry.Extended, "DeleteObjectTaggingHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 

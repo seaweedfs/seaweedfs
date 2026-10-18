@@ -27,11 +27,10 @@ type LifecycleClient interface {
 	LifecycleDelete(ctx context.Context, req *s3_lifecycle_pb.LifecycleDeleteRequest) (*s3_lifecycle_pb.LifecycleDeleteResponse, error)
 }
 
-// WalkerFunc handles the per-shard bucket walk for a given engine view.
-// Phase 4b uses it on the recovery branch (rule-content edit / partition
-// flip) so already-due objects across the rewritten rule set get caught
-// before the cursor rewinds.
-type WalkerFunc func(ctx context.Context, view *engine.Snapshot, shardID int) error
+// WalkerFunc runs one bucket walk covering every shard in shards under
+// the given engine view, so a whole pass costs at most a couple of
+// bucket listings rather than one listing per shard.
+type WalkerFunc func(ctx context.Context, view *engine.Snapshot, shards []int) error
 
 type Config struct {
 	Shards      []int
@@ -58,9 +57,9 @@ type Config struct {
 	// Walker is invoked on the recovery branch (rule-content edit or
 	// partition flip) before the cursor rewind. It receives the
 	// engine.RecoveryView so only the rules that need bulk re-evaluation
-	// are walked, and the per-shard ID so the implementation can filter
-	// entries. nil disables walker invocation entirely — the cursor
-	// still rewinds, matching Phase 4a behavior.
+	// are walked, and the shard set the walk must cover. nil disables
+	// walker invocation entirely — the cursor still rewinds, matching
+	// Phase 4a behavior.
 	Walker WalkerFunc
 
 	// WalkerInterval throttles the steady-state and empty-replay walker
@@ -132,6 +131,21 @@ func Run(ctx context.Context, cfg Config) error {
 	// compatibility but otherwise inert.
 	_ = cfg.Workers
 
+	retentionWindow := cfg.RetentionWindow
+	if retentionWindow <= 0 {
+		retentionWindow = maxTTL
+	}
+
+	// One cursor scan feeds both the subscription floor and the walk
+	// plan. runShard re-loads its own cursor anyway, so a cursor
+	// rewritten between the two reads can't confuse it.
+	var cursors map[int]cursorLoad
+	if rsh != [32]byte{} || cfg.Walker != nil {
+		cursors = loadShardCursors(ctx, cfg)
+	}
+	promoted := engine.PromotedHash(snap, retentionWindow)
+	walks := planWalks(ctx, cfg, snap, runNow, cursors, rsh, promoted, retentionWindow)
+
 	// rsh==[32]byte{} means no replay-eligible rules — runShard's
 	// walker-only branch fires and saves; no subscription needed.
 	var (
@@ -151,7 +165,7 @@ func Run(ctx context.Context, cfg Config) error {
 		// events on shards whose cursor is older than the floor —
 		// exactly the case where a rule's TTL equals maxTTL and an
 		// older event still has DueTime <= runNow.
-		globalStartTsNs = computeGlobalStartTsNs(ctx, cfg, runNow, maxTTL)
+		globalStartTsNs = computeGlobalStartTsNs(cursors, cfg, runNow, maxTTL)
 		shardEvents, readerDone, fanoutDone, cancelRead = startSharedSubscription(ctx, cfg, runNow, globalStartTsNs, &stoppedOnPurpose)
 		defer cancelRead()
 	}
@@ -167,7 +181,7 @@ func Run(ctx context.Context, cfg Config) error {
 			if shardEvents != nil {
 				ch = shardEvents[sh]
 			}
-			if err := runShard(ctx, cfg, snap, runNow, sh, ch); err != nil {
+			if err := runShard(ctx, cfg, snap, runNow, sh, ch, walks); err != nil {
 				errCh <- err
 			}
 			// A halted dispatch returns runShard mid-stream. Keep
@@ -181,6 +195,18 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	wg.Wait()
 	close(errCh)
+
+	// Join every planned walk. A shard that exits early (cursor load
+	// failure, ctx cancel) never awaits pw.done, but planWalks already
+	// started the goroutine — Run must not return while it still lists
+	// or dispatches against connections the caller is about to close.
+	seenWalks := map[*pendingWalk]bool{}
+	for _, pw := range walks {
+		if !seenWalks[pw] {
+			seenWalks[pw] = true
+			<-pw.done
+		}
+	}
 
 	// Tear down the shared subscription. cancelRead unblocks both the
 	// reader's gRPC stream and the fan-out's send loop; we wait on both
@@ -272,20 +298,20 @@ func summarizeShardCursorLag(ctx context.Context, cfg Config, runNow time.Time) 
 	return lagStr + " " + ageStr
 }
 
-// computeGlobalStartTsNs scans every shard's persisted cursor and
-// returns the minimum startTsNs the shared subscription must cover.
-// For each shard the start point is the persisted cursor (steady state)
-// or runNow - maxTTL (cold start, when no cursor exists). Load errors
-// downgrade to the cold-start floor for that shard — failing closed
-// would be worse than re-scanning maxTTL of events.
-func computeGlobalStartTsNs(ctx context.Context, cfg Config, runNow time.Time, maxTTL time.Duration) int64 {
+// computeGlobalStartTsNs returns the minimum startTsNs the shared
+// subscription must cover. For each shard the start point is the
+// persisted cursor (steady state) or runNow - maxTTL (cold start, when
+// no cursor exists). Load errors downgrade to the cold-start floor for
+// that shard — failing closed would be worse than re-scanning maxTTL
+// of events.
+func computeGlobalStartTsNs(cursors map[int]cursorLoad, cfg Config, runNow time.Time, maxTTL time.Duration) int64 {
 	floor := runNow.Add(-maxTTL).UnixNano()
 	min := int64(0)
 	first := true
 	for _, sh := range cfg.Shards {
 		var start int64
-		if persisted, found, err := cfg.Persister.Load(ctx, sh); err == nil && found {
-			start = persisted.TsNs
+		if cl := cursors[sh]; cl.err == nil && cl.found {
+			start = cl.cursor.TsNs
 		} else {
 			start = floor
 		}
@@ -443,6 +469,12 @@ func validate(cfg Config) error {
 	if cfg.SubscriptionReceiveTimeout < 0 {
 		return fmt.Errorf("daily_run: negative SubscriptionReceiveTimeout %v (0 = default %v)", cfg.SubscriptionReceiveTimeout, defaultSubscriptionReceiveTimeout)
 	}
+	// A declared retention window promotes long-TTL rules to the walk
+	// view; without a walker they lose their only dispatch path while
+	// the drain cursor still advances past their events.
+	if cfg.RetentionWindow > 0 && cfg.Walker == nil {
+		return errors.New("daily_run: RetentionWindow requires Walker (promoted rules would be silently skipped)")
+	}
 	for _, sh := range cfg.Shards {
 		if sh < 0 || sh >= s3lifecycle.ShardCount {
 			return fmt.Errorf("daily_run: shard %d out of [0, %d)", sh, s3lifecycle.ShardCount)
@@ -452,7 +484,9 @@ func validate(cfg Config) error {
 }
 
 // runShard executes one daily-replay pass; see DESIGN.md for algorithm.
-// Three walker invocation paths under cfg.Walker (when set):
+// Three walker invocation paths under cfg.Walker (when set); each waits
+// on the pass's shared walk via walkForShard rather than listing the
+// bucket itself:
 //   - cold start / recovery: RecoveryView. Unconditional — these are
 //     bounded events (first run for a shard, or rule-content edit / partition
 //     flip) and the walker must run once when the trigger condition is met.
@@ -462,7 +496,7 @@ func validate(cfg Config) error {
 //   - empty replay: same throttling — buckets with only walker-bound rules
 //     use the walk view, and a too-fast Run() driver would otherwise burn
 //     the filer with a full subtree scan per tick.
-func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int, events <-chan *reader.Event) error {
+func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow time.Time, shardID int, events <-chan *reader.Event, walks map[int]*pendingWalk) error {
 	shardLabel := strconv.Itoa(shardID)
 	shardStart := time.Now()
 	defer func() {
@@ -522,7 +556,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		// the bug TestLifecycleExpirationDateInThePast caught.
 		if cfg.Walker != nil && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
 			if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
-				if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
+				if werr := walkForShard(ctx, cfg.Walker, walks, shardID, false, walkView); werr != nil {
 					return fmt.Errorf("shard=%d: steady walk (empty replay): %w", shardID, werr)
 				}
 				lastWalkedNs = runNow.UnixNano()
@@ -551,7 +585,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	mustWalkColdStart := !found
 	if mustWalkRecovery || mustWalkColdStart {
 		if cfg.Walker != nil {
-			if werr := cfg.Walker(ctx, engine.RecoveryView(snap), shardID); werr != nil {
+			if werr := walkForShard(ctx, cfg.Walker, walks, shardID, true, engine.RecoveryView(snap)); werr != nil {
 				return fmt.Errorf("shard=%d: recovery walk: %w", shardID, werr)
 			}
 			lastWalkedNs = runNow.UnixNano()
@@ -586,7 +620,7 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 	// where this is a normal pass that didn't trigger cold-start.
 	if cfg.Walker != nil && !walkedThisPass && walkerDue(lastWalkedNs, runNow, cfg.WalkerInterval) {
 		if _, walkView := snap.RulesForShard(shardID, retentionWindow); walkView != nil && len(walkView.AllActions()) > 0 {
-			if werr := cfg.Walker(ctx, walkView, shardID); werr != nil {
+			if werr := walkForShard(ctx, cfg.Walker, walks, shardID, false, walkView); werr != nil {
 				return fmt.Errorf("shard=%d: steady walk: %w", shardID, werr)
 			}
 			lastWalkedNs = runNow.UnixNano()
@@ -607,7 +641,10 @@ func runShard(ctx context.Context, cfg Config, snap *engine.Snapshot, runNow tim
 		startTsNs = runNow.Add(-maxTTL).UnixNano()
 	}
 
-	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
+	// Walk-bound rules are never due inside the retention window; keep them
+	// out of the drain so their matches don't pin the cursor.
+	replayView := snap.ReplayView(retentionWindow)
+	lastOK, _, drainErr := drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
 	// Fresh ctx: a wall-clock cap on the pass (the shell driver's
 	// -runtime) cancels the drain's, and saving with it would drop the
 	// cursor and re-replay from the same floor next pass.

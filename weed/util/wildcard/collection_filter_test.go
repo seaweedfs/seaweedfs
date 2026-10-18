@@ -1,6 +1,9 @@
 package wildcard
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestCompileCollectionMatcher(t *testing.T) {
 	cases := []struct {
@@ -69,6 +72,39 @@ func TestCompileCollectionMatcherInvalidEntry(t *testing.T) {
 	for _, filter := range []string{"photos,[invalid", ",", ", ,"} {
 		if _, err := CompileCollectionMatcher(filter); err == nil {
 			t.Errorf("filter %q should not compile", filter)
+		}
+	}
+}
+
+func TestExpandCollectionFilter(t *testing.T) {
+	listed := []string{"photos", "photos-backup", "videos"}
+	cases := []struct {
+		filter string
+		want   []string
+	}{
+		// Match-all forms return the candidates.
+		{"", listed},
+		{"*", listed},
+		{string(CollectionFilterEach), listed},
+		// A literal name passes through even when unlisted — the listing only
+		// covers collections with registered volumes.
+		{"photos", []string{"photos"}},
+		{"archived", []string{"archived"}},
+		{CollectionDefault, []string{""}},
+		{"photos," + CollectionDefault, []string{"photos", ""}},
+		// Patterns resolve only against listed names; a literal in the same
+		// list still passes through.
+		{"photos*", []string{"photos", "photos-backup"}},
+		{"photos*,archived", []string{"archived", "photos", "photos-backup"}},
+		{"^videos$", []string{"videos"}},
+	}
+	for _, c := range cases {
+		got, err := ExpandCollectionFilter(c.filter, listed)
+		if err != nil {
+			t.Fatalf("ExpandCollectionFilter(%q): %v", c.filter, err)
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("ExpandCollectionFilter(%q) = %v, want %v", c.filter, got, c.want)
 		}
 	}
 }

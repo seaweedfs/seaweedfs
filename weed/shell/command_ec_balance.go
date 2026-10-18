@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func init() {
@@ -42,7 +43,7 @@ func (c *commandEcBalance) HasTag(CommandTag) bool {
 
 func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
+	collection := balanceCommand.String("collection", string(wildcard.CollectionFilterEach), "comma-separated collection names, wildcards, or regex patterns, \""+CollectionDefault+"\" for the collection with no name, or \""+string(wildcard.CollectionFilterEach)+"\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	diskTypeStr := balanceCommand.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)")
@@ -71,14 +72,9 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
-	var collections []string
-	if *collection == "EACH_COLLECTION" {
-		collections, err = ListCollectionNames(commandEnv, false, true)
-		if err != nil {
-			return err
-		}
-	} else {
-		collections = append(collections, *collection)
+	collections, err := resolveEcCollections(commandEnv, *collection)
+	if err != nil {
+		return err
 	}
 	glog.V(1).Infof("balanceEcVolumes collections %+v\n", len(collections))
 

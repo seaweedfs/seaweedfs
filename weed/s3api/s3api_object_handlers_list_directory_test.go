@@ -3,10 +3,11 @@ package s3api
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestDirectoryListedAsCommonPrefix tests that regular directories (without MIME)
@@ -67,8 +68,8 @@ func TestDirectoryListedAsCommonPrefix(t *testing.T) {
 // TestEmptyDirectorySurfacedAsMarker reproduces the hadoop-aws / Spark case where a
 // real but empty directory (created via mount, mkdir or the filer API, so it has no
 // MIME) must be visible to S3 clients that detect directories by listing under the
-// "<dir>/" prefix. Such a directory is surfaced as a directory marker, identical to
-// one created via PutObject with a trailing "/".
+// "<dir>/" prefix. Under a delimiter it is reported as a CommonPrefix, which the
+// probe accepts, instead of a key a client might try to read.
 func TestEmptyDirectorySurfacedAsMarker(t *testing.T) {
 	s3a := &S3ApiServer{
 		option: &S3ApiServerOption{BucketsPath: "/buckets"},
@@ -96,9 +97,10 @@ func TestEmptyDirectorySurfacedAsMarker(t *testing.T) {
 
 	assert.NoError(t, err)
 	if assert.Len(t, seen, 1, "empty directory must be surfaced under the logs/ prefix") {
-		assert.True(t, seen[0].IsDirectoryKeyObject(),
-			"empty directory must be marked as a directory key object so it lists as logs/")
-		assert.Equal(t, s3_constants.FolderMimeType, seen[0].Attributes.Mime)
+		assert.True(t, cursor.emitDirAsCommonPrefix,
+			"a delimited probe reports the empty directory as a common prefix")
+		assert.Empty(t, seen[0].Attributes.Mime,
+			"the entry must not be dressed as a directory key object")
 	}
 }
 
@@ -181,4 +183,31 @@ func TestEmptyDirectoryHiddenInFlatListing(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"foo"}, seen, "flat listing must hide the empty directory and return only real objects")
+}
+
+// A trailing-slash delimited listing of an empty directory reports the
+// directory as a CommonPrefix, not as a Contents key: clients that treat
+// every returned key as an object (e.g. lock listings) skip prefixes.
+func TestEmptyDirectoryListedAsCommonPrefix(t *testing.T) {
+	filer := &fakeBucketDeleteFiler{entriesByDir: map[string][]*filer_pb.Entry{
+		"/buckets/test": {
+			{Name: "locks", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: ""}},
+		},
+		"/buckets/test/locks": {},
+	}}
+	s3a := newFailoverTestServer(t, startFakeFiler(t, filer))
+	s3a.option.BucketsPath = "/buckets"
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("test", &BucketConfig{Name: "test"})
+
+	response, err := s3a.listFilerEntries(context.Background(), listObjectsRequest{
+		bucket:    "test",
+		prefix:    "locks/",
+		delimiter: "/",
+		maxKeys:   1000,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, response.Contents, "an empty directory is not a readable key")
+	require.Len(t, response.CommonPrefixes, 1)
+	assert.Equal(t, "locks/", response.CommonPrefixes[0].Prefix)
 }

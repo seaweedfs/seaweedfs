@@ -107,6 +107,8 @@ fn build_test_state(
         rack: String::new(),
         file_size_limit_bytes: 0,
         maintenance_byte_per_second: 0,
+        vacuum_commit_slots: None,
+        vacuum_commits_waiting: std::sync::atomic::AtomicU32::new(0),
         is_heartbeating: std::sync::atomic::AtomicBool::new(true),
         ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
         ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),

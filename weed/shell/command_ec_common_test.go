@@ -14,7 +14,7 @@ func TestCompileCollectionPattern(t *testing.T) {
 		{pattern: CollectionDefault, matches: []string{""}, misses: []string{"pictures"}},
 		{pattern: "pictures", matches: []string{"pictures"}, misses: []string{"", "pictures-backup"}},
 		{pattern: "pictures,videos", matches: []string{"pictures", "videos"}, misses: []string{"", "clips"}},
-		{pattern: "pictures,_default", matches: []string{"pictures", ""}, misses: []string{"clips"}},
+		{pattern: "pictures," + CollectionDefault, matches: []string{"pictures", ""}, misses: []string{"clips"}},
 		{pattern: "pictures*", matches: []string{"pictures", "pictures-backup"}, misses: []string{"clips"}},
 		{pattern: "^pictures", matches: []string{"pictures", "pictures-backup"}, misses: []string{"clips"}},
 		{pattern: "*", matches: []string{"", "pictures"}},

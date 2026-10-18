@@ -113,8 +113,9 @@ type IdentityAccessManagement struct {
 	// reloadCh coalesces failed-reload retries handled by reloadRetryLoop
 	reloadCh chan struct{}
 
-	// reloadMu serializes configuration loads end-to-end (store snapshot
-	// through commit) so an older snapshot cannot overwrite a newer one
+	// reloadMu serializes configuration loads and pushes end-to-end (store
+	// snapshot through commit) so an older snapshot cannot overwrite a newer
+	// one
 	reloadMu sync.Mutex
 }
 
@@ -1027,10 +1028,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	for k, v := range iam.nameToIdentity {
 		nameToIdentity[k] = v
 	}
-	policies := make(map[string]*iam_pb.Policy)
-	for k, v := range iam.policies {
-		policies[k] = v
-	}
 	accounts := make(map[string]*Account)
 	for k, v := range iam.accounts {
 		accounts[k] = v
@@ -1246,22 +1243,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
 	}
 
-	for _, policy := range config.Policies {
-		policies[policy.Name] = policy
-	}
-	// full snapshot: drop dynamic policies the store no longer has
-	if isFullState {
-		presentPolicies := make(map[string]bool, len(config.Policies))
-		for _, policy := range config.Policies {
-			presentPolicies[policy.Name] = true
-		}
-		for name := range policies {
-			if !staticPolicies[name] && !presentPolicies[name] {
-				delete(policies, name)
-			}
-		}
-	}
-
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
@@ -1270,7 +1251,28 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.emailAccount = emailAccount
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
-	iam.policies = policies
+
+	// Apply policy changes to the live map rather than swapping in a snapshot
+	// taken before this merge prepared: a policy committed in the meantime (a
+	// pushed inline document or a PutPolicy update) must not be discarded.
+	if iam.policies == nil {
+		iam.policies = make(map[string]*iam_pb.Policy)
+	}
+	for _, policy := range config.Policies {
+		iam.policies[policy.Name] = policy
+	}
+	// full snapshot: drop dynamic policies the store no longer has
+	if isFullState {
+		presentPolicies := make(map[string]bool, len(config.Policies))
+		for _, policy := range config.Policies {
+			presentPolicies[policy.Name] = true
+		}
+		for name := range iam.policies {
+			if !staticPolicies[name] && !presentPolicies[name] {
+				delete(iam.policies, name)
+			}
+		}
+	}
 
 	// Groups: a full snapshot is authoritative even when empty (last group
 	// deleted); partial updates pass nil Groups and preserve existing state.
@@ -1366,9 +1368,51 @@ func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) erro
 		return fmt.Errorf("upsert identity failed: empty identity name")
 	}
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
-	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+	// Serialize the store reads below with the merge that publishes them:
+	// reloadMu already gives full reloads the same snapshot-through-commit
+	// ordering, so a document read here cannot overwrite a newer copy that a
+	// concurrent push or reload committed in the meantime.
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
+	config := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
-	}, false, false)
+	}
+	// The wire proto lacks runtime inline policy names; merging it raw would
+	// drop them until the next reload and authorize by flattened Actions.
+	// Reattach the names and their documents, scoped to this identity: a name
+	// without its document would deny requests the policy allows until the
+	// next reload.
+	if iam.credentialManager != nil {
+		if store, ok := iam.credentialManager.GetStore().(credential.InlinePolicyStore); ok {
+			policyNames, err := store.ListUserInlinePolicies(context.Background(), ident.Name)
+			if err != nil {
+				return err
+			}
+			for _, policyName := range policyNames {
+				runtimeName := inlinePolicyRuntimeName(ident.Name, policyName)
+				ident.PolicyNames = appendUniquePolicyName(ident.PolicyNames, runtimeName)
+				doc, err := store.GetUserInlinePolicy(context.Background(), ident.Name, policyName)
+				if err != nil {
+					return err
+				}
+				if doc == nil {
+					continue
+				}
+				content, err := json.Marshal(doc)
+				if err != nil {
+					return fmt.Errorf("failed to marshal inline policy %q for user %q: %w", policyName, ident.Name, err)
+				}
+				config.Policies = append(config.Policies, &iam_pb.Policy{Name: runtimeName, Content: string(content)})
+			}
+		}
+	}
+	if err := iam.MergeS3ApiConfiguration(config, false, false); err != nil {
+		return err
+	}
+	if len(config.Policies) > 0 {
+		iam.resyncIAMManagerPolicies()
+	}
+	return nil
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.
@@ -1811,6 +1855,27 @@ func isBucketListingRequest(r *http.Request, action Action) bool {
 	}
 	_, object := s3_constants.GetBucketAndObject(r)
 	return object == "" || object == "/"
+}
+
+// multipartListingAction returns the scoped action for a request the router
+// sends to ListObjectPartsHandler or ListMultipartUploadsHandler, or "" for
+// any other request. It follows the route order in s3api_server.go and reads
+// the object from the route vars, so a ?prefix promoted into the
+// authorization object, or extra subresource parameters such as ?policy, do
+// not change which operation the grant has to name.
+func multipartListingAction(r *http.Request, action Action) Action {
+	if action != s3_constants.ACTION_READ || r == nil || r.Method != http.MethodGet || r.URL == nil {
+		return ""
+	}
+	query := r.URL.Query()
+	_, object := s3_constants.GetBucketAndObject(r)
+	if object != "" && object != "/" && query.Has("uploadId") {
+		return s3_constants.ACTION_LIST_PARTS
+	}
+	if query.Has("uploads") {
+		return s3_constants.ACTION_LIST_MULTIPART_UPLOADS
+	}
+	return ""
 }
 
 // authRequestWithAuthType authenticates and then authorizes a request for a given action.
@@ -2826,7 +2891,12 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 		}
 	case authorizeViaLegacyActions:
 		if !identity.CanDo(action, bucket, object) {
-			return s3err.ErrAccessDenied
+			// The multipart listing routes are gated on ACTION_READ, but a
+			// grant may name the listing operation itself.
+			listing := multipartListingAction(r, action)
+			if listing == "" || !identity.CanDo(listing, bucket, object) {
+				return s3err.ErrAccessDenied
+			}
 		}
 		return s3err.ErrNone
 	default:
@@ -2916,16 +2986,12 @@ func (iam *IdentityAccessManagement) bucketsNamedByAttachedPolicies(r *http.Requ
 // its query describe. versionId, when set, and the STS session token ride along
 // for policy conditions. Returns ErrNone when auth is disabled (checked by the
 // callers) or the identity is an admin.
-func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, identity *Identity, method string, action Action, bucket, objectKey, versionId string) s3err.ErrorCode {
-	if identity == nil {
-		return s3err.ErrAccessDenied
-	}
-	if identity.isAdmin() {
-		return s3err.ErrNone
-	}
-
-	// Shallow copy: authorization only reads headers, so sharing the header map
-	// with the original request is safe, and this can run once per key.
+// objectKeyPolicyRequest synthesizes a <method> /<bucket>/<objectKey> request
+// for policy evaluation against a key the real URL does not name. The query is
+// built from scratch so a param on the real request (delete, uploadId,
+// partNumber, ...) cannot steer ResolveS3Action off the intended action; the
+// STS token and versionId ride along for policy conditions.
+func objectKeyPolicyRequest(r *http.Request, method, bucket, objectKey, versionId string) *http.Request {
 	keyReq := new(http.Request)
 	*keyReq = *r
 	keyURL := &url.URL{
@@ -2933,9 +2999,6 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 		Host:   r.URL.Host,
 		Path:   "/" + bucket + "/" + objectKey,
 	}
-	// Build the query from scratch so a param on the real request (delete,
-	// uploadId, partNumber, ...) cannot steer ResolveS3Action off the intended
-	// action; keep the STS token and per-key versionId for policy conditions.
 	keyQuery := make(url.Values)
 	if versionId != "" {
 		keyQuery.Set("versionId", versionId)
@@ -2954,6 +3017,18 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 	keyReq.Body = nil
 	keyReq.GetBody = nil
 	keyReq.ContentLength = 0
+	return keyReq
+}
+
+func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, identity *Identity, method string, action Action, bucket, objectKey, versionId string) s3err.ErrorCode {
+	if identity == nil {
+		return s3err.ErrAccessDenied
+	}
+	if identity.isAdmin() {
+		return s3err.ErrNone
+	}
+
+	keyReq := objectKeyPolicyRequest(r, method, bucket, objectKey, versionId)
 
 	if iam.policyEngine != nil {
 		principal := buildPrincipalARN(identity, keyReq)
@@ -3159,8 +3234,42 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 	}
 	glog.V(1).Infof("IAM: put group %s", group.Name)
 
+	// Serialize the store reads below with their installation under iam.m:
+	// the same reloadMu ordering that identity pushes and full reloads use,
+	// so a document read here cannot overwrite a newer committed copy.
+	iam.reloadMu.Lock()
+	defer iam.reloadMu.Unlock()
+
+	// As for identity pushes, the wire proto lacks the group's runtime
+	// inline policy names; reattach them with their documents, scoped to
+	// this group.
+	var inlinePolicies []*iam_pb.Policy
+	if iam.credentialManager != nil {
+		if store, ok := iam.credentialManager.GetStore().(credential.GroupInlinePolicyStore); ok {
+			policyNames, err := store.ListGroupInlinePolicies(context.Background(), group.Name)
+			if err != nil {
+				return err
+			}
+			for _, policyName := range policyNames {
+				runtimeName := inlineGroupPolicyRuntimeName(group.Name, policyName)
+				group.PolicyNames = appendUniquePolicyName(group.PolicyNames, runtimeName)
+				doc, err := store.GetGroupInlinePolicy(context.Background(), group.Name, policyName)
+				if err != nil {
+					return err
+				}
+				if doc == nil {
+					continue
+				}
+				content, err := json.Marshal(doc)
+				if err != nil {
+					return fmt.Errorf("failed to marshal inline policy %q for group %q: %w", policyName, group.Name, err)
+				}
+				inlinePolicies = append(inlinePolicies, &iam_pb.Policy{Name: runtimeName, Content: string(content)})
+			}
+		}
+	}
+
 	iam.m.Lock()
-	defer iam.m.Unlock()
 
 	// Remove old reverse index entries for this group
 	if old, ok := iam.groups[group.Name]; ok && !old.Disabled {
@@ -3178,6 +3287,20 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 		}
 	}
 
+	if len(inlinePolicies) > 0 {
+		if iam.policies == nil {
+			iam.policies = make(map[string]*iam_pb.Policy)
+		}
+		for _, policy := range inlinePolicies {
+			iam.policies[policy.Name] = policy
+		}
+		iam.rebuildIAMPolicyEngineLocked()
+	}
+	iam.m.Unlock()
+
+	if len(inlinePolicies) > 0 {
+		iam.resyncIAMManagerPolicies()
+	}
 	return nil
 }
 

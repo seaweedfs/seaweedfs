@@ -620,11 +620,20 @@ impl DiskLocation {
             return Err(v.compacting_error());
         }
         if let Some(mut v) = self.volumes.remove(&vid) {
-            crate::metrics::VOLUME_GAUGE
-                .with_label_values(&[&v.collection, "volume"])
-                .dec();
-            v.destroy(only_empty, only_garbage, keep_remote_data)?;
-            Ok(())
+            match v.destroy(only_empty, only_garbage, keep_remote_data) {
+                Ok(()) => {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&v.collection, "volume"])
+                        .dec();
+                    Ok(())
+                }
+                Err(e) => {
+                    // A failed destroy left the local files in place, so the
+                    // replica stays registered rather than becoming a phantom.
+                    self.volumes.insert(vid, v);
+                    Err(e)
+                }
+            }
         } else {
             Err(VolumeError::NotFound)
         }
@@ -641,11 +650,13 @@ impl DiskLocation {
 
         for vid in vids {
             if let Some(mut v) = self.volumes.remove(&vid) {
-                crate::metrics::VOLUME_GAUGE
-                    .with_label_values(&[&v.collection, "volume"])
-                    .dec();
                 if let Err(e) = v.destroy(false, false, false) {
                     warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
+                    self.volumes.insert(vid, v);
+                } else {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&v.collection, "volume"])
+                        .dec();
                 }
             }
         }

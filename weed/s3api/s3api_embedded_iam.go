@@ -1194,6 +1194,9 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 				resource = fmt.Sprintf("arn:aws:s3:::%s", act[1])
 			}
 			s3Action := fmt.Sprintf("s3:%s", iamMapToIdentitiesAction(act[0]))
+			if iamMapToIdentitiesAction(act[0]) == "" {
+				s3Action = fmt.Sprintf("s3:%s", act[0])
+			}
 			// Dedupe actions per resource
 			if seenAction[resource] == nil {
 				seenAction[resource] = make(map[string]bool)

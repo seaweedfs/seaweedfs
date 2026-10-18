@@ -149,7 +149,9 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 			break
 		}
 		if chunkOffset == 0 && !isAppend {
-			if dataSize < fs.option.SaveToFilerLimit {
+			// A short first read proves EOF, so the buffer holds the whole file.
+			// A full chunk may have more data behind it — store it chunked.
+			if dataSize < fs.option.SaveToFilerLimit && dataSize < int64(chunkSize) {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
 				bytesBuffer.Read(smallContent)

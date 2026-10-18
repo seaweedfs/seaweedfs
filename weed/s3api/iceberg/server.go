@@ -110,6 +110,14 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	// audit-logged.
 	router.Use(validateRequestPath)
 
+	// Clients pointed at a catalog URI ending in /v1 still append the API
+	// version themselves, producing /v1/v1/... requests (iceberg-java does
+	// this when configured with a /v1-suffixed URI). Collapse the repeated
+	// segments before routing so those requests reach the intended handler;
+	// a table bucket can never be named "v1" (names require 3-63 chars), so
+	// the rewrite is unambiguous.
+	router.Use(collapseDoubledV1Middleware(router))
+
 	// Configuration endpoint - no auth needed for config
 	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
 
@@ -179,6 +187,39 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	})
 
 	glog.V(2).Infof("Registered Iceberg REST Catalog routes")
+}
+
+// collapseDoubledV1Middleware rewrites /v1/v1/... (and deeper repetitions) to
+// the single-/v1 path and re-dispatches through the router once. The collapsed
+// path never starts with /v1/v1 again, so re-entry cannot recurse. The path
+// the client sent is kept in the request context for SigV4 verification,
+// which must check the signature against what was actually signed.
+func collapseDoubledV1Middleware(router *mux.Router) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := r.URL.Path
+			if path != "/v1/v1" && !strings.HasPrefix(path, "/v1/v1/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			for path == "/v1/v1" || strings.HasPrefix(path, "/v1/v1/") {
+				path = path[len("/v1"):]
+			}
+			signedPath := r.URL.EscapedPath()
+			if signedPath == "" {
+				signedPath = r.URL.Path
+			}
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = path
+			r2.URL.RawPath = ""
+			r2.RequestURI = r2.URL.EscapedPath()
+			if r.URL.RawQuery != "" {
+				r2.RequestURI += "?" + r.URL.RawQuery
+			}
+			r2 = r2.WithContext(s3_constants.SetOriginalRequestPathInContext(r2.Context(), signedPath))
+			router.ServeHTTP(w, r2)
+		})
+	}
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {

@@ -392,6 +392,8 @@ message ObjectTransactionRequest {
     string condition_key = 6;          // if set, evaluate the condition against this entry instead of lock_key (still locking lock_key)
     string route_key = 7;              // ring key identifying the owner filer; a non-owner forwards the whole transaction to it
     bool is_moved = 8;                 // set on a forwarded transaction so the receiver applies it locally instead of forwarding again
+    string request_id = 9;             // idempotency token: the owner records the outcome and replays it on a retried request instead of re-applying
+    string condition_alt_key = 10;     // if the condition's entry is absent, evaluate it against this entry instead (e.g. null slot, else latest version)
 }
 
 message ObjectTransactionResponse {
@@ -533,6 +535,10 @@ message AtomicRenameEntryRequest {
     string new_directory = 3;
     string new_name = 4;
     repeated int32 signatures = 5;
+    // When true, the rename fails with ErrEntryAlreadyExists if the target
+    // already exists. Lets a caller that authorized the rename without delete
+    // access on an absent target stay safe if one is created concurrently.
+    bool fail_if_target_exists = 6;
 }
 
 message AtomicRenameEntryResponse {

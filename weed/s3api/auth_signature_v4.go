@@ -354,9 +354,15 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	// 8. Verify the signature for each plausible host value: when X-Forwarded-Host carries
 	// no port, the client may have signed the Host header the proxy kept or the forwarded
 	// host and port, and the headers alone cannot tell which.
-	pathForSignature := r.URL.EscapedPath()
+	// A router that rewrote the request path (e.g. the Iceberg catalog's
+	// doubled-/v1 collapse) records the client-sent path in the context;
+	// the signature covers that original path.
+	pathForSignature := s3_constants.GetOriginalRequestPathFromContext(r)
 	if pathForSignature == "" {
-		pathForSignature = r.URL.Path
+		pathForSignature = r.URL.EscapedPath()
+		if pathForSignature == "" {
+			pathForSignature = r.URL.Path
+		}
 	}
 	forwardedPrefix := r.Header.Get("X-Forwarded-Prefix")
 	var matchedHost string

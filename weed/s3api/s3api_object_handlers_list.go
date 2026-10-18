@@ -539,6 +539,18 @@ func (s3a *S3ApiServer) listFilerEntries(ctx context.Context, req listObjectsReq
 				}
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
+					if cursor.emitDirAsCommonPrefix {
+						cursor.emitDirAsCommonPrefix = false
+						dirPrefix := fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):]
+						commonPrefixes = append(commonPrefixes, PrefixEntry{
+							Prefix: dirPrefix,
+						})
+						cursor.maxKeys--
+						lastEntryWasCommonPrefix = true
+						lastCommonPrefix = dirPrefix
+						lastPrefixNullBackers, lastPrefixConfirmed = nil, true
+						return
+					}
 					if originalPrefix != "" {
 						normalizedPrefix := strings.TrimPrefix(strings.TrimSuffix(originalPrefix, "/"), "/")
 						if normalizedPrefix != "" {
@@ -789,6 +801,9 @@ type ListingCursor struct {
 	// resolvePendingNulls settles trailing null objects whose .versions sibling
 	// has not streamed yet before a page is declared full.
 	resolvePendingNulls func() error
+	// emitDirAsCommonPrefix marks the next directory entry passed to the entry
+	// callback for reporting as a CommonPrefix rather than a Contents key.
+	emitDirAsCommonPrefix bool
 }
 
 // excludedMarkerKey returns the key an exclusive marker names that the walk's cutoff no
@@ -1124,15 +1139,21 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 					// A real but empty directory (created out of band via mount, mkdir or
 					// the filer API, so it carries no MIME) is otherwise invisible to S3
 					// clients that detect directories by listing it under its own "<dir>/"
-					// prefix. Surface it as a directory marker for that explicit probe,
-					// identical to a directory created via PutObject with a trailing "/", so
-					// tools like hadoop-aws can find it. Plain listings are left untouched, so
-					// empty directories left behind by deleted objects are not shown as keys.
+					// prefix. Answer that explicit probe so tools like hadoop-aws can find
+					// the directory: a delimited listing reports it as a CommonPrefix --
+					// a real key in Contents would look like an object a client can read --
+					// while a recursive listing keeps the directory marker key it used.
+					// Plain listings are left untouched, so empty directories left behind
+					// by deleted objects are not shown as keys.
 					// A directory that still holds version history no longer names anything,
 					// so it gets no marker either.
 					if explicitDirProbe && !isKeyObject && !childEmitted && !cursor.isTruncated && entry.Attributes != nil &&
 						!s3a.dirHoldsOnlyHiddenEntries(ctx, client, bucket, dir+"/"+entry.Name, cursor) {
-						entry.Attributes.Mime = s3_constants.FolderMimeType
+						if delimiter == "/" {
+							cursor.emitDirAsCommonPrefix = true
+						} else {
+							entry.Attributes.Mime = s3_constants.FolderMimeType
+						}
 						eachEntryFn(dir, entry)
 					}
 					// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)

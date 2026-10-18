@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -29,13 +31,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	// autoChunking can be set at the command-line level or as a query param. Query param overrides command-line
 	query := r.URL.Query()
 
-	parsedMaxMB, _ := strconv.ParseInt(query.Get("maxMB"), 10, 32)
-	maxMB := int32(parsedMaxMB)
-	if maxMB <= 0 && fs.option.MaxMB > 0 {
-		maxMB = int32(fs.option.MaxMB)
-	}
-
-	chunkSize := 1024 * 1024 * maxMB
+	chunkSize := fs.requestChunkSize(query)
 
 	var reply *FilerPostResult
 	var err error
@@ -176,6 +172,22 @@ func isAppend(r *http.Request) bool {
 
 func skipCheckParentDirEntry(r *http.Request) bool {
 	return r.URL.Query().Get("skipCheckParentDir") == "true"
+}
+
+// requestChunkSize resolves the auto-chunking size from the maxMB query param
+// or the server default, clamped so the int32 chunk size cannot overflow into
+// a non-positive value that would drop the upload's contents.
+func (fs *FilerServer) requestChunkSize(query url.Values) int32 {
+	parsedMaxMB, _ := strconv.ParseInt(query.Get("maxMB"), 10, 32)
+	maxMB := parsedMaxMB
+	if maxMB <= 0 {
+		maxMB = int64(fs.option.MaxMB)
+	}
+	const maxChunkSizeMB = math.MaxInt32 / (1024 * 1024) // 2047
+	if maxMB > maxChunkSizeMB {
+		maxMB = maxChunkSizeMB
+	}
+	return int32(maxMB) * 1024 * 1024
 }
 
 func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fileName string) error {

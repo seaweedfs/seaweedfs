@@ -149,6 +149,7 @@ func init() {
 	serverOptions.v.readMode = cmdServer.Flag.String("volume.readMode", "proxy", "[local|proxy|redirect] how to deal with non-local volume: 'not found|read in remote node|redirect volume location'.")
 	serverOptions.v.compactionMBPerSecond = cmdServer.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
 	serverOptions.v.maintenanceMBPerSecond = cmdServer.Flag.Int("volume.maintenanceMBps", 0, "limit maintenance (replication / balance) IO rate in MB/s. Unset is 0, no limitation.")
+	serverOptions.v.maxParallelVacuumCommits = cmdServer.Flag.Int("volume.compactionMaxParallelCommits", 0, "limit how many vacuum commits run at once on this server; queued commits hold no volume lock. 0 means unlimited")
 	serverOptions.v.fileSizeLimitMB = cmdServer.Flag.Int("volume.fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	serverOptions.v.ldbTimeout = cmdServer.Flag.Int64("volume.index.leveldbTimeout", 0, "alive time for leveldb (default to 0). If leveldb of volume is not accessed in ldbTimeout hours, it will be off loaded to reduce opened files and memory consumption.")
 	serverOptions.v.concurrentUploadLimitMB = cmdServer.Flag.Int("volume.concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
@@ -174,6 +175,7 @@ func init() {
 	s3Options.icebergCredentialDuration = cmdServer.Flag.Int("s3.iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	s3Options.domainName = cmdServer.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3Options.allowedOrigins = cmdServer.Flag.String("s3.allowedOrigins", "*", "comma separated list of allowed origins")
+	s3Options.dataCenter = cmdServer.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
 	s3Options.tlsPrivateKey = cmdServer.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	s3Options.tlsCertificate = cmdServer.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	s3Options.tlsCACertificate = cmdServer.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
@@ -182,7 +184,7 @@ func init() {
 	s3Options.iamConfig = cmdServer.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3. Overrides -iam.config if both are provided.")
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
-	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", false, "allow recursive deleting all entries along with bucket")
 	s3Options.autoCreateBucket = cmdServer.Flag.Bool("s3.autoCreateBucket", true, "create the bucket on upload if it does not exist, for admin identities only")
 	s3Options.localSocket = cmdServer.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3Options.bindIp = cmdServer.Flag.String("s3.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
@@ -209,6 +211,7 @@ func init() {
 	sftpOptions.clientAliveCountMax = cmdServer.Flag.Int("sftp.clientAliveCountMax", 3, "maximum number of missed keep-alive messages before disconnecting")
 	sftpOptions.userStoreFile = cmdServer.Flag.String("sftp.userStoreFile", "", "path to JSON file containing user credentials and permissions")
 	sftpOptions.trustedUserCAKeysFile = cmdServer.Flag.String("sftp.trustedUserCAKeysFile", "", "path to a file with trusted user CA public keys (OpenSSH authorized_keys format); required when 'certificate' is in -sftp.authMethods")
+	sftpOptions.dataCenter = cmdServer.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
 	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
 
@@ -336,8 +339,6 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.rack = serverRack
 	mqBrokerOptions.dataCenter = serverDataCenter
 	mqBrokerOptions.rack = serverRack
-	s3Options.dataCenter = serverDataCenter
-	sftpOptions.dataCenter = serverDataCenter
 	*filerOptions.disableHttp = *filerOptions.disableHttp || *serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 

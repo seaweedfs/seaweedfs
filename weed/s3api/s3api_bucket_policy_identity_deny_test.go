@@ -3,10 +3,13 @@ package s3api
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -179,4 +182,32 @@ func TestAuthorizeObjectKeyActionBucketAllowDoesNotOverrideIdentityDeny(t *testi
 	assert.Equal(t, s3err.ErrNone,
 		iam.AuthorizeCopySource(req, reader, bpdBucket, "other/data.txt", ""),
 		"AuthorizeCopySource must preserve the bucket Allow over an implicit identity denial")
+}
+
+// A deferred tag-aware recheck (copy/rename source) re-runs only the bucket
+// policy; it must still honor an explicit Deny in the caller's attached or
+// session policies, or the phase-1 veto on secret/* could be bypassed.
+func TestRecheckPolicyForKeyWithLookupHonorsIdentityDeny(t *testing.T) {
+	filerImpl := &ambiguousPutFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/" + bpdBucket + "/secret/payroll.txt": {Name: "payroll.txt"},
+			"/buckets/" + bpdBucket + "/other/data.txt":     {Name: "data.txt"},
+		},
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	iam := newBucketPolicyDenyIAM(t, bpdBucketPolicyDoc(t, "secret/*", "other/*"))
+	s3a.iam = iam
+	s3a.policyEngine = iam.policyEngine
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set(bpdBucket, &BucketConfig{Name: bpdBucket})
+
+	req := httptest.NewRequest(http.MethodPut, "/victim-bucket/dst-key", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), bpdReader(t, iam)))
+
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckPolicyForKeyWithLookup(req, http.MethodGet, bpdBucket, "secret/payroll.txt", "", s3_constants.ACTION_READ, "test"),
+		"an explicit identity-policy Deny must survive the bucket-policy recheck")
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckPolicyForKeyWithLookup(req, http.MethodGet, bpdBucket, "other/data.txt", "", s3_constants.ACTION_READ, "test"),
+		"a bucket-policy Allow on a prefix the identity does not deny must still grant")
 }

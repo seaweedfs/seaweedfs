@@ -16,6 +16,18 @@ import (
 
 func AllocateVolume(t testing.TB, client volume_server_pb.VolumeServerClient, volumeID uint32, collection string) {
 	t.Helper()
+	allocateVolume(t, client, volumeID, collection, "")
+}
+
+// AllocateVolumeWithTTL allocates a volume whose needles expire after ttl
+// (e.g. "10m").
+func AllocateVolumeWithTTL(t testing.TB, client volume_server_pb.VolumeServerClient, volumeID uint32, collection string, ttl string) {
+	t.Helper()
+	allocateVolume(t, client, volumeID, collection, ttl)
+}
+
+func allocateVolume(t testing.TB, client volume_server_pb.VolumeServerClient, volumeID uint32, collection string, ttl string) {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -24,6 +36,7 @@ func AllocateVolume(t testing.TB, client volume_server_pb.VolumeServerClient, vo
 		VolumeId:    volumeID,
 		Collection:  collection,
 		Replication: "000",
+		Ttl:         ttl,
 		Version:     uint32(needle.GetCurrentVersion()),
 	})
 	if err != nil {
