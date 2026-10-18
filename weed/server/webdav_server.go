@@ -76,6 +76,7 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		Handler: listedEntriesHandler{
 			next: copyMoveGuardHandler{
+				fs: fs,
 				next: &webdav.Handler{
 					FileSystem: fs,
 					LockSystem: webdav.NewMemLS(),
@@ -91,6 +92,7 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 // source, so a destination that contains the source removes it too; a
 // destination under the source copies itself unless the copy is shallow
 type copyMoveGuardHandler struct {
+	fs   webdav.FileSystem
 	next http.Handler
 }
 
@@ -105,6 +107,12 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
+		}
+		// a source that cannot be read makes the operation fail after the
+		// destination is already gone — reject it before that
+		if _, err := h.fs.Stat(r.Context(), r.URL.Path); err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
 	}
 	h.next.ServeHTTP(w, r)
