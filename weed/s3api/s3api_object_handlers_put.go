@@ -1037,7 +1037,13 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				routedAmbiguous = true
 				glog.Warningf("putToFiler: routed PUT to %s failed for %s, falling back to lock: %v", owner, filePath, err)
 			case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
-				createCode, routed = s3err.ErrPreconditionFailed, true
+				if condAltKey == "" {
+					createCode, routed = s3err.ErrPreconditionFailed, true
+				} else {
+					// A filer that ignores condition_alt_key checked only the empty
+					// null slot; the lock path resolves what the read path serves.
+					glog.Warningf("putToFiler: routed PUT to %s precondition-failed for %s; rechecking under the lock", owner, filePath)
+				}
 			case resp.Error != "":
 				// A mutation can store the entry before a later step of the
 				// same mutation fails, so even an error from the first mutation
