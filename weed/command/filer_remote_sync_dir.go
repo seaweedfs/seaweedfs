@@ -374,8 +374,11 @@ func processUpdateEvent(
 				return err
 			}
 			// a metadata write can rewrite the object (S3 copies it in place
-			// for a Content-Encoding change), so restamp from the live object
-			if live, statErr := client.StatFile(dest); statErr == nil {
+			// for a Content-Encoding change), so restamp from the live
+			// object — only while it is still that object: a replacement's
+			// stamp would let a later delete pass the freshness guard on
+			// data the entry never owned
+			if live, statErr := client.StatFile(dest); statErr == nil && remote_storage.Describes(remoteEntry, live) {
 				remoteEntry = live
 			}
 			return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, remoteEntry)

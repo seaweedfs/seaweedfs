@@ -1783,3 +1783,31 @@ func TestMetadataUpdateRestampsTheLiveObject(t *testing.T) {
 		t.Fatalf("stamped RemoteEntry = %+v, want the live object's mtime 200", filerClient.updated.Entry.RemoteEntry)
 	}
 }
+
+// TestMetadataUpdateDoesNotRestampAReplacedObject: the live stat after a
+// metadata update can describe a different object entirely — a delayed
+// tagging update running after another writer replaced it. Saving that stamp
+// onto the entry would let a later delete pass the freshness guard on data
+// the entry never owned, so the stored stamp must stay.
+func TestMetadataUpdateDoesNotRestampAReplacedObject(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
+	stamp := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: `"orig"`, RemoteSize: 3, RemoteMtime: 100}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/vol",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 100}, RemoteEntry: stamp},
+			NewParentPath: "/buckets/b/vol",
+			NewEntry: &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 100}, RemoteEntry: stamp,
+				Extended: map[string][]byte{"Content-Encoding": []byte("gzip")}},
+		},
+	}
+	remote := &recordingRemote{objects: map[string][]byte{"/b/vol/f": []byte("replacement")}, statETag: `"new"`, statMtime: 200}
+	filerClient := &stubFilerClient{}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if filerClient.updates != 1 || filerClient.updated.Entry.RemoteEntry.RemoteMtime != 100 {
+		t.Fatalf("stamped RemoteEntry = %+v, want the entry's own stamp kept (mtime 100)", filerClient.updated.Entry.RemoteEntry)
+	}
+}

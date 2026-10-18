@@ -366,7 +366,13 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						if remoteEntry == nil {
 							remoteEntry = message.OldEntry.RemoteEntry
 						}
-						if live, statErr := client.StatFile(oldDest); statErr == nil {
+						// the metadata write can rewrite the object (S3
+						// copies it in place for a Content-Encoding change);
+						// restamp from the live object only while it is still
+						// that object — a replacement's stamp would let a
+						// later delete pass the freshness guard on data the
+						// entry never owned
+						if live, statErr := client.StatFile(oldDest); statErr == nil && remote_storage.Describes(remoteEntry, live) {
 							remoteEntry = live
 						}
 						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
