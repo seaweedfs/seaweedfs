@@ -280,9 +280,6 @@ func runFiler(cmd *Command, args []string) bool {
 			filerS3Options.bindIp = f.bindIp
 		}
 		filerS3Options.localFilerSocket = f.localSocket
-		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
-			filerS3Options.dataCenter = f.dataCenter
-		}
 		// Set S3 metrics IP based on bind IP if not explicitly set
 		if *filerS3Options.metricsHttpIp == "" {
 			*filerS3Options.metricsHttpIp = *filerS3Options.bindIp
@@ -323,9 +320,6 @@ func runFiler(cmd *Command, args []string) bool {
 		filerSftpOptions.filer = &filerAddress
 		if *filerSftpOptions.bindIp == "" {
 			filerSftpOptions.bindIp = f.bindIp
-		}
-		if *f.dataCenter != "" && *filerSftpOptions.dataCenter == "" {
-			filerSftpOptions.dataCenter = f.dataCenter
 		}
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)

@@ -175,6 +175,7 @@ func init() {
 	s3Options.icebergCredentialDuration = cmdServer.Flag.Int("s3.iceberg.credentialDurationSeconds", 3600, "lifetime of credentials vended by the Iceberg catalog")
 	s3Options.domainName = cmdServer.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3Options.allowedOrigins = cmdServer.Flag.String("s3.allowedOrigins", "*", "comma separated list of allowed origins")
+	s3Options.dataCenter = cmdServer.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
 	s3Options.tlsPrivateKey = cmdServer.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	s3Options.tlsCertificate = cmdServer.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	s3Options.tlsCACertificate = cmdServer.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
@@ -210,6 +211,7 @@ func init() {
 	sftpOptions.clientAliveCountMax = cmdServer.Flag.Int("sftp.clientAliveCountMax", 3, "maximum number of missed keep-alive messages before disconnecting")
 	sftpOptions.userStoreFile = cmdServer.Flag.String("sftp.userStoreFile", "", "path to JSON file containing user credentials and permissions")
 	sftpOptions.trustedUserCAKeysFile = cmdServer.Flag.String("sftp.trustedUserCAKeysFile", "", "path to a file with trusted user CA public keys (OpenSSH authorized_keys format); required when 'certificate' is in -sftp.authMethods")
+	sftpOptions.dataCenter = cmdServer.Flag.String("sftp.dataCenter", "", "prefer to read and write to volumes in this data center")
 	sftpOptions.localSocket = cmdServer.Flag.String("sftp.localSocket", "", "default to /tmp/seaweedfs-sftp-<port>.sock")
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
 
@@ -337,8 +339,6 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.rack = serverRack
 	mqBrokerOptions.dataCenter = serverDataCenter
 	mqBrokerOptions.rack = serverRack
-	s3Options.dataCenter = serverDataCenter
-	sftpOptions.dataCenter = serverDataCenter
 	*filerOptions.disableHttp = *filerOptions.disableHttp || *serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 

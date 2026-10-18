@@ -535,6 +535,10 @@ message AtomicRenameEntryRequest {
     string new_directory = 3;
     string new_name = 4;
     repeated int32 signatures = 5;
+    // When true, the rename fails with ErrEntryAlreadyExists if the target
+    // already exists. Lets a caller that authorized the rename without delete
+    // access on an absent target stay safe if one is created concurrently.
+    bool fail_if_target_exists = 6;
 }
 
 message AtomicRenameEntryResponse {

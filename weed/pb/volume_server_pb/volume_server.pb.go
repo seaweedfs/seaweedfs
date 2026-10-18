@@ -4678,6 +4678,7 @@ type ReadVolumeFileStatusResponse struct {
 	DiskType                string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	VolumeInfo              *VolumeInfo            `protobuf:"bytes,10,opt,name=volume_info,json=volumeInfo,proto3" json:"volume_info,omitempty"`
 	Version                 uint32                 `protobuf:"varint,11,opt,name=version,proto3" json:"version,omitempty"`
+	ExpireAtSec             uint64                 `protobuf:"varint,12,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // TTL expiry counted from the last write; 0 when the volume never expires
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -4785,6 +4786,13 @@ func (x *ReadVolumeFileStatusResponse) GetVolumeInfo() *VolumeInfo {
 func (x *ReadVolumeFileStatusResponse) GetVersion() uint32 {
 	if x != nil {
 		return x.Version
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetExpireAtSec() uint64 {
+	if x != nil {
+		return x.ExpireAtSec
 	}
 	return 0
 }
@@ -7601,7 +7609,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\x12\x1b\n" +
 	"\tvolume_id\x18\x04 \x01(\rR\bvolumeId\":\n" +
 	"\x1bReadVolumeFileStatusRequest\x12\x1b\n" +
-	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xe3\x03\n" +
+	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\x87\x04\n" +
 	"\x1cReadVolumeFileStatusResponse\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12;\n" +
 	"\x1aidx_file_timestamp_seconds\x18\x02 \x01(\x04R\x17idxFileTimestampSeconds\x12\"\n" +
@@ -7618,7 +7626,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"\vvolume_info\x18\n" +
 	" \x01(\v2\x1c.volume_server_pb.VolumeInfoR\n" +
 	"volumeInfo\x12\x18\n" +
-	"\aversion\x18\v \x01(\rR\aversion\"\xd1\x01\n" +
+	"\aversion\x18\v \x01(\rR\aversion\x12\"\n" +
+	"\rexpire_at_sec\x18\f \x01(\x04R\vexpireAtSec\"\xd1\x01\n" +
 	"\n" +
 	"DiskStatus\x12\x10\n" +
 	"\x03dir\x18\x01 \x01(\tR\x03dir\x12\x10\n" +

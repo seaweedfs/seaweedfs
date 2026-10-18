@@ -19,13 +19,16 @@ dailyrun.Run(ctx, cfg):
     rsh                = engine.ReplayContentHash(snap)
     maxTTL             = engine.MaxEffectiveTTL(snap)
 
+    cursors            = load every shard's persisted cursor
+    walks              = planWalks(cursors) → at most 2 shared walks (recovery, steady)
+
     if rsh != [32]byte{}:                                           // replay-eligible rules present
         globalStartTsNs = min over cfg.Shards of (persisted cursor or runNow - maxTTL)
         reader          = subscribeMeta(ShardPredicate ∈ cfg.Shards, StartTsNs = globalStartTsNs)
         fanOut(reader.Events → shardEvents[shardID]) until ev.TsNs > runNow
 
     spawn one goroutine per shard:
-        runShard(ctx, cfg, snap, runNow, shardID, shardEvents[shardID])
+        runShard(ctx, cfg, snap, runNow, shardID, shardEvents[shardID], walks)
 
     wait all
     teardown reader + fan-out
@@ -37,7 +40,7 @@ runShard(ctx, cfg, snap, runNow, shardID, events):
 
     if rsh == [32]byte{}:                                           // pure walker bucket
         if walkerDue and Walker:
-            cfg.Walker(walkView)                                    // RulesForShard.walk
+            walkForShard(walkView)                                // shared walk, per-shard fallback
             lastWalkedNs = runNow.UnixNano()
         save cursor (TsNs=0, rsh, promoted, lastWalkedNs)
         return
@@ -46,7 +49,7 @@ runShard(ctx, cfg, snap, runNow, shardID, events):
     mustWalkColdStart  = !found
 
     if mustWalkRecovery or mustWalkColdStart:
-        cfg.Walker(engine.RecoveryView(snap))                       // every rule, force-active
+        walkForShard(RecoveryView(snap))                          // every rule, force-active
         walkedThisPass = true
         lastWalkedNs   = runNow.UnixNano()
         if mustWalkRecovery:
@@ -54,15 +57,16 @@ runShard(ctx, cfg, snap, runNow, shardID, events):
             return
 
     if Walker and !walkedThisPass and walkerDue:
-        cfg.Walker(walkView)                                        // steady-state walker
+        walkForShard(walkView)                                    // steady-state walker
         lastWalkedNs = runNow.UnixNano()
 
     startTsNs = !found ? runNow - maxTTL : persisted.TsNs           // steady state honors cursor
-    lastOK, _, drainErr = drainShardEvents(ctx, cfg, runNow, shardID, snap, startTsNs, events)
+    replayView = snap.ReplayView(retentionWindow)                   // minus walk-bound rules
+    lastOK, _, drainErr = drainShardEvents(ctx, cfg, runNow, shardID, replayView, startTsNs, events)
     save cursor (TsNs = lastOK, rsh, promoted, lastWalkedNs)
 ```
 
-Walker invocations — three call sites, distinct conditions:
+Walker invocations — three call sites, distinct conditions. `cfg.Walker` takes a shard set, not a single shard: `planWalks` predicts each shard's branch from the pre-loaded cursors and runs one shared walk per group, so a pass lists each bucket at most twice (recovery group + steady group) instead of once per shard. `runShard` waits on its group's walk; a shard whose own freshly-loaded cursor disagrees with the plan falls back to a per-shard walk, so the plan can't under-cover a shard after a cursor is rewritten mid-pass.
 
 | Branch | View | Trigger | Throttle |
 |---|---|---|---|
@@ -78,6 +82,7 @@ Walker invocations — three call sites, distinct conditions:
 // In engine:
 func (e *Engine) Snapshot() *Snapshot
 func (s *Snapshot) RulesForShard(shardID int, retentionWindow time.Duration) (replay, walk *Snapshot)
+func (s *Snapshot) ReplayView(retentionWindow time.Duration) *Snapshot
 func RecoveryView(s *Snapshot) *Snapshot
 func ReplayContentHash(s *Snapshot) [32]byte
 func PromotedHash(s *Snapshot, retentionWindow time.Duration) [32]byte
@@ -99,6 +104,7 @@ Shared-by-pointer with the base: `Rule` definitions, predicate maps, `RuleHash` 
 | View | Clone settings | Why |
 |---|---|---|
 | `replay` | `active = true`, `Mode = ModeEventDriven` | `router.Route` requires `ModeEventDriven`. Forced regardless of `prior.Mode`. |
+| `replayView` | `active` preserved, `Mode = ModeEventDriven` | The drain's routing set: `replay` partition minus promoted rules, but without force-activating pre-bootstrap actions. Walk-bound kinds are shared by pointer. |
 | `walk` | `active = true`, `Mode` preserved | Walker accepts any non-`ModeDisabled` Mode. |
 | `recovery` | `active = true`, `Mode` preserved | Walker iterates all action clones. |
 
@@ -230,9 +236,10 @@ The lifecycle evaluator uses `ev.TsNs` for current-version rules and `entry.Nonc
 | `evaluate.go`, `due_at.go`, `rule_hash.go`, `tags.go` | Engine-side rule evaluation |
 | `reader/` | Meta-log subscribe; one subscription per dailyrun.Run pass |
 | `router/router.go` | Per-event rule evaluation |
-| `bootstrap/walker.go` | Bucket walker with `RunForShard(view, shardID)` filter |
+| `bootstrap/walker.go` | Bucket walker; shard-set entry filter |
 | `dispatcher/filer_persister.go` | Filer-backed cursor I/O |
 | `dailyrun/run.go` | Main pass orchestrator: subscription, fan-out, per-shard `runShard` |
+| `dailyrun/walk_plan.go` | Groups shards into shared recovery/steady walks (one listing per group) |
 | `dailyrun/cursor.go` | Cursor type + filer JSON serializer |
 | `dailyrun/walker_dispatcher.go` | Adapter from walker to `LifecycleDelete` RPC |
 
@@ -265,6 +272,6 @@ Worker config:
 Tracked as optimizations rather than blockers:
 
 1. **Long-lived subscription across passes.** Today the subscription is rebuilt per `Run()`. Keeping it alive across passes would eliminate the 7s ctx-timeout per pass and the start/teardown overhead. Requires per-shard pending heap (events whose `DueTime > runNow` would be parked in-memory instead of replayed) and a hot-swappable snapshot for mid-pass config changes. Multi-day refactor; current model works.
-2. **Bucket-coordinated walker.** Phase 4 has each shard walk the full bucket and filter by `ShardID(bucket, key)` — simple but 16× the listing cost. A per-bucket coordinator (the worker owning shard 0 for that bucket lists once, routes matches to other shards) would cut listing cost. Worth doing if listing becomes the bottleneck for very large buckets.
+2. ~~Bucket-coordinated walker~~. Done: `planWalks` shares one listing across the recovery group and one across the steady group (issue #11791). Remaining headroom: directories could be pruned to rule prefixes, and per-shard views could partition work rather than fanning every entry to its shard's dispatcher.
 3. **Per-bucket dispatch lag metric.** Currently only per-shard lag is exposed. Per-bucket would require a per-bucket cursor or a derived metric from `s3_lifecycle_dispatch_total{bucket,kind,outcome}`. Punted on cardinality concerns; revisit when an operator asks for it.
 4. **Meta-log retention plumbing.** If the filer adds GC for `/topics/.system/log`, the `PromotedHash` partition flip needs to consume the filer's actual retention horizon (currently dormant because retention is effectively infinite).

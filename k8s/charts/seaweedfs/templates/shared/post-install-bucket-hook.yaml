@@ -18,9 +18,17 @@
 {{- $clusterFilerKey := printf "WEED_CLUSTER_%s_FILER" $clusterUpper }}
 {{- $podSecurityContext := .Values.filer.podSecurityContext }}
 {{- $containerSecurityContext := .Values.filer.containerSecurityContext }}
+{{- $nodeSelector := .Values.filer.nodeSelector }}
+{{- $tolerations := .Values.filer.tolerations }}
+{{- $createBucketsHook := .Values.filer.s3.createBucketsHook }}
 {{- if .Values.allInOne.enabled }}
   {{- $podSecurityContext = .Values.allInOne.podSecurityContext }}
   {{- $containerSecurityContext = .Values.allInOne.containerSecurityContext }}
+  {{- $nodeSelector = .Values.allInOne.nodeSelector }}
+  {{- $tolerations = .Values.allInOne.tolerations }}
+  {{- $createBucketsHook = .Values.allInOne.s3.createBucketsHook }}
+{{- else if .Values.s3.createBuckets }}
+  {{- $createBucketsHook = .Values.s3.createBucketsHook }}
 {{- end }}
 
 {{- /* Check allInOne mode first */}}
@@ -76,9 +84,17 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name | quote }}
         app.kubernetes.io/component: bucket-hook
     spec:
+      {{- with $createBucketsHook.affinity }}
+      affinity:
+        {{ tpl . $ | indent 8 | trim }}
+      {{- end }}
       restartPolicy: Never
       {{- if $podSecurityContext.enabled }}
       securityContext: {{- omit $podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      {{- with coalesce $createBucketsHook.tolerations $tolerations }}
+      tolerations:
+        {{ tpl . $ | indent 8 | trim }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       containers:
@@ -274,4 +290,8 @@ spec:
             secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
     {{- end }}
+      {{- with coalesce $createBucketsHook.nodeSelector $nodeSelector }}
+      nodeSelector:
+        {{ tpl . $ | indent 8 | trim }}
+      {{- end }}
 {{- end }}

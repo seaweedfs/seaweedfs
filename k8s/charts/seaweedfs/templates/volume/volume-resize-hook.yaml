@@ -30,10 +30,18 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name | quote }}
         app.kubernetes.io/component: volume-resize-hook
     spec:
+      {{- with .Values.volume.resizeHook.affinity }}
+      affinity:
+        {{ tpl (printf "{{ $volumeName := \"volume\" }}%s" .) $ | indent 8 | trim }}
+      {{- end }}
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
       restartPolicy: Never
       {{- if .Values.volume.podSecurityContext.enabled }}
       securityContext: {{- omit .Values.volume.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      {{- with coalesce .Values.volume.resizeHook.tolerations .Values.volume.tolerations }}
+      tolerations:
+        {{ tpl (printf "{{ $volumeName := \"volume\" }}%s" .) $ | indent 8 | trim }}
       {{- end }}
       containers:
         - name: resize
@@ -57,6 +65,10 @@ spec:
       {{- if and .Values.volume.containerSecurityContext.enabled .Values.volume.containerSecurityContext.readOnlyRootFilesystem }}
       volumes:
         {{- include "seaweedfs.tmpDirVolume" (list . .Values.volume.containerSecurityContext "" "" false) | nindent 8 }}
+      {{- end }}
+      {{- with coalesce .Values.volume.resizeHook.nodeSelector .Values.volume.nodeSelector }}
+      nodeSelector:
+        {{ tpl (printf "{{ $volumeName := \"volume\" }}%s" .) $ | indent 8 | trim }}
       {{- end }}
 ---
 apiVersion: v1
