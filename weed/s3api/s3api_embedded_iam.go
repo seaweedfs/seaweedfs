@@ -2528,9 +2528,10 @@ func iamRequiresAdminForOthers(action string) bool {
 	return iamSelfServiceActions[action]
 }
 
-// iamSelfTargetActions require an explicit iam:<Action> grant, but a non-admin
-// grant holder may only target their own identity. The target parameter is
-// action-specific (UserName for most, ParentUser for CreateServiceAccount).
+// iamSelfTargetActions are authorized against the target identity's ARN so a
+// policy can scope the grant (arn:aws:iam:::user/team-parent). The target
+// parameter is action-specific (UserName for most, ParentUser for
+// CreateServiceAccount).
 var iamSelfTargetActions = map[string]bool{
 	"CreateServiceAccount": true,
 }
@@ -2573,13 +2574,14 @@ func (iam *IdentityAccessManagement) AuthorizeIamAction(r *http.Request, identit
 	if identity.isAdmin() {
 		return s3err.ErrNone
 	}
-	if errCode := iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", ""); errCode != s3err.ErrNone {
-		return errCode
+	// Self-target actions authorize against the target identity's ARN. The
+	// account segment stays empty so existing arn:aws:iam:::* wildcard
+	// grants keep matching.
+	resource := "arn:aws:iam:::*"
+	if iamRequiresSelfTarget(action) && targetUserName != "" {
+		resource = fmt.Sprintf("arn:aws:iam:::user/%s", targetUserName)
 	}
-	if iamRequiresSelfTarget(action) && targetUserName != "" && targetUserName != identity.Name {
-		return s3err.ErrAccessDenied
-	}
-	return s3err.ErrNone
+	return iam.VerifyActionPermission(r, identity, Action("iam:"+action), resource, "")
 }
 
 // AuthIamManagement authenticates an IAM management request and authorizes the

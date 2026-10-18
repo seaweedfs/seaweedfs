@@ -1240,6 +1240,18 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 		return true // Universal wildcard
 	}
 
+	// IAM identity ARNs match case-sensitively: identity lookup is
+	// case-sensitive, so a case-variant names a different identity.
+	if strings.HasPrefix(value, "arn:aws:iam::") {
+		if expandedPattern == value {
+			return true
+		}
+		if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
+			return wildcard.MatchesWildcard(expandedPattern, value)
+		}
+		return false
+	}
+
 	// Step 3: Case-insensitive exact match
 	if strings.EqualFold(expandedPattern, value) {
 		return true
