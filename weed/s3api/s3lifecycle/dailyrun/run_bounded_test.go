@@ -225,7 +225,7 @@ func TestValidate_RejectsRetentionWindowWithoutWalker(t *testing.T) {
 	cfg := validatableConfig()
 	cfg.RetentionWindow = 24 * time.Hour
 	require.ErrorContains(t, validate(cfg), "RetentionWindow")
-	cfg.Walker = func(context.Context, *engine.Snapshot, int) error { return nil }
+	cfg.Walker = func(context.Context, *engine.Snapshot, []int) error { return nil }
 	require.NoError(t, validate(cfg))
 	cfg.Walker = nil
 	cfg.RetentionWindow = 0
