@@ -772,11 +772,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var readPersistedLogErr error
 	var readInMemoryLogErr error
 	var isDone bool
-	var lastCheckedFlushTsNs int64 = -1      // Track the last local flush we read the disk under
-	var lastCheckedFlushLowTsNs int64 = -1   // Track the last peer flush low-watermark we read the disk under
-	var lastDiskReadTsNs int64 = -1          // Track the last read position we used for disk read
-	var lastDiskRefsStopTsNs int64 = -1      // Track the last chunk listing bound we read the disk under
-	var lastDiskPassAt time.Time             // Paces re-probes for files no watermark signals
+	var lastCheckedFlushTsNs int64 = -1    // Track the last local flush we read the disk under
+	var lastCheckedFlushLowTsNs int64 = -1 // Track the last peer flush low-watermark we read the disk under
+	var lastDiskReadTsNs int64 = -1        // Track the last read position we used for disk read
+	var lastDiskRefsStopTsNs int64 = -1    // Track the last chunk listing bound we read the disk under
+	var lastDiskPassAt time.Time           // Paces re-probes for files no watermark signals
 	sentRefs := make(map[string]sentRefState)
 
 	aggBuffer := fs.filer.MetaAggregator.MetaLogBuffer

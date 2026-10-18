@@ -335,6 +335,11 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 		MaxFileNameLength: maxFileNameLength,
+		// A location that survives from a request parameter, a placement
+		// overlay, or the path rule is a contract; only a bare filer default
+		// is a preference that may still be widened.
+		EnforceLocation: dataCenter != "" || overlayDataCenter != "" || rule.DataCenter != "" ||
+			rack != "" || rule.Rack != "" || dataNode != "" || rule.DataNode != "",
 	}, nil
 }
 
