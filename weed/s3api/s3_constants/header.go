@@ -170,6 +170,12 @@ const (
 	// rename, and it is dropped whenever the key is written again.
 	SeaweedFSRenameToken = "x-seaweedfs-rename-token"
 
+	// SeaweedFSWriteId identifies the single write that stored an entry: putToFiler
+	// stamps a fresh id into Extended on every call. Recovery for an ambiguously
+	// committed write compares it to tell its own entry from an identical older
+	// object — chunk lists cannot, since an empty object carries none.
+	SeaweedFSWriteId = "x-seaweedfs-write-id"
+
 	// Multipart upload metadata keys for SSE-S3
 	SeaweedFSSSES3Encryption = "x-seaweedfs-sse-s3-encryption" // Encryption type for multipart upload SSE-S3 inheritance
 	SeaweedFSSSES3BaseIV     = "x-seaweedfs-sse-s3-base-iv"    // Base IV for multipart upload SSE-S3 (for IV offset calculation)

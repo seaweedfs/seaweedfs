@@ -235,6 +235,7 @@ var (
 	ErrExistingIsFile      = errors.New("existing entry is a file")
 	ErrEntryAlreadyExists  = errors.New("entry already exists")
 	ErrReadOnly            = errors.New("read only")
+	ErrPreconditionFailed  = errors.New("precondition failed")
 )
 
 // FilerErrorToSentinel maps a proto FilerError code to its sentinel error.
@@ -253,6 +254,8 @@ func FilerErrorToSentinel(code FilerError) error {
 		return ErrEntryAlreadyExists
 	case FilerError_READ_ONLY:
 		return ErrReadOnly
+	case FilerError_PRECONDITION_FAILED:
+		return ErrPreconditionFailed
 	default:
 		return nil
 	}

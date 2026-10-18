@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pquerna/cachecontrol/cacheobject"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -850,6 +851,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Store ETag in Extended attribute for future retrieval (e.g. multipart parts)
 	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
+	// Stamp this write's identity: an ambiguously committed PUT is told apart
+	// from an identical older object by it during recovery, which chunk identity
+	// cannot do for a chunkless (empty) object.
+	entry.Extended[s3_constants.SeaweedFSWriteId] = []byte(uuid.NewString())
+
 	// Store additional checksum if one was computed
 	checksumBase64 := ""
 	if checksumHash != nil && checksumHeaderName != "" {
@@ -969,17 +975,19 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	var createErr error
 	var rollbackErr error
 	entryCreated := false
+	var owner pb.ServerAddress
 	preconditionFn := func() s3err.ErrorCode {
 		if object == "" {
 			return s3err.ErrNone
 		}
 		return s3a.checkConditionalHeaders(r, bucket, object)
 	}
-	createUnderLock := func() s3err.ErrorCode {
-		createErr = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	createUnderLock := func(cond *filer_pb.WriteCondition) s3err.ErrorCode {
+		create := func(client filer_pb.SeaweedFilerClient) error {
 			req := &filer_pb.CreateEntryRequest{
 				Directory: path.Dir(filePath),
 				Entry:     entry,
+				Condition: cond,
 			}
 			glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
 			err := filer_pb.CreateEntry(context.Background(), client, req)
@@ -994,7 +1002,27 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				return err
 			}
 			return nil
-		})
+		}
+		// A conditional create must not be replayed once possibly sent: a lost
+		// commit followed by a delete lets the replayed IF_NOT_EXISTS pass and
+		// recreates an entry whose chunks the delete already reclaimed.
+		if cond != nil && owner != "" {
+			// The condition and the routed write serialize on the owner's
+			// per-path lock. Failover cannot preserve that: another filer's lock
+			// is a different boundary, and its forwarding is only correct when
+			// its ring view agrees — exactly what is not guaranteed after an
+			// ambiguous write. The create goes to the owner alone; an
+			// unreachable owner leaves the outcome uncertain.
+			createErr = pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, create)
+			switch status.Code(createErr) {
+			case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
+				s3a.markOwnerUnreachable(owner)
+			}
+		} else if s3a.filerClient != nil {
+			createErr = s3a.withFilerClientFailover(context.Background(), "", false, cond == nil, create)
+		} else {
+			createErr = s3a.withFilerClient(context.Background(), false, create)
+		}
 		if createErr != nil {
 			return filerErrorToS3Error(createErr)
 		}
@@ -1018,7 +1046,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	var createCode s3err.ErrorCode
 	routed := false
 	routedAmbiguous := false
-	var owner pb.ServerAddress
 	condAltKey := ""
 	if finalize != nil {
 		condAltKey = finalize.conditionAltKey
@@ -1056,8 +1083,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 	}
 	if !routed {
-		createFn := createUnderLock
-		if routedAmbiguous && len(chunkResult.FileChunks) > 0 {
+		createFn := func() s3err.ErrorCode { return createUnderLock(nil) }
+		if routedAmbiguous {
 			createFn = func() s3err.ErrorCode {
 				return s3a.createAfterAmbiguousRoute(filePath, bucket, object, owner, entry, chunkResult.FileChunks, finalize, &entryCreated, s3a.uploadedChunksExist, createUnderLock)
 			}
@@ -1131,62 +1158,96 @@ const createLookupTimeout = 10 * time.Second
 // superseded the commit, and its old-chunk cleanup may have deleted this
 // entry's chunks — committing would write back a stale entry pointing at dead
 // needles, so the request fails for the client to retry with a fresh upload.
-// Unresolvable lookups fail the same way; only a proven-absent entry or a
-// directory conflict with verifiably-live chunks falls through to the normal
-// create.
-func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object string, owner pb.ServerAddress, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize, entryCreated *bool, chunksExist func(ctx context.Context, chunks []*filer_pb.FileChunk) bool, createUnderLock func() s3err.ErrorCode) s3err.ErrorCode {
+// Unresolvable lookups fail the same way; only a proven-absent entry with
+// verifiably-live chunks or a directory conflict with them falls through to
+// the normal create — an empty upload has nothing to verify, so neither the
+// absent nor the lookalike-entry outcome is provable for it.
+func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object string, owner pb.ServerAddress, entry *filer_pb.Entry, uploaded []*filer_pb.FileChunk, finalize *putFinalize, entryCreated *bool, chunksExist func(ctx context.Context, chunks []*filer_pb.FileChunk) bool, createUnderLock func(cond *filer_pb.WriteCondition) s3err.ErrorCode) s3err.ErrorCode {
 	dir, name := path.Dir(filePath), path.Base(filePath)
 	lookupCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
 	defer cancel()
-	existing, uncertain := s3a.lookupCommittedEntry(lookupCtx, s3a.createTargetFilers(owner, bucket, object), dir, name)
-	if existing != nil {
-		if uncertain {
-			// A filer earlier in the list could not answer and may hold a
-			// newer entry; this match is not authoritative.
-			glog.Warningf("putToFiler: ambiguous routed PUT for %s matches an entry but a filer could not be checked; not recovering", filePath)
-			return s3err.ErrServiceUnavailable
-		}
-		if existing.IsDirectory {
-			// The directory can postdate this PUT's commit: the route may
-			// have stored the file entry, a delete removed it, and a nested
-			// write recreated the directory before recovery took the lock.
-			// Re-committing is only safe while the uploaded chunks verifiably
-			// survive — that delete may already have reclaimed the needles,
-			// and a create retrying over the directory would store an entry
-			// pointing at dead chunks.
-			if !chunksExist(lookupCtx, uploaded) {
-				glog.Warningf("putToFiler: ambiguous routed PUT for %s resolved to a directory and its chunks cannot be verified; not re-applying entry", filePath)
+	// The verified state and the create are made atomic by a WriteCondition on
+	// the create itself, which the filer evaluates under its per-path lock — a
+	// routed write committing in between fails the precondition instead of
+	// being clobbered, and the next pass re-derives the verdict from what the
+	// racer left.
+	for attempt := 0; attempt < 2; attempt++ {
+		existing, uncertain := s3a.lookupCommittedEntry(lookupCtx, s3a.createTargetFilers(owner, bucket, object), dir, name)
+		if existing != nil {
+			if uncertain {
+				// A filer earlier in the list could not answer and may hold a
+				// newer entry; this match is not authoritative.
+				glog.Warningf("putToFiler: ambiguous routed PUT for %s matches an entry but a filer could not be checked; not recovering", filePath)
 				return s3err.ErrServiceUnavailable
 			}
-			return createUnderLock()
+			if existing.IsDirectory {
+				// The directory can postdate this PUT's commit: the route may
+				// have stored the file entry, a delete removed it, and a nested
+				// write recreated the directory before recovery took the lock.
+				// Re-committing is only safe while the uploaded chunks verifiably
+				// survive — that delete may already have reclaimed the needles,
+				// and a create retrying over the directory would store an entry
+				// pointing at dead chunks.
+				if !chunksExist(lookupCtx, uploaded) {
+					glog.Warningf("putToFiler: ambiguous routed PUT for %s resolved to a directory and its chunks cannot be verified; not re-applying entry", filePath)
+					return s3err.ErrServiceUnavailable
+				}
+				code := createUnderLock(&filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+					Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+					ExpectedEntry: existing,
+				}}})
+				if code != s3err.ErrPreconditionFailed {
+					return code
+				}
+				continue
+			}
+			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
+				glog.Warningf("putToFiler: ambiguous routed PUT for %s was superseded by another write; not committing stale entry", filePath)
+				return s3err.ErrServiceUnavailable
+			}
+			// An empty PUT carries no fids, so two chunkless entries compare
+			// equal even when the stored one predates this write; only this
+			// write's stamped id proves the entry is its own commit.
+			if len(uploaded) == 0 && !sameStoredEntry(existing, entry) {
+				glog.Warningf("putToFiler: ambiguous routed PUT for %s cannot prove an empty stored entry is its own; not claiming it", filePath)
+				return s3err.ErrServiceUnavailable
+			}
+			*entryCreated = true
+			if finalize != nil && finalize.afterCreate != nil {
+				if code := finalize.afterCreate(entry); code != s3err.ErrNone {
+					// Same undo the create path applies when post-create
+					// finalization fails.
+					if rbErr := s3a.rmObject(context.Background(), dir, name, true, false); rbErr != nil {
+						glog.Errorf("putToFiler: failed to rollback recovered entry for %s: %v", filePath, rbErr)
+					}
+					return code
+				}
+			}
+			return s3err.ErrNone
 		}
-		resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
-		if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
-			glog.Warningf("putToFiler: ambiguous routed PUT for %s was superseded by another write; not committing stale entry", filePath)
+		if uncertain {
+			glog.Warningf("putToFiler: cannot confirm what ambiguous routed PUT for %s committed; not re-applying entry", filePath)
 			return s3err.ErrServiceUnavailable
 		}
-		*entryCreated = true
-		if finalize != nil && finalize.afterCreate != nil {
-			if code := finalize.afterCreate(entry); code != s3err.ErrNone {
-				// Same undo the create path applies when post-create
-				// finalization fails.
-				if rbErr := s3a.rmObject(context.Background(), dir, name, true, false); rbErr != nil {
-					glog.Errorf("putToFiler: failed to rollback recovered entry for %s: %v", filePath, rbErr)
-				}
-				return code
-			}
+		// An absent entry cannot prove an empty PUT never committed — the routed
+		// create may have landed and a delete already reclaimed it — and there
+		// are no chunks to verify either way. IF_NOT_EXISTS would recreate an
+		// object a delete already removed, so the outcome stays uncertain.
+		if len(uploaded) == 0 {
+			glog.Warningf("putToFiler: ambiguous routed PUT for %s left no entry and no chunks to verify; not re-applying entry", filePath)
+			return s3err.ErrServiceUnavailable
 		}
-		return s3err.ErrNone
+		if !chunksExist(lookupCtx, uploaded) {
+			glog.Warningf("putToFiler: ambiguous routed PUT for %s left no entry and its chunks cannot be verified; not re-applying entry", filePath)
+			return s3err.ErrServiceUnavailable
+		}
+		code := createUnderLock(clause(filer_pb.WriteCondition_IF_NOT_EXISTS))
+		if code != s3err.ErrPreconditionFailed {
+			return code
+		}
 	}
-	if uncertain {
-		glog.Warningf("putToFiler: cannot confirm what ambiguous routed PUT for %s committed; not re-applying entry", filePath)
-		return s3err.ErrServiceUnavailable
-	}
-	if !chunksExist(lookupCtx, uploaded) {
-		glog.Warningf("putToFiler: ambiguous routed PUT for %s left no entry and its chunks cannot be verified; not re-applying entry", filePath)
-		return s3err.ErrServiceUnavailable
-	}
-	return createUnderLock()
+	return s3err.ErrServiceUnavailable
 }
 
 // lookupCommittedEntry returns the entry any of the candidate filers stores
@@ -1275,11 +1336,16 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object string, ent
 			return s3err.ErrNone
 		}
 		if len(uploaded) == 0 {
-			return s3err.ErrNone
-		}
-		resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
-		if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
-			return s3err.ErrNone
+			// No chunks to compare; only this write's stamped id proves the
+			// entry is its own commit rather than an identical older object.
+			if !sameStoredEntry(existing, entry) {
+				return s3err.ErrNone
+			}
+		} else {
+			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
+				return s3err.ErrNone
+			}
 		}
 		glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
 		if finalize == nil || finalize.afterCreate == nil {
@@ -1354,6 +1420,16 @@ func sameFileChunks(a, b []*filer_pb.FileChunk) bool {
 		counts[k]--
 	}
 	return true
+}
+
+// sameStoredEntry reports whether the stored entry is this write's own
+// commit. Matching metadata cannot say so — an identical older object carries
+// the same fields — but the write id putToFiler stamps into every entry does:
+// the filer stores Extended verbatim, so the id rides the commit and a lookup
+// reads it back. An entry without this write's id cannot be claimed.
+func sameStoredEntry(existing, entry *filer_pb.Entry) bool {
+	id := entry.GetExtended()[s3_constants.SeaweedFSWriteId]
+	return len(id) > 0 && bytes.Equal(existing.GetExtended()[s3_constants.SeaweedFSWriteId], id)
 }
 
 // checksumAlgorithmMapping maps algorithm name strings to their enum and header name.
@@ -1642,6 +1718,8 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrExistingObjectIsDirectory
 	case errors.Is(err, weed_server.ErrReadOnly):
 		return s3err.ErrAccessDenied
+	case errors.Is(err, filer_pb.ErrPreconditionFailed):
+		return s3err.ErrPreconditionFailed
 	}
 
 	// A transport failure leaves the outcome ambiguous — the write may have
