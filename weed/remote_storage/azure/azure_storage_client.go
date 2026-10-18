@@ -512,10 +512,13 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key)
 
 	updated := false
+	var writeETag *azcore.ETag
 	if !reflect.DeepEqual(toMetadata(oldEntry.Extended), metadata) {
-		if _, err = blobClient.SetMetadata(context.Background(), metadata, nil); err != nil {
-			return nil, err
+		metaResp, metaErr := blobClient.SetMetadata(context.Background(), metadata, nil)
+		if metaErr != nil {
+			return nil, metaErr
 		}
+		writeETag = metaResp.ETag
 		updated = true
 	}
 
@@ -530,15 +533,23 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 		if encoding != "" {
 			httpHeaders.BlobContentEncoding = &encoding
 		}
-		if _, err = blobClient.SetHTTPHeaders(context.Background(), httpHeaders, nil); err != nil {
-			return nil, fmt.Errorf("azure set http headers %s%s: %w", loc.Bucket, loc.Path, err)
+		hdrResp, hdrErr := blobClient.SetHTTPHeaders(context.Background(), httpHeaders, nil)
+		if hdrErr != nil {
+			return nil, fmt.Errorf("azure set http headers %s%s: %w", loc.Bucket, loc.Path, hdrErr)
 		}
+		writeETag = hdrResp.ETag
 		updated = true
 	}
 	if !updated {
 		return nil, nil
 	}
-	return az.StatFile(loc)
+	remoteEntry, err = az.StatFile(loc)
+	if err == nil && writeETag != nil {
+		// the stat can describe a concurrent replacement; the write response
+		// names the object this update produced
+		remoteEntry.RemoteETag = string(*writeETag)
+	}
+	return remoteEntry, err
 }
 
 func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
