@@ -138,7 +138,7 @@ func TestAzureStorageClientBasic(t *testing.T) {
 				"x-amz-meta-new-key":  []byte("new-value"),
 			},
 		}
-		err := azClient.UpdateFileMetadata(loc, oldEntry, newEntry)
+		_, err := azClient.UpdateFileMetadata(loc, oldEntry, newEntry)
 		if err != nil {
 			t.Fatalf("Failed to update metadata: %v", err)
 		}

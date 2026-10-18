@@ -695,6 +695,10 @@ type recordingRemote struct {
 	// statETags names one for its path.
 	statETag  string
 	statETags map[string]string
+	statMtime int64
+	// metadataUpdateResult is the RemoteEntry UpdateFileMetadata reports; nil
+	// means the update left the object untouched
+	metadataUpdateResult *filer_pb.RemoteEntry
 }
 
 func (r *recordingRemote) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (*filer_pb.RemoteEntry, error) {
@@ -727,7 +731,7 @@ func (r *recordingRemote) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer
 	if e, ok := r.statETags[loc.Path]; ok {
 		etag = e
 	}
-	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body)), RemoteETag: etag}, nil
+	return &filer_pb.RemoteEntry{StorageName: loc.Name, RemoteSize: int64(len(body)), RemoteETag: etag, RemoteMtime: r.statMtime}, nil
 }
 
 func (r *recordingRemote) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) ([]byte, error) {
@@ -743,9 +747,9 @@ func (r *recordingRemote) DeleteFile(loc *remote_pb.RemoteStorageLocation) error
 	return r.deleteErr
 }
 
-func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) error {
+func (r *recordingRemote) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry, newEntry *filer_pb.Entry) (*filer_pb.RemoteEntry, error) {
 	r.metadataUpdates = append(r.metadataUpdates, loc)
-	return nil
+	return r.metadataUpdateResult, nil
 }
 
 // TestRenameWithInheritedRemoteEntryWritesNewKey reproduces #11261: a rename
@@ -1749,5 +1753,66 @@ func TestCompleteRemoteOnlyRenameRetryUsesTheSourceStamp(t *testing.T) {
 	}
 	if len(remote.deletes) != 1 || remote.deletes[0].Path != "/b/a.jpg" {
 		t.Errorf("deletes = %+v, want the unchanged source deleted on the retry", remote.deletes)
+	}
+}
+
+// TestMetadataUpdateRestampsTheUpdatedObject: a metadata-only update can
+// rewrite the remote object itself (S3 changes Content-Encoding through an
+// in-place copy, minting a new ETag and mtime). The stamp saved back to the
+// filer must be the one the update produced — a stat instead could fail the
+// freshness comparison on the legitimately new ETag and keep the stale
+// stamp, so a later delete would keep the object.
+func TestMetadataUpdateRestampsTheUpdatedObject(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
+	stamp := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: `"orig"`, RemoteSize: 3, RemoteMtime: 100}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/vol",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 100}, RemoteEntry: stamp},
+			NewParentPath: "/buckets/b/vol",
+			NewEntry: &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 100}, RemoteEntry: stamp,
+				Extended: map[string][]byte{"Content-Encoding": []byte("gzip")}},
+		},
+	}
+	remote := &recordingRemote{
+		objects:              map[string][]byte{"/b/vol/f": []byte("old")},
+		metadataUpdateResult: &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: `"new"`, RemoteSize: 3, RemoteMtime: 200},
+	}
+	filerClient := &stubFilerClient{}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.metadataUpdates) != 1 {
+		t.Fatalf("metadataUpdates = %+v, want one", remote.metadataUpdates)
+	}
+	got := filerClient.updated.Entry.RemoteEntry
+	if filerClient.updates != 1 || got.RemoteMtime != 200 || got.RemoteETag != `"new"` {
+		t.Fatalf("stamped RemoteEntry = %+v, want the update's result (mtime 200, etag \"new\")", got)
+	}
+}
+
+// TestMetadataUpdateKeepsTheStoredStampOnNilResult: a backend that did not
+// rewrite the object reports no stamp; the entry keeps its own.
+func TestMetadataUpdateKeepsTheStoredStampOnNilResult(t *testing.T) {
+	const mountedDir = "/buckets"
+	mountLoc := &remote_pb.RemoteStorageLocation{Name: "gcs", Bucket: "bucket", Path: "/"}
+	stamp := &filer_pb.RemoteEntry{StorageName: "gcs", RemoteETag: `"orig"`, RemoteSize: 3, RemoteMtime: 100}
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/b/vol",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 100}, RemoteEntry: stamp},
+			NewParentPath: "/buckets/b/vol",
+			NewEntry: &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{Mtime: 100}, RemoteEntry: stamp,
+				Extended: map[string][]byte{"Content-Encoding": []byte("gzip")}},
+		},
+	}
+	remote := &recordingRemote{objects: map[string][]byte{"/b/vol/f": []byte("old")}}
+	filerClient := &stubFilerClient{}
+	if err := processUpdateEvent(filerClient, filerClient, "", remote, mountedDir, mountLoc, resp); err != nil {
+		t.Fatal(err)
+	}
+	if filerClient.updates != 1 || filerClient.updated.Entry.RemoteEntry.RemoteMtime != 100 {
+		t.Fatalf("stamped RemoteEntry = %+v, want the entry's own stamp kept (mtime 100)", filerClient.updated.Entry.RemoteEntry)
 	}
 }

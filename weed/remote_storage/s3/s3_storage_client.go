@@ -586,9 +586,9 @@ func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorage
 // the largest object a single CopyObject call accepts
 const s3CopyObjectSizeLimit = 5 * 1024 * 1024 * 1024
 
-func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
-		return nil
+		return nil, nil
 	}
 
 	// Content-Encoding is S3 system metadata, changeable without a content
@@ -605,7 +605,7 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 				Key:    aws.String(key),
 			})
 			if headErr != nil {
-				return fmt.Errorf("stat %s/%s before metadata copy: %w", loc.Bucket, key, headErr)
+				return nil, fmt.Errorf("stat %s/%s before metadata copy: %w", loc.Bucket, key, headErr)
 			}
 			copyInput := &s3.CopyObjectInput{
 				Bucket:                  aws.String(loc.Bucket),
@@ -636,8 +636,25 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 			if s.conf.S3StorageClass != "" {
 				copyInput.StorageClass = aws.String(s.conf.S3StorageClass)
 			}
-			if _, err = s.conn.CopyObject(copyInput); err != nil {
-				return fmt.Errorf("update content encoding of %s/%s: %w", loc.Bucket, key, err)
+			copyOutput, copyErr := s.conn.CopyObject(copyInput)
+			if copyErr != nil {
+				return nil, fmt.Errorf("update content encoding of %s/%s: %w", loc.Bucket, key, copyErr)
+			}
+			// the copy rewrites the object and can mint a new ETag, so the
+			// stamp it produced is reported instead of a fresh stat — which
+			// could describe a replacement that landed in between
+			remoteEntry = &filer_pb.RemoteEntry{
+				StorageName: s.conf.Name,
+				RemoteSize:  aws.Int64Value(headOut.ContentLength),
+			}
+			if result := copyOutput.CopyObjectResult; result != nil {
+				remoteEntry.RemoteETag = aws.StringValue(result.ETag)
+				if result.LastModified != nil {
+					remoteEntry.RemoteMtime = result.LastModified.Unix()
+				}
+			}
+			if encoding != "" {
+				remoteEntry.RemoteContentEncoding = aws.String(encoding)
 			}
 		}
 	}
@@ -660,6 +677,9 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageL
 			Bucket: aws.String(loc.Bucket),
 			Key:    aws.String(loc.Path[1:]),
 		})
+	}
+	if err != nil {
+		return nil, err
 	}
 	return
 }
@@ -831,6 +851,45 @@ func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation)
 		Key:    aws.String(loc.Path[1:]),
 	})
 	return
+}
+
+// DeleteFileIfUnchanged deletes the object only while it is still the one the
+// stat describes, enforced with the S3 conditional-delete If-Match header. A
+// replacement that lands between the stat and the delete fails the
+// precondition instead of being deleted.
+func (s *s3RemoteStorageClient) DeleteFileIfUnchanged(loc *remote_pb.RemoteStorageLocation, stamp *filer_pb.RemoteEntry) (bool, error) {
+	live, err := s.StatFile(loc)
+	if err != nil {
+		if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	if !remote_storage.StillCurrent(stamp, live) {
+		return false, nil
+	}
+	if live.RemoteETag == "" {
+		return true, s.DeleteFile(loc)
+	}
+	req, _ := s.conn.DeleteObjectRequest(&s3.DeleteObjectInput{
+		Bucket: aws.String(loc.Bucket),
+		Key:    aws.String(loc.Path[1:]),
+	})
+	req.Handlers.Build.PushBack(func(r *request.Request) {
+		r.HTTPRequest.Header.Set("If-Match", live.RemoteETag)
+	})
+	if err := req.Send(); err != nil {
+		if reqErr, ok := err.(awserr.RequestFailure); ok {
+			switch reqErr.StatusCode() {
+			case http.StatusPreconditionFailed:
+				return false, nil
+			case http.StatusNotFound:
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("delete s3 %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return true, nil
 }
 
 func (s *s3RemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {

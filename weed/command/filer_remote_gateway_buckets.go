@@ -359,12 +359,20 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 					if message.OldEntry.RemoteEntry != nil && filer.IsSameData(message.OldEntry, message.NewEntry) {
 						glog.V(2).Infof("update meta: %+v", resp)
 						oldDest := toRemoteStorageLocation(oldBucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), oldRemoteStorageMountLocation)
-						if err := client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry); err != nil {
+						updated, err := client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry)
+						if err != nil {
 							return err
 						}
 						remoteEntry := message.NewEntry.RemoteEntry
 						if remoteEntry == nil {
 							remoteEntry = message.OldEntry.RemoteEntry
+						}
+						// the metadata write can rewrite the object (S3 copies
+						// it in place for a Content-Encoding change, minting a
+						// new ETag): restamp from the object the update
+						// produced when the backend reports it
+						if updated != nil {
+							remoteEntry = updated
 						}
 						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 					} else {

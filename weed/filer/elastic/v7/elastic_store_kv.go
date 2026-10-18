@@ -37,13 +37,16 @@ func (store *ElasticStore) KvGet(ctx context.Context, key []byte) (value []byte,
 	if elastic.IsNotFound(err) {
 		return value, filer.ErrKvNotFound
 	}
+	if err != nil {
+		glog.ErrorfCtx(ctx, "find key(%s),%v.", string(key), err)
+		return value, err
+	}
 	if searchResult != nil && searchResult.Found {
 		esEntry := &ESKVEntry{}
 		if err := jsoniter.Unmarshal(searchResult.Source, esEntry); err == nil {
 			return esEntry.Value, nil
 		}
 	}
-	glog.ErrorfCtx(ctx, "find key(%s),%v.", string(key), err)
 	return value, filer.ErrKvNotFound
 }
 

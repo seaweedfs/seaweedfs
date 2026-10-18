@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -751,6 +752,46 @@ func TestReplayDirectoryDeleteSweepsLocalChildren(t *testing.T) {
 	}
 }
 
+// The sweep locks each child under locks Replay already holds, so it cannot
+// wait on a child a local write holds — a rename could hold the child while
+// waiting on one of the replayed paths. Contention fails the replay instead,
+// and a retry after the local write sweeps normally.
+func TestReplaySweepFailsOnChildLockContention(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	if err := store.InsertEntry(ctx, &Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertEntry(ctx, &Entry{FullPath: "/d/a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "d", IsDirectory: true},
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+
+	held := f.EntryLockTable.AcquireLock("test local write", "/d/a.txt", util.ExclusiveLock)
+	if err := f.Replay(event); err == nil {
+		f.EntryLockTable.ReleaseLock("/d/a.txt", held)
+		t.Fatal("replay succeeded while a child lock was held by a local write")
+	}
+	f.EntryLockTable.ReleaseLock("/d/a.txt", held)
+
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay after the local write: %v", err)
+	}
+	for _, path := range []string{"/d", "/d/a.txt"} {
+		if _, err := store.FindEntry(ctx, util.FullPath(path)); !errors.Is(err, filer_pb.ErrNotFound) {
+			t.Fatalf("expected %s gone after the retried delete, got %v", path, err)
+		}
+	}
+}
+
 func TestReplayFileDeleteKeepsSiblingEntries(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)
@@ -876,5 +917,618 @@ func TestReplayKeptDirectoryDeleteFencesStaleCreates(t *testing.T) {
 	}
 	if _, err := store.FindEntry(ctx, "/d/late.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
 		t.Fatal("stale create resurrected a child under a directory the origin deleted")
+	}
+}
+
+// A swept hard link drops the shared inode record with the entry. When the
+// record is gone the sweep must free the chunks no sibling link can reach.
+func TestReplayDirectoryDeleteFreesOrphanedHardLinkChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.FilerConf = NewFilerConf()
+	f.FileIdDeletionQueue = util.NewUnboundedQueue()
+	ctx := context.Background()
+
+	hardLinkId := NewHardLinkId()
+	inode := &Entry{
+		FullPath:        "/d/a.txt",
+		Attr:            Attr{Mtime: time.Now()},
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 1,
+		Chunks:          []*filer_pb.FileChunk{{FileId: "3,01637037d6"}},
+	}
+	blob, err := inode.EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.KvPut(ctx, hardLinkId, blob); err != nil {
+		t.Fatal(err)
+	}
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(&Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir}})
+	put(&Entry{FullPath: "/d/a.txt", Attr: Attr{Mtime: time.Now()}, HardLinkId: hardLinkId, HardLinkCounter: 1})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: true,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if _, err := store.KvGet(ctx, hardLinkId); !errors.Is(err, ErrKvNotFound) {
+		t.Fatalf("hard link record should be gone, got %v", err)
+	}
+	if got := f.pendingDeletionCount(); got != 1 {
+		t.Fatalf("pending deletions = %d, want the orphaned shared chunks queued", got)
+	}
+}
+
+// A sibling link outside the swept tree keeps the inode record, so the shared
+// chunks stay owned and must not be deleted.
+func TestReplayDirectoryDeleteKeepsSharedHardLinkChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.FilerConf = NewFilerConf()
+	f.FileIdDeletionQueue = util.NewUnboundedQueue()
+	ctx := context.Background()
+
+	hardLinkId := NewHardLinkId()
+	inode := &Entry{
+		FullPath:        "/d/a.txt",
+		Attr:            Attr{Mtime: time.Now()},
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 2,
+		Chunks:          []*filer_pb.FileChunk{{FileId: "3,01637037d6"}},
+	}
+	blob, err := inode.EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.KvPut(ctx, hardLinkId, blob); err != nil {
+		t.Fatal(err)
+	}
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(&Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir}})
+	put(&Entry{FullPath: "/d/a.txt", Attr: Attr{Mtime: time.Now()}, HardLinkId: hardLinkId, HardLinkCounter: 2})
+	put(&Entry{FullPath: "/keep", Attr: Attr{Mode: os.ModeDir}})
+	put(&Entry{FullPath: "/keep/b.txt", Attr: Attr{Mtime: time.Now()}, HardLinkId: hardLinkId, HardLinkCounter: 2})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: true,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if _, err := store.KvGet(ctx, hardLinkId); err != nil {
+		t.Fatalf("surviving link must keep the inode record: %v", err)
+	}
+	if got := f.pendingDeletionCount(); got != 0 {
+		t.Fatalf("pending deletions = %d, want 0 while a sibling link owns the chunks", got)
+	}
+}
+
+// A replayed directory delete must mirror the origin's remote cleanup: entries
+// the lagging peer alone still holds lose their remote objects too, and record
+// tombstones so lazy remote fetches cannot resurrect them.
+func TestReplayDirectoryDeleteSweepsRemoteObjects(t *testing.T) {
+	const storageType = "stub_replay_remote"
+	stub := &stubRemoteClient{
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "replaystore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "replaystore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	f.onMetadataChangeEvent(event)
+
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("swept child should be gone, got %v", err)
+	}
+	if len(stub.deleteCalls) != 1 || stub.deleteCalls[0].Path != "/d/f.txt" {
+		t.Fatalf("expected one remote delete of /d/f.txt, got %v", stub.deleteCalls)
+	}
+	if got := f.remoteTombstones.dirs["/buckets/mybucket/d"]; got != event.TsNs {
+		t.Fatalf("dir tombstone stamped %d, want the event ts %d", got, event.TsNs)
+	}
+}
+
+// A metadata-only delete keeps remote objects: the event's marker means the
+// remote tree stays authoritative, so the sweep must not touch it.
+func TestReplayDirectoryDeleteKeepRemoteObjects(t *testing.T) {
+	const storageType = "stub_replay_remote_keep"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "keepstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "keepstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name:        "d",
+				IsDirectory: true,
+				Extended:    map[string][]byte{ExtKeepRemoteObjectKey: []byte("true")},
+			},
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	f.onMetadataChangeEvent(event)
+
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("metadata-only delete must not touch remote objects, got %v", stub.deleteCalls)
+	}
+	if len(f.remoteTombstones.files)+len(f.remoteTombstones.dirs) != 0 {
+		t.Fatalf("metadata-only delete must not record tombstones, got %v", f.remoteTombstones.dirs)
+	}
+}
+
+// A delayed sweep must not erase an object another writer replaced since the
+// entry's stamp was recorded — the same guard the write-back daemon applies.
+func TestReplayDirectoryDeleteKeepsReplacedRemoteObject(t *testing.T) {
+	const storageType = "stub_replay_remote_replaced"
+	stub := &stubRemoteClient{
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000099, RemoteSize: 10},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "replacestore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "replacestore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("a replaced remote object must be kept, got %v", stub.deleteCalls)
+	}
+}
+
+// A backend offering a conditional delete must serve the sweep: the check and
+// the delete bind into one preconditioned request, so a replacement landing
+// between them cannot be deleted.
+func TestReplayDirectoryDeleteUsesConditionalRemoteDelete(t *testing.T) {
+	const storageType = "stub_replay_remote_cond"
+	stub := &stubConditionalRemoteClient{conditionalResult: true}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "condstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "condstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if len(stub.conditionalCalls) != 1 || stub.conditionalCalls[0].Path != "/d/f.txt" {
+		t.Fatalf("expected one conditional delete of /d/f.txt, got %v", stub.conditionalCalls)
+	}
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("an unconditional delete must not run beside the conditional one, got %v", stub.deleteCalls)
+	}
+}
+
+// A conditional delete reporting the object changed keeps the remote object
+// but still sweeps the local metadata: the entry the peer held is gone either
+// way.
+func TestReplayDirectoryDeleteKeepsChangedRemoteObject(t *testing.T) {
+	const storageType = "stub_replay_remote_cond_keep"
+	stub := &stubConditionalRemoteClient{conditionalResult: false}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "condkeepstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "condkeepstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("swept child should be gone, got %v", err)
+	}
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("a changed remote object must be kept, got %v", stub.deleteCalls)
+	}
+}
+
+// A failed remote delete aborts the sweep so the replication stream retries
+// instead of orphaning the object no other event will ever name.
+func TestReplayDirectoryDeleteFailsOnRemoteDeleteError(t *testing.T) {
+	const storageType = "stub_replay_remote_err"
+	stub := &stubRemoteClient{
+		statResult: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+		deleteErr:  errors.New("remote unavailable"),
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "errstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "errstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err == nil {
+		t.Fatal("a failed remote delete must fail the replay for retry")
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); err != nil {
+		t.Fatalf("the child must survive for the retry, got %v", err)
+	}
+}
+
+// A swept entry deleted while its rename copy was still pending reads its
+// content from the source the marker names: removing the entry must release
+// that object too, or it is orphaned — the destination key may hold nothing.
+func TestReplayDirectoryDeleteReleasesPendingRenameSource(t *testing.T) {
+	const storageType = "stub_replay_remote_rename_src"
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/d/src.txt": {RemoteMtime: 1700000000, RemoteSize: 10},
+	}}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "srcstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "srcstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/dst.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+		Extended: map[string][]byte{ExtRemoteRenameSourceKey: []byte("/buckets/mybucket/d/src.txt")},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/dst.txt"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("swept child should be gone, got %v", err)
+	}
+	if len(stub.deleteCalls) != 1 || stub.deleteCalls[0].Path != "/d/src.txt" {
+		t.Fatalf("expected one remote delete of the pending rename's source /d/src.txt, got %v", stub.deleteCalls)
+	}
+}
+
+// The source survives while a remote-only entry holds its path: that entry's
+// content is the same object. The swept destination entry's own object still
+// goes while its stamp describes it.
+func TestReplayDirectoryDeleteKeepsPendingRenameSourceOwnedByRemoteOnly(t *testing.T) {
+	const storageType = "stub_replay_remote_rename_owned"
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/d/dst.txt":     {RemoteMtime: 1700000000, RemoteSize: 10},
+		"/other/src.txt": {RemoteMtime: 1700000000, RemoteSize: 10},
+	}}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "ownstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "ownstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	put := func(e *Entry) {
+		if err := store.InsertEntry(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{"/buckets", "/buckets/mybucket", "/buckets/mybucket/d", "/buckets/mybucket/other"} {
+		put(&Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir}})
+	}
+	put(&Entry{
+		FullPath: "/buckets/mybucket/d/dst.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+		Extended: map[string][]byte{ExtRemoteRenameSourceKey: []byte("/buckets/mybucket/other/src.txt")},
+	})
+	put(&Entry{
+		FullPath: "/buckets/mybucket/other/src.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/buckets/mybucket",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: false,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(stub.deleteCalls) != 1 || stub.deleteCalls[0].Path != "/d/dst.txt" {
+		t.Fatalf("expected one remote delete of /d/dst.txt, got %v", stub.deleteCalls)
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/other/src.txt"); err != nil {
+		t.Fatalf("the remote-only source holder must survive, got %v", err)
+	}
+}
+
+// A remote-only entry that took the path since the listing reads the object
+// at the key as its only copy — the sweep must keep both.
+func TestReplaySweepKeepsRemoteOnlyOwnerOfPath(t *testing.T) {
+	const storageType = "stub_replay_remote_owner"
+	stub := &pathStatRemoteClient{objects: map[string]*filer_pb.RemoteEntry{
+		"/d/f.txt": {RemoteMtime: 1700000099, RemoteSize: 20},
+	}}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "ownerstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "ownerstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+	ctx := context.Background()
+
+	owner := &Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000099, RemoteSize: 20},
+	}
+	if err := store.InsertEntry(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := &Entry{
+		FullPath: "/buckets/mybucket/d/f.txt",
+		Attr:     Attr{Mtime: time.Now(), Mode: 0644},
+		Remote:   &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 10},
+	}
+	sweep := &folderSweep{chunksByPath: make(map[util.FullPath][]*filer_pb.FileChunk)}
+	message := &filer_pb.EventNotification{OldEntry: &filer_pb.Entry{Name: "d", IsDirectory: true}}
+	kept, err := f.deleteSweptChild(ctx, stale, message, 0, sweep, false, true)
+	if err != nil {
+		t.Fatalf("deleteSweptChild: %v", err)
+	}
+	if !kept {
+		t.Fatal("a remote-only entry that took the path must be kept")
+	}
+	if _, err := store.FindEntry(ctx, "/buckets/mybucket/d/f.txt"); err != nil {
+		t.Fatalf("the remote-only owner must survive, got %v", err)
+	}
+	if len(stub.deleteCalls) != 0 {
+		t.Fatalf("the owned remote object must be kept, got %v", stub.deleteCalls)
 	}
 }
