@@ -56,11 +56,6 @@ func TestFileInfoETag(t *testing.T) {
 	if etag, err := (&FileInfo{etag: "abc"}).ETag(ctx); err != nil || etag != "abc" {
 		t.Errorf("ETag() = %q, %v, want \"abc\", nil", etag, err)
 	}
-
-	failed := &FileInfo{err: os.ErrInvalid}
-	if _, err := failed.ETag(ctx); err != os.ErrInvalid {
-		t.Errorf("ETag() = %v, want the stat error", err)
-	}
 }
 
 type noVolumeFiler struct {
@@ -166,8 +161,17 @@ func TestWebDavFileSystem_RemoveAll_Recursive(t *testing.T) {
 	}
 
 	filer.req = nil
+	assert.NoError(t, fs.RemoveAll(context.Background(), "/dir/sub/"))
+	if assert.NotNil(t, filer.req) {
+		assert.Equal(t, "/dir", filer.req.Directory)
+		assert.Equal(t, "sub", filer.req.Name)
+	}
+
+	filer.req = nil
+	wrapped := NewWrappedFs(fs, "/served")
 	assert.Equal(t, os.ErrInvalid, fs.RemoveAll(context.Background(), "/"))
-	assert.Equal(t, os.ErrInvalid, NewWrappedFs(fs, "/served").RemoveAll(context.Background(), "/../"))
+	assert.Equal(t, os.ErrInvalid, wrapped.RemoveAll(context.Background(), "/../"))
+	assert.Equal(t, os.ErrInvalid, wrapped.Rename(context.Background(), "/", "/x"))
 	assert.Nil(t, filer.req)
 }
 

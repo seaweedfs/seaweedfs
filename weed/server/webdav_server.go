@@ -101,7 +101,6 @@ type FileInfo struct {
 	modifiedTime time.Time
 	etag         string
 	isDirectory  bool
-	err          error
 }
 
 func (fi *FileInfo) Name() string       { return fi.name }
@@ -112,12 +111,8 @@ func (fi *FileInfo) IsDir() bool        { return fi.isDirectory }
 func (fi *FileInfo) Sys() interface{}   { return nil }
 
 func (fi *FileInfo) ETag(ctx context.Context) (string, error) {
-	if fi.err != nil {
-		return "", fi.err
-	}
 	if fi.etag == "" {
-		// nothing hashed this entry; let webdav derive one rather than
-		// publish an empty DAV:getetag, which is not a valid entity-tag
+		// an empty DAV:getetag is not a valid entity-tag; let webdav derive one
 		return "", webdav.ErrNotImplemented
 	}
 	return fi.etag, nil
@@ -203,6 +198,9 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 	if err == nil {
 		return os.ErrExist
 	}
+	if err != os.ErrNotExist {
+		return err
+	}
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		dir, name := util.FullPath(fullDirPath).DirAndName()
@@ -246,14 +244,12 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		}
 		fi, err := fs.stat(ctx, fullFilePath)
 		if err == nil {
-			if flag&os.O_EXCL != 0 {
-				return nil, os.ErrExist
-			}
-			// removeAll is recursive: never replace a folder with a file
-			if fi.IsDir() {
+			if flag&os.O_EXCL != 0 || fi.IsDir() {
 				return nil, os.ErrExist
 			}
 			fs.removeAll(ctx, fullFilePath)
+		} else if err != os.ErrNotExist {
+			return nil, err
 		}
 
 		dir, name := util.FullPath(fullFilePath).DirAndName()
@@ -317,6 +313,10 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 		return err
 	}
 
+	fullFilePath = strings.TrimSuffix(fullFilePath, "/")
+	if fullFilePath == "" {
+		return os.ErrInvalid
+	}
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
 	return filer_pb.Remove(context.Background(), fs, dir, name, true, true, false, false, []int32{fs.signature})
@@ -327,9 +327,6 @@ func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 
 	glog.V(2).Infof("WebDavFileSystem.RemoveAll %v", name)
 
-	if path.Clean(name) == "/" {
-		return os.ErrInvalid
-	}
 	return fs.removeAll(ctx, name)
 }
 
@@ -350,18 +347,19 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 		return os.ErrExist
 	}
 	if of.IsDir() {
-		if strings.HasSuffix(oldName, "/") {
-			oldName = strings.TrimRight(oldName, "/")
-		}
+		oldName = strings.TrimRight(oldName, "/")
 	}
-	// a file moved onto "/coll/" replaces /coll; with the "/" kept it would get an empty name
-	if strings.HasSuffix(newName, "/") {
-		newName = strings.TrimRight(newName, "/")
+	newName = strings.TrimRight(newName, "/")
+	if oldName == "" || newName == "" {
+		return os.ErrInvalid
 	}
 
 	_, err = fs.stat(ctx, newName)
 	if err == nil {
 		return os.ErrExist
+	}
+	if err != os.ErrNotExist {
+		return err
 	}
 
 	oldDir, oldBaseName := util.FullPath(oldName).DirAndName()
@@ -403,7 +401,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 		if err == filer_pb.ErrNotFound {
 			return nil, os.ErrNotExist
 		}
-		return &FileInfo{err: err}, nil
+		return nil, err
 	}
 	if entry == nil {
 		return nil, os.ErrNotExist
