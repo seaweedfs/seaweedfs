@@ -128,6 +128,39 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	return lock
 }
 
+// TryAcquireLock grants the lock only when nothing holds or waits for the
+// key; it reports false on contention instead of queueing. Callers already
+// holding other locks use it so acquisition stays deadlock-free.
+func (lt *LockTable[T]) TryAcquireLock(intention string, key T, lockType LockType) (lock *ActiveLock, acquired bool) {
+	lt.mu.Lock()
+	entry, exists := lt.locks[key]
+	if !exists {
+		entry = &LockEntry{}
+		entry.cond = sync.NewCond(&entry.mu)
+		lt.locks[key] = entry
+		lt.locksInFlight[key] = 0
+	}
+	lt.locksInFlight[key]++
+	entry.mu.Lock()
+	blocked := len(entry.waiters) > 0 || entry.activeExclusiveLockOwnerCount > 0 ||
+		(lockType == ExclusiveLock && entry.activeSharedLockOwnerCount > 0)
+	if blocked {
+		entry.mu.Unlock()
+		lt.locksInFlight[key]--
+		lt.mu.Unlock()
+		return nil, false
+	}
+	lock = lt.NewActiveLock(intention, lockType)
+	if lockType == ExclusiveLock {
+		entry.activeExclusiveLockOwnerCount++
+	} else {
+		entry.activeSharedLockOwnerCount++
+	}
+	entry.mu.Unlock()
+	lt.mu.Unlock()
+	return lock, true
+}
+
 func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()

@@ -16,6 +16,12 @@ import (
 
 var RetryWaitTime = 6 * time.Second
 
+// ErrLockContended marks a lock acquisition abandoned instead of waited on —
+// the caller already holds other locks and cannot queue without inverting
+// their order. The holder's write settles the contested state, so callers
+// treat it as transient and retry.
+var ErrLockContended = errors.New("a local write holds the entry lock")
+
 // transientErrorMessages are substrings of failures that a later attempt is
 // likely to get past: connection resets, timeouts, and the throttling or
 // overload replies S3 and gRPC hand back. Cloud SDKs bury the underlying net
@@ -83,6 +89,9 @@ func IsTransientError(err error) bool {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+	if errors.Is(err, ErrLockContended) {
+		return true
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) ||

@@ -752,6 +752,46 @@ func TestReplayDirectoryDeleteSweepsLocalChildren(t *testing.T) {
 	}
 }
 
+// The sweep locks each child under locks Replay already holds, so it cannot
+// wait on a child a local write holds — a rename could hold the child while
+// waiting on one of the replayed paths. Contention fails the replay instead,
+// and a retry after the local write sweeps normally.
+func TestReplaySweepFailsOnChildLockContention(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	ctx := context.Background()
+
+	if err := store.InsertEntry(ctx, &Entry{FullPath: "/d", Attr: Attr{Mode: os.ModeDir}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertEntry(ctx, &Entry{FullPath: "/d/a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "d", IsDirectory: true},
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+
+	held := f.EntryLockTable.AcquireLock("test local write", "/d/a.txt", util.ExclusiveLock)
+	if err := f.Replay(event); err == nil {
+		f.EntryLockTable.ReleaseLock("/d/a.txt", held)
+		t.Fatal("replay succeeded while a child lock was held by a local write")
+	}
+	f.EntryLockTable.ReleaseLock("/d/a.txt", held)
+
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay after the local write: %v", err)
+	}
+	for _, path := range []string{"/d", "/d/a.txt"} {
+		if _, err := store.FindEntry(ctx, util.FullPath(path)); !errors.Is(err, filer_pb.ErrNotFound) {
+			t.Fatalf("expected %s gone after the retried delete, got %v", path, err)
+		}
+	}
+}
+
 func TestReplayFileDeleteKeepsSiblingEntries(t *testing.T) {
 	store := newStubFilerStore()
 	f := newReplayTestFiler(store)

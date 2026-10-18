@@ -221,7 +221,15 @@ func (f *Filer) sweepReplayedFolder(ctx context.Context, dir util.FullPath, mess
 func (f *Filer) deleteSweptChild(ctx context.Context, sub *Entry, message *filer_pb.EventNotification, tsNs int64, sweep *folderSweep, keepRemote, deleteRemote bool) (bool, error) {
 	var childLock *util.ActiveLock
 	if lt := f.EntryLockTable; lt != nil {
-		childLock = lt.AcquireLock("MetaReplay", sub.FullPath, util.ExclusiveLock)
+		// The sweep already holds locks on the event's paths; waiting for a
+		// descendant here can deadlock against a local rename that holds the
+		// child and waits for one of them. ErrLockContended is transient, so
+		// the replication retry picks the event up once the write settles.
+		var acquired bool
+		childLock, acquired = lt.TryAcquireLock("MetaReplay", sub.FullPath, util.ExclusiveLock)
+		if !acquired {
+			return false, fmt.Errorf("sweep %s: %w", sub.FullPath, util.ErrLockContended)
+		}
 		defer lt.ReleaseLock(sub.FullPath, childLock)
 	}
 	if tsNs > 0 {
