@@ -247,6 +247,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 					if len(sub.HardLinkId) != 0 {
 						// hard link chunk data are deleted separately
 						err = onHardLinkIdsFn([]HardLinkId{sub.HardLinkId})
+						if shouldDeleteChunks && f.hardLinkIsOrphaned(ctx, sub.HardLinkId) {
+							chunksToDelete = append(chunksToDelete, sub.GetChunks()...)
+						}
 					} else {
 						if shouldDeleteChunks {
 							chunksToDelete = append(chunksToDelete, sub.GetChunks()...)
@@ -410,4 +413,11 @@ func (f *Filer) maybeDeleteHardLinks(ctx context.Context, hardLinkIds []HardLink
 			glog.ErrorfCtx(ctx, "delete hard link id %d : %v", hardLinkId, err)
 		}
 	}
+}
+
+// hardLinkIsOrphaned reports whether the shared inode record for hardLinkId
+// is gone, meaning the removed link was the last owner of its chunks.
+func (f *Filer) hardLinkIsOrphaned(ctx context.Context, hardLinkId HardLinkId) bool {
+	_, err := f.Store.KvGet(ctx, hardLinkId)
+	return errors.Is(err, ErrKvNotFound)
 }
