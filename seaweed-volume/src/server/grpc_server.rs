@@ -10408,6 +10408,55 @@ mod tests {
         assert!(vif.expire_at_sec <= before + ttl.to_seconds() + 5);
     }
 
+    /// The worker EC encode reads ExpireAtSec out of ReadVolumeFileStatus, so
+    /// persisting a readonly mark must stamp it into the live volume_info too,
+    /// not only into the written .vif. A creation-time stamp would sit a full
+    /// last-write interval early.
+    #[tokio::test]
+    async fn test_mark_readonly_persist_reports_expire_at_sec() {
+        let ttl = crate::storage::needle::ttl::TTL::read("3m").unwrap();
+        let (service, _tmp) = make_local_service_with_volume("ttl", Some(ttl));
+
+        // A later write must move the expiry: pin it ahead of the setup write
+        // so the stale creation-time stamp cannot collide on the same second.
+        let last_write = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 60;
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .find_volume_mut(VolumeId(1))
+            .unwrap()
+            .1
+            .set_last_modified_ts_for_test(last_write);
+        service
+            .state
+            .store
+            .write()
+            .unwrap()
+            .find_volume_mut(VolumeId(1))
+            .unwrap()
+            .1
+            .set_read_only_persist(false, true)
+            .unwrap();
+
+        let status = service
+            .read_volume_file_status(Request::new(
+                volume_server_pb::ReadVolumeFileStatusRequest { volume_id: 1 },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            status.volume_info.unwrap().expire_at_sec,
+            last_write + ttl.to_seconds()
+        );
+    }
+
     /// A re-encode must not mix artifacts from a previous run. Generate used to
     /// go straight into the encode, truncating only the `.ecNN` files on the
     /// encoding disk; a stale shard on a sibling disk survived and was later
