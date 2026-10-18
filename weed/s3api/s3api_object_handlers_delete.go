@@ -484,8 +484,12 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				continue
 			}
 			if authErr := s3a.iam.AuthorizeObjectDelete(r, identity, bucket, object.Key, object.VersionId); authErr != s3err.ErrNone {
-				deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
-				continue
+				// Defer to the recheck, mirroring the copy-source fallback: a
+				// tag-conditioned Allow may still grant what phase one denied.
+				if authErr != s3err.ErrAccessDenied || s3a.recheckPolicyForKeyWithLookup(r, http.MethodDelete, bucket, object.Key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler") != s3err.ErrNone {
+					deleteErrors = append(deleteErrors, deleteErrorFromCode(authErr, object.Key, object.VersionId))
+					continue
+				}
 			}
 			if errCode := s3a.recheckTagConditionedPolicyWithLookup(objectKeyPolicyRequest(r, http.MethodDelete, bucket, object.Key, object.VersionId), bucket, object.Key, object.VersionId, string(s3_constants.ACTION_WRITE), "DeleteMultipleObjectsHandler"); errCode != s3err.ErrNone {
 				deleteErrors = append(deleteErrors, deleteErrorFromCode(errCode, object.Key, object.VersionId))
