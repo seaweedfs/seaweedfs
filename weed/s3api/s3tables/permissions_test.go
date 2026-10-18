@@ -399,3 +399,24 @@ func TestCheckPermissionLegacyOwnerExcludesLocalAndScoped(t *testing.T) {
 		t.Error("an ARN-shaped stored owner must not re-anchor")
 	}
 }
+
+// Legacy policies can carry the bare subject in the AWS map or array forms,
+// not only as a top-level string; re-anchoring must reach all of them or a
+// pre-scoping Deny silently stops matching the caller.
+func TestCheckPermissionLegacyPolicyPrincipalShapes(t *testing.T) {
+	ctx := &PolicyContext{
+		TrustedIssuers:   []string{"corp-idp"},
+		IsLocalAccountID: func(string) bool { return false },
+	}
+	principal := sts.ComputeParentUser("alice-sub", "corp-idp")
+	other := "other-owner"
+
+	deny := `{"Statement":[{"Effect":"Deny","Principal":{"AWS":"alice-sub"},"Action":"s3tables:GetTable"}]}`
+	if CheckPermissionWithContext("GetTable", principal, other, deny, "arn", ctx) {
+		t.Error("legacy Deny with AWS-map principal must still match the scoped caller")
+	}
+	allow := `{"Statement":[{"Effect":"Allow","Principal":["alice-sub"],"Action":"s3tables:GetTable"}]}`
+	if !CheckPermissionWithContext("GetTable", principal, other, allow, "arn", ctx) {
+		t.Error("legacy Allow with array principal must still match the scoped caller")
+	}
+}

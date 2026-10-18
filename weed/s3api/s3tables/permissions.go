@@ -299,8 +299,21 @@ func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyConte
 	if matchesPrincipal(principalSpec, principal) {
 		return true
 	}
-	legacy, ok := principalSpec.(string)
-	return ok && matchesLegacySubject(legacy, principal, ctx)
+	switch p := principalSpec.(type) {
+	case string:
+		return matchesLegacySubject(p, principal, ctx)
+	case []interface{}:
+		for _, item := range p {
+			if str, ok := item.(string); ok && matchesLegacySubject(str, principal, ctx) {
+				return true
+			}
+		}
+	case map[string]interface{}:
+		if aws, ok := p["AWS"]; ok {
+			return matchesCaller(aws, principal, ctx)
+		}
+	}
+	return false
 }
 
 // matchesLegacySubject reports whether a bare subject stored before issuer
