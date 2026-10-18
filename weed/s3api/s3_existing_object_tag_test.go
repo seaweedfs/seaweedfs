@@ -424,12 +424,92 @@ func TestRecheckTagConditionedPolicyWithLookupDelete(t *testing.T) {
 		s3a.recheckTagConditionedPolicyWithLookup(req, "b", "secret.txt", "", string(s3_constants.ACTION_WRITE), "test"),
 		"a tag-conditioned Deny on s3:DeleteObject must block deleting the tagged object")
 
-	postReq := httptest.NewRequest(http.MethodPost, "/b?delete", nil)
+	postReq := httptest.NewRequest(http.MethodPost, "/bv?delete", nil)
 	postReq = postReq.WithContext(s3_constants.SetIdentityInContext(postReq.Context(), identity))
-	keyReq := objectKeyPolicyRequest(postReq, http.MethodDelete, "b", "secret.txt", "v1")
+
+	filerImpl.entries["/buckets/bv/secret.txt"] = &filer_pb.Entry{
+		Name: "secret.txt",
+		Extended: map[string][]byte{
+			s3_constants.AmzObjectTaggingPrefix + "classification": []byte("public"),
+		},
+	}
+	filerImpl.entries["/buckets/bv/secret.txt.versions/v_v1"] = &filer_pb.Entry{
+		Name: "v_v1",
+		Extended: map[string][]byte{
+			s3_constants.AmzObjectTaggingPrefix + "classification": []byte("secret"),
+		},
+	}
+	filerImpl.entries["/buckets/bv/secret.txt.versions/v_v2"] = &filer_pb.Entry{
+		Name: "v_v2",
+		Extended: map[string][]byte{
+			s3_constants.AmzObjectTaggingPrefix + "classification": []byte("public"),
+		},
+	}
+	s3a.bucketConfigCache.Set("bv", &BucketConfig{Name: "bv", Versioning: s3_constants.VersioningEnabled})
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("bv", `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::bv", "arn:aws:s3:::bv/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:DeleteObjectVersion",
+				"Resource": "arn:aws:s3:::bv/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/classification": ["secret"]
+					}
+				}
+			}
+		]
+	}`))
+
+	keyReq := objectKeyPolicyRequest(postReq, http.MethodDelete, "bv", "secret.txt", "v1")
 	assert.Equal(t, s3err.ErrAccessDenied,
-		s3a.recheckTagConditionedPolicyWithLookup(keyReq, "b", "secret.txt", "v1", string(s3_constants.ACTION_WRITE), "test"),
+		s3a.recheckTagConditionedPolicyWithLookup(keyReq, "bv", "secret.txt", "v1", string(s3_constants.ACTION_WRITE), "test"),
 		"a versioned batch-delete key must be denied by the s3:DeleteObjectVersion statement")
+
+	keyReq = objectKeyPolicyRequest(postReq, http.MethodDelete, "bv", "secret.txt", "v2")
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckTagConditionedPolicyWithLookup(keyReq, "bv", "secret.txt", "v2", string(s3_constants.ACTION_WRITE), "test"),
+		"a publicly tagged version of the same object stays deletable")
+
+	filerImpl.entries["/buckets/ba/key"] = &filer_pb.Entry{
+		Name: "key",
+		Extended: map[string][]byte{
+			s3_constants.AmzObjectTaggingPrefix + "classification": []byte("secret"),
+		},
+	}
+	s3a.bucketConfigCache.Set("ba", &BucketConfig{Name: "ba"})
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("ba", `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:DeleteObject",
+				"Resource": "arn:aws:s3:::ba/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/classification": ["secret"]
+					}
+				}
+			}
+		]
+	}`))
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckPolicyForKeyWithLookup(postReq, http.MethodDelete, "ba", "key", "", string(s3_constants.ACTION_WRITE), "test"),
+		"a tag-conditioned Allow on s3:DeleteObject must grant the resolved tagged key")
+
+	filerImpl.entries["/buckets/ba/key"].Extended[s3_constants.AmzObjectTaggingPrefix+"classification"] = []byte("public")
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckPolicyForKeyWithLookup(postReq, http.MethodDelete, "ba", "key", "", string(s3_constants.ACTION_WRITE), "test"),
+		"a non-matching tag keeps the first-phase deny")
 
 	filerImpl.entries["/buckets/b/secret.txt"].Extended[s3_constants.AmzObjectTaggingPrefix+"classification"] = []byte("public")
 	assert.Equal(t, s3err.ErrNone,
