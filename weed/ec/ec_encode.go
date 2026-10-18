@@ -327,16 +327,23 @@ func doEcEncode(env *Env, writer io.Writer, volumeIdToCollection map[needle.Volu
 		return nil, err
 	}
 
-	// Compare live .idx NeedleId sets after readonly. Mismatch or an
-	// idx RPC error aborts encode and does not build a union. Matching sets
-	// late-bind the generation host.
+	// Compare live .idx NeedleId sets after readonly on ALL replicas, not
+	// only the FreeVolumeCount>=2 subset. A fat replica with a different
+	// live set must refuse encode. The generation host is then required to
+	// be in filteredLocations; no intersection → refuse, do not encode
+	// from the first fat replica. Originals are deleted only if this gate
+	// passed (generate/mount run below).
 	bestReplicas := make(map[needle.VolumeId]wdclient.Location)
 	for _, vid := range volumeIds {
 		collection := volumeIdToCollection[vid]
-
-		bestLoc, selectErr := volume_replica.SelectSourceIfIndexesMatch(env.GrpcDialOption, vid, collection, filteredLocations[vid], "", writer)
+		prefer := filteredLocations[vid][0].Url
+		bestLoc, selectErr := volume_replica.SelectSourceIfIndexesMatch(env.GrpcDialOption, vid, collection, locations[vid], prefer, writer)
 		if selectErr != nil {
 			return nil, fmt.Errorf("failed to compare replica indexes for volume %d: %v", vid, selectErr)
+		}
+		bestLoc, capErr := volume_replica.RequireCapacitySource(vid, bestLoc, filteredLocations[vid])
+		if capErr != nil {
+			return nil, capErr
 		}
 		bestReplicas[vid] = bestLoc
 	}

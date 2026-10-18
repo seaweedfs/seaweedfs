@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
-	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
@@ -18,6 +17,11 @@ import (
 // replicas can differ by MIME/flags while still holding the same ids.
 type LiveNeedle struct {
 	Id types.NeedleId
+}
+
+type replicaLiveIdx struct {
+	loc  wdclient.Location
+	live []LiveNeedle
 }
 
 // LiveNeedlesFromIndex walks a compact needle map and returns live NeedleIds
@@ -51,6 +55,20 @@ func EqualLiveNeedleSets(a, b []LiveNeedle) bool {
 	return true
 }
 
+// RequireCapacitySource returns loc if it is in capacityLocs (FreeVolumeCount>=2).
+// An empty intersection refuses encode: do not fall back to a fat replica.
+func RequireCapacitySource(vid needle.VolumeId, loc wdclient.Location, capacityLocs []wdclient.Location) (wdclient.Location, error) {
+	if loc.Url == "" {
+		return wdclient.Location{}, fmt.Errorf("volume %d: no encode source after idx compare", vid)
+	}
+	for _, c := range capacityLocs {
+		if c.Url == loc.Url {
+			return loc, nil
+		}
+	}
+	return wdclient.Location{}, fmt.Errorf("volume %d: selected source %s is not in the FreeVolumeCount>=2 replica set; refusing encode", vid, loc.Url)
+}
+
 // SelectSourceIfIndexesMatch copies each replica's live .idx and compares
 // NeedleId sets. A read error or a mismatch aborts: encode must not
 // start and the union path must not run. One replica skips the comparison.
@@ -66,21 +84,11 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 		return locations[0], nil
 	}
 
-	var dataLocs []wdclient.Location
-	var reference []LiveNeedle
-	var referenceUrl string
+	views := make([]replicaLiveIdx, 0, len(locations))
 	for _, loc := range locations {
 		status := GetReplicaStatus(grpcDialOption, vid, loc)
 		if status.Error != nil {
 			return wdclient.Location{}, fmt.Errorf("volume %d: replica status %s: %w", vid, loc.Url, status.Error)
-		}
-		// 0-byte stubs left by an interrupted encode are not data replicas.
-		// They are swept later; including them would abort a healthy source.
-		if status.VolumeSize <= uint64(super_block.SuperBlockSize) {
-			if writer != nil {
-				fmt.Fprintf(writer, "volume %d: skipping stub replica %s (size %d)\n", vid, loc.Url, status.VolumeSize)
-			}
-			continue
 		}
 		db, err := ReadReplicaIndex(grpcDialOption, vid, collection, loc.ServerAddress())
 		if err != nil {
@@ -91,42 +99,43 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 		if err != nil {
 			return wdclient.Location{}, fmt.Errorf("volume %d: walk .idx from %s: %w", vid, loc.Url, err)
 		}
-		if len(dataLocs) == 0 {
-			reference = live
-			referenceUrl = loc.Url
-			dataLocs = append(dataLocs, loc)
-			continue
-		}
-		if !EqualLiveNeedleSets(reference, live) {
-			return wdclient.Location{}, fmt.Errorf("volume %d: replica %s live NeedleId set does not match %s (%d vs %d entries); refusing encode (no union)",
-				vid, loc.Url, referenceUrl, len(live), len(reference))
-		}
-		dataLocs = append(dataLocs, loc)
+		views = append(views, replicaLiveIdx{loc: loc, live: live})
 	}
 
-	if len(dataLocs) == 0 {
+	return chooseSourceFromLiveNeedles(vid, views, prefer, writer)
+}
+
+func chooseSourceFromLiveNeedles(vid needle.VolumeId, views []replicaLiveIdx, prefer string, writer io.Writer) (wdclient.Location, error) {
+	if len(views) == 0 {
 		return wdclient.Location{}, fmt.Errorf("volume %d: no data-bearing replicas to encode", vid)
 	}
-	if len(dataLocs) == 1 {
-		if writer != nil {
-			fmt.Fprintf(writer, "volume %d: one data replica %s after skipping stubs, skipping idx set compare\n", vid, dataLocs[0].Url)
+
+	reference := views[0].live
+	referenceUrl := views[0].loc.Url
+	for _, view := range views[1:] {
+		if !EqualLiveNeedleSets(reference, view.live) {
+			return wdclient.Location{}, fmt.Errorf("volume %d: replica %s live NeedleId set does not match %s (%d vs %d entries); refusing encode (no union)",
+				vid, view.loc.Url, referenceUrl, len(view.live), len(reference))
 		}
-		return dataLocs[0], nil
+	}
+
+	if len(reference) == 0 {
+		return wdclient.Location{}, fmt.Errorf("volume %d: no data-bearing replicas to encode", vid)
 	}
 
 	if writer != nil {
-		fmt.Fprintf(writer, "volume %d: all %d data replicas have matching live idx sets (%d needles)\n",
-			vid, len(dataLocs), len(reference))
+		fmt.Fprintf(writer, "volume %d: all %d data replicas are consistent (matching live idx sets, %d needles)\n",
+			vid, len(views), len(reference))
 	}
 
 	if prefer != "" {
-		for _, loc := range dataLocs {
-			if loc.Url == prefer {
-				return loc, nil
+		for _, view := range views {
+			if view.loc.Url == prefer {
+				return view.loc, nil
 			}
 		}
 	}
-	return dataLocs[0], nil
+	return views[0].loc, nil
 }
 
 // ReadReplicaIndex streams a replica's .idx into an in-memory compact map.

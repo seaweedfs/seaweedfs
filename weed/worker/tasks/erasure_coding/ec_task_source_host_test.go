@@ -1,6 +1,10 @@
 package erasure_coding
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+)
 
 func TestLateBindSourceToWorkerHostEqualFileCountPrefersWorkerHost(t *testing.T) {
 	a := replicaFileCount{url: "full-01:8080", fileCount: 21}
@@ -27,5 +31,17 @@ func TestLateBindSourceToWorkerHostDivergeKeepsMaxFileCount(t *testing.T) {
 	}
 	if got := lateBindSourceToWorkerHost(a.url, worker, []replicaFileCount{b, a}); got != a.url {
 		t.Fatalf("diverge [B,A]: got %s want max FileCount %s", got, a.url)
+	}
+}
+
+func TestBindSourceAfterIdxGateDoesNotKeepStubURL(t *testing.T) {
+	task := NewErasureCodingTask("ec-idx-gate", "stub:1", 9, "c", nil)
+	bound := bindSourceAfterIdxGate(task.server, wdclient.Location{Url: "full-01:8080"})
+	task.server = bound
+	if task.server == "stub:1" {
+		t.Fatal("after gate t.server is still a stub URL")
+	}
+	if task.server != "full-01:8080" {
+		t.Fatalf("got %s, want replica URL", task.server)
 	}
 }

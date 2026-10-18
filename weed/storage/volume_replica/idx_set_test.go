@@ -1,7 +1,9 @@
 package volume_replica
 
 import (
+	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -115,5 +117,79 @@ func TestSelectSourceIfIndexesMatch_NoReplicas(t *testing.T) {
 	_, err := SelectSourceIfIndexesMatch(nil, needle.VolumeId(7), "", nil, "", io.Discard)
 	if err == nil {
 		t.Fatal("expected error for empty replica list")
+	}
+}
+
+func TestChooseSourceFromLiveNeedles_SuccessContainsConsistent(t *testing.T) {
+	a := wdclient.Location{Url: "127.0.0.1:8080"}
+	b := wdclient.Location{Url: "127.0.0.1:8081"}
+	live := []LiveNeedle{{Id: 1}, {Id: 2}}
+	var buf bytes.Buffer
+	got, err := chooseSourceFromLiveNeedles(7, []replicaLiveIdx{
+		{loc: a, live: live},
+		{loc: b, live: append([]LiveNeedle(nil), live...)},
+	}, "", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Url != a.Url {
+		t.Fatalf("got %+v, want %+v", got, a)
+	}
+	if !strings.Contains(buf.String(), "replicas are consistent") {
+		t.Fatalf("success log %q must contain %q", buf.String(), "replicas are consistent")
+	}
+	wantLine := "volume 7: all 2 data replicas are consistent (matching live idx sets, 2 needles)"
+	if !strings.Contains(buf.String(), wantLine) {
+		t.Fatalf("success log %q must contain %q", buf.String(), wantLine)
+	}
+}
+
+func TestChooseSourceFromLiveNeedles_EmptyVsLiveRefuses(t *testing.T) {
+	a := wdclient.Location{Url: "127.0.0.1:8080"}
+	b := wdclient.Location{Url: "127.0.0.1:8081"}
+	_, err := chooseSourceFromLiveNeedles(7, []replicaLiveIdx{
+		{loc: a, live: []LiveNeedle{{Id: 1}}},
+		{loc: b, live: nil}, // empty / superblock stub
+	}, "", io.Discard)
+	if err == nil {
+		t.Fatal("empty live-idx vs non-empty must error, not skip")
+	}
+	if strings.Contains(err.Error(), "skipping") {
+		t.Fatalf("must refuse, not skip: %v", err)
+	}
+}
+
+func TestChooseSourceFromLiveNeedles_AllEmpty(t *testing.T) {
+	a := wdclient.Location{Url: "127.0.0.1:8080"}
+	b := wdclient.Location{Url: "127.0.0.1:8081"}
+	_, err := chooseSourceFromLiveNeedles(7, []replicaLiveIdx{
+		{loc: a, live: nil},
+		{loc: b, live: nil},
+	}, "", io.Discard)
+	if err == nil {
+		t.Fatal("all empty live-idx must error")
+	}
+	if !strings.Contains(err.Error(), "no data-bearing replicas") {
+		t.Fatalf("got %v, want no data-bearing replicas", err)
+	}
+}
+
+func TestRequireCapacitySource_ThreeLocationsSourceFromCapacity(t *testing.T) {
+	fat := wdclient.Location{Url: "fat:8080"}
+	cap1 := wdclient.Location{Url: "cap1:8080"}
+	cap2 := wdclient.Location{Url: "cap2:8080"}
+	filtered := []wdclient.Location{cap1, cap2}
+
+	got, err := RequireCapacitySource(1, cap1, filtered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Url != cap1.Url {
+		t.Fatalf("got %+v, want capacity source %+v", got, cap1)
+	}
+
+	_, err = RequireCapacitySource(1, fat, filtered)
+	if err == nil {
+		t.Fatal("must refuse encode from first fat replica")
 	}
 }

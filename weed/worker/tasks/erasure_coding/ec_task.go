@@ -402,21 +402,20 @@ func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
 	if err != nil {
 		return err
 	}
-	if best.Url != "" && best.Url != t.server {
-		glog.Infof("EC encode: late-binding source %s for volume %d (was %s)", best.Url, t.volumeID, t.server)
-		t.server = best.Url
-	}
-	// Late-bind from after consistency: worker -address hostname, not Sources[0]
-	// and not AddressIsLocal (replica URLs are hostnames like full-02:8081).
-	workerAddr := strings.TrimSpace(t.workerAddress)
-	if workerAddr == "" {
-		workerAddr, _ = os.Hostname()
-	}
-	if local := preferWorkerHostReplicaIfComplete(t.grpcDialOption, needle.VolumeId(t.volumeID), locs, t.server, workerAddr); local != "" && local != t.server {
-		glog.Infof("EC encode: preferring worker-host replica %s as source for volume %d (was %s)", local, t.volumeID, t.server)
-		t.server = local
+	if bound := bindSourceAfterIdxGate(t.server, best); bound != t.server {
+		glog.Infof("EC encode: late-binding source %s for volume %d (was %s)", bound, t.volumeID, t.server)
+		t.server = bound
 	}
 	return nil
+}
+
+// bindSourceAfterIdxGate takes the gate's source. The idx gate already received
+// prefer (t.server); do not rebind by FileCount afterwards.
+func bindSourceAfterIdxGate(current string, best wdclient.Location) string {
+	if best.Url != "" {
+		return best.Url
+	}
+	return current
 }
 
 type replicaFileCount struct {
