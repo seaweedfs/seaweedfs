@@ -244,9 +244,13 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if strings.HasSuffix(fullFilePath, "/") {
 			return nil, os.ErrInvalid
 		}
-		_, err = fs.stat(ctx, fullFilePath)
+		fi, err := fs.stat(ctx, fullFilePath)
 		if err == nil {
 			if flag&os.O_EXCL != 0 {
+				return nil, os.ErrExist
+			}
+			// removeAll is recursive: never replace a folder with a file
+			if fi.IsDir() {
 				return nil, os.ErrExist
 			}
 			fs.removeAll(ctx, fullFilePath)
@@ -315,7 +319,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) 
 
 	dir, name := util.FullPath(fullFilePath).DirAndName()
 
-	return filer_pb.Remove(context.Background(), fs, dir, name, true, false, false, false, []int32{fs.signature})
+	return filer_pb.Remove(context.Background(), fs, dir, name, true, true, false, false, []int32{fs.signature})
 
 }
 
@@ -323,6 +327,9 @@ func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 
 	glog.V(2).Infof("WebDavFileSystem.RemoveAll %v", name)
 
+	if path.Clean(name) == "/" {
+		return os.ErrInvalid
+	}
 	return fs.removeAll(ctx, name)
 }
 
@@ -346,9 +353,10 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 		if strings.HasSuffix(oldName, "/") {
 			oldName = strings.TrimRight(oldName, "/")
 		}
-		if strings.HasSuffix(newName, "/") {
-			newName = strings.TrimRight(newName, "/")
-		}
+	}
+	// a file moved onto "/coll/" replaces /coll; with the "/" kept it would get an empty name
+	if strings.HasSuffix(newName, "/") {
+		newName = strings.TrimRight(newName, "/")
 	}
 
 	_, err = fs.stat(ctx, newName)

@@ -71,6 +71,24 @@ func (f *noVolumeFiler) LookupVolume(_ context.Context, _ *filer_pb.LookupVolume
 	return &filer_pb.LookupVolumeResponse{LocationsMap: map[string]*filer_pb.Locations{}}, nil
 }
 
+type deleteRecordingFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	req      *filer_pb.DeleteEntryRequest
+	existing *filer_pb.Entry
+}
+
+func (f *deleteRecordingFiler) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if f.existing == nil {
+		return nil, filer_pb.ErrNotFound
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: f.existing}, nil
+}
+
+func (f *deleteRecordingFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.req = req
+	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
 func startFakeWebDavFiler(t *testing.T, impl filer_pb.SeaweedFilerServer) pb.ServerAddress {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -129,4 +147,77 @@ func TestWebDavFile_Read_InlineContent(t *testing.T) {
 	n, err := f.Read(buf)
 	assert.NoError(t, err)
 	assert.Equal(t, "inl", string(buf[:n]))
+}
+
+// DELETE, and MOVE or COPY with Overwrite: T, remove a collection through RemoveAll, which must take its contents too.
+func TestWebDavFileSystem_RemoveAll_Recursive(t *testing.T) {
+	filer := &deleteRecordingFiler{}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	assert.NoError(t, fs.RemoveAll(context.Background(), "/dir/sub"))
+	if assert.NotNil(t, filer.req) {
+		assert.Equal(t, "/dir", filer.req.Directory)
+		assert.Equal(t, "sub", filer.req.Name)
+		assert.True(t, filer.req.IsRecursive)
+	}
+
+	filer.req = nil
+	assert.Equal(t, os.ErrInvalid, fs.RemoveAll(context.Background(), "/"))
+	assert.Equal(t, os.ErrInvalid, NewWrappedFs(fs, "/served").RemoveAll(context.Background(), "/../"))
+	assert.Nil(t, filer.req)
+}
+
+// A PUT onto a folder must not delete the folder to make room for the file.
+func TestWebDavFileSystem_OpenFile_DoesNotReplaceFolder(t *testing.T) {
+	filer := &deleteRecordingFiler{existing: &filer_pb.Entry{
+		Name:        "sub",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755)},
+	}}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	_, err := fs.OpenFile(context.Background(), "/dir/sub", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	assert.Equal(t, os.ErrExist, err)
+	assert.Nil(t, filer.req)
+}
+
+type renameRecordingFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	req *filer_pb.AtomicRenameEntryRequest
+}
+
+func (f *renameRecordingFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if req.Name != "file.txt" {
+		return nil, filer_pb.ErrNotFound
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{Name: "file.txt", Attributes: &filer_pb.FuseAttributes{}}}, nil
+}
+
+func (f *renameRecordingFiler) AtomicRenameEntry(_ context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
+	f.req = req
+	return &filer_pb.AtomicRenameEntryResponse{}, nil
+}
+
+// MOVE of a file onto an existing folder removes the folder, then renames onto "/dir/coll/".
+func TestWebDavFileSystem_Rename_FileOntoSlashedPath(t *testing.T) {
+	filer := &renameRecordingFiler{}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	assert.NoError(t, fs.Rename(context.Background(), "/dir/file.txt", "/dir/coll/"))
+	if assert.NotNil(t, filer.req) {
+		assert.Equal(t, "/dir", filer.req.NewDirectory)
+		assert.Equal(t, "coll", filer.req.NewName)
+	}
 }

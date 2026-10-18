@@ -41,6 +41,10 @@ func (w wrappedFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 }
 
 func (w wrappedFs) RemoveAll(ctx context.Context, name string) error {
+	// the root of the served sub-tree is not removable, like the root of webdav.Dir
+	if path.Clean("/"+name) == "/" {
+		return os.ErrInvalid
+	}
 	name = w.confine(name)
 	return w.FileSystem.RemoveAll(ctx, name)
 }
