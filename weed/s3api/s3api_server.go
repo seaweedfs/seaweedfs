@@ -19,6 +19,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -687,21 +689,19 @@ func (s3a *S3ApiServer) recheckCopySourcePolicy(r *http.Request, bucket, object,
 }
 
 // recheckTagConditionedPolicyWithLookup repeats policy evaluation with the
-// object's entry in hand so s3:ExistingObjectTag conditions apply to tagging
-// writes that did not otherwise fetch the entry. It only does the extra
+// object's entry in hand so s3:ExistingObjectTag conditions apply to
+// operations that did not otherwise fetch the entry. It only does the extra
 // lookup when the bucket has a policy; entry misses return ErrNone because
 // the handler reports its own NoSuchKey.
-func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, bucket, object, action, handlerName string) s3err.ErrorCode {
+func (s3a *S3ApiServer) recheckTagConditionedPolicyWithLookup(r *http.Request, bucket, object, versionId, action, handlerName string) s3err.ErrorCode {
 	if s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket) {
 		return s3err.ErrNone
 	}
-	target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
-	dir, name := target.DirAndName()
-	entry, err := s3a.getEntry(dir, name)
+	entry, err := s3a.resolveObjectEntry(bucket, object, versionId)
 	if err != nil {
 		// The tag conditions cannot be evaluated without the entry; failing
 		// open would let a tag-gated Deny slip through a transient miss.
-		if errors.Is(err, filer_pb.ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
 			return s3err.ErrNone
 		}
 		glog.Errorf("%s: recheck lookup for %s/%s failed: %v", handlerName, bucket, object, err)
