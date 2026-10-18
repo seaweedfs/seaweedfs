@@ -363,10 +363,12 @@ func TestCheckPermissionLegacyOwnerScopedToIssuer(t *testing.T) {
 		t.Error("legacy owner matching must not engage without a trusted issuer")
 	}
 
-	if CheckPermissionWithContext("GetTable", principal, owner, "", "arn", &PolicyContext{
+	// With no local-account predicate only the unconditional exclusions apply;
+	// a plain legacy subject still re-anchors.
+	if !CheckPermissionWithContext("GetTable", principal, owner, "", "arn", &PolicyContext{
 		TrustedIssuers: []string{"corp-idp"},
 	}) {
-		t.Error("legacy owner matching must not engage without a local-account check")
+		t.Error("a missing local-account check keeps plain legacy subjects working")
 	}
 }
 

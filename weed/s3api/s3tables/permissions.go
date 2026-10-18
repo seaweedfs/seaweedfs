@@ -96,7 +96,8 @@ type PolicyContext struct {
 	TrustedIssuers []string
 	// IsLocalAccountID reports whether an account ID belongs to a configured
 	// local identity. Such owner strings were never OIDC subjects and must not
-	// be re-anchored; a nil predicate means no string can be proven local.
+	// be re-anchored; a nil predicate exempts nothing beyond the built-in
+	// reserved, ARN, and scoped-id checks.
 	IsLocalAccountID func(string) bool
 }
 
@@ -323,15 +324,18 @@ func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyConte
 // subject is ambiguous — matching it under the caller's own issuer would let
 // a same-sub identity from any configured issuer claim it.
 func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
-	if ctx == nil || len(ctx.TrustedIssuers) != 1 || ctx.IsLocalAccountID == nil {
+	if ctx == nil || len(ctx.TrustedIssuers) != 1 {
 		return false
 	}
-	// "admin" and other configured account ids name local identities, not OIDC
-	// subjects; ARN-shaped values name IAM principals; and an already-scoped
-	// hash is not a legacy subject either. Without these exclusions any caller
-	// whose sub equals a stored owner string — including the reserved admin
-	// account or a victim's scoped id — could be re-anchored onto it.
-	if ctx.IsLocalAccountID(legacy) || sts.IsParentUserID(legacy) || strings.HasPrefix(legacy, "arn:") {
+	// The reserved accounts, ARN values, and already issuer-scoped ids are never
+	// OIDC subjects — or, for strings that could be either a legacy subject or a
+	// scoped id, resolving to scoped fails closed. A configured local account
+	// id is excluded the same way once the caller supplies the predicate. Any
+	// of them could otherwise be claimed by a token asserting that string as
+	// sub — including the admin account or a victim's scoped id.
+	if legacy == s3_constants.AccountAdminId || legacy == s3_constants.AccountAnonymousId ||
+		strings.HasPrefix(legacy, "arn:") || sts.IsParentUserID(legacy) ||
+		(ctx.IsLocalAccountID != nil && ctx.IsLocalAccountID(legacy)) {
 		return false
 	}
 	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal
