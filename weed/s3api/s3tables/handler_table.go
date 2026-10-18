@@ -422,14 +422,15 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	allowed := CheckTableOrBucketPermission("GetTable", accountID,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			Namespace:       namespace,
-			TableName:       tableName,
-			TableBucketTags: bucketTags,
-			ResourceTags:    tableTags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        namespace,
+			TableName:        tableName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		})
 
 	if !allowed {
@@ -557,12 +558,13 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if !CheckTableOrBucketPermission("ListTables", accountID,
 				nsMeta.OwnerAccountID, namespacePolicy, bucketARN,
 				bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-					TrustedIssuers:  h.trustedIssuers(r),
-					TableBucketName: bucketName,
-					Namespace:       namespaceName,
-					TableBucketTags: bucketTags,
-					IdentityActions: identityActions,
-					DefaultAllow:    h.defaultAllowFor(r),
+					TrustedIssuers:   h.trustedIssuers(r),
+					IsLocalAccountID: h.localAccountIDs,
+					TableBucketName:  bucketName,
+					Namespace:        namespaceName,
+					TableBucketTags:  bucketTags,
+					IdentityActions:  identityActions,
+					DefaultAllow:     h.defaultAllowFor(r),
 				}) {
 				return ErrAccessDenied
 			}
@@ -603,11 +605,12 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
 			identityActions := getIdentityActions(r)
 			if !CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-				TrustedIssuers:  h.trustedIssuers(r),
-				TableBucketName: bucketName,
-				TableBucketTags: bucketTags,
-				IdentityActions: identityActions,
-				DefaultAllow:    h.defaultAllowFor(r),
+				TrustedIssuers:   h.trustedIssuers(r),
+				IsLocalAccountID: h.localAccountIDs,
+				TableBucketName:  bucketName,
+				TableBucketTags:  bucketTags,
+				IdentityActions:  identityActions,
+				DefaultAllow:     h.defaultAllowFor(r),
 			}) {
 				return ErrAccessDenied
 			}
@@ -943,14 +946,15 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	allowed := CheckTableOrBucketPermission("DeleteTable", principal,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			Namespace:       namespaceName,
-			TableName:       tableName,
-			TableBucketTags: bucketTags,
-			ResourceTags:    tableTags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        namespaceName,
+			TableName:        tableName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		})
 	if !allowed {
 		if h.canReadEntry("GetTable", principal, metadata.OwnerAccountID, bucketMetadata.OwnerAccountID, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespaceName, tableName, bucketTags, tableTags, identityActions, r) {
@@ -1115,14 +1119,15 @@ func (h *S3TablesHandler) readTableMetadata(ctx context.Context, client filer_pb
 // cannot see the entry keeps the not-found veil.
 func (h *S3TablesHandler) canReadEntry(readOp, principal, tableOwner, bucketOwner, tablePolicy, bucketPolicy, tableARN, bucketARN, bucketName, namespace, name string, bucketTags, tableTags map[string]string, identityActions []string, r *http.Request) bool {
 	ctx := &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		Namespace:       namespace,
-		TableName:       name,
-		TableBucketTags: bucketTags,
-		ResourceTags:    tableTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespace,
+		TableName:        name,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     tableTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}
 	return CheckTableOrBucketPermission(readOp, principal,
 		tableOwner, tablePolicy, tableARN,
@@ -1300,14 +1305,15 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	allowed := CheckTableOrBucketPermission(kind.renameOp, principal,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			Namespace:       srcNamespace,
-			TableName:       srcName,
-			TableBucketTags: bucketTags,
-			ResourceTags:    tableTags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        srcNamespace,
+			TableName:        srcName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		})
 	if !allowed {
 		readTags := tableTags
@@ -1367,13 +1373,14 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 	if !CheckTableOrBucketPermission(kind.createOp, principal,
 		destNamespaceMetadata.OwnerAccountID, destNamespacePolicy, bucketARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			Namespace:       destNamespace,
-			TableName:       destName,
-			TableBucketTags: bucketTags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        destNamespace,
+			TableName:        destName,
+			TableBucketTags:  bucketTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", destNamespace))
 		return NewAuthError(kind.renameOp, principal, "not authorized to create "+kind.noun+" in the destination namespace")
@@ -1572,14 +1579,15 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	allowed := CheckTableOrBucketPermission("UpdateTable", principal,
 		metadata.OwnerAccountID, tablePolicy, tableARN,
 		bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
-			TrustedIssuers:  h.trustedIssuers(r),
-			TableBucketName: bucketName,
-			Namespace:       namespaceName,
-			TableName:       tableName,
-			TableBucketTags: bucketTags,
-			ResourceTags:    tableTags,
-			IdentityActions: identityActions,
-			DefaultAllow:    h.defaultAllowFor(r),
+			TrustedIssuers:   h.trustedIssuers(r),
+			IsLocalAccountID: h.localAccountIDs,
+			TableBucketName:  bucketName,
+			Namespace:        namespaceName,
+			TableName:        tableName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     tableTags,
+			IdentityActions:  identityActions,
+			DefaultAllow:     h.defaultAllowFor(r),
 		})
 
 	if !allowed {
@@ -1777,15 +1785,16 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	identityActions := getIdentityActions(r)
 	policyContext := &PolicyContext{
-		TrustedIssuers:  h.trustedIssuers(r),
-		TableBucketName: bucketName,
-		Namespace:       namespaceName,
-		TableName:       tableName,
-		RequestTags:     requestTags,
-		TagKeys:         mapKeys(requestTags),
-		TableBucketTags: bucketTags,
-		IdentityActions: identityActions,
-		DefaultAllow:    h.defaultAllowFor(r),
+		TrustedIssuers:   h.trustedIssuers(r),
+		IsLocalAccountID: h.localAccountIDs,
+		TableBucketName:  bucketName,
+		Namespace:        namespaceName,
+		TableName:        tableName,
+		RequestTags:      requestTags,
+		TagKeys:          mapKeys(requestTags),
+		TableBucketTags:  bucketTags,
+		IdentityActions:  identityActions,
+		DefaultAllow:     h.defaultAllowFor(r),
 	}
 	if !CheckTableOrBucketPermission("CreateTable", accountID,
 		namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN,

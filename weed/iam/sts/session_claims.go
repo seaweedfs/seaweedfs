@@ -24,6 +24,14 @@ func ComputeParentUser(sub, iss string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
+// IsParentUserID reports whether s has the shape ComputeParentUser produces —
+// a base64url-encoded SHA-256 — i.e. an already issuer-scoped id rather than a
+// bare subject string.
+func IsParentUserID(s string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	return err == nil && len(b) == sha256.Size
+}
+
 // identityClaimPriority is the order in which ResolveIdentityClaim looks for a
 // human-readable, authoritative identity attribute in an STS request context.
 // The context is populated at federation time from the validated OIDC token

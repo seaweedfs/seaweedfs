@@ -135,6 +135,7 @@ type ambiguousPutFiler struct {
 	txnCount      int
 	txnCheck      func(req *filer_pb.ObjectTransactionRequest)
 	apply         bool
+	ignoreAltKey  bool
 	createErr     error
 	respError     string
 	lookupErr     error
@@ -257,7 +258,7 @@ func (f *ambiguousPutFiler) ObjectTransaction(_ context.Context, req *filer_pb.O
 		key = req.ConditionKey
 	}
 	current := f.entries[key]
-	if current == nil && req.ConditionAltKey != "" {
+	if current == nil && req.ConditionAltKey != "" && !f.ignoreAltKey {
 		// Mirrors the filer's fallback: the alt key is the object's .versions
 		// directory and the entry under test is the one its latest pointer
 		// names; a delete marker resolves to absent.
@@ -1055,5 +1056,69 @@ func TestSuspendedPutIfNoneMatchWithDeleteMarkerLatest(t *testing.T) {
 	}
 	if filerImpl.entries["/buckets/b/k"] == nil {
 		t.Fatal("null-version entry was not created")
+	}
+}
+
+// A filer that predates condition_alt_key ignores the field and checks the
+// empty null slot alone, so the transaction precondition-fails even though
+// If-Match matches the served version. The gateway resends the transaction
+// against the resolved version instead of surfacing the false 412.
+func TestSuspendedPutIfMatchRecheckedWhenAltKeyIgnored(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume: volume,
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {
+				Name:        "b",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended:    map[string][]byte{s3_constants.ExtVersioningKey: []byte(s3_constants.VersioningSuspended)},
+			},
+			"/buckets/b/k.versions": {
+				Name:        "k.versions",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionIdKey:       []byte("v1"),
+					s3_constants.ExtLatestVersionFileNameKey: []byte("v_v1"),
+				},
+			},
+			"/buckets/b/k.versions/v_v1": {
+				Name:       "v_v1",
+				Attributes: &filer_pb.FuseAttributes{Md5: []byte{0xab, 0xc1, 0x23}, FileSize: 1},
+				Extended: map[string][]byte{
+					s3_constants.ExtETagKey:      []byte("abc123"),
+					s3_constants.ExtVersionIdKey: []byte("v1"),
+				},
+			},
+		},
+		apply:        true,
+		ignoreAltKey: true,
+	}
+	filerAddr := startFakeFiler(t, filerImpl)
+	s3a := newPutTestServer(t, filerAddr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, filerAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{filerAddr}, 1)
+
+	var conditionKeys []string
+	filerImpl.txnCheck = func(req *filer_pb.ObjectTransactionRequest) {
+		conditionKeys = append(conditionKeys, req.ConditionKey)
+	}
+
+	r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader("new"))
+	r.Header.Set(s3_constants.IfMatch, `"abc123"`)
+	_, code, _ := s3a.putSuspendedVersioningObject(r, "b", "k", r.Body, "")
+	if code != s3err.ErrNone {
+		t.Fatalf("suspended If-Match PUT against a filer ignoring condition_alt_key = %v", code)
+	}
+	if filerImpl.entries["/buckets/b/k"] == nil {
+		t.Fatal("null-version entry was not created")
+	}
+	if filerImpl.txnCount != 2 {
+		t.Fatalf("got %d transactions, want the routed attempt plus a resend against the resolved version", filerImpl.txnCount)
+	}
+	if len(conditionKeys) != 2 || conditionKeys[0] != "" || conditionKeys[1] != "/buckets/b/k.versions/v_v1" {
+		t.Fatalf("condition keys = %v, want [\"\" \"/buckets/b/k.versions/v_v1\"]", conditionKeys)
 	}
 }

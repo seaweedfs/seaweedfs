@@ -94,6 +94,11 @@ type PolicyContext struct {
 	// account IDs. A bare subject is only resolvable when exactly one issuer
 	// is configured; more than one leaves it ambiguous, so it must not match.
 	TrustedIssuers []string
+	// IsLocalAccountID reports whether an account ID belongs to a configured
+	// local identity. Such owner strings were never OIDC subjects and must not
+	// be re-anchored; a nil predicate exempts nothing beyond the built-in
+	// reserved, ARN, and scoped-id checks.
+	IsLocalAccountID func(string) bool
 }
 
 // CheckPermissionWithContext checks permission with optional resource and condition context.
@@ -295,8 +300,21 @@ func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyConte
 	if matchesPrincipal(principalSpec, principal) {
 		return true
 	}
-	legacy, ok := principalSpec.(string)
-	return ok && matchesLegacySubject(legacy, principal, ctx)
+	switch p := principalSpec.(type) {
+	case string:
+		return matchesLegacySubject(p, principal, ctx)
+	case []interface{}:
+		for _, item := range p {
+			if str, ok := item.(string); ok && matchesLegacySubject(str, principal, ctx) {
+				return true
+			}
+		}
+	case map[string]interface{}:
+		if aws, ok := p["AWS"]; ok {
+			return matchesCaller(aws, principal, ctx)
+		}
+	}
+	return false
 }
 
 // matchesLegacySubject reports whether a bare subject stored before issuer
@@ -307,6 +325,17 @@ func matchesCaller(principalSpec interface{}, principal string, ctx *PolicyConte
 // a same-sub identity from any configured issuer claim it.
 func matchesLegacySubject(legacy, principal string, ctx *PolicyContext) bool {
 	if ctx == nil || len(ctx.TrustedIssuers) != 1 {
+		return false
+	}
+	// The reserved accounts, ARN values, and already issuer-scoped ids are never
+	// OIDC subjects — or, for strings that could be either a legacy subject or a
+	// scoped id, resolving to scoped fails closed. A configured local account
+	// id is excluded the same way once the caller supplies the predicate. Any
+	// of them could otherwise be claimed by a token asserting that string as
+	// sub — including the admin account or a victim's scoped id.
+	if legacy == s3_constants.AccountAdminId || legacy == s3_constants.AccountAnonymousId ||
+		strings.HasPrefix(legacy, "arn:") || sts.IsParentUserID(legacy) ||
+		(ctx.IsLocalAccountID != nil && ctx.IsLocalAccountID(legacy)) {
 		return false
 	}
 	return sts.ComputeParentUser(legacy, ctx.TrustedIssuers[0]) == principal

@@ -229,7 +229,7 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 	}
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		dir, name := util.FullPath(fullDirPath).DirAndName()
+		dir, name := util.NormalizePath(fullDirPath).DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
@@ -339,11 +339,11 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string, 
 		return err
 	}
 
-	fullFilePath = strings.TrimSuffix(fullFilePath, "/")
-	if fullFilePath == "" {
+	fullpath := util.NormalizePath(fullFilePath)
+	if fullpath == "/" {
 		return os.ErrInvalid
 	}
-	dir, name := util.FullPath(fullFilePath).DirAndName()
+	dir, name := fullpath.DirAndName()
 
 	return filer_pb.Remove(context.Background(), fs, dir, name, true, recursive, false, false, []int32{fs.signature})
 
@@ -368,15 +368,12 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 		return err
 	}
 
-	of, err := fs.stat(ctx, oldName)
-	if err != nil {
+	if _, err = fs.stat(ctx, oldName); err != nil {
 		return os.ErrExist
 	}
-	if of.IsDir() {
-		oldName = strings.TrimRight(oldName, "/")
-	}
-	newName = strings.TrimRight(newName, "/")
-	if oldName == "" || newName == "" {
+	oldName = string(util.NormalizePath(oldName))
+	newName = string(util.NormalizePath(newName))
+	if oldName == "/" || newName == "/" {
 		return os.ErrInvalid
 	}
 

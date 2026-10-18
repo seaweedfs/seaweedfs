@@ -3969,13 +3969,14 @@ impl Volume {
             self.no_write_can_delete && !self.has_remote_file() && !self.no_write_or_delete;
         self.volume_info.read_only = self.no_write_or_delete || marked_can_delete;
         self.volume_info.read_only_can_delete = marked_can_delete;
-        let mut vif = VifVolumeInfo::from_pb(&self.volume_info);
 
-        // Match Go's SaveVolumeInfo: compute ExpireAtSec from TTL
+        // Match Go's SaveVolumeInfo: stamp ExpireAtSec into the live volume_info
+        // so read_volume_file_status returns it, not only into the written file.
         let expire_at_sec = self.expire_at_sec();
         if expire_at_sec > 0 {
-            vif.expire_at_sec = expire_at_sec;
+            self.volume_info.expire_at_sec = expire_at_sec;
         }
+        let vif = VifVolumeInfo::from_pb(&self.volume_info);
 
         let content = serde_json::to_string_pretty(&vif)
             .map_err(|e| VolumeError::Io(io::Error::other(e.to_string())))?;

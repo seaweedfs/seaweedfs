@@ -68,6 +68,20 @@ func (f *noVolumeFiler) LookupVolume(_ context.Context, _ *filer_pb.LookupVolume
 	return &filer_pb.LookupVolumeResponse{LocationsMap: map[string]*filer_pb.Locations{}}, nil
 }
 
+type createRecordingFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	req *filer_pb.CreateEntryRequest
+}
+
+func (f *createRecordingFiler) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	return nil, filer_pb.ErrNotFound
+}
+
+func (f *createRecordingFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.req = req
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
 type deleteRecordingFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	req      *filer_pb.DeleteEntryRequest
@@ -144,6 +158,23 @@ func TestWebDavFile_Read_InlineContent(t *testing.T) {
 	n, err := f.Read(buf)
 	assert.NoError(t, err)
 	assert.Equal(t, "inl", string(buf[:n]))
+}
+
+// MKCOL paths end in "/"; the entry must be created under its own name, not as "" inside itself.
+func TestWebDavFileSystem_Mkdir_EntryName(t *testing.T) {
+	filer := &createRecordingFiler{}
+	filerAddr := startFakeWebDavFiler(t, filer)
+	fs := &WebDavFileSystem{option: &WebDavOption{
+		Filer:          filerAddr,
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}}
+
+	assert.NoError(t, fs.Mkdir(context.Background(), "/dir/sub/", 0755))
+	if assert.NotNil(t, filer.req) {
+		assert.Equal(t, "/dir", filer.req.Directory)
+		assert.Equal(t, "sub", filer.req.Entry.Name)
+		assert.True(t, filer.req.Entry.IsDirectory)
+	}
 }
 
 // DELETE, and MOVE or COPY with Overwrite: T, remove a collection through RemoveAll, which must take its contents too.
