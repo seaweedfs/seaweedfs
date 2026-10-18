@@ -60,7 +60,7 @@ func TestRunShard_WalkBoundRuleDoesNotPinCursor(t *testing.T) {
 	close(events)
 	client := &recordingClient{}
 	cfg := Config{Persister: p, Client: client, Lister: stubSiblingLister{}, RetentionWindow: retention}
-	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, events))
+	require.NoError(t, runShard(context.Background(), cfg, snap, runNow, 0, events, nil))
 	assert.ElementsMatch(t, []string{"short/a", "short/b"}, client.seenObjects())
 	got, _, _ := p.Load(context.Background(), 0)
 	assert.Equal(t, last.TsNs, got.TsNs, "cursor must advance past the walk-bound object's PUT")
