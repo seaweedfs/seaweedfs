@@ -244,7 +244,7 @@ func TestMiniAdminAdvertisedIP(t *testing.T) {
 		},
 	}
 
-		for _, tt := range tests {
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			adminIP := tt.adminIP
 			miniAdminOptions.ip = &adminIP
@@ -256,8 +256,7 @@ func TestMiniAdminAdvertisedIP(t *testing.T) {
 }
 
 func TestDefaultMiniAdminGrpcPortBelowEphemeralFloor(t *testing.T) {
-	grpcPort := defaultMiniAdminHTTPPort + GrpcPortOffset
-	if grpcPort >= linuxEphemeralPortFloor {
-		t.Fatalf("default mini admin gRPC port %d must stay below ephemeral floor %d", grpcPort, linuxEphemeralPortFloor)
+	if defaultMiniAdminGrpcPort >= linuxEphemeralPortFloor {
+		t.Fatalf("default mini admin gRPC port %d must stay below ephemeral floor %d", defaultMiniAdminGrpcPort, linuxEphemeralPortFloor)
 	}
 }

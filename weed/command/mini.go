@@ -56,7 +56,7 @@ const (
 	maxVolumeSizeMB           = 1024        // Maximum volume size in MB (1GB)
 	GrpcPortOffset            = 10000       // Offset used to calculate gRPC port from HTTP port
 	linuxEphemeralPortFloor   = 32768       // Default net.ipv4.ip_local_port_range floor on Linux
-	defaultMiniAdminHTTPPort  = 12646       // Keeps admin gRPC (http+GrpcPortOffset) below linuxEphemeralPortFloor
+	defaultMiniAdminGrpcPort  = 22646       // Below the ephemeral floor; the derived http+offset would be 33646
 	defaultMiniPluginJobTypes = "all"
 )
 
@@ -373,12 +373,12 @@ After starting, you can access:
 - S3 Endpoint:     http://localhost:8333
 - Iceberg Catalog: http://localhost:8181
 - WebDAV:          http://localhost:7333
-- Admin UI:        http://localhost:12646
+- Admin UI:        http://localhost:23646
 
 S3 Access:
 The S3 endpoint is available at http://localhost:8333. For client
 configuration and IAM setup, see the project documentation or use the
-Admin UI (http://localhost:12646) to manage users and policies.
+Admin UI (http://localhost:23646) to manage users and policies.
 
 Notes:
 - Values mini computes itself (currently master.volumeSizeLimitMB) are
@@ -576,8 +576,8 @@ func initMiniWebDAVFlags() {
 
 // initMiniAdminFlags initializes Admin server flag options
 func initMiniAdminFlags() {
-	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", defaultMiniAdminHTTPPort, "admin server http listen port")
-	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + GrpcPortOffset)")
+	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", 23646, "admin server http listen port")
+	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", defaultMiniAdminGrpcPort, "admin server grpc listen port (default: admin http port + GrpcPortOffset)")
 	miniAdminOptions.master = cmdMini.Flag.String("admin.master", "", "master server address (automatically set)")
 	// admin discovery must query the same group the co-located filer registers under
 	miniAdminOptions.filerGroup = miniFilerOptions.filerGroup
