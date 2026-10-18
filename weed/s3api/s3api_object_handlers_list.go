@@ -950,6 +950,10 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		return
 	}
 
+	// markerParentWalked tracks whether marker now names a directory whose
+	// subtree this call already walked: after the descent below it is the
+	// parent directory, and seeing its entry again must not re-list it.
+	markerParentWalked := false
 	if strings.Contains(marker, "/") {
 		subDir, subMarker := toParentAndDescendants(marker)
 		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
@@ -961,9 +965,16 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 		nextMarker = subDir + "/" + subNextMarker
 		// finished processing this subdirectory
 		marker = subDir
+		markerParentWalked = true
 	}
 	if cursor.isTruncated {
 		return
+	}
+
+	// Ask for the marker's own entry: an exclusive window never delivers the
+	// directory a marker names, and its children sort after the marker key.
+	if marker != "" {
+		inclusiveStartFrom = true
 	}
 
 	// now marker is also a direct child of dir
@@ -1023,8 +1034,19 @@ func (s3a *S3ApiServer) doListFilerEntries(ctx context.Context, client filer_pb.
 			if entry.IsDirectory {
 				markerName = strings.TrimSuffix(markerName, s3_constants.VersionsFolder)
 			}
-			if !inclusiveStartFrom && marker != "" && (entry.Name == marker || markerName == marker) {
-				continue
+			if marker != "" && (entry.Name == marker || markerName == marker) {
+				// The marker excludes only the key it names. A directory under
+				// that name sorts its children after the marker, so they must
+				// still be listed — under a delimiter this entry yields the
+				// directory's common prefix, otherwise the directory branch
+				// below walks the subtree from the start. A .versions dir named
+				// by the base key still folds into the marker key and skips, as
+				// does the parent the descent already walked.
+				walkableMarkerDir := entry.IsDirectory && entry.Name == marker && !markerParentWalked &&
+					!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder)
+				if !walkableMarkerDir {
+					continue
+				}
 			}
 
 			// The .versions sibling of the key just emitted still decides that key's

@@ -423,6 +423,50 @@ func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEchoWithSubsequentEntries(t
 	assert.Equal(t, "zebra.txt", nextMarker)
 }
 
+func TestDoListFilerEntries_MarkerNamingDirectoryListsItsChildren(t *testing.T) {
+	// StartAfter=d00/s01 must still list d00/s01's contents: every child sorts
+	// after the marker key. The same holds for a bare top-level directory.
+	s3a := &S3ApiServer{}
+	dir := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	file := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{}}
+	}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket":         {dir("d00"), dir("d01")},
+			"/buckets/test-bucket/d00":     {dir("s00"), dir("s01"), dir("s02")},
+			"/buckets/test-bucket/d00/s00": {file("f000.txt")},
+			"/buckets/test-bucket/d00/s01": {file("f000.txt")},
+			"/buckets/test-bucket/d00/s02": {file("f000.txt")},
+			"/buckets/test-bucket/d01":     {dir("s00")},
+			"/buckets/test-bucket/d01/s00": {file("f000.txt")},
+		},
+	}
+
+	collect := func(marker string) []string {
+		cursor := &ListingCursor{maxKeys: 1000}
+		var seen []string
+		_, err := s3a.doListFilerEntries(context.Background(), client, listDirectoryRequest{dir: "/buckets/test-bucket", marker: marker, bucket: "test-bucket"}, cursor, func(dir string, entry *filer_pb.Entry) {
+			seen = append(seen, dir+"/"+entry.Name)
+			cursor.maxKeys--
+		})
+		assert.NoError(t, err)
+		return seen
+	}
+
+	assert.Equal(t, []string{
+		"/buckets/test-bucket/d00/s01/f000.txt",
+		"/buckets/test-bucket/d00/s02/f000.txt",
+		"/buckets/test-bucket/d01/s00/f000.txt",
+	}, collect("d00/s01"))
+
+	assert.Equal(t, []string{
+		"/buckets/test-bucket/d01/s00/f000.txt",
+	}, collect("d01"))
+}
+
 func TestDoListFilerEntries_EmptyDirectoriesDoNotHideLaterEntries(t *testing.T) {
 	// With maxKeys=1 the listing window is 3 entries. The first window holds only
 	// empty directories, so the real object further down must still be found.
