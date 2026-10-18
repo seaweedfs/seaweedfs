@@ -193,9 +193,13 @@ This allows anonymous access only to objects that have a tag `status=public`.
 **Supported Operations for Tag-Based Conditions:**
 
 Tag-based conditions (`s3:ExistingObjectTag/<key>`) are evaluated for the following operations:
-- `s3:GetObject` (GET object)
-- `s3:GetObjectVersion` (GET object with versionId)
-- `s3:HeadObject` (HEAD object)
+- `s3:GetObject` / `s3:GetObjectVersion` / `s3:HeadObject` (object reads, including the source of CopyObject, UploadPartCopy and RenameObject)
+- `s3:DeleteObject` / `s3:DeleteObjectVersion` (single and batch deletes)
+- `s3:GetObjectAcl` / `s3:PutObjectAcl`
+- `s3:GetObjectTagging` / `s3:PutObjectTagging` / `s3:DeleteObjectTagging`
+- `s3:GetObjectAttributes`
+- `s3:GetObjectRetention` / `s3:PutObjectRetention`
+- `s3:GetObjectLegalHold` / `s3:PutObjectLegalHold`
 
 Note: For these conditions to be evaluated, the object must exist and the policy engine re-checks access after fetching the object metadata.
 

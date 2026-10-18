@@ -369,3 +369,130 @@ func TestRecheckPolicyForKeyWithLookup(t *testing.T) {
 	assert.Equal(t, s3err.ErrAccessDenied,
 		s3a.recheckPolicyForKeyWithLookup(req, http.MethodGet, "src-bucket", "src-key", "", string(s3_constants.ACTION_READ), "test"))
 }
+
+// A Deny on s3:DeleteObject / s3:DeleteObjectVersion conditioned on
+// s3:ExistingObjectTag only matches once the entry's tags are known; the
+// delete path's deferred lookup recheck must enforce it on the resolved
+// object. The batch-delete variant evaluates a synthesized DELETE request so
+// a key carrying a versionId resolves to s3:DeleteObjectVersion.
+func TestRecheckTagConditionedPolicyWithLookupDelete(t *testing.T) {
+	filerImpl := &ambiguousPutFiler{
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b/secret.txt": {
+				Name: "secret.txt",
+				Extended: map[string][]byte{
+					s3_constants.AmzObjectTaggingPrefix + "classification": []byte("secret"),
+				},
+			},
+		},
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	s3a.policyEngine = NewBucketPolicyEngine()
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::b", "arn:aws:s3:::b/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"],
+				"Resource": "arn:aws:s3:::b/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/classification": ["secret"]
+					}
+				}
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("b", policyJSON))
+
+	identity := &Identity{Name: "writer", PrincipalArn: "arn:aws:iam::123456789012:user/writer"}
+
+	req := httptest.NewRequest(http.MethodDelete, "/b/secret.txt", nil)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), identity))
+
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckTagConditionedPolicyWithLookup(req, "b", "secret.txt", "", string(s3_constants.ACTION_WRITE), "test"),
+		"a tag-conditioned Deny on s3:DeleteObject must block deleting the tagged object")
+
+	postReq := httptest.NewRequest(http.MethodPost, "/b?delete", nil)
+	postReq = postReq.WithContext(s3_constants.SetIdentityInContext(postReq.Context(), identity))
+	keyReq := objectKeyPolicyRequest(postReq, http.MethodDelete, "b", "secret.txt", "v1")
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckTagConditionedPolicyWithLookup(keyReq, "b", "secret.txt", "v1", string(s3_constants.ACTION_WRITE), "test"),
+		"a versioned batch-delete key must be denied by the s3:DeleteObjectVersion statement")
+
+	filerImpl.entries["/buckets/b/secret.txt"].Extended[s3_constants.AmzObjectTaggingPrefix+"classification"] = []byte("public")
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckTagConditionedPolicyWithLookup(req, "b", "secret.txt", "", string(s3_constants.ACTION_WRITE), "test"),
+		"a non-matching tag leaves the delete allowed")
+
+	// A missing object reports no entry; the handler answers its own NoSuchKey.
+	delete(filerImpl.entries, "/buckets/b/secret.txt")
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckTagConditionedPolicyWithLookup(req, "b", "secret.txt", "", string(s3_constants.ACTION_WRITE), "test"))
+}
+
+// Tag-conditioned Deny on the ACL subresources is enforced once the object
+// entry is in hand, the same way it is on a plain read.
+func TestRecheckObjectAclTagConditionedPolicy(t *testing.T) {
+	s3a := &S3ApiServer{
+		policyEngine: NewBucketPolicyEngine(),
+	}
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::b", "arn:aws:s3:::b/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": ["s3:GetObjectAcl", "s3:PutObjectAcl"],
+				"Resource": "arn:aws:s3:::b/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/classification": ["secret"]
+					}
+				}
+			}
+		]
+	}`
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("b", policyJSON))
+
+	identity := &Identity{Name: "writer", PrincipalArn: "arn:aws:iam::123456789012:user/writer"}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/b/secret.txt?acl", nil)
+	getReq = getReq.WithContext(s3_constants.SetIdentityInContext(getReq.Context(), identity))
+	putReq := httptest.NewRequest(http.MethodPut, "/b/secret.txt?acl", nil)
+	putReq = putReq.WithContext(s3_constants.SetIdentityInContext(putReq.Context(), identity))
+
+	secretEntry := map[string][]byte{
+		s3_constants.AmzObjectTaggingPrefix + "classification": []byte("secret"),
+	}
+	publicEntry := map[string][]byte{
+		s3_constants.AmzObjectTaggingPrefix + "classification": []byte("public"),
+	}
+
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckPolicyWithObjectEntry(getReq, "b", "secret.txt", s3_constants.S3_ACTION_GET_OBJECT_ACL, secretEntry, "test"))
+	assert.Equal(t, s3err.ErrAccessDenied,
+		s3a.recheckPolicyWithObjectEntry(putReq, "b", "secret.txt", s3_constants.S3_ACTION_PUT_OBJECT_ACL, secretEntry, "test"))
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckPolicyWithObjectEntry(getReq, "b", "secret.txt", s3_constants.S3_ACTION_GET_OBJECT_ACL, publicEntry, "test"))
+	assert.Equal(t, s3err.ErrNone,
+		s3a.recheckPolicyWithObjectEntry(putReq, "b", "secret.txt", s3_constants.S3_ACTION_PUT_OBJECT_ACL, publicEntry, "test"))
+}
